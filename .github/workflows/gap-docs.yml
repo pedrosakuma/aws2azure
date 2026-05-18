@@ -1,0 +1,34 @@
+name: gap-docs
+
+on:
+  push:
+    paths:
+      - 'docs/gaps/**'
+      - 'tools/Aws2Azure.GapDocs/**'
+      - 'src/Aws2Azure.Core/Generated/**'
+      - '.github/workflows/gap-docs.yml'
+  pull_request:
+    paths:
+      - 'docs/gaps/**'
+      - 'tools/Aws2Azure.GapDocs/**'
+      - 'src/Aws2Azure.Core/Generated/**'
+      - '.github/workflows/gap-docs.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Validate YAML schema
+        run: dotnet run --project tools/Aws2Azure.GapDocs -- --validate
+      - name: Regenerate and ensure no diff
+        run: |
+          dotnet run --project tools/Aws2Azure.GapDocs
+          if ! git diff --quiet -- docs/site src/Aws2Azure.Core/Generated; then
+            echo "::error::Generated artefacts are out of date. Run 'dotnet run --project tools/Aws2Azure.GapDocs' and commit the result."
+            git --no-pager diff -- docs/site src/Aws2Azure.Core/Generated
+            exit 1
+          fi

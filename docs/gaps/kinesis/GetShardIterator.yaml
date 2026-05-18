@@ -1,0 +1,9 @@
+service: kinesis
+operation: GetShardIterator
+azure_equivalent: "Azure Event Hubs Kafka/HTTP surface"
+status: stub
+sub_features: []
+behavior_differences:
+  - "Shards map to partitions; cursor semantics differ"
+references:
+  - https://docs.aws.amazon.com/kinesis/latest/APIReference/API_GetShardIterator.html

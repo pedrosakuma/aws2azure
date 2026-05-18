@@ -1,0 +1,10 @@
+service: s3
+operation: GetObject
+azure_equivalent: "GET https://{account}.blob.core.windows.net/{container}/{blob}"
+status: stub
+sub_features: []
+behavior_differences:
+  - "Blob storage flat namespace; S3 prefix/delimiter semantics implemented in the proxy"
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
+  - https://learn.microsoft.com/rest/api/storageservices/blob-service-rest-api

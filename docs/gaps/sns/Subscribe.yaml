@@ -1,0 +1,9 @@
+service: sns
+operation: Subscribe
+azure_equivalent: "Azure Service Bus topics / Event Grid (TBD per operation)"
+status: stub
+sub_features: []
+behavior_differences:
+  - "Subscription filter expressions differ; SQS-as-subscriber fan-out emulated"
+references:
+  - https://docs.aws.amazon.com/sns/latest/api/API_Subscribe.html

@@ -1,0 +1,14 @@
+site_name: aws2azure — gap docs
+site_description: AWS → Azure proxy operation coverage & behavioural gaps
+docs_dir: docs/site
+theme:
+  name: readthedocs
+nav:
+  - Overview: index.md
+  - Coverage matrix: coverage.md
+  - Services:
+      - S3: s3.md
+      - SQS: sqs.md
+      - DynamoDB: dynamodb.md
+      - Kinesis: kinesis.md
+      - SNS: sns.md

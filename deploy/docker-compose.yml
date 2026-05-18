@@ -1,0 +1,55 @@
+version: "3.9"
+
+# Local emulator stack used by tests/Aws2Azure.IntegrationTests and for
+# manual exploration. CI only spins Azurite (fast, scriptable). Service Bus
+# and Cosmos take much longer to boot and are best run locally.
+#
+# Reminder: emulators do not always match the production Azure surface.
+# Any divergence found while exercising these MUST be captured in the
+# corresponding docs/gaps/<service>/<Operation>.yaml under
+# `behavior_differences:` so the gap docs stay honest.
+
+services:
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    container_name: aws2azure-azurite
+    command: ["azurite", "--blobHost", "0.0.0.0", "--queueHost", "0.0.0.0", "--tableHost", "0.0.0.0", "--skipApiVersionCheck"]
+    ports:
+      - "10000:10000"
+      - "10001:10001"
+      - "10002:10002"
+
+  mssql:
+    image: mcr.microsoft.com/azure-sql-edge:latest
+    container_name: aws2azure-mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Aws2AzureLocalDev!"
+    ports:
+      - "1433:1433"
+
+  servicebus-emulator:
+    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+    container_name: aws2azure-sb
+    depends_on:
+      - mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      SQL_SERVER: mssql
+      MSSQL_SA_PASSWORD: "Aws2AzureLocalDev!"
+    volumes:
+      - ./servicebus-config.json:/ServiceBus_Emulator/ConfigFiles/Config.json:ro
+    ports:
+      - "5672:5672"
+
+  cosmos-emulator:
+    image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:latest
+    container_name: aws2azure-cosmos
+    tty: true
+    mem_limit: 3g
+    environment:
+      AZURE_COSMOS_EMULATOR_PARTITION_COUNT: "3"
+      AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE: "false"
+    ports:
+      - "8081:8081"
+      - "10250-10255:10250-10255"
