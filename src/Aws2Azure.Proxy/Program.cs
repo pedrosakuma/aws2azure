@@ -1,8 +1,10 @@
 using System.Text.Json.Serialization;
 using Aws2Azure.Core;
+using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Core.SigV4;
+using Aws2Azure.Modules.S3;
 using Aws2Azure.Proxy;
 using Microsoft.AspNetCore.Http;
 
@@ -35,12 +37,18 @@ builder.Services.AddSingleton<ICredentialResolver>(credentialResolver);
 var sigV4Validator = new SigV4Validator(credentialResolver);
 builder.Services.AddSingleton(sigV4Validator);
 
+// Single shared Azure HTTP client per process — pooled SocketsHttpHandler
+// inside. Disposed on host shutdown via the DI container.
+var azureHttpClient = new AzureHttpClient();
+builder.Services.AddSingleton(azureHttpClient);
+
 // Manual, reflection-free module registration. Capability matrices come from
-// the generated registry (single source of truth: docs/gaps/**/*.yaml). Real
-// modules will replace these stubs in their respective Phase 1+ issues.
+// the generated registry (single source of truth: docs/gaps/**/*.yaml). The
+// S3 module is real as of Phase-1 slice 1 (bucket lifecycle); the rest stay
+// stubbed until their respective phases.
 IServiceModule[] modules =
 [
-    new StubServiceModule(CapabilityRegistry.S3, AwsErrorFormat.Xml, "s3."),
+    new S3ServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.S3),
     new StubServiceModule(CapabilityRegistry.Sqs, AwsErrorFormat.Json, "sqs."),
     new StubServiceModule(CapabilityRegistry.Dynamodb, AwsErrorFormat.Json, "dynamodb."),
     new StubServiceModule(CapabilityRegistry.Kinesis, AwsErrorFormat.Json, "kinesis."),

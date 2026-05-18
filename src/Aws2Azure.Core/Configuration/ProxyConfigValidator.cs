@@ -75,6 +75,17 @@ public static class ProxyConfigValidator
             {
                 errors.Add($"{prefix}.blob.accountKey: required.");
             }
+            if (!string.IsNullOrWhiteSpace(blob.ServiceEndpoint))
+            {
+                if (!Uri.TryCreate(blob.ServiceEndpoint, UriKind.Absolute, out var endpointUri))
+                {
+                    errors.Add($"{prefix}.blob.serviceEndpoint: must be an absolute URI when set.");
+                }
+                else if (endpointUri.Scheme != Uri.UriSchemeHttp && endpointUri.Scheme != Uri.UriSchemeHttps)
+                {
+                    errors.Add($"{prefix}.blob.serviceEndpoint: must use http or https scheme.");
+                }
+            }
         }
 
         if (azure.ServiceBus is { } sb)

@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Aws2Azure.Core\Aws2Azure.Core.csproj" />
+    <ProjectReference Include="..\Aws2Azure.Modules.S3\Aws2Azure.Modules.S3.csproj" />
   </ItemGroup>
   
 </Project>
