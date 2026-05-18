@@ -1,0 +1,9 @@
+service: sqs
+operation: ReceiveMessage
+azure_equivalent: "Azure Service Bus (queue) REST API"
+status: stub
+sub_features: []
+behavior_differences:
+  - "AWS SQS visibility timeout maps to Service Bus peek-lock/lock duration"
+references:
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ReceiveMessage.html

@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Aws2Azure.Core/Aws2Azure.Core.csproj" />
+    <Project Path="src/Aws2Azure.Proxy/Aws2Azure.Proxy.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Aws2Azure.UnitTests/Aws2Azure.UnitTests.csproj" />
+    <Project Path="tests/Aws2Azure.IntegrationTests/Aws2Azure.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,9 @@
+service: dynamodb
+operation: Query
+azure_equivalent: "Azure Cosmos DB (Core SQL API)"
+status: stub
+sub_features: []
+behavior_differences:
+  - "DynamoDB JSON type system mapped onto Cosmos JSON; consistency model differs"
+references:
+  - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Query.html

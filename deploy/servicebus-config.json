@@ -1,0 +1,16 @@
+{
+  "UserConfig": {
+    "Namespaces": [
+      {
+        "Name": "aws2azure",
+        "Queues": [
+          { "Name": "test-queue", "Properties": { "DeadLetteringOnMessageExpiration": false, "DefaultMessageTimeToLive": "PT1H", "DuplicateDetectionHistoryTimeWindow": "PT20S", "ForwardDeadLetteredMessagesTo": "", "ForwardTo": "", "LockDuration": "PT1M", "MaxDeliveryCount": 10, "RequiresDuplicateDetection": false, "RequiresSession": false } }
+        ],
+        "Topics": [
+          { "Name": "test-topic", "Properties": { "DefaultMessageTimeToLive": "PT1H", "DuplicateDetectionHistoryTimeWindow": "PT20S", "RequiresDuplicateDetection": false }, "Subscriptions": [ { "Name": "sub1", "Properties": { "DeadLetteringOnMessageExpiration": false, "DefaultMessageTimeToLive": "PT1H", "LockDuration": "PT1M", "MaxDeliveryCount": 10, "ForwardDeadLetteredMessagesTo": "", "ForwardTo": "", "RequiresSession": false }, "Rules": [] } ] }
+        ]
+      }
+    ],
+    "Logging": { "Type": "File" }
+  }
+}
