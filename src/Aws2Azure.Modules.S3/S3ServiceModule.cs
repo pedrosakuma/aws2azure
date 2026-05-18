@@ -91,6 +91,10 @@ public sealed class S3ServiceModule : IServiceModule
         {
             await ObjectHandlers.HandleAsync(context, route, blob, context.RequestAborted).ConfigureAwait(false);
         }
+        else if (route.Operation is S3Operation.ListObjects or S3Operation.ListObjectsV2)
+        {
+            await ObjectListHandlers.HandleAsync(context, route, blob, context.RequestAborted).ConfigureAwait(false);
+        }
         else
         {
             await BucketLifecycleHandlers.HandleAsync(context, route, blob, context.RequestAborted).ConfigureAwait(false);

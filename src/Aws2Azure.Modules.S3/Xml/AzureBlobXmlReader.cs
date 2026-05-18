@@ -91,4 +91,154 @@ internal static class AzureBlobXmlReader
 
         return new ContainerListPage(list, nextMarker);
     }
+
+    public readonly record struct BlobEntry(
+        string Name,
+        DateTimeOffset LastModified,
+        long ContentLength,
+        string? ETag);
+
+    /// <summary>
+    /// One page of an Azure blob listing: the blob entries in the segment,
+    /// the BlobPrefix values (Azure's equivalent of S3 CommonPrefixes,
+    /// emitted when the listing request supplied a delimiter), and the
+    /// NextMarker for continuation (or null when the listing is complete).
+    /// </summary>
+    public readonly record struct BlobListPage(
+        IReadOnlyList<BlobEntry> Blobs,
+        IReadOnlyList<string> BlobPrefixes,
+        string? NextMarker);
+
+    /// <summary>
+    /// Parses an EnumerationResults document returned by
+    /// <c>GET https://{account}.blob.core.windows.net/{container}?restype=container&amp;comp=list</c>.
+    /// Extracts blob entries (Name, Last-Modified, Content-Length, ETag),
+    /// BlobPrefix entries (when delimiter was set), and NextMarker.
+    /// </summary>
+    public static BlobListPage ParseBlobListPage(string xml)
+    {
+        var blobs = new List<BlobEntry>();
+        var prefixes = new List<string>();
+        string? nextMarker = null;
+
+        using var reader = XmlReader.Create(new StringReader(xml), new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Prohibit,
+            XmlResolver = null,
+            IgnoreWhitespace = true,
+            IgnoreComments = true,
+        });
+
+        // Top-level walk. For each <Blob> / <BlobPrefix> we hand the inner
+        // tree to a dedicated parser so leaf reads don't desync the outer
+        // reader (XmlReader.ReadElementContentAsString positions on the
+        // *next* node after the end-tag, and a subsequent outer Read()
+        // would skip whatever sibling came next).
+        while (reader.Read())
+        {
+            if (reader.NodeType != XmlNodeType.Element)
+            {
+                continue;
+            }
+            switch (reader.LocalName)
+            {
+                case "Blob":
+                    blobs.Add(ParseBlob(reader.ReadSubtree()));
+                    break;
+                case "BlobPrefix":
+                    var p = ParseBlobPrefix(reader.ReadSubtree());
+                    if (!string.IsNullOrEmpty(p))
+                    {
+                        prefixes.Add(p);
+                    }
+                    break;
+                case "NextMarker":
+                    var marker = reader.ReadElementContentAsString();
+                    if (!string.IsNullOrEmpty(marker))
+                    {
+                        nextMarker = marker;
+                    }
+                    break;
+            }
+        }
+
+        return new BlobListPage(blobs, prefixes, nextMarker);
+    }
+
+    private static BlobEntry ParseBlob(XmlReader subtree)
+    {
+        using (subtree)
+        {
+            string? name = null;
+            DateTimeOffset? lastModified = null;
+            long contentLength = 0;
+            string? etag = null;
+
+            // Step the reader manually: ReadElementContentAsString already
+            // positions on the *next* node, so we must NOT call Read() again
+            // when we just consumed a leaf — otherwise we skip its sibling.
+            if (!subtree.Read())
+            {
+                return new BlobEntry(string.Empty, DateTimeOffset.UnixEpoch, 0, null);
+            }
+            while (!subtree.EOF)
+            {
+                if (subtree.NodeType != XmlNodeType.Element)
+                {
+                    subtree.Read();
+                    continue;
+                }
+                var consumed = true;
+                switch (subtree.LocalName)
+                {
+                    case "Name":
+                        name = subtree.ReadElementContentAsString();
+                        break;
+                    case "Last-Modified":
+                        var rawLm = subtree.ReadElementContentAsString();
+                        if (DateTimeOffset.TryParse(rawLm, CultureInfo.InvariantCulture,
+                                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsedLm))
+                        {
+                            lastModified = parsedLm;
+                        }
+                        break;
+                    case "Content-Length":
+                        var rawCl = subtree.ReadElementContentAsString();
+                        long.TryParse(rawCl, NumberStyles.Integer, CultureInfo.InvariantCulture, out contentLength);
+                        break;
+                    case "Etag":
+                        etag = subtree.ReadElementContentAsString();
+                        break;
+                    default:
+                        consumed = false;
+                        break;
+                }
+                if (!consumed)
+                {
+                    subtree.Read();
+                }
+            }
+
+            return new BlobEntry(
+                name ?? string.Empty,
+                lastModified ?? DateTimeOffset.UnixEpoch,
+                contentLength,
+                etag);
+        }
+    }
+
+    private static string? ParseBlobPrefix(XmlReader subtree)
+    {
+        using (subtree)
+        {
+            while (subtree.Read())
+            {
+                if (subtree.NodeType == XmlNodeType.Element && subtree.LocalName == "Name")
+                {
+                    return subtree.ReadElementContentAsString();
+                }
+            }
+        }
+        return null;
+    }
 }

@@ -1,10 +1,32 @@
 service: s3
 operation: ListObjectsV2
 azure_equivalent: "GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list"
-status: stub
-sub_features: []
+status: implemented
+sub_features:
+  - name: prefix
+    status: implemented
+  - name: delimiter (CommonPrefixes via Azure BlobPrefix)
+    status: implemented
+  - name: max-keys (default 1000, cap 1000)
+    status: implemented
+    gap: "Azure's maxresults cap is 5000; we clamp to S3's 1000 so wire semantics match."
+  - name: continuation-token (base64url-encoded Azure NextMarker)
+    status: implemented
+    gap: "Opaque token; clients must round-trip the exact value. Stateless on the proxy."
+  - name: start-after (used as initial Azure marker when no continuation-token)
+    status: implemented
+  - name: encoding-type=url (percent-encodes Key/Prefix/Delimiter/StartAfter)
+    status: implemented
+  - name: KeyCount / IsTruncated
+    status: implemented
+  - name: fetch-owner
+    status: unsupported
+    gap: "Owner element is omitted; Azure does not expose per-blob ownership."
 behavior_differences:
-  - "Blob storage flat namespace; S3 prefix/delimiter semantics implemented in the proxy"
+  - "Pagination is server-driven against Azure; the proxy paginates internally to fill max-keys."
+  - "Blob storage is flat — delimiter-based grouping is computed by Azure and surfaced as CommonPrefixes."
+  - "CommonPrefixes are de-duplicated across Azure pages."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
-  - https://learn.microsoft.com/rest/api/storageservices/blob-service-rest-api
+  - https://learn.microsoft.com/rest/api/storageservices/list-blobs
+

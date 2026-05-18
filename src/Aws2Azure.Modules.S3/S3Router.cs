@@ -75,16 +75,33 @@ public static class S3Router
         }
 
         // Bucket-scoped ops: HEAD/PUT/DELETE on /{bucket}. GET /{bucket} is
-        // ListObjectsV2 (later slice) — explicitly Unsupported here so we
-        // don't accidentally route it to ListBuckets.
+        // the object listing — V2 when the client sets ?list-type=2,
+        // otherwise legacy V1.
         return method switch
         {
             var m when m == HttpMethods.Head   => new S3RouteResult(S3Operation.HeadBucket,   bucket, null, virtualHosted),
             var m when m == HttpMethods.Put    => new S3RouteResult(S3Operation.CreateBucket, bucket, null, virtualHosted),
             var m when m == HttpMethods.Delete => new S3RouteResult(S3Operation.DeleteBucket, bucket, null, virtualHosted),
-            var m when m == HttpMethods.Get    => new S3RouteResult(S3Operation.Unsupported,  bucket, null, virtualHosted),
+            var m when m == HttpMethods.Get    => new S3RouteResult(ClassifyListOperation(request.Query), bucket, null, virtualHosted),
             _ => new S3RouteResult(S3Operation.Unknown, bucket, null, virtualHosted),
         };
+    }
+
+    private static S3Operation ClassifyListOperation(IQueryCollection query)
+    {
+        // S3 promotes a GET on the bucket to ListObjectsV2 when list-type=2
+        // is present. Any other value (including absent) is the legacy V1.
+        if (query.TryGetValue("list-type", out var values))
+        {
+            foreach (var v in values)
+            {
+                if (string.Equals(v, "2", StringComparison.Ordinal))
+                {
+                    return S3Operation.ListObjectsV2;
+                }
+            }
+        }
+        return S3Operation.ListObjects;
     }
 
     // Well-known S3 object subresources. Membership is checked case-insensitively.
