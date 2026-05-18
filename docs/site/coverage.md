@@ -21,7 +21,8 @@
 | s3 | [HeadBucket](s3.md#headbucket) | ✅ implemented | `HEAD https://{account}.blob.core.windows.net/{container}?restype=container` |
 | s3 | [HeadObject](s3.md#headobject) | ✅ implemented | `HEAD https://{account}.blob.core.windows.net/{container}/{blob}` |
 | s3 | [ListBuckets](s3.md#listbuckets) | ✅ implemented | `GET https://{account}.blob.core.windows.net/?comp=list` |
-| s3 | [ListObjectsV2](s3.md#listobjectsv2) | ⚪ stub | `GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list` |
+| s3 | [ListObjects](s3.md#listobjects) | ✅ implemented | `GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list` |
+| s3 | [ListObjectsV2](s3.md#listobjectsv2) | ✅ implemented | `GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list` |
 | s3 | [PutObject](s3.md#putobject) | ✅ implemented | `PUT https://{account}.blob.core.windows.net/{container}/{blob}` |
 | sns | [CreateTopic](sns.md#createtopic) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
 | sns | [DeleteTopic](sns.md#deletetopic) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |

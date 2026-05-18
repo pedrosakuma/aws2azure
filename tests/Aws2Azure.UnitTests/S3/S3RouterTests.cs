@@ -12,7 +12,7 @@ public class S3RouterTests
     [InlineData("s3.amazonaws.com", "HEAD", "/my-bucket", S3Operation.HeadBucket, "my-bucket")]
     [InlineData("s3.amazonaws.com", "PUT",  "/my-bucket", S3Operation.CreateBucket, "my-bucket")]
     [InlineData("s3.amazonaws.com", "DELETE", "/my-bucket", S3Operation.DeleteBucket, "my-bucket")]
-    [InlineData("s3.amazonaws.com", "GET", "/my-bucket", S3Operation.Unsupported, "my-bucket")] // ListObjectsV2 later
+    [InlineData("s3.amazonaws.com", "GET", "/my-bucket", S3Operation.ListObjects, "my-bucket")]
     [InlineData("s3.amazonaws.com", "POST", "/my-bucket", S3Operation.Unknown, "my-bucket")]
     public void Path_style_classification(string host, string method, string path, S3Operation expected, string? bucket)
     {
@@ -88,6 +88,20 @@ public class S3RouterTests
         var result = S3Router.Classify(ctx);
         Assert.True(result.VirtualHosted);
         Assert.Equal(bucket, result.Bucket);
+    }
+
+    [Theory]
+    [InlineData("?list-type=2", S3Operation.ListObjectsV2)]
+    [InlineData("?list-type=2&prefix=foo/", S3Operation.ListObjectsV2)]
+    [InlineData("?prefix=foo/", S3Operation.ListObjects)]
+    [InlineData("?list-type=1", S3Operation.ListObjects)]
+    [InlineData("", S3Operation.ListObjects)]
+    public void Get_on_bucket_routes_by_list_type(string query, S3Operation expected)
+    {
+        var ctx = BuildContext("s3.amazonaws.com", "GET", "/my-bucket", query: query);
+        var result = S3Router.Classify(ctx);
+        Assert.Equal(expected, result.Operation);
+        Assert.Equal("my-bucket", result.Bucket);
     }
 
     private static DefaultHttpContext BuildContext(string host, string method, string path, string? query = null)

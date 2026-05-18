@@ -55,4 +55,177 @@ internal static class S3XmlWriter
         }
         return sb.ToString();
     }
+
+    public readonly record struct ListedObject(
+        string Key,
+        DateTimeOffset LastModified,
+        string? ETag,
+        long Size,
+        string StorageClass);
+
+    /// <summary>
+    /// S3 ListObjectsV2 response. <paramref name="continuationToken"/> echoes
+    /// the request's token (null if absent). <paramref name="nextContinuationToken"/>
+    /// is set only when the listing is truncated. <paramref name="encodeUrl"/>
+    /// percent-encodes Key/Prefix/Delimiter/StartAfter when the client asked
+    /// for <c>encoding-type=url</c>.
+    /// </summary>
+    public static string ListObjectsV2Result(
+        string bucket,
+        string? prefix,
+        string? delimiter,
+        int maxKeys,
+        int keyCount,
+        bool isTruncated,
+        string? continuationToken,
+        string? nextContinuationToken,
+        string? startAfter,
+        bool encodeUrl,
+        IReadOnlyList<ListedObject> contents,
+        IReadOnlyList<string> commonPrefixes)
+    {
+        var sb = new StringBuilder(512);
+        using (var writer = XmlWriter.Create(sb, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("ListBucketResult", S3Namespace);
+
+            writer.WriteElementString("Name", bucket);
+            writer.WriteElementString("Prefix", Encode(prefix, encodeUrl));
+            if (!string.IsNullOrEmpty(startAfter))
+            {
+                writer.WriteElementString("StartAfter", Encode(startAfter, encodeUrl));
+            }
+            if (!string.IsNullOrEmpty(continuationToken))
+            {
+                writer.WriteElementString("ContinuationToken", continuationToken);
+            }
+            if (!string.IsNullOrEmpty(nextContinuationToken))
+            {
+                writer.WriteElementString("NextContinuationToken", nextContinuationToken);
+            }
+            writer.WriteElementString("KeyCount", keyCount.ToString(CultureInfo.InvariantCulture));
+            writer.WriteElementString("MaxKeys", maxKeys.ToString(CultureInfo.InvariantCulture));
+            if (!string.IsNullOrEmpty(delimiter))
+            {
+                writer.WriteElementString("Delimiter", Encode(delimiter, encodeUrl));
+            }
+            writer.WriteElementString("IsTruncated", isTruncated ? "true" : "false");
+            if (encodeUrl)
+            {
+                writer.WriteElementString("EncodingType", "url");
+            }
+            WriteContents(writer, contents, encodeUrl);
+            WriteCommonPrefixes(writer, commonPrefixes, encodeUrl);
+
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// S3 ListObjects (V1) response. V1 uses <c>Marker</c> + <c>NextMarker</c>
+    /// instead of continuation tokens; NextMarker is only emitted when the
+    /// listing is truncated AND a delimiter was supplied (matches S3 docs).
+    /// </summary>
+    public static string ListBucketResult(
+        string bucket,
+        string? prefix,
+        string? delimiter,
+        int maxKeys,
+        bool isTruncated,
+        string? marker,
+        string? nextMarker,
+        bool encodeUrl,
+        IReadOnlyList<ListedObject> contents,
+        IReadOnlyList<string> commonPrefixes)
+    {
+        var sb = new StringBuilder(512);
+        using (var writer = XmlWriter.Create(sb, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("ListBucketResult", S3Namespace);
+
+            writer.WriteElementString("Name", bucket);
+            writer.WriteElementString("Prefix", Encode(prefix, encodeUrl));
+            writer.WriteElementString("Marker", Encode(marker, encodeUrl));
+            if (!string.IsNullOrEmpty(nextMarker))
+            {
+                writer.WriteElementString("NextMarker", Encode(nextMarker, encodeUrl));
+            }
+            writer.WriteElementString("MaxKeys", maxKeys.ToString(CultureInfo.InvariantCulture));
+            if (!string.IsNullOrEmpty(delimiter))
+            {
+                writer.WriteElementString("Delimiter", Encode(delimiter, encodeUrl));
+            }
+            writer.WriteElementString("IsTruncated", isTruncated ? "true" : "false");
+            if (encodeUrl)
+            {
+                writer.WriteElementString("EncodingType", "url");
+            }
+            WriteContents(writer, contents, encodeUrl);
+            WriteCommonPrefixes(writer, commonPrefixes, encodeUrl);
+
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        return sb.ToString();
+    }
+
+    private static void WriteContents(XmlWriter writer, IReadOnlyList<ListedObject> contents, bool encodeUrl)
+    {
+        foreach (var entry in contents)
+        {
+            writer.WriteStartElement("Contents");
+            writer.WriteElementString("Key", Encode(entry.Key, encodeUrl));
+            writer.WriteElementString("LastModified",
+                entry.LastModified.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
+            var etag = NormalizeETag(entry.ETag);
+            if (!string.IsNullOrEmpty(etag))
+            {
+                writer.WriteElementString("ETag", etag);
+            }
+            writer.WriteElementString("Size", entry.Size.ToString(CultureInfo.InvariantCulture));
+            writer.WriteElementString("StorageClass", entry.StorageClass);
+            writer.WriteEndElement();
+        }
+    }
+
+    /// <summary>
+    /// S3 always wraps ETag values in double-quotes; Azure's List Blobs
+    /// response surfaces them unquoted (e.g. <c>0x8CBFF45D8A29A19</c>).
+    /// Normalize so SDK ETag parsers see the S3-shaped value.
+    /// </summary>
+    private static string? NormalizeETag(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw))
+        {
+            return null;
+        }
+        if (raw.Length >= 2 && raw[0] == '"' && raw[^1] == '"')
+        {
+            return raw;
+        }
+        return "\"" + raw + "\"";
+    }
+
+    private static void WriteCommonPrefixes(XmlWriter writer, IReadOnlyList<string> commonPrefixes, bool encodeUrl)
+    {
+        foreach (var p in commonPrefixes)
+        {
+            writer.WriteStartElement("CommonPrefixes");
+            writer.WriteElementString("Prefix", Encode(p, encodeUrl));
+            writer.WriteEndElement();
+        }
+    }
+
+    private static string Encode(string? value, bool encodeUrl)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return string.Empty;
+        }
+        return encodeUrl ? Uri.EscapeDataString(value) : value;
+    }
 }

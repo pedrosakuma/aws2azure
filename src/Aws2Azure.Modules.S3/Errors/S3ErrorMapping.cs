@@ -86,6 +86,9 @@ internal static class S3ErrorMapping
     public static Mapping InvalidObjectKey() =>
         new(400, "InvalidArgument", "The specified object key is not valid.");
 
+    public static Mapping InvalidArgument(string message) =>
+        new(400, "InvalidArgument", message);
+
     public static Mapping NotImplemented(S3Operation op) =>
         new(501, "NotImplemented",
             $"aws2azure: operation {op} is not implemented in this build.");

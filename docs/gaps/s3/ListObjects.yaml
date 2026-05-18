@@ -1,0 +1,22 @@
+service: s3
+operation: ListObjects
+azure_equivalent: "GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list"
+status: implemented
+sub_features:
+  - name: prefix
+    status: implemented
+  - name: delimiter (CommonPrefixes via Azure BlobPrefix)
+    status: implemented
+  - name: marker / NextMarker
+    status: implemented
+    gap: "S3 V1 only emits NextMarker when a delimiter is set; we follow that contract."
+  - name: max-keys (default 1000, cap 1000)
+    status: implemented
+  - name: encoding-type=url
+    status: implemented
+behavior_differences:
+  - "Legacy V1 listing kept alongside V2 for SDKs that have not migrated."
+  - "Without a delimiter, callers derive the next marker from the last Contents.Key (matches S3 docs)."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjects.html
+  - https://learn.microsoft.com/rest/api/storageservices/list-blobs

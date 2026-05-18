@@ -67,6 +67,43 @@ internal sealed partial class BlobClient
     }
 
     /// <summary>
+    /// Lists a single page of blobs in <paramref name="container"/>. All
+    /// arguments are forwarded to Azure verbatim (already-validated /
+    /// already-clamped by the caller). The returned <see cref="HttpResponseMessage"/>
+    /// is the raw Azure response — the handler parses + reshapes into the
+    /// S3 envelope (ListBucketResult / ListObjectsV2Result).
+    /// </summary>
+    public Task<HttpResponseMessage> ListBlobsAsync(
+        string container,
+        string? prefix,
+        string? delimiter,
+        string? marker,
+        int? maxResults,
+        CancellationToken cancellationToken)
+    {
+        var sb = new System.Text.StringBuilder(64);
+        sb.Append(container).Append("?restype=container&comp=list");
+        if (!string.IsNullOrEmpty(prefix))
+        {
+            sb.Append("&prefix=").Append(Uri.EscapeDataString(prefix));
+        }
+        if (!string.IsNullOrEmpty(delimiter))
+        {
+            sb.Append("&delimiter=").Append(Uri.EscapeDataString(delimiter));
+        }
+        if (!string.IsNullOrEmpty(marker))
+        {
+            sb.Append("&marker=").Append(Uri.EscapeDataString(marker));
+        }
+        if (maxResults is int max)
+        {
+            sb.Append("&maxresults=").Append(max.ToString(CultureInfo.InvariantCulture));
+        }
+        var uri = new Uri(_serviceEndpoint, sb.ToString());
+        return SendAsync(HttpMethod.Get, uri, cancellationToken);
+    }
+
+    /// <summary>
     /// Builds the absolute Azure blob URI for <paramref name="container"/> /
     /// <paramref name="key"/>. The key is percent-encoded per Azure's URL rules
     /// while preserving '/'. The URI is constructed from a fully-qualified
