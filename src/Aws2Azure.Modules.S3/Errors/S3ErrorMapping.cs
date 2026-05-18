@@ -27,6 +27,9 @@ internal static class S3ErrorMapping
             (404, "ContainerNotFound") =>
                 new Mapping(404, "NoSuchBucket", "The specified bucket does not exist."),
 
+            (404, "BlobNotFound") =>
+                new Mapping(404, "NoSuchKey", "The specified key does not exist."),
+
             (409, "ContainerAlreadyExists") =>
                 // S3 distinguishes "owned by you" from "owned by someone else"; without ownership
                 // signals from Azure we surface the conservative variant.
@@ -37,8 +40,19 @@ internal static class S3ErrorMapping
                 new Mapping(409, "OperationAborted",
                     "A conflicting conditional operation is currently in progress against this resource."),
 
+            (412, _) =>
+                new Mapping(412, "PreconditionFailed",
+                    "At least one of the pre-conditions you specified did not hold."),
+
+            (416, _) =>
+                new Mapping(416, "InvalidRange",
+                    "The requested range is not satisfiable."),
+
             (400, "InvalidResourceName") or (400, "OutOfRangeInput") =>
                 new Mapping(400, "InvalidBucketName", "The specified bucket is not valid."),
+
+            (400, "InvalidHeaderValue") or (400, "InvalidInput") or (400, "InvalidQueryParameterValue") =>
+                new Mapping(400, "InvalidArgument", "Invalid argument."),
 
             (403, _) =>
                 new Mapping(403, "AccessDenied", "Access Denied."),
@@ -68,6 +82,9 @@ internal static class S3ErrorMapping
 
     public static Mapping InvalidBucketName() =>
         new(400, "InvalidBucketName", "The specified bucket is not valid.");
+
+    public static Mapping InvalidObjectKey() =>
+        new(400, "InvalidArgument", "The specified object key is not valid.");
 
     public static Mapping NotImplemented(S3Operation op) =>
         new(501, "NotImplemented",

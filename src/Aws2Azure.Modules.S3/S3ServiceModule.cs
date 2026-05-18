@@ -84,7 +84,17 @@ public sealed class S3ServiceModule : IServiceModule
         }
 
         var blob = new BlobClient(_http, blobCreds);
-        await BucketLifecycleHandlers.HandleAsync(context, route, blob, context.RequestAborted).ConfigureAwait(false);
+        if (route.Operation is S3Operation.PutObject
+            or S3Operation.GetObject
+            or S3Operation.HeadObject
+            or S3Operation.DeleteObject)
+        {
+            await ObjectHandlers.HandleAsync(context, route, blob, context.RequestAborted).ConfigureAwait(false);
+        }
+        else
+        {
+            await BucketLifecycleHandlers.HandleAsync(context, route, blob, context.RequestAborted).ConfigureAwait(false);
+        }
     }
 
     private static Task WriteErrorAsync(HttpContext context, S3ErrorMapping.Mapping mapping) =>

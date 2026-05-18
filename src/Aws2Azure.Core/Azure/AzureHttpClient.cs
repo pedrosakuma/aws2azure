@@ -37,6 +37,14 @@ public sealed class AzureHttpClient : IDisposable
 
     public HttpClient Inner => _client;
 
+    /// <summary>
+    /// Opt-out flag for the built-in retry loop. Handlers that wrap a
+    /// non-replayable stream (e.g. uploads forwarding <c>HttpRequest.Body</c>)
+    /// set this so a 5xx never causes the request body to be buffered or
+    /// re-read after consumption.
+    /// </summary>
+    public static readonly HttpRequestOptionsKey<bool> NoRetryOption = new("aws2azure.no-retry");
+
     public async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
         HttpCompletionOption completionOption = HttpCompletionOption.ResponseHeadersRead,
@@ -44,8 +52,9 @@ public sealed class AzureHttpClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        var noRetry = request.Options.TryGetValue(NoRetryOption, out var noRetryFlag) && noRetryFlag;
         var attempt = 0;
-        var maxAttempts = Math.Max(1, _options.MaxAttempts);
+        var maxAttempts = noRetry ? 1 : Math.Max(1, _options.MaxAttempts);
 
         while (true)
         {
@@ -147,7 +156,10 @@ public sealed class AzureHttpClient : IDisposable
             PooledConnectionLifetime = TimeSpan.FromMinutes(2),
             PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1),
             MaxConnectionsPerServer = 64,
-            AutomaticDecompression = DecompressionMethods.All,
+            // Object bodies must be byte-faithful end-to-end; Content-Encoding
+            // is metadata that we forward unchanged to the client. Auto-decompression
+            // would silently rewrite the bytes and break round-trips.
+            AutomaticDecompression = DecompressionMethods.None,
             EnableMultipleHttp2Connections = true
         };
 

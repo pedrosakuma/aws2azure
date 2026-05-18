@@ -52,7 +52,10 @@ internal static class TestSigV4Signer
 
         var canonical = CanonicalRequest.Build(
             request.Method.Method,
-            request.RequestUri.AbsolutePath,
+            // Validator canonicalizes from HttpContext.Request.Path (decoded);
+            // mirror that by unescaping before signing so percent-encoding in
+            // the wire URI doesn't cause double-encoding in the canonical URI.
+            Uri.UnescapeDataString(request.RequestUri.AbsolutePath),
             request.RequestUri.Query.TrimStart('?'),
             headers,
             signedHeaders,

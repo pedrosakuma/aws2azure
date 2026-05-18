@@ -13,7 +13,6 @@ public class S3RouterTests
     [InlineData("s3.amazonaws.com", "PUT",  "/my-bucket", S3Operation.CreateBucket, "my-bucket")]
     [InlineData("s3.amazonaws.com", "DELETE", "/my-bucket", S3Operation.DeleteBucket, "my-bucket")]
     [InlineData("s3.amazonaws.com", "GET", "/my-bucket", S3Operation.Unsupported, "my-bucket")] // ListObjectsV2 later
-    [InlineData("s3.amazonaws.com", "GET", "/my-bucket/key.txt", S3Operation.Unsupported, "my-bucket")]
     [InlineData("s3.amazonaws.com", "POST", "/my-bucket", S3Operation.Unknown, "my-bucket")]
     public void Path_style_classification(string host, string method, string path, S3Operation expected, string? bucket)
     {
@@ -37,6 +36,38 @@ public class S3RouterTests
         var result = S3Router.Classify(ctx);
         Assert.Equal(S3Operation.Unsupported, result.Operation);
         Assert.Equal("my-bucket", result.Bucket);
+    }
+
+    [Theory]
+    [InlineData("PUT",    "/my-bucket/key.txt", S3Operation.PutObject)]
+    [InlineData("GET",    "/my-bucket/key.txt", S3Operation.GetObject)]
+    [InlineData("HEAD",   "/my-bucket/key.txt", S3Operation.HeadObject)]
+    [InlineData("DELETE", "/my-bucket/key.txt", S3Operation.DeleteObject)]
+    [InlineData("GET",    "/my-bucket/deep/folder/key.txt", S3Operation.GetObject)]
+    public void Object_path_classification(string method, string path, S3Operation expected)
+    {
+        var ctx = BuildContext("s3.amazonaws.com", method, path);
+        var result = S3Router.Classify(ctx);
+        Assert.Equal(expected, result.Operation);
+        Assert.Equal("my-bucket", result.Bucket);
+        Assert.False(string.IsNullOrEmpty(result.Key));
+    }
+
+    [Theory]
+    [InlineData("DELETE", "/b/k.txt", "tagging")]
+    [InlineData("DELETE", "/b/k.txt", "versionId=abc")]
+    [InlineData("PUT",    "/b/k.txt", "acl")]
+    [InlineData("PUT",    "/b/k.txt", "uploads")]
+    [InlineData("GET",    "/b/k.txt", "uploadId=xyz&partNumber=1")]
+    [InlineData("GET",    "/b/k.txt", "attributes")]
+    [InlineData("POST",   "/b/k.txt", "restore")]
+    public void Object_subresource_queries_are_unsupported(string method, string path, string query)
+    {
+        var ctx = BuildContext("s3.amazonaws.com", method, path, query: "?" + query);
+        var result = S3Router.Classify(ctx);
+        Assert.Equal(S3Operation.Unsupported, result.Operation);
+        Assert.Equal("b", result.Bucket);
+        Assert.Equal("k.txt", result.Key);
     }
 
     [Fact]

@@ -1,10 +1,27 @@
 service: s3
 operation: GetObject
 azure_equivalent: "GET https://{account}.blob.core.windows.net/{container}/{blob}"
-status: stub
-sub_features: []
+status: implemented
+sub_features:
+  - name: Range requests (bytes=X-Y)
+    status: implemented
+  - name: conditional headers (If-Match / If-None-Match / If-Modified-Since / If-Unmodified-Since)
+    status: implemented
+  - name: standard response headers (ETag, Last-Modified, Content-Type, Content-Length, Content-Encoding, Cache-Control, Accept-Ranges, Content-Range)
+    status: implemented
+  - name: user metadata (x-amz-meta-*)
+    status: implemented
+    gap: "Translated from Azure x-ms-meta-*."
+  - name: response header overrides (response-content-type, response-content-disposition, …)
+    status: unsupported
+  - name: server-side encryption customer keys (SSE-C)
+    status: unsupported
+  - name: versioning (versionId query)
+    status: unsupported
+    gap: "Routed to Unsupported; blob versioning will be a later slice."
 behavior_differences:
-  - "Blob storage flat namespace; S3 prefix/delimiter semantics implemented in the proxy"
+  - "Streaming end-to-end: response body is forwarded without buffering."
+  - "x-amz-id-2 carries the Azure x-ms-request-id for cross-system tracing."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
-  - https://learn.microsoft.com/rest/api/storageservices/blob-service-rest-api
+  - https://learn.microsoft.com/rest/api/storageservices/get-blob
