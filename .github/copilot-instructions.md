@@ -148,6 +148,16 @@ consistency, throttling, auth edge cases, and feature surface. Therefore:
   also be exercised against **real Azure** at least once (manual or scheduled
   job) and any divergences recorded.
 
+### CI cadence
+
+- **`ci.yml`** (PR + push to `main`): build, unit tests, AOT publish. Fast,
+  blocking.
+- **`integration.yml`**: emulator-backed integration tests. Runs **nightly**
+  (cron `0 4 * * *` UTC), on `workflow_dispatch`, and on PRs that carry the
+  **`run-integration`** label. Default PR runs do **not** trigger it — apply
+  the label when changing SigV4, the Azure REST client, authenticators, or
+  any module's emulator-covered code paths to force a run before merge.
+
 ## Build / publish (canonical commands)
 
 > Add commands here once the solution exists. Until then, the contract is:
