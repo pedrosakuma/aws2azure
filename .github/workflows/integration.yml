@@ -1,12 +1,24 @@
 name: integration
 
 on:
-  push:
-    branches: [main]
+  schedule:
+    # Nightly at 04:00 UTC (~01:00 BRT). Picks up the default branch tip.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
   pull_request:
+    types: [labeled, synchronize, reopened]
 
 jobs:
   integration:
+    # Run on nightly schedule, manual dispatch, or PRs that carry the
+    # `run-integration` label. The label gate keeps PR cost low while
+    # still allowing on-demand runs for sensitive changes (SigV4, Azure
+    # REST client, auth, etc.).
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'run-integration'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,7 +29,5 @@ jobs:
         run: docker info
       - name: Restore + build
         run: dotnet build -c Release --nologo
-      - name: Run unit tests
-        run: dotnet test tests/Aws2Azure.UnitTests -c Release --no-build --nologo
       - name: Run integration tests (Testcontainers/Azurite)
         run: dotnet test tests/Aws2Azure.IntegrationTests -c Release --no-build --nologo
