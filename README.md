@@ -32,6 +32,12 @@ The goal is to enable applications using the official AWS SDK in **any language*
 - Not a control-plane / IaC tool (use Terraform/Crossplane for that).
 - Not a fork or repackaging of existing projects (s3proxy, MinIO, etc.) — built from scratch.
 
+
+
+## Project Tracking
+
+The canonical, durable source of truth for scope, phases, and status is the pinned **[Project Roadmap](https://github.com/pedrosakuma/aws2azure/issues/16)** issue. All work is tracked via GitHub issues and milestones — start there.
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).
