@@ -66,6 +66,41 @@ internal sealed partial class BlobClient
         return SendAsync(HttpMethod.Head, uri, cancellationToken);
     }
 
+    /// <summary>
+    /// Builds the absolute Azure blob URI for <paramref name="container"/> /
+    /// <paramref name="key"/>. The key is percent-encoded per Azure's URL rules
+    /// while preserving '/'. The URI is constructed from a fully-qualified
+    /// string so <see cref="Uri"/>'s relative-resolution / dot-segment
+    /// normalization cannot rewrite the path (defence in depth — keys
+    /// containing "." / ".." segments are also rejected by
+    /// <see cref="S3ObjectKey.IsValid"/>).
+    /// </summary>
+    public Uri BuildBlobUri(string container, string key)
+    {
+        var endpoint = _serviceEndpoint.AbsoluteUri;
+        if (endpoint.Length == 0 || endpoint[^1] != '/')
+        {
+            endpoint += "/";
+        }
+        return new Uri(endpoint + container + "/" + S3ObjectKey.EncodeForBlobUrl(key), UriKind.Absolute);
+    }
+
+    /// <summary>
+    /// Authenticates an arbitrary blob-scoped <see cref="HttpRequestMessage"/>
+    /// (already built with method/uri/headers/body by the caller) and sends
+    /// it. Lets handlers stream request/response bodies directly to/from the
+    /// network without an intermediate buffer.
+    /// </summary>
+    public async Task<HttpResponseMessage> SendBlobRequestAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        request.Headers.TryAddWithoutValidation("x-ms-date",
+            DateTimeOffset.UtcNow.ToString("R", CultureInfo.InvariantCulture));
+        request.Headers.TryAddWithoutValidation("x-ms-version", "2021-12-02");
+        await _auth.AuthenticateAsync(request, cancellationToken).ConfigureAwait(false);
+        return await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     private async Task<HttpResponseMessage> SendAsync(HttpMethod method, Uri uri, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(method, uri);

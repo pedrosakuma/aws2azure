@@ -1,10 +1,26 @@
 service: s3
 operation: PutObject
 azure_equivalent: "PUT https://{account}.blob.core.windows.net/{container}/{blob}"
-status: stub
-sub_features: []
+status: implemented
+sub_features:
+  - name: standard content headers (Content-Type, Content-Encoding, Content-Language, Content-Disposition, Cache-Control, Content-MD5)
+    status: implemented
+  - name: user metadata (x-amz-meta-*)
+    status: implemented
+    gap: "Renamed to x-ms-meta-* on the Azure call; Azure restricts header names to ASCII and ≤256 bytes."
+  - name: aws-chunked payloads (STREAMING-AWS4-HMAC-SHA256-PAYLOAD)
+    status: unsupported
+    gap: "Returns 501 NotImplemented. Clients should disable chunked-signing for now (e.g. AWSSDK.NET: DisablePayloadSigning=true, boto3: Config(s3={'payload_signing_enabled': False}))."
+  - name: server-side encryption (SSE-S3, SSE-KMS, SSE-C)
+    status: unsupported
+    gap: "Azure manages encryption at the storage-account level; SSE headers are ignored."
+  - name: Object Lock / Legal Hold / Retention
+    status: unsupported
+  - name: ACLs (x-amz-acl)
+    status: unsupported
 behavior_differences:
-  - "Blob storage flat namespace; S3 prefix/delimiter semantics implemented in the proxy"
+  - "ETag value comes from Azure (hex of MD5 for single-part uploads); shape matches S3 but bytes differ from a re-uploaded object."
+  - "PUT always overwrites an existing blob, matching S3 default semantics."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html
-  - https://learn.microsoft.com/rest/api/storageservices/blob-service-rest-api
+  - https://learn.microsoft.com/rest/api/storageservices/put-blob

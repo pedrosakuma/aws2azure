@@ -7,6 +7,10 @@ public class S3ErrorMappingTests
 {
     [Theory]
     [InlineData(404, "ContainerNotFound", 404, "NoSuchBucket")]
+    [InlineData(404, "BlobNotFound", 404, "NoSuchKey")]
+    [InlineData(412, "ConditionNotMet", 412, "PreconditionFailed")]
+    [InlineData(416, "InvalidRange", 416, "InvalidRange")]
+    [InlineData(400, "InvalidHeaderValue", 400, "InvalidArgument")]
     [InlineData(409, "ContainerAlreadyExists", 409, "BucketAlreadyOwnedByYou")]
     [InlineData(409, "ContainerBeingDeleted", 409, "OperationAborted")]
     [InlineData(400, "InvalidResourceName", 400, "InvalidBucketName")]

@@ -47,8 +47,22 @@ public static class S3Router
 
         if (!string.IsNullOrEmpty(key))
         {
-            // Object-scoped ops are not part of slice 1.
-            return new S3RouteResult(S3Operation.Unsupported, bucket, key, virtualHosted);
+            // Object subresources (?uploads, ?uploadId, ?tagging, ?acl, …) are
+            // distinct S3 operations layered on the same path/verb. Refuse
+            // them up-front so e.g. DELETE /{b}/{k}?tagging never drops the
+            // blob and PUT /{b}/{k}?acl never overwrites it.
+            if (HasObjectSubresource(request.Query))
+            {
+                return new S3RouteResult(S3Operation.Unsupported, bucket, key, virtualHosted);
+            }
+            return method switch
+            {
+                var m when m == HttpMethods.Get    => new S3RouteResult(S3Operation.GetObject,    bucket, key, virtualHosted),
+                var m when m == HttpMethods.Head   => new S3RouteResult(S3Operation.HeadObject,   bucket, key, virtualHosted),
+                var m when m == HttpMethods.Put    => new S3RouteResult(S3Operation.PutObject,    bucket, key, virtualHosted),
+                var m when m == HttpMethods.Delete => new S3RouteResult(S3Operation.DeleteObject, bucket, key, virtualHosted),
+                _ => new S3RouteResult(S3Operation.Unknown, bucket, key, virtualHosted),
+            };
         }
 
         // Bucket subresources (?tagging, ?policy, ?lifecycle, …) are distinct
@@ -71,6 +85,31 @@ public static class S3Router
             var m when m == HttpMethods.Get    => new S3RouteResult(S3Operation.Unsupported,  bucket, null, virtualHosted),
             _ => new S3RouteResult(S3Operation.Unknown, bucket, null, virtualHosted),
         };
+    }
+
+    // Well-known S3 object subresources. Membership is checked case-insensitively.
+    private static readonly System.Collections.Generic.HashSet<string> ObjectSubresources =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            "acl", "attributes", "tagging", "torrent", "uploads", "uploadId",
+            "partNumber", "restore", "select", "select-type",
+            "legal-hold", "retention", "versions", "versionId",
+        };
+
+    private static bool HasObjectSubresource(IQueryCollection query)
+    {
+        if (query.Count == 0)
+        {
+            return false;
+        }
+        foreach (var kv in query)
+        {
+            if (ObjectSubresources.Contains(kv.Key))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     // Well-known S3 bucket subresources. Membership is checked case-insensitively
