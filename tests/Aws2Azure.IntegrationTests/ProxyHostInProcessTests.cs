@@ -49,8 +49,9 @@ public class ProxyHostInProcessTests
     public async Task StubModule_Returns501()
     {
         var client = _fx.CreateClient();
-        var request = new HttpRequestMessage(HttpMethod.Get, "/my-bucket");
-        request.Headers.Host = "s3.proxy.localtest.me";
+        // SQS remains stubbed; S3 is a real module as of Phase-1 slice 1.
+        var request = new HttpRequestMessage(HttpMethod.Get, "/queues");
+        request.Headers.Host = "sqs.proxy.localtest.me";
         var response = await client.SendAsync(request);
         Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode);
     }

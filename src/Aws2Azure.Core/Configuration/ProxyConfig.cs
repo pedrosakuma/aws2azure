@@ -35,6 +35,14 @@ public sealed class BlobCredentials
 {
     public string AccountName { get; set; } = string.Empty;
     public string AccountKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Optional absolute Blob service endpoint. When empty, the canonical
+    /// formula <c>https://{AccountName}.blob.core.windows.net</c> is used.
+    /// Override for Azurite (<c>http://127.0.0.1:10000/devstoreaccount1</c>)
+    /// or sovereign clouds (e.g. <c>blob.core.usgovcloudapi.net</c>).
+    /// </summary>
+    public string? ServiceEndpoint { get; set; }
 }
 
 public sealed class ServiceBusCredentials
