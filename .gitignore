@@ -1,0 +1,30 @@
+# .NET
+bin/
+obj/
+out/
+*.user
+*.suo
+*.userprefs
+*.sln.docstates
+.vs/
+.vscode/
+*.pdb
+*.dll
+*.exe
+*.cache
+
+# AOT artifacts
+publish/
+*.nativeaot/
+
+# Rider / Visual Studio
+.idea/
+*.DotSettings.user
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tooling
+*.log
+.tools/
