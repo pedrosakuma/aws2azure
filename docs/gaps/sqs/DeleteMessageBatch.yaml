@@ -1,0 +1,17 @@
+service: sqs
+operation: DeleteMessageBatch
+azure_equivalent: "Azure Service Bus queue runtime REST API — N parallel DELETE /{queue}/messages/{messageId}/{lockToken}?api-version=2021-05"
+status: implemented
+sub_features:
+  - {name: "1..10 entries per batch", status: implemented, notes: "Matches SQS limit; enforced before any SB call."}
+  - {name: "Per-entry Id validation (alnum/_/-, 1..80 chars, unique)", status: implemented, notes: "Returns the AWS-shaped EmptyBatchRequest / TooManyEntriesInBatchRequest / BatchEntryIdsNotDistinct / InvalidBatchEntryId on the whole call."}
+  - {name: "Partial failure response shape", status: implemented, notes: "Per-entry Successful / Failed rows preserve the caller's Id ordering and carry SenderFault=true on rejects."}
+  - {name: "Bounded parallelism", status: implemented, notes: "SemaphoreSlim cap of 5 concurrent SB DELETEs per batch to avoid throttling small SB Standard namespaces."}
+  - {name: "ReceiptHandle round-trip", status: implemented, notes: "Same length-prefixed base64 ReceiptHandle as DeleteMessage; decoded per-entry."}
+behavior_differences:
+  - "SB REST has no native batch-delete; the proxy fans out parallel DELETEs. A failing entry never aborts the batch — callers see per-entry results matching SQS semantics."
+  - "Expired-lock vs already-deleted ambiguity from DeleteMessage applies per entry (see DeleteMessage.yaml behavior_differences)."
+  - "Verified against in-process fakes; emulator-backed end-to-end validation lands with the SbEmulatorFixture build-out (tracked in p2-sb-emulator-fixture)."
+references:
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteMessageBatch.html
+  - https://learn.microsoft.com/rest/api/servicebus/delete-message

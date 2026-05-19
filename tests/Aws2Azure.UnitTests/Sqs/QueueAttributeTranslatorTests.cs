@@ -97,4 +97,52 @@ public class QueueAttributeTranslatorTests
         Assert.Equal("PT1H", QueueAttributeTranslator.FormatIso8601Seconds(3600));
         Assert.Equal("P14D", QueueAttributeTranslator.FormatIso8601Seconds(14 * 24 * 3600));
     }
+
+    [Fact]
+    public void Merge_overlays_only_non_null_patch_fields()
+    {
+        var existing = new QueueDescriptionProperties
+        {
+            LockDuration = "PT30S",
+            LockDurationSeconds = 30,
+            DefaultMessageTimeToLive = "P4D",
+            DefaultMessageTimeToLiveSeconds = 4 * 24 * 60 * 60,
+            MaxMessageSizeBytes = 1048576,
+            DelaySeconds = 0,
+            ReceiveMessageWaitTimeSeconds = 0,
+            RequiresSession = false,
+            RequiresDuplicateDetection = false,
+            ApproximateNumberOfMessages = 42,
+        };
+        var patch = new QueueDescriptionProperties
+        {
+            LockDuration = "PT2M",
+            LockDurationSeconds = 120,
+            ReceiveMessageWaitTimeSeconds = 10,
+        };
+
+        var merged = QueueAttributeTranslator.Merge(existing, patch);
+
+        Assert.Equal("PT2M", merged.LockDuration);
+        Assert.Equal(120, merged.LockDurationSeconds);
+        Assert.Equal(10, merged.ReceiveMessageWaitTimeSeconds);
+        Assert.Equal(existing.DefaultMessageTimeToLive, merged.DefaultMessageTimeToLive);
+        Assert.Equal(existing.MaxMessageSizeBytes, merged.MaxMessageSizeBytes);
+        Assert.Equal(existing.RequiresSession, merged.RequiresSession);
+        Assert.Equal(existing.ApproximateNumberOfMessages, merged.ApproximateNumberOfMessages);
+    }
+
+    [Fact]
+    public void Merge_with_empty_patch_returns_existing_field_values()
+    {
+        var existing = new QueueDescriptionProperties
+        {
+            LockDurationSeconds = 60,
+            MaxMessageSizeBytes = 65536,
+        };
+        var merged = QueueAttributeTranslator.Merge(existing, new QueueDescriptionProperties());
+
+        Assert.Equal(60, merged.LockDurationSeconds);
+        Assert.Equal(65536, merged.MaxMessageSizeBytes);
+    }
 }

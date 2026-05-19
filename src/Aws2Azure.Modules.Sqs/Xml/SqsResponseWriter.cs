@@ -227,6 +227,86 @@ internal static class SqsResponseWriter
             jsonProps: Array.Empty<(string, object)>(),
             xmlContent: null);
 
+    public static Task WriteSetQueueAttributesAsync(HttpContext ctx, SqsWireProtocol protocol) =>
+        WriteAsync(ctx, protocol,
+            xmlEnvelope: "SetQueueAttributesResponse",
+            xmlResult: null,
+            jsonProps: Array.Empty<(string, object)>(),
+            xmlContent: null);
+
+    public static Task WritePurgeQueueAsync(HttpContext ctx, SqsWireProtocol protocol) =>
+        WriteAsync(ctx, protocol,
+            xmlEnvelope: "PurgeQueueResponse",
+            xmlResult: null,
+            jsonProps: Array.Empty<(string, object)>(),
+            xmlContent: null);
+
+    /// <summary>
+    /// Writes a DeleteMessageBatch response. Mirrors SendMessageBatch shape:
+    /// per-entry success returns just the Id; failures carry SQS error code /
+    /// message / SenderFault.
+    /// </summary>
+    public static Task WriteDeleteMessageBatchAsync(
+        HttpContext ctx, SqsWireProtocol protocol,
+        IReadOnlyList<BatchEntryOk> successful,
+        IReadOnlyList<BatchEntryError> failed) =>
+        WriteBatchResultAsync(ctx, protocol, "DeleteMessageBatch", "DeleteMessageBatchResultEntry", successful, failed);
+
+    /// <summary>
+    /// Writes a ChangeMessageVisibilityBatch response — same shape as
+    /// DeleteMessageBatch (per-entry Id on success, error envelope on failure).
+    /// </summary>
+    public static Task WriteChangeMessageVisibilityBatchAsync(
+        HttpContext ctx, SqsWireProtocol protocol,
+        IReadOnlyList<BatchEntryOk> successful,
+        IReadOnlyList<BatchEntryError> failed) =>
+        WriteBatchResultAsync(ctx, protocol, "ChangeMessageVisibilityBatch", "ChangeMessageVisibilityBatchResultEntry", successful, failed);
+
+    private static Task WriteBatchResultAsync(
+        HttpContext ctx, SqsWireProtocol protocol,
+        string operationName, string okElementName,
+        IReadOnlyList<BatchEntryOk> successful,
+        IReadOnlyList<BatchEntryError> failed)
+    {
+        if (protocol == SqsWireProtocol.AwsJson)
+        {
+            var json = JsonSerializer.Serialize(
+                new BatchActionPayload(successful, failed),
+                SqsListJsonContext.Default.BatchActionPayload);
+            return WriteJsonAsync(ctx, json);
+        }
+
+        var sb = new StringBuilder();
+        using (var sw = new Utf8StringWriter(sb))
+        using (var w = XmlWriter.Create(sw, XmlSettings))
+        {
+            w.WriteStartDocument();
+            w.WriteStartElement(operationName + "Response", QueryNamespace);
+            w.WriteStartElement(operationName + "Result", QueryNamespace);
+            foreach (var ok in successful)
+            {
+                w.WriteStartElement(okElementName, QueryNamespace);
+                w.WriteElementString("Id", QueryNamespace, ok.Id);
+                w.WriteEndElement();
+            }
+            foreach (var err in failed)
+            {
+                w.WriteStartElement("BatchResultErrorEntry", QueryNamespace);
+                w.WriteElementString("Id", QueryNamespace, err.Id);
+                w.WriteElementString("Code", QueryNamespace, err.Code);
+                w.WriteElementString("Message", QueryNamespace, err.Message);
+                w.WriteElementString("SenderFault", QueryNamespace, err.SenderFault ? "true" : "false");
+                w.WriteEndElement();
+            }
+            w.WriteEndElement();
+            WriteResponseMetadata(w, ctx);
+            w.WriteEndElement();
+            w.WriteEndDocument();
+            w.Flush();
+        }
+        return WriteXmlAsync(ctx, sb.ToString());
+    }
+
     public static Task WriteReceiveMessageAsync(
         HttpContext ctx, SqsWireProtocol protocol,
         IReadOnlyList<ReceivedSqsMessage> messages)
@@ -445,11 +525,25 @@ internal sealed record ReceivedSqsAttribute(
     public bool IsBinary => BinaryValueBase64 is not null;
 }
 
+internal sealed record BatchEntryOk(
+    [property: JsonPropertyName("Id")] string Id);
+
+internal sealed record BatchEntryError(
+    [property: JsonPropertyName("Id")] string Id,
+    [property: JsonPropertyName("Code")] string Code,
+    [property: JsonPropertyName("Message")] string Message,
+    [property: JsonPropertyName("SenderFault")] bool SenderFault);
+
+internal sealed record BatchActionPayload(
+    [property: JsonPropertyName("Successful")] IReadOnlyList<BatchEntryOk> Successful,
+    [property: JsonPropertyName("Failed")] IReadOnlyList<BatchEntryError> Failed);
+
 [JsonSerializable(typeof(ListQueuesPayload))]
 [JsonSerializable(typeof(GetQueueAttributesPayload))]
 [JsonSerializable(typeof(SendMessagePayload))]
 [JsonSerializable(typeof(SendMessageBatchPayload))]
 [JsonSerializable(typeof(ReceiveMessagePayload))]
+[JsonSerializable(typeof(BatchActionPayload))]
 internal sealed partial class SqsListJsonContext : JsonSerializerContext
 {
 }

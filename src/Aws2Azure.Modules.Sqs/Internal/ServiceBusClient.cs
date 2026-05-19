@@ -284,6 +284,25 @@ internal sealed class ServiceBusClient
     }
 
     /// <summary>
+    /// Updates an existing queue's QueueDescription via
+    /// <c>PUT /{queue}?api-version=…</c> with <c>If-Match: *</c>. Service
+    /// Bus only honours updates to a small subset of properties
+    /// (LockDuration, DefaultMessageTimeToLive, etc.); other fields must
+    /// match the existing values verbatim. Callers are responsible for
+    /// merging the desired changes onto the current QueueDescription
+    /// before serialising the Atom entry.
+    /// </summary>
+    public Task<HttpResponseMessage> UpdateQueueAsync(string queueName, string atomEntryXml, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(queueName);
+        ArgumentException.ThrowIfNullOrEmpty(atomEntryXml);
+        var req = new HttpRequestMessage(HttpMethod.Put, BuildUri(queueName, $"api-version={ApiVersion}"));
+        req.Content = new StringContent(atomEntryXml, Encoding.UTF8, "application/atom+xml;type=entry");
+        req.Headers.TryAddWithoutValidation("If-Match", "*");
+        return SendAsync(req, ct);
+    }
+
+    /// <summary>
     /// Resolves the namespace endpoint. Accepts either a plain namespace
     /// name (<c>"my-ns"</c> → <c>https://my-ns.servicebus.windows.net/</c>)
     /// or an absolute http/https URL (used by the emulator and sovereign

@@ -116,6 +116,20 @@ public static class SqsErrorMapping
         new(StatusCodes.Status400BadRequest, "MessageNotInflight",
             "The message referred to is not in flight.");
 
+    // ---- Slice 4 mappings (batches, set-attributes, purge) ----
+
+    public static Mapping PurgeQueueInProgress(string queueName) =>
+        new(StatusCodes.Status403Forbidden, "AWS.SimpleQueueService.PurgeQueueInProgress",
+            $"Only one PurgeQueue operation on {queueName} is allowed every 60 seconds.");
+
+    public static Mapping InvalidIdFormat(string id) =>
+        new(StatusCodes.Status400BadRequest, "InvalidIdFormat",
+            $"The receipt handle '{id}' is not a valid format.");
+
+    public static Mapping InvalidAttributeNameForUpdate(string name) =>
+        new(StatusCodes.Status400BadRequest, "InvalidAttributeName",
+            $"Unknown Attribute {name}.");
+
     /// <summary>
     /// Surfaces a non-2xx Service Bus REST response as a best-effort SQS
     /// error. Each per-op handler can decide whether to call this generic

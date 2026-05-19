@@ -167,6 +167,37 @@ internal static class QueueAttributeTranslator
         return d;
     }
 
+    /// <summary>
+    /// Builds a <see cref="QueueDescriptionProperties"/> that represents
+    /// <paramref name="existing"/> with any non-null property from
+    /// <paramref name="patch"/> overlaid on top. Used by SetQueueAttributes:
+    /// the partial patch comes from <see cref="ToServiceBusProperties"/>
+    /// against the caller's attribute bag (which only sets the keys
+    /// actually present), and Service Bus requires a full QueueDescription
+    /// on update (PUT semantics, not PATCH).
+    /// </summary>
+    public static QueueDescriptionProperties Merge(
+        QueueDescriptionProperties existing, QueueDescriptionProperties patch)
+    {
+        ArgumentNullException.ThrowIfNull(existing);
+        ArgumentNullException.ThrowIfNull(patch);
+        return new QueueDescriptionProperties
+        {
+            LockDuration                       = patch.LockDuration                       ?? existing.LockDuration,
+            LockDurationSeconds                = patch.LockDurationSeconds                ?? existing.LockDurationSeconds,
+            DefaultMessageTimeToLive           = patch.DefaultMessageTimeToLive           ?? existing.DefaultMessageTimeToLive,
+            DefaultMessageTimeToLiveSeconds    = patch.DefaultMessageTimeToLiveSeconds    ?? existing.DefaultMessageTimeToLiveSeconds,
+            MaxMessageSizeBytes                = patch.MaxMessageSizeBytes                ?? existing.MaxMessageSizeBytes,
+            DelaySeconds                       = patch.DelaySeconds                       ?? existing.DelaySeconds,
+            ReceiveMessageWaitTimeSeconds      = patch.ReceiveMessageWaitTimeSeconds      ?? existing.ReceiveMessageWaitTimeSeconds,
+            RequiresSession                    = patch.RequiresSession                    ?? existing.RequiresSession,
+            RequiresDuplicateDetection         = patch.RequiresDuplicateDetection         ?? existing.RequiresDuplicateDetection,
+            ApproximateNumberOfMessages        = existing.ApproximateNumberOfMessages,
+            CreatedAt                          = existing.CreatedAt,
+            UpdatedAt                          = existing.UpdatedAt,
+        };
+    }
+
     private static bool TryParseSeconds(string value, int min, int max, out int parsed)
     {
         if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out parsed) &&

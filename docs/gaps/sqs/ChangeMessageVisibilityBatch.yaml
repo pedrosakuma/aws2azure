@@ -1,0 +1,17 @@
+service: sqs
+operation: ChangeMessageVisibilityBatch
+azure_equivalent: "Azure Service Bus queue runtime REST API — N parallel POST /{queue}/messages/{messageId}/{lockToken}?action=renewlock&api-version=2021-05"
+status: partial
+sub_features:
+  - {name: "1..10 entries per batch", status: implemented}
+  - {name: "Per-entry Id validation (alnum/_/-, 1..80 chars, unique)", status: implemented}
+  - {name: "Per-entry VisibilityTimeout 0..43200 validation", status: implemented, notes: "Non-integer / out-of-range entries fail with SenderFault InvalidParameterValue while siblings succeed."}
+  - {name: "Bounded parallelism", status: implemented, notes: "5-way concurrency cap; lock-renew calls are individually short."}
+  - {name: "Renew semantics", status: partial, notes: "SB renewlock extends the lock by the queue's configured LockDuration, ignoring the requested VisibilityTimeout — see behavior_differences."}
+behavior_differences:
+  - "SB has no per-call visibility override on REST. The proxy validates and accepts the VisibilityTimeout value but SB always extends by the queue's LockDuration. Callers needing an arbitrary new visibility must Delete+Send or rely on SetQueueAttributes to change the queue-wide LockDuration."
+  - "VisibilityTimeout of 0 (which AWS uses to make a message immediately re-visible) is currently treated as a renewlock too — the message is not made re-visible. This divergence is tracked for Phase-2 NFR follow-up."
+  - "Verified against in-process fakes; emulator-backed end-to-end validation lands with the SbEmulatorFixture build-out (tracked in p2-sb-emulator-fixture)."
+references:
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ChangeMessageVisibilityBatch.html
+  - https://learn.microsoft.com/rest/api/servicebus/renew-lock

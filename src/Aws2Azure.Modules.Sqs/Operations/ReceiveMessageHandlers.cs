@@ -82,19 +82,9 @@ internal static class ReceiveMessageHandlers
             return;
         }
 
-        // WaitTimeSeconds is parsed and bounds-checked, but Slice 3 only
-        // honours WaitTimeSeconds=0 (short poll). >0 is reported as
-        // NotImplemented so clients see a deterministic error instead of
-        // silently getting short-poll behaviour. Slice 4 lifts this.
         if (!TryParseBoundedInt(parsed, "WaitTimeSeconds", min: 0, max: MaxWaitTimeSeconds, defaultValue: 0, out var waitSeconds))
         {
             await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.ReceiveWaitTimeInvalid()).ConfigureAwait(false);
-            return;
-        }
-        if (waitSeconds > 0)
-        {
-            await WriteErrorAsync(context, parsed.Protocol,
-                SqsErrorMapping.NotImplemented(SqsOperation.ReceiveMessage)).ConfigureAwait(false);
             return;
         }
 
@@ -112,14 +102,23 @@ internal static class ReceiveMessageHandlers
         var systemAttrFilter = ParseAttributeNames(parsed, "AttributeName");
         var messageAttrFilter = ParseAttributeNames(parsed, "MessageAttributeName");
 
+        // Long-poll semantics (Slice 4): the *first* peek-lock call uses SB's
+        // native server-side wait (timeout query parameter, up to 20s — same
+        // hard cap as SQS). If at least one message arrives, follow-up calls
+        // for the rest of the requested batch use timeout=0 to drain quickly
+        // without re-blocking. If the first call returns empty after the
+        // long poll, the receive returns immediately with an empty list,
+        // matching SQS's "long-poll returns as soon as a message is
+        // available or WaitTimeSeconds elapses" contract.
         var collected = new List<ReceivedSqsMessage>(maxMessages);
-        var deadline = DateTimeOffset.UtcNow + ReceiveLoopBudget;
+        var followupBudget = DateTimeOffset.UtcNow + ReceiveLoopBudget + TimeSpan.FromSeconds(waitSeconds);
         for (var i = 0; i < maxMessages; i++)
         {
             if (ct.IsCancellationRequested) break;
-            if (DateTimeOffset.UtcNow > deadline) break;
+            if (i > 0 && DateTimeOffset.UtcNow > followupBudget) break;
 
-            using var response = await sb.PeekLockMessageAsync(queueName, TimeSpan.Zero, ct).ConfigureAwait(false);
+            var perCallTimeout = i == 0 ? TimeSpan.FromSeconds(waitSeconds) : TimeSpan.Zero;
+            using var response = await sb.PeekLockMessageAsync(queueName, perCallTimeout, ct).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.NoContent ||
                 response.StatusCode == (HttpStatusCode)204)
             {
