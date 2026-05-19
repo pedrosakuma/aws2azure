@@ -1,0 +1,12 @@
+service: s3
+operation: GetBucketAccelerateConfiguration
+azure_equivalent: "(no equivalent — proxy returns an empty <AccelerateConfiguration/> document)"
+status: stub
+sub_features:
+  - name: "configuration storage"
+    status: unsupported
+    note: "No Azure equivalent of S3 Transfer Acceleration."
+behavior_differences:
+  - "GET returns 200 with an empty <AccelerateConfiguration/> document, matching the S3 'never configured' wire shape."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketAccelerateConfiguration.html

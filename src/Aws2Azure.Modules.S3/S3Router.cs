@@ -56,10 +56,15 @@ public static class S3Router
                 return new S3RouteResult(multipartOp, bucket, key, virtualHosted);
             }
 
-            // Object subresources (?acl, ?tagging, …) are distinct S3
-            // operations layered on the same path/verb. Refuse them up-front
-            // so e.g. DELETE /{b}/{k}?tagging never drops the blob and
-            // PUT /{b}/{k}?acl never overwrites it.
+            // Object subresources (?acl, ?tagging, ?torrent, ?restore,
+            // ?legal-hold, ?retention) are distinct S3 operations. Classify
+            // them to dedicated ops (Slice 9: tagging is real; the rest are
+            // ownership-only / NotImplemented stubs) so clients get coherent
+            // S3-shaped responses instead of generic 501.
+            if (TryClassifyObjectSubresource(method, request.Query, out var objSubOp))
+            {
+                return new S3RouteResult(objSubOp, bucket, key, virtualHosted);
+            }
             if (HasObjectSubresource(request.Query))
             {
                 return new S3RouteResult(S3Operation.Unsupported, bucket, key, virtualHosted);
@@ -74,11 +79,13 @@ public static class S3Router
             };
         }
 
-        // Bucket subresources (?tagging, ?policy, ?lifecycle, …) are distinct
-        // S3 operations even though they share the verb + path with the
-        // lifecycle ops. Refuse them up-front so DELETE /b?tagging never
-        // reaches DeleteBucket and drops the container.
-        // Exception: GET /b?uploads is ListMultipartUploads, handled below.
+        // Bucket subresources (?tagging, ?policy, ?lifecycle, …). Slice 9
+        // classifies them to dedicated ops; ?uploads stays as
+        // ListMultipartUploads and is handled below.
+        if (TryClassifyBucketSubresource(method, request.Query, out var bucketSubOp))
+        {
+            return new S3RouteResult(bucketSubOp, bucket, null, virtualHosted);
+        }
         if (HasBucketSubresource(request.Query) &&
             !(method == HttpMethods.Get && request.Query.ContainsKey("uploads")))
         {
@@ -235,6 +242,72 @@ public static class S3Router
         return false;
     }
 
+    /// <summary>
+    /// Maps an object-scoped subresource query key + HTTP method to the
+    /// specific <see cref="S3Operation"/> the long-tail handler will dispatch
+    /// to. Returns false when the subresource is not recognised or the verb
+    /// combination has no S3 equivalent (caller falls back to the
+    /// catch-all <see cref="S3Operation.Unsupported"/>).
+    /// </summary>
+    private static bool TryClassifyObjectSubresource(string method, IQueryCollection query, out S3Operation op)
+    {
+        op = S3Operation.Unknown;
+        if (query.Count == 0) return false;
+
+        if (query.ContainsKey("tagging"))
+        {
+            op = method switch
+            {
+                var m when m == HttpMethods.Get    => S3Operation.GetObjectTagging,
+                var m when m == HttpMethods.Put    => S3Operation.PutObjectTagging,
+                var m when m == HttpMethods.Delete => S3Operation.DeleteObjectTagging,
+                _ => S3Operation.Unsupported,
+            };
+            return true;
+        }
+        if (query.ContainsKey("acl"))
+        {
+            op = method switch
+            {
+                var m when m == HttpMethods.Get => S3Operation.GetObjectAcl,
+                var m when m == HttpMethods.Put => S3Operation.PutObjectAcl,
+                _ => S3Operation.Unsupported,
+            };
+            return true;
+        }
+        if (query.ContainsKey("torrent"))
+        {
+            op = method == HttpMethods.Get ? S3Operation.GetObjectTorrent : S3Operation.Unsupported;
+            return true;
+        }
+        if (query.ContainsKey("restore"))
+        {
+            op = method == HttpMethods.Post ? S3Operation.RestoreObject : S3Operation.Unsupported;
+            return true;
+        }
+        if (query.ContainsKey("legal-hold"))
+        {
+            op = method switch
+            {
+                var m when m == HttpMethods.Get => S3Operation.GetObjectLegalHold,
+                var m when m == HttpMethods.Put => S3Operation.PutObjectLegalHold,
+                _ => S3Operation.Unsupported,
+            };
+            return true;
+        }
+        if (query.ContainsKey("retention"))
+        {
+            op = method switch
+            {
+                var m when m == HttpMethods.Get => S3Operation.GetObjectRetention,
+                var m when m == HttpMethods.Put => S3Operation.PutObjectRetention,
+                _ => S3Operation.Unsupported,
+            };
+            return true;
+        }
+        return false;
+    }
+
     // Well-known S3 bucket subresources. Membership is checked case-insensitively
     // since SDKs and SigV4 canonicalization both normalise query keys.
     private static readonly System.Collections.Generic.HashSet<string> BucketSubresources =
@@ -259,6 +332,199 @@ public static class S3Router
             {
                 return true;
             }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Maps a bucket-scoped subresource query key + HTTP method to its
+    /// specific <see cref="S3Operation"/>. Returns false when no recognised
+    /// subresource is present (caller falls back to the catch-all
+    /// <see cref="S3Operation.Unsupported"/>). Order matters when more than
+    /// one recognised key is present, mirroring AWS precedence; in practice
+    /// SDKs send exactly one.
+    /// </summary>
+    private static bool TryClassifyBucketSubresource(string method, IQueryCollection query, out S3Operation op)
+    {
+        op = S3Operation.Unknown;
+        if (query.Count == 0) return false;
+
+        // ?uploads belongs to multipart (handled separately).
+        if (query.ContainsKey("uploads")) return false;
+
+        if (query.ContainsKey("tagging"))
+        {
+            op = method switch
+            {
+                var m when m == HttpMethods.Get    => S3Operation.GetBucketTagging,
+                var m when m == HttpMethods.Put    => S3Operation.PutBucketTagging,
+                var m when m == HttpMethods.Delete => S3Operation.DeleteBucketTagging,
+                _ => S3Operation.Unsupported,
+            };
+            return true;
+        }
+        if (query.ContainsKey("acl"))
+        {
+            op = method switch
+            {
+                var m when m == HttpMethods.Get => S3Operation.GetBucketAcl,
+                var m when m == HttpMethods.Put => S3Operation.PutBucketAcl,
+                _ => S3Operation.Unsupported,
+            };
+            return true;
+        }
+        if (query.ContainsKey("lifecycle"))
+        {
+            op = method switch
+            {
+                var m when m == HttpMethods.Get    => S3Operation.GetBucketLifecycleConfiguration,
+                var m when m == HttpMethods.Put    => S3Operation.PutBucketLifecycleConfiguration,
+                var m when m == HttpMethods.Delete => S3Operation.DeleteBucketLifecycle,
+                _ => S3Operation.Unsupported,
+            };
+            return true;
+        }
+        if (query.ContainsKey("cors"))
+        {
+            op = method switch
+            {
+                var m when m == HttpMethods.Get    => S3Operation.GetBucketCors,
+                var m when m == HttpMethods.Put    => S3Operation.PutBucketCors,
+                var m when m == HttpMethods.Delete => S3Operation.DeleteBucketCors,
+                _ => S3Operation.Unsupported,
+            };
+            return true;
+        }
+        if (query.ContainsKey("website"))
+        {
+            op = method switch
+            {
+                var m when m == HttpMethods.Get    => S3Operation.GetBucketWebsite,
+                var m when m == HttpMethods.Put    => S3Operation.PutBucketWebsite,
+                var m when m == HttpMethods.Delete => S3Operation.DeleteBucketWebsite,
+                _ => S3Operation.Unsupported,
+            };
+            return true;
+        }
+        if (query.ContainsKey("replication"))
+        {
+            op = method switch
+            {
+                var m when m == HttpMethods.Get    => S3Operation.GetBucketReplication,
+                var m when m == HttpMethods.Put    => S3Operation.PutBucketReplication,
+                var m when m == HttpMethods.Delete => S3Operation.DeleteBucketReplication,
+                _ => S3Operation.Unsupported,
+            };
+            return true;
+        }
+        if (query.ContainsKey("encryption"))
+        {
+            op = method switch
+            {
+                var m when m == HttpMethods.Get    => S3Operation.GetBucketEncryption,
+                var m when m == HttpMethods.Put    => S3Operation.PutBucketEncryption,
+                var m when m == HttpMethods.Delete => S3Operation.DeleteBucketEncryption,
+                _ => S3Operation.Unsupported,
+            };
+            return true;
+        }
+        if (query.ContainsKey("logging"))
+        {
+            op = method switch
+            {
+                var m when m == HttpMethods.Get => S3Operation.GetBucketLogging,
+                var m when m == HttpMethods.Put => S3Operation.PutBucketLogging,
+                _ => S3Operation.Unsupported,
+            };
+            return true;
+        }
+        if (query.ContainsKey("versioning"))
+        {
+            op = method switch
+            {
+                var m when m == HttpMethods.Get => S3Operation.GetBucketVersioning,
+                var m when m == HttpMethods.Put => S3Operation.PutBucketVersioning,
+                _ => S3Operation.Unsupported,
+            };
+            return true;
+        }
+        if (query.ContainsKey("requestPayment"))
+        {
+            op = method switch
+            {
+                var m when m == HttpMethods.Get => S3Operation.GetBucketRequestPayment,
+                var m when m == HttpMethods.Put => S3Operation.PutBucketRequestPayment,
+                _ => S3Operation.Unsupported,
+            };
+            return true;
+        }
+        if (query.ContainsKey("object-lock"))
+        {
+            op = method switch
+            {
+                var m when m == HttpMethods.Get => S3Operation.GetObjectLockConfiguration,
+                var m when m == HttpMethods.Put => S3Operation.PutObjectLockConfiguration,
+                _ => S3Operation.Unsupported,
+            };
+            return true;
+        }
+        if (query.ContainsKey("publicAccessBlock"))
+        {
+            op = method switch
+            {
+                var m when m == HttpMethods.Get    => S3Operation.GetPublicAccessBlock,
+                var m when m == HttpMethods.Put    => S3Operation.PutPublicAccessBlock,
+                var m when m == HttpMethods.Delete => S3Operation.DeletePublicAccessBlock,
+                _ => S3Operation.Unsupported,
+            };
+            return true;
+        }
+        if (query.ContainsKey("policy"))
+        {
+            op = method switch
+            {
+                var m when m == HttpMethods.Get    => S3Operation.GetBucketPolicy,
+                var m when m == HttpMethods.Put    => S3Operation.PutBucketPolicy,
+                var m when m == HttpMethods.Delete => S3Operation.DeleteBucketPolicy,
+                _ => S3Operation.Unsupported,
+            };
+            return true;
+        }
+        if (query.ContainsKey("policyStatus"))
+        {
+            op = method == HttpMethods.Get ? S3Operation.GetBucketPolicyStatus : S3Operation.Unsupported;
+            return true;
+        }
+        if (query.ContainsKey("notification"))
+        {
+            op = method switch
+            {
+                var m when m == HttpMethods.Get => S3Operation.GetBucketNotificationConfiguration,
+                var m when m == HttpMethods.Put => S3Operation.PutBucketNotificationConfiguration,
+                _ => S3Operation.Unsupported,
+            };
+            return true;
+        }
+        if (query.ContainsKey("accelerate"))
+        {
+            op = method switch
+            {
+                var m when m == HttpMethods.Get => S3Operation.GetBucketAccelerateConfiguration,
+                var m when m == HttpMethods.Put => S3Operation.PutBucketAccelerateConfiguration,
+                _ => S3Operation.Unsupported,
+            };
+            return true;
+        }
+        if (query.ContainsKey("ownershipControls"))
+        {
+            op = method switch
+            {
+                var m when m == HttpMethods.Get    => S3Operation.GetBucketOwnershipControls,
+                var m when m == HttpMethods.Put    => S3Operation.PutBucketOwnershipControls,
+                var m when m == HttpMethods.Delete => S3Operation.DeleteBucketOwnershipControls,
+                _ => S3Operation.Unsupported,
+            };
+            return true;
         }
         return false;
     }

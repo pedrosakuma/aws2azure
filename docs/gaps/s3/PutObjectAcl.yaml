@@ -1,0 +1,13 @@
+service: s3
+operation: PutObjectAcl
+azure_equivalent: "(no Azure equivalent — validates owner-only intent and replies 200)"
+status: partial
+sub_features:
+  - name: "canned ACL 'private'"
+    status: implemented
+    note: "Accepted as no-op."
+  - name: "other canned ACLs / x-amz-grant-* headers / non-owner grants"
+    status: unsupported
+    note: "Rejected with AccessControlListNotSupported."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectAcl.html

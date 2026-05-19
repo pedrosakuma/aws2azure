@@ -1,0 +1,12 @@
+service: s3
+operation: GetBucketLifecycleConfiguration
+azure_equivalent: "(no equivalent — proxy returns 404 NoSuchLifecycleConfiguration)"
+status: unsupported
+sub_features:
+  - name: "configuration storage"
+    status: unsupported
+    note: "Azure Storage Management lifecycle policies live on the storage account, not on individual containers; the proxy cannot expose them via the S3 surface today."
+behavior_differences:
+  - "GET returns HTTP 404 with code NoSuchLifecycleConfiguration so clients receive the same shape as a never-configured S3 bucket instead of InternalError."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketLifecycleConfiguration.html

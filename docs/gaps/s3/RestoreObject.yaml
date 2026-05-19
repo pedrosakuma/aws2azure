@@ -1,0 +1,10 @@
+service: s3
+operation: RestoreObject
+azure_equivalent: "(no equivalent — proxy returns 501 NotImplemented)"
+status: unsupported
+sub_features:
+  - name: "operation"
+    status: unsupported
+    note: "Azure has no equivalent surface for this S3 operation. The proxy returns 501 NotImplemented so the absence is explicit."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_RestoreObject.html

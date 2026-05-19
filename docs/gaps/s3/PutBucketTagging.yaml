@@ -1,0 +1,18 @@
+service: s3
+operation: PutBucketTagging
+azure_equivalent: "PUT {container}?restype=container&comp=metadata"
+status: partial
+sub_features:
+  - name: "replace whole tag set"
+    status: implemented
+    note: "Single atomic Azure metadata write."
+  - name: "50-tag limit per bucket"
+    status: implemented
+    note: "Enforced before the Azure call."
+  - name: "128-char key / 256-char value limits"
+    status: implemented
+    note: "Enforced before the Azure call."
+behavior_differences:
+  - "The metadata write replaces all container metadata on each PUT — the proxy uses no other container-metadata keys today."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketTagging.html

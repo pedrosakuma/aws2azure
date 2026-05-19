@@ -105,7 +105,7 @@ public class S3ObjectOpsTests
     }
 
     [SkippableFact]
-    public async Task Object_subresource_query_is_not_implemented()
+    public async Task Object_tagging_delete_clears_tags_without_dropping_blob()
     {
         Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
 
@@ -113,10 +113,12 @@ public class S3ObjectOpsTests
         await PutBucket(bucket);
         await PutObject(bucket, "obj.txt", Encoding.UTF8.GetBytes("x"));
 
-        // DELETE /b/k?tagging would drop the blob if routed to DeleteObject;
-        // router must classify subresources as Unsupported → 501.
+        // Slice 9 routes DELETE /b/k?tagging to DeleteObjectTagging (clearing
+        // blob index tags via PUT comp=tags with an empty TagSet). The
+        // critical invariant from the old "Unsupported" world is still that
+        // the underlying blob is NOT deleted.
         using var resp = await SendAsync(HttpMethod.Delete, $"/{bucket}/obj.txt?tagging", Array.Empty<byte>());
-        Assert.Equal(HttpStatusCode.NotImplemented, resp.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, resp.StatusCode);
 
         // Verify the blob is still there.
         using var head = await SendAsync(HttpMethod.Head, $"/{bucket}/obj.txt", Array.Empty<byte>());

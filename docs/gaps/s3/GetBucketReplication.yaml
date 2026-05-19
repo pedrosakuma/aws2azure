@@ -1,0 +1,12 @@
+service: s3
+operation: GetBucketReplication
+azure_equivalent: "(no equivalent — proxy returns 404 ReplicationConfigurationNotFoundError)"
+status: unsupported
+sub_features:
+  - name: "configuration storage"
+    status: unsupported
+    note: "Azure Object Replication is configured via the management plane and is asynchronous and account-scoped."
+behavior_differences:
+  - "GET returns HTTP 404 with code ReplicationConfigurationNotFoundError so clients receive the same shape as a never-configured S3 bucket instead of InternalError."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketReplication.html

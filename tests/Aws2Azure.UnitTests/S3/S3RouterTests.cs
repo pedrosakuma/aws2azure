@@ -24,18 +24,56 @@ public class S3RouterTests
     }
 
     [Theory]
-    [InlineData("DELETE", "/my-bucket", "tagging")]
-    [InlineData("DELETE", "/my-bucket", "policy")]
-    [InlineData("DELETE", "/my-bucket", "lifecycle")]
-    [InlineData("PUT",    "/my-bucket", "acl")]
-    [InlineData("PUT",    "/my-bucket", "cors")]
-    [InlineData("PUT",    "/my-bucket", "versioning")]
-    public void Bucket_subresource_queries_are_unsupported(string method, string path, string subresource)
+    [InlineData("DELETE", "/my-bucket", "tagging", S3Operation.DeleteBucketTagging)]
+    [InlineData("DELETE", "/my-bucket", "policy", S3Operation.DeleteBucketPolicy)]
+    [InlineData("DELETE", "/my-bucket", "lifecycle", S3Operation.DeleteBucketLifecycle)]
+    [InlineData("PUT",    "/my-bucket", "acl", S3Operation.PutBucketAcl)]
+    [InlineData("PUT",    "/my-bucket", "cors", S3Operation.PutBucketCors)]
+    [InlineData("PUT",    "/my-bucket", "versioning", S3Operation.PutBucketVersioning)]
+    [InlineData("GET",    "/my-bucket", "tagging", S3Operation.GetBucketTagging)]
+    [InlineData("GET",    "/my-bucket", "lifecycle", S3Operation.GetBucketLifecycleConfiguration)]
+    [InlineData("GET",    "/my-bucket", "cors", S3Operation.GetBucketCors)]
+    [InlineData("GET",    "/my-bucket", "website", S3Operation.GetBucketWebsite)]
+    [InlineData("GET",    "/my-bucket", "replication", S3Operation.GetBucketReplication)]
+    [InlineData("GET",    "/my-bucket", "encryption", S3Operation.GetBucketEncryption)]
+    [InlineData("GET",    "/my-bucket", "logging", S3Operation.GetBucketLogging)]
+    [InlineData("GET",    "/my-bucket", "versioning", S3Operation.GetBucketVersioning)]
+    [InlineData("GET",    "/my-bucket", "requestPayment", S3Operation.GetBucketRequestPayment)]
+    [InlineData("GET",    "/my-bucket", "object-lock", S3Operation.GetObjectLockConfiguration)]
+    [InlineData("GET",    "/my-bucket", "publicAccessBlock", S3Operation.GetPublicAccessBlock)]
+    [InlineData("GET",    "/my-bucket", "policy", S3Operation.GetBucketPolicy)]
+    [InlineData("GET",    "/my-bucket", "policyStatus", S3Operation.GetBucketPolicyStatus)]
+    [InlineData("GET",    "/my-bucket", "notification", S3Operation.GetBucketNotificationConfiguration)]
+    [InlineData("GET",    "/my-bucket", "accelerate", S3Operation.GetBucketAccelerateConfiguration)]
+    [InlineData("GET",    "/my-bucket", "ownershipControls", S3Operation.GetBucketOwnershipControls)]
+    [InlineData("GET",    "/my-bucket", "acl", S3Operation.GetBucketAcl)]
+    public void Bucket_subresource_queries_classify_to_dedicated_op(string method, string path, string subresource, S3Operation expected)
     {
         var ctx = BuildContext("s3.amazonaws.com", method, path, query: "?" + subresource);
         var result = S3Router.Classify(ctx);
-        Assert.Equal(S3Operation.Unsupported, result.Operation);
+        Assert.Equal(expected, result.Operation);
         Assert.Equal("my-bucket", result.Bucket);
+    }
+
+    [Theory]
+    [InlineData("GET",    "tagging", S3Operation.GetObjectTagging)]
+    [InlineData("PUT",    "tagging", S3Operation.PutObjectTagging)]
+    [InlineData("DELETE", "tagging", S3Operation.DeleteObjectTagging)]
+    [InlineData("GET",    "acl", S3Operation.GetObjectAcl)]
+    [InlineData("PUT",    "acl", S3Operation.PutObjectAcl)]
+    [InlineData("GET",    "torrent", S3Operation.GetObjectTorrent)]
+    [InlineData("POST",   "restore", S3Operation.RestoreObject)]
+    [InlineData("GET",    "legal-hold", S3Operation.GetObjectLegalHold)]
+    [InlineData("PUT",    "legal-hold", S3Operation.PutObjectLegalHold)]
+    [InlineData("GET",    "retention", S3Operation.GetObjectRetention)]
+    [InlineData("PUT",    "retention", S3Operation.PutObjectRetention)]
+    public void Object_subresource_queries_classify_to_dedicated_op(string method, string subresource, S3Operation expected)
+    {
+        var ctx = BuildContext("s3.amazonaws.com", method, "/my-bucket/key.txt", query: "?" + subresource);
+        var result = S3Router.Classify(ctx);
+        Assert.Equal(expected, result.Operation);
+        Assert.Equal("my-bucket", result.Bucket);
+        Assert.Equal("key.txt", result.Key);
     }
 
     [Theory]
@@ -89,13 +127,10 @@ public class S3RouterTests
     }
 
     [Theory]
-    [InlineData("DELETE", "/b/k.txt", "tagging")]
     [InlineData("DELETE", "/b/k.txt", "versionId=abc")]
-    [InlineData("PUT",    "/b/k.txt", "acl")]
     [InlineData("PUT",    "/b/k.txt", "uploads")]
     [InlineData("GET",    "/b/k.txt", "uploadId=xyz&partNumber=1")]
     [InlineData("GET",    "/b/k.txt", "attributes")]
-    [InlineData("POST",   "/b/k.txt", "restore")]
     public void Object_subresource_queries_are_unsupported(string method, string path, string query)
     {
         var ctx = BuildContext("s3.amazonaws.com", method, path, query: "?" + query);

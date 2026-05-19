@@ -109,6 +109,16 @@ internal static class S3ErrorMapping
         new(501, "NotImplemented",
             $"aws2azure: operation {op} is not implemented in this build.");
 
+    public static Mapping NoSuchConfiguration(string code, string what) =>
+        new(404, code, $"The {what} does not exist.");
+
+    public static Mapping AccessControlListNotSupported() =>
+        new(400, "AccessControlListNotSupported",
+            "The bucket does not allow ACLs. Only canned ACL 'private' (or an equivalent FULL_CONTROL grant to the bucket owner) is accepted by this proxy.");
+
+    public static Mapping MalformedXml(string message) =>
+        new(400, "MalformedXML", message);
+
     public static Mapping VirtualHostedNotSupported() =>
         new(400, "InvalidRequest",
             "aws2azure: virtual-hosted-style S3 URLs are not supported. Use path-style addressing.");
