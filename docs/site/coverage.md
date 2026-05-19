@@ -89,8 +89,11 @@
 | sns | [Publish](sns.md#publish) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
 | sns | [Subscribe](sns.md#subscribe) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
 | sns | [Unsubscribe](sns.md#unsubscribe) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
-| sqs | [CreateQueue](sqs.md#createqueue) | ⚪ stub | `Azure Service Bus (queue) REST API` |
+| sqs | [CreateQueue](sqs.md#createqueue) | ✅ implemented | `PUT https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (Atom QueueDescription)` |
 | sqs | [DeleteMessage](sqs.md#deletemessage) | ⚪ stub | `Azure Service Bus (queue) REST API` |
-| sqs | [DeleteQueue](sqs.md#deletequeue) | ⚪ stub | `Azure Service Bus (queue) REST API` |
+| sqs | [DeleteQueue](sqs.md#deletequeue) | ✅ implemented | `DELETE https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05` |
+| sqs | [GetQueueAttributes](sqs.md#getqueueattributes) | 🟡 partial | `GET https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (Atom QueueDescription)` |
+| sqs | [GetQueueUrl](sqs.md#getqueueurl) | ✅ implemented | `GET https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (existence probe)` |
+| sqs | [ListQueues](sqs.md#listqueues) | ✅ implemented | `GET https://{namespace}.servicebus.windows.net/$Resources/queues?api-version=2021-05&$skip=N&$top=M` |
 | sqs | [ReceiveMessage](sqs.md#receivemessage) | ⚪ stub | `Azure Service Bus (queue) REST API` |
 | sqs | [SendMessage](sqs.md#sendmessage) | ⚪ stub | `Azure Service Bus (queue) REST API` |

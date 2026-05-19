@@ -1,0 +1,21 @@
+service: sqs
+operation: ListQueues
+azure_equivalent: "GET https://{namespace}.servicebus.windows.net/$Resources/queues?api-version=2021-05&$skip=N&$top=M"
+status: implemented
+sub_features:
+  - name: QueueNamePrefix
+    status: implemented
+    notes: "Filtered proxy-side after Service Bus returns the page; Service Bus has no native server-side prefix filter."
+  - name: MaxResults
+    status: implemented
+    notes: "Honoured up to the SQS cap of 1000. Server-side pages are 100 (Service Bus management limit); the proxy concatenates pages until MaxResults or end."
+  - name: NextToken
+    status: implemented
+    notes: "Opaque base-10 integer encoding the upstream $skip cursor; an end-of-feed probe avoids issuing a token when no more queues remain."
+behavior_differences:
+  - "Service Bus iteration is by $skip/$top; the cursor is not stable across queue deletions. AWS SQS tokens are likewise opaque, so no public contract is broken."
+  - "Prefix filtering happens after the page is returned, so the same NextToken may visit a partially-filtered page. This is consistent with AWS-SDK pagination but may surface fewer than MaxResults entries per call."
+  - "Verified against Service Bus emulator only; real-Azure validation pending."
+references:
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListQueues.html
+  - https://learn.microsoft.com/rest/api/servicebus/list-queues

@@ -99,9 +99,20 @@ public sealed class SqsServiceModule : IServiceModule
             return;
         }
 
-        // Slice 0 only constructs the client to validate the credential
-        // shape; per-op handlers land in subsequent slices.
-        _ = new ServiceBusClient(_http, sbCreds);
+        // Slice 1: dispatch the queue-lifecycle ops; everything else still
+        // surfaces NotImplemented in the caller's wire protocol.
+        var sbClient = new ServiceBusClient(_http, sbCreds);
+        if (parsed.Operation is SqsOperation.CreateQueue
+            or SqsOperation.DeleteQueue
+            or SqsOperation.ListQueues
+            or SqsOperation.GetQueueUrl
+            or SqsOperation.GetQueueAttributes)
+        {
+            await Operations.QueueLifecycleHandlers
+                .HandleAsync(context, parsed, sbClient, context.RequestAborted)
+                .ConfigureAwait(false);
+            return;
+        }
 
         var notImpl = SqsErrorMapping.NotImplemented(parsed.Operation);
         await SqsErrorResponse.WriteAsync(context, parsed.Protocol,

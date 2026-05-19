@@ -1,0 +1,14 @@
+service: sqs
+operation: GetQueueUrl
+azure_equivalent: "GET https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (existence probe)"
+status: implemented
+sub_features:
+  - name: QueueOwnerAWSAccountId
+    status: unsupported
+    gap: "aws2azure does not model AWS accounts; a placeholder 12-zero account id is always returned in the URL path. If a caller supplies a different QueueOwnerAWSAccountId, it is ignored."
+behavior_differences:
+  - "Returned QueueUrl is '{request-scheme}://{request-host}/000000000000/{queue}' so the AWS SDK keeps routing back to the same proxy endpoint the caller reached."
+  - "Existence check uses Service Bus GET; an unknown queue returns AWS.SimpleQueueService.NonExistentQueue."
+  - "Verified against Service Bus emulator only; real-Azure validation pending."
+references:
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_GetQueueUrl.html

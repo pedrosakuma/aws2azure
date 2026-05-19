@@ -107,6 +107,51 @@ internal sealed class ServiceBusClient
         return await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
     }
 
+    // --- Management API helpers (Slice 1 queue lifecycle) ---
+
+    /// <summary>
+    /// PUTs the supplied Atom <c>QueueDescription</c> entry, creating the
+    /// queue if it doesn't exist. Service Bus returns 201 on create, 200 on
+    /// "create-or-update with matching definition", and 409 on conflict.
+    /// </summary>
+    public Task<HttpResponseMessage> CreateQueueAsync(string queueName, string atomEntryXml, CancellationToken ct)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Put, BuildUri(queueName, $"api-version={ApiVersion}"));
+        req.Content = new StringContent(atomEntryXml, Encoding.UTF8, "application/atom+xml;type=entry");
+        req.Headers.TryAddWithoutValidation("If-None-Match", "*");
+        return SendAsync(req, ct);
+    }
+
+    /// <summary>
+    /// GETs the Atom <c>QueueDescription</c> of an existing queue. Returns
+    /// 404 when the queue does not exist.
+    /// </summary>
+    public Task<HttpResponseMessage> GetQueueAsync(string queueName, CancellationToken ct)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Get, BuildUri(queueName, $"api-version={ApiVersion}"));
+        return SendAsync(req, ct);
+    }
+
+    /// <summary>
+    /// DELETEs the queue. Returns 200 on success, 404 if it doesn't exist.
+    /// </summary>
+    public Task<HttpResponseMessage> DeleteQueueAsync(string queueName, CancellationToken ct)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Delete, BuildUri(queueName, $"api-version={ApiVersion}"));
+        return SendAsync(req, ct);
+    }
+
+    /// <summary>
+    /// Lists queues under the namespace. Service Bus paginates via
+    /// <c>$skip</c>/<c>$top</c>; the per-page max is 100 — callers loop.
+    /// </summary>
+    public Task<HttpResponseMessage> ListQueuesAsync(int skip, int top, CancellationToken ct)
+    {
+        var query = $"api-version={ApiVersion}&$skip={skip}&$top={top}";
+        var req = new HttpRequestMessage(HttpMethod.Get, BuildUri("$Resources/queues", query));
+        return SendAsync(req, ct);
+    }
+
     /// <summary>
     /// Resolves the namespace endpoint. Accepts either a plain namespace
     /// name (<c>"my-ns"</c> → <c>https://my-ns.servicebus.windows.net/</c>)
