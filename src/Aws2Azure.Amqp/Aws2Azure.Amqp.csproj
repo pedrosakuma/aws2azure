@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Aws2Azure.Amqp</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Aws2Azure.UnitTests" />
+    <InternalsVisibleTo Include="Aws2Azure.IntegrationTests" />
+  </ItemGroup>
+
+</Project>

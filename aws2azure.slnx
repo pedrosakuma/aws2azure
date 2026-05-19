@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Aws2Azure.Amqp/Aws2Azure.Amqp.csproj" />
     <Project Path="src/Aws2Azure.Core/Aws2Azure.Core.csproj" />
     <Project Path="src/Aws2Azure.Modules.S3/Aws2Azure.Modules.S3.csproj" />
     <Project Path="src/Aws2Azure.Modules.Sqs/Aws2Azure.Modules.Sqs.csproj" />
