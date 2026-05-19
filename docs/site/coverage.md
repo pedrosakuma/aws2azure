@@ -12,8 +12,11 @@
 | kinesis | [GetShardIterator](kinesis.md#getsharditerator) | ⚪ stub | `Azure Event Hubs Kafka/HTTP surface` |
 | kinesis | [PutRecord](kinesis.md#putrecord) | ⚪ stub | `Azure Event Hubs Kafka/HTTP surface` |
 | kinesis | [PutRecords](kinesis.md#putrecords) | ⚪ stub | `Azure Event Hubs Kafka/HTTP surface` |
+| s3 | [AbortMultipartUpload](s3.md#abortmultipartupload) | ✅ implemented | `(no-op; uncommitted blocks GC after 7 days)` |
+| s3 | [CompleteMultipartUpload](s3.md#completemultipartupload) | ✅ implemented | `Put Block List` |
 | s3 | [CopyObject](s3.md#copyobject) | ✅ implemented | `PUT https://{account}.blob.core.windows.net/{container}/{blob} with x-ms-copy-source` |
 | s3 | [CreateBucket](s3.md#createbucket) | ✅ implemented | `PUT https://{account}.blob.core.windows.net/{container}?restype=container` |
+| s3 | [CreateMultipartUpload](s3.md#createmultipartupload) | ✅ implemented | `Stateless UploadId (no Azure call until UploadPart)` |
 | s3 | [DeleteBucket](s3.md#deletebucket) | ✅ implemented | `DELETE https://{account}.blob.core.windows.net/{container}?restype=container` |
 | s3 | [DeleteObject](s3.md#deleteobject) | ✅ implemented | `DELETE https://{account}.blob.core.windows.net/{container}/{blob}` |
 | s3 | [DeleteObjects](s3.md#deleteobjects) | ✅ implemented | `Multiple DELETEs against Blob (no native batch endpoint)` |
@@ -24,6 +27,7 @@
 | s3 | [ListObjects](s3.md#listobjects) | ✅ implemented | `GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list` |
 | s3 | [ListObjectsV2](s3.md#listobjectsv2) | ✅ implemented | `GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list` |
 | s3 | [PutObject](s3.md#putobject) | ✅ implemented | `PUT https://{account}.blob.core.windows.net/{container}/{blob}` |
+| s3 | [UploadPart](s3.md#uploadpart) | ✅ implemented | `Put Block (?comp=block&blockid=…)` |
 | sns | [CreateTopic](sns.md#createtopic) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
 | sns | [DeleteTopic](sns.md#deletetopic) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
 | sns | [Publish](sns.md#publish) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |

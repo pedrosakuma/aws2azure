@@ -47,10 +47,19 @@ public static class S3Router
 
         if (!string.IsNullOrEmpty(key))
         {
-            // Object subresources (?uploads, ?uploadId, ?tagging, ?acl, …) are
-            // distinct S3 operations layered on the same path/verb. Refuse
-            // them up-front so e.g. DELETE /{b}/{k}?tagging never drops the
-            // blob and PUT /{b}/{k}?acl never overwrites it.
+            // Multipart upload subresources (?uploads, ?uploadId, ?partNumber)
+            // are first-class operations layered on the same path. Classify
+            // them before the catch-all subresource gate so they reach the
+            // multipart handler instead of returning Unsupported.
+            if (IsMultipartObjectRequest(method, request.Query, out var multipartOp))
+            {
+                return new S3RouteResult(multipartOp, bucket, key, virtualHosted);
+            }
+
+            // Object subresources (?acl, ?tagging, …) are distinct S3
+            // operations layered on the same path/verb. Refuse them up-front
+            // so e.g. DELETE /{b}/{k}?tagging never drops the blob and
+            // PUT /{b}/{k}?acl never overwrites it.
             if (HasObjectSubresource(request.Query))
             {
                 return new S3RouteResult(S3Operation.Unsupported, bucket, key, virtualHosted);
@@ -88,6 +97,53 @@ public static class S3Router
                                               => new S3RouteResult(S3Operation.DeleteObjects, bucket, null, virtualHosted),
             _ => new S3RouteResult(S3Operation.Unknown, bucket, null, virtualHosted),
         };
+    }
+
+    /// <summary>
+    /// S3 multipart upload subresources hang off the object path with their
+    /// own verb mapping:
+    ///   POST /{b}/{k}?uploads                       → CreateMultipartUpload
+    ///   PUT  /{b}/{k}?uploadId=X&amp;partNumber=N   → UploadPart
+    ///   POST /{b}/{k}?uploadId=X                    → CompleteMultipartUpload
+    ///   DELETE /{b}/{k}?uploadId=X                  → AbortMultipartUpload
+    /// </summary>
+    private static bool IsMultipartObjectRequest(string method, IQueryCollection query, out S3Operation op)
+    {
+        op = S3Operation.Unknown;
+        var hasUploads = query.ContainsKey("uploads");
+        var hasUploadId = query.ContainsKey("uploadId");
+        var hasPartNumber = query.ContainsKey("partNumber");
+
+        if (!hasUploads && !hasUploadId && !hasPartNumber)
+        {
+            return false;
+        }
+
+        if (hasUploads && method == HttpMethods.Post)
+        {
+            op = S3Operation.CreateMultipartUpload;
+            return true;
+        }
+        if (hasUploadId && hasPartNumber && method == HttpMethods.Put)
+        {
+            op = S3Operation.UploadPart;
+            return true;
+        }
+        if (hasUploadId && !hasPartNumber && method == HttpMethods.Post)
+        {
+            op = S3Operation.CompleteMultipartUpload;
+            return true;
+        }
+        if (hasUploadId && !hasPartNumber && method == HttpMethods.Delete)
+        {
+            op = S3Operation.AbortMultipartUpload;
+            return true;
+        }
+        // Recognised subresource but not a routable verb combo — fall through
+        // to Unsupported so the catch-all subresource gate maps it to a
+        // NotImplemented error rather than silently mishandling.
+        op = S3Operation.Unsupported;
+        return true;
     }
 
     private static S3Operation ClassifyListOperation(IQueryCollection query)

@@ -100,6 +100,13 @@ public sealed class S3ServiceModule : IServiceModule
         {
             await DeleteObjectsHandler.HandleAsync(context, route, blob, context.RequestAborted).ConfigureAwait(false);
         }
+        else if (route.Operation is S3Operation.CreateMultipartUpload
+            or S3Operation.UploadPart
+            or S3Operation.CompleteMultipartUpload
+            or S3Operation.AbortMultipartUpload)
+        {
+            await MultipartHandlers.HandleAsync(context, route, blob, context.RequestAborted).ConfigureAwait(false);
+        }
         else
         {
             await BucketLifecycleHandlers.HandleAsync(context, route, blob, context.RequestAborted).ConfigureAwait(false);

@@ -1,0 +1,12 @@
+service: s3
+operation: AbortMultipartUpload
+azure_equivalent: "(no-op; uncommitted blocks GC after 7 days)"
+status: implemented
+sub_features: []
+behavior_differences:
+  - "Server-side no-op once the UploadId is validated. Azure auto-removes uncommitted blocks ~7 days after their last upload, which matches the UploadId TTL — so an aborted upload's blocks expire on the same schedule as a forgotten one."
+  - "The destination bucket is still probed so a missing container surfaces NoSuchBucket instead of 204."
+  - "Subsequent UploadPart calls on the same UploadId continue to succeed until the TTL expires (no active invalidation). To prevent reuse, callers should treat the UploadId as discarded after Abort."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html
+  - https://learn.microsoft.com/rest/api/storageservices/put-block

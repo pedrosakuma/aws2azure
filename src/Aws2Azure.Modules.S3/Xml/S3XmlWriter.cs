@@ -93,6 +93,51 @@ internal static class S3XmlWriter
     public readonly record struct DeleteErrorEntry(string Key, string Code, string Message);
 
     /// <summary>
+    /// S3 <c>InitiateMultipartUploadResult</c>: response body for
+    /// <c>POST /{bucket}/{key}?uploads</c>. SDKs read the <c>UploadId</c>
+    /// to thread subsequent UploadPart / Complete / Abort calls.
+    /// </summary>
+    public static string InitiateMultipartUploadResult(string bucket, string key, string uploadId)
+    {
+        var sb = new StringBuilder(192);
+        using (var writer = XmlWriter.Create(sb, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("InitiateMultipartUploadResult", S3Namespace);
+            writer.WriteElementString("Bucket", bucket);
+            writer.WriteElementString("Key", key);
+            writer.WriteElementString("UploadId", uploadId);
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// S3 <c>CompleteMultipartUploadResult</c>: response body when block-list
+    /// commit succeeds. The synthesised <see cref="eTag"/> mirrors the S3
+    /// <c>"{hash}-{partCount}"</c> shape so SDKs that pattern-match on the
+    /// dash-suffix recognise it as a multipart ETag.
+    /// </summary>
+    public static string CompleteMultipartUploadResult(
+        string location, string bucket, string key, string eTag)
+    {
+        var sb = new StringBuilder(256);
+        using (var writer = XmlWriter.Create(sb, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("CompleteMultipartUploadResult", S3Namespace);
+            writer.WriteElementString("Location", location);
+            writer.WriteElementString("Bucket", bucket);
+            writer.WriteElementString("Key", key);
+            writer.WriteElementString("ETag", NormalizeETag(eTag) ?? string.Empty);
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
     /// S3 multi-object DeleteResult envelope. In <paramref name="quiet"/>
     /// mode (Delete.Quiet=true on the request) successfully deleted keys
     /// are omitted and only errors are emitted, matching the wire spec.
