@@ -36,6 +36,10 @@ internal sealed class AmqpSession
     private readonly Dictionary<string, AmqpLink> _linksByName = new(StringComparer.Ordinal);
     private uint _nextOutgoingHandle;
 
+    // Session-level transfer accounting (§2.5.6). Slice 5c uses a single
+    // counter; flow-control windowing comes in a later polish slice.
+    private uint _nextOutgoingId;
+
     private int _state = StateClosed;
 
     internal AmqpSession(AmqpConnection connection, ushort outgoingChannel, AmqpSessionSettings settings)
@@ -43,7 +47,11 @@ internal sealed class AmqpSession
         _connection = connection;
         OutgoingChannel = outgoingChannel;
         _settings = settings;
+        _nextOutgoingId = settings.NextOutgoingId;
     }
+
+    /// <summary>Allocates the next delivery-id for an outgoing transfer.</summary>
+    internal uint AllocateDeliveryId() => Interlocked.Increment(ref _nextOutgoingId) - 1;
 
     /// <summary>Parent connection, exposed so links can use its write hook.</summary>
     internal AmqpConnection Connection => _connection;
@@ -233,9 +241,53 @@ internal sealed class AmqpSession
                 detachLink?.DispatchIncomingFrame(kind, body);
                 break;
 
+            case PerformativeKind.Flow:
+                AmqpFlow.Read(body, out var flow, out _);
+                if (flow.Handle is { } flowHandle)
+                {
+                    AmqpLink? flowLink;
+                    lock (_linkLock)
+                    {
+                        _linksByIncomingHandle.TryGetValue(flowHandle, out flowLink);
+                    }
+                    flowLink?.DispatchIncomingFrame(kind, body);
+                }
+                break;
+
+            case PerformativeKind.Transfer:
+                AmqpTransfer.Read(body, out var transfer, out _);
+                AmqpLink? transferLink;
+                lock (_linkLock)
+                {
+                    _linksByIncomingHandle.TryGetValue(transfer.Handle, out transferLink);
+                }
+                transferLink?.DispatchTransfer(transfer, body);
+                break;
+
+            case PerformativeKind.Disposition:
+                AmqpDisposition.Read(body, out var disposition, out _);
+                DispatchDisposition(disposition);
+                break;
+
             // Flow / Transfer / Disposition land in Slice 5c.
             default:
                 break;
+        }
+    }
+
+    private void DispatchDisposition(AmqpDisposition disposition)
+    {
+        // Sender-role disposition (from receiver) updates state for our
+        // outgoing transfers; receiver-role (from sender) for our incoming
+        // ones. Slice 5c targets the sender-receives-accepted path.
+        AmqpLink[] snapshot;
+        lock (_linkLock)
+        {
+            snapshot = _linksByOutgoingHandle.Values.ToArray();
+        }
+        foreach (var link in snapshot)
+        {
+            link.DispatchDisposition(disposition);
         }
     }
 
