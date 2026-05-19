@@ -51,6 +51,10 @@ internal static class S3ErrorMapping
                 new Mapping(412, "PreconditionFailed",
                     "At least one of the pre-conditions you specified did not hold."),
 
+            (413, _) =>
+                new Mapping(413, "EntityTooLarge",
+                    "Your proposed upload exceeds the maximum allowed size."),
+
             (416, _) =>
                 new Mapping(416, "InvalidRange",
                     "The requested range is not satisfiable."),

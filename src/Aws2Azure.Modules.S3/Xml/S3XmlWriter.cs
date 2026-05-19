@@ -88,6 +88,51 @@ internal static class S3XmlWriter
         return sb.ToString();
     }
 
+    public readonly record struct DeletedEntry(string Key);
+
+    public readonly record struct DeleteErrorEntry(string Key, string Code, string Message);
+
+    /// <summary>
+    /// S3 multi-object DeleteResult envelope. In <paramref name="quiet"/>
+    /// mode (Delete.Quiet=true on the request) successfully deleted keys
+    /// are omitted and only errors are emitted, matching the wire spec.
+    /// </summary>
+    public static string DeleteResult(
+        bool quiet,
+        IReadOnlyList<DeletedEntry> deleted,
+        IReadOnlyList<DeleteErrorEntry> errors)
+    {
+        var sb = new StringBuilder(256);
+        using (var writer = XmlWriter.Create(sb, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("DeleteResult", S3Namespace);
+
+            if (!quiet)
+            {
+                foreach (var d in deleted)
+                {
+                    writer.WriteStartElement("Deleted");
+                    writer.WriteElementString("Key", d.Key);
+                    writer.WriteEndElement();
+                }
+            }
+
+            foreach (var e in errors)
+            {
+                writer.WriteStartElement("Error");
+                writer.WriteElementString("Key", e.Key);
+                writer.WriteElementString("Code", e.Code);
+                writer.WriteElementString("Message", e.Message);
+                writer.WriteEndElement();
+            }
+
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        return sb.ToString();
+    }
+
     /// <summary>
     /// S3 ListObjectsV2 response. <paramref name="continuationToken"/> echoes
     /// the request's token (null if absent). <paramref name="nextContinuationToken"/>
