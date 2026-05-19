@@ -90,12 +90,16 @@
 | sns | [Subscribe](sns.md#subscribe) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
 | sns | [Unsubscribe](sns.md#unsubscribe) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
 | sqs | [ChangeMessageVisibility](sqs.md#changemessagevisibility) | 🟡 partial | `Azure Service Bus queue runtime REST API — POST /{queue}/messages/{messageId}/{lockToken}?api-version=2021-05 (renew-lock)` |
+| sqs | [ChangeMessageVisibilityBatch](sqs.md#changemessagevisibilitybatch) | 🟡 partial | `Azure Service Bus queue runtime REST API — N parallel POST /{queue}/messages/{messageId}/{lockToken}?action=renewlock&api-version=2021-05` |
 | sqs | [CreateQueue](sqs.md#createqueue) | ✅ implemented | `PUT https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (Atom QueueDescription)` |
 | sqs | [DeleteMessage](sqs.md#deletemessage) | ✅ implemented | `Azure Service Bus queue runtime REST API — DELETE /{queue}/messages/{messageId}/{lockToken}?api-version=2021-05` |
+| sqs | [DeleteMessageBatch](sqs.md#deletemessagebatch) | ✅ implemented | `Azure Service Bus queue runtime REST API — N parallel DELETE /{queue}/messages/{messageId}/{lockToken}?api-version=2021-05` |
 | sqs | [DeleteQueue](sqs.md#deletequeue) | ✅ implemented | `DELETE https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05` |
 | sqs | [GetQueueAttributes](sqs.md#getqueueattributes) | 🟡 partial | `GET https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (Atom QueueDescription)` |
 | sqs | [GetQueueUrl](sqs.md#getqueueurl) | ✅ implemented | `GET https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (existence probe)` |
 | sqs | [ListQueues](sqs.md#listqueues) | ✅ implemented | `GET https://{namespace}.servicebus.windows.net/$Resources/queues?api-version=2021-05&$skip=N&$top=M` |
-| sqs | [ReceiveMessage](sqs.md#receivemessage) | 🟡 partial | `Azure Service Bus queue runtime REST API — POST /{queue}/messages/head?timeout=0&api-version=2021-05 (peek-lock semantics)` |
+| sqs | [PurgeQueue](sqs.md#purgequeue) | 🟡 partial | `Azure Service Bus queue runtime REST API — emulated via drain-loop of POST /{queue}/messages/head + DELETE /{queue}/messages/{id}/{lockToken}` |
+| sqs | [ReceiveMessage](sqs.md#receivemessage) | ✅ implemented | `Azure Service Bus queue runtime REST API — POST /{queue}/messages/head?timeout={waitSeconds}&api-version=2021-05 (peek-lock semantics)` |
 | sqs | [SendMessage](sqs.md#sendmessage) | ✅ implemented | `Azure Service Bus queue runtime REST API — POST /{queue}/messages?api-version=2021-05` |
 | sqs | [SendMessageBatch](sqs.md#sendmessagebatch) | ✅ implemented | `Azure Service Bus queue runtime REST API — POST /{queue}/messages with Content-Type: application/vnd.microsoft.servicebus.json` |
+| sqs | [SetQueueAttributes](sqs.md#setqueueattributes) | 🟡 partial | `Azure Service Bus management REST API — PUT /{queue}?api-version=2021-05 with If-Match: * (whole-entity replace)` |

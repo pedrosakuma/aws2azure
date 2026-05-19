@@ -132,6 +132,17 @@ public sealed class SqsServiceModule : IServiceModule
             return;
         }
 
+        if (parsed.Operation is SqsOperation.DeleteMessageBatch
+            or SqsOperation.ChangeMessageVisibilityBatch
+            or SqsOperation.SetQueueAttributes
+            or SqsOperation.PurgeQueue)
+        {
+            await Operations.BatchAdminHandlers
+                .HandleAsync(context, parsed, sbClient, context.RequestAborted)
+                .ConfigureAwait(false);
+            return;
+        }
+
         var notImpl = SqsErrorMapping.NotImplemented(parsed.Operation);
         await SqsErrorResponse.WriteAsync(context, parsed.Protocol,
             notImpl.StatusCode, notImpl.Code, notImpl.Message, notImpl.FaultType).ConfigureAwait(false);

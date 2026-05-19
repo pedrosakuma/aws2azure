@@ -8,6 +8,6 @@ Authoritative inventory of which AWS operations the proxy translates, with the A
 - [kinesis](kinesis.md) — 4 operation(s)
 - [s3](s3.md) — 72 operation(s)
 - [sns](sns.md) — 5 operation(s)
-- [sqs](sqs.md) — 10 operation(s)
+- [sqs](sqs.md) — 14 operation(s)
 
 See [coverage matrix](coverage.md) for a one-screen overview.

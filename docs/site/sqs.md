@@ -24,6 +24,32 @@
 - <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ChangeMessageVisibility.html>
 - <https://learn.microsoft.com/rest/api/servicebus/renew-lock-for-a-message>
 
+## ChangeMessageVisibilityBatch
+
+- **Status:** 🟡 partial
+- **Azure equivalent:** `Azure Service Bus queue runtime REST API — N parallel POST /{queue}/messages/{messageId}/{lockToken}?action=renewlock&api-version=2021-05`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| 1..10 entries per batch | ✅ implemented |  |  |  |
+| Per-entry Id validation (alnum/_/-, 1..80 chars, unique) | ✅ implemented |  |  |  |
+| Per-entry VisibilityTimeout 0..43200 validation | ✅ implemented | Non-integer / out-of-range entries fail with SenderFault InvalidParameterValue while siblings succeed. |  |  |
+| Bounded parallelism | ✅ implemented | 5-way concurrency cap; lock-renew calls are individually short. |  |  |
+| Renew semantics | 🟡 partial | SB renewlock extends the lock by the queue's configured LockDuration, ignoring the requested VisibilityTimeout — see behavior_differences. |  |  |
+
+### Behaviour differences
+
+- SB has no per-call visibility override on REST. The proxy validates and accepts the VisibilityTimeout value but SB always extends by the queue's LockDuration. Callers needing an arbitrary new visibility must Delete+Send or rely on SetQueueAttributes to change the queue-wide LockDuration.
+- VisibilityTimeout of 0 (which AWS uses to make a message immediately re-visible) is currently treated as a renewlock too — the message is not made re-visible. This divergence is tracked for Phase-2 NFR follow-up.
+- Verified against in-process fakes; emulator-backed end-to-end validation lands with the SbEmulatorFixture build-out (tracked in p2-sb-emulator-fixture).
+
+### References
+
+- <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ChangeMessageVisibilityBatch.html>
+- <https://learn.microsoft.com/rest/api/servicebus/renew-lock>
+
 ## CreateQueue
 
 - **Status:** ✅ implemented
@@ -75,6 +101,32 @@
 ### References
 
 - <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteMessage.html>
+- <https://learn.microsoft.com/rest/api/servicebus/delete-message>
+
+## DeleteMessageBatch
+
+- **Status:** ✅ implemented
+- **Azure equivalent:** `Azure Service Bus queue runtime REST API — N parallel DELETE /{queue}/messages/{messageId}/{lockToken}?api-version=2021-05`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| 1..10 entries per batch | ✅ implemented | Matches SQS limit; enforced before any SB call. |  |  |
+| Per-entry Id validation (alnum/_/-, 1..80 chars, unique) | ✅ implemented | Returns the AWS-shaped EmptyBatchRequest / TooManyEntriesInBatchRequest / BatchEntryIdsNotDistinct / InvalidBatchEntryId on the whole call. |  |  |
+| Partial failure response shape | ✅ implemented | Per-entry Successful / Failed rows preserve the caller's Id ordering and carry SenderFault=true on rejects. |  |  |
+| Bounded parallelism | ✅ implemented | SemaphoreSlim cap of 5 concurrent SB DELETEs per batch to avoid throttling small SB Standard namespaces. |  |  |
+| ReceiptHandle round-trip | ✅ implemented | Same length-prefixed base64 ReceiptHandle as DeleteMessage; decoded per-entry. |  |  |
+
+### Behaviour differences
+
+- SB REST has no native batch-delete; the proxy fans out parallel DELETEs. A failing entry never aborts the batch — callers see per-entry results matching SQS semantics.
+- Expired-lock vs already-deleted ambiguity from DeleteMessage applies per entry (see DeleteMessage.yaml behavior_differences).
+- Verified against in-process fakes; emulator-backed end-to-end validation lands with the SbEmulatorFixture build-out (tracked in p2-sb-emulator-fixture).
+
+### References
+
+- <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteMessageBatch.html>
 - <https://learn.microsoft.com/rest/api/servicebus/delete-message>
 
 ## DeleteQueue
@@ -168,31 +220,56 @@
 - <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListQueues.html>
 - <https://learn.microsoft.com/rest/api/servicebus/list-queues>
 
-## ReceiveMessage
+## PurgeQueue
 
 - **Status:** 🟡 partial
-- **Azure equivalent:** `Azure Service Bus queue runtime REST API — POST /{queue}/messages/head?timeout=0&api-version=2021-05 (peek-lock semantics)`
+- **Azure equivalent:** `Azure Service Bus queue runtime REST API — emulated via drain-loop of POST /{queue}/messages/head + DELETE /{queue}/messages/{id}/{lockToken}`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| Drain-loop receive+delete | ✅ implemented | Peek-locks messages in bursts and DELETEs them; bounded by a 60s wall-clock budget per call. |  |  |
+| 60s cool-down (PurgeQueueInProgress) | 🟡 partial | Enforced via an in-process ConcurrentDictionary keyed by namespace+queue — see behavior_differences. |  |  |
+| Idempotency on empty queue | ✅ implemented | Returns 200 with empty body, like SQS. |  |  |
+
+### Behaviour differences
+
+- SB has no native purge. The proxy emulates it by draining peek-locked messages and deleting them. With a long LockDuration the drain may not be able to keep up if producers are sending faster than the proxy can delete — the 60s budget bounds wall-clock cost; the queue is therefore best-effort empty rather than guaranteed empty at the end of the call. The SQS contract guarantees a 60-second 'all messages enqueued at the time of the call will be deleted' window, which we approximate.
+- The 60-second cool-down (PurgeQueueInProgress) is in-process only. Other replicas of the proxy will not observe the cool-down — a horizontally scaled deployment could allow multiple concurrent drains. Tracked for the NFR phase (shared coordination cache).
+- Verified against in-process fakes; emulator-backed end-to-end validation lands with the SbEmulatorFixture build-out (tracked in p2-sb-emulator-fixture).
+
+### References
+
+- <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_PurgeQueue.html>
+- <https://learn.microsoft.com/rest/api/servicebus/peek-lock-message-non-destructive-read>
+- <https://learn.microsoft.com/rest/api/servicebus/delete-message>
+
+## ReceiveMessage
+
+- **Status:** ✅ implemented
+- **Azure equivalent:** `Azure Service Bus queue runtime REST API — POST /{queue}/messages/head?timeout={waitSeconds}&api-version=2021-05 (peek-lock semantics)`
 
 ### Sub-features
 
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
 | Short polling (WaitTimeSeconds = 0) | ✅ implemented |  |  |  |
-| Long polling (WaitTimeSeconds 1..20) | ⛔ unsupported | Returns NotImplemented; Slice 4 will emulate via short-poll loop. |  |  |
-| MaxNumberOfMessages 1..10 | ✅ implemented | SB REST is single-message peek-lock; the proxy loops until count or queue empty, bounded by a 5s aggregate budget. |  |  |
+| Long polling (WaitTimeSeconds 1..20) | ✅ implemented | Uses SB's native server-side wait on the first peek-lock call (timeout query parameter); subsequent calls inside the same batch fall back to timeout=0 to drain quickly, matching the SQS 'return as soon as one message is available or WaitTimeSeconds elapses' contract. |  |  |
+| MaxNumberOfMessages 1..10 | ✅ implemented | SB REST is single-message peek-lock; the proxy loops until count or queue empty. The first call blocks up to WaitTimeSeconds (long-poll); follow-up calls share a 5s aggregate budget added on top of WaitTimeSeconds. |  |  |
 | VisibilityTimeout parameter | 🟡 partial | Accepted and validated (0..43200) but ignored at SB level — see behavior_differences. |  |  |
 | AttributeNames / MessageAttributeNames filters | ✅ implemented | Includes 'All' shorthand. Returned system attributes: SentTimestamp, ApproximateReceiveCount, SequenceNumber. |  |  |
-| Receipt handle round-trip | ✅ implemented | Opaque base64 of MessageId\|LockToken\|SequenceNumber\|LockedUntilUtc — self-contained for DeleteMessage / ChangeMessageVisibility. |  |  |
+| Receipt handle round-trip | ✅ implemented | Opaque length-prefixed base64 of (MessageId, LockToken, SequenceNumber, LockedUntilUtc) — self-contained for DeleteMessage / ChangeMessageVisibility, safe against caller-controlled metacharacters in MessageDeduplicationId. |  |  |
 | MessageAttributes (String/Number/Binary) round-trip | ✅ implemented | Reconstructed from Aws2Azure-AttrTypes side-channel header emitted by SendMessage. |  |  |
 | MD5OfBody / MD5OfMessageAttributes | ✅ implemented |  |  |  |
 
 ### Behaviour differences
 
 - VisibilityTimeout on ReceiveMessage cannot be set per-call — SB locks the message for the queue's configured LockDuration. The proxy validates the parameter but does not enforce it; clients needing custom per-message visibility must use ChangeMessageVisibility after receive.
-- MaxNumberOfMessages > 1 is emulated by looping POST /messages/head, capped by ReceiveLoopBudget (5s) — the proxy may return fewer messages than requested even when the queue has more if the budget elapses.
+- MaxNumberOfMessages > 1 is emulated by looping POST /messages/head, capped by ReceiveLoopBudget (5s) added on top of WaitTimeSeconds — the proxy may return fewer messages than requested even when the queue has more if the budget elapses.
 - ApproximateFirstReceiveTimestamp and SenderId are not surfaced (SB does not provide them).
-- Long polling is intentionally rejected in Slice 3 (NotImplemented) so callers see a deterministic error — Slice 4 will emulate via short-poll loop.
-- Verified against in-process fakes; emulator-backed end-to-end validation lands with Slice 4's emulator fixture build-out.
+- Long polling uses SB's native server-side wait; if the first call returns empty after the wait the receive returns immediately with an empty list (no second wait). This matches SQS semantics.
+- Verified against in-process fakes; emulator-backed end-to-end validation lands with the SbEmulatorFixture build-out (tracked in p2-sb-emulator-fixture).
 
 ### References
 
@@ -261,4 +338,35 @@
 
 - <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessageBatch.html>
 - <https://learn.microsoft.com/rest/api/servicebus/send-message-batch>
+
+## SetQueueAttributes
+
+- **Status:** 🟡 partial
+- **Azure equivalent:** `Azure Service Bus management REST API — PUT /{queue}?api-version=2021-05 with If-Match: * (whole-entity replace)`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| VisibilityTimeout → LockDuration | ✅ implemented |  |  |  |
+| MessageRetentionPeriod → DefaultMessageTimeToLive | ✅ implemented |  |  |  |
+| MaximumMessageSize → MaxMessageSizeInKilobytes | ✅ implemented | Bounded by SQS 1 MiB cap (Aug-2025) and the SB tier ceiling (Standard 256 KiB, Premium up to 100 MiB). |  |  |
+| DelaySeconds (queue default) | ⛔ unsupported | Rejected with InvalidAttributeName on update — SB has no equivalent field and the proxy has no durable per-queue metadata store yet. Tracked for the NFR phase. Per-message DelaySeconds on SendMessage still works. |  |  |
+| ReceiveMessageWaitTimeSeconds (queue default for long-poll) | ⛔ unsupported | Same rationale as DelaySeconds — rejected with InvalidAttributeName until a durable metadata store lands. Per-call WaitTimeSeconds on ReceiveMessage is fully supported. |  |  |
+| ContentBasedDeduplication / RequiresDuplicateDetection toggle | ✅ implemented | Only on FIFO queues; SB rejects flipping the flag on Standard queues. |  |  |
+| RedrivePolicy → ForwardDeadLetteredMessagesTo | ⛔ unsupported | Deferred to Slice 5 (DLQ + FIFO). |  |  |
+| Policy / KmsMasterKeyId / KmsDataKeyReusePeriodSeconds / SqsManagedSseEnabled | ⛔ unsupported | Returned as InvalidAttributeName for the unsupported attribute. SB has its own SAS/MSI/CMK story that does not translate 1:1. |  |  |
+| Read-merge-write semantics | ✅ implemented | SB management is whole-entity replace — the proxy first GETs the queue, overlays only the patched fields, then PUTs with If-Match: * to avoid clobbering immutable / unmanaged fields. |  |  |
+
+### Behaviour differences
+
+- Updates are not atomic across multiple concurrent SetQueueAttributes calls on the same queue: last write wins. If-Match: * is used (not the ETag we read) because SB does not surface the ETag in management responses on every emulator/version we tested. NFR phase may tighten this with an If-Match: <etag>.
+- Several SQS-only attributes have no SB equivalent (Policy, KmsMasterKeyId, KmsDataKeyReusePeriodSeconds, SqsManagedSseEnabled, RedriveAllowPolicy). The proxy rejects them with InvalidAttributeName until Slice 5 (RedrivePolicy) and the security-encryption pass land.
+- FIFO-only attributes (FifoQueue, FifoThroughputLimit, DeduplicationScope) cannot be flipped on an existing queue (SB rejects the change); the proxy returns InvalidAttributeName.
+- Verified against in-process fakes; emulator-backed end-to-end validation is blocked because the Service Bus emulator does not expose the management REST API. Real-Azure validation pending.
+
+### References
+
+- <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SetQueueAttributes.html>
+- <https://learn.microsoft.com/rest/api/servicebus/update-queue>
 
