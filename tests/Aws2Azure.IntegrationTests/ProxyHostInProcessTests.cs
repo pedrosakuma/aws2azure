@@ -49,9 +49,10 @@ public class ProxyHostInProcessTests
     public async Task StubModule_Returns501()
     {
         var client = _fx.CreateClient();
-        // SQS remains stubbed; S3 is a real module as of Phase-1 slice 1.
-        var request = new HttpRequestMessage(HttpMethod.Get, "/queues");
-        request.Headers.Host = "sqs.proxy.localtest.me";
+        // DynamoDB/Kinesis/SNS remain stubbed; S3 and SQS are real modules
+        // as of Phase-1 slice 1 and Phase-2 slice 0 respectively.
+        var request = new HttpRequestMessage(HttpMethod.Get, "/");
+        request.Headers.Host = "dynamodb.proxy.localtest.me";
         var response = await client.SendAsync(request);
         Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode);
     }
