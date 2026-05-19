@@ -40,6 +40,8 @@ internal static class MultipartHandlers
             S3Operation.UploadPart            => UploadPartAsync(context, blob, route.Bucket!, route.Key!, ct),
             S3Operation.CompleteMultipartUpload => CompleteAsync(context, blob, route.Bucket!, route.Key!, ct),
             S3Operation.AbortMultipartUpload  => AbortAsync(context, blob, route.Bucket!, route.Key!, ct),
+            S3Operation.ListParts             => ListPartsAsync(context, blob, route.Bucket!, route.Key!, ct),
+            S3Operation.ListMultipartUploads  => ListMultipartUploadsAsync(context, blob, route.Bucket!, ct),
             _ => WriteErrorAsync(context, S3ErrorMapping.NotImplemented(route.Operation)),
         };
 
@@ -243,6 +245,164 @@ internal static class MultipartHandlers
         // beyond credentials/bucket validation. Documented in the gap doc.
         ctx.Response.StatusCode = StatusCodes.Status204NoContent;
         ctx.Response.ContentLength = 0;
+    }
+
+    // ---------- ListParts ----------
+
+    /// <summary>S3 default page size for ListParts.</summary>
+    private const int DefaultMaxParts = 1000;
+    /// <summary>S3 hard cap on <c>max-parts</c>.</summary>
+    private const int MaxAllowedMaxParts = 1000;
+
+    private static async Task ListPartsAsync(HttpContext ctx, BlobClient blob, string bucket, string key, CancellationToken ct)
+    {
+        var uploadId = ctx.Request.Query["uploadId"].ToString();
+        var token = UploadIdCodec.TryDecode(uploadId, blob.AccountName, bucket, key, blob.AccountKeyBytes);
+        if (token is null)
+        {
+            await WriteErrorAsync(ctx, NoSuchUpload()).ConfigureAwait(false);
+            return;
+        }
+
+        var (maxParts, maxPartsErr) = ParseMaxParts(ctx.Request.Query);
+        if (maxPartsErr is not null) { await WriteErrorAsync(ctx, maxPartsErr.Value).ConfigureAwait(false); return; }
+        var (marker, markerErr) = ParsePartNumberMarker(ctx.Request.Query);
+        if (markerErr is not null) { await WriteErrorAsync(ctx, markerErr.Value).ConfigureAwait(false); return; }
+
+        using var azureResp = await blob.GetBlockListAsync(bucket, key, "uncommitted", ct).ConfigureAwait(false);
+        if (azureResp.StatusCode == HttpStatusCode.NotFound)
+        {
+            // Azure returns 404 for both missing container (bucket) and missing
+            // blob. Surface NoSuchBucket explicitly; treat a missing blob as
+            // "no parts yet" (matches S3's empty ListPartsResult behavior since
+            // the uploadId HMAC already authenticated the (bucket,key,nonce)).
+            var azureErrorCode = ReadHeader(azureResp, "x-ms-error-code");
+            if (string.Equals(azureErrorCode, "ContainerNotFound", StringComparison.Ordinal))
+            {
+                await WriteErrorAsync(ctx, S3ErrorMapping.FromAzure(azureResp, S3Operation.ListParts)).ConfigureAwait(false);
+                return;
+            }
+            var emptyXml = S3XmlWriter.ListPartsResult(bucket, key, uploadId,
+                marker, null, maxParts, false, Array.Empty<S3XmlWriter.ListedPart>());
+            await WriteXmlAsync(ctx, StatusCodes.Status200OK, emptyXml, ct).ConfigureAwait(false);
+            return;
+        }
+        if (!azureResp.IsSuccessStatusCode)
+        {
+            await WriteErrorAsync(ctx, S3ErrorMapping.FromAzure(azureResp, S3Operation.ListParts)).ConfigureAwait(false);
+            return;
+        }
+
+        var rawXml = await azureResp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+        var parsed = BlockListParser.Parse(new MemoryStream(rawXml));
+
+        // Filter to blocks issued by this upload (nonce match) and above the
+        // PartNumberMarker. Synthesise ETag/LastModified — we don't retain
+        // per-part MD5s and Azure exposes no per-block timestamp.
+        var nonceHex = token.Value.NonceHex;
+        var initiated = token.Value.CreatedAt;
+        var ours = new List<S3XmlWriter.ListedPart>(parsed.Uncommitted.Count);
+        foreach (var b in parsed.Uncommitted)
+        {
+            if (!BlockListParser.TryParseBlockName(b.Name, out var blockNonce, out var pn))
+            {
+                continue;
+            }
+            if (!string.Equals(blockNonce, nonceHex, StringComparison.Ordinal))
+            {
+                continue;
+            }
+            if (pn <= marker)
+            {
+                continue;
+            }
+            ours.Add(new S3XmlWriter.ListedPart(
+                pn,
+                initiated,
+                "\"" + SyntheticPartEtag(b.Name) + "\"",
+                b.Size));
+        }
+        ours.Sort(static (a, b) => a.PartNumber.CompareTo(b.PartNumber));
+
+        var truncated = ours.Count > maxParts;
+        if (truncated)
+        {
+            ours.RemoveRange(maxParts, ours.Count - maxParts);
+        }
+        int? next = truncated ? ours[^1].PartNumber : null;
+
+        var xml = S3XmlWriter.ListPartsResult(bucket, key, uploadId, marker, next, maxParts, truncated, ours);
+        await WriteXmlAsync(ctx, StatusCodes.Status200OK, xml, ct).ConfigureAwait(false);
+    }
+
+    // ---------- ListMultipartUploads ----------
+
+    private static async Task ListMultipartUploadsAsync(HttpContext ctx, BlobClient blob, string bucket, CancellationToken ct)
+    {
+        if (!BlobClient.IsValidContainerName(bucket))
+        {
+            await WriteErrorAsync(ctx, S3ErrorMapping.InvalidBucketName()).ConfigureAwait(false);
+            return;
+        }
+
+        if (await CheckBucketAsync(blob, bucket, ct).ConfigureAwait(false) is { } bucketErr)
+        {
+            await WriteErrorAsync(ctx, bucketErr).ConfigureAwait(false);
+            return;
+        }
+
+        // Stateless design: we don't record issued UploadIds and cannot
+        // reconstruct one without the original timestamp (HMAC input). We
+        // always return an empty list so SDKs receive a well-formed
+        // response instead of a 501 — documented in the gap doc.
+        var prefix    = ctx.Request.Query["prefix"].ToString();
+        var delimiter = ctx.Request.Query["delimiter"].ToString();
+        var xml = S3XmlWriter.ListMultipartUploadsResult(
+            bucket,
+            string.IsNullOrEmpty(prefix) ? null : prefix,
+            string.IsNullOrEmpty(delimiter) ? null : delimiter,
+            1000, false, Array.Empty<S3XmlWriter.ListedUpload>());
+        await WriteXmlAsync(ctx, StatusCodes.Status200OK, xml, ct).ConfigureAwait(false);
+    }
+
+    private static (int value, S3ErrorMapping.Mapping? error) ParseMaxParts(IQueryCollection query)
+    {
+        var raw = query["max-parts"].ToString();
+        if (string.IsNullOrEmpty(raw))
+        {
+            return (DefaultMaxParts, null);
+        }
+        if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) || parsed < 0)
+        {
+            return (0, S3ErrorMapping.InvalidArgument("max-parts must be a non-negative integer."));
+        }
+        return (Math.Min(parsed == 0 ? DefaultMaxParts : parsed, MaxAllowedMaxParts), null);
+    }
+
+    private static (int value, S3ErrorMapping.Mapping? error) ParsePartNumberMarker(IQueryCollection query)
+    {
+        var raw = query["part-number-marker"].ToString();
+        if (string.IsNullOrEmpty(raw))
+        {
+            return (0, null);
+        }
+        if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) || parsed < 0)
+        {
+            return (0, S3ErrorMapping.InvalidArgument("part-number-marker must be a non-negative integer."));
+        }
+        return (parsed, null);
+    }
+
+    /// <summary>
+    /// Synthetic ETag for ListParts entries. Stable per (uploadId, partNumber)
+    /// because the block name encodes both. NOT equal to the MD5 returned
+    /// from UploadPart — Azure doesn't expose per-block MD5s on Get Block
+    /// List and the proxy retains no upload state. Documented in gap doc.
+    /// </summary>
+    private static string SyntheticPartEtag(string blockBase64Name)
+    {
+        var hash = System.Security.Cryptography.MD5.HashData(System.Text.Encoding.ASCII.GetBytes(blockBase64Name));
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
     // ---------- helpers ----------

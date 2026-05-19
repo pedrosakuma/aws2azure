@@ -24,8 +24,10 @@
 | s3 | [HeadBucket](s3.md#headbucket) | ✅ implemented | `HEAD https://{account}.blob.core.windows.net/{container}?restype=container` |
 | s3 | [HeadObject](s3.md#headobject) | ✅ implemented | `HEAD https://{account}.blob.core.windows.net/{container}/{blob}` |
 | s3 | [ListBuckets](s3.md#listbuckets) | ✅ implemented | `GET https://{account}.blob.core.windows.net/?comp=list` |
+| s3 | [ListMultipartUploads](s3.md#listmultipartuploads) | 🟡 partial | `(none — Azure Blob has no in-progress-upload enumeration)` |
 | s3 | [ListObjects](s3.md#listobjects) | ✅ implemented | `GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list` |
 | s3 | [ListObjectsV2](s3.md#listobjectsv2) | ✅ implemented | `GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list` |
+| s3 | [ListParts](s3.md#listparts) | ✅ implemented | `Get Block List (?comp=blocklist&blocklisttype=uncommitted)` |
 | s3 | [PutObject](s3.md#putobject) | ✅ implemented | `PUT https://{account}.blob.core.windows.net/{container}/{blob}` |
 | s3 | [UploadPart](s3.md#uploadpart) | ✅ implemented | `Put Block (?comp=block&blockid=…)` |
 | sns | [CreateTopic](sns.md#createtopic) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |

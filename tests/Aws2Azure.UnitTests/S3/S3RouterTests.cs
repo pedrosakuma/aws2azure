@@ -144,6 +144,8 @@ public class S3RouterTests
     [InlineData("PUT",    "/my-bucket/key.txt", "?uploadId=ABC&partNumber=3",        S3Operation.UploadPart)]
     [InlineData("POST",   "/my-bucket/key.txt", "?uploadId=ABC",                     S3Operation.CompleteMultipartUpload)]
     [InlineData("DELETE", "/my-bucket/key.txt", "?uploadId=ABC",                     S3Operation.AbortMultipartUpload)]
+    [InlineData("GET",    "/my-bucket/key.txt", "?uploadId=ABC",                     S3Operation.ListParts)]
+    [InlineData("GET",    "/my-bucket/key.txt", "?uploadId=ABC&max-parts=10",        S3Operation.ListParts)]
     public void Multipart_object_subresources_are_routed(string method, string path, string query, S3Operation expected)
     {
         var ctx = BuildContext("s3.amazonaws.com", method, path, query: query);
@@ -164,6 +166,22 @@ public class S3RouterTests
         var ctx = BuildContext("s3.amazonaws.com", method, path, query: query);
         var result = S3Router.Classify(ctx);
         Assert.Equal(S3Operation.Unsupported, result.Operation);
+    }
+
+    [Fact]
+    public void Get_on_bucket_with_uploads_routes_to_ListMultipartUploads()
+    {
+        var ctx = BuildContext("s3.amazonaws.com", "GET", "/my-bucket", query: "?uploads");
+        var result = S3Router.Classify(ctx);
+        Assert.Equal(S3Operation.ListMultipartUploads, result.Operation);
+        Assert.Equal("my-bucket", result.Bucket);
+    }
+
+    [Fact]
+    public void Get_on_bucket_with_uploads_and_prefix_routes_to_ListMultipartUploads()
+    {
+        var ctx = BuildContext("s3.amazonaws.com", "GET", "/my-bucket", query: "?uploads&prefix=foo/");
+        Assert.Equal(S3Operation.ListMultipartUploads, S3Router.Classify(ctx).Operation);
     }
 
     private static DefaultHttpContext BuildContext(string host, string method, string path, string? query = null)

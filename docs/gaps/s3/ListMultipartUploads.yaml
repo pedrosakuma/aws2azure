@@ -1,0 +1,18 @@
+service: s3
+operation: ListMultipartUploads
+azure_equivalent: "(none — Azure Blob has no in-progress-upload enumeration)"
+status: partial
+sub_features:
+  - name: enumeration
+    status: unsupported
+    note: "Always returns an empty <Upload> list. aws2azure does not record issued UploadIds and cannot reconstruct them from Azure block-list state alone (the HMAC tag depends on the original creation timestamp, which is not recoverable from a block name)."
+  - name: prefix-filter
+    status: unsupported
+    note: "Echoed back in the response for SDK compatibility but not applied."
+  - name: pagination
+    status: unsupported
+behavior_differences:
+  - "Returns a well-formed empty <ListMultipartUploadsResult> (IsTruncated=false, no <Upload> entries) rather than 501. This keeps SDK retry/recovery flows from erroring out, but callers cannot use this endpoint to discover orphaned uploads."
+  - "Bucket existence is still validated — missing bucket → NoSuchBucket."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListMultipartUploads.html

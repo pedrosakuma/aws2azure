@@ -92,6 +92,107 @@ internal static class S3XmlWriter
 
     public readonly record struct DeleteErrorEntry(string Key, string Code, string Message);
 
+    public readonly record struct ListedPart(int PartNumber, DateTimeOffset LastModified, string ETag, long Size);
+
+    public readonly record struct ListedUpload(string Key, string UploadId, DateTimeOffset Initiated);
+
+    /// <summary>
+    /// S3 <c>ListPartsResult</c> response. Mirrors the AWS shape so SDKs
+    /// resuming an interrupted upload can iterate the previously-uploaded
+    /// parts. ETag values are synthesised — see gap doc for the trade-off.
+    /// </summary>
+    public static string ListPartsResult(
+        string bucket,
+        string key,
+        string uploadId,
+        int partNumberMarker,
+        int? nextPartNumberMarker,
+        int maxParts,
+        bool isTruncated,
+        IReadOnlyList<ListedPart> parts)
+    {
+        var sb = new StringBuilder(512);
+        using (var writer = XmlWriter.Create(sb, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("ListPartsResult", S3Namespace);
+            writer.WriteElementString("Bucket", bucket);
+            writer.WriteElementString("Key", key);
+            writer.WriteElementString("UploadId", uploadId);
+            writer.WriteElementString("PartNumberMarker", partNumberMarker.ToString(CultureInfo.InvariantCulture));
+            if (nextPartNumberMarker is { } next)
+            {
+                writer.WriteElementString("NextPartNumberMarker", next.ToString(CultureInfo.InvariantCulture));
+            }
+            writer.WriteElementString("MaxParts", maxParts.ToString(CultureInfo.InvariantCulture));
+            writer.WriteElementString("IsTruncated", isTruncated ? "true" : "false");
+            writer.WriteElementString("StorageClass", "STANDARD");
+            foreach (var p in parts)
+            {
+                writer.WriteStartElement("Part");
+                writer.WriteElementString("PartNumber", p.PartNumber.ToString(CultureInfo.InvariantCulture));
+                writer.WriteElementString("LastModified",
+                    p.LastModified.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
+                writer.WriteElementString("ETag", NormalizeETag(p.ETag) ?? string.Empty);
+                writer.WriteElementString("Size", p.Size.ToString(CultureInfo.InvariantCulture));
+                writer.WriteEndElement();
+            }
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// S3 <c>ListMultipartUploadsResult</c> envelope. aws2azure cannot
+    /// fully enumerate in-progress uploads (stateless design — no record
+    /// of issued UploadIds) so the <paramref name="uploads"/> list is
+    /// typically empty. See gap doc.
+    /// </summary>
+    public static string ListMultipartUploadsResult(
+        string bucket,
+        string? prefix,
+        string? delimiter,
+        int maxUploads,
+        bool isTruncated,
+        IReadOnlyList<ListedUpload> uploads)
+    {
+        var sb = new StringBuilder(384);
+        using (var writer = XmlWriter.Create(sb, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("ListMultipartUploadsResult", S3Namespace);
+            writer.WriteElementString("Bucket", bucket);
+            writer.WriteElementString("KeyMarker", string.Empty);
+            writer.WriteElementString("UploadIdMarker", string.Empty);
+            writer.WriteElementString("NextKeyMarker", string.Empty);
+            writer.WriteElementString("NextUploadIdMarker", string.Empty);
+            if (!string.IsNullOrEmpty(prefix))
+            {
+                writer.WriteElementString("Prefix", prefix);
+            }
+            if (!string.IsNullOrEmpty(delimiter))
+            {
+                writer.WriteElementString("Delimiter", delimiter);
+            }
+            writer.WriteElementString("MaxUploads", maxUploads.ToString(CultureInfo.InvariantCulture));
+            writer.WriteElementString("IsTruncated", isTruncated ? "true" : "false");
+            foreach (var u in uploads)
+            {
+                writer.WriteStartElement("Upload");
+                writer.WriteElementString("Key", u.Key);
+                writer.WriteElementString("UploadId", u.UploadId);
+                writer.WriteElementString("Initiated",
+                    u.Initiated.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
+                writer.WriteElementString("StorageClass", "STANDARD");
+                writer.WriteEndElement();
+            }
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        return sb.ToString();
+    }
+
     /// <summary>
     /// S3 <c>InitiateMultipartUploadResult</c>: response body for
     /// <c>POST /{bucket}/{key}?uploads</c>. SDKs read the <c>UploadId</c>
