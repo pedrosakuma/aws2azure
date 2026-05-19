@@ -18,7 +18,7 @@ internal static class QueueAttributeTranslator
     // SQS spec defaults (see CreateQueue / SetQueueAttributes API reference).
     public const int DefaultVisibilityTimeoutSeconds = 30;
     public const int DefaultMessageRetentionPeriodSeconds = 4 * 24 * 60 * 60; // 4 days
-    public const int DefaultMaximumMessageSizeBytes = 262144; // 256 KiB
+    public const int DefaultMaximumMessageSizeBytes = 1048576; // 1 MiB (SQS default since Aug 2025; previously 256 KiB)
     public const int DefaultDelaySeconds = 0;
     public const int DefaultReceiveMessageWaitTimeSeconds = 0;
 
@@ -69,12 +69,14 @@ internal static class QueueAttributeTranslator
                     props.DefaultMessageTimeToLive = FormatIso8601Seconds(mrp);
                     break;
                 case "MaximumMessageSize":
-                    if (!TryParseSeconds(kv.Value, 1024, 262144, out var mms))
+                    if (!TryParseSeconds(kv.Value, 1024, 1048576, out var mms))
                         return new AttributeError(QueueAttributeError.InvalidValue, kv.Key,
-                            "MaximumMessageSize must be 1024..262144 bytes.");
-                    // SB Standard caps at 256 KiB (262144 bytes); document via
-                    // gap doc. We do not need to set MaxMessageSizeInKilobytes
-                    // for the standard tier — the cap is enforced by Azure.
+                            "MaximumMessageSize must be 1024..1048576 bytes.");
+                    // SB Standard tier caps at 256 KiB per message regardless
+                    // of what we set; SB Premium honours up to 100 MiB. The
+                    // proxy persists the requested value verbatim — if it
+                    // exceeds the backing tier's hard cap, SB will reject
+                    // oversized payloads on send. Documented in gap docs.
                     props.MaxMessageSizeBytes = mms;
                     break;
                 case "DelaySeconds":

@@ -37,16 +37,48 @@ namespace Aws2Azure.Modules.Sqs.Operations;
 /// </summary>
 internal static class SendMessageHandlers
 {
-    /// <summary>AWS SQS hard cap on a single SendMessage body (262144 bytes).</summary>
-    public const int MaxBodyBytes = 262144;
+    /// <summary>AWS SQS hard cap on a single SendMessage payload — body
+    /// plus message attributes combined (1,048,576 bytes / 1 MiB; raised
+    /// from 256 KiB in August 2025).</summary>
+    public const int MaxBodyBytes = 1048576;
 
     /// <summary>AWS SQS hard cap on a SendMessageBatch — at most 10 entries.</summary>
     public const int MaxBatchEntries = 10;
 
-    /// <summary>AWS SQS hard cap on aggregate batch payload (262144 bytes).</summary>
-    public const int MaxBatchBytes = 262144;
+    /// <summary>AWS SQS hard cap on aggregate batch payload — sum of every
+    /// entry's body + attributes (1,048,576 bytes / 1 MiB).</summary>
+    public const int MaxBatchBytes = 1048576;
 
     public const string AttrTypesHeader = "Aws2Azure-AttrTypes";
+
+    /// <summary>
+    /// SQS-faithful wire-size accounting: AWS counts the message body
+    /// <em>plus</em> every message attribute (name UTF-8 bytes + data type
+    /// UTF-8 bytes + value bytes — UTF-8 for String/Number, raw for Binary)
+    /// against the 1 MiB cap. See the
+    /// <a href="https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/quotas-messages.html">SQS
+    /// message quotas</a> page (the cap was raised from 256 KiB to 1 MiB
+    /// in August 2025). Larger payloads still require the AWS Extended
+    /// Client Library, which stores the body in S3 and sends a small JSON
+    /// pointer — that pointer flows through this proxy unchanged and
+    /// resolves against the S3 module's Blob translation.
+    /// </summary>
+    internal static int ComputeWireSize(
+        int bodyBytes,
+        IReadOnlyDictionary<string, SqsMessageAttribute>? attributes)
+    {
+        var total = bodyBytes;
+        if (attributes is null || attributes.Count == 0) return total;
+        foreach (var (name, attr) in attributes)
+        {
+            total += Encoding.UTF8.GetByteCount(name);
+            total += Encoding.UTF8.GetByteCount(attr.DataType);
+            total += attr.IsBinary
+                ? attr.BinaryValue.Length
+                : Encoding.UTF8.GetByteCount(attr.StringValue ?? string.Empty);
+        }
+        return total;
+    }
 
     public static Task HandleAsync(
         HttpContext context,
@@ -81,11 +113,6 @@ internal static class SendMessageHandlers
             return;
         }
         var bodyBytes = Encoding.UTF8.GetBytes(body);
-        if (bodyBytes.Length > MaxBodyBytes)
-        {
-            await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.MessageTooLong()).ConfigureAwait(false);
-            return;
-        }
 
         if (!TryParseDelaySeconds(parsed, out var delaySeconds, out var delayError))
         {
@@ -101,6 +128,12 @@ internal static class SendMessageHandlers
             return;
         }
         var attrs = attrResult.Attributes ?? new Dictionary<string, SqsMessageAttribute>();
+
+        if (ComputeWireSize(bodyBytes.Length, attrs) > MaxBodyBytes)
+        {
+            await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.MessageTooLong()).ConfigureAwait(false);
+            return;
+        }
 
         TryGetParam(parsed, "MessageGroupId", out var groupId);
         TryGetParam(parsed, "MessageDeduplicationId", out var dedupId);
@@ -183,7 +216,7 @@ internal static class SendMessageHandlers
                     SqsErrorMapping.BatchEntryIdsNotDistinct(e.Id)).ConfigureAwait(false);
                 return;
             }
-            totalBytes += e.BodyBytes.Length;
+            totalBytes += ComputeWireSize(e.BodyBytes.Length, e.Attributes);
         }
         if (totalBytes > MaxBatchBytes)
         {

@@ -11,7 +11,7 @@ sub_features:
     notes: "Translated from DefaultMessageTimeToLive."
   - name: Attribute.MaximumMessageSize
     status: implemented
-    notes: "Derived from MaxMessageSizeInKilobytes; defaults to 256 KiB when absent."
+    notes: "Derived from MaxMessageSizeInKilobytes; defaults to 1 MiB (1048576 bytes) when absent — matches the current SQS default (raised from 256 KiB to 1 MiB in August 2025)."
   - name: Attribute.DelaySeconds
     status: partial
     notes: "Service Bus has no queue-level default delay; the proxy returns 0. Per-message delay lands in Slice 2."

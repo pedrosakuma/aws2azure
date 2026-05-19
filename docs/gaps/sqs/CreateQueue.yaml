@@ -11,7 +11,7 @@ sub_features:
     notes: "Maps to DefaultMessageTimeToLive."
   - name: Attribute.MaximumMessageSize
     status: implemented
-    notes: "Recorded as MaxMessageSizeInKilobytes; SB Standard caps at 256 KiB."
+    notes: "Recorded as MaxMessageSizeInKilobytes (1024..1048576 bytes / 1 KiB..1 MiB). SQS raised its hard cap from 256 KiB to 1 MiB in August 2025; the proxy now mirrors that range. Backing Service Bus tier still constrains the *effective* limit: SB Standard rejects anything over 256 KiB, SB Premium honours up to 100 MiB (configurable). Per-queue MaximumMessageSize is set at create time but not re-validated per send — SB itself rejects oversized payloads on the runtime POST."
   - name: Attribute.DelaySeconds
     status: partial
     notes: "Accepted on CreateQueue; honoured per-message via ScheduledEnqueueTimeUtc in Slice 2."
