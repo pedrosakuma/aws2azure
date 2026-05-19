@@ -17,10 +17,22 @@ internal sealed class AmqpMessage
     public ReadOnlyMemory<byte> Body { get; set; }
 
     /// <summary>
+    /// Optional amqp-value (§3.2, descriptor 0x77) string body. When set
+    /// it takes precedence over <see cref="Body"/> and the message is
+    /// serialised with an amqp-value section instead of a data section.
+    /// Used by Service Bus CBS, which mandates SAS tokens be carried as
+    /// amqp-value strings rather than binary data sections.
+    /// </summary>
+    public string? BodyValueString { get; set; }
+
+    /// <summary>
     /// Serialises the bare message into <paramref name="destination"/>.
     /// Sections are emitted in spec-defined order: properties (if any
     /// field present), application-properties (if any entry present),
-    /// data (always — empty body produces an empty data section).
+    /// body. The body is either an amqp-value string (when
+    /// <see cref="BodyValueString"/> is non-null) or a data section
+    /// carrying <see cref="Body"/> (always — empty body produces an
+    /// empty data section).
     /// </summary>
     public void Write(Span<byte> destination, out int written)
     {
@@ -39,8 +51,20 @@ internal sealed class AmqpMessage
             AmqpApplicationProperties.Write(destination[w..], ap, out var al);
             w += al;
         }
-        AmqpDataSection.Write(destination[w..], Body.Span, out var dl);
-        w += dl;
+        if (BodyValueString is { } value)
+        {
+            destination[w++] = Aws2Azure.Amqp.Codec.AmqpFormatCode.Described;
+            Aws2Azure.Amqp.Codec.AmqpPrimitiveWriter.WriteULong(
+                destination[w..], MessageSectionDescriptor.AmqpValue, out var dl);
+            w += dl;
+            Aws2Azure.Amqp.Codec.AmqpVariableWriter.WriteString(destination[w..], value, out var sl);
+            w += sl;
+        }
+        else
+        {
+            AmqpDataSection.Write(destination[w..], Body.Span, out var dl);
+            w += dl;
+        }
         written = w;
     }
 
@@ -74,6 +98,26 @@ internal sealed class AmqpMessage
                     break;
                 case MessageSectionDescriptor.Data:
                     message.Body = AmqpDataSection.Read(remaining, out consumed);
+                    break;
+                case MessageSectionDescriptor.AmqpValue:
+                    // Skip the described constructor header (0x00 + ULong descriptor),
+                    // then read the value verbatim. We only model the string variant
+                    // (CBS responses are typically empty or status-text); other primitive
+                    // types fall through to AmqpValueScanner skip below.
+                    var valueOffset = 1 + descLen;
+                    var valueSpan = span[valueOffset..];
+                    if (valueSpan.Length > 0 &&
+                        (valueSpan[0] == Aws2Azure.Amqp.Codec.AmqpFormatCode.String8Utf8
+                         || valueSpan[0] == Aws2Azure.Amqp.Codec.AmqpFormatCode.String32Utf8))
+                    {
+                        message.BodyValueString = Aws2Azure.Amqp.Codec.AmqpVariableReader.ReadString(
+                            valueSpan, out var sLen);
+                        consumed = valueOffset + sLen;
+                    }
+                    else
+                    {
+                        consumed = Aws2Azure.Amqp.Codec.AmqpValueScanner.Measure(span);
+                    }
                     break;
                 default:
                     // Skip unknown described section: descriptor + value (described type measure).
