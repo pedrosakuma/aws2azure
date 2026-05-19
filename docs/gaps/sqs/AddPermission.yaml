@@ -1,0 +1,12 @@
+service: sqs
+operation: AddPermission
+azure_equivalent: "No native Service Bus equivalent — validates queue existence and returns success."
+status: stub
+sub_features:
+  - {name: "Queue existence validation", status: implemented, notes: "Returns NonExistentQueue if the SB queue does not exist."}
+  - {name: "Cross-account permission persistence", status: unsupported, gap: "SQS resource-based access via SID/AccountId/Action does not map to SB. Authorization in SB is done via namespace-level Shared Access Signatures or AAD roles, neither of which the proxy provisions on a per-queue basis."}
+behavior_differences:
+  - "The Permission payload is accepted and silently dropped; there is no AWS-style cross-account access control inside the proxy. Clients relying on AddPermission to grant access should configure SB SAS rules or Azure RBAC out of band, then map them to aws2azure access keys via the config file."
+  - "Returns 200 OK on any well-formed payload to maximise SDK compatibility — including for Actions that SQS itself rejects on standard queues. A future revision may tighten validation once the credential model exposes scoped keys."
+references:
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_AddPermission.html

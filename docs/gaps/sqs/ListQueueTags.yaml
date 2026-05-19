@@ -1,0 +1,12 @@
+service: sqs
+operation: ListQueueTags
+azure_equivalent: "No native Service Bus equivalent — returns an empty Tags map after validating queue existence."
+status: stub
+sub_features:
+  - {name: "Queue existence validation", status: implemented, notes: "Returns NonExistentQueue if the SB queue does not exist."}
+  - {name: "Tags round-trip", status: unsupported, gap: "SB queues have no per-queue tag surface in the REST control plane. The proxy returns an empty Tags map until a durable namespace-metadata store lands."}
+behavior_differences:
+  - "Always returns an empty Tags map for any existing queue. Clients using tagging as a billing-allocation signal should expect zero data; an actual implementation requires a side-store (mirrors the S3 bucket-tagging trick from Phase 1 Slice 9)."
+  - "Verified against in-process fakes; emulator-backed validation is blocked (SB emulator does not expose management REST)."
+references:
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListQueueTags.html

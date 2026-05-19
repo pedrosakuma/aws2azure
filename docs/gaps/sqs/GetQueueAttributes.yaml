@@ -30,9 +30,12 @@ sub_features:
   - name: Attribute.QueueArn
     status: unsupported
     gap: "aws2azure has no AWS account model; ARN synthesis is intentionally deferred."
-  - name: Attribute.RedrivePolicy / RedriveAllowPolicy
+  - name: Attribute.RedrivePolicy
+    status: implemented
+    notes: "Slice 5: emitted as JSON {deadLetterTargetArn, maxReceiveCount} when the SB queue has ForwardDeadLetteredMessagesTo set. The ARN is synthetic (arn:aws-azure:sqs:azure-sb::{queue}) because the proxy has no AWS account/region model, but its shape parses cleanly with boto3 / AWSSDK clients."
+  - name: Attribute.RedriveAllowPolicy
     status: unsupported
-    gap: "DLQ wiring lands in Slice 5."
+    gap: "SB has no per-queue ACL controlling which sources may forward into a DLQ."
   - name: AttributeNames=All
     status: implemented
 behavior_differences:

@@ -7,7 +7,7 @@ sub_features:
   - {name: "Long polling (WaitTimeSeconds 1..20)", status: implemented, notes: "Uses SB's native server-side wait on the first peek-lock call (timeout query parameter); subsequent calls inside the same batch fall back to timeout=0 to drain quickly, matching the SQS 'return as soon as one message is available or WaitTimeSeconds elapses' contract."}
   - {name: "MaxNumberOfMessages 1..10", status: implemented, notes: "SB REST is single-message peek-lock; the proxy loops until count or queue empty. The first call blocks up to WaitTimeSeconds (long-poll); follow-up calls share a 5s aggregate budget added on top of WaitTimeSeconds."}
   - {name: "VisibilityTimeout parameter", status: partial, notes: "Accepted and validated (0..43200) but ignored at SB level — see behavior_differences."}
-  - {name: "AttributeNames / MessageAttributeNames filters", status: implemented, notes: "Includes 'All' shorthand. Returned system attributes: SentTimestamp, ApproximateReceiveCount, SequenceNumber."}
+  - {name: "AttributeNames / MessageAttributeNames filters", status: implemented, notes: "Includes 'All' shorthand. Returned system attributes: SentTimestamp, ApproximateReceiveCount, SequenceNumber, MessageGroupId (FIFO, from BrokerProperties.SessionId), MessageDeduplicationId (FIFO, from BrokerProperties.MessageId)."}
   - {name: "Receipt handle round-trip", status: implemented, notes: "Opaque length-prefixed base64 of (MessageId, LockToken, SequenceNumber, LockedUntilUtc) — self-contained for DeleteMessage / ChangeMessageVisibility, safe against caller-controlled metacharacters in MessageDeduplicationId."}
   - {name: "MessageAttributes (String/Number/Binary) round-trip", status: implemented, notes: "Reconstructed from Aws2Azure-AttrTypes side-channel header emitted by SendMessage."}
   - {name: "MD5OfBody / MD5OfMessageAttributes", status: implemented}
@@ -16,7 +16,9 @@ behavior_differences:
   - "MaxNumberOfMessages > 1 is emulated by looping POST /messages/head, capped by ReceiveLoopBudget (5s) added on top of WaitTimeSeconds — the proxy may return fewer messages than requested even when the queue has more if the budget elapses."
   - "ApproximateFirstReceiveTimestamp and SenderId are not surfaced (SB does not provide them)."
   - "Long polling uses SB's native server-side wait; if the first call returns empty after the wait the receive returns immediately with an empty list (no second wait). This matches SQS semantics."
-  - "Verified against in-process fakes; emulator-backed end-to-end validation lands with the SbEmulatorFixture build-out (tracked in p2-sb-emulator-fixture)."
+  - "FIFO ordering gap: SQS FIFO guarantees strict per-MessageGroupId order on receive (one in-flight message per group at a time, others stay invisible until the in-flight one is deleted). SB only enforces ordering when the receiver opens a session-aware receive link (AMQP) and pins one consumer per session — semantics SB REST cannot express. As a result, ReceiveMessage on a .fifo queue surfaces MessageGroupId on each message (so application-side de-grouping still works) but does not block other messages of the same group from being delivered concurrently to different consumers. Tracked for Phase 2.5 (hand-rolled AMQP 1.0 lib)."
+  - "MessageGroupId is surfaced from BrokerProperties.SessionId; MessageDeduplicationId from BrokerProperties.MessageId. Both only appear in the response when the AttributeNames filter requests them (or 'All')."
+  - "Verified against in-process fakes; emulator-backed end-to-end validation is blocked (SB emulator does not expose runtime REST). Real-Azure validation pending — see ADR-0001."
 references:
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ReceiveMessage.html
   - https://learn.microsoft.com/rest/api/servicebus/peek-lock-message-non-destructive-read

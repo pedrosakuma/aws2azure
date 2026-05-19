@@ -1,0 +1,15 @@
+service: sqs
+operation: ListDeadLetterSourceQueues
+azure_equivalent: "Page through SB management GET /$Resources/queues?api-version=2021-05 and filter entries whose ForwardDeadLetteredMessagesTo equals the requested queue."
+status: implemented
+sub_features:
+  - {name: "Queue existence probe", status: implemented, notes: "SQS returns NonExistentQueue when the DLQ target itself is unknown; the proxy issues a GET /{queue} before paging."}
+  - {name: "Page-walk + filter", status: implemented, notes: "SB management API caps a page at 100 entries; the proxy walks pages until a short page is observed, filtering each entry by ForwardDeadLetteredMessagesTo == target."}
+  - {name: "MaxResults / NextToken pagination", status: implemented, notes: "MaxResults defaults to 1000 (SQS hard cap); NextToken is an opaque integer cursor into the SB queue listing (the proxy emits it only when there is at least one more SB queue past the consumed cursor). A request that hits MaxResults receives a NextToken that the caller can pass back to continue."}
+behavior_differences:
+  - "Linear scan: the proxy issues one or more SB management GETs per ListDeadLetterSourceQueues call. On namespaces with thousands of queues this is O(N) and may be slow; the NFR phase should consider a cached reverse index."
+  - "Verified against in-process fakes; emulator-backed validation is blocked (SB emulator does not expose management REST). Real-Azure verification pending."
+  - "Verified against in-process fakes; emulator-backed validation is blocked (SB emulator does not expose management REST). Real-Azure verification pending."
+references:
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListDeadLetterSourceQueues.html
+  - https://learn.microsoft.com/rest/api/servicebus/list-queues

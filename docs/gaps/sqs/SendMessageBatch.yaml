@@ -12,6 +12,7 @@ sub_features:
   - {name: "Successful / Failed result partitioning", status: implemented, notes: "See behavior_differences — SB batch is atomic."}
 behavior_differences:
   - "SB's runtime batch send is atomic: the whole batch either succeeds or fails together (no AMQP-style per-message ack). The proxy preserves SQS's BatchResultErrorEntry shape: on a batch-level SB error every entry surfaces in Failed[] with the mapped SQS error code (SenderFault=true for client-side rejections, false for server-side). Genuine per-entry partial success (one bad entry mixed with good ones) is not available over SB REST."
+  - "FIFO required-param validation (Slice 5): on a .fifo queue, every entry must carry a MessageGroupId; the proxy rejects the whole batch with MissingParameter on the first violating entry (validation runs before the SB call). On standard queues, MessageGroupId / MessageDeduplicationId on any entry yields InvalidParameterValue."
   - "Same attribute-flattening + Aws2Azure-AttrTypes side-channel as SendMessage. The 1 MiB aggregate cap is computed over body + attribute name/type/value bytes per the SQS quota docs (raised from 256 KiB in August 2025)."
   - "Payloads larger than 1 MiB require the AWS Extended Client Library (S3-backed pointer); the same caveat as SendMessage applies — the pointer flows through unchanged and resolves against the proxy's S3 → Blob translation."
   - "Entry MessageId returned to the caller is proxy-synthesised (Guid, or MessageDeduplicationId for FIFO)."

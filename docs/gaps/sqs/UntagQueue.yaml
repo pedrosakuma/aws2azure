@@ -1,0 +1,11 @@
+service: sqs
+operation: UntagQueue
+azure_equivalent: "No native Service Bus equivalent — validates queue existence and returns success."
+status: stub
+sub_features:
+  - {name: "Queue existence validation", status: implemented, notes: "Returns NonExistentQueue if the SB queue does not exist."}
+  - {name: "Tag removal", status: unsupported, gap: "Tags are never persisted (see TagQueue gap doc), so removal is a no-op."}
+behavior_differences:
+  - "No-op: returns 200 OK regardless of the TagKey list because no tags are stored."
+references:
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_UntagQueue.html

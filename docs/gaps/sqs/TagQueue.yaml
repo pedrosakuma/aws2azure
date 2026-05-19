@@ -1,0 +1,12 @@
+service: sqs
+operation: TagQueue
+azure_equivalent: "No native Service Bus equivalent — validates queue existence and returns success."
+status: stub
+sub_features:
+  - {name: "Queue existence validation", status: implemented, notes: "Returns NonExistentQueue if the SB queue does not exist."}
+  - {name: "Tag persistence", status: unsupported, gap: "Tags are accepted and dropped on the floor; subsequent ListQueueTags will not see them."}
+behavior_differences:
+  - "Tags are not persisted: a TagQueue → ListQueueTags round-trip returns an empty Tags map. Clients depending on tags for cost-allocation or governance should be aware that aws2azure does not store them. A durable side-store is tracked for the NFR phase."
+  - "No throttling or per-resource tag-count cap is enforced (SQS allows up to 50 tags); since nothing is stored, the cap is moot."
+references:
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_TagQueue.html
