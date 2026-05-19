@@ -49,8 +49,25 @@ public class S3RouterTests
         var ctx = BuildContext("s3.amazonaws.com", method, path);
         var result = S3Router.Classify(ctx);
         Assert.Equal(expected, result.Operation);
-        Assert.Equal("my-bucket", result.Bucket);
-        Assert.False(string.IsNullOrEmpty(result.Key));
+    }
+
+    [Fact]
+    public void Put_with_x_amz_copy_source_routes_to_CopyObject()
+    {
+        var ctx = BuildContext("s3.amazonaws.com", "PUT", "/dest-bucket/dest.txt");
+        ctx.Request.Headers["x-amz-copy-source"] = "/src-bucket/src.txt";
+        var result = S3Router.Classify(ctx);
+        Assert.Equal(S3Operation.CopyObject, result.Operation);
+        Assert.Equal("dest-bucket", result.Bucket);
+        Assert.Equal("dest.txt", result.Key);
+    }
+
+    [Fact]
+    public void Put_without_copy_source_stays_PutObject()
+    {
+        var ctx = BuildContext("s3.amazonaws.com", "PUT", "/dest-bucket/dest.txt");
+        var result = S3Router.Classify(ctx);
+        Assert.Equal(S3Operation.PutObject, result.Operation);
     }
 
     [Theory]

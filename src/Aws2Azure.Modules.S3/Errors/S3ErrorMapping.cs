@@ -30,6 +30,13 @@ internal static class S3ErrorMapping
             (404, "BlobNotFound") =>
                 new Mapping(404, "NoSuchKey", "The specified key does not exist."),
 
+            // Azure surfaces "source not reachable" during a Copy Blob with
+            // CannotVerifyCopySource; from S3's perspective that's a source
+            // bucket/key the caller doesn't have access to or doesn't exist.
+            (404, "CannotVerifyCopySource") =>
+                new Mapping(404, "NoSuchKey",
+                    "The specified copy source does not exist or is not accessible."),
+
             (409, "ContainerAlreadyExists") =>
                 // S3 distinguishes "owned by you" from "owned by someone else"; without ownership
                 // signals from Azure we surface the conservative variant.
