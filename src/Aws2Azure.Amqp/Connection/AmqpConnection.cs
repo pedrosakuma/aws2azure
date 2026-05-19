@@ -31,6 +31,11 @@ internal sealed class AmqpConnection : IAsyncDisposable
     private readonly TaskCompletionSource<AmqpClose> _peerCloseReceived =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    private readonly object _sessionLock = new();
+    private readonly Dictionary<ushort, AmqpSession> _sessionsByOutgoingChannel = new();
+    private readonly Dictionary<ushort, AmqpSession> _sessionsByIncomingChannel = new();
+    private ushort _nextOutgoingChannel;
+
     private Task? _readLoopTask;
     private Task? _heartbeatTask;
     private int _state = StateClosed;
@@ -171,6 +176,51 @@ internal sealed class AmqpConnection : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Allocates the next outgoing channel, registers a new
+    /// <see cref="AmqpSession"/>, and performs the <c>begin</c>/<c>begin</c>
+    /// handshake. Throws if no channels remain under
+    /// <c>open.channel-max</c>.
+    /// </summary>
+    public async Task<AmqpSession> BeginSessionAsync(
+        AmqpSessionSettings? settings = null, CancellationToken cancellationToken = default)
+    {
+        if (Volatile.Read(ref _state) != StateOpened)
+            throw new InvalidOperationException("Connection is not open.");
+
+        settings ??= new AmqpSessionSettings();
+
+        AmqpSession session;
+        lock (_sessionLock)
+        {
+            var max = _settings.ChannelMax;
+            if (_sessionsByOutgoingChannel.Count > max)
+                throw new InvalidOperationException("No channels available under negotiated channel-max.");
+
+            ushort channel = _nextOutgoingChannel;
+            while (_sessionsByOutgoingChannel.ContainsKey(channel))
+            {
+                if (channel == max)
+                    throw new InvalidOperationException("No channels available under negotiated channel-max.");
+                channel++;
+            }
+            session = new AmqpSession(this, channel, settings);
+            _sessionsByOutgoingChannel.Add(channel, session);
+            _nextOutgoingChannel = (ushort)(channel == max ? 0 : channel + 1);
+        }
+
+        try
+        {
+            await session.OpenAsync(cancellationToken).ConfigureAwait(false);
+            return session;
+        }
+        catch
+        {
+            UnregisterSession(session);
+            throw;
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         await ShutdownAsync().ConfigureAwait(false);
@@ -225,6 +275,23 @@ internal sealed class AmqpConnection : IAsyncDisposable
         finally { _writeLock.Release(); }
     }
 
+    /// <summary>Internal hook used by <see cref="AmqpSession"/> to emit frames on its own channel.</summary>
+    internal ValueTask WriteSessionFrameAsync(ushort channel, ReadOnlyMemory<byte> body, CancellationToken ct)
+        => WriteFrameLockedAsync(AmqpFrameType.Amqp, channel, body, ct);
+
+    /// <summary>Internal hook used by <see cref="AmqpSession"/> on close/abort.</summary>
+    internal void UnregisterSession(AmqpSession session)
+    {
+        lock (_sessionLock)
+        {
+            _sessionsByOutgoingChannel.Remove(session.OutgoingChannel);
+            // RemoteChannel defaults to 0 before begin reply lands; only
+            // remove if the mapping actually points at this session.
+            if (_sessionsByIncomingChannel.TryGetValue(session.RemoteChannel, out var existing) && existing == session)
+                _sessionsByIncomingChannel.Remove(session.RemoteChannel);
+        }
+    }
+
     private async Task ReadLoopAsync(CancellationToken ct)
     {
         try
@@ -270,12 +337,11 @@ internal sealed class AmqpConnection : IAsyncDisposable
                             }
                             catch { /* peer might already be gone */ }
                         }
+                        AbortAllSessions();
                         return;
                     }
-                    // Other performatives (begin/attach/flow/...) — future
-                    // slices add session/link routing. For 4c we deliberately
-                    // ignore them; the SASL+Open layer is not supposed to
-                    // see them on a fresh connection.
+
+                    DispatchSessionFrame(kind, frame.Header.Channel, frame.Body);
                 }
             }
         }
@@ -285,6 +351,51 @@ internal sealed class AmqpConnection : IAsyncDisposable
             _peerCloseReceived.TrySetException(
                 new AmqpConnectionException("Read loop failed.", ex, AmqpErrorKind.ClientFatal));
         }
+    }
+
+    private void DispatchSessionFrame(PerformativeKind kind, ushort incomingChannel, ReadOnlyMemory<byte> body)
+    {
+        AmqpSession? session;
+        if (kind == PerformativeKind.Begin)
+        {
+            // The peer's begin echoes our outgoing channel back as
+            // remote-channel; we use that to bind the session before
+            // delivering the frame.
+            AmqpBegin.Read(body, out var begin, out _);
+            if (begin.RemoteChannel is not { } ourChannel)
+            {
+                // Peer-initiated session (server begin first) — not used in
+                // any flow we currently support; ignore for 5a.
+                return;
+            }
+            lock (_sessionLock)
+            {
+                if (!_sessionsByOutgoingChannel.TryGetValue(ourChannel, out session))
+                    return;
+                session.OnRemoteChannelLearned(incomingChannel);
+                _sessionsByIncomingChannel[incomingChannel] = session;
+            }
+            session.DispatchIncomingFrame(kind, body);
+            return;
+        }
+
+        lock (_sessionLock)
+        {
+            _sessionsByIncomingChannel.TryGetValue(incomingChannel, out session);
+        }
+        session?.DispatchIncomingFrame(kind, body);
+    }
+
+    private void AbortAllSessions()
+    {
+        AmqpSession[] all;
+        lock (_sessionLock)
+        {
+            all = _sessionsByOutgoingChannel.Values.ToArray();
+            _sessionsByOutgoingChannel.Clear();
+            _sessionsByIncomingChannel.Clear();
+        }
+        foreach (var s in all) s.Abort();
     }
 
     private async Task HeartbeatLoopAsync(CancellationToken ct)
@@ -321,6 +432,7 @@ internal sealed class AmqpConnection : IAsyncDisposable
         {
             try { await rl.ConfigureAwait(false); } catch { }
         }
+        AbortAllSessions();
     }
 
     private async Task WaitForFinalAsync(CancellationToken ct)
