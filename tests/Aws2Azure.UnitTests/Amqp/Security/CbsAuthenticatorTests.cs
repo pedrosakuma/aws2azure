@@ -59,6 +59,10 @@ public sealed class CbsAuthenticatorTests
         Assert.NotNull(capturedBody);
         Assert.StartsWith("SharedAccessSignature sr=", capturedBody);
         Assert.Contains("skn=" + KeyName, capturedBody);
+        // Body must be carried as an amqp-value string (CBS spec), not a
+        // data section. Parse() routes amqp-value strings to BodyValueString
+        // and leaves Body empty, so the broker side asserts that here.
+        Assert.NotNull(capturedAppProps);
 
         await cbs.DisposeAsync();
         await session.CloseAsync();
@@ -139,7 +143,7 @@ public sealed class CbsAuthenticatorTests
             var payload = f.Body.Slice(perfLen).ToArray();
             var msg = AmqpMessage.Parse(payload);
             requestMessageId = msg.Properties.MessageId!;
-            capture?.Invoke(msg.ApplicationProperties!, Encoding.UTF8.GetString(msg.Body.Span));
+        capture?.Invoke(msg.ApplicationProperties!, msg.BodyValueString ?? "");
             break;
         }
 

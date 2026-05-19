@@ -1,4 +1,3 @@
-using System.Text;
 using Aws2Azure.Amqp.Connection;
 using Aws2Azure.Amqp.Framing;
 using Aws2Azure.Amqp.Management;
@@ -69,7 +68,7 @@ internal sealed class CbsAuthenticator : IAsyncDisposable
                 ["type"] = _tokenProvider.TokenType,
                 ["name"] = audience,
             },
-            Body = Encoding.UTF8.GetBytes(token.Value),
+            BodyValueString = token.Value,
         };
 
         var response = await _link.SendRequestAsync(request, cancellationToken).ConfigureAwait(false);
