@@ -70,6 +70,24 @@ public class S3RouterTests
         Assert.Equal(S3Operation.PutObject, result.Operation);
     }
 
+    [Fact]
+    public void Post_to_bucket_with_delete_query_routes_to_DeleteObjects()
+    {
+        var ctx = BuildContext("s3.amazonaws.com", "POST", "/my-bucket", query: "?delete");
+        var result = S3Router.Classify(ctx);
+        Assert.Equal(S3Operation.DeleteObjects, result.Operation);
+        Assert.Equal("my-bucket", result.Bucket);
+        Assert.Null(result.Key);
+    }
+
+    [Fact]
+    public void Post_to_bucket_without_delete_query_is_Unknown()
+    {
+        var ctx = BuildContext("s3.amazonaws.com", "POST", "/my-bucket");
+        var result = S3Router.Classify(ctx);
+        Assert.Equal(S3Operation.Unknown, result.Operation);
+    }
+
     [Theory]
     [InlineData("DELETE", "/b/k.txt", "tagging")]
     [InlineData("DELETE", "/b/k.txt", "versionId=abc")]

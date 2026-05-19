@@ -139,6 +139,22 @@ internal sealed partial class BlobClient
     }
 
     /// <summary>
+    /// Builds the absolute Azure container URI (no blob path). Used by
+    /// handlers that need to issue container-scoped requests such as the
+    /// HeadBucket-style probe used to short-circuit DeleteObjects when the
+    /// destination bucket is missing.
+    /// </summary>
+    public Uri BuildContainerUri(string container)
+    {
+        var endpoint = _serviceEndpoint.AbsoluteUri;
+        if (endpoint.Length == 0 || endpoint[^1] != '/')
+        {
+            endpoint += "/";
+        }
+        return new Uri(endpoint + container, UriKind.Absolute);
+    }
+
+    /// <summary>
     /// Returns the absolute URI for a sibling blob in the same Azure storage
     /// account. Used to build the <c>x-ms-copy-source</c> value for
     /// <see cref="ObjectHandlers"/>' CopyObject, which only supports copies

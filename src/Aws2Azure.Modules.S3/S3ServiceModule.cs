@@ -96,6 +96,10 @@ public sealed class S3ServiceModule : IServiceModule
         {
             await ObjectListHandlers.HandleAsync(context, route, blob, context.RequestAborted).ConfigureAwait(false);
         }
+        else if (route.Operation is S3Operation.DeleteObjects)
+        {
+            await DeleteObjectsHandler.HandleAsync(context, route, blob, context.RequestAborted).ConfigureAwait(false);
+        }
         else
         {
             await BucketLifecycleHandlers.HandleAsync(context, route, blob, context.RequestAborted).ConfigureAwait(false);

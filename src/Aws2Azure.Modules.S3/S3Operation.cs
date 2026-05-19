@@ -16,6 +16,7 @@ public enum S3Operation
     GetObject,
     HeadObject,
     DeleteObject,
+    DeleteObjects,
     CopyObject,
     ListObjects,
     ListObjectsV2,

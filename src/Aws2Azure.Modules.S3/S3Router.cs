@@ -76,13 +76,16 @@ public static class S3Router
 
         // Bucket-scoped ops: HEAD/PUT/DELETE on /{bucket}. GET /{bucket} is
         // the object listing — V2 when the client sets ?list-type=2,
-        // otherwise legacy V1.
+        // otherwise legacy V1. POST /{bucket}?delete is the multi-object
+        // delete batch.
         return method switch
         {
             var m when m == HttpMethods.Head   => new S3RouteResult(S3Operation.HeadBucket,   bucket, null, virtualHosted),
             var m when m == HttpMethods.Put    => new S3RouteResult(S3Operation.CreateBucket, bucket, null, virtualHosted),
             var m when m == HttpMethods.Delete => new S3RouteResult(S3Operation.DeleteBucket, bucket, null, virtualHosted),
             var m when m == HttpMethods.Get    => new S3RouteResult(ClassifyListOperation(request.Query), bucket, null, virtualHosted),
+            var m when m == HttpMethods.Post && request.Query.ContainsKey("delete")
+                                              => new S3RouteResult(S3Operation.DeleteObjects, bucket, null, virtualHosted),
             _ => new S3RouteResult(S3Operation.Unknown, bucket, null, virtualHosted),
         };
     }

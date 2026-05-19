@@ -16,7 +16,7 @@
 | s3 | [CreateBucket](s3.md#createbucket) | ✅ implemented | `PUT https://{account}.blob.core.windows.net/{container}?restype=container` |
 | s3 | [DeleteBucket](s3.md#deletebucket) | ✅ implemented | `DELETE https://{account}.blob.core.windows.net/{container}?restype=container` |
 | s3 | [DeleteObject](s3.md#deleteobject) | ✅ implemented | `DELETE https://{account}.blob.core.windows.net/{container}/{blob}` |
-| s3 | [DeleteObjects](s3.md#deleteobjects) | ⚪ stub | `Multiple DELETEs against Blob (no native batch endpoint)` |
+| s3 | [DeleteObjects](s3.md#deleteobjects) | ✅ implemented | `Multiple DELETEs against Blob (no native batch endpoint)` |
 | s3 | [GetObject](s3.md#getobject) | ✅ implemented | `GET https://{account}.blob.core.windows.net/{container}/{blob}` |
 | s3 | [HeadBucket](s3.md#headbucket) | ✅ implemented | `HEAD https://{account}.blob.core.windows.net/{container}?restype=container` |
 | s3 | [HeadObject](s3.md#headobject) | ✅ implemented | `HEAD https://{account}.blob.core.windows.net/{container}/{blob}` |
