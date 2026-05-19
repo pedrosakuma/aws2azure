@@ -246,6 +246,7 @@ internal static class ReceiveMessageHandlers
         // Decode BrokerProperties to get messageId, lockToken,
         // sequenceNumber, lockedUntilUtc.
         string? messageId = null, lockToken = null, sequenceNumber = null;
+        string? sessionId = null;
         DateTimeOffset lockedUntil = DateTimeOffset.UtcNow.AddSeconds(30);
         long? enqueuedTime = null;
         int? deliveryCount = null;
@@ -262,6 +263,8 @@ internal static class ReceiveMessageHandlers
                         messageId = mid.GetString();
                     if (doc.RootElement.TryGetProperty("LockToken", out var lt) && lt.ValueKind == JsonValueKind.String)
                         lockToken = lt.GetString();
+                    if (doc.RootElement.TryGetProperty("SessionId", out var sid) && sid.ValueKind == JsonValueKind.String)
+                        sessionId = sid.GetString();
                     if (doc.RootElement.TryGetProperty("SequenceNumber", out var sn) && sn.ValueKind == JsonValueKind.Number)
                         sequenceNumber = sn.GetInt64().ToString(CultureInfo.InvariantCulture);
                     if (doc.RootElement.TryGetProperty("LockedUntilUtc", out var lu) && lu.ValueKind == JsonValueKind.String &&
@@ -317,7 +320,8 @@ internal static class ReceiveMessageHandlers
         var typeRegistry = ParseAttrTypeRegistry(response);
         var (msgAttrs, md5OfAttrs) = BuildMessageAttributes(response, typeRegistry, messageAttrFilter);
 
-        var systemAttrs = BuildSystemAttributes(enqueuedTime, deliveryCount, sequenceNumber, systemAttrFilter);
+        var systemAttrs = BuildSystemAttributes(enqueuedTime, deliveryCount, sequenceNumber,
+            messageGroupId: sessionId, messageDeduplicationId: messageId, systemAttrFilter);
 
         var handle = ReceiptHandle.Encode(messageId!, lockToken!, sequenceNumber ?? string.Empty, lockedUntil);
         return new ReceivedSqsMessage(
@@ -331,7 +335,8 @@ internal static class ReceiveMessageHandlers
     }
 
     private static IReadOnlyDictionary<string, string>? BuildSystemAttributes(
-        long? enqueuedTimeMillis, int? deliveryCount, string? sequenceNumber, HashSet<string>? filter)
+        long? enqueuedTimeMillis, int? deliveryCount, string? sequenceNumber,
+        string? messageGroupId, string? messageDeduplicationId, HashSet<string>? filter)
     {
         if (filter is null || filter.Count == 0) return null;
 
@@ -347,6 +352,10 @@ internal static class ReceiveMessageHandlers
             Add("ApproximateReceiveCount", deliveryCount.Value.ToString(CultureInfo.InvariantCulture));
         if (!string.IsNullOrEmpty(sequenceNumber))
             Add("SequenceNumber", sequenceNumber!);
+        if (!string.IsNullOrEmpty(messageGroupId))
+            Add("MessageGroupId", messageGroupId!);
+        if (!string.IsNullOrEmpty(messageDeduplicationId))
+            Add("MessageDeduplicationId", messageDeduplicationId!);
         return dict.Count == 0 ? null : dict;
     }
 

@@ -9,7 +9,7 @@ sub_features:
   - {name: "DelaySeconds (queue default)", status: unsupported, notes: "Rejected with InvalidAttributeName on update — SB has no equivalent field and the proxy has no durable per-queue metadata store yet. Tracked for the NFR phase. Per-message DelaySeconds on SendMessage still works."}
   - {name: "ReceiveMessageWaitTimeSeconds (queue default for long-poll)", status: unsupported, notes: "Same rationale as DelaySeconds — rejected with InvalidAttributeName until a durable metadata store lands. Per-call WaitTimeSeconds on ReceiveMessage is fully supported."}
   - {name: "ContentBasedDeduplication / RequiresDuplicateDetection toggle", status: implemented, notes: "Only on FIFO queues; SB rejects flipping the flag on Standard queues."}
-  - {name: "RedrivePolicy → ForwardDeadLetteredMessagesTo", status: unsupported, notes: "Deferred to Slice 5 (DLQ + FIFO)."}
+  - {name: "RedrivePolicy → ForwardDeadLetteredMessagesTo", status: implemented, notes: "Slice 5: JSON parsed and mapped to ForwardDeadLetteredMessagesTo + MaxDeliveryCount. SB read-merge-write replaces the whole queue entity so the patch is preserved across subsequent SetQueueAttributes calls."}
   - {name: "Policy / KmsMasterKeyId / KmsDataKeyReusePeriodSeconds / SqsManagedSseEnabled", status: unsupported, notes: "Returned as InvalidAttributeName for the unsupported attribute. SB has its own SAS/MSI/CMK story that does not translate 1:1."}
   - {name: "Read-merge-write semantics", status: implemented, notes: "SB management is whole-entity replace — the proxy first GETs the queue, overlays only the patched fields, then PUTs with If-Match: * to avoid clobbering immutable / unmanaged fields."}
 behavior_differences:

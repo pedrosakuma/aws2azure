@@ -1,5 +1,26 @@
 # sqs
 
+## AddPermission
+
+- **Status:** ⚪ stub
+- **Azure equivalent:** `No native Service Bus equivalent — validates queue existence and returns success.`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| Queue existence validation | ✅ implemented | Returns NonExistentQueue if the SB queue does not exist. |  |  |
+| Cross-account permission persistence | ⛔ unsupported |  | SQS resource-based access via SID/AccountId/Action does not map to SB. Authorization in SB is done via namespace-level Shared Access Signatures or AAD roles, neither of which the proxy provisions on a per-queue basis. |  |
+
+### Behaviour differences
+
+- The Permission payload is accepted and silently dropped; there is no AWS-style cross-account access control inside the proxy. Clients relying on AddPermission to grant access should configure SB SAS rules or Azure RBAC out of band, then map them to aws2azure access keys via the config file.
+- Returns 200 OK on any well-formed payload to maximise SDK compatibility — including for Actions that SQS itself rejects on standard queues. A future revision may tighten validation once the credential model exposes scoped keys.
+
+### References
+
+- <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_AddPermission.html>
+
 ## ChangeMessageVisibility
 
 - **Status:** 🟡 partial
@@ -65,7 +86,8 @@
 | Attribute.DelaySeconds | 🟡 partial | Accepted on CreateQueue; honoured per-message via ScheduledEnqueueTimeUtc in Slice 2. |  |  |
 | Attribute.ReceiveMessageWaitTimeSeconds | 🟡 partial | Accepted; long-polling emulation lands in Slice 4. |  |  |
 | Attribute.FifoQueue / ContentBasedDeduplication | 🟡 partial | Maps to RequiresSession + RequiresDuplicateDetection; full FIFO routing lands in Slice 5. |  |  |
-| Attribute.RedrivePolicy | ⛔ unsupported |  | DLQ wiring + auto-provisioning lands in Slice 5. |  |
+| Attribute.RedrivePolicy | ✅ implemented | Slice 5: SQS RedrivePolicy JSON ({deadLetterTargetArn,maxReceiveCount}) is parsed and mapped to SB ForwardDeadLetteredMessagesTo (queue-name segment of the ARN) + MaxDeliveryCount. maxReceiveCount is bounded to 1..1000 per SQS. The target DLQ must already exist (auto-provisioning is intentionally not implemented; client owns DLQ lifecycle). |  |  |
+| Attribute.RedriveAllowPolicy | ⛔ unsupported |  | Accepted silently; SB has no per-queue ACL controlling which sources may forward into a DLQ. |  |
 | Attribute.KmsMasterKeyId / KmsDataKeyReusePeriodSeconds / SqsManagedSseEnabled | ⛔ unsupported |  | Service Bus encryption is namespace-level (Microsoft-managed by default; customer-managed via Key Vault out of band). |  |
 | Attribute.Policy | ⛔ unsupported |  | Resource-based access policies are AWS IAM; no Service Bus equivalent on REST. |  |
 | tags | ⛔ unsupported |  | Service Bus REST has no per-queue tagging surface; tracked for Slice 5 namespace-metadata workaround. |  |
@@ -163,7 +185,8 @@
 | Attribute.ApproximateNumberOfMessagesNotVisible / Delayed | ⛔ unsupported |  | Service Bus exposes ActiveMessageCount / DeadLetterMessageCount via CountDetails — requires extra parsing planned for Slice 3+. |  |
 | Attribute.CreatedTimestamp / LastModifiedTimestamp | ⛔ unsupported |  | Available in the Atom envelope; the proxy reads them but does not surface them as SQS attributes yet. |  |
 | Attribute.QueueArn | ⛔ unsupported |  | aws2azure has no AWS account model; ARN synthesis is intentionally deferred. |  |
-| Attribute.RedrivePolicy / RedriveAllowPolicy | ⛔ unsupported |  | DLQ wiring lands in Slice 5. |  |
+| Attribute.RedrivePolicy | ✅ implemented | Slice 5: emitted as JSON {deadLetterTargetArn, maxReceiveCount} when the SB queue has ForwardDeadLetteredMessagesTo set. The ARN is synthetic (arn:aws-azure:sqs:azure-sb::{queue}) because the proxy has no AWS account/region model, but its shape parses cleanly with boto3 / AWSSDK clients. |  |  |
+| Attribute.RedriveAllowPolicy | ⛔ unsupported |  | SB has no per-queue ACL controlling which sources may forward into a DLQ. |  |
 | AttributeNames=All | ✅ implemented |  |  |  |
 
 ### Behaviour differences
@@ -195,6 +218,51 @@
 ### References
 
 - <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_GetQueueUrl.html>
+
+## ListDeadLetterSourceQueues
+
+- **Status:** ✅ implemented
+- **Azure equivalent:** `Page through SB management GET /$Resources/queues?api-version=2021-05 and filter entries whose ForwardDeadLetteredMessagesTo equals the requested queue.`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| Queue existence probe | ✅ implemented | SQS returns NonExistentQueue when the DLQ target itself is unknown; the proxy issues a GET /{queue} before paging. |  |  |
+| Page-walk + filter | ✅ implemented | SB management API caps a page at 100 entries; the proxy walks pages until a short page is observed, filtering each entry by ForwardDeadLetteredMessagesTo == target. |  |  |
+| MaxResults / NextToken pagination | ✅ implemented | MaxResults defaults to 1000 (SQS hard cap); NextToken is an opaque integer cursor into the SB queue listing (the proxy emits it only when there is at least one more SB queue past the consumed cursor). A request that hits MaxResults receives a NextToken that the caller can pass back to continue. |  |  |
+
+### Behaviour differences
+
+- Linear scan: the proxy issues one or more SB management GETs per ListDeadLetterSourceQueues call. On namespaces with thousands of queues this is O(N) and may be slow; the NFR phase should consider a cached reverse index.
+- Verified against in-process fakes; emulator-backed validation is blocked (SB emulator does not expose management REST). Real-Azure verification pending.
+- Verified against in-process fakes; emulator-backed validation is blocked (SB emulator does not expose management REST). Real-Azure verification pending.
+
+### References
+
+- <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListDeadLetterSourceQueues.html>
+- <https://learn.microsoft.com/rest/api/servicebus/list-queues>
+
+## ListQueueTags
+
+- **Status:** ⚪ stub
+- **Azure equivalent:** `No native Service Bus equivalent — returns an empty Tags map after validating queue existence.`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| Queue existence validation | ✅ implemented | Returns NonExistentQueue if the SB queue does not exist. |  |  |
+| Tags round-trip | ⛔ unsupported |  | SB queues have no per-queue tag surface in the REST control plane. The proxy returns an empty Tags map until a durable namespace-metadata store lands. |  |
+
+### Behaviour differences
+
+- Always returns an empty Tags map for any existing queue. Clients using tagging as a billing-allocation signal should expect zero data; an actual implementation requires a side-store (mirrors the S3 bucket-tagging trick from Phase 1 Slice 9).
+- Verified against in-process fakes; emulator-backed validation is blocked (SB emulator does not expose management REST).
+
+### References
+
+- <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListQueueTags.html>
 
 ## ListQueues
 
@@ -258,7 +326,7 @@
 | Long polling (WaitTimeSeconds 1..20) | ✅ implemented | Uses SB's native server-side wait on the first peek-lock call (timeout query parameter); subsequent calls inside the same batch fall back to timeout=0 to drain quickly, matching the SQS 'return as soon as one message is available or WaitTimeSeconds elapses' contract. |  |  |
 | MaxNumberOfMessages 1..10 | ✅ implemented | SB REST is single-message peek-lock; the proxy loops until count or queue empty. The first call blocks up to WaitTimeSeconds (long-poll); follow-up calls share a 5s aggregate budget added on top of WaitTimeSeconds. |  |  |
 | VisibilityTimeout parameter | 🟡 partial | Accepted and validated (0..43200) but ignored at SB level — see behavior_differences. |  |  |
-| AttributeNames / MessageAttributeNames filters | ✅ implemented | Includes 'All' shorthand. Returned system attributes: SentTimestamp, ApproximateReceiveCount, SequenceNumber. |  |  |
+| AttributeNames / MessageAttributeNames filters | ✅ implemented | Includes 'All' shorthand. Returned system attributes: SentTimestamp, ApproximateReceiveCount, SequenceNumber, MessageGroupId (FIFO, from BrokerProperties.SessionId), MessageDeduplicationId (FIFO, from BrokerProperties.MessageId). |  |  |
 | Receipt handle round-trip | ✅ implemented | Opaque length-prefixed base64 of (MessageId, LockToken, SequenceNumber, LockedUntilUtc) — self-contained for DeleteMessage / ChangeMessageVisibility, safe against caller-controlled metacharacters in MessageDeduplicationId. |  |  |
 | MessageAttributes (String/Number/Binary) round-trip | ✅ implemented | Reconstructed from Aws2Azure-AttrTypes side-channel header emitted by SendMessage. |  |  |
 | MD5OfBody / MD5OfMessageAttributes | ✅ implemented |  |  |  |
@@ -269,12 +337,34 @@
 - MaxNumberOfMessages > 1 is emulated by looping POST /messages/head, capped by ReceiveLoopBudget (5s) added on top of WaitTimeSeconds — the proxy may return fewer messages than requested even when the queue has more if the budget elapses.
 - ApproximateFirstReceiveTimestamp and SenderId are not surfaced (SB does not provide them).
 - Long polling uses SB's native server-side wait; if the first call returns empty after the wait the receive returns immediately with an empty list (no second wait). This matches SQS semantics.
-- Verified against in-process fakes; emulator-backed end-to-end validation lands with the SbEmulatorFixture build-out (tracked in p2-sb-emulator-fixture).
+- FIFO ordering gap: SQS FIFO guarantees strict per-MessageGroupId order on receive (one in-flight message per group at a time, others stay invisible until the in-flight one is deleted). SB only enforces ordering when the receiver opens a session-aware receive link (AMQP) and pins one consumer per session — semantics SB REST cannot express. As a result, ReceiveMessage on a .fifo queue surfaces MessageGroupId on each message (so application-side de-grouping still works) but does not block other messages of the same group from being delivered concurrently to different consumers. Tracked for Phase 2.5 (hand-rolled AMQP 1.0 lib).
+- MessageGroupId is surfaced from BrokerProperties.SessionId; MessageDeduplicationId from BrokerProperties.MessageId. Both only appear in the response when the AttributeNames filter requests them (or 'All').
+- Verified against in-process fakes; emulator-backed end-to-end validation is blocked (SB emulator does not expose runtime REST). Real-Azure validation pending — see ADR-0001.
 
 ### References
 
 - <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ReceiveMessage.html>
 - <https://learn.microsoft.com/rest/api/servicebus/peek-lock-message-non-destructive-read>
+
+## RemovePermission
+
+- **Status:** ⚪ stub
+- **Azure equivalent:** `No native Service Bus equivalent — validates queue existence and returns success.`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| Queue existence validation | ✅ implemented | Returns NonExistentQueue if the SB queue does not exist. |  |  |
+| Permission removal by Label | ⛔ unsupported |  | AddPermission never persists anything, so RemovePermission has nothing to remove. |  |
+
+### Behaviour differences
+
+- No-op: returns 200 OK regardless of the Label. See AddPermission gap doc for the underlying rationale.
+
+### References
+
+- <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_RemovePermission.html>
 
 ## SendMessage
 
@@ -298,6 +388,7 @@
 ### Behaviour differences
 
 - MessageId is synthesised proxy-side (SB does not echo the message id on the runtime POST). For FIFO the MessageDeduplicationId is reused as the MessageId; otherwise a fresh Guid is minted.
+- FIFO required-param validation (Slice 5): on a .fifo queue, MessageGroupId is required and the proxy returns MissingParameter when it is omitted. On standard queues, MessageGroupId and MessageDeduplicationId are rejected with InvalidParameterValue — matching SQS's per-attribute domain.
 - SQS attribute data types (String/Number/Binary/'String.Custom') are flattened to SB application-property strings. The proxy emits an Aws2Azure-AttrTypes side-channel header so the receive path can faithfully reconstruct the original SQS shape — without it, all attributes would surface as String on receive.
 - SQS's per-message cap is 1 MiB (1,048,576 bytes) — raised from 256 KiB in August 2025 — and includes the body plus every message attribute's name + data type + value bytes. The proxy enforces the same 1 MiB cap. The *effective* cap is also bounded by the backing Service Bus tier: SB Standard rejects anything over 256 KiB regardless, SB Premium honours up to 100 MiB. Per-queue MaximumMessageSize (1024..1048576) is recorded at CreateQueue time but not re-validated per send — SB itself rejects oversized payloads.
 - Payloads larger than 1 MiB must use the AWS Extended Client Library, which stores the body in S3 and embeds a JSON pointer in the SQS message. That pointer flows through this proxy unchanged: the receive side returns the same pointer, and the embedded S3 reference resolves against the proxy's S3 → Blob translation, so end-to-end large-message support works as long as the client uses the Extended Client and the same proxy fronts both S3 and SQS.
@@ -329,6 +420,7 @@
 ### Behaviour differences
 
 - SB's runtime batch send is atomic: the whole batch either succeeds or fails together (no AMQP-style per-message ack). The proxy preserves SQS's BatchResultErrorEntry shape: on a batch-level SB error every entry surfaces in Failed[] with the mapped SQS error code (SenderFault=true for client-side rejections, false for server-side). Genuine per-entry partial success (one bad entry mixed with good ones) is not available over SB REST.
+- FIFO required-param validation (Slice 5): on a .fifo queue, every entry must carry a MessageGroupId; the proxy rejects the whole batch with MissingParameter on the first violating entry (validation runs before the SB call). On standard queues, MessageGroupId / MessageDeduplicationId on any entry yields InvalidParameterValue.
 - Same attribute-flattening + Aws2Azure-AttrTypes side-channel as SendMessage. The 1 MiB aggregate cap is computed over body + attribute name/type/value bytes per the SQS quota docs (raised from 256 KiB in August 2025).
 - Payloads larger than 1 MiB require the AWS Extended Client Library (S3-backed pointer); the same caveat as SendMessage applies — the pointer flows through unchanged and resolves against the proxy's S3 → Blob translation.
 - Entry MessageId returned to the caller is proxy-synthesised (Guid, or MessageDeduplicationId for FIFO).
@@ -354,7 +446,7 @@
 | DelaySeconds (queue default) | ⛔ unsupported | Rejected with InvalidAttributeName on update — SB has no equivalent field and the proxy has no durable per-queue metadata store yet. Tracked for the NFR phase. Per-message DelaySeconds on SendMessage still works. |  |  |
 | ReceiveMessageWaitTimeSeconds (queue default for long-poll) | ⛔ unsupported | Same rationale as DelaySeconds — rejected with InvalidAttributeName until a durable metadata store lands. Per-call WaitTimeSeconds on ReceiveMessage is fully supported. |  |  |
 | ContentBasedDeduplication / RequiresDuplicateDetection toggle | ✅ implemented | Only on FIFO queues; SB rejects flipping the flag on Standard queues. |  |  |
-| RedrivePolicy → ForwardDeadLetteredMessagesTo | ⛔ unsupported | Deferred to Slice 5 (DLQ + FIFO). |  |  |
+| RedrivePolicy → ForwardDeadLetteredMessagesTo | ✅ implemented | Slice 5: JSON parsed and mapped to ForwardDeadLetteredMessagesTo + MaxDeliveryCount. SB read-merge-write replaces the whole queue entity so the patch is preserved across subsequent SetQueueAttributes calls. |  |  |
 | Policy / KmsMasterKeyId / KmsDataKeyReusePeriodSeconds / SqsManagedSseEnabled | ⛔ unsupported | Returned as InvalidAttributeName for the unsupported attribute. SB has its own SAS/MSI/CMK story that does not translate 1:1. |  |  |
 | Read-merge-write semantics | ✅ implemented | SB management is whole-entity replace — the proxy first GETs the queue, overlays only the patched fields, then PUTs with If-Match: * to avoid clobbering immutable / unmanaged fields. |  |  |
 
@@ -369,4 +461,45 @@
 
 - <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SetQueueAttributes.html>
 - <https://learn.microsoft.com/rest/api/servicebus/update-queue>
+
+## TagQueue
+
+- **Status:** ⚪ stub
+- **Azure equivalent:** `No native Service Bus equivalent — validates queue existence and returns success.`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| Queue existence validation | ✅ implemented | Returns NonExistentQueue if the SB queue does not exist. |  |  |
+| Tag persistence | ⛔ unsupported |  | Tags are accepted and dropped on the floor; subsequent ListQueueTags will not see them. |  |
+
+### Behaviour differences
+
+- Tags are not persisted: a TagQueue → ListQueueTags round-trip returns an empty Tags map. Clients depending on tags for cost-allocation or governance should be aware that aws2azure does not store them. A durable side-store is tracked for the NFR phase.
+- No throttling or per-resource tag-count cap is enforced (SQS allows up to 50 tags); since nothing is stored, the cap is moot.
+
+### References
+
+- <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_TagQueue.html>
+
+## UntagQueue
+
+- **Status:** ⚪ stub
+- **Azure equivalent:** `No native Service Bus equivalent — validates queue existence and returns success.`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| Queue existence validation | ✅ implemented | Returns NonExistentQueue if the SB queue does not exist. |  |  |
+| Tag removal | ⛔ unsupported |  | Tags are never persisted (see TagQueue gap doc), so removal is a no-op. |  |
+
+### Behaviour differences
+
+- No-op: returns 200 OK regardless of the TagKey list because no tags are stored.
+
+### References
+
+- <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_UntagQueue.html>
 

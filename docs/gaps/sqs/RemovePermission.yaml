@@ -1,0 +1,11 @@
+service: sqs
+operation: RemovePermission
+azure_equivalent: "No native Service Bus equivalent — validates queue existence and returns success."
+status: stub
+sub_features:
+  - {name: "Queue existence validation", status: implemented, notes: "Returns NonExistentQueue if the SB queue does not exist."}
+  - {name: "Permission removal by Label", status: unsupported, gap: "AddPermission never persists anything, so RemovePermission has nothing to remove."}
+behavior_differences:
+  - "No-op: returns 200 OK regardless of the Label. See AddPermission gap doc for the underlying rationale."
+references:
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_RemovePermission.html

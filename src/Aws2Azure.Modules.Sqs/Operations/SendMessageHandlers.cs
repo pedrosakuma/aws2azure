@@ -138,6 +138,28 @@ internal static class SendMessageHandlers
         TryGetParam(parsed, "MessageGroupId", out var groupId);
         TryGetParam(parsed, "MessageDeduplicationId", out var dedupId);
 
+        var isFifoQueue = queueName.EndsWith(".fifo", StringComparison.Ordinal);
+        if (isFifoQueue && string.IsNullOrEmpty(groupId))
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.MissingParameter("MessageGroupId")).ConfigureAwait(false);
+            return;
+        }
+        if (!isFifoQueue && !string.IsNullOrEmpty(groupId))
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.InvalidParameterValue("MessageGroupId",
+                    "MessageGroupId is only valid on FIFO queues.")).ConfigureAwait(false);
+            return;
+        }
+        if (!isFifoQueue && !string.IsNullOrEmpty(dedupId))
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.InvalidParameterValue("MessageDeduplicationId",
+                    "MessageDeduplicationId is only valid on FIFO queues.")).ConfigureAwait(false);
+            return;
+        }
+
         var brokerProps = BuildBrokerProperties(messageId: dedupId, sessionId: groupId, delaySeconds);
         var appHeaders = BuildAppPropertyHeaders(attrs);
 
@@ -155,8 +177,7 @@ internal static class SendMessageHandlers
         // from the dedup id when the queue is FIFO (where dedup actually
         // applies), else mint a fresh guid. SQS clients never reuse the
         // value other than to log it.
-        var isFifo = queueName.EndsWith(".fifo", StringComparison.Ordinal);
-        var messageId = (isFifo && !string.IsNullOrEmpty(dedupId)) ? dedupId : Guid.NewGuid().ToString();
+        var messageId = (isFifoQueue && !string.IsNullOrEmpty(dedupId)) ? dedupId : Guid.NewGuid().ToString();
         var md5OfBody = SqsMessageMd5.OfBody(bodyBytes);
         var md5OfAttrs = attrs.Count == 0 ? null : SqsMessageMd5.OfAttributes(attrs);
 
@@ -202,6 +223,7 @@ internal static class SendMessageHandlers
         // Validate ids: must be unique and follow the SQS character rules.
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var totalBytes = 0;
+        var batchIsFifoQueue = queueName.EndsWith(".fifo", StringComparison.Ordinal);
         foreach (var e in entries)
         {
             if (!IsValidBatchEntryId(e.Id))
@@ -214,6 +236,26 @@ internal static class SendMessageHandlers
             {
                 await WriteErrorAsync(context, parsed.Protocol,
                     SqsErrorMapping.BatchEntryIdsNotDistinct(e.Id)).ConfigureAwait(false);
+                return;
+            }
+            if (batchIsFifoQueue && string.IsNullOrEmpty(e.GroupId))
+            {
+                await WriteErrorAsync(context, parsed.Protocol,
+                    SqsErrorMapping.MissingParameter("MessageGroupId")).ConfigureAwait(false);
+                return;
+            }
+            if (!batchIsFifoQueue && !string.IsNullOrEmpty(e.GroupId))
+            {
+                await WriteErrorAsync(context, parsed.Protocol,
+                    SqsErrorMapping.InvalidParameterValue("MessageGroupId",
+                        "MessageGroupId is only valid on FIFO queues.")).ConfigureAwait(false);
+                return;
+            }
+            if (!batchIsFifoQueue && !string.IsNullOrEmpty(e.DeduplicationId))
+            {
+                await WriteErrorAsync(context, parsed.Protocol,
+                    SqsErrorMapping.InvalidParameterValue("MessageDeduplicationId",
+                        "MessageDeduplicationId is only valid on FIFO queues.")).ConfigureAwait(false);
                 return;
             }
             totalBytes += ComputeWireSize(e.BodyBytes.Length, e.Attributes);
@@ -247,11 +289,10 @@ internal static class SendMessageHandlers
             return;
         }
 
-        var batchIsFifo = queueName.EndsWith(".fifo", StringComparison.Ordinal);
         var successful = new List<SendMessageBatchEntryResult>(entries.Count);
         foreach (var e in entries)
         {
-            var messageId = (batchIsFifo && !string.IsNullOrEmpty(e.DeduplicationId))
+            var messageId = (batchIsFifoQueue && !string.IsNullOrEmpty(e.DeduplicationId))
                 ? e.DeduplicationId
                 : Guid.NewGuid().ToString();
             var md5OfBody = SqsMessageMd5.OfBody(e.BodyBytes);

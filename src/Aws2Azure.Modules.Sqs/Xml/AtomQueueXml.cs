@@ -198,6 +198,21 @@ internal static class AtomQueueXmlReader
                     p.RequiresDuplicateDetection = ReadBool(reader);
                     advanced = true;
                     break;
+                case "MaxDeliveryCount":
+                {
+                    var raw = reader.ReadElementContentAsString();
+                    if (int.TryParse(raw, System.Globalization.NumberStyles.Integer,
+                        System.Globalization.CultureInfo.InvariantCulture, out var mdc))
+                    {
+                        p.MaxDeliveryCount = mdc;
+                    }
+                    advanced = true;
+                    break;
+                }
+                case "ForwardDeadLetteredMessagesTo":
+                    p.ForwardDeadLetteredMessagesTo = reader.ReadElementContentAsString();
+                    advanced = true;
+                    break;
                 case "CreatedAt":
                     p.CreatedAt = ReadDate(reader);
                     advanced = true;
@@ -310,6 +325,16 @@ internal static class AtomQueueXmlWriter
                 var kb = (long)Math.Ceiling(mms / 1024.0);
                 w.WriteElementString("MaxMessageSizeInKilobytes", AtomQueueXmlReader.SbNs,
                     kb.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+            if (props.MaxDeliveryCount is { } mdc)
+            {
+                w.WriteElementString("MaxDeliveryCount", AtomQueueXmlReader.SbNs,
+                    mdc.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+            if (!string.IsNullOrEmpty(props.ForwardDeadLetteredMessagesTo))
+            {
+                w.WriteElementString("ForwardDeadLetteredMessagesTo", AtomQueueXmlReader.SbNs,
+                    props.ForwardDeadLetteredMessagesTo);
             }
             w.WriteEndElement(); // QueueDescription
             w.WriteEndElement(); // content

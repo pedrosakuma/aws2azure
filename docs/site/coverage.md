@@ -89,6 +89,7 @@
 | sns | [Publish](sns.md#publish) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
 | sns | [Subscribe](sns.md#subscribe) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
 | sns | [Unsubscribe](sns.md#unsubscribe) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
+| sqs | [AddPermission](sqs.md#addpermission) | ⚪ stub | `No native Service Bus equivalent — validates queue existence and returns success.` |
 | sqs | [ChangeMessageVisibility](sqs.md#changemessagevisibility) | 🟡 partial | `Azure Service Bus queue runtime REST API — POST /{queue}/messages/{messageId}/{lockToken}?api-version=2021-05 (renew-lock)` |
 | sqs | [ChangeMessageVisibilityBatch](sqs.md#changemessagevisibilitybatch) | 🟡 partial | `Azure Service Bus queue runtime REST API — N parallel POST /{queue}/messages/{messageId}/{lockToken}?action=renewlock&api-version=2021-05` |
 | sqs | [CreateQueue](sqs.md#createqueue) | ✅ implemented | `PUT https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (Atom QueueDescription)` |
@@ -97,9 +98,14 @@
 | sqs | [DeleteQueue](sqs.md#deletequeue) | ✅ implemented | `DELETE https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05` |
 | sqs | [GetQueueAttributes](sqs.md#getqueueattributes) | 🟡 partial | `GET https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (Atom QueueDescription)` |
 | sqs | [GetQueueUrl](sqs.md#getqueueurl) | ✅ implemented | `GET https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (existence probe)` |
+| sqs | [ListDeadLetterSourceQueues](sqs.md#listdeadlettersourcequeues) | ✅ implemented | `Page through SB management GET /$Resources/queues?api-version=2021-05 and filter entries whose ForwardDeadLetteredMessagesTo equals the requested queue.` |
+| sqs | [ListQueueTags](sqs.md#listqueuetags) | ⚪ stub | `No native Service Bus equivalent — returns an empty Tags map after validating queue existence.` |
 | sqs | [ListQueues](sqs.md#listqueues) | ✅ implemented | `GET https://{namespace}.servicebus.windows.net/$Resources/queues?api-version=2021-05&$skip=N&$top=M` |
 | sqs | [PurgeQueue](sqs.md#purgequeue) | 🟡 partial | `Azure Service Bus queue runtime REST API — emulated via drain-loop of POST /{queue}/messages/head + DELETE /{queue}/messages/{id}/{lockToken}` |
 | sqs | [ReceiveMessage](sqs.md#receivemessage) | ✅ implemented | `Azure Service Bus queue runtime REST API — POST /{queue}/messages/head?timeout={waitSeconds}&api-version=2021-05 (peek-lock semantics)` |
+| sqs | [RemovePermission](sqs.md#removepermission) | ⚪ stub | `No native Service Bus equivalent — validates queue existence and returns success.` |
 | sqs | [SendMessage](sqs.md#sendmessage) | ✅ implemented | `Azure Service Bus queue runtime REST API — POST /{queue}/messages?api-version=2021-05` |
 | sqs | [SendMessageBatch](sqs.md#sendmessagebatch) | ✅ implemented | `Azure Service Bus queue runtime REST API — POST /{queue}/messages with Content-Type: application/vnd.microsoft.servicebus.json` |
 | sqs | [SetQueueAttributes](sqs.md#setqueueattributes) | 🟡 partial | `Azure Service Bus management REST API — PUT /{queue}?api-version=2021-05 with If-Match: * (whole-entity replace)` |
+| sqs | [TagQueue](sqs.md#tagqueue) | ⚪ stub | `No native Service Bus equivalent — validates queue existence and returns success.` |
+| sqs | [UntagQueue](sqs.md#untagqueue) | ⚪ stub | `No native Service Bus equivalent — validates queue existence and returns success.` |

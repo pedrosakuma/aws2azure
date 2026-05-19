@@ -241,6 +241,113 @@ internal static class SqsResponseWriter
             jsonProps: Array.Empty<(string, object)>(),
             xmlContent: null);
 
+    public static Task WriteTagQueueAsync(HttpContext ctx, SqsWireProtocol protocol) =>
+        WriteAsync(ctx, protocol,
+            xmlEnvelope: "TagQueueResponse",
+            xmlResult: null,
+            jsonProps: Array.Empty<(string, object)>(),
+            xmlContent: null);
+
+    public static Task WriteUntagQueueAsync(HttpContext ctx, SqsWireProtocol protocol) =>
+        WriteAsync(ctx, protocol,
+            xmlEnvelope: "UntagQueueResponse",
+            xmlResult: null,
+            jsonProps: Array.Empty<(string, object)>(),
+            xmlContent: null);
+
+    public static Task WriteAddPermissionAsync(HttpContext ctx, SqsWireProtocol protocol) =>
+        WriteAsync(ctx, protocol,
+            xmlEnvelope: "AddPermissionResponse",
+            xmlResult: null,
+            jsonProps: Array.Empty<(string, object)>(),
+            xmlContent: null);
+
+    public static Task WriteRemovePermissionAsync(HttpContext ctx, SqsWireProtocol protocol) =>
+        WriteAsync(ctx, protocol,
+            xmlEnvelope: "RemovePermissionResponse",
+            xmlResult: null,
+            jsonProps: Array.Empty<(string, object)>(),
+            xmlContent: null);
+
+    /// <summary>
+    /// Writes a ListQueueTags response. Service Bus has no native tag
+    /// surface, so the proxy returns an empty Tags map until a metadata
+    /// store lands.
+    /// </summary>
+    public static Task WriteListQueueTagsAsync(
+        HttpContext ctx, SqsWireProtocol protocol, IReadOnlyDictionary<string, string> tags)
+    {
+        if (protocol == SqsWireProtocol.AwsJson)
+        {
+            var json = JsonSerializer.Serialize(
+                new ListQueueTagsPayload(tags),
+                SqsListJsonContext.Default.ListQueueTagsPayload);
+            return WriteJsonAsync(ctx, json);
+        }
+
+        var sb = new StringBuilder();
+        using (var sw = new Utf8StringWriter(sb))
+        using (var w = XmlWriter.Create(sw, XmlSettings))
+        {
+            w.WriteStartDocument();
+            w.WriteStartElement("ListQueueTagsResponse", QueryNamespace);
+            w.WriteStartElement("ListQueueTagsResult", QueryNamespace);
+            foreach (var kv in tags)
+            {
+                w.WriteStartElement("Tag", QueryNamespace);
+                w.WriteElementString("Key", QueryNamespace, kv.Key);
+                w.WriteElementString("Value", QueryNamespace, kv.Value);
+                w.WriteEndElement();
+            }
+            w.WriteEndElement();
+            WriteResponseMetadata(w, ctx);
+            w.WriteEndElement();
+            w.WriteEndDocument();
+            w.Flush();
+        }
+        return WriteXmlAsync(ctx, sb.ToString());
+    }
+
+    /// <summary>
+    /// Writes a ListDeadLetterSourceQueues response: a flat list of queue
+    /// URLs whose RedrivePolicy targets the requested queue, plus an
+    /// optional NextToken cursor when the result set was truncated.
+    /// </summary>
+    public static Task WriteListDeadLetterSourceQueuesAsync(
+        HttpContext ctx, SqsWireProtocol protocol, IReadOnlyList<string> queueUrls, string? nextToken)
+    {
+        if (protocol == SqsWireProtocol.AwsJson)
+        {
+            var json = JsonSerializer.Serialize(
+                new ListDeadLetterSourceQueuesPayload(queueUrls, nextToken),
+                SqsListJsonContext.Default.ListDeadLetterSourceQueuesPayload);
+            return WriteJsonAsync(ctx, json);
+        }
+
+        var sb = new StringBuilder();
+        using (var sw = new Utf8StringWriter(sb))
+        using (var w = XmlWriter.Create(sw, XmlSettings))
+        {
+            w.WriteStartDocument();
+            w.WriteStartElement("ListDeadLetterSourceQueuesResponse", QueryNamespace);
+            w.WriteStartElement("ListDeadLetterSourceQueuesResult", QueryNamespace);
+            foreach (var url in queueUrls)
+            {
+                w.WriteElementString("QueueUrl", QueryNamespace, url);
+            }
+            if (!string.IsNullOrEmpty(nextToken))
+            {
+                w.WriteElementString("NextToken", QueryNamespace, nextToken);
+            }
+            w.WriteEndElement();
+            WriteResponseMetadata(w, ctx);
+            w.WriteEndElement();
+            w.WriteEndDocument();
+            w.Flush();
+        }
+        return WriteXmlAsync(ctx, sb.ToString());
+    }
+
     /// <summary>
     /// Writes a DeleteMessageBatch response. Mirrors SendMessageBatch shape:
     /// per-entry success returns just the Id; failures carry SQS error code /
@@ -538,12 +645,21 @@ internal sealed record BatchActionPayload(
     [property: JsonPropertyName("Successful")] IReadOnlyList<BatchEntryOk> Successful,
     [property: JsonPropertyName("Failed")] IReadOnlyList<BatchEntryError> Failed);
 
+internal sealed record ListQueueTagsPayload(
+    [property: JsonPropertyName("Tags")] IReadOnlyDictionary<string, string> Tags);
+
+internal sealed record ListDeadLetterSourceQueuesPayload(
+    [property: JsonPropertyName("queueUrls")] IReadOnlyList<string> QueueUrls,
+    [property: JsonPropertyName("NextToken")] string? NextToken);
+
 [JsonSerializable(typeof(ListQueuesPayload))]
 [JsonSerializable(typeof(GetQueueAttributesPayload))]
 [JsonSerializable(typeof(SendMessagePayload))]
 [JsonSerializable(typeof(SendMessageBatchPayload))]
 [JsonSerializable(typeof(ReceiveMessagePayload))]
 [JsonSerializable(typeof(BatchActionPayload))]
+[JsonSerializable(typeof(ListQueueTagsPayload))]
+[JsonSerializable(typeof(ListDeadLetterSourceQueuesPayload))]
 internal sealed partial class SqsListJsonContext : JsonSerializerContext
 {
 }

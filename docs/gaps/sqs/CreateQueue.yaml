@@ -22,8 +22,11 @@ sub_features:
     status: partial
     notes: "Maps to RequiresSession + RequiresDuplicateDetection; full FIFO routing lands in Slice 5."
   - name: Attribute.RedrivePolicy
+    status: implemented
+    notes: "Slice 5: SQS RedrivePolicy JSON ({deadLetterTargetArn,maxReceiveCount}) is parsed and mapped to SB ForwardDeadLetteredMessagesTo (queue-name segment of the ARN) + MaxDeliveryCount. maxReceiveCount is bounded to 1..1000 per SQS. The target DLQ must already exist (auto-provisioning is intentionally not implemented; client owns DLQ lifecycle)."
+  - name: Attribute.RedriveAllowPolicy
     status: unsupported
-    gap: "DLQ wiring + auto-provisioning lands in Slice 5."
+    gap: "Accepted silently; SB has no per-queue ACL controlling which sources may forward into a DLQ."
   - name: Attribute.KmsMasterKeyId / KmsDataKeyReusePeriodSeconds / SqsManagedSseEnabled
     status: unsupported
     gap: "Service Bus encryption is namespace-level (Microsoft-managed by default; customer-managed via Key Vault out of band)."
