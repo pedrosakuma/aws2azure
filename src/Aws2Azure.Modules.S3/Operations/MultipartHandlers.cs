@@ -38,6 +38,7 @@ internal static class MultipartHandlers
         {
             S3Operation.CreateMultipartUpload => CreateAsync(context, blob, route.Bucket!, route.Key!, ct),
             S3Operation.UploadPart            => UploadPartAsync(context, blob, route.Bucket!, route.Key!, ct),
+            S3Operation.UploadPartCopy        => UploadPartCopyAsync(context, blob, route.Bucket!, route.Key!, ct),
             S3Operation.CompleteMultipartUpload => CompleteAsync(context, blob, route.Bucket!, route.Key!, ct),
             S3Operation.AbortMultipartUpload  => AbortAsync(context, blob, route.Bucket!, route.Key!, ct),
             S3Operation.ListParts             => ListPartsAsync(context, blob, route.Bucket!, route.Key!, ct),
@@ -145,6 +146,197 @@ internal static class MultipartHandlers
         ctx.Response.StatusCode = StatusCodes.Status200OK;
         ctx.Response.Headers["ETag"] = etag;
         ctx.Response.ContentLength = 0;
+    }
+
+    // ---------- UploadPartCopy ----------
+
+    /// <summary>
+    /// PUT /{b}/{k}?uploadId=X&amp;partNumber=N with <c>x-amz-copy-source</c>
+    /// header → Azure <c>Put Block From URL</c>. The source must live in the
+    /// same Azure storage account; we authenticate Azure's source fetch via
+    /// <c>x-ms-copy-source-authorization</c> SharedKey so the source blob
+    /// does not need to be public or pre-signed. <c>x-amz-copy-source-range</c>
+    /// (S3) is forwarded as <c>x-ms-source-range</c> (Azure) and folded into
+    /// the source SharedKey signature.
+    /// </summary>
+    private static async Task UploadPartCopyAsync(HttpContext ctx, BlobClient blob, string destBucket, string destKey, CancellationToken ct)
+    {
+        var uploadId = ctx.Request.Query["uploadId"].ToString();
+        var partRaw  = ctx.Request.Query["partNumber"].ToString();
+        if (!int.TryParse(partRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var partNumber) ||
+            partNumber is < 1 or > 10000)
+        {
+            await WriteErrorAsync(ctx, S3ErrorMapping.InvalidArgument(
+                "partNumber must be an integer in [1, 10000].")).ConfigureAwait(false);
+            return;
+        }
+
+        var token = UploadIdCodec.TryDecode(uploadId, blob.AccountName, destBucket, destKey, blob.AccountKeyBytes);
+        if (token is null)
+        {
+            await WriteErrorAsync(ctx, NoSuchUpload()).ConfigureAwait(false);
+            return;
+        }
+
+        var rawSource = ctx.Request.Headers.TryGetValue("x-amz-copy-source", out var sourceValues) && sourceValues.Count > 0
+            ? sourceValues[0]
+            : null;
+        var parsed = CopySourceParser.Parse(rawSource);
+        if (!parsed.Success)
+        {
+            await WriteErrorAsync(ctx, S3ErrorMapping.InvalidArgument(parsed.Error!)).ConfigureAwait(false);
+            return;
+        }
+        var sourceBucket = parsed.Bucket!;
+        var sourceKey = parsed.Key!;
+
+        if (!BlobClient.IsValidContainerName(sourceBucket))
+        {
+            await WriteErrorAsync(ctx,
+                new S3ErrorMapping.Mapping(400, "InvalidBucketName",
+                    "The specified copy-source bucket is not valid.")).ConfigureAwait(false);
+            return;
+        }
+        if (!S3ObjectKey.IsValid(sourceKey))
+        {
+            await WriteErrorAsync(ctx,
+                S3ErrorMapping.InvalidArgument("The specified copy-source object key is not valid.")).ConfigureAwait(false);
+            return;
+        }
+
+        // S3 forbids targeting an in-flight upload's part at the same key as
+        // the source — Azure would happily Put Block From URL onto the
+        // source's own uncommitted-block list, which the eventual Complete
+        // would silently reconcile against the live blob. Rejecting up-front
+        // matches S3's "InvalidRequest" behaviour for the same scenario.
+        if (string.Equals(sourceBucket, destBucket, StringComparison.Ordinal)
+            && string.Equals(sourceKey, destKey, StringComparison.Ordinal))
+        {
+            await WriteErrorAsync(ctx, new S3ErrorMapping.Mapping(400, "InvalidRequest",
+                "The copy source and destination of an UploadPartCopy must differ.")).ConfigureAwait(false);
+            return;
+        }
+
+        var rangeHeader = NormalizeCopySourceRange(ctx.Request);
+        if (rangeHeader.Error is { } rangeErr)
+        {
+            await WriteErrorAsync(ctx, rangeErr).ConfigureAwait(false);
+            return;
+        }
+
+        var sourceUri = blob.BuildSourceReadSasUri(sourceBucket, sourceKey, TimeSpan.FromHours(1));
+        var blockId = UploadIdCodec.BlockId(token.Value.NonceHex, partNumber);
+        var destUri = blob.BuildBlobUri(destBucket, destKey, "?comp=block&blockid=" + Uri.EscapeDataString(blockId));
+
+        using var azureReq = new HttpRequestMessage(HttpMethod.Put, destUri)
+        {
+            Content = new ByteArrayContent(Array.Empty<byte>()),
+        };
+        azureReq.Content.Headers.ContentLength = 0;
+        azureReq.Headers.TryAddWithoutValidation("x-ms-copy-source", sourceUri.AbsoluteUri);
+        if (rangeHeader.Value is { } range)
+        {
+            azureReq.Headers.TryAddWithoutValidation("x-ms-source-range", range);
+        }
+
+        // Source-conditional headers (S3 → Azure rename). Evaluated by
+        // Azure on the source fetch and surfaced via 412 PreconditionFailed.
+        ForwardSourceConditional(ctx.Request, azureReq, "x-amz-copy-source-if-match",            "x-ms-source-if-match");
+        ForwardSourceConditional(ctx.Request, azureReq, "x-amz-copy-source-if-none-match",       "x-ms-source-if-none-match");
+        ForwardSourceConditional(ctx.Request, azureReq, "x-amz-copy-source-if-modified-since",   "x-ms-source-if-modified-since");
+        ForwardSourceConditional(ctx.Request, azureReq, "x-amz-copy-source-if-unmodified-since", "x-ms-source-if-unmodified-since");
+
+        using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
+        if (!azureResp.IsSuccessStatusCode)
+        {
+            // Distinguish the source-side 404 (NoSuchKey) from the
+            // destination-side 404 (NoSuchBucket); both surface as 404 from
+            // Azure with x-ms-error-code on the response.
+            await WriteErrorAsync(ctx, S3ErrorMapping.FromAzure(azureResp, S3Operation.UploadPartCopy)).ConfigureAwait(false);
+            return;
+        }
+
+        var lastModified = azureResp.Content.Headers.LastModified ?? DateTimeOffset.UtcNow;
+
+        // S3 clients echo this ETag back in CompleteMultipartUpload. Azure's
+        // Put Block From URL only returns Content-MD5 when the request
+        // supplied x-ms-source-content-md5; in the more common case the
+        // response carries x-ms-content-crc64 instead, with no ETag suitable
+        // for S3. To keep a stable, S3-shaped ETag — and to match what
+        // ListParts synthesises for the same (uploadId, partNumber) — we
+        // derive the part ETag from the block name. The proxy's Complete
+        // path rebuilds block IDs from (nonce, partNumber) and ignores the
+        // echoed ETag, so this synthetic value is safe to round-trip.
+        string etag;
+        if (azureResp.Content.Headers.ContentMD5 is { } md5Bytes)
+        {
+            etag = "\"" + Convert.ToHexString(md5Bytes).ToLowerInvariant() + "\"";
+        }
+        else
+        {
+            etag = "\"" + SyntheticPartEtag(blockId) + "\"";
+        }
+
+        var xml = S3XmlWriter.CopyPartResult(lastModified, etag);
+        await WriteXmlAsync(ctx, StatusCodes.Status200OK, xml, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Parses optional <c>x-amz-copy-source-range</c> header (format
+    /// <c>bytes=start-end</c>; both endpoints inclusive). Returns the
+    /// canonical <c>bytes=…</c> value to forward as <c>x-ms-source-range</c>,
+    /// an error mapping if the header is malformed, or both null when the
+    /// header is absent (= whole-blob copy).
+    /// </summary>
+    private static (string? Value, S3ErrorMapping.Mapping? Error) NormalizeCopySourceRange(HttpRequest request)
+    {
+        if (!request.Headers.TryGetValue("x-amz-copy-source-range", out var values) || values.Count == 0)
+        {
+            return (null, null);
+        }
+        var raw = values[0];
+        if (string.IsNullOrEmpty(raw))
+        {
+            return (null, null);
+        }
+        const string Prefix = "bytes=";
+        if (!raw.StartsWith(Prefix, StringComparison.Ordinal))
+        {
+            return (null, S3ErrorMapping.InvalidArgument(
+                "x-amz-copy-source-range must be of the form 'bytes=start-end'."));
+        }
+        var spec = raw.AsSpan(Prefix.Length);
+        var dash = spec.IndexOf('-');
+        if (dash <= 0 || dash == spec.Length - 1)
+        {
+            return (null, S3ErrorMapping.InvalidArgument(
+                "x-amz-copy-source-range must be of the form 'bytes=start-end'."));
+        }
+        if (!long.TryParse(spec[..dash], NumberStyles.Integer, CultureInfo.InvariantCulture, out var start) ||
+            !long.TryParse(spec[(dash + 1)..], NumberStyles.Integer, CultureInfo.InvariantCulture, out var end) ||
+            start < 0 || end < start)
+        {
+            return (null, S3ErrorMapping.InvalidArgument(
+                "x-amz-copy-source-range must be of the form 'bytes=start-end' with end >= start >= 0."));
+        }
+        // Azure's x-ms-source-range uses the same RFC-7233 'bytes=' syntax,
+        // so re-emit the canonical form (drops any whitespace S3 tolerates).
+        return ("bytes=" + start.ToString(CultureInfo.InvariantCulture)
+            + "-" + end.ToString(CultureInfo.InvariantCulture), null);
+    }
+
+    private static void ForwardSourceConditional(HttpRequest source, HttpRequestMessage target, string s3Header, string azureHeader)
+    {
+        if (source.Headers.TryGetValue(s3Header, out var values))
+        {
+            foreach (var v in values)
+            {
+                if (!string.IsNullOrEmpty(v))
+                {
+                    target.Headers.TryAddWithoutValidation(azureHeader, v);
+                }
+            }
+        }
     }
 
     // ---------- CompleteMultipartUpload ----------

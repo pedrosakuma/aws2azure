@@ -30,10 +30,15 @@ internal static class S3ErrorMapping
             (404, "BlobNotFound") =>
                 new Mapping(404, "NoSuchKey", "The specified key does not exist."),
 
-            // Azure surfaces "source not reachable" during a Copy Blob with
-            // CannotVerifyCopySource; from S3's perspective that's a source
-            // bucket/key the caller doesn't have access to or doesn't exist.
-            (404, "CannotVerifyCopySource") =>
+            // Azure surfaces "source not reachable" during a Copy Blob /
+            // Put Block From URL with CannotVerifyCopySource; from S3's
+            // perspective that's a source bucket/key the caller doesn't
+            // have access to or doesn't exist. Azure documents the HTTP
+            // status as 404 for Copy Blob and 500 for some Put-from-URL
+            // paths, so we match by error code only and surface NoSuchKey
+            // either way (a 500 InternalError would otherwise look like a
+            // retryable server fault).
+            (_, "CannotVerifyCopySource") =>
                 new Mapping(404, "NoSuchKey",
                     "The specified copy source does not exist or is not accessible."),
 

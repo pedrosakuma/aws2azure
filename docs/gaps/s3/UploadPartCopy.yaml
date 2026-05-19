@@ -1,0 +1,31 @@
+service: s3
+operation: UploadPartCopy
+azure_equivalent: "Put Block From URL (?comp=block&blockid=…)"
+status: implemented
+sub_features:
+  - name: same-account-copy
+    status: implemented
+    note: "Source is referenced via a short-lived (1 hour) read-only blob service SAS minted with the destination account's shared key; no separate source credentials, public access, or trust relationship is needed. Azurite does not yet honour x-ms-copy-source-authorization SharedKey, so SAS is used uniformly."
+  - name: copy-source-range
+    status: implemented
+    note: "x-amz-copy-source-range 'bytes=start-end' is parsed, canonicalised, and forwarded as x-ms-source-range on the destination request."
+  - name: cross-account-copy
+    status: unsupported
+    note: "The proxy only models a single Azure storage account per S3 access key. Cross-account UploadPartCopy would require a source SAS minted with a different account's key or a federated identity story."
+  - name: source-conditional-headers
+    status: implemented
+    note: "x-amz-copy-source-if-{match,none-match,modified-since,unmodified-since} forward to x-ms-source-if-*; their evaluation is performed by Azure on the source fetch and surfaced via 412 PreconditionFailed."
+  - name: versionId
+    status: unsupported
+    note: "x-amz-copy-source with ?versionId=… is rejected; the proxy has no versioning story."
+  - name: requester-pays
+    status: unsupported
+behavior_differences:
+  - "Per-part ETag is synthesised from the (uploadId, partNumber) pair (same algorithm ListParts uses), NOT the MD5 of the copied bytes. Azure's Put Block From URL response only includes Content-MD5 when the request supplied x-ms-source-content-md5; otherwise it returns x-ms-content-crc64, which has no S3 equivalent. The synthetic ETag is stable per (uploadId, partNumber) and is what the proxy expects to see echoed back in CompleteMultipartUpload — but it is NOT a content hash and must not be compared with the per-part ETag returned by a non-copy UploadPart."
+  - "UploadPartCopy with source==destination (same bucket+key) is rejected with InvalidRequest. Azure would otherwise stage the new block on the source blob itself, letting the eventual CompleteMultipartUpload silently reconcile against a moving target."
+  - "Source URL SAS expires 1 hour after the UploadPartCopy request; a very large source copied over a very slow link could theoretically race the expiry. In practice Azure's intra-account server-side fetch is fast enough that this is academic."
+  - "Integration tests against Azurite skip the end-to-end happy-path scenarios because Azurite does not implement Put Block From URL (responds 501 InternalError). The implementation is verified against real Azure Blob Storage in the cloud-integration nightly."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPartCopy.html
+  - https://learn.microsoft.com/rest/api/storageservices/put-block-from-url
+  - https://learn.microsoft.com/rest/api/storageservices/create-service-sas

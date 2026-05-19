@@ -51,7 +51,7 @@ public static class S3Router
             // are first-class operations layered on the same path. Classify
             // them before the catch-all subresource gate so they reach the
             // multipart handler instead of returning Unsupported.
-            if (IsMultipartObjectRequest(method, request.Query, out var multipartOp))
+            if (IsMultipartObjectRequest(method, request, out var multipartOp))
             {
                 return new S3RouteResult(multipartOp, bucket, key, virtualHosted);
             }
@@ -108,13 +108,16 @@ public static class S3Router
     /// S3 multipart upload subresources hang off the object path with their
     /// own verb mapping:
     ///   POST /{b}/{k}?uploads                       → CreateMultipartUpload
-    ///   PUT  /{b}/{k}?uploadId=X&amp;partNumber=N   → UploadPart
+    ///   PUT  /{b}/{k}?uploadId=X&amp;partNumber=N   → UploadPart (or UploadPartCopy
+    ///                                                 when x-amz-copy-source is set)
     ///   POST /{b}/{k}?uploadId=X                    → CompleteMultipartUpload
     ///   DELETE /{b}/{k}?uploadId=X                  → AbortMultipartUpload
+    ///   GET  /{b}/{k}?uploadId=X                    → ListParts
     /// </summary>
-    private static bool IsMultipartObjectRequest(string method, IQueryCollection query, out S3Operation op)
+    private static bool IsMultipartObjectRequest(string method, HttpRequest request, out S3Operation op)
     {
         op = S3Operation.Unknown;
+        var query = request.Query;
         var hasUploads = query.ContainsKey("uploads");
         var hasUploadId = query.ContainsKey("uploadId");
         var hasPartNumber = query.ContainsKey("partNumber");
@@ -131,7 +134,9 @@ public static class S3Router
         }
         if (hasUploadId && hasPartNumber && method == HttpMethods.Put)
         {
-            op = S3Operation.UploadPart;
+            op = HasCopySourceHeader(request)
+                ? S3Operation.UploadPartCopy
+                : S3Operation.UploadPart;
             return true;
         }
         if (hasUploadId && !hasPartNumber && method == HttpMethods.Post)
@@ -181,17 +186,28 @@ public static class S3Router
     /// </summary>
     private static S3Operation ClassifyPutObject(HttpRequest request)
     {
-        if (request.Headers.TryGetValue("x-amz-copy-source", out var values))
+        return HasCopySourceHeader(request) ? S3Operation.CopyObject : S3Operation.PutObject;
+    }
+
+    /// <summary>
+    /// True when the request carries a non-empty <c>x-amz-copy-source</c>
+    /// header. Used to disambiguate PUT-on-object (PutObject vs CopyObject)
+    /// and PUT-on-multipart-part (UploadPart vs UploadPartCopy).
+    /// </summary>
+    private static bool HasCopySourceHeader(HttpRequest request)
+    {
+        if (!request.Headers.TryGetValue("x-amz-copy-source", out var values))
         {
-            foreach (var v in values)
+            return false;
+        }
+        foreach (var v in values)
+        {
+            if (!string.IsNullOrEmpty(v))
             {
-                if (!string.IsNullOrEmpty(v))
-                {
-                    return S3Operation.CopyObject;
-                }
+                return true;
             }
         }
-        return S3Operation.PutObject;
+        return false;
     }
 
     // Well-known S3 object subresources. Membership is checked case-insensitively.

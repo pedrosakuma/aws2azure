@@ -102,6 +102,7 @@ public sealed class S3ServiceModule : IServiceModule
         }
         else if (route.Operation is S3Operation.CreateMultipartUpload
             or S3Operation.UploadPart
+            or S3Operation.UploadPartCopy
             or S3Operation.CompleteMultipartUpload
             or S3Operation.AbortMultipartUpload
             or S3Operation.ListParts

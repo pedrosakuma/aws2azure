@@ -24,6 +24,11 @@ internal sealed partial class BlobClient
     private readonly string _accountName;
     private readonly byte[] _accountKeyBytes;
 
+    /// <summary>Azure Storage REST API version sent on every blob request
+    /// (matches the version used by <see cref="SendBlobRequestAsync"/> and
+    /// the private <c>SendAsync</c>).</summary>
+    public const string XmsVersion = "2021-12-02";
+
     public BlobClient(AzureHttpClient http, BlobCredentials credentials)
     {
         ArgumentNullException.ThrowIfNull(http);
@@ -48,6 +53,63 @@ internal sealed partial class BlobClient
     /// transmitted in cleartext.
     /// </summary>
     internal ReadOnlySpan<byte> AccountKeyBytes => _accountKeyBytes;
+
+    /// <summary>
+    /// Builds a short-lived read-only service SAS URL for a sibling blob in
+    /// the same Azure storage account. Used as the <c>x-ms-copy-source</c>
+    /// value for <c>UploadPartCopy</c> (<c>Put Block From URL</c>); the
+    /// destination call has the proxy's regular SharedKey credentials and
+    /// the SAS lets Azure dereference the source without a separate trust
+    /// relationship. Azurite supports SAS but does not currently honour
+    /// <c>x-ms-copy-source-authorization: SharedKey</c>, which is why this
+    /// path uses SAS even in same-account scenarios.
+    /// </summary>
+    public Uri BuildSourceReadSasUri(string container, string key, TimeSpan validFor)
+    {
+        var baseUri = BuildBlobUri(container, key);
+
+        var expiry = DateTimeOffset.UtcNow.Add(validFor).ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+        const string version = XmsVersion;
+        const string permissions = "r";
+        const string resource = "b";
+
+        // The signed canonicalized resource is `/blob/{account}/{container}/{key}` —
+        // independent of any account-name path segment present in the
+        // service endpoint (e.g. Azurite's `/devstoreaccount1`).
+        var canonicalResource = "/blob/" + _accountName + "/" + container + "/" + key;
+
+        // String-to-sign layout for service SAS at x-ms-version=2020-12-06+
+        // (sv) — 16 fields separated by '\n'. Unused fields are empty.
+        var stringToSign = string.Join('\n', new[]
+        {
+            permissions,
+            string.Empty,        // signedstart
+            expiry,              // signedexpiry
+            canonicalResource,   // canonicalizedresource
+            string.Empty,        // signedidentifier
+            string.Empty,        // signedIP
+            string.Empty,        // signedProtocol
+            version,             // signedversion
+            resource,            // signedResource
+            string.Empty,        // signedSnapshotTime
+            string.Empty,        // signedEncryptionScope
+            string.Empty,        // rscc
+            string.Empty,        // rscd
+            string.Empty,        // rsce
+            string.Empty,        // rscl
+            string.Empty,        // rsct
+        });
+
+        using var hmac = new System.Security.Cryptography.HMACSHA256(_accountKeyBytes);
+        var sig = Convert.ToBase64String(hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(stringToSign)));
+
+        var query = "?sv=" + Uri.EscapeDataString(version)
+            + "&se=" + Uri.EscapeDataString(expiry)
+            + "&sr=" + resource
+            + "&sp=" + permissions
+            + "&sig=" + Uri.EscapeDataString(sig);
+        return new Uri(baseUri.AbsoluteUri + query, UriKind.Absolute);
+    }
 
     public static bool IsValidContainerName(string name) =>
         !string.IsNullOrEmpty(name)

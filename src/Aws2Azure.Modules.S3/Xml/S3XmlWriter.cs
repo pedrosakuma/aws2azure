@@ -88,6 +88,31 @@ internal static class S3XmlWriter
         return sb.ToString();
     }
 
+    /// <summary>
+    /// S3 <c>CopyPartResult</c> response body for UploadPartCopy. Only
+    /// LastModified + ETag are emitted; SDKs surface both. ETag is
+    /// normalised through the same quoting rule as CopyObject.
+    /// </summary>
+    public static string CopyPartResult(DateTimeOffset lastModified, string? eTag)
+    {
+        var sb = new StringBuilder(192);
+        using (var writer = XmlWriter.Create(sb, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("CopyPartResult", S3Namespace);
+            writer.WriteElementString("LastModified",
+                lastModified.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
+            var quoted = NormalizeETag(eTag);
+            if (!string.IsNullOrEmpty(quoted))
+            {
+                writer.WriteElementString("ETag", quoted);
+            }
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        return sb.ToString();
+    }
+
     public readonly record struct DeletedEntry(string Key);
 
     public readonly record struct DeleteErrorEntry(string Key, string Code, string Message);
