@@ -96,4 +96,5 @@
 | sqs | [GetQueueUrl](sqs.md#getqueueurl) | ✅ implemented | `GET https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (existence probe)` |
 | sqs | [ListQueues](sqs.md#listqueues) | ✅ implemented | `GET https://{namespace}.servicebus.windows.net/$Resources/queues?api-version=2021-05&$skip=N&$top=M` |
 | sqs | [ReceiveMessage](sqs.md#receivemessage) | ⚪ stub | `Azure Service Bus (queue) REST API` |
-| sqs | [SendMessage](sqs.md#sendmessage) | ⚪ stub | `Azure Service Bus (queue) REST API` |
+| sqs | [SendMessage](sqs.md#sendmessage) | ✅ implemented | `Azure Service Bus queue runtime REST API — POST /{queue}/messages?api-version=2021-05` |
+| sqs | [SendMessageBatch](sqs.md#sendmessagebatch) | ✅ implemented | `Azure Service Bus queue runtime REST API — POST /{queue}/messages with Content-Type: application/vnd.microsoft.servicebus.json` |

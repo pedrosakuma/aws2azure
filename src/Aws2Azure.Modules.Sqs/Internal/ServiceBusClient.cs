@@ -152,6 +152,68 @@ internal sealed class ServiceBusClient
         return SendAsync(req, ct);
     }
 
+    // --- Runtime API helpers (Slice 2+ send / receive) ---
+
+    /// <summary>
+    /// Posts a single message to a queue's runtime endpoint. Caller is
+    /// responsible for setting the <c>BrokerProperties</c> header (with
+    /// MessageId, SessionId, ScheduledEnqueueTimeUtc, etc. encoded as JSON)
+    /// and any custom application-property headers. The body must already
+    /// be the raw message bytes.
+    /// </summary>
+    public Task<HttpResponseMessage> SendMessageAsync(
+        string queueName,
+        HttpContent body,
+        string? brokerPropertiesJson,
+        IReadOnlyDictionary<string, string>? applicationProperties,
+        CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(queueName);
+        ArgumentNullException.ThrowIfNull(body);
+
+        var req = new HttpRequestMessage(HttpMethod.Post,
+            BuildUri(queueName + "/messages", $"api-version={ApiVersion}"))
+        {
+            Content = body,
+        };
+
+        if (!string.IsNullOrEmpty(brokerPropertiesJson))
+        {
+            req.Headers.TryAddWithoutValidation("BrokerProperties", brokerPropertiesJson);
+        }
+        if (applicationProperties is not null)
+        {
+            foreach (var kv in applicationProperties)
+            {
+                // SB application properties are sent as plain HTTP headers
+                // alongside the message; the receiver gets them back via
+                // the same header surface on /messages/head.
+                req.Headers.TryAddWithoutValidation(kv.Key, kv.Value);
+            }
+        }
+        return SendAsync(req, ct);
+    }
+
+    /// <summary>
+    /// Posts a batch of messages to a queue. Service Bus accepts JSON
+    /// arrays at <c>POST /{queue}/messages</c> when the content-type is
+    /// <c>application/vnd.microsoft.servicebus.json</c>. Each array element
+    /// is <c>{ "Body": ..., "BrokerProperties": {...}, "UserProperties": {...} }</c>.
+    /// </summary>
+    public Task<HttpResponseMessage> SendMessageBatchAsync(
+        string queueName, string batchJson, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(queueName);
+        ArgumentException.ThrowIfNullOrEmpty(batchJson);
+        var req = new HttpRequestMessage(HttpMethod.Post,
+            BuildUri(queueName + "/messages", $"api-version={ApiVersion}"))
+        {
+            Content = new StringContent(batchJson, Encoding.UTF8,
+                "application/vnd.microsoft.servicebus.json"),
+        };
+        return SendAsync(req, ct);
+    }
+
     /// <summary>
     /// Resolves the namespace endpoint. Accepts either a plain namespace
     /// name (<c>"my-ns"</c> → <c>https://my-ns.servicebus.windows.net/</c>)

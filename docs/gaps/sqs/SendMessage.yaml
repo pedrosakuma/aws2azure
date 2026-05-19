@@ -1,9 +1,23 @@
 service: sqs
 operation: SendMessage
-azure_equivalent: "Azure Service Bus (queue) REST API"
-status: stub
-sub_features: []
+azure_equivalent: "Azure Service Bus queue runtime REST API — POST /{queue}/messages?api-version=2021-05"
+status: implemented
+sub_features:
+  - {name: "MessageBody round-trip (≤256 KiB)", status: implemented}
+  - {name: "MessageAttributes (String/Number)", status: implemented, notes: "Mapped to SB application properties as strings."}
+  - {name: "MessageAttributes (Binary)", status: implemented, notes: "Base64-encoded into the side-channel header so receive can rebuild the SQS-shaped attribute."}
+  - {name: "MessageAttributes (custom .suffix types)", status: implemented}
+  - {name: "MD5OfMessageBody / MD5OfMessageAttributes in response", status: implemented, notes: "Computed locally to match AWS algorithm; clients use them to detect transport corruption."}
+  - {name: "DelaySeconds (0..900)", status: implemented, notes: "Translated to BrokerProperties.ScheduledEnqueueTimeUtc (UtcNow + delay)."}
+  - {name: "MessageDeduplicationId (FIFO)", status: implemented, notes: "Becomes SB MessageId for SB's dedup window. SB default dedup window differs from SQS — see behavior_differences."}
+  - {name: "MessageGroupId (FIFO)", status: implemented, notes: "Becomes SB SessionId."}
+  - {name: "MessageSystemAttribute AWSTraceHeader", status: unsupported}
 behavior_differences:
-  - "AWS SQS visibility timeout maps to Service Bus peek-lock/lock duration"
+  - "MessageId is synthesised proxy-side (SB does not echo the message id on the runtime POST). For FIFO the MessageDeduplicationId is reused as the MessageId; otherwise a fresh Guid is minted."
+  - "SQS attribute data types (String/Number/Binary/'String.Custom') are flattened to SB application-property strings. The proxy emits an Aws2Azure-AttrTypes side-channel header so the receive path can faithfully reconstruct the original SQS shape — without it, all attributes would surface as String on receive."
+  - "MaximumMessageSize on SB Standard tier caps at 256 KiB (same as SQS default); on Premium tier SB allows up to 100 MiB but SQS hard-cap is still 256 KiB and is enforced here."
+  - "ScheduledEnqueueTimeUtc has millisecond resolution in SB; SQS DelaySeconds is integer seconds, so no loss occurs."
+  - "Verified against in-process fakes; end-to-end emulator validation deferred to Slice 3 where the receive path co-validates send. Real-Azure verification pending."
 references:
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessage.html
+  - https://learn.microsoft.com/rest/api/servicebus/send-message-to-queue
