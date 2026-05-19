@@ -78,7 +78,9 @@ public static class S3Router
         // S3 operations even though they share the verb + path with the
         // lifecycle ops. Refuse them up-front so DELETE /b?tagging never
         // reaches DeleteBucket and drops the container.
-        if (HasBucketSubresource(request.Query))
+        // Exception: GET /b?uploads is ListMultipartUploads, handled below.
+        if (HasBucketSubresource(request.Query) &&
+            !(method == HttpMethods.Get && request.Query.ContainsKey("uploads")))
         {
             return new S3RouteResult(S3Operation.Unsupported, bucket, null, virtualHosted);
         }
@@ -86,12 +88,15 @@ public static class S3Router
         // Bucket-scoped ops: HEAD/PUT/DELETE on /{bucket}. GET /{bucket} is
         // the object listing — V2 when the client sets ?list-type=2,
         // otherwise legacy V1. POST /{bucket}?delete is the multi-object
-        // delete batch.
+        // delete batch. GET /{bucket}?uploads enumerates in-progress
+        // multipart uploads.
         return method switch
         {
             var m when m == HttpMethods.Head   => new S3RouteResult(S3Operation.HeadBucket,   bucket, null, virtualHosted),
             var m when m == HttpMethods.Put    => new S3RouteResult(S3Operation.CreateBucket, bucket, null, virtualHosted),
             var m when m == HttpMethods.Delete => new S3RouteResult(S3Operation.DeleteBucket, bucket, null, virtualHosted),
+            var m when m == HttpMethods.Get && request.Query.ContainsKey("uploads")
+                                              => new S3RouteResult(S3Operation.ListMultipartUploads, bucket, null, virtualHosted),
             var m when m == HttpMethods.Get    => new S3RouteResult(ClassifyListOperation(request.Query), bucket, null, virtualHosted),
             var m when m == HttpMethods.Post && request.Query.ContainsKey("delete")
                                               => new S3RouteResult(S3Operation.DeleteObjects, bucket, null, virtualHosted),
@@ -137,6 +142,11 @@ public static class S3Router
         if (hasUploadId && !hasPartNumber && method == HttpMethods.Delete)
         {
             op = S3Operation.AbortMultipartUpload;
+            return true;
+        }
+        if (hasUploadId && !hasPartNumber && method == HttpMethods.Get)
+        {
+            op = S3Operation.ListParts;
             return true;
         }
         // Recognised subresource but not a routable verb combo — fall through

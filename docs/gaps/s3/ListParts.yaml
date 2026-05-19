@@ -1,0 +1,20 @@
+service: s3
+operation: ListParts
+azure_equivalent: "Get Block List (?comp=blocklist&blocklisttype=uncommitted)"
+status: implemented
+sub_features:
+  - name: pagination
+    status: implemented
+    note: "Honours max-parts (default 1000, capped at 1000) and part-number-marker. Truncation is computed client-side from the full Azure block list."
+  - name: encoding-type
+    status: unsupported
+  - name: requester-pays
+    status: unsupported
+behavior_differences:
+  - "<ETag> values returned by ListParts are synthetic (derived from the Azure block name) and are NOT equal to the per-part ETags returned by UploadPart. Azure's Get Block List response does not expose per-block MD5s and the proxy retains no upload state. Clients that compare these values to records saved at upload time will see mismatches."
+  - "<LastModified> for every part is the UploadId's creation timestamp (no per-block timestamp exists in Azure)."
+  - "<Owner> / <Initiator> are omitted (S3 sources them from the IAM principal; aws2azure does not model IAM)."
+  - "Empty / missing blob → empty ListPartsResult (S3 returns 404 NoSuchUpload only when the UploadId is unknown; aws2azure already rejects unknown UploadIds at the HMAC check)."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListParts.html
+  - https://learn.microsoft.com/rest/api/storageservices/get-block-list

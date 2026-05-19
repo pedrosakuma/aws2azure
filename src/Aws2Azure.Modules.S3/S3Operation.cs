@@ -24,4 +24,6 @@ public enum S3Operation
     UploadPart,
     CompleteMultipartUpload,
     AbortMultipartUpload,
+    ListParts,
+    ListMultipartUploads,
 }

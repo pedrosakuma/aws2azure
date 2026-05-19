@@ -185,6 +185,20 @@ internal sealed partial class BlobClient
     }
 
     /// <summary>
+    /// Issues Azure <c>Get Block List</c> for <paramref name="key"/> with
+    /// the requested <paramref name="blockListType"/> (<c>committed</c>,
+    /// <c>uncommitted</c>, or <c>all</c>). Used by ListParts to enumerate
+    /// the uncommitted blocks belonging to a multipart upload.
+    /// </summary>
+    public Task<HttpResponseMessage> GetBlockListAsync(
+        string container, string key, string blockListType, CancellationToken cancellationToken)
+    {
+        var uri = BuildBlobUri(container, key,
+            "?comp=blocklist&blocklisttype=" + Uri.EscapeDataString(blockListType));
+        return SendAsync(HttpMethod.Get, uri, cancellationToken);
+    }
+
+    /// <summary>
     /// Returns the absolute URI for a sibling blob in the same Azure storage
     /// account. Used to build the <c>x-ms-copy-source</c> value for
     /// <see cref="ObjectHandlers"/>' CopyObject, which only supports copies
