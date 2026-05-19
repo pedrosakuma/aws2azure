@@ -18,6 +18,27 @@ internal static class PerformativeDescriptor
     public const ulong Detach = 0x0000_0000_0000_0016UL;
     public const ulong End = 0x0000_0000_0000_0017UL;
     public const ulong Close = 0x0000_0000_0000_0018UL;
+
+    // SASL sub-protocol performatives (AMQP 1.0 §5.3.3).
+    public const ulong SaslMechanisms = 0x0000_0000_0000_0040UL;
+    public const ulong SaslInit = 0x0000_0000_0000_0041UL;
+    public const ulong SaslChallenge = 0x0000_0000_0000_0042UL;
+    public const ulong SaslResponse = 0x0000_0000_0000_0043UL;
+    public const ulong SaslOutcome = 0x0000_0000_0000_0044UL;
+}
+
+/// <summary>
+/// SASL outcome codes (§5.3.3.6): the single ubyte value carried in
+/// <c>sasl-outcome.code</c>. <see cref="Ok"/> means authentication
+/// succeeded and the peer may now exchange the AMQP protocol header.
+/// </summary>
+internal enum AmqpSaslOutcomeCode : byte
+{
+    Ok = 0,
+    Auth = 1,
+    Sys = 2,
+    SysPerm = 3,
+    SysTemp = 4,
 }
 
 /// <summary>
@@ -37,4 +58,9 @@ internal enum PerformativeKind
     Detach,
     End,
     Close,
+    SaslMechanisms,
+    SaslInit,
+    SaslChallenge,
+    SaslResponse,
+    SaslOutcome,
 }

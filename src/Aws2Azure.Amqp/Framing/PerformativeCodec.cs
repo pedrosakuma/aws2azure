@@ -79,6 +79,11 @@ internal static class PerformativeCodec
             PerformativeDescriptor.Detach => PerformativeKind.Detach,
             PerformativeDescriptor.End => PerformativeKind.End,
             PerformativeDescriptor.Close => PerformativeKind.Close,
+            PerformativeDescriptor.SaslMechanisms => PerformativeKind.SaslMechanisms,
+            PerformativeDescriptor.SaslInit => PerformativeKind.SaslInit,
+            PerformativeDescriptor.SaslChallenge => PerformativeKind.SaslChallenge,
+            PerformativeDescriptor.SaslResponse => PerformativeKind.SaslResponse,
+            PerformativeDescriptor.SaslOutcome => PerformativeKind.SaslOutcome,
             _ => PerformativeKind.Unknown,
         };
     }
