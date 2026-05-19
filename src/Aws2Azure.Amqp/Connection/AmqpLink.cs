@@ -44,6 +44,24 @@ internal sealed class AmqpLink
     // so we must advance this on every successful receive.
     private uint _receiverDeliveryCount;
 
+    // Sender-side credit tracking. The receiver grants us a window via
+    // flow: sender_credit = receiver.delivery_count + receiver.link_credit
+    // - sender.delivery_count (§2.6.7). We wait on _creditAvailable until
+    // credit > 0 before transferring.
+    private readonly SemaphoreSlim _creditAvailable = new(0, int.MaxValue);
+    private uint _peerReceiverDeliveryCount;
+    private uint _peerReceiverLinkCredit;
+    private bool _peerFlowSeen;
+
+    // Multi-frame receive reassembly buffer (§2.6.14). Keyed by
+    // delivery-id; first transfer carries the id, continuation transfers
+    // omit it and append to the most recent in-progress delivery.
+    private readonly object _reassemblyLock = new();
+    private uint? _currentInboundDeliveryId;
+    private byte[]? _currentInboundTag;
+    private bool? _currentInboundSettled;
+    private System.IO.MemoryStream? _currentInboundPayload;
+
     private int _state = StateClosed;
 
     internal AmqpLink(AmqpSession session, uint outgoingHandle, AmqpLinkSettings settings)
@@ -81,6 +99,13 @@ internal sealed class AmqpLink
             throw new InvalidOperationException("SendMessageAsync requires a sender link.");
         if (Volatile.Read(ref _state) != StateAttached)
             throw new InvalidOperationException($"Link is not attached (state={_state}).");
+
+        // §2.6.7: wait for receiver credit before transferring. If the
+        // peer has never sent a flow we treat that as no credit and
+        // block here until one arrives — matches strict broker behaviour
+        // (Service Bus, ActiveMQ Artemis) that detach a link whose
+        // sender pushes transfers without granted credit.
+        await AcquireCreditAsync(cancellationToken).ConfigureAwait(false);
 
         var deliveryId = _session.AllocateDeliveryId();
         Interlocked.Increment(ref _deliveryCount);
@@ -334,10 +359,37 @@ internal sealed class AmqpLink
                 HandlePeerDetach(detach);
                 break;
 
-            // Flow / Transfer / Disposition land in Slice 5c.
+            case PerformativeKind.Flow:
+                if (Role == AmqpRole.Sender)
+                {
+                    AmqpFlow.Read(body, out var flow, out _);
+                    HandlePeerFlow(flow);
+                }
+                break;
+
             default:
                 break;
         }
+    }
+
+    private void HandlePeerFlow(AmqpFlow flow)
+    {
+        // §2.6.7: sender_credit = receiver.delivery_count + receiver.link_credit
+        //                       - sender.delivery_count.
+        var receiverDeliveryCount = flow.DeliveryCount ?? 0u;
+        var receiverLinkCredit = flow.LinkCredit ?? 0u;
+        int releaseCount;
+        lock (_deliveryLock)
+        {
+            _peerReceiverDeliveryCount = receiverDeliveryCount;
+            _peerReceiverLinkCredit = receiverLinkCredit;
+            _peerFlowSeen = true;
+            var available = (long)receiverDeliveryCount + receiverLinkCredit - _deliveryCount;
+            releaseCount = available > 0 && available <= int.MaxValue ? (int)available : 0;
+            // Drain any stale permits so the semaphore reflects the new window.
+            while (_creditAvailable.CurrentCount > 0 && _creditAvailable.Wait(0)) { }
+        }
+        if (releaseCount > 0) _creditAvailable.Release(releaseCount);
     }
 
     internal void OnRemoteHandleLearned(uint remoteHandle) => RemoteHandle = remoteHandle;
@@ -345,27 +397,93 @@ internal sealed class AmqpLink
     /// <summary>
     /// Receives a transfer frame for this link. The body memory belongs
     /// to a pooled frame buffer; we copy out the payload immediately so
-    /// the caller can dispose the frame.
+    /// the caller can dispose the frame. Implements §2.6.14 multi-frame
+    /// reassembly: <c>more=true</c> transfers buffer payload until a
+    /// final transfer arrives; <c>aborted=true</c> discards the in-progress
+    /// delivery without enqueueing it.
     /// </summary>
     internal void DispatchTransfer(AmqpTransfer transfer, ReadOnlyMemory<byte> frameBody)
     {
         AmqpTransfer.Read(frameBody, out _, out var perfLen);
         var payload = frameBody.Slice(perfLen);
-        var copy = payload.ToArray();
 
-        // §2.6.7: advance delivery-count, but guard against underflowing
-        // credit if the peer over-sends.
-        lock (_deliveryLock)
+        var more = transfer.More ?? false;
+        var aborted = transfer.Aborted ?? false;
+        var settled = transfer.Settled ?? false;
+
+        byte[]? completed = null;
+        uint completedDeliveryId = 0;
+        byte[]? completedTag = null;
+        bool completedSettled = false;
+
+        lock (_reassemblyLock)
         {
-            _receiverDeliveryCount++;
-            if (_linkCredit > 0) _linkCredit--;
+            // §2.6.14: only the first transfer of a delivery carries
+            // delivery-id and delivery-tag; continuation transfers omit
+            // them and append to the most recent in-progress delivery on
+            // the link.
+            if (transfer.DeliveryId is { } did)
+            {
+                if (_currentInboundDeliveryId is not null)
+                {
+                    // Spec violation by peer (new delivery before previous
+                    // signalled more=false). Drop the in-progress one.
+                    _currentInboundPayload?.Dispose();
+                    _currentInboundPayload = null;
+                }
+                _currentInboundDeliveryId = did;
+                _currentInboundTag = transfer.DeliveryTag.IsEmpty ? Array.Empty<byte>() : transfer.DeliveryTag.ToArray();
+                _currentInboundSettled = settled;
+                _currentInboundPayload = null;
+            }
+
+            if (aborted)
+            {
+                _currentInboundPayload?.Dispose();
+                _currentInboundPayload = null;
+                _currentInboundDeliveryId = null;
+                _currentInboundTag = null;
+                _currentInboundSettled = null;
+            }
+            else if (more)
+            {
+                _currentInboundPayload ??= new System.IO.MemoryStream();
+                if (!payload.IsEmpty) _currentInboundPayload.Write(payload.Span);
+            }
+            else if (_currentInboundDeliveryId is { } activeId)
+            {
+                if (_currentInboundPayload is { } stream)
+                {
+                    if (!payload.IsEmpty) stream.Write(payload.Span);
+                    completed = stream.ToArray();
+                    stream.Dispose();
+                }
+                else
+                {
+                    completed = payload.IsEmpty ? Array.Empty<byte>() : payload.ToArray();
+                }
+                completedDeliveryId = activeId;
+                completedTag = _currentInboundTag ?? Array.Empty<byte>();
+                completedSettled = _currentInboundSettled ?? settled;
+                _currentInboundPayload = null;
+                _currentInboundDeliveryId = null;
+                _currentInboundTag = null;
+                _currentInboundSettled = null;
+            }
         }
 
-        _incoming.Writer.TryWrite(new AmqpIncomingDelivery(
-            transfer.DeliveryId ?? 0u,
-            transfer.DeliveryTag.ToArray(),
-            transfer.Settled ?? false,
-            copy));
+        // §2.6.7: advance delivery-count, but guard against underflowing
+        // credit if the peer over-sends. Only count completed deliveries.
+        if (completed is not null)
+        {
+            lock (_deliveryLock)
+            {
+                _receiverDeliveryCount++;
+                if (_linkCredit > 0) _linkCredit--;
+            }
+            _incoming.Writer.TryWrite(new AmqpIncomingDelivery(
+                completedDeliveryId, completedTag!, completedSettled, completed));
+        }
     }
 
     /// <summary>
@@ -397,6 +515,34 @@ internal sealed class AmqpLink
         _peerAttachReceived.TrySetCanceled();
         _peerDetachReceived.TrySetCanceled();
         CompleteWaitersTerminal(cancelled: true);
+    }
+
+    private async ValueTask AcquireCreditAsync(CancellationToken ct)
+    {
+        while (true)
+        {
+            if (Volatile.Read(ref _state) != StateAttached)
+                throw new InvalidOperationException("Link is no longer attached.");
+            lock (_deliveryLock)
+            {
+                if (_peerFlowSeen)
+                {
+                    var available = (long)_peerReceiverDeliveryCount + _peerReceiverLinkCredit - _deliveryCount;
+                    if (available > 0)
+                    {
+                        if (_creditAvailable.Wait(0)) return;
+                    }
+                }
+            }
+            await _creditAvailable.WaitAsync(ct).ConfigureAwait(false);
+            if (Volatile.Read(ref _state) != StateAttached)
+                throw new InvalidOperationException("Link is no longer attached.");
+            lock (_deliveryLock)
+            {
+                var available = (long)_peerReceiverDeliveryCount + _peerReceiverLinkCredit - _deliveryCount;
+                if (available > 0) return;
+            }
+        }
     }
 
     private async ValueTask SendFlowAsync(CancellationToken ct)
@@ -436,14 +582,20 @@ internal sealed class AmqpLink
 
         if (prior == StateAttached)
         {
-            try
-            {
-                _ = SendDetachAsync(detach.Closed ?? true, error: null, CancellationToken.None);
-            }
-            catch { /* best effort */ }
-            // Peer initiated tear-down: unblock any local receivers/senders so they
-            // observe the detach rather than hanging on the message channel.
+            // Peer initiated tear-down: mirror a detach back, then transition
+            // to Final and unregister. Also unblock any local senders/receivers
+            // so they observe the detach rather than hanging on the message channel.
             CompleteWaitersTerminal(cancelled: false);
+            _ = Task.Run(async () =>
+            {
+                try { await SendDetachAsync(detach.Closed ?? true, error: null, CancellationToken.None).ConfigureAwait(false); }
+                catch { /* best effort */ }
+                finally
+                {
+                    Interlocked.Exchange(ref _state, StateFinal);
+                    _session.UnregisterLink(this);
+                }
+            });
         }
     }
 
@@ -466,6 +618,9 @@ internal sealed class AmqpLink
             if (cancelled) tcs.TrySetCanceled();
             else tcs.TrySetException(new InvalidOperationException("Link detached before disposition was received."));
         }
+        // Wake any sender waiting on credit so it observes the terminal state.
+        try { _creditAvailable.Release(int.MaxValue / 2); }
+        catch (SemaphoreFullException) { /* already at max */ }
     }
 
     private async ValueTask SendDetachAsync(bool closed, AmqpError? error, CancellationToken ct)
