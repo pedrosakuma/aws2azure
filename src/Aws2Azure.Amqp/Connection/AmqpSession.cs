@@ -30,6 +30,11 @@ internal sealed class AmqpSession
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource<AmqpEnd> _peerEndReceived =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly object _linkLock = new();
+    private readonly Dictionary<uint, AmqpLink> _linksByOutgoingHandle = new();
+    private readonly Dictionary<uint, AmqpLink> _linksByIncomingHandle = new();
+    private readonly Dictionary<string, AmqpLink> _linksByName = new(StringComparer.Ordinal);
+    private uint _nextOutgoingHandle;
 
     private int _state = StateClosed;
 
@@ -39,6 +44,9 @@ internal sealed class AmqpSession
         OutgoingChannel = outgoingChannel;
         _settings = settings;
     }
+
+    /// <summary>Parent connection, exposed so links can use its write hook.</summary>
+    internal AmqpConnection Connection => _connection;
 
     /// <summary>Our local channel number (the one peer sees as remote-channel).</summary>
     public ushort OutgoingChannel { get; }
@@ -51,6 +59,65 @@ internal sealed class AmqpSession
 
     /// <summary>True once the session has reached its terminal state.</summary>
     public bool IsClosed => Volatile.Read(ref _state) >= StateClosingLocal;
+
+    /// <summary>
+    /// Allocates the next handle (under the peer's <c>begin.handle-max</c>),
+    /// registers a new <see cref="AmqpLink"/>, and performs the
+    /// <c>attach</c> handshake.
+    /// </summary>
+    public async Task<AmqpLink> AttachLinkAsync(
+        AmqpLinkSettings settings, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        if (Volatile.Read(ref _state) != StateOpened)
+            throw new InvalidOperationException("Session is not open.");
+
+        AmqpLink link;
+        lock (_linkLock)
+        {
+            if (_linksByName.ContainsKey(settings.Name))
+                throw new InvalidOperationException($"Link '{settings.Name}' is already attached on this session.");
+
+            var max = RemoteBegin.HandleMax ?? uint.MaxValue;
+            uint handle = _nextOutgoingHandle;
+            while (_linksByOutgoingHandle.ContainsKey(handle))
+            {
+                if (handle == max)
+                    throw new InvalidOperationException("No link handles available under negotiated handle-max.");
+                handle++;
+            }
+            if (handle > max)
+                throw new InvalidOperationException("No link handles available under negotiated handle-max.");
+
+            link = new AmqpLink(this, handle, settings);
+            _linksByOutgoingHandle.Add(handle, link);
+            _linksByName.Add(settings.Name, link);
+            _nextOutgoingHandle = handle == max ? 0 : handle + 1;
+        }
+
+        try
+        {
+            await link.AttachAsync(cancellationToken).ConfigureAwait(false);
+            return link;
+        }
+        catch
+        {
+            UnregisterLink(link);
+            throw;
+        }
+    }
+
+    /// <summary>Internal hook used by <see cref="AmqpLink"/> on detach/abort.</summary>
+    internal void UnregisterLink(AmqpLink link)
+    {
+        lock (_linkLock)
+        {
+            _linksByOutgoingHandle.Remove(link.OutgoingHandle);
+            _linksByName.Remove(link.Name);
+            if (_linksByIncomingHandle.TryGetValue(link.RemoteHandle, out var existing) && existing == link)
+                _linksByIncomingHandle.Remove(link.RemoteHandle);
+        }
+    }
 
     /// <summary>
     /// Sends our <c>begin</c> and awaits the peer's <c>begin</c> reply.
@@ -142,7 +209,31 @@ internal sealed class AmqpSession
                 HandlePeerEnd(end);
                 break;
 
-            // Future slices add: Attach, Flow, Transfer, Disposition, Detach.
+            case PerformativeKind.Attach:
+                // Peer's attach binds their handle to one of our links by Name.
+                AmqpAttach.Read(body, out var attach, out _);
+                AmqpLink? attachLink;
+                lock (_linkLock)
+                {
+                    if (!_linksByName.TryGetValue(attach.Name, out attachLink))
+                        return; // unknown link — drop (server-initiated attach not supported in 5b)
+                    attachLink.OnRemoteHandleLearned(attach.Handle);
+                    _linksByIncomingHandle[attach.Handle] = attachLink;
+                }
+                attachLink.DispatchIncomingFrame(kind, body);
+                break;
+
+            case PerformativeKind.Detach:
+                AmqpDetach.Read(body, out var detach, out _);
+                AmqpLink? detachLink;
+                lock (_linkLock)
+                {
+                    _linksByIncomingHandle.TryGetValue(detach.Handle, out detachLink);
+                }
+                detachLink?.DispatchIncomingFrame(kind, body);
+                break;
+
+            // Flow / Transfer / Disposition land in Slice 5c.
             default:
                 break;
         }
@@ -156,6 +247,16 @@ internal sealed class AmqpSession
         Interlocked.Exchange(ref _state, StateFinal);
         _peerBeginReceived.TrySetCanceled();
         _peerEndReceived.TrySetCanceled();
+
+        AmqpLink[] links;
+        lock (_linkLock)
+        {
+            links = _linksByOutgoingHandle.Values.ToArray();
+            _linksByOutgoingHandle.Clear();
+            _linksByIncomingHandle.Clear();
+            _linksByName.Clear();
+        }
+        foreach (var l in links) l.Abort();
     }
 
     // ---- internals --------------------------------------------------------
