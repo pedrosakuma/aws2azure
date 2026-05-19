@@ -215,6 +215,75 @@ internal sealed class ServiceBusClient
     }
 
     /// <summary>
+    /// Peek-locks a single message at the head of the queue. Returns the
+    /// raw SB <see cref="HttpResponseMessage"/> so the caller can read both
+    /// the body (the message payload) and the response headers
+    /// (<c>BrokerProperties</c>, application-property headers, <c>Location</c>
+    /// which encodes the lock token). The caller is responsible for either
+    /// completing (DELETE) or letting the lock expire.
+    ///
+    /// <para>Service Bus REST does <em>not</em> support batched receives —
+    /// AMQP does, but over HTTP the proxy must loop. Callers requesting
+    /// <c>MaxNumberOfMessages &gt; 1</c> issue this method repeatedly within
+    /// their receive budget.</para>
+    /// </summary>
+    public Task<HttpResponseMessage> PeekLockMessageAsync(
+        string queueName, TimeSpan timeout, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(queueName);
+        // SB's `timeout` query parameter is a server-side wait in seconds —
+        // it's how long the broker should wait before returning empty when
+        // no message is available. We expose it so Slice 4 long-polling can
+        // crank it up; Slice 3 short-poll callers pass TimeSpan.Zero.
+        var timeoutSeconds = Math.Max(0, (int)timeout.TotalSeconds);
+        var req = new HttpRequestMessage(HttpMethod.Post,
+            BuildUri(queueName + "/messages/head", $"timeout={timeoutSeconds}&api-version={ApiVersion}"));
+        return SendAsync(req, ct);
+    }
+
+    /// <summary>
+    /// Completes an in-flight peek-locked message via
+    /// <c>DELETE /{queue}/messages/{messageId}/{lockToken}</c>. SB returns
+    /// 200 on success, 404 if the lock has expired or the message no
+    /// longer exists.
+    /// </summary>
+    public Task<HttpResponseMessage> DeleteLockedMessageAsync(
+        string queueName, string messageId, string lockToken, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(queueName);
+        ArgumentException.ThrowIfNullOrEmpty(messageId);
+        ArgumentException.ThrowIfNullOrEmpty(lockToken);
+        var req = new HttpRequestMessage(HttpMethod.Delete,
+            BuildUri($"{queueName}/messages/{Uri.EscapeDataString(messageId)}/{Uri.EscapeDataString(lockToken)}",
+                $"api-version={ApiVersion}"));
+        return SendAsync(req, ct);
+    }
+
+    /// <summary>
+    /// Renews the lock on an in-flight peek-locked message via
+    /// <c>POST /{queue}/messages/{messageId}/{lockToken}</c>. SB's behavior
+    /// is to extend the lock by the queue's configured <c>LockDuration</c>;
+    /// it does <em>not</em> accept an arbitrary new timeout (unlike SQS's
+    /// <c>VisibilityTimeout</c>). The proxy documents this divergence and
+    /// clamps caller-supplied values.
+    /// </summary>
+    public Task<HttpResponseMessage> RenewLockAsync(
+        string queueName, string messageId, string lockToken, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(queueName);
+        ArgumentException.ThrowIfNullOrEmpty(messageId);
+        ArgumentException.ThrowIfNullOrEmpty(lockToken);
+        var req = new HttpRequestMessage(HttpMethod.Post,
+            BuildUri($"{queueName}/messages/{Uri.EscapeDataString(messageId)}/{Uri.EscapeDataString(lockToken)}",
+                $"api-version={ApiVersion}"));
+        // The renew endpoint is a POST with no body, but HttpClient demands
+        // a non-null Content for verbs that allow a body. Empty bytes keep
+        // SB happy without an explicit Content-Length=0 fight.
+        req.Content = new ByteArrayContent(Array.Empty<byte>());
+        return SendAsync(req, ct);
+    }
+
+    /// <summary>
     /// Resolves the namespace endpoint. Accepts either a plain namespace
     /// name (<c>"my-ns"</c> → <c>https://my-ns.servicebus.windows.net/</c>)
     /// or an absolute http/https URL (used by the emulator and sovereign

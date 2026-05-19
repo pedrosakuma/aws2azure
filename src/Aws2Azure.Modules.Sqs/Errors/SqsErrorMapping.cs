@@ -94,6 +94,28 @@ public static class SqsErrorMapping
         new(StatusCodes.Status400BadRequest, "AWS.SimpleQueueService.BatchRequestTooLong",
             $"Batch requests cannot be longer than 262144 bytes. You have sent {totalBytes} bytes.");
 
+    // ---- Receive-path mappings (Slice 3) ----
+
+    public static Mapping ReceiveLimitInvalid() =>
+        new(StatusCodes.Status400BadRequest, "InvalidParameterValue",
+            "Value for parameter MaxNumberOfMessages is invalid. Reason: must be an integer between 1 and 10.");
+
+    public static Mapping ReceiveWaitTimeInvalid() =>
+        new(StatusCodes.Status400BadRequest, "InvalidParameterValue",
+            "Value for parameter WaitTimeSeconds is invalid. Reason: must be an integer between 0 and 20.");
+
+    public static Mapping VisibilityTimeoutInvalid() =>
+        new(StatusCodes.Status400BadRequest, "InvalidParameterValue",
+            "Value for parameter VisibilityTimeout is invalid. Reason: must be an integer between 0 and 43200.");
+
+    public static Mapping ReceiptHandleInvalid() =>
+        new(StatusCodes.Status404NotFound, "ReceiptHandleIsInvalid",
+            "The input receipt handle is invalid.");
+
+    public static Mapping MessageNotInflight() =>
+        new(StatusCodes.Status400BadRequest, "MessageNotInflight",
+            "The message referred to is not in flight.");
+
     /// <summary>
     /// Surfaces a non-2xx Service Bus REST response as a best-effort SQS
     /// error. Each per-op handler can decide whether to call this generic

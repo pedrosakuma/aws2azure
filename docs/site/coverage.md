@@ -89,12 +89,13 @@
 | sns | [Publish](sns.md#publish) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
 | sns | [Subscribe](sns.md#subscribe) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
 | sns | [Unsubscribe](sns.md#unsubscribe) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
+| sqs | [ChangeMessageVisibility](sqs.md#changemessagevisibility) | 🟡 partial | `Azure Service Bus queue runtime REST API — POST /{queue}/messages/{messageId}/{lockToken}?api-version=2021-05 (renew-lock)` |
 | sqs | [CreateQueue](sqs.md#createqueue) | ✅ implemented | `PUT https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (Atom QueueDescription)` |
-| sqs | [DeleteMessage](sqs.md#deletemessage) | ⚪ stub | `Azure Service Bus (queue) REST API` |
+| sqs | [DeleteMessage](sqs.md#deletemessage) | ✅ implemented | `Azure Service Bus queue runtime REST API — DELETE /{queue}/messages/{messageId}/{lockToken}?api-version=2021-05` |
 | sqs | [DeleteQueue](sqs.md#deletequeue) | ✅ implemented | `DELETE https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05` |
 | sqs | [GetQueueAttributes](sqs.md#getqueueattributes) | 🟡 partial | `GET https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (Atom QueueDescription)` |
 | sqs | [GetQueueUrl](sqs.md#getqueueurl) | ✅ implemented | `GET https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (existence probe)` |
 | sqs | [ListQueues](sqs.md#listqueues) | ✅ implemented | `GET https://{namespace}.servicebus.windows.net/$Resources/queues?api-version=2021-05&$skip=N&$top=M` |
-| sqs | [ReceiveMessage](sqs.md#receivemessage) | ⚪ stub | `Azure Service Bus (queue) REST API` |
+| sqs | [ReceiveMessage](sqs.md#receivemessage) | 🟡 partial | `Azure Service Bus queue runtime REST API — POST /{queue}/messages/head?timeout=0&api-version=2021-05 (peek-lock semantics)` |
 | sqs | [SendMessage](sqs.md#sendmessage) | ✅ implemented | `Azure Service Bus queue runtime REST API — POST /{queue}/messages?api-version=2021-05` |
 | sqs | [SendMessageBatch](sqs.md#sendmessagebatch) | ✅ implemented | `Azure Service Bus queue runtime REST API — POST /{queue}/messages with Content-Type: application/vnd.microsoft.servicebus.json` |

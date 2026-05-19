@@ -1,9 +1,13 @@
 service: sqs
 operation: DeleteMessage
-azure_equivalent: "Azure Service Bus (queue) REST API"
-status: stub
-sub_features: []
+azure_equivalent: "Azure Service Bus queue runtime REST API — DELETE /{queue}/messages/{messageId}/{lockToken}?api-version=2021-05"
+status: implemented
+sub_features:
+  - {name: "ReceiptHandle round-trip", status: implemented, notes: "Decoded back into (messageId, lockToken) — opaque to the client."}
+  - {name: "Idempotent behaviour on expired lock / already-deleted message", status: partial, notes: "SB 404 surfaces as SQS ReceiptHandleIsInvalid; AWS treats DeleteMessage as idempotent on already-deleted messages but errors on expired locks. The proxy currently surfaces the SB 404 verbatim — see behavior_differences."}
 behavior_differences:
-  - "AWS SQS visibility timeout maps to Service Bus peek-lock/lock duration"
+  - "If the SB lock has expired before DeleteMessage arrives, the proxy returns ReceiptHandleIsInvalid (404). AWS SQS would return success (idempotent) for already-deleted messages and an error only for genuinely invalid handles — these two cases are indistinguishable on SB REST without an extra round-trip."
+  - "Verified against in-process fakes; emulator-backed end-to-end validation lands with Slice 4's emulator fixture build-out."
 references:
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteMessage.html
+  - https://learn.microsoft.com/rest/api/servicebus/delete-message

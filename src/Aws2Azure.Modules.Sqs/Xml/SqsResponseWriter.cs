@@ -213,6 +213,91 @@ internal static class SqsResponseWriter
         return WriteXmlAsync(ctx, sb.ToString());
     }
 
+    public static Task WriteDeleteMessageAsync(HttpContext ctx, SqsWireProtocol protocol) =>
+        WriteAsync(ctx, protocol,
+            xmlEnvelope: "DeleteMessageResponse",
+            xmlResult: null,
+            jsonProps: Array.Empty<(string, object)>(),
+            xmlContent: null);
+
+    public static Task WriteChangeMessageVisibilityAsync(HttpContext ctx, SqsWireProtocol protocol) =>
+        WriteAsync(ctx, protocol,
+            xmlEnvelope: "ChangeMessageVisibilityResponse",
+            xmlResult: null,
+            jsonProps: Array.Empty<(string, object)>(),
+            xmlContent: null);
+
+    public static Task WriteReceiveMessageAsync(
+        HttpContext ctx, SqsWireProtocol protocol,
+        IReadOnlyList<ReceivedSqsMessage> messages)
+    {
+        if (protocol == SqsWireProtocol.AwsJson)
+        {
+            var json = JsonSerializer.Serialize(
+                new ReceiveMessagePayload(messages),
+                SqsListJsonContext.Default.ReceiveMessagePayload);
+            return WriteJsonAsync(ctx, json);
+        }
+
+        var sb = new StringBuilder();
+        using (var sw = new Utf8StringWriter(sb))
+        using (var w = XmlWriter.Create(sw, XmlSettings))
+        {
+            w.WriteStartDocument();
+            w.WriteStartElement("ReceiveMessageResponse", QueryNamespace);
+            w.WriteStartElement("ReceiveMessageResult", QueryNamespace);
+            foreach (var m in messages)
+            {
+                w.WriteStartElement("Message", QueryNamespace);
+                w.WriteElementString("MessageId", QueryNamespace, m.MessageId);
+                w.WriteElementString("ReceiptHandle", QueryNamespace, m.ReceiptHandle);
+                w.WriteElementString("MD5OfBody", QueryNamespace, m.MD5OfBody);
+                w.WriteElementString("Body", QueryNamespace, m.Body);
+                if (!string.IsNullOrEmpty(m.MD5OfMessageAttributes))
+                {
+                    w.WriteElementString("MD5OfMessageAttributes", QueryNamespace, m.MD5OfMessageAttributes);
+                }
+                if (m.Attributes is not null)
+                {
+                    foreach (var kv in m.Attributes)
+                    {
+                        w.WriteStartElement("Attribute", QueryNamespace);
+                        w.WriteElementString("Name", QueryNamespace, kv.Key);
+                        w.WriteElementString("Value", QueryNamespace, kv.Value);
+                        w.WriteEndElement();
+                    }
+                }
+                if (m.MessageAttributes is not null)
+                {
+                    foreach (var kv in m.MessageAttributes)
+                    {
+                        w.WriteStartElement("MessageAttribute", QueryNamespace);
+                        w.WriteElementString("Name", QueryNamespace, kv.Key);
+                        w.WriteStartElement("Value", QueryNamespace);
+                        w.WriteElementString("DataType", QueryNamespace, kv.Value.DataType);
+                        if (kv.Value.IsBinary)
+                        {
+                            w.WriteElementString("BinaryValue", QueryNamespace, kv.Value.BinaryValueBase64 ?? string.Empty);
+                        }
+                        else
+                        {
+                            w.WriteElementString("StringValue", QueryNamespace, kv.Value.StringValue ?? string.Empty);
+                        }
+                        w.WriteEndElement();
+                        w.WriteEndElement();
+                    }
+                }
+                w.WriteEndElement();
+            }
+            w.WriteEndElement();
+            WriteResponseMetadata(w, ctx);
+            w.WriteEndElement();
+            w.WriteEndDocument();
+            w.Flush();
+        }
+        return WriteXmlAsync(ctx, sb.ToString());
+    }
+
     private static Task WriteAsync(
         HttpContext ctx, SqsWireProtocol protocol,
         string xmlEnvelope, string? xmlResult,
@@ -339,10 +424,32 @@ internal sealed record SendMessageBatchEntryError(
     [property: JsonPropertyName("Message")] string Message,
     [property: JsonPropertyName("SenderFault")] bool SenderFault);
 
+internal sealed record ReceiveMessagePayload(
+    [property: JsonPropertyName("Messages")] IReadOnlyList<ReceivedSqsMessage> Messages);
+
+internal sealed record ReceivedSqsMessage(
+    [property: JsonPropertyName("MessageId")] string MessageId,
+    [property: JsonPropertyName("ReceiptHandle")] string ReceiptHandle,
+    [property: JsonPropertyName("MD5OfBody")] string MD5OfBody,
+    [property: JsonPropertyName("Body")] string Body,
+    [property: JsonPropertyName("MD5OfMessageAttributes")] string? MD5OfMessageAttributes,
+    [property: JsonPropertyName("Attributes")] IReadOnlyDictionary<string, string>? Attributes,
+    [property: JsonPropertyName("MessageAttributes")] IReadOnlyDictionary<string, ReceivedSqsAttribute>? MessageAttributes);
+
+internal sealed record ReceivedSqsAttribute(
+    [property: JsonPropertyName("DataType")] string DataType,
+    [property: JsonPropertyName("StringValue")] string? StringValue,
+    [property: JsonPropertyName("BinaryValue")] string? BinaryValueBase64)
+{
+    [JsonIgnore]
+    public bool IsBinary => BinaryValueBase64 is not null;
+}
+
 [JsonSerializable(typeof(ListQueuesPayload))]
 [JsonSerializable(typeof(GetQueueAttributesPayload))]
 [JsonSerializable(typeof(SendMessagePayload))]
 [JsonSerializable(typeof(SendMessageBatchPayload))]
+[JsonSerializable(typeof(ReceiveMessagePayload))]
 internal sealed partial class SqsListJsonContext : JsonSerializerContext
 {
 }

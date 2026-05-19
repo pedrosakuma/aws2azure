@@ -1,5 +1,29 @@
 # sqs
 
+## ChangeMessageVisibility
+
+- **Status:** 🟡 partial
+- **Azure equivalent:** `Azure Service Bus queue runtime REST API — POST /{queue}/messages/{messageId}/{lockToken}?api-version=2021-05 (renew-lock)`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| ReceiptHandle round-trip | ✅ implemented |  |  |  |
+| VisibilityTimeout 0..43200 validation | ✅ implemented |  |  |  |
+| Arbitrary new visibility duration | ⛔ unsupported | SB extends the lock by the queue's configured LockDuration only. The proxy still issues the renew and annotates the response with Aws2Azure-VisibilityClamped: <requested-seconds>. |  |  |
+
+### Behaviour differences
+
+- SB renew-lock semantics do not accept a caller-supplied duration — every renew extends by the queue's LockDuration. Callers asking for a longer (or shorter) timeout get the queue-level value instead; the requested value is echoed on the Aws2Azure-VisibilityClamped response header for diagnostics.
+- VisibilityTimeout=0 is *not* supported by SB REST (there is no 'unlock immediately' verb on this endpoint). The renew still extends the lock; clients needing immediate release must either DeleteMessage or wait for the lock to expire.
+- Verified against in-process fakes; emulator-backed end-to-end validation lands with Slice 4's emulator fixture build-out.
+
+### References
+
+- <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ChangeMessageVisibility.html>
+- <https://learn.microsoft.com/rest/api/servicebus/renew-lock-for-a-message>
+
 ## CreateQueue
 
 - **Status:** ✅ implemented
@@ -33,16 +57,25 @@
 
 ## DeleteMessage
 
-- **Status:** ⚪ stub
-- **Azure equivalent:** `Azure Service Bus (queue) REST API`
+- **Status:** ✅ implemented
+- **Azure equivalent:** `Azure Service Bus queue runtime REST API — DELETE /{queue}/messages/{messageId}/{lockToken}?api-version=2021-05`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| ReceiptHandle round-trip | ✅ implemented | Decoded back into (messageId, lockToken) — opaque to the client. |  |  |
+| Idempotent behaviour on expired lock / already-deleted message | 🟡 partial | SB 404 surfaces as SQS ReceiptHandleIsInvalid; AWS treats DeleteMessage as idempotent on already-deleted messages but errors on expired locks. The proxy currently surfaces the SB 404 verbatim — see behavior_differences. |  |  |
 
 ### Behaviour differences
 
-- AWS SQS visibility timeout maps to Service Bus peek-lock/lock duration
+- If the SB lock has expired before DeleteMessage arrives, the proxy returns ReceiptHandleIsInvalid (404). AWS SQS would return success (idempotent) for already-deleted messages and an error only for genuinely invalid handles — these two cases are indistinguishable on SB REST without an extra round-trip.
+- Verified against in-process fakes; emulator-backed end-to-end validation lands with Slice 4's emulator fixture build-out.
 
 ### References
 
 - <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteMessage.html>
+- <https://learn.microsoft.com/rest/api/servicebus/delete-message>
 
 ## DeleteQueue
 
@@ -137,16 +170,34 @@
 
 ## ReceiveMessage
 
-- **Status:** ⚪ stub
-- **Azure equivalent:** `Azure Service Bus (queue) REST API`
+- **Status:** 🟡 partial
+- **Azure equivalent:** `Azure Service Bus queue runtime REST API — POST /{queue}/messages/head?timeout=0&api-version=2021-05 (peek-lock semantics)`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| Short polling (WaitTimeSeconds = 0) | ✅ implemented |  |  |  |
+| Long polling (WaitTimeSeconds 1..20) | ⛔ unsupported | Returns NotImplemented; Slice 4 will emulate via short-poll loop. |  |  |
+| MaxNumberOfMessages 1..10 | ✅ implemented | SB REST is single-message peek-lock; the proxy loops until count or queue empty, bounded by a 5s aggregate budget. |  |  |
+| VisibilityTimeout parameter | 🟡 partial | Accepted and validated (0..43200) but ignored at SB level — see behavior_differences. |  |  |
+| AttributeNames / MessageAttributeNames filters | ✅ implemented | Includes 'All' shorthand. Returned system attributes: SentTimestamp, ApproximateReceiveCount, SequenceNumber. |  |  |
+| Receipt handle round-trip | ✅ implemented | Opaque base64 of MessageId\|LockToken\|SequenceNumber\|LockedUntilUtc — self-contained for DeleteMessage / ChangeMessageVisibility. |  |  |
+| MessageAttributes (String/Number/Binary) round-trip | ✅ implemented | Reconstructed from Aws2Azure-AttrTypes side-channel header emitted by SendMessage. |  |  |
+| MD5OfBody / MD5OfMessageAttributes | ✅ implemented |  |  |  |
 
 ### Behaviour differences
 
-- AWS SQS visibility timeout maps to Service Bus peek-lock/lock duration
+- VisibilityTimeout on ReceiveMessage cannot be set per-call — SB locks the message for the queue's configured LockDuration. The proxy validates the parameter but does not enforce it; clients needing custom per-message visibility must use ChangeMessageVisibility after receive.
+- MaxNumberOfMessages > 1 is emulated by looping POST /messages/head, capped by ReceiveLoopBudget (5s) — the proxy may return fewer messages than requested even when the queue has more if the budget elapses.
+- ApproximateFirstReceiveTimestamp and SenderId are not surfaced (SB does not provide them).
+- Long polling is intentionally rejected in Slice 3 (NotImplemented) so callers see a deterministic error — Slice 4 will emulate via short-poll loop.
+- Verified against in-process fakes; emulator-backed end-to-end validation lands with Slice 4's emulator fixture build-out.
 
 ### References
 
 - <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ReceiveMessage.html>
+- <https://learn.microsoft.com/rest/api/servicebus/peek-lock-message-non-destructive-read>
 
 ## SendMessage
 
