@@ -39,6 +39,10 @@ internal sealed class AmqpLink
         = System.Threading.Channels.Channel.CreateUnbounded<AmqpIncomingDelivery>(
             new System.Threading.Channels.UnboundedChannelOptions { SingleReader = false, SingleWriter = true });
     private uint _linkCredit;
+    // Number of transfers we have received on this link. Per §2.6.7
+    // link-credit is interpreted relative to (delivery-count + link-credit)
+    // so we must advance this on every successful receive.
+    private uint _receiverDeliveryCount;
 
     private int _state = StateClosed;
 
@@ -110,13 +114,21 @@ internal sealed class AmqpLink
         try
         {
             AmqpTransfer.Write(rentedT, in transferPerf, out var tlen);
-            // Frame body = transfer performative + payload (bare message).
             rentedT.AsSpan(0, tlen).CopyTo(rentedFrame);
             payload.Memory.Span.CopyTo(rentedFrame.AsSpan(tlen));
             await _session.Connection.WriteSessionFrameAsync(
                 _session.OutgoingChannel,
                 rentedFrame.AsMemory(0, tlen + payload.Length),
                 cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Wire write failed — drop any pending entry so it doesn't leak.
+            if (!settled)
+            {
+                lock (_deliveryLock) _pendingSends.Remove(deliveryId);
+            }
+            throw;
         }
         finally
         {
@@ -127,7 +139,11 @@ internal sealed class AmqpLink
         if (settled)
             return AmqpDispositionOutcome.Accepted;
 
-        using (cancellationToken.Register(() => tcs!.TrySetCanceled(cancellationToken)))
+        using (cancellationToken.Register(() =>
+        {
+            lock (_deliveryLock) _pendingSends.Remove(deliveryId);
+            tcs!.TrySetCanceled(cancellationToken);
+        }))
             return await tcs!.Task.ConfigureAwait(false);
     }
 
@@ -142,7 +158,10 @@ internal sealed class AmqpLink
     {
         if (Role != AmqpRole.Receiver)
             throw new InvalidOperationException("GrantCreditAsync requires a receiver link.");
-        Interlocked.Add(ref _linkCredit, additional);
+        lock (_deliveryLock)
+        {
+            _linkCredit += additional;
+        }
         await SendFlowAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -294,6 +313,7 @@ internal sealed class AmqpLink
         finally
         {
             Interlocked.Exchange(ref _state, StateFinal);
+            CompleteWaitersTerminal(cancelled: false);
             _session.UnregisterLink(this);
         }
     }
@@ -329,12 +349,18 @@ internal sealed class AmqpLink
     /// </summary>
     internal void DispatchTransfer(AmqpTransfer transfer, ReadOnlyMemory<byte> frameBody)
     {
-        // Compute the payload offset: the transfer performative consumed
-        // some prefix of frameBody; whatever remains is the bare message.
         AmqpTransfer.Read(frameBody, out _, out var perfLen);
         var payload = frameBody.Slice(perfLen);
         var copy = payload.ToArray();
-        Interlocked.Decrement(ref _linkCredit);
+
+        // §2.6.7: advance delivery-count, but guard against underflowing
+        // credit if the peer over-sends.
+        lock (_deliveryLock)
+        {
+            _receiverDeliveryCount++;
+            if (_linkCredit > 0) _linkCredit--;
+        }
+
         _incoming.Writer.TryWrite(new AmqpIncomingDelivery(
             transfer.DeliveryId ?? 0u,
             transfer.DeliveryTag.ToArray(),
@@ -370,16 +396,17 @@ internal sealed class AmqpLink
         Interlocked.Exchange(ref _state, StateFinal);
         _peerAttachReceived.TrySetCanceled();
         _peerDetachReceived.TrySetCanceled();
-        _incoming.Writer.TryComplete();
-        lock (_deliveryLock)
-        {
-            foreach (var tcs in _pendingSends.Values) tcs.TrySetCanceled();
-            _pendingSends.Clear();
-        }
+        CompleteWaitersTerminal(cancelled: true);
     }
 
     private async ValueTask SendFlowAsync(CancellationToken ct)
     {
+        uint credit, deliveryCount;
+        lock (_deliveryLock)
+        {
+            credit = _linkCredit;
+            deliveryCount = Role == AmqpRole.Receiver ? _receiverDeliveryCount : _deliveryCount;
+        }
         var flow = new AmqpFlow
         {
             NextIncomingId = null,
@@ -387,8 +414,8 @@ internal sealed class AmqpLink
             NextOutgoingId = 0,
             OutgoingWindow = uint.MaxValue,
             Handle = OutgoingHandle,
-            DeliveryCount = _deliveryCount,
-            LinkCredit = Volatile.Read(ref _linkCredit),
+            DeliveryCount = deliveryCount,
+            LinkCredit = credit,
         };
         var rented = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
         try
@@ -414,6 +441,30 @@ internal sealed class AmqpLink
                 _ = SendDetachAsync(detach.Closed ?? true, error: null, CancellationToken.None);
             }
             catch { /* best effort */ }
+            // Peer initiated tear-down: unblock any local receivers/senders so they
+            // observe the detach rather than hanging on the message channel.
+            CompleteWaitersTerminal(cancelled: false);
+        }
+    }
+
+    /// <summary>
+    /// Releases all link-level waiters (incoming message reader and any
+    /// pending unsettled-send TCSes). Called from every terminal path:
+    /// local detach, peer-initiated detach, abort. Idempotent.
+    /// </summary>
+    private void CompleteWaitersTerminal(bool cancelled)
+    {
+        _incoming.Writer.TryComplete();
+        TaskCompletionSource<AmqpDispositionOutcome>[] snapshot;
+        lock (_deliveryLock)
+        {
+            snapshot = _pendingSends.Values.ToArray();
+            _pendingSends.Clear();
+        }
+        foreach (var tcs in snapshot)
+        {
+            if (cancelled) tcs.TrySetCanceled();
+            else tcs.TrySetException(new InvalidOperationException("Link detached before disposition was received."));
         }
     }
 
