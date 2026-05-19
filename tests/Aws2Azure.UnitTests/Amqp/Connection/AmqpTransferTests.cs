@@ -58,8 +58,8 @@ public sealed class AmqpTransferTests
         await using var server = serverTransport;
         var conn = new AmqpConnection(clientTransport, DefaultConnSettings());
 
-        AmqpTransfer observedTransfer = default;
-        byte[] observedPayload = Array.Empty<byte>();
+        var transferRead = new TaskCompletionSource<(AmqpTransfer perf, byte[] payload)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
 
         var serverTask = Task.Run(async () =>
         {
@@ -77,8 +77,8 @@ public sealed class AmqpTransferTests
             using (var f = await AmqpFrameIO.ReadFrameAsync(server))
             {
                 Assert.Equal(PerformativeKind.Transfer, PerformativeCodec.PeekKind(f.Body.Span, out _));
-                AmqpTransfer.Read(f.Body, out observedTransfer, out var perfLen);
-                observedPayload = f.Body.Slice(perfLen).ToArray();
+                AmqpTransfer.Read(f.Body, out var t, out var perfLen);
+                transferRead.TrySetResult((t, f.Body.Slice(perfLen).ToArray()));
             }
 
             // Detach + end + close shutdown.
@@ -106,6 +106,8 @@ public sealed class AmqpTransferTests
         }, settled: true);
 
         Assert.Equal(AmqpDispositionOutcome.Accepted, outcome);
+
+        var (observedTransfer, observedPayload) = await transferRead.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(0u, observedTransfer.Handle);
         Assert.Equal(0u, observedTransfer.DeliveryId);
         Assert.True(observedTransfer.Settled);
