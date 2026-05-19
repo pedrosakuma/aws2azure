@@ -1,0 +1,25 @@
+service: s3
+operation: CompleteMultipartUpload
+azure_equivalent: "Put Block List"
+status: implemented
+sub_features:
+  - name: part-ordering
+    status: implemented
+    note: "Parts must arrive in ascending PartNumber order without duplicates; reuses S3's InvalidPartOrder/MalformedXML semantics."
+  - name: per-part-etag-validation
+    status: unsupported
+    note: "Client-supplied <ETag> values are not validated against the per-part MD5s we returned. Blocks are addressed by (uploadId.nonce, PartNumber) so a stale completion manifest will commit whatever bytes were most recently UploadPart'd under that PartNumber — S3 would have rejected the request with InvalidPart. Documented as a stateless-design trade-off."
+  - name: minimum-part-size
+    status: unsupported
+    note: "S3's 5 MiB minimum for non-final parts is not enforced (Azure has no equivalent floor)."
+  - name: checksum-algorithm
+    status: unsupported
+behavior_differences:
+  - "Response ETag has the S3 multipart shape \"{hash}-{count}\" but {hash} is derived from the Azure blob ETag (no per-part MD5s are retained). SDKs that only pattern-match the dash-suffix accept it as multipart."
+  - "Missing/unknown PartNumbers surface as InvalidPart (mapped from Azure's InvalidBlockList)."
+  - "Request body cap of 4 MiB (>10× the worst-case 10,000-part payload)."
+  - "Client-supplied per-part <ETag> values are not validated. Blocks are addressed by (uploadId.nonce, PartNumber) only — if the same PartNumber was UploadPart'd twice with different bytes, Complete will commit the latest version regardless of which ETag the client sends. S3 would reject the stale ETag with InvalidPart. Workflows that don't overwrite parts within an upload are unaffected."
+  - "S3's minimum part size (5 MiB for all but the final part) is NOT enforced. aws2azure commits the supplied block list without size validation; S3 would otherwise reject with EntityTooSmall. The Azure block-size ceiling (~4000 MiB per block, 190.7 TiB per blob) still applies."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html
+  - https://learn.microsoft.com/rest/api/storageservices/put-block-list

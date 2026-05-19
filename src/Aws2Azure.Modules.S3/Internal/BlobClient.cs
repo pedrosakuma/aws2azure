@@ -21,6 +21,8 @@ internal sealed partial class BlobClient
     private readonly AzureHttpClient _http;
     private readonly SharedKeyAuthenticator _auth;
     private readonly Uri _serviceEndpoint;
+    private readonly string _accountName;
+    private readonly byte[] _accountKeyBytes;
 
     public BlobClient(AzureHttpClient http, BlobCredentials credentials)
     {
@@ -29,7 +31,23 @@ internal sealed partial class BlobClient
         _http = http;
         _auth = new SharedKeyAuthenticator(credentials.AccountName, credentials.AccountKey);
         _serviceEndpoint = ResolveEndpoint(credentials);
+        _accountName = credentials.AccountName;
+        _accountKeyBytes = Convert.FromBase64String(credentials.AccountKey);
     }
+
+    /// <summary>
+    /// Account name used to scope multipart UploadId tokens. Required for
+    /// the HMAC binding so a token issued for account A cannot be replayed
+    /// against account B.
+    /// </summary>
+    internal string AccountName => _accountName;
+
+    /// <summary>
+    /// Raw Azure account-key bytes (already base64-decoded). Used as the
+    /// HMAC key for stateless multipart UploadId tokens; never logged or
+    /// transmitted in cleartext.
+    /// </summary>
+    internal ReadOnlySpan<byte> AccountKeyBytes => _accountKeyBytes;
 
     public static bool IsValidContainerName(string name) =>
         !string.IsNullOrEmpty(name)
@@ -120,6 +138,18 @@ internal sealed partial class BlobClient
             endpoint += "/";
         }
         return new Uri(endpoint + container + "/" + S3ObjectKey.EncodeForBlobUrl(key), UriKind.Absolute);
+    }
+
+    /// <summary>
+    /// Builds a blob URI with an additional pre-formatted query string
+    /// (already starting with <c>?</c>, components already escaped). Used
+    /// by the multipart handlers to target Azure subresources such as
+    /// <c>?comp=block&amp;blockid=…</c> or <c>?comp=blocklist</c>.
+    /// </summary>
+    public Uri BuildBlobUri(string container, string key, string queryString)
+    {
+        var baseUri = BuildBlobUri(container, key).AbsoluteUri;
+        return new Uri(baseUri + queryString, UriKind.Absolute);
     }
 
     /// <summary>

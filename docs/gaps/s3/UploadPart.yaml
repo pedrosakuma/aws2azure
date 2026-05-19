@@ -1,0 +1,19 @@
+service: s3
+operation: UploadPart
+azure_equivalent: "Put Block (?comp=block&blockid=…)"
+status: implemented
+sub_features:
+  - name: content-md5
+    status: implemented
+    note: "ETag returned to clients is hex(MD5) of the part body, computed in-flight as the body streams to Azure."
+  - name: aws-chunked-payload
+    status: unsupported
+    note: "STREAMING-AWS4-HMAC-SHA256-PAYLOAD is rejected with NotImplemented; same constraint as PutObject."
+  - name: server-side-encryption-customer
+    status: unsupported
+behavior_differences:
+  - "Block IDs use the fixed-width layout b{nonce16hex}p{partNumber5d} (base64-encoded) so all parts of a blob share a constant length, satisfying Azure's per-blob block-ID uniformity rule."
+  - "Part numbers must be in [1, 10000] (S3 limit). Azure supports up to 50,000 blocks per blob — surplus capacity is unused."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPart.html
+  - https://learn.microsoft.com/rest/api/storageservices/put-block

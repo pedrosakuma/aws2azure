@@ -20,4 +20,8 @@ public enum S3Operation
     CopyObject,
     ListObjects,
     ListObjectsV2,
+    CreateMultipartUpload,
+    UploadPart,
+    CompleteMultipartUpload,
+    AbortMultipartUpload,
 }

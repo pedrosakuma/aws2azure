@@ -1,0 +1,22 @@
+service: s3
+operation: CreateMultipartUpload
+azure_equivalent: "Stateless UploadId (no Azure call until UploadPart)"
+status: implemented
+sub_features:
+  - name: server-side-encryption
+    status: unsupported
+    note: "x-amz-server-side-encryption* request headers are ignored. Encryption is governed by the destination storage account's settings."
+  - name: object-tagging
+    status: unsupported
+    note: "x-amz-tagging is ignored on initiate. Tagging on completion is not yet wired."
+  - name: object-lock
+    status: unsupported
+  - name: storage-class
+    status: unsupported
+    note: "x-amz-storage-class is ignored; blob is committed using the account's default access tier."
+behavior_differences:
+  - "UploadId is a 32-byte stateless token (base64url, 43 chars) HMAC-bound to (account, container, key) using the Azure account key. No Azure call is made on initiate."
+  - "UploadIds expire after 7 days, matching Azure's uncommitted-block GC window. Late UploadPart / Complete / Abort calls surface NoSuchUpload."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateMultipartUpload.html
+  - https://learn.microsoft.com/rest/api/storageservices/put-block

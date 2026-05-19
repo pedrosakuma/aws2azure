@@ -139,6 +139,33 @@ public class S3RouterTests
         Assert.Equal("my-bucket", result.Bucket);
     }
 
+    [Theory]
+    [InlineData("POST",   "/my-bucket/key.txt", "?uploads",                         S3Operation.CreateMultipartUpload)]
+    [InlineData("PUT",    "/my-bucket/key.txt", "?uploadId=ABC&partNumber=3",        S3Operation.UploadPart)]
+    [InlineData("POST",   "/my-bucket/key.txt", "?uploadId=ABC",                     S3Operation.CompleteMultipartUpload)]
+    [InlineData("DELETE", "/my-bucket/key.txt", "?uploadId=ABC",                     S3Operation.AbortMultipartUpload)]
+    public void Multipart_object_subresources_are_routed(string method, string path, string query, S3Operation expected)
+    {
+        var ctx = BuildContext("s3.amazonaws.com", method, path, query: query);
+        var result = S3Router.Classify(ctx);
+        Assert.Equal(expected, result.Operation);
+        Assert.Equal("my-bucket", result.Bucket);
+        Assert.Equal("key.txt", result.Key);
+    }
+
+    [Theory]
+    // Wrong verb for ?uploads (PUT/GET/HEAD) → recognised subresource but unroutable.
+    [InlineData("PUT",    "/my-bucket/key.txt", "?uploads")]
+    [InlineData("GET",    "/my-bucket/key.txt", "?uploads")]
+    // partNumber without uploadId is nonsensical.
+    [InlineData("PUT",    "/my-bucket/key.txt", "?partNumber=1")]
+    public void Multipart_invalid_combos_are_unsupported(string method, string path, string query)
+    {
+        var ctx = BuildContext("s3.amazonaws.com", method, path, query: query);
+        var result = S3Router.Classify(ctx);
+        Assert.Equal(S3Operation.Unsupported, result.Operation);
+    }
+
     private static DefaultHttpContext BuildContext(string host, string method, string path, string? query = null)
     {
         var ctx = new DefaultHttpContext();
