@@ -39,27 +39,41 @@ public static class AwsErrorResponse
     public static string BuildXml(string code, string message, string? resource, string requestId)
     {
         // Use XmlWriter directly (AOT-safe; XmlSerializer is banned).
+        // XmlWriter.Create(StringBuilder, …) hard-codes encoding="utf-16" in
+        // the XML declaration regardless of the requested Encoding setting,
+        // so we wrap the StringBuilder in a UTF-8-reporting StringWriter to
+        // keep the declaration in sync with the bytes ASP.NET ultimately
+        // sends on the wire.
         var sb = new StringBuilder();
-        using var writer = XmlWriter.Create(sb, new XmlWriterSettings
+        using (var sw = new Utf8StringWriter(sb))
+        using (var writer = XmlWriter.Create(sw, new XmlWriterSettings
         {
             Indent = false,
             OmitXmlDeclaration = false,
             Encoding = Encoding.UTF8,
             CloseOutput = false,
-        });
-        writer.WriteStartDocument();
-        writer.WriteStartElement("Error");
-        writer.WriteElementString("Code", code);
-        writer.WriteElementString("Message", message);
-        if (!string.IsNullOrEmpty(resource))
+        }))
         {
-            writer.WriteElementString("Resource", resource);
+            writer.WriteStartDocument();
+            writer.WriteStartElement("Error");
+            writer.WriteElementString("Code", code);
+            writer.WriteElementString("Message", message);
+            if (!string.IsNullOrEmpty(resource))
+            {
+                writer.WriteElementString("Resource", resource);
+            }
+            writer.WriteElementString("RequestId", requestId);
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+            writer.Flush();
         }
-        writer.WriteElementString("RequestId", requestId);
-        writer.WriteEndElement();
-        writer.WriteEndDocument();
-        writer.Flush();
         return sb.ToString();
+    }
+
+    private sealed class Utf8StringWriter : System.IO.StringWriter
+    {
+        public Utf8StringWriter(StringBuilder sb) : base(sb) { }
+        public override Encoding Encoding => Encoding.UTF8;
     }
 
     public static string BuildJson(string code, string message)

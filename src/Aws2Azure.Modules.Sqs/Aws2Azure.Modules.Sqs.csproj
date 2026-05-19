@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Aws2Azure.Modules.Sqs</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="..\Aws2Azure.Core\Aws2Azure.Core.csproj" />
+    <InternalsVisibleTo Include="Aws2Azure.UnitTests" />
+    <InternalsVisibleTo Include="Aws2Azure.IntegrationTests" />
+  </ItemGroup>
+
+</Project>

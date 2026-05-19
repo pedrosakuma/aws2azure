@@ -50,7 +50,7 @@ public sealed class ServiceModuleRegistry
         {
             if (_sigV4 is null)
             {
-                await AwsErrorResponse.WriteAsync(context, module.ErrorFormat,
+                await module.EmitAuthErrorAsync(context,
                     StatusCodes.Status500InternalServerError,
                     code: "InternalError",
                     message: "SigV4 validator is not configured but module requires SigV4.");
@@ -62,7 +62,7 @@ public sealed class ServiceModuleRegistry
             var result = _sigV4.Validate(sigRequest);
             if (!result.IsValid)
             {
-                await EmitAuthError(context, module.ErrorFormat, result);
+                await EmitAuthError(context, module, result);
                 return;
             }
 
@@ -108,7 +108,7 @@ public sealed class ServiceModuleRegistry
         return SigV4Constants.EmptyPayloadSha256;
     }
 
-    private static Task EmitAuthError(HttpContext context, AwsErrorFormat format, SigV4ValidationResult result)
+    private static ValueTask EmitAuthError(HttpContext context, IServiceModule module, SigV4ValidationResult result)
     {
         var (status, code) = result.Status switch
         {
@@ -119,6 +119,6 @@ public sealed class ServiceModuleRegistry
             _                                        => (StatusCodes.Status400BadRequest,  "InvalidRequest"),
         };
 
-        return AwsErrorResponse.WriteAsync(context, format, status, code, result.Reason ?? code);
+        return module.EmitAuthErrorAsync(context, status, code, result.Reason ?? code);
     }
 }

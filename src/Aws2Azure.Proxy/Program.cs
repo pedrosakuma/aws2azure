@@ -5,6 +5,7 @@ using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Core.SigV4;
 using Aws2Azure.Modules.S3;
+using Aws2Azure.Modules.Sqs;
 using Aws2Azure.Proxy;
 using Microsoft.AspNetCore.Http;
 
@@ -49,7 +50,7 @@ builder.Services.AddSingleton(azureHttpClient);
 IServiceModule[] modules =
 [
     new S3ServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.S3),
-    new StubServiceModule(CapabilityRegistry.Sqs, AwsErrorFormat.Json, "sqs."),
+    new SqsServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.Sqs),
     new StubServiceModule(CapabilityRegistry.Dynamodb, AwsErrorFormat.Json, "dynamodb."),
     new StubServiceModule(CapabilityRegistry.Kinesis, AwsErrorFormat.Json, "kinesis."),
     new StubServiceModule(CapabilityRegistry.Sns, AwsErrorFormat.Json, "sns."),
