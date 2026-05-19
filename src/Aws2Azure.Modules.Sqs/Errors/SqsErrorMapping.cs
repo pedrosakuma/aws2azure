@@ -36,4 +36,51 @@ public static class SqsErrorMapping
     public static Mapping InternalError(string message) =>
         new(StatusCodes.Status500InternalServerError, "InternalFailure", message,
             SqsErrorResponse.FaultType.Receiver);
+
+    public static Mapping InvalidParameterValue(string parameter, string message) =>
+        new(StatusCodes.Status400BadRequest, "InvalidParameterValue",
+            $"Value for parameter {parameter} is invalid. Reason: {message}");
+
+    public static Mapping InvalidAttributeName(string attributeName) =>
+        new(StatusCodes.Status400BadRequest, "InvalidAttributeName",
+            $"Unknown Attribute {attributeName}.");
+
+    public static Mapping InvalidAttributeValue(string attributeName, string message) =>
+        new(StatusCodes.Status400BadRequest, "InvalidAttributeValue",
+            $"Attribute {attributeName} value is invalid: {message}");
+
+    public static Mapping QueueNameInvalid() =>
+        new(StatusCodes.Status400BadRequest, "InvalidParameterValue",
+            "Value for parameter QueueName is invalid. Reason: " +
+            "Can only include alphanumeric characters, hyphens, or underscores. " +
+            "1 to 80 characters; FIFO queue names must end with '.fifo'.");
+
+    public static Mapping QueueDoesNotExist() =>
+        new(StatusCodes.Status400BadRequest, "AWS.SimpleQueueService.NonExistentQueue",
+            "The specified queue does not exist for this wsdl version.");
+
+    public static Mapping QueueAlreadyExists(string message) =>
+        new(StatusCodes.Status400BadRequest, "QueueAlreadyExists", message);
+
+    /// <summary>
+    /// Surfaces a non-2xx Service Bus REST response as a best-effort SQS
+    /// error. Each per-op handler can decide whether to call this generic
+    /// helper or supply a more specific code.
+    /// </summary>
+    public static Mapping FromServiceBus(System.Net.Http.HttpResponseMessage sb)
+    {
+        var status = (int)sb.StatusCode;
+        return status switch
+        {
+            401 or 403 => new Mapping(StatusCodes.Status403Forbidden, "AccessDenied",
+                "aws2azure: Azure Service Bus rejected the request (HTTP " + status + ")."),
+            404 or 410 => QueueDoesNotExist(),
+            409 => QueueAlreadyExists(
+                "aws2azure: Azure Service Bus reports the queue already exists with different attributes."),
+            >= 500 => new Mapping(StatusCodes.Status502BadGateway, "ServiceUnavailable",
+                "aws2azure: upstream Azure Service Bus returned HTTP " + status + ".",
+                SqsErrorResponse.FaultType.Receiver),
+            _ => InternalError("aws2azure: upstream Azure Service Bus returned HTTP " + status + "."),
+        };
+    }
 }

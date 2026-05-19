@@ -1,0 +1,42 @@
+service: sqs
+operation: GetQueueAttributes
+azure_equivalent: "GET https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (Atom QueueDescription)"
+status: partial
+sub_features:
+  - name: Attribute.VisibilityTimeout
+    status: implemented
+    notes: "Translated from Service Bus LockDuration."
+  - name: Attribute.MessageRetentionPeriod
+    status: implemented
+    notes: "Translated from DefaultMessageTimeToLive."
+  - name: Attribute.MaximumMessageSize
+    status: implemented
+    notes: "Derived from MaxMessageSizeInKilobytes; defaults to 256 KiB when absent."
+  - name: Attribute.DelaySeconds
+    status: partial
+    notes: "Service Bus has no queue-level default delay; the proxy returns 0. Per-message delay lands in Slice 2."
+  - name: Attribute.ReceiveMessageWaitTimeSeconds
+    status: partial
+    notes: "Returned as 0 until long-polling lands in Slice 4."
+  - name: Attribute.ApproximateNumberOfMessages
+    status: implemented
+    notes: "Mapped from Service Bus MessageCount when the property is present in the Atom response."
+  - name: Attribute.ApproximateNumberOfMessagesNotVisible / Delayed
+    status: unsupported
+    gap: "Service Bus exposes ActiveMessageCount / DeadLetterMessageCount via CountDetails — requires extra parsing planned for Slice 3+."
+  - name: Attribute.CreatedTimestamp / LastModifiedTimestamp
+    status: unsupported
+    gap: "Available in the Atom envelope; the proxy reads them but does not surface them as SQS attributes yet."
+  - name: Attribute.QueueArn
+    status: unsupported
+    gap: "aws2azure has no AWS account model; ARN synthesis is intentionally deferred."
+  - name: Attribute.RedrivePolicy / RedriveAllowPolicy
+    status: unsupported
+    gap: "DLQ wiring lands in Slice 5."
+  - name: AttributeNames=All
+    status: implemented
+behavior_differences:
+  - "AttributeNames filtering happens proxy-side after the full Atom response is parsed."
+  - "Verified against Service Bus emulator only; real-Azure validation pending."
+references:
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_GetQueueAttributes.html

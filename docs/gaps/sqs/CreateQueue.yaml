@@ -1,9 +1,42 @@
 service: sqs
 operation: CreateQueue
-azure_equivalent: "Azure Service Bus (queue) REST API"
-status: stub
-sub_features: []
+azure_equivalent: "PUT https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (Atom QueueDescription)"
+status: implemented
+sub_features:
+  - name: Attribute.VisibilityTimeout
+    status: implemented
+    notes: "Maps to Service Bus LockDuration (ISO-8601 duration)."
+  - name: Attribute.MessageRetentionPeriod
+    status: implemented
+    notes: "Maps to DefaultMessageTimeToLive."
+  - name: Attribute.MaximumMessageSize
+    status: implemented
+    notes: "Recorded as MaxMessageSizeInKilobytes; SB Standard caps at 256 KiB."
+  - name: Attribute.DelaySeconds
+    status: partial
+    notes: "Accepted on CreateQueue; honoured per-message via ScheduledEnqueueTimeUtc in Slice 2."
+  - name: Attribute.ReceiveMessageWaitTimeSeconds
+    status: partial
+    notes: "Accepted; long-polling emulation lands in Slice 4."
+  - name: Attribute.FifoQueue / ContentBasedDeduplication
+    status: partial
+    notes: "Maps to RequiresSession + RequiresDuplicateDetection; full FIFO routing lands in Slice 5."
+  - name: Attribute.RedrivePolicy
+    status: unsupported
+    gap: "DLQ wiring + auto-provisioning lands in Slice 5."
+  - name: Attribute.KmsMasterKeyId / KmsDataKeyReusePeriodSeconds / SqsManagedSseEnabled
+    status: unsupported
+    gap: "Service Bus encryption is namespace-level (Microsoft-managed by default; customer-managed via Key Vault out of band)."
+  - name: Attribute.Policy
+    status: unsupported
+    gap: "Resource-based access policies are AWS IAM; no Service Bus equivalent on REST."
+  - name: tags
+    status: unsupported
+    gap: "Service Bus REST has no per-queue tagging surface; tracked for Slice 5 namespace-metadata workaround."
 behavior_differences:
-  - "AWS SQS visibility timeout maps to Service Bus peek-lock/lock duration"
+  - "Queue name validation enforces SQS rules (1-80 alnum/-_, '.fifo' suffix) before reaching Azure; Azure container names are stricter on some characters."
+  - "Idempotency: an existing queue with matching attributes returns the same QueueUrl; mismatched attributes surface QueueNameExists. We compare LockDuration, TTL, MaxMessageSize, RequiresSession, RequiresDuplicateDetection — a small set vs SQS's full attribute parity."
+  - "Slice-1 verification has only been performed against the Service Bus emulator (mcr.microsoft.com/azure-messaging/servicebus-emulator). Real-Azure validation pending before marking the op stable."
 references:
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_CreateQueue.html
+  - https://learn.microsoft.com/rest/api/servicebus/create-queue
