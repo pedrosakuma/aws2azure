@@ -150,14 +150,62 @@
 
 ## SendMessage
 
-- **Status:** ⚪ stub
-- **Azure equivalent:** `Azure Service Bus (queue) REST API`
+- **Status:** ✅ implemented
+- **Azure equivalent:** `Azure Service Bus queue runtime REST API — POST /{queue}/messages?api-version=2021-05`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| MessageBody round-trip (≤256 KiB) | ✅ implemented |  |  |  |
+| MessageAttributes (String/Number) | ✅ implemented | Mapped to SB application properties as strings. |  |  |
+| MessageAttributes (Binary) | ✅ implemented | Base64-encoded into the side-channel header so receive can rebuild the SQS-shaped attribute. |  |  |
+| MessageAttributes (custom .suffix types) | ✅ implemented |  |  |  |
+| MD5OfMessageBody / MD5OfMessageAttributes in response | ✅ implemented | Computed locally to match AWS algorithm; clients use them to detect transport corruption. |  |  |
+| DelaySeconds (0..900) | ✅ implemented | Translated to BrokerProperties.ScheduledEnqueueTimeUtc (UtcNow + delay). |  |  |
+| MessageDeduplicationId (FIFO) | ✅ implemented | Becomes SB MessageId for SB's dedup window. SB default dedup window differs from SQS — see behavior_differences. |  |  |
+| MessageGroupId (FIFO) | ✅ implemented | Becomes SB SessionId. |  |  |
+| MessageSystemAttribute AWSTraceHeader | ⛔ unsupported |  |  |  |
 
 ### Behaviour differences
 
-- AWS SQS visibility timeout maps to Service Bus peek-lock/lock duration
+- MessageId is synthesised proxy-side (SB does not echo the message id on the runtime POST). For FIFO the MessageDeduplicationId is reused as the MessageId; otherwise a fresh Guid is minted.
+- SQS attribute data types (String/Number/Binary/'String.Custom') are flattened to SB application-property strings. The proxy emits an Aws2Azure-AttrTypes side-channel header so the receive path can faithfully reconstruct the original SQS shape — without it, all attributes would surface as String on receive.
+- MaximumMessageSize on SB Standard tier caps at 256 KiB (same as SQS default); on Premium tier SB allows up to 100 MiB but SQS hard-cap is still 256 KiB and is enforced here.
+- ScheduledEnqueueTimeUtc has millisecond resolution in SB; SQS DelaySeconds is integer seconds, so no loss occurs.
+- Verified against in-process fakes; end-to-end emulator validation deferred to Slice 3 where the receive path co-validates send. Real-Azure verification pending.
 
 ### References
 
 - <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessage.html>
+- <https://learn.microsoft.com/rest/api/servicebus/send-message-to-queue>
+
+## SendMessageBatch
+
+- **Status:** ✅ implemented
+- **Azure equivalent:** `Azure Service Bus queue runtime REST API — POST /{queue}/messages with Content-Type: application/vnd.microsoft.servicebus.json`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| 1..10 entries per batch | ✅ implemented |  |  |  |
+| Aggregate body cap (≤256 KiB) | ✅ implemented |  |  |  |
+| Unique entry Id validation (1..80 alnum/-/_) | ✅ implemented |  |  |  |
+| Per-entry MessageAttributes (String/Number/Binary) | ✅ implemented |  |  |  |
+| Per-entry DelaySeconds → ScheduledEnqueueTimeUtc | ✅ implemented |  |  |  |
+| Per-entry MessageDeduplicationId / MessageGroupId (FIFO) | ✅ implemented |  |  |  |
+| Successful / Failed result partitioning | ✅ implemented | See behavior_differences — SB batch is atomic. |  |  |
+
+### Behaviour differences
+
+- SB's runtime batch send is atomic: the whole batch either succeeds or fails together (no AMQP-style per-message ack). The proxy preserves SQS's BatchResultErrorEntry shape: on a batch-level SB error every entry surfaces in Failed[] with the mapped SQS error code (SenderFault=true for client-side rejections, false for server-side). Genuine per-entry partial success (one bad entry mixed with good ones) is not available over SB REST.
+- Same attribute-flattening + Aws2Azure-AttrTypes side-channel as SendMessage.
+- Entry MessageId returned to the caller is proxy-synthesised (Guid, or MessageDeduplicationId for FIFO).
+- Verified against in-process fakes; end-to-end emulator validation deferred to Slice 3.
+
+### References
+
+- <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessageBatch.html>
+- <https://learn.microsoft.com/rest/api/servicebus/send-message-batch>
 

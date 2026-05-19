@@ -1,0 +1,20 @@
+service: sqs
+operation: SendMessageBatch
+azure_equivalent: "Azure Service Bus queue runtime REST API — POST /{queue}/messages with Content-Type: application/vnd.microsoft.servicebus.json"
+status: implemented
+sub_features:
+  - {name: "1..10 entries per batch", status: implemented}
+  - {name: "Aggregate body cap (≤256 KiB)", status: implemented}
+  - {name: "Unique entry Id validation (1..80 alnum/-/_)", status: implemented}
+  - {name: "Per-entry MessageAttributes (String/Number/Binary)", status: implemented}
+  - {name: "Per-entry DelaySeconds → ScheduledEnqueueTimeUtc", status: implemented}
+  - {name: "Per-entry MessageDeduplicationId / MessageGroupId (FIFO)", status: implemented}
+  - {name: "Successful / Failed result partitioning", status: implemented, notes: "See behavior_differences — SB batch is atomic."}
+behavior_differences:
+  - "SB's runtime batch send is atomic: the whole batch either succeeds or fails together (no AMQP-style per-message ack). The proxy preserves SQS's BatchResultErrorEntry shape: on a batch-level SB error every entry surfaces in Failed[] with the mapped SQS error code (SenderFault=true for client-side rejections, false for server-side). Genuine per-entry partial success (one bad entry mixed with good ones) is not available over SB REST."
+  - "Same attribute-flattening + Aws2Azure-AttrTypes side-channel as SendMessage."
+  - "Entry MessageId returned to the caller is proxy-synthesised (Guid, or MessageDeduplicationId for FIFO)."
+  - "Verified against in-process fakes; end-to-end emulator validation deferred to Slice 3."
+references:
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessageBatch.html
+  - https://learn.microsoft.com/rest/api/servicebus/send-message-batch

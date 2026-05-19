@@ -114,6 +114,105 @@ internal static class SqsResponseWriter
         return WriteXmlAsync(ctx, sb.ToString());
     }
 
+    /// <summary>
+    /// Writes the SendMessage response with the SQS-required digests and
+    /// (optionally) a SequenceNumber the proxy maps from Service Bus's
+    /// post-send echo. SQS clients verify the body digest; AWS SDKs surface
+    /// a transport error when it mismatches.
+    /// </summary>
+    public static Task WriteSendMessageAsync(
+        HttpContext ctx, SqsWireProtocol protocol,
+        string messageId, string md5OfBody,
+        string? md5OfAttributes, string? sequenceNumber)
+    {
+        if (protocol == SqsWireProtocol.AwsJson)
+        {
+            var json = JsonSerializer.Serialize(
+                new SendMessagePayload(messageId, md5OfBody, md5OfAttributes, sequenceNumber),
+                SqsListJsonContext.Default.SendMessagePayload);
+            return WriteJsonAsync(ctx, json);
+        }
+
+        var sb = new StringBuilder();
+        using (var sw = new Utf8StringWriter(sb))
+        using (var w = XmlWriter.Create(sw, XmlSettings))
+        {
+            w.WriteStartDocument();
+            w.WriteStartElement("SendMessageResponse", QueryNamespace);
+            w.WriteStartElement("SendMessageResult", QueryNamespace);
+            w.WriteElementString("MD5OfMessageBody", QueryNamespace, md5OfBody);
+            if (!string.IsNullOrEmpty(md5OfAttributes))
+            {
+                w.WriteElementString("MD5OfMessageAttributes", QueryNamespace, md5OfAttributes);
+            }
+            w.WriteElementString("MessageId", QueryNamespace, messageId);
+            if (!string.IsNullOrEmpty(sequenceNumber))
+            {
+                w.WriteElementString("SequenceNumber", QueryNamespace, sequenceNumber);
+            }
+            w.WriteEndElement();
+            WriteResponseMetadata(w, ctx);
+            w.WriteEndElement();
+            w.WriteEndDocument();
+            w.Flush();
+        }
+        return WriteXmlAsync(ctx, sb.ToString());
+    }
+
+    public static Task WriteSendMessageBatchAsync(
+        HttpContext ctx, SqsWireProtocol protocol,
+        IReadOnlyList<SendMessageBatchEntryResult> successful,
+        IReadOnlyList<SendMessageBatchEntryError> failed)
+    {
+        if (protocol == SqsWireProtocol.AwsJson)
+        {
+            var json = JsonSerializer.Serialize(
+                new SendMessageBatchPayload(successful, failed),
+                SqsListJsonContext.Default.SendMessageBatchPayload);
+            return WriteJsonAsync(ctx, json);
+        }
+
+        var sb = new StringBuilder();
+        using (var sw = new Utf8StringWriter(sb))
+        using (var w = XmlWriter.Create(sw, XmlSettings))
+        {
+            w.WriteStartDocument();
+            w.WriteStartElement("SendMessageBatchResponse", QueryNamespace);
+            w.WriteStartElement("SendMessageBatchResult", QueryNamespace);
+            foreach (var ok in successful)
+            {
+                w.WriteStartElement("SendMessageBatchResultEntry", QueryNamespace);
+                w.WriteElementString("Id", QueryNamespace, ok.Id);
+                w.WriteElementString("MessageId", QueryNamespace, ok.MessageId);
+                w.WriteElementString("MD5OfMessageBody", QueryNamespace, ok.MD5OfMessageBody);
+                if (!string.IsNullOrEmpty(ok.MD5OfMessageAttributes))
+                {
+                    w.WriteElementString("MD5OfMessageAttributes", QueryNamespace, ok.MD5OfMessageAttributes);
+                }
+                if (!string.IsNullOrEmpty(ok.SequenceNumber))
+                {
+                    w.WriteElementString("SequenceNumber", QueryNamespace, ok.SequenceNumber);
+                }
+                w.WriteEndElement();
+            }
+            foreach (var err in failed)
+            {
+                w.WriteStartElement("BatchResultErrorEntry", QueryNamespace);
+                w.WriteElementString("Id", QueryNamespace, err.Id);
+                w.WriteElementString("Code", QueryNamespace, err.Code);
+                w.WriteElementString("Message", QueryNamespace, err.Message);
+                w.WriteElementString("SenderFault", QueryNamespace, err.SenderFault ? "true" : "false");
+                w.WriteEndElement();
+            }
+            w.WriteEndElement();
+            WriteResponseMetadata(w, ctx);
+            w.WriteEndElement();
+            w.WriteEndDocument();
+            w.Flush();
+        }
+        return WriteXmlAsync(ctx, sb.ToString());
+    }
+
     private static Task WriteAsync(
         HttpContext ctx, SqsWireProtocol protocol,
         string xmlEnvelope, string? xmlResult,
@@ -217,8 +316,33 @@ internal sealed record ListQueuesPayload(
 internal sealed record GetQueueAttributesPayload(
     [property: JsonPropertyName("Attributes")] IReadOnlyDictionary<string, string> Attributes);
 
+internal sealed record SendMessagePayload(
+    [property: JsonPropertyName("MessageId")] string MessageId,
+    [property: JsonPropertyName("MD5OfMessageBody")] string MD5OfMessageBody,
+    [property: JsonPropertyName("MD5OfMessageAttributes")] string? MD5OfMessageAttributes,
+    [property: JsonPropertyName("SequenceNumber")] string? SequenceNumber);
+
+internal sealed record SendMessageBatchPayload(
+    [property: JsonPropertyName("Successful")] IReadOnlyList<SendMessageBatchEntryResult> Successful,
+    [property: JsonPropertyName("Failed")] IReadOnlyList<SendMessageBatchEntryError> Failed);
+
+internal sealed record SendMessageBatchEntryResult(
+    [property: JsonPropertyName("Id")] string Id,
+    [property: JsonPropertyName("MessageId")] string MessageId,
+    [property: JsonPropertyName("MD5OfMessageBody")] string MD5OfMessageBody,
+    [property: JsonPropertyName("MD5OfMessageAttributes")] string? MD5OfMessageAttributes,
+    [property: JsonPropertyName("SequenceNumber")] string? SequenceNumber);
+
+internal sealed record SendMessageBatchEntryError(
+    [property: JsonPropertyName("Id")] string Id,
+    [property: JsonPropertyName("Code")] string Code,
+    [property: JsonPropertyName("Message")] string Message,
+    [property: JsonPropertyName("SenderFault")] bool SenderFault);
+
 [JsonSerializable(typeof(ListQueuesPayload))]
 [JsonSerializable(typeof(GetQueueAttributesPayload))]
+[JsonSerializable(typeof(SendMessagePayload))]
+[JsonSerializable(typeof(SendMessageBatchPayload))]
 internal sealed partial class SqsListJsonContext : JsonSerializerContext
 {
 }
