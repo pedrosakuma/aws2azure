@@ -1,9 +1,22 @@
 service: sqs
 operation: ReceiveMessage
-azure_equivalent: "Azure Service Bus (queue) REST API"
-status: stub
-sub_features: []
+azure_equivalent: "Azure Service Bus queue runtime REST API — POST /{queue}/messages/head?timeout=0&api-version=2021-05 (peek-lock semantics)"
+status: partial
+sub_features:
+  - {name: "Short polling (WaitTimeSeconds = 0)", status: implemented}
+  - {name: "Long polling (WaitTimeSeconds 1..20)", status: unsupported, notes: "Returns NotImplemented; Slice 4 will emulate via short-poll loop."}
+  - {name: "MaxNumberOfMessages 1..10", status: implemented, notes: "SB REST is single-message peek-lock; the proxy loops until count or queue empty, bounded by a 5s aggregate budget."}
+  - {name: "VisibilityTimeout parameter", status: partial, notes: "Accepted and validated (0..43200) but ignored at SB level — see behavior_differences."}
+  - {name: "AttributeNames / MessageAttributeNames filters", status: implemented, notes: "Includes 'All' shorthand. Returned system attributes: SentTimestamp, ApproximateReceiveCount, SequenceNumber."}
+  - {name: "Receipt handle round-trip", status: implemented, notes: "Opaque base64 of MessageId|LockToken|SequenceNumber|LockedUntilUtc — self-contained for DeleteMessage / ChangeMessageVisibility."}
+  - {name: "MessageAttributes (String/Number/Binary) round-trip", status: implemented, notes: "Reconstructed from Aws2Azure-AttrTypes side-channel header emitted by SendMessage."}
+  - {name: "MD5OfBody / MD5OfMessageAttributes", status: implemented}
 behavior_differences:
-  - "AWS SQS visibility timeout maps to Service Bus peek-lock/lock duration"
+  - "VisibilityTimeout on ReceiveMessage cannot be set per-call — SB locks the message for the queue's configured LockDuration. The proxy validates the parameter but does not enforce it; clients needing custom per-message visibility must use ChangeMessageVisibility after receive."
+  - "MaxNumberOfMessages > 1 is emulated by looping POST /messages/head, capped by ReceiveLoopBudget (5s) — the proxy may return fewer messages than requested even when the queue has more if the budget elapses."
+  - "ApproximateFirstReceiveTimestamp and SenderId are not surfaced (SB does not provide them)."
+  - "Long polling is intentionally rejected in Slice 3 (NotImplemented) so callers see a deterministic error — Slice 4 will emulate via short-poll loop."
+  - "Verified against in-process fakes; emulator-backed end-to-end validation lands with Slice 4's emulator fixture build-out."
 references:
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ReceiveMessage.html
+  - https://learn.microsoft.com/rest/api/servicebus/peek-lock-message-non-destructive-read
