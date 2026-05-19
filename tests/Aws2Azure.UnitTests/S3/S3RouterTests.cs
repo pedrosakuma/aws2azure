@@ -178,6 +178,29 @@ public class S3RouterTests
     }
 
     [Fact]
+    public void Put_part_with_x_amz_copy_source_routes_to_UploadPartCopy()
+    {
+        var ctx = BuildContext("s3.amazonaws.com", "PUT", "/my-bucket/key.txt", query: "?uploadId=ABC&partNumber=3");
+        ctx.Request.Headers["x-amz-copy-source"] = "/src-bucket/src.txt";
+        var result = S3Router.Classify(ctx);
+        Assert.Equal(S3Operation.UploadPartCopy, result.Operation);
+        Assert.Equal("my-bucket", result.Bucket);
+        Assert.Equal("key.txt", result.Key);
+    }
+
+    [Fact]
+    public void Put_part_with_empty_copy_source_header_routes_to_UploadPart()
+    {
+        // Empty header MUST NOT promote the request to a copy; otherwise a
+        // misconfigured SDK would silently turn a body upload into a copy of
+        // an undefined source.
+        var ctx = BuildContext("s3.amazonaws.com", "PUT", "/my-bucket/key.txt", query: "?uploadId=ABC&partNumber=3");
+        ctx.Request.Headers["x-amz-copy-source"] = "";
+        var result = S3Router.Classify(ctx);
+        Assert.Equal(S3Operation.UploadPart, result.Operation);
+    }
+
+    [Fact]
     public void Get_on_bucket_with_uploads_and_prefix_routes_to_ListMultipartUploads()
     {
         var ctx = BuildContext("s3.amazonaws.com", "GET", "/my-bucket", query: "?uploads&prefix=foo/");

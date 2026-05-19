@@ -30,6 +30,7 @@
 | s3 | [ListParts](s3.md#listparts) | ✅ implemented | `Get Block List (?comp=blocklist&blocklisttype=uncommitted)` |
 | s3 | [PutObject](s3.md#putobject) | ✅ implemented | `PUT https://{account}.blob.core.windows.net/{container}/{blob}` |
 | s3 | [UploadPart](s3.md#uploadpart) | ✅ implemented | `Put Block (?comp=block&blockid=…)` |
+| s3 | [UploadPartCopy](s3.md#uploadpartcopy) | ✅ implemented | `Put Block From URL (?comp=block&blockid=…)` |
 | sns | [CreateTopic](sns.md#createtopic) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
 | sns | [DeleteTopic](sns.md#deletetopic) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
 | sns | [Publish](sns.md#publish) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
