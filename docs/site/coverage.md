@@ -12,7 +12,7 @@
 | kinesis | [GetShardIterator](kinesis.md#getsharditerator) | ⚪ stub | `Azure Event Hubs Kafka/HTTP surface` |
 | kinesis | [PutRecord](kinesis.md#putrecord) | ⚪ stub | `Azure Event Hubs Kafka/HTTP surface` |
 | kinesis | [PutRecords](kinesis.md#putrecords) | ⚪ stub | `Azure Event Hubs Kafka/HTTP surface` |
-| s3 | [CopyObject](s3.md#copyobject) | ⚪ stub | `PUT https://{account}.blob.core.windows.net/{container}/{blob} with x-ms-copy-source` |
+| s3 | [CopyObject](s3.md#copyobject) | ✅ implemented | `PUT https://{account}.blob.core.windows.net/{container}/{blob} with x-ms-copy-source` |
 | s3 | [CreateBucket](s3.md#createbucket) | ✅ implemented | `PUT https://{account}.blob.core.windows.net/{container}?restype=container` |
 | s3 | [DeleteBucket](s3.md#deletebucket) | ✅ implemented | `DELETE https://{account}.blob.core.windows.net/{container}?restype=container` |
 | s3 | [DeleteObject](s3.md#deleteobject) | ✅ implemented | `DELETE https://{account}.blob.core.windows.net/{container}/{blob}` |

@@ -1,10 +1,31 @@
 service: s3
 operation: CopyObject
 azure_equivalent: "PUT https://{account}.blob.core.windows.net/{container}/{blob} with x-ms-copy-source"
-status: stub
-sub_features: []
+status: implemented
+sub_features:
+  - name: x-amz-copy-source (path-prefixed + legacy form)
+    status: implemented
+    gap: "URL-decoded before issuing to Azure."
+  - name: source conditional headers (if-match / if-none-match / if-modified-since / if-unmodified-since)
+    status: implemented
+  - name: x-amz-metadata-directive=COPY (default)
+    status: implemented
+    gap: "Azure preserves source metadata when no x-ms-meta-* is sent, matching S3 COPY semantics."
+  - name: x-amz-metadata-directive=REPLACE
+    status: implemented
+    gap: "Request's metadata + Content-Type override source via standard header forwarding."
+  - name: versionId source qualifier
+    status: unsupported
+    gap: "Rejected with InvalidArgument; versioning is a later slice."
+  - name: cross-account copy (source in a different Azure storage account)
+    status: unsupported
+    gap: "Azure cross-account copy is asynchronous; rejected with NotImplemented to avoid reporting fake success."
+  - name: ARN copy-source (S3-on-Outposts)
+    status: unsupported
 behavior_differences:
-  - "Blob storage flat namespace; S3 prefix/delimiter semantics implemented in the proxy"
+  - "Intra-account copies are synchronous on Azure; the proxy verifies x-ms-copy-status=success before responding 200."
+  - "ETag in CopyObjectResult is normalised to S3-quoted form."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html
-  - https://learn.microsoft.com/rest/api/storageservices/blob-service-rest-api
+  - https://learn.microsoft.com/rest/api/storageservices/copy-blob
+

@@ -59,7 +59,7 @@ public static class S3Router
             {
                 var m when m == HttpMethods.Get    => new S3RouteResult(S3Operation.GetObject,    bucket, key, virtualHosted),
                 var m when m == HttpMethods.Head   => new S3RouteResult(S3Operation.HeadObject,   bucket, key, virtualHosted),
-                var m when m == HttpMethods.Put    => new S3RouteResult(S3Operation.PutObject,    bucket, key, virtualHosted),
+                var m when m == HttpMethods.Put    => new S3RouteResult(ClassifyPutObject(request), bucket, key, virtualHosted),
                 var m when m == HttpMethods.Delete => new S3RouteResult(S3Operation.DeleteObject, bucket, key, virtualHosted),
                 _ => new S3RouteResult(S3Operation.Unknown, bucket, key, virtualHosted),
             };
@@ -102,6 +102,27 @@ public static class S3Router
             }
         }
         return S3Operation.ListObjects;
+    }
+
+    /// <summary>
+    /// S3 overloads PUT /{bucket}/{key} on a header: when
+    /// <c>x-amz-copy-source</c> is present the request is a CopyObject
+    /// instead of a PutObject upload. Detecting the header at the router
+    /// keeps the per-operation dispatch table flat.
+    /// </summary>
+    private static S3Operation ClassifyPutObject(HttpRequest request)
+    {
+        if (request.Headers.TryGetValue("x-amz-copy-source", out var values))
+        {
+            foreach (var v in values)
+            {
+                if (!string.IsNullOrEmpty(v))
+                {
+                    return S3Operation.CopyObject;
+                }
+            }
+        }
+        return S3Operation.PutObject;
     }
 
     // Well-known S3 object subresources. Membership is checked case-insensitively.

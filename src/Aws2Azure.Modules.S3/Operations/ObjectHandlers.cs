@@ -2,6 +2,7 @@ using Aws2Azure.Core.Modules;
 using Aws2Azure.Modules.S3.Errors;
 using Aws2Azure.Modules.S3.Internal;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Net.Http.Headers;
 
 namespace Aws2Azure.Modules.S3.Operations;
 
@@ -46,7 +47,250 @@ internal static class ObjectHandlers
             case S3Operation.DeleteObject:
                 await DeleteAsync(context, blob, bucket, key, cancellationToken).ConfigureAwait(false);
                 break;
+            case S3Operation.CopyObject:
+                await CopyAsync(context, blob, bucket, key, cancellationToken).ConfigureAwait(false);
+                break;
         }
+    }
+
+    private static async Task CopyAsync(HttpContext context, BlobClient blob, string destBucket, string destKey, CancellationToken ct)
+    {
+        // Parse + validate x-amz-copy-source up-front; never round-trip an
+        // ambiguous source to Azure (a typo'd bucket would otherwise become
+        // a different error code surface).
+        var rawSource = context.Request.Headers.TryGetValue("x-amz-copy-source", out var headerValues) && headerValues.Count > 0
+            ? headerValues[0]
+            : null;
+        var parsed = CopySourceParser.Parse(rawSource);
+        if (!parsed.Success)
+        {
+            await WriteErrorAsync(context, S3ErrorMapping.InvalidArgument(parsed.Error!)).ConfigureAwait(false);
+            return;
+        }
+        var sourceBucket = parsed.Bucket!;
+        var sourceKey = parsed.Key!;
+
+        if (!BlobClient.IsValidContainerName(sourceBucket))
+        {
+            await WriteErrorAsync(context,
+                new S3ErrorMapping.Mapping(400, "InvalidBucketName",
+                    "The specified copy-source bucket is not valid.")).ConfigureAwait(false);
+            return;
+        }
+        if (!S3ObjectKey.IsValid(sourceKey))
+        {
+            await WriteErrorAsync(context,
+                S3ErrorMapping.InvalidArgument("The specified copy-source object key is not valid.")).ConfigureAwait(false);
+            return;
+        }
+
+        var sourceUri = blob.BuildAccountBlobUri(sourceBucket, sourceKey);
+
+        // S3 rejects same-bucket/same-key CopyObject unless the request
+        // changes something (metadata, storage class, encryption…). We only
+        // model metadata for now, so a default/COPY self-copy is always a
+        // no-op and must surface as InvalidRequest to match SDK expectations.
+        var directive = ReadDirective(context.Request, "x-amz-metadata-directive");
+        var replace = string.Equals(directive, "REPLACE", StringComparison.OrdinalIgnoreCase);
+        if (!replace && string.Equals(sourceBucket, destBucket, StringComparison.Ordinal)
+            && string.Equals(sourceKey, destKey, StringComparison.Ordinal))
+        {
+            await WriteErrorAsync(context, new S3ErrorMapping.Mapping(400, "InvalidRequest",
+                "This copy request is illegal because it is trying to copy an object to itself "
+                + "without changing the object's metadata, storage class, website redirect "
+                + "location or encryption attributes.")).ConfigureAwait(false);
+            return;
+        }
+        if (!replace && !string.IsNullOrEmpty(directive) && !string.Equals(directive, "COPY", StringComparison.OrdinalIgnoreCase))
+        {
+            await WriteErrorAsync(context, S3ErrorMapping.InvalidArgument(
+                "x-amz-metadata-directive must be COPY or REPLACE.")).ConfigureAwait(false);
+            return;
+        }
+
+        using var azureReq = new HttpRequestMessage(HttpMethod.Put, blob.BuildBlobUri(destBucket, destKey));
+        // The CopyObject request body is always empty; the source lives in
+        // the x-ms-copy-source header. Setting a zero-length StringContent
+        // gives us a Content.Headers bag for Content-Type forwarding.
+        azureReq.Content = new ByteArrayContent(Array.Empty<byte>());
+        azureReq.Content.Headers.ContentLength = 0;
+        azureReq.Headers.TryAddWithoutValidation("x-ms-copy-source", sourceUri.AbsoluteUri);
+
+        // Source-conditional headers (S3 → Azure rename).
+        ForwardSourceConditional(context.Request, azureReq, "x-amz-copy-source-if-match",            "x-ms-source-if-match");
+        ForwardSourceConditional(context.Request, azureReq, "x-amz-copy-source-if-none-match",       "x-ms-source-if-none-match");
+        ForwardSourceConditional(context.Request, azureReq, "x-amz-copy-source-if-modified-since",   "x-ms-source-if-modified-since");
+        ForwardSourceConditional(context.Request, azureReq, "x-amz-copy-source-if-unmodified-since", "x-ms-source-if-unmodified-since");
+
+        // Metadata directive: COPY (default) preserves source metadata —
+        // Azure's Copy Blob does the same when no x-ms-meta-* are sent.
+        // REPLACE means use the request's metadata (Azure rule: any
+        // x-ms-meta-* present replaces source metadata wholesale).
+        if (replace)
+        {
+            ForwardMetadata(context.Request, azureReq);
+        }
+
+        using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
+        if (!azureResp.IsSuccessStatusCode)
+        {
+            await WriteErrorAsync(context, S3ErrorMapping.FromAzure(azureResp, S3Operation.CopyObject)).ConfigureAwait(false);
+            return;
+        }
+
+        // Azure intra-account copy is synchronous: x-ms-copy-status=success
+        // is set in the response and the destination is fully written. If
+        // the proxy is ever pointed at a cross-account topology this would
+        // come back as "pending" — surface that as a clear NotImplemented
+        // rather than reporting fake success to the client.
+        if (azureResp.Headers.TryGetValues("x-ms-copy-status", out var copyStatus))
+        {
+            foreach (var s in copyStatus)
+            {
+                if (!string.Equals(s, "success", StringComparison.OrdinalIgnoreCase))
+                {
+                    await WriteErrorAsync(context, new S3ErrorMapping.Mapping(
+                        StatusCodes.Status501NotImplemented, "NotImplemented",
+                        $"aws2azure: only synchronous CopyObject is supported (x-ms-copy-status={s}).")).ConfigureAwait(false);
+                    return;
+                }
+            }
+        }
+
+        var lastModified = azureResp.Content.Headers.LastModified ?? DateTimeOffset.UtcNow;
+        var etag = azureResp.Headers.ETag?.Tag;
+
+        // Azure's Copy Blob does not honour x-ms-blob-* property overrides
+        // on the copy itself. For REPLACE we always issue a follow-up
+        // Set Blob Properties call — even when no system headers are
+        // supplied — because S3 REPLACE does not preserve source
+        // Content-Type / Cache-Control / etc. unless the caller asked for
+        // them. The follow-up call also rewrites ETag/Last-Modified, so we
+        // overwrite our return values with the response from that call to
+        // keep the CopyObjectResult coherent with the destination blob.
+        if (replace)
+        {
+            var (err, propsETag, propsLastModified) =
+                await SetDestinationPropertiesAsync(context.Request, blob, destBucket, destKey, ct).ConfigureAwait(false);
+            if (err is { } mapping)
+            {
+                await WriteErrorAsync(context, mapping).ConfigureAwait(false);
+                return;
+            }
+            if (propsETag is not null) etag = propsETag;
+            if (propsLastModified is not null) lastModified = propsLastModified.Value;
+        }
+
+        var body = Xml.S3XmlWriter.CopyObjectResult(lastModified, etag);
+
+        context.Response.StatusCode = StatusCodes.Status200OK;
+        context.Response.ContentType = "application/xml; charset=utf-8";
+        // Expose x-amz-version-id / x-amz-server-side-encryption equivalents
+        // in the future via HeaderForwarding if needed. For this slice we
+        // only emit the canonical CopyObjectResult envelope.
+        await context.Response.WriteAsync(body, ct).ConfigureAwait(false);
+    }
+
+    private static void ForwardSourceConditional(HttpRequest source, HttpRequestMessage target, string s3Header, string azureHeader)
+    {
+        if (source.Headers.TryGetValue(s3Header, out var values))
+        {
+            foreach (var v in values)
+            {
+                if (!string.IsNullOrEmpty(v))
+                {
+                    target.Headers.TryAddWithoutValidation(azureHeader, v);
+                }
+            }
+        }
+    }
+
+    private static string? ReadDirective(HttpRequest request, string header)
+    {
+        if (request.Headers.TryGetValue(header, out var values))
+        {
+            foreach (var v in values)
+            {
+                if (!string.IsNullOrEmpty(v))
+                {
+                    return v;
+                }
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// REPLACE-mode metadata forwarding for CopyObject. The Copy Blob REST
+    /// API itself only honours <c>x-ms-meta-*</c> (system properties like
+    /// Content-Type are applied separately via Set Blob Properties).
+    /// </summary>
+    private static void ForwardMetadata(HttpRequest source, HttpRequestMessage target)
+    {
+        foreach (var kv in source.Headers)
+        {
+            if (kv.Key.StartsWith("x-amz-meta-", StringComparison.OrdinalIgnoreCase))
+            {
+                var azureName = "x-ms-meta-" + kv.Key.AsSpan("x-amz-meta-".Length).ToString();
+                foreach (var value in kv.Value)
+                {
+                    if (!string.IsNullOrEmpty(value))
+                    {
+                        target.Headers.TryAddWithoutValidation(azureName, value);
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// After a REPLACE copy, push the request's system properties onto the
+    /// destination blob via Set Blob Properties. The call is unconditional
+    /// (even when no system headers were supplied) because S3 REPLACE does
+    /// not preserve source Content-Type / Cache-Control etc. — sending an
+    /// empty Set Blob Properties clears Azure's inherited values to match.
+    /// Returns the response ETag and Last-Modified so the caller can keep
+    /// CopyObjectResult coherent with the final destination state, or an
+    /// error mapping if Azure rejects the call.
+    /// </summary>
+    private static async Task<(S3ErrorMapping.Mapping? Error, string? ETag, DateTimeOffset? LastModified)>
+        SetDestinationPropertiesAsync(
+            HttpRequest source, BlobClient blob, string destBucket, string destKey, CancellationToken ct)
+    {
+        var uri = new Uri(blob.BuildBlobUri(destBucket, destKey).AbsoluteUri + "?comp=properties");
+        using var req = new HttpRequestMessage(HttpMethod.Put, uri);
+        req.Content = new ByteArrayContent(Array.Empty<byte>());
+        req.Content.Headers.ContentLength = 0;
+
+        ForwardBlobProperty(source, req, HeaderNames.ContentType,        "x-ms-blob-content-type");
+        ForwardBlobProperty(source, req, HeaderNames.ContentEncoding,    "x-ms-blob-content-encoding");
+        ForwardBlobProperty(source, req, HeaderNames.ContentLanguage,    "x-ms-blob-content-language");
+        ForwardBlobProperty(source, req, HeaderNames.CacheControl,       "x-ms-blob-cache-control");
+        ForwardBlobProperty(source, req, HeaderNames.ContentDisposition, "x-ms-blob-content-disposition");
+
+        using var resp = await blob.SendBlobRequestAsync(req, ct).ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode)
+        {
+            return (S3ErrorMapping.FromAzure(resp, S3Operation.CopyObject), null, null);
+        }
+        return (null, resp.Headers.ETag?.Tag, resp.Content.Headers.LastModified);
+    }
+
+    private static bool ForwardBlobProperty(HttpRequest source, HttpRequestMessage target, string s3Header, string azureHeader)
+    {
+        if (!source.Headers.TryGetValue(s3Header, out var values))
+        {
+            return false;
+        }
+        foreach (var v in values)
+        {
+            if (!string.IsNullOrEmpty(v))
+            {
+                target.Headers.TryAddWithoutValidation(azureHeader, v);
+                return true;
+            }
+        }
+        return false;
     }
 
     private static async Task PutAsync(HttpContext context, BlobClient blob, string bucket, string key, CancellationToken ct)

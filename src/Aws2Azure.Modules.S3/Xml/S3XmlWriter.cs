@@ -64,6 +64,31 @@ internal static class S3XmlWriter
         string StorageClass);
 
     /// <summary>
+    /// S3 CopyObject response body. Only LastModified + ETag are emitted;
+    /// SDKs surface both. ETag is normalised through the same quoting rule
+    /// used for ListObjects so Azure's bare ETag round-trips as S3-shaped.
+    /// </summary>
+    public static string CopyObjectResult(DateTimeOffset lastModified, string? eTag)
+    {
+        var sb = new StringBuilder(192);
+        using (var writer = XmlWriter.Create(sb, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("CopyObjectResult", S3Namespace);
+            writer.WriteElementString("LastModified",
+                lastModified.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
+            var quoted = NormalizeETag(eTag);
+            if (!string.IsNullOrEmpty(quoted))
+            {
+                writer.WriteElementString("ETag", quoted);
+            }
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
     /// S3 ListObjectsV2 response. <paramref name="continuationToken"/> echoes
     /// the request's token (null if absent). <paramref name="nextContinuationToken"/>
     /// is set only when the listing is truncated. <paramref name="encodeUrl"/>

@@ -138,6 +138,15 @@ internal sealed partial class BlobClient
             .ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Returns the absolute URI for a sibling blob in the same Azure storage
+    /// account. Used to build the <c>x-ms-copy-source</c> value for
+    /// <see cref="ObjectHandlers"/>' CopyObject, which only supports copies
+    /// inside the account the request was authenticated for.
+    /// </summary>
+    public Uri BuildAccountBlobUri(string container, string key) =>
+        BuildBlobUri(container, key);
+
     private async Task<HttpResponseMessage> SendAsync(HttpMethod method, Uri uri, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(method, uri);
