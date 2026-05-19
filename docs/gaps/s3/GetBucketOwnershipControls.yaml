@@ -1,0 +1,12 @@
+service: s3
+operation: GetBucketOwnershipControls
+azure_equivalent: "(no equivalent — proxy returns 404 OwnershipControlsNotFoundError)"
+status: unsupported
+sub_features:
+  - name: "configuration storage"
+    status: unsupported
+    note: "The proxy emulates BucketOwnerEnforced via the ACL stubs but does not persist an OwnershipControls document."
+behavior_differences:
+  - "GET returns HTTP 404 with code OwnershipControlsNotFoundError so clients receive the same shape as a never-configured S3 bucket instead of InternalError."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketOwnershipControls.html

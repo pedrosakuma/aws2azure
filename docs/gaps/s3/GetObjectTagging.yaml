@@ -1,0 +1,16 @@
+service: s3
+operation: GetObjectTagging
+azure_equivalent: "GET {blob}?comp=tags (Azure Blob Index Tags)"
+status: implemented
+sub_features:
+  - name: "tag listing"
+    status: implemented
+    note: "Azure response's <Tags><TagSet> is rewrapped as S3 <Tagging><TagSet>."
+  - name: "versionId qualifier"
+    status: unsupported
+    note: "The proxy has no versioning story; ignored on input."
+behavior_differences:
+  - "Returns an empty TagSet (200) when no tags are set, matching Azure's behaviour. Azure surfaces 'no tags' as an empty set rather than a NoSuchTagSet error."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectTagging.html
+  - https://learn.microsoft.com/rest/api/storageservices/get-blob-tags

@@ -1,0 +1,13 @@
+service: s3
+operation: GetObjectAcl
+azure_equivalent: "(no Azure equivalent — synthetic ownership-only response)"
+status: partial
+sub_features:
+  - name: "owner reporting"
+    status: implemented
+    note: "Identical to GetBucketAcl."
+  - name: "per-object grants"
+    status: unsupported
+    note: "Reports owner FULL_CONTROL only."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectAcl.html

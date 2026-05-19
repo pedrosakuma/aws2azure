@@ -1,0 +1,12 @@
+service: s3
+operation: GetBucketNotificationConfiguration
+azure_equivalent: "(no equivalent — proxy returns an empty <NotificationConfiguration/> document)"
+status: stub
+sub_features:
+  - name: "configuration storage"
+    status: unsupported
+    note: "Empty body means 'no notifications configured', matching S3. Azure Event Grid / Event Hubs subscriptions are configured out of band."
+behavior_differences:
+  - "GET returns 200 with an empty <NotificationConfiguration/> document, matching the S3 'never configured' wire shape."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketNotificationConfiguration.html

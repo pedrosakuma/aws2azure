@@ -1,0 +1,12 @@
+service: s3
+operation: GetBucketLogging
+azure_equivalent: "(no equivalent — proxy returns an empty <BucketLoggingStatus/> document)"
+status: stub
+sub_features:
+  - name: "configuration storage"
+    status: unsupported
+    note: "S3 returns an empty <BucketLoggingStatus/> when logging has never been enabled; the proxy mirrors that. Azure Storage Analytics logging is account-scoped and not bridged."
+behavior_differences:
+  - "GET returns 200 with an empty <BucketLoggingStatus/> document, matching the S3 'never configured' wire shape."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketLogging.html

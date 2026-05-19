@@ -18,9 +18,41 @@
 | s3 | [CreateBucket](s3.md#createbucket) | ✅ implemented | `PUT https://{account}.blob.core.windows.net/{container}?restype=container` |
 | s3 | [CreateMultipartUpload](s3.md#createmultipartupload) | ✅ implemented | `Stateless UploadId (no Azure call until UploadPart)` |
 | s3 | [DeleteBucket](s3.md#deletebucket) | ✅ implemented | `DELETE https://{account}.blob.core.windows.net/{container}?restype=container` |
+| s3 | [DeleteBucketCors](s3.md#deletebucketcors) | ⚪ stub | `(no equivalent — proxy treats it as a no-op)` |
+| s3 | [DeleteBucketEncryption](s3.md#deletebucketencryption) | ⚪ stub | `(no equivalent — proxy treats it as a no-op)` |
+| s3 | [DeleteBucketLifecycle](s3.md#deletebucketlifecycle) | ⚪ stub | `(no equivalent — proxy treats it as a no-op)` |
+| s3 | [DeleteBucketOwnershipControls](s3.md#deletebucketownershipcontrols) | ⚪ stub | `(no equivalent — proxy treats it as a no-op)` |
+| s3 | [DeleteBucketPolicy](s3.md#deletebucketpolicy) | ⚪ stub | `(no equivalent — proxy treats it as a no-op)` |
+| s3 | [DeleteBucketReplication](s3.md#deletebucketreplication) | ⚪ stub | `(no equivalent — proxy treats it as a no-op)` |
+| s3 | [DeleteBucketTagging](s3.md#deletebuckettagging) | ✅ implemented | `PUT {container}?restype=container&comp=metadata with no x-ms-meta-* headers` |
+| s3 | [DeleteBucketWebsite](s3.md#deletebucketwebsite) | ⚪ stub | `(no equivalent — proxy treats it as a no-op)` |
 | s3 | [DeleteObject](s3.md#deleteobject) | ✅ implemented | `DELETE https://{account}.blob.core.windows.net/{container}/{blob}` |
+| s3 | [DeleteObjectTagging](s3.md#deleteobjecttagging) | ✅ implemented | `PUT {blob}?comp=tags with an empty <TagSet/>` |
 | s3 | [DeleteObjects](s3.md#deleteobjects) | ✅ implemented | `Multiple DELETEs against Blob (no native batch endpoint)` |
+| s3 | [DeletePublicAccessBlock](s3.md#deletepublicaccessblock) | ⚪ stub | `(no equivalent — proxy treats it as a no-op)` |
+| s3 | [GetBucketAccelerateConfiguration](s3.md#getbucketaccelerateconfiguration) | ⚪ stub | `(no equivalent — proxy returns an empty <AccelerateConfiguration/> document)` |
+| s3 | [GetBucketAcl](s3.md#getbucketacl) | 🟡 partial | `(no Azure equivalent — synthetic ownership-only response)` |
+| s3 | [GetBucketCors](s3.md#getbucketcors) | ⛔ unsupported | `(no equivalent — proxy returns 404 NoSuchCORSConfiguration)` |
+| s3 | [GetBucketEncryption](s3.md#getbucketencryption) | ⛔ unsupported | `(no equivalent — proxy returns 404 ServerSideEncryptionConfigurationNotFoundError)` |
+| s3 | [GetBucketLifecycleConfiguration](s3.md#getbucketlifecycleconfiguration) | ⛔ unsupported | `(no equivalent — proxy returns 404 NoSuchLifecycleConfiguration)` |
+| s3 | [GetBucketLogging](s3.md#getbucketlogging) | ⚪ stub | `(no equivalent — proxy returns an empty <BucketLoggingStatus/> document)` |
+| s3 | [GetBucketNotificationConfiguration](s3.md#getbucketnotificationconfiguration) | ⚪ stub | `(no equivalent — proxy returns an empty <NotificationConfiguration/> document)` |
+| s3 | [GetBucketOwnershipControls](s3.md#getbucketownershipcontrols) | ⛔ unsupported | `(no equivalent — proxy returns 404 OwnershipControlsNotFoundError)` |
+| s3 | [GetBucketPolicy](s3.md#getbucketpolicy) | ⛔ unsupported | `(no equivalent — proxy returns 404 NoSuchBucketPolicy)` |
+| s3 | [GetBucketPolicyStatus](s3.md#getbucketpolicystatus) | ⛔ unsupported | `(no equivalent — proxy returns 404 NoSuchBucketPolicy)` |
+| s3 | [GetBucketReplication](s3.md#getbucketreplication) | ⛔ unsupported | `(no equivalent — proxy returns 404 ReplicationConfigurationNotFoundError)` |
+| s3 | [GetBucketRequestPayment](s3.md#getbucketrequestpayment) | ⚪ stub | `(no equivalent — proxy returns the S3 default body)` |
+| s3 | [GetBucketTagging](s3.md#getbuckettagging) | 🟡 partial | `GET {container}?restype=container&comp=metadata (single opaque metadata blob)` |
+| s3 | [GetBucketVersioning](s3.md#getbucketversioning) | ⚪ stub | `(no equivalent — proxy returns an empty <VersioningConfiguration/> document)` |
+| s3 | [GetBucketWebsite](s3.md#getbucketwebsite) | ⛔ unsupported | `(no equivalent — proxy returns 404 NoSuchWebsiteConfiguration)` |
 | s3 | [GetObject](s3.md#getobject) | ✅ implemented | `GET https://{account}.blob.core.windows.net/{container}/{blob}` |
+| s3 | [GetObjectAcl](s3.md#getobjectacl) | 🟡 partial | `(no Azure equivalent — synthetic ownership-only response)` |
+| s3 | [GetObjectLegalHold](s3.md#getobjectlegalhold) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
+| s3 | [GetObjectLockConfiguration](s3.md#getobjectlockconfiguration) | ⛔ unsupported | `(no equivalent — proxy returns 404 ObjectLockConfigurationNotFoundError)` |
+| s3 | [GetObjectRetention](s3.md#getobjectretention) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
+| s3 | [GetObjectTagging](s3.md#getobjecttagging) | ✅ implemented | `GET {blob}?comp=tags (Azure Blob Index Tags)` |
+| s3 | [GetObjectTorrent](s3.md#getobjecttorrent) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
+| s3 | [GetPublicAccessBlock](s3.md#getpublicaccessblock) | ⛔ unsupported | `(no equivalent — proxy returns 404 NoSuchPublicAccessBlockConfiguration)` |
 | s3 | [HeadBucket](s3.md#headbucket) | ✅ implemented | `HEAD https://{account}.blob.core.windows.net/{container}?restype=container` |
 | s3 | [HeadObject](s3.md#headobject) | ✅ implemented | `HEAD https://{account}.blob.core.windows.net/{container}/{blob}` |
 | s3 | [ListBuckets](s3.md#listbuckets) | ✅ implemented | `GET https://{account}.blob.core.windows.net/?comp=list` |
@@ -28,7 +60,28 @@
 | s3 | [ListObjects](s3.md#listobjects) | ✅ implemented | `GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list` |
 | s3 | [ListObjectsV2](s3.md#listobjectsv2) | ✅ implemented | `GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list` |
 | s3 | [ListParts](s3.md#listparts) | ✅ implemented | `Get Block List (?comp=blocklist&blocklisttype=uncommitted)` |
+| s3 | [PutBucketAccelerateConfiguration](s3.md#putbucketaccelerateconfiguration) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
+| s3 | [PutBucketAcl](s3.md#putbucketacl) | 🟡 partial | `(no Azure equivalent — validates owner-only intent and replies 200)` |
+| s3 | [PutBucketCors](s3.md#putbucketcors) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
+| s3 | [PutBucketEncryption](s3.md#putbucketencryption) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
+| s3 | [PutBucketLifecycleConfiguration](s3.md#putbucketlifecycleconfiguration) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
+| s3 | [PutBucketLogging](s3.md#putbucketlogging) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
+| s3 | [PutBucketNotificationConfiguration](s3.md#putbucketnotificationconfiguration) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
+| s3 | [PutBucketOwnershipControls](s3.md#putbucketownershipcontrols) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
+| s3 | [PutBucketPolicy](s3.md#putbucketpolicy) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
+| s3 | [PutBucketReplication](s3.md#putbucketreplication) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
+| s3 | [PutBucketRequestPayment](s3.md#putbucketrequestpayment) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
+| s3 | [PutBucketTagging](s3.md#putbuckettagging) | 🟡 partial | `PUT {container}?restype=container&comp=metadata` |
+| s3 | [PutBucketVersioning](s3.md#putbucketversioning) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
+| s3 | [PutBucketWebsite](s3.md#putbucketwebsite) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
 | s3 | [PutObject](s3.md#putobject) | ✅ implemented | `PUT https://{account}.blob.core.windows.net/{container}/{blob}` |
+| s3 | [PutObjectAcl](s3.md#putobjectacl) | 🟡 partial | `(no Azure equivalent — validates owner-only intent and replies 200)` |
+| s3 | [PutObjectLegalHold](s3.md#putobjectlegalhold) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
+| s3 | [PutObjectLockConfiguration](s3.md#putobjectlockconfiguration) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
+| s3 | [PutObjectRetention](s3.md#putobjectretention) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
+| s3 | [PutObjectTagging](s3.md#putobjecttagging) | ✅ implemented | `PUT {blob}?comp=tags` |
+| s3 | [PutPublicAccessBlock](s3.md#putpublicaccessblock) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
+| s3 | [RestoreObject](s3.md#restoreobject) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
 | s3 | [UploadPart](s3.md#uploadpart) | ✅ implemented | `Put Block (?comp=block&blockid=…)` |
 | s3 | [UploadPartCopy](s3.md#uploadpartcopy) | ✅ implemented | `Put Block From URL (?comp=block&blockid=…)` |
 | sns | [CreateTopic](sns.md#createtopic) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |

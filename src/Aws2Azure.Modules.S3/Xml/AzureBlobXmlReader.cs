@@ -241,4 +241,79 @@ internal static class AzureBlobXmlReader
         }
         return null;
     }
+
+    /// <summary>
+    /// Parses a tag set XML document. Accepts both the AWS S3 wire shape
+    /// (<c>&lt;Tagging&gt;&lt;TagSet&gt;…</c>, optionally with the S3
+    /// namespace) and the Azure Blob shape (<c>&lt;Tags&gt;&lt;TagSet&gt;…</c>).
+    /// Returns null when the document is well-formed XML but does not contain
+    /// a recognised <c>&lt;TagSet&gt;</c>; throws <see cref="XmlException"/>
+    /// on malformed XML.
+    /// </summary>
+    public static IReadOnlyList<Xml.S3XmlWriter.Tag>? ParseTagSet(string xml)
+    {
+        if (string.IsNullOrWhiteSpace(xml))
+        {
+            return Array.Empty<Xml.S3XmlWriter.Tag>();
+        }
+
+        var tags = new List<Xml.S3XmlWriter.Tag>();
+        using var reader = XmlReader.Create(new StringReader(xml), new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Prohibit,
+            XmlResolver = null,
+            IgnoreWhitespace = true,
+            IgnoreComments = true,
+        });
+
+        var insideTagSet = false;
+        var sawTagSet = false;
+        string? key = null;
+        string? value = null;
+
+        // Manual cursor: ReadElementContentAsString already advances past the
+        // closing tag, so calling reader.Read() at the top of the loop would
+        // skip the sibling element (e.g. <Value> after <Key>). Instead we
+        // advance explicitly inside each branch.
+        if (!reader.Read()) return Array.Empty<Xml.S3XmlWriter.Tag>();
+        while (!reader.EOF)
+        {
+            if (reader.NodeType == XmlNodeType.Element)
+            {
+                switch (reader.LocalName)
+                {
+                    case "TagSet":
+                        insideTagSet = true;
+                        sawTagSet = true;
+                        reader.Read();
+                        continue;
+                    case "Tag" when insideTagSet:
+                        key = null;
+                        value = null;
+                        reader.Read();
+                        continue;
+                    case "Key" when insideTagSet:
+                        key = reader.ReadElementContentAsString();
+                        continue;
+                    case "Value" when insideTagSet:
+                        value = reader.ReadElementContentAsString();
+                        continue;
+                }
+            }
+            else if (reader.NodeType == XmlNodeType.EndElement)
+            {
+                if (reader.LocalName == "Tag" && insideTagSet && key is not null)
+                {
+                    tags.Add(new Xml.S3XmlWriter.Tag(key, value ?? string.Empty));
+                }
+                else if (reader.LocalName == "TagSet")
+                {
+                    insideTagSet = false;
+                }
+            }
+            reader.Read();
+        }
+
+        return sawTagSet ? tags : null;
+    }
 }

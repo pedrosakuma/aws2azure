@@ -1,0 +1,12 @@
+service: s3
+operation: GetObjectLockConfiguration
+azure_equivalent: "(no equivalent — proxy returns 404 ObjectLockConfigurationNotFoundError)"
+status: unsupported
+sub_features:
+  - name: "configuration storage"
+    status: unsupported
+    note: "Azure Immutable Blob Storage uses time-based or legal-hold policies; not surfaced through this proxy yet."
+behavior_differences:
+  - "GET returns HTTP 404 with code ObjectLockConfigurationNotFoundError so clients receive the same shape as a never-configured S3 bucket instead of InternalError."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectLockConfiguration.html

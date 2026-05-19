@@ -269,6 +269,87 @@ internal sealed partial class BlobClient
     public Uri BuildAccountBlobUri(string container, string key) =>
         BuildBlobUri(container, key);
 
+    /// <summary>
+    /// Issues <c>GET {blob}?comp=tags</c> to retrieve Azure Blob Index Tags
+    /// for an object. The returned XML uses Azure's <c>&lt;Tags&gt;</c> root
+    /// (no namespace); the S3 module rewraps it as <c>&lt;Tagging&gt;</c>.
+    /// </summary>
+    public Task<HttpResponseMessage> GetBlobTagsAsync(string container, string key, CancellationToken cancellationToken)
+    {
+        var uri = BuildBlobUri(container, key, "?comp=tags");
+        return SendAsync(HttpMethod.Get, uri, cancellationToken);
+    }
+
+    /// <summary>
+    /// Issues <c>PUT {blob}?comp=tags</c> to replace the Azure Blob Index
+    /// Tags for an object. <paramref name="azureTagsXml"/> must already be
+    /// in Azure's wire format (<c>&lt;Tags&gt;&lt;TagSet&gt;…</c>).
+    /// </summary>
+    public Task<HttpResponseMessage> PutBlobTagsAsync(
+        string container, string key, byte[] azureTagsXml, CancellationToken cancellationToken)
+    {
+        var uri = BuildBlobUri(container, key, "?comp=tags");
+        var request = new HttpRequestMessage(HttpMethod.Put, uri)
+        {
+            Content = new ByteArrayContent(azureTagsXml),
+        };
+        request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/xml");
+        request.Content.Headers.ContentLength = azureTagsXml.LongLength;
+        return SendBlobRequestAsync(request, cancellationToken);
+    }
+
+    /// <summary>
+    /// Issues <c>PUT {container}?restype=container&amp;comp=metadata</c>
+    /// replacing the container metadata with <paramref name="metadata"/>.
+    /// Used by the S3 module to back PutBucketTagging / DeleteBucketTagging
+    /// (Azure has no native bucket-tagging endpoint).
+    /// </summary>
+    public Task<HttpResponseMessage> SetContainerMetadataAsync(
+        string container, IReadOnlyDictionary<string, string> metadata, CancellationToken cancellationToken)
+    {
+        var uri = new Uri(_serviceEndpoint, $"{container}?restype=container&comp=metadata");
+        var request = new HttpRequestMessage(HttpMethod.Put, uri);
+        foreach (var kv in metadata)
+        {
+            request.Headers.TryAddWithoutValidation("x-ms-meta-" + kv.Key, kv.Value);
+        }
+        request.Content = new ByteArrayContent(Array.Empty<byte>());
+        request.Content.Headers.ContentLength = 0;
+        return SendBlobRequestAsync(request, cancellationToken);
+    }
+
+    /// <summary>
+    /// Issues <c>GET {container}?restype=container&amp;comp=metadata</c>.
+    /// Returns the raw response so callers can read <c>x-ms-meta-*</c>
+    /// headers directly.
+    /// </summary>
+    public Task<HttpResponseMessage> GetContainerMetadataAsync(string container, CancellationToken cancellationToken)
+    {
+        var uri = new Uri(_serviceEndpoint, $"{container}?restype=container&comp=metadata");
+        return SendAsync(HttpMethod.Get, uri, cancellationToken);
+    }
+
+    /// <summary>
+    /// Extracts the <c>x-ms-meta-*</c> headers from a container properties
+    /// or metadata response into a case-sensitive dictionary keyed by the
+    /// bare metadata name (no prefix). The header names returned by Azure
+    /// are lower-cased to match the keys accepted by
+    /// <see cref="SetContainerMetadataAsync"/>.
+    /// </summary>
+    public static IDictionary<string, string> ReadContainerMetadata(HttpResponseMessage response)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var header in response.Headers)
+        {
+            if (header.Key.StartsWith("x-ms-meta-", StringComparison.OrdinalIgnoreCase))
+            {
+                var key = header.Key.Substring("x-ms-meta-".Length).ToLowerInvariant();
+                foreach (var v in header.Value) { result[key] = v; break; }
+            }
+        }
+        return result;
+    }
+
     private async Task<HttpResponseMessage> SendAsync(HttpMethod method, Uri uri, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(method, uri);

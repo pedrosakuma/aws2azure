@@ -1,0 +1,22 @@
+service: s3
+operation: PutObjectTagging
+azure_equivalent: "PUT {blob}?comp=tags"
+status: implemented
+sub_features:
+  - name: "replace existing tag set"
+    status: implemented
+    note: "Mirrors S3 semantics: PUT replaces the tag set atomically."
+  - name: "10-tag limit per object"
+    status: implemented
+    note: "Enforced before the Azure call."
+  - name: "128-char key / 256-char value limits"
+    status: implemented
+    note: "Enforced before the Azure call."
+  - name: "versionId qualifier"
+    status: unsupported
+    note: "No versioning model in the proxy."
+behavior_differences:
+  - "AWS uses 200 OK with empty body; the proxy matches that."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectTagging.html
+  - https://learn.microsoft.com/rest/api/storageservices/set-blob-tags

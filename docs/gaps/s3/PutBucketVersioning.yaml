@@ -1,0 +1,12 @@
+service: s3
+operation: PutBucketVersioning
+azure_equivalent: "(no equivalent — proxy returns 501 NotImplemented)"
+status: unsupported
+sub_features:
+  - name: "configuration storage"
+    status: unsupported
+    note: "See the matching Get* gap doc for the Azure-side reason."
+behavior_differences:
+  - "PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketVersioning.html

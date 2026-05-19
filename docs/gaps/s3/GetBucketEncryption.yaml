@@ -1,0 +1,12 @@
+service: s3
+operation: GetBucketEncryption
+azure_equivalent: "(no equivalent — proxy returns 404 ServerSideEncryptionConfigurationNotFoundError)"
+status: unsupported
+sub_features:
+  - name: "configuration storage"
+    status: unsupported
+    note: "Azure Storage encrypts all data at rest by default with Microsoft-managed keys; per-container SSE configuration is not exposed through the data plane."
+behavior_differences:
+  - "GET returns HTTP 404 with code ServerSideEncryptionConfigurationNotFoundError so clients receive the same shape as a never-configured S3 bucket instead of InternalError."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketEncryption.html

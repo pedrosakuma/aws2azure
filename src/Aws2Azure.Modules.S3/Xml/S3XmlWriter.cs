@@ -469,4 +469,133 @@ internal static class S3XmlWriter
         }
         return encodeUrl ? Uri.EscapeDataString(value) : value;
     }
+
+    public readonly record struct Tag(string Key, string Value);
+
+    /// <summary>
+    /// Serialises the S3 <c>&lt;Tagging&gt;</c> response shape used by
+    /// GetObjectTagging / GetBucketTagging. Always emits the S3 namespace.
+    /// </summary>
+    public static string Tagging(IReadOnlyList<Tag> tags)
+    {
+        var sb = new StringBuilder(128);
+        using (var writer = XmlWriter.Create(sb, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("Tagging", S3Namespace);
+            writer.WriteStartElement("TagSet");
+            foreach (var t in tags)
+            {
+                writer.WriteStartElement("Tag");
+                writer.WriteElementString("Key", t.Key);
+                writer.WriteElementString("Value", t.Value);
+                writer.WriteEndElement();
+            }
+            writer.WriteEndElement();
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Serialises Azure's <c>&lt;Tags&gt;&lt;TagSet&gt;…</c> request body
+    /// used by <c>PUT {blob}?comp=tags</c>. Azure does NOT use the S3
+    /// namespace and rejects requests that include it.
+    /// </summary>
+    public static byte[] AzureBlobTagsBody(IReadOnlyList<Tag> tags)
+    {
+        var sb = new StringBuilder(128);
+        using (var writer = XmlWriter.Create(sb, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("Tags");
+            writer.WriteStartElement("TagSet");
+            foreach (var t in tags)
+            {
+                writer.WriteStartElement("Tag");
+                writer.WriteElementString("Key", t.Key);
+                writer.WriteElementString("Value", t.Value);
+                writer.WriteEndElement();
+            }
+            writer.WriteEndElement();
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        return Encoding.UTF8.GetBytes(sb.ToString());
+    }
+
+    /// <summary>
+    /// Ownership-only ACL response. Reports a single FULL_CONTROL grant to
+    /// the canonical owner, matching the behaviour of a bucket created with
+    /// the ObjectOwnership=BucketOwnerEnforced setting.
+    /// </summary>
+    public static string AccessControlPolicy(OwnerInfo owner)
+    {
+        var sb = new StringBuilder(256);
+        using (var writer = XmlWriter.Create(sb, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("AccessControlPolicy", S3Namespace);
+
+            writer.WriteStartElement("Owner");
+            writer.WriteElementString("ID", owner.Id);
+            writer.WriteElementString("DisplayName", owner.DisplayName);
+            writer.WriteEndElement();
+
+            writer.WriteStartElement("AccessControlList");
+            writer.WriteStartElement("Grant");
+            writer.WriteStartElement("Grantee");
+            writer.WriteAttributeString("xmlns", "xsi", null, "http://www.w3.org/2001/XMLSchema-instance");
+            writer.WriteAttributeString("xsi", "type", null, "CanonicalUser");
+            writer.WriteElementString("ID", owner.Id);
+            writer.WriteElementString("DisplayName", owner.DisplayName);
+            writer.WriteEndElement();
+            writer.WriteElementString("Permission", "FULL_CONTROL");
+            writer.WriteEndElement();
+            writer.WriteEndElement();
+
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Renders a top-level empty configuration document of the given root
+    /// element name. Used for the GET-config stubs that AWS documents as
+    /// returning a 200 with an empty body (versioning, notification, logging,
+    /// accelerate, ownershipControls, …).
+    /// </summary>
+    public static string EmptyConfiguration(string rootElement)
+    {
+        var sb = new StringBuilder(128);
+        using (var writer = XmlWriter.Create(sb, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement(rootElement, S3Namespace);
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Renders <c>&lt;RequestPaymentConfiguration&gt;&lt;Payer&gt;BucketOwner&lt;/Payer&gt;</c>.
+    /// AWS returns this exact body for buckets that have never opted into
+    /// requester-pays, which is the default we surface from the proxy.
+    /// </summary>
+    public static string RequestPaymentConfigurationDefault()
+    {
+        var sb = new StringBuilder(96);
+        using (var writer = XmlWriter.Create(sb, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("RequestPaymentConfiguration", S3Namespace);
+            writer.WriteElementString("Payer", "BucketOwner");
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        return sb.ToString();
+    }
 }
