@@ -71,7 +71,7 @@ public class QueueAttributeTranslatorTests
         var attrs = QueueAttributeTranslator.ToSqsAttributes(new QueueDescriptionProperties());
         Assert.Equal("30", attrs["VisibilityTimeout"]);
         Assert.Equal("345600", attrs["MessageRetentionPeriod"]);
-        Assert.Equal("262144", attrs["MaximumMessageSize"]);
+        Assert.Equal("1048576", attrs["MaximumMessageSize"]);
         Assert.Equal("0", attrs["DelaySeconds"]);
         Assert.Equal("0", attrs["ReceiveMessageWaitTimeSeconds"]);
         Assert.False(attrs.ContainsKey("FifoQueue"));

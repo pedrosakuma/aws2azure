@@ -35,7 +35,7 @@
 |---|---|---|---|---|
 | Attribute.VisibilityTimeout | ✅ implemented | Maps to Service Bus LockDuration (ISO-8601 duration). |  |  |
 | Attribute.MessageRetentionPeriod | ✅ implemented | Maps to DefaultMessageTimeToLive. |  |  |
-| Attribute.MaximumMessageSize | ✅ implemented | Recorded as MaxMessageSizeInKilobytes; SB Standard caps at 256 KiB. |  |  |
+| Attribute.MaximumMessageSize | ✅ implemented | Recorded as MaxMessageSizeInKilobytes (1024..1048576 bytes / 1 KiB..1 MiB). SQS raised its hard cap from 256 KiB to 1 MiB in August 2025; the proxy now mirrors that range. Backing Service Bus tier still constrains the *effective* limit: SB Standard rejects anything over 256 KiB, SB Premium honours up to 100 MiB (configurable). Per-queue MaximumMessageSize is set at create time but not re-validated per send — SB itself rejects oversized payloads on the runtime POST. |  |  |
 | Attribute.DelaySeconds | 🟡 partial | Accepted on CreateQueue; honoured per-message via ScheduledEnqueueTimeUtc in Slice 2. |  |  |
 | Attribute.ReceiveMessageWaitTimeSeconds | 🟡 partial | Accepted; long-polling emulation lands in Slice 4. |  |  |
 | Attribute.FifoQueue / ContentBasedDeduplication | 🟡 partial | Maps to RequiresSession + RequiresDuplicateDetection; full FIFO routing lands in Slice 5. |  |  |
@@ -104,7 +104,7 @@
 |---|---|---|---|---|
 | Attribute.VisibilityTimeout | ✅ implemented | Translated from Service Bus LockDuration. |  |  |
 | Attribute.MessageRetentionPeriod | ✅ implemented | Translated from DefaultMessageTimeToLive. |  |  |
-| Attribute.MaximumMessageSize | ✅ implemented | Derived from MaxMessageSizeInKilobytes; defaults to 256 KiB when absent. |  |  |
+| Attribute.MaximumMessageSize | ✅ implemented | Derived from MaxMessageSizeInKilobytes; defaults to 1 MiB (1048576 bytes) when absent — matches the current SQS default (raised from 256 KiB to 1 MiB in August 2025). |  |  |
 | Attribute.DelaySeconds | 🟡 partial | Service Bus has no queue-level default delay; the proxy returns 0. Per-message delay lands in Slice 2. |  |  |
 | Attribute.ReceiveMessageWaitTimeSeconds | 🟡 partial | Returned as 0 until long-polling lands in Slice 4. |  |  |
 | Attribute.ApproximateNumberOfMessages | ✅ implemented | Mapped from Service Bus MessageCount when the property is present in the Atom response. |  |  |
@@ -208,7 +208,7 @@
 
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
-| MessageBody round-trip (≤256 KiB) | ✅ implemented |  |  |  |
+| MessageBody round-trip (≤1 MiB) | ✅ implemented | 1 MiB cap counts the body and message attributes together, matching SQS's August 2025 quota increase from 256 KiB to 1 MiB. |  |  |
 | MessageAttributes (String/Number) | ✅ implemented | Mapped to SB application properties as strings. |  |  |
 | MessageAttributes (Binary) | ✅ implemented | Base64-encoded into the side-channel header so receive can rebuild the SQS-shaped attribute. |  |  |
 | MessageAttributes (custom .suffix types) | ✅ implemented |  |  |  |
@@ -222,7 +222,8 @@
 
 - MessageId is synthesised proxy-side (SB does not echo the message id on the runtime POST). For FIFO the MessageDeduplicationId is reused as the MessageId; otherwise a fresh Guid is minted.
 - SQS attribute data types (String/Number/Binary/'String.Custom') are flattened to SB application-property strings. The proxy emits an Aws2Azure-AttrTypes side-channel header so the receive path can faithfully reconstruct the original SQS shape — without it, all attributes would surface as String on receive.
-- MaximumMessageSize on SB Standard tier caps at 256 KiB (same as SQS default); on Premium tier SB allows up to 100 MiB but SQS hard-cap is still 256 KiB and is enforced here.
+- SQS's per-message cap is 1 MiB (1,048,576 bytes) — raised from 256 KiB in August 2025 — and includes the body plus every message attribute's name + data type + value bytes. The proxy enforces the same 1 MiB cap. The *effective* cap is also bounded by the backing Service Bus tier: SB Standard rejects anything over 256 KiB regardless, SB Premium honours up to 100 MiB. Per-queue MaximumMessageSize (1024..1048576) is recorded at CreateQueue time but not re-validated per send — SB itself rejects oversized payloads.
+- Payloads larger than 1 MiB must use the AWS Extended Client Library, which stores the body in S3 and embeds a JSON pointer in the SQS message. That pointer flows through this proxy unchanged: the receive side returns the same pointer, and the embedded S3 reference resolves against the proxy's S3 → Blob translation, so end-to-end large-message support works as long as the client uses the Extended Client and the same proxy fronts both S3 and SQS.
 - ScheduledEnqueueTimeUtc has millisecond resolution in SB; SQS DelaySeconds is integer seconds, so no loss occurs.
 - Verified against in-process fakes; end-to-end emulator validation deferred to Slice 3 where the receive path co-validates send. Real-Azure verification pending.
 
@@ -241,7 +242,7 @@
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
 | 1..10 entries per batch | ✅ implemented |  |  |  |
-| Aggregate body cap (≤256 KiB) | ✅ implemented |  |  |  |
+| Aggregate payload cap (≤1 MiB) | ✅ implemented | SQS counts each entry's body + message attributes (name + data type + value bytes) and rejects the batch when the sum exceeds 1 MiB (1,048,576 bytes). The proxy enforces the same rule. |  |  |
 | Unique entry Id validation (1..80 alnum/-/_) | ✅ implemented |  |  |  |
 | Per-entry MessageAttributes (String/Number/Binary) | ✅ implemented |  |  |  |
 | Per-entry DelaySeconds → ScheduledEnqueueTimeUtc | ✅ implemented |  |  |  |
@@ -251,7 +252,8 @@
 ### Behaviour differences
 
 - SB's runtime batch send is atomic: the whole batch either succeeds or fails together (no AMQP-style per-message ack). The proxy preserves SQS's BatchResultErrorEntry shape: on a batch-level SB error every entry surfaces in Failed[] with the mapped SQS error code (SenderFault=true for client-side rejections, false for server-side). Genuine per-entry partial success (one bad entry mixed with good ones) is not available over SB REST.
-- Same attribute-flattening + Aws2Azure-AttrTypes side-channel as SendMessage.
+- Same attribute-flattening + Aws2Azure-AttrTypes side-channel as SendMessage. The 1 MiB aggregate cap is computed over body + attribute name/type/value bytes per the SQS quota docs (raised from 256 KiB in August 2025).
+- Payloads larger than 1 MiB require the AWS Extended Client Library (S3-backed pointer); the same caveat as SendMessage applies — the pointer flows through unchanged and resolves against the proxy's S3 → Blob translation.
 - Entry MessageId returned to the caller is proxy-synthesised (Guid, or MessageDeduplicationId for FIFO).
 - Verified against in-process fakes; end-to-end emulator validation deferred to Slice 3.
 

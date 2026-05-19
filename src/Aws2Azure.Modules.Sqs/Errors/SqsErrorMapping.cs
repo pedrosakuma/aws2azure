@@ -67,7 +67,7 @@ public static class SqsErrorMapping
     public static Mapping MessageTooLong() =>
         new(StatusCodes.Status400BadRequest, "InvalidParameterValue",
             "One or more parameters are invalid. " +
-            "Reason: Message must be shorter than 262144 bytes.");
+            "Reason: Message must be shorter than 1048576 bytes.");
 
     public static Mapping MissingParameter(string name) =>
         new(StatusCodes.Status400BadRequest, "MissingParameter",
@@ -92,7 +92,7 @@ public static class SqsErrorMapping
 
     public static Mapping BatchRequestTooLong(int totalBytes) =>
         new(StatusCodes.Status400BadRequest, "AWS.SimpleQueueService.BatchRequestTooLong",
-            $"Batch requests cannot be longer than 262144 bytes. You have sent {totalBytes} bytes.");
+            $"Batch requests cannot be longer than 1048576 bytes. You have sent {totalBytes} bytes.");
 
     // ---- Receive-path mappings (Slice 3) ----
 

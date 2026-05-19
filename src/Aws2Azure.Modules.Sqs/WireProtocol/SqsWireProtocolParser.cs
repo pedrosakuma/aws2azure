@@ -32,7 +32,7 @@ namespace Aws2Azure.Modules.Sqs.WireProtocol;
 ///
 /// <para>The body is bounded at <see cref="MaxBodyBytes"/> to keep a hostile
 /// caller from pinning memory before per-op handlers have a chance to
-/// enforce their tighter limits (e.g. SendMessage's 256 KiB body cap).</para>
+/// enforce their tighter limits (e.g. SendMessage's 1 MiB body cap).</para>
 /// </summary>
 public static class SqsWireProtocolParser
 {
