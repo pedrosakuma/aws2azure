@@ -334,29 +334,163 @@ internal sealed class AmqpLink
     /// <c>accepted</c> (§3.4.2). Required for second-mode receiver
     /// settle mode; harmless under first-mode.
     /// </summary>
-    public async Task AcceptAsync(AmqpIncomingDelivery delivery, CancellationToken cancellationToken = default)
+    public Task AcceptAsync(AmqpIncomingDelivery delivery, CancellationToken cancellationToken = default)
     {
-        var stateRented = ArrayPool<byte>.Shared.Rent(8);
+        var rented = ArrayPool<byte>.Shared.Rent(8);
         try
         {
-            Accepted.Write(stateRented, out var sl);
-            var disposition = new AmqpDisposition
-            {
-                Role = AmqpRole.Receiver,
-                First = delivery.DeliveryId,
-                Settled = true,
-                State = stateRented.AsMemory(0, sl),
-            };
-            var rented = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
-            try
-            {
-                AmqpDisposition.Write(rented, in disposition, out var dl);
-                await _session.Connection.WriteSessionFrameAsync(
-                    _session.OutgoingChannel, rented.AsMemory(0, dl), cancellationToken).ConfigureAwait(false);
-            }
-            finally { ArrayPool<byte>.Shared.Return(rented); }
+            Accepted.Write(rented, out var sl);
+            return SendDispositionAsync(delivery.DeliveryId, rented.AsMemory(0, sl), settled: true, cancellationToken);
         }
-        finally { ArrayPool<byte>.Shared.Return(stateRented); }
+        finally { ArrayPool<byte>.Shared.Return(rented); }
+    }
+
+    /// <summary>
+    /// Sends a disposition settling <paramref name="delivery"/> with
+    /// <c>rejected</c> (§3.4.4). Service Bus dead-letters on this
+    /// outcome when the entity is configured for it.
+    /// </summary>
+    public Task RejectAsync(
+        AmqpIncomingDelivery delivery,
+        AmqpError? error = null,
+        CancellationToken cancellationToken = default)
+    {
+        ReadOnlyMemory<byte> errorMem = ReadOnlyMemory<byte>.Empty;
+        byte[]? rentedErr = null;
+        if (error is { } e)
+        {
+            rentedErr = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
+            AmqpError.Write(rentedErr, in e, out var el);
+            errorMem = rentedErr.AsMemory(0, el);
+        }
+        var rented = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
+        try
+        {
+            var rejected = new Rejected { Error = errorMem };
+            Rejected.Write(rented, in rejected, out var sl);
+            return SendDispositionAsync(delivery.DeliveryId, rented.AsMemory(0, sl), settled: true, cancellationToken);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
+            if (rentedErr is not null) ArrayPool<byte>.Shared.Return(rentedErr);
+        }
+    }
+
+    /// <summary>
+    /// Sends a disposition settling <paramref name="delivery"/> with
+    /// <c>released</c> (§3.4.5). The broker requeues the message
+    /// immediately without incrementing the delivery-count.
+    /// </summary>
+    public Task ReleaseAsync(AmqpIncomingDelivery delivery, CancellationToken cancellationToken = default)
+    {
+        var rented = ArrayPool<byte>.Shared.Rent(8);
+        try
+        {
+            Released.Write(rented, out var sl);
+            return SendDispositionAsync(delivery.DeliveryId, rented.AsMemory(0, sl), settled: true, cancellationToken);
+        }
+        finally { ArrayPool<byte>.Shared.Return(rented); }
+    }
+
+    /// <summary>
+    /// Sends a disposition settling <paramref name="delivery"/> with
+    /// <c>modified</c> (§3.4.6). Service Bus honours
+    /// <c>delivery-failed</c> (bumps the dead-letter counter) and
+    /// <c>undeliverable-here</c> (route to DLQ immediately).
+    /// </summary>
+    public Task ModifyAsync(
+        AmqpIncomingDelivery delivery,
+        bool? deliveryFailed = null,
+        bool? undeliverableHere = null,
+        CancellationToken cancellationToken = default)
+    {
+        var rented = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
+        try
+        {
+            var modified = new Modified
+            {
+                DeliveryFailed = deliveryFailed,
+                UndeliverableHere = undeliverableHere,
+            };
+            Modified.Write(rented, in modified, out var sl);
+            return SendDispositionAsync(delivery.DeliveryId, rented.AsMemory(0, sl), settled: true, cancellationToken);
+        }
+        finally { ArrayPool<byte>.Shared.Return(rented); }
+    }
+
+    /// <summary>
+    /// Long-poll equivalent: grants <paramref name="maxMessages"/> credit
+    /// and drains up to that many deliveries within
+    /// <paramref name="maxWait"/>. Returns early as soon as the cap is
+    /// reached. The returned list may be empty if the wait elapses
+    /// with no deliveries.
+    /// </summary>
+    /// <remarks>
+    /// Single-shot semantics: granted credit is additive. Repeated
+    /// calls on the same link will over-grant. Higher layers that
+    /// reuse a long-lived receiver should track outstanding credit
+    /// themselves and use <see cref="GrantCreditAsync"/> +
+    /// <see cref="ReceiveMessageAsync"/> directly.
+    /// </remarks>
+    public async Task<IReadOnlyList<AmqpIncomingDelivery>> ReceiveBatchAsync(
+        int maxMessages,
+        TimeSpan maxWait,
+        CancellationToken cancellationToken = default)
+    {
+        if (Role != AmqpRole.Receiver)
+            throw new InvalidOperationException("ReceiveBatchAsync requires a receiver link.");
+        if (maxMessages <= 0) throw new ArgumentOutOfRangeException(nameof(maxMessages));
+
+        await GrantCreditAsync((uint)maxMessages, cancellationToken).ConfigureAwait(false);
+
+        var batch = new List<AmqpIncomingDelivery>(maxMessages);
+
+        // Drain anything already buffered before arming the timer.
+        while (batch.Count < maxMessages && _incoming.Reader.TryRead(out var ready))
+            batch.Add(ready);
+        if (batch.Count >= maxMessages) return batch;
+
+        using var deadlineCts = new CancellationTokenSource(maxWait);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadlineCts.Token);
+        try
+        {
+            while (batch.Count < maxMessages
+                   && await _incoming.Reader.WaitToReadAsync(linked.Token).ConfigureAwait(false))
+            {
+                while (batch.Count < maxMessages && _incoming.Reader.TryRead(out var item))
+                    batch.Add(item);
+            }
+        }
+        catch (OperationCanceledException) when (deadlineCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            // Deadline reached: return whatever we have.
+        }
+
+        return batch;
+    }
+
+    private async Task SendDispositionAsync(
+        uint deliveryId,
+        ReadOnlyMemory<byte> state,
+        bool settled,
+        CancellationToken cancellationToken)
+    {
+        var disposition = new AmqpDisposition
+        {
+            Role = AmqpRole.Receiver,
+            First = deliveryId,
+            Settled = settled,
+            State = state,
+        };
+        var rented = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
+        try
+        {
+            AmqpDisposition.Write(rented, in disposition, out var dl);
+            await _session.Connection.WriteSessionFrameAsync(
+                _session.OutgoingChannel, rented.AsMemory(0, dl), cancellationToken).ConfigureAwait(false);
+        }
+        finally { ArrayPool<byte>.Shared.Return(rented); }
     }
 
     /// <summary>
@@ -759,15 +893,31 @@ internal sealed class AmqpLink
 
     private void HandlePeerDetach(AmqpDetach detach)
     {
-        var prior = Interlocked.CompareExchange(ref _state, StateDetachingRemote, StateAttached);
+        // Per §2.6.5 the peer may detach at any time after sending its
+        // attach, including before our own attach handshake completes
+        // (e.g. broker rejects authorization). Accept from either state.
+        int prior;
+        while (true)
+        {
+            prior = Volatile.Read(ref _state);
+            if (prior != StateAttached && prior != StateAttaching) break;
+            if (Interlocked.CompareExchange(ref _state, StateDetachingRemote, prior) == prior) break;
+        }
         _peerDetachReceived.TrySetResult(detach);
 
-        if (prior == StateAttached)
+        if (prior == StateAttached || prior == StateAttaching)
         {
             // Peer initiated tear-down: mirror a detach back, then transition
             // to Final and unregister. Also unblock any local senders/receivers
-            // so they observe the detach rather than hanging on the message channel.
+            // (and the AttachAsync waiter) so they observe the detach rather
+            // than hanging on the message channel.
             CompleteWaitersTerminal(cancelled: false);
+            if (prior == StateAttaching)
+            {
+                // Surface a link-detached failure to AttachAsync.
+                _peerAttachReceived.TrySetException(new InvalidOperationException(
+                    "Peer detached during attach handshake."));
+            }
             _ = Task.Run(async () =>
             {
                 try { await SendDetachAsync(detach.Closed ?? true, error: null, CancellationToken.None).ConfigureAwait(false); }

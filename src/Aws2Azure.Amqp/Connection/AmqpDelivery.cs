@@ -14,6 +14,7 @@ internal enum AmqpDispositionOutcome
     Accepted = 1,
     Rejected = 2,
     Released = 3,
+    Modified = 4,
 }
 
 /// <summary>
@@ -50,6 +51,7 @@ internal static class AmqpDispositionOutcomeExtractor
             DeliveryStateKind.Accepted => AmqpDispositionOutcome.Accepted,
             DeliveryStateKind.Rejected => AmqpDispositionOutcome.Rejected,
             DeliveryStateKind.Released => AmqpDispositionOutcome.Released,
+            DeliveryStateKind.Modified => AmqpDispositionOutcome.Modified,
             _ => AmqpDispositionOutcome.Unknown,
         };
     }
