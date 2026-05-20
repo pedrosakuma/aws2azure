@@ -151,4 +151,79 @@ public static class SqsErrorMapping
             _ => InternalError("aws2azure: upstream Azure Service Bus returned HTTP " + status + "."),
         };
     }
+
+    /// <summary>
+    /// Maps an AMQP failure (link / connection exception or settle
+    /// outcome on the SB AMQP transport) onto an SQS-shaped error.
+    /// Uses the spec-defined <see cref="Aws2Azure.Amqp.Framing.AmqpErrorKind"/>
+    /// classification plus a small set of condition-specific overrides
+    /// for cases SQS clients pattern-match (lock-lost →
+    /// <c>MessageNotInflight</c>, not-found → <c>NonExistentQueue</c>,
+    /// throttling / server-fatal → <c>ServiceUnavailable</c>).
+    ///
+    /// <para>The peer's <c>description</c> is intentionally not leaked
+    /// into the SQS message body — it can include broker-internal
+    /// diagnostics. Operators retain the full context in the structured
+    /// log emitted by the handler.</para>
+    /// </summary>
+    internal static Mapping FromAmqp(
+        Aws2Azure.Amqp.Framing.AmqpErrorKind kind,
+        string? condition,
+        string operation)
+    {
+        // Condition-level overrides first — these match what real SQS
+        // clients expect for the same logical failures.
+        switch (condition)
+        {
+            case Aws2Azure.Amqp.Framing.AmqpErrorCondition.NotFound:
+                return QueueDoesNotExist();
+
+            case Aws2Azure.Amqp.Framing.AmqpErrorCondition.MessageLockLost:
+            case Aws2Azure.Amqp.Framing.AmqpErrorCondition.SessionLockLost:
+                return MessageNotInflight();
+
+            case Aws2Azure.Amqp.Framing.AmqpErrorCondition.EntityDisabled:
+                return new Mapping(StatusCodes.Status403Forbidden, "AccessDenied",
+                    "aws2azure: the upstream Service Bus entity is disabled.");
+
+            case Aws2Azure.Amqp.Framing.AmqpErrorCondition.ResourceDeleted:
+                return QueueDoesNotExist();
+        }
+
+        return kind switch
+        {
+            Aws2Azure.Amqp.Framing.AmqpErrorKind.Auth =>
+                new Mapping(StatusCodes.Status403Forbidden, "AccessDenied",
+                    "aws2azure: Azure Service Bus rejected the AMQP credentials."),
+
+            Aws2Azure.Amqp.Framing.AmqpErrorKind.Throttled =>
+                new Mapping(StatusCodes.Status503ServiceUnavailable, "ServiceUnavailable",
+                    $"aws2azure: Azure Service Bus throttled the {operation} request; retry with back-off.",
+                    SqsErrorResponse.FaultType.Receiver),
+
+            Aws2Azure.Amqp.Framing.AmqpErrorKind.Transient =>
+                new Mapping(StatusCodes.Status503ServiceUnavailable, "ServiceUnavailable",
+                    $"aws2azure: transient upstream failure during {operation}; retry.",
+                    SqsErrorResponse.FaultType.Receiver),
+
+            Aws2Azure.Amqp.Framing.AmqpErrorKind.LockLost =>
+                MessageNotInflight(),
+
+            Aws2Azure.Amqp.Framing.AmqpErrorKind.ClientFatal =>
+                new Mapping(StatusCodes.Status400BadRequest, "InvalidParameterValue",
+                    $"aws2azure: Azure Service Bus rejected the {operation} request as malformed."),
+
+            Aws2Azure.Amqp.Framing.AmqpErrorKind.ServerFatal =>
+                new Mapping(StatusCodes.Status502BadGateway, "ServiceUnavailable",
+                    $"aws2azure: Azure Service Bus reported a server-side failure during {operation}.",
+                    SqsErrorResponse.FaultType.Receiver),
+
+            Aws2Azure.Amqp.Framing.AmqpErrorKind.Redirect =>
+                new Mapping(StatusCodes.Status502BadGateway, "ServiceUnavailable",
+                    "aws2azure: Azure Service Bus requested an AMQP redirect; not yet supported.",
+                    SqsErrorResponse.FaultType.Receiver),
+
+            _ => InternalError($"aws2azure: AMQP {operation} failed."),
+        };
+    }
 }

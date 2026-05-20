@@ -321,6 +321,15 @@ public sealed class AmqpReceiverTests
             Assert.True(link.IsClosed,
                 "AttachAsync returned a link that never transitioned to closed despite peer detach.");
         }
+        else
+        {
+            // When AttachAsync does fail (the race we're guarding), the
+            // exception must be typed and carry the peer condition so
+            // upstream handlers can map it to the right SQS error code
+            // (slice 8c.1).
+            var linkEx = Assert.IsType<AmqpLinkException>(attachEx);
+            Assert.Equal(AmqpErrorCondition.UnauthorizedAccess, linkEx.PeerCondition);
+        }
 
         await conn.CloseAsync();
         await serverTask.WaitAsync(TimeSpan.FromSeconds(10));
@@ -363,7 +372,7 @@ public sealed class AmqpReceiverTests
         // complete the incoming channel before the deadline elapses, and
         // ReceiveBatchAsync must surface the broken link rather than
         // returning an empty list as if the deadline fired.
-        await Assert.ThrowsAsync<InvalidOperationException>(
+        await Assert.ThrowsAsync<AmqpLinkException>(
             async () => await link.ReceiveBatchAsync(maxMessages: 5, maxWait: TimeSpan.FromSeconds(10))
                 .WaitAsync(TimeSpan.FromSeconds(15)));
 
