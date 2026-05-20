@@ -432,37 +432,55 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         {
             ThrowIfDisposed();
             var audience = ServiceBusEndpoint.BuildQueueAudience(key.NamespaceFqdn, queueName);
-            // Open a fresh broker-assigned session receiver. The
-            // connection.OpenSessionReceiverAsync contract guarantees a
-            // non-null SessionId on success (it throws otherwise).
-            var fresh = await connection
-                .OpenSessionReceiverAsync(queueName, audience, sessionId: null, prefetchCredit: 0, cancellationToken)
-                .ConfigureAwait(false);
-            var resolvedId = fresh.SessionId!;
-            var slotKey = new SessionReceiverKey(queueName, resolvedId);
-            var ourSlot = SessionReceiverSlot.FromExisting(fresh);
-            var inserted = _sessionReceivers.GetOrAdd(slotKey, ourSlot);
-            if (ReferenceEquals(inserted, ourSlot))
+            while (true)
             {
-                // We won — pool now owns 'fresh'. Re-check disposal so
-                // we surface ObjectDisposedException to the outer retry
-                // loop rather than leaking the slot we just published.
-                if (Volatile.Read(ref _disposed) != 0)
+                // Open a fresh broker-assigned session receiver. The
+                // connection.OpenSessionReceiverAsync contract guarantees a
+                // non-null SessionId on success (it throws otherwise).
+                var fresh = await connection
+                    .OpenSessionReceiverAsync(queueName, audience, sessionId: null, prefetchCredit: 0, cancellationToken)
+                    .ConfigureAwait(false);
+                var resolvedId = fresh.SessionId!;
+                var slotKey = new SessionReceiverKey(queueName, resolvedId);
+                var ourSlot = SessionReceiverSlot.FromExisting(fresh);
+                var inserted = _sessionReceivers.GetOrAdd(slotKey, ourSlot);
+                if (ReferenceEquals(inserted, ourSlot))
                 {
-                    _sessionReceivers.TryRemove(KeyValuePair.Create(slotKey, ourSlot));
-                    await ourSlot.DisposeAsync().ConfigureAwait(false);
-                    throw new ObjectDisposedException(nameof(ConnectionSlot));
+                    // We won — pool now owns 'fresh'. Re-check disposal so
+                    // we surface ObjectDisposedException to the outer retry
+                    // loop rather than leaking the slot we just published.
+                    if (Volatile.Read(ref _disposed) != 0)
+                    {
+                        _sessionReceivers.TryRemove(KeyValuePair.Create(slotKey, ourSlot));
+                        await ourSlot.DisposeAsync().ConfigureAwait(false);
+                        throw new ObjectDisposedException(nameof(ConnectionSlot));
+                    }
+                    return fresh;
                 }
-                return fresh;
-            }
 
-            // Raced — another caller already adopted a receiver for the
-            // same resolved session-id. Drop ours and return the cached
-            // one. Dispose our slot (which also disposes 'fresh').
-            await ourSlot.DisposeAsync().ConfigureAwait(false);
-            return await inserted
-                .GetOrCreateAsync(connection, key.NamespaceFqdn, queueName, resolvedId, cancellationToken)
-                .ConfigureAwait(false);
+                // Raced — another caller already adopted a receiver for the
+                // same resolved session-id. Drop ours and return the cached
+                // one. Dispose our slot (which also disposes 'fresh').
+                await ourSlot.DisposeAsync().ConfigureAwait(false);
+                try
+                {
+                    return await inserted
+                        .GetOrCreateAsync(connection, key.NamespaceFqdn, queueName, resolvedId, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (ObjectDisposedException)
+                {
+                    // The session slot we lost to was invalidated before
+                    // we could read its receiver. Surface that as a
+                    // session-level retry (open a fresh broker-assigned
+                    // session) rather than letting it bubble up to the
+                    // outer connection-level catch, which would tear
+                    // down the whole connection slot.
+                    ThrowIfDisposed();
+                    _sessionReceivers.TryRemove(KeyValuePair.Create(slotKey, inserted));
+                    continue;
+                }
+            }
         }
 
         public async Task InvalidateSessionReceiverAsync(string queueName, string sessionId)
