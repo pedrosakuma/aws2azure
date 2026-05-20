@@ -86,6 +86,15 @@ internal sealed class ServiceBusBrokerSimulator
     /// </summary>
     public Dictionary<string, string> AssignedSessionByLink { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// When false, the simulator deliberately omits the source.filter
+    /// from the response attach even for session-bound clients —
+    /// exercises the "broker did not bind a session" error path that
+    /// <see cref="ServiceBusAmqpConnection.OpenSessionReceiverAsync"/>
+    /// surfaces when the caller asked for "any available session".
+    /// </summary>
+    public bool EchoSessionFilterOnAttach { get; set; } = true;
+
 
     /// <summary>Flow frames received per link name (recorded as the granted credit value).</summary>
     public Dictionary<string, List<uint>> FlowCreditsByLink { get; } = new(StringComparer.Ordinal);
@@ -215,19 +224,27 @@ internal sealed class ServiceBusBrokerSimulator
                 ServiceBusSessionFilter.TryDecode(clientSource.Filter, out var requestedSession))
             {
                 SessionFiltersByLink[a.Name] = requestedSession;
-                var assigned = requestedSession
-                    ?? (AssignedSessionByLink.TryGetValue(a.Name, out var fromTable)
-                        ? fromTable
-                        : "broker-assigned-session");
-                var responseFilter = ServiceBusSessionFilter.Encode(assigned);
-                var responseSrc = new AmqpSource
+                if (EchoSessionFilterOnAttach)
                 {
-                    Address = clientSource.Address,
-                    Filter = responseFilter,
-                };
-                var rented = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
-                AmqpSource.Write(rented, in responseSrc, out var srcLen);
-                responseSource = rented.AsMemory(0, srcLen);
+                    var assigned = requestedSession
+                        ?? (AssignedSessionByLink.TryGetValue(a.Name, out var fromTable)
+                            ? fromTable
+                            : "broker-assigned-session");
+                    var responseFilter = ServiceBusSessionFilter.Encode(assigned);
+                    var responseSrc = new AmqpSource
+                    {
+                        Address = clientSource.Address,
+                        Filter = responseFilter,
+                    };
+                    // Encode into a stack-bounded scratch then COPY into a
+                    // fresh heap array — SendPerfAsync may capture the
+                    // memory; renting & forgetting from ArrayPool would leak.
+                    Span<byte> scratch = stackalloc byte[Performatives.ScratchSize];
+                    AmqpSource.Write(scratch, in responseSrc, out var srcLen);
+                    var copy = new byte[srcLen];
+                    scratch[..srcLen].CopyTo(copy);
+                    responseSource = copy;
+                }
             }
         }
 

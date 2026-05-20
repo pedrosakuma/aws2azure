@@ -210,6 +210,21 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
                 }
             }
 
+            // A null sessionId means the caller asked the broker to
+            // assign any available session. If we get back here without
+            // a concrete bound id, the broker either didn't echo a
+            // session-filter or echoed a null value — both of which
+            // mean no session was actually bound. Detach and surface
+            // a clear protocol error rather than handing back a
+            // misleading "session receiver".
+            if (boundSessionId is null)
+            {
+                throw new InvalidOperationException(
+                    $"Service Bus did not bind a session to receiver link '{settings.Name}': " +
+                    "the attach response carried no com.microsoft:session-filter " +
+                    "with an assigned session-id.");
+            }
+
             if (prefetchCredit > 0)
                 await link.GrantCreditAsync(prefetchCredit, cancellationToken).ConfigureAwait(false);
             return new ServiceBusReceiver(link, queueName, boundSessionId);
