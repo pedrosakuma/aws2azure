@@ -98,4 +98,74 @@ public sealed class ServiceBusAmqpConnectionTests
         await Assert.ThrowsAsync<global::Aws2Azure.Amqp.Security.CbsAuthenticationException>(
             () => conn.OpenReceiverAsync("queue1", audience, 0));
     }
+
+    [Fact]
+    public async Task OpenSessionReceiverAsync_binds_to_requested_session_id()
+    {
+        var (client, server) = PipePairTransport.CreatePair();
+        await using var _ = server;
+
+        var broker = new ServiceBusBrokerSimulator(server);
+        broker.Start();
+
+        await using var conn = await ServiceBusAmqpConnection
+            .OpenAsync(client, new FakeTokenProvider(), DefaultSettings())
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        var audience = ServiceBusEndpoint.BuildQueueAudience("ns.servicebus.windows.net", "fifo-queue");
+        await using var receiver = await conn
+            .OpenSessionReceiverAsync("fifo-queue", audience, sessionId: "order-42", prefetchCredit: 0)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal("fifo-queue", receiver.QueueName);
+        Assert.Equal("order-42", receiver.SessionId);
+        // Broker must have observed exactly one session-filtered attach
+        // with the requested session-id.
+        var observed = Assert.Single(broker.SessionFiltersByLink);
+        Assert.Equal("order-42", observed.Value);
+    }
+
+    [Fact]
+    public async Task OpenSessionReceiverAsync_with_null_session_id_uses_broker_assigned()
+    {
+        var (client, server) = PipePairTransport.CreatePair();
+        await using var _ = server;
+
+        var broker = new ServiceBusBrokerSimulator(server);
+        broker.Start();
+
+        await using var conn = await ServiceBusAmqpConnection
+            .OpenAsync(client, new FakeTokenProvider(), DefaultSettings())
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        var audience = ServiceBusEndpoint.BuildQueueAudience("ns.servicebus.windows.net", "fifo-queue");
+        await using var receiver = await conn
+            .OpenSessionReceiverAsync("fifo-queue", audience, sessionId: null, prefetchCredit: 0)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        // The broker assigned the default placeholder when the client
+        // asked for "any available session"; the receiver must surface
+        // that bound id (not the null that was requested).
+        Assert.Equal("broker-assigned-session", receiver.SessionId);
+        var observed = Assert.Single(broker.SessionFiltersByLink);
+        Assert.Null(observed.Value);
+    }
+
+    [Fact]
+    public async Task OpenSessionReceiverAsync_throws_when_broker_does_not_bind_a_session()
+    {
+        var (client, server) = PipePairTransport.CreatePair();
+        await using var _ = server;
+
+        var broker = new ServiceBusBrokerSimulator(server) { EchoSessionFilterOnAttach = false };
+        broker.Start();
+
+        await using var conn = await ServiceBusAmqpConnection
+            .OpenAsync(client, new FakeTokenProvider(), DefaultSettings())
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        var audience = ServiceBusEndpoint.BuildQueueAudience("ns.servicebus.windows.net", "fifo-queue");
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            conn.OpenSessionReceiverAsync("fifo-queue", audience, sessionId: null, prefetchCredit: 0));
+    }
 }

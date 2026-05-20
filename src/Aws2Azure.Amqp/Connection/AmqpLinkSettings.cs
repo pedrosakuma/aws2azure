@@ -20,6 +20,15 @@ internal sealed record AmqpLinkSettings
     /// <summary>Address of the source terminus (queue/topic/<c>$cbs</c>).</summary>
     public string? SourceAddress { get; init; }
 
+    /// <summary>
+    /// Opaque AMQP-encoded <c>filter</c> map written into the source
+    /// terminus (§3.5.3 field 8). Used by Service Bus session-bound
+    /// receivers to carry the
+    /// <see cref="ServiceBus.ServiceBusSessionFilter"/> entry. Empty
+    /// means "no filter".
+    /// </summary>
+    public ReadOnlyMemory<byte> SourceFilter { get; init; }
+
     /// <summary>Address of the target terminus.</summary>
     public string? TargetAddress { get; init; }
 

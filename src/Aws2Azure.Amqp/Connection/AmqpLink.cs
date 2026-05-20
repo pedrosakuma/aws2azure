@@ -557,7 +557,11 @@ internal sealed class AmqpLink
             if (_settings.SourceAddress is not null)
             {
                 rentedSrc = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
-                var src = new AmqpSource { Address = _settings.SourceAddress };
+                var src = new AmqpSource
+                {
+                    Address = _settings.SourceAddress,
+                    Filter = _settings.SourceFilter,
+                };
                 AmqpSource.Write(rentedSrc, in src, out var srcLen);
                 sourceMem = rentedSrc.AsMemory(0, srcLen);
             }
@@ -687,6 +691,21 @@ internal sealed class AmqpLink
         {
             case PerformativeKind.Attach:
                 AmqpAttach.Read(body, out var attach, out _);
+                // AmqpAttach.Read returns the opaque fields (Source, Target,
+                // Unsettled, capabilities, properties) as slices into `body` —
+                // which is the inbound rented frame buffer. The connection's
+                // read loop returns the frame to the pool immediately after
+                // dispatch, so anything we store past this point must own its
+                // own backing storage. Deep-copy each opaque slot.
+                attach = attach with
+                {
+                    Source = CopyOpaque(attach.Source),
+                    Target = CopyOpaque(attach.Target),
+                    Unsettled = CopyOpaque(attach.Unsettled),
+                    OfferedCapabilities = CopyOpaque(attach.OfferedCapabilities),
+                    DesiredCapabilities = CopyOpaque(attach.DesiredCapabilities),
+                    Properties = CopyOpaque(attach.Properties),
+                };
                 _peerAttachReceived.TrySetResult(attach);
                 break;
 
@@ -706,6 +725,18 @@ internal sealed class AmqpLink
             default:
                 break;
         }
+    }
+
+    /// <summary>
+    /// Copies the opaque slice into a fresh heap array so it survives
+    /// the inbound frame's return-to-pool. No-op for empty inputs.
+    /// </summary>
+    private static ReadOnlyMemory<byte> CopyOpaque(ReadOnlyMemory<byte> source)
+    {
+        if (source.IsEmpty) return ReadOnlyMemory<byte>.Empty;
+        var copy = new byte[source.Length];
+        source.CopyTo(copy);
+        return copy;
     }
 
     private void HandlePeerFlow(AmqpFlow flow)

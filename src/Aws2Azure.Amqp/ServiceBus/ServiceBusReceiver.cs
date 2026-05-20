@@ -41,12 +41,27 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     private int _disposed;
 
     internal ServiceBusReceiver(AmqpLink link, string queueName)
+        : this(link, queueName, sessionId: null) { }
+
+    internal ServiceBusReceiver(AmqpLink link, string queueName, string? sessionId)
     {
         _link = link;
         QueueName = queueName;
+        SessionId = sessionId;
     }
 
     public string QueueName { get; }
+
+    /// <summary>
+    /// When the receiver was opened against a Service Bus session
+    /// (slice 7 — <c>OpenSessionReceiverAsync</c>), the session-id the
+    /// link is bound to. Populated from the broker's echoed
+    /// <c>com.microsoft:session-filter</c> on the attach response —
+    /// distinct from the value the caller requested (which may have
+    /// been <c>null</c> meaning "any available session"). <c>null</c>
+    /// for non-session receivers.
+    /// </summary>
+    public string? SessionId { get; }
 
     /// <summary>The underlying receiver link. Exposed for diagnostics / advanced flow control.</summary>
     internal AmqpLink Link => _link;
