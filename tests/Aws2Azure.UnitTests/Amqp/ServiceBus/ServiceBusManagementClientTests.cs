@@ -107,4 +107,72 @@ public sealed class ServiceBusManagementClientTests
         await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    [Fact]
+    public async Task RenewSessionLockAsync_round_trips_session_id_to_expiration()
+    {
+        var (clientTransport, serverTransport) = PipePairTransport.CreatePair();
+        await using var server = serverTransport;
+        var conn = new AmqpConnection(clientTransport, DefaultConnSettings());
+
+        const string SessionId = "order-group-42";
+        var brokerExpiry = DateTimeOffset.UtcNow.AddSeconds(30);
+        brokerExpiry = DateTimeOffset.FromUnixTimeMilliseconds(brokerExpiry.ToUnixTimeMilliseconds());
+
+        string? receivedOperation = null;
+        var serverTask = Task.Run(async () => await ManagementBrokerSimulator.RunFullAsync(
+            server,
+            renewExpiry: brokerExpiry,
+            statusCode: 200,
+            statusDescription: "OK",
+            errorCondition: null,
+            captureOperation: op => receivedOperation = op));
+
+        await conn.OpenAsync();
+        var session = await conn.BeginSessionAsync();
+        await using var mgmt = await ServiceBusManagementClient.OpenAsync(session);
+
+        var expiration = await mgmt.RenewSessionLockAsync(SessionId).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(brokerExpiry, expiration);
+
+        await mgmt.DisposeAsync();
+        await session.CloseAsync();
+        await conn.CloseAsync();
+        await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("com.microsoft:renew-session-lock", receivedOperation);
+    }
+
+    [Fact]
+    public async Task RenewSessionLockAsync_throws_on_session_lock_lost()
+    {
+        var (clientTransport, serverTransport) = PipePairTransport.CreatePair();
+        await using var server = serverTransport;
+        var conn = new AmqpConnection(clientTransport, DefaultConnSettings());
+
+        var serverTask = Task.Run(async () => await ManagementBrokerSimulator.RunFullAsync(
+            server,
+            renewExpiry: DateTimeOffset.UtcNow,
+            statusCode: 410,
+            statusDescription: "SessionLockLost",
+            errorCondition: "com.microsoft:session-lock-lost",
+            captureOperation: _ => { }));
+
+        await conn.OpenAsync();
+        var session = await conn.BeginSessionAsync();
+        await using var mgmt = await ServiceBusManagementClient.OpenAsync(session);
+
+        var ex = await Assert.ThrowsAsync<ServiceBusManagementException>(
+            async () => await mgmt.RenewSessionLockAsync("group-X").WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(410, ex.StatusCode);
+        Assert.Equal("SessionLockLost", ex.Description);
+        Assert.Equal("com.microsoft:session-lock-lost", ex.ErrorCondition);
+        Assert.Equal("com.microsoft:renew-session-lock", ex.Operation);
+
+        await mgmt.DisposeAsync();
+        await session.CloseAsync();
+        await conn.CloseAsync();
+        await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
 }

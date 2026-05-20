@@ -34,6 +34,7 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
 {
     internal const string ManagementAddress = "$management";
     internal const string RenewLockOperation = "com.microsoft:renew-lock";
+    internal const string RenewSessionLockOperation = "com.microsoft:renew-session-lock";
 
     private static readonly TimeSpan DefaultServerTimeout = TimeSpan.FromSeconds(60);
 
@@ -117,6 +118,46 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
         return DecodeExpirations(response, expected: lockTokens.Count);
     }
 
+    /// <summary>
+    /// Session-flavoured renew-lock: renews the lock that the broker
+    /// holds on <paramref name="sessionId"/> and returns the new
+    /// session-lock expiry. Used by the FIFO
+    /// <c>ChangeMessageVisibility(VisibilityTimeout &gt; 0)</c> path
+    /// where the receipt handle is keyed by session-id (slice 7c.4).
+    /// </summary>
+    /// <remarks>
+    /// Service Bus exposes this as the <c>com.microsoft:renew-session-lock</c>
+    /// operation; the request body carries a single
+    /// <c>session-id</c> field and the response carries a single
+    /// <c>expiration</c> timestamp (singular, not an array — session
+    /// locks are not batched). The granted duration is always the
+    /// queue's configured <c>LockDuration</c> — the broker does not
+    /// accept a caller-supplied duration.
+    /// </remarks>
+    /// <exception cref="ServiceBusManagementException">
+    /// Thrown when the broker reports a non-2xx status code.
+    /// </exception>
+    public async Task<DateTimeOffset> RenewSessionLockAsync(
+        string sessionId, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(sessionId);
+
+        using var body = EncodeRenewSessionLockRequest(sessionId);
+        var request = new AmqpMessage
+        {
+            ApplicationProperties = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["operation"] = RenewSessionLockOperation,
+                ["com.microsoft:server-timeout"] = (int)DefaultServerTimeout.TotalMilliseconds,
+            },
+            BodyValueBytes = body.Memory,
+        };
+
+        var response = await _link.SendRequestAsync(request, cancellationToken).ConfigureAwait(false);
+        ThrowIfNotSuccess(response, RenewSessionLockOperation);
+        return DecodeSingleExpiration(response, RenewSessionLockOperation);
+    }
+
     // --- Request encoding -------------------------------------------------
 
     private static PooledPayload EncodeRenewLockRequest(IReadOnlyList<Guid> lockTokens)
@@ -172,6 +213,47 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
                 return new PooledPayload(rented, mapLen);
             }
             finally { ArrayPool<byte>.Shared.Return(pairBuf); }
+        }
+        catch
+        {
+            ArrayPool<byte>.Shared.Return(rented);
+            throw;
+        }
+    }
+
+    private static PooledPayload EncodeRenewSessionLockRequest(string sessionId)
+    {
+        // body = AmqpValue map { "session-id" → string }.
+        // Per the broker spec the key is the symbol "session-id" and
+        // the value is a UTF-8 string. The wire size is modest
+        // (16 + sessionId length × 4 worst case) so a single rented
+        // page is plenty.
+        var byteLen = System.Text.Encoding.UTF8.GetMaxByteCount(sessionId.Length);
+        var rented = ArrayPool<byte>.Shared.Rent(64 + byteLen);
+        try
+        {
+            Span<byte> pairBuf = stackalloc byte[256];
+            byte[]? rentedPair = null;
+            Span<byte> pair = pairBuf;
+            if (16 + byteLen > pair.Length)
+            {
+                rentedPair = ArrayPool<byte>.Shared.Rent(32 + byteLen);
+                pair = rentedPair;
+            }
+            try
+            {
+                AmqpVariableWriter.WriteSymbol(pair, "session-id", out var keyLen);
+                AmqpVariableWriter.WriteString(pair[keyLen..], sessionId, out var valLen);
+                var pairLen = keyLen + valLen;
+
+                AmqpCompoundWriter.WriteMap(rented, pair[..pairLen], pairCount: 1, out var mapLen);
+                return new PooledPayload(rented, mapLen);
+            }
+            finally
+            {
+                if (rentedPair is not null)
+                    ArrayPool<byte>.Shared.Return(rentedPair);
+            }
         }
         catch
         {
@@ -246,6 +328,42 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
             o += valLen;
         }
         throw new InvalidDataException("Service Bus renew-lock response missing 'expirations' field.");
+    }
+
+    private static DateTimeOffset DecodeSingleExpiration(AmqpMessage response, string operation)
+    {
+        if (response.BodyValueBytes is not { } bodyMem || bodyMem.IsEmpty)
+            throw new InvalidDataException($"Service Bus {operation} response missing body.");
+
+        var span = bodyMem.Span;
+        var mapView = AmqpCompoundReader.ReadMap(span, out _);
+        var els = mapView.Elements;
+        var pairCount = mapView.Count / 2;
+        int o = 0;
+        for (int i = 0; i < pairCount; i++)
+        {
+            string key;
+            int kAdvance;
+            var keyCode = els[o];
+            if (keyCode == AmqpFormatCode.Symbol8 || keyCode == AmqpFormatCode.Symbol32)
+                key = AmqpVariableReader.ReadSymbol(els[o..], out kAdvance);
+            else
+                key = AmqpVariableReader.ReadString(els[o..], out kAdvance);
+            o += kAdvance;
+
+            if (key == "expiration")
+            {
+                var valCode = els[o];
+                if (valCode != AmqpFormatCode.TimestampMs)
+                    throw new InvalidDataException(
+                        $"Service Bus {operation} returned non-timestamp 'expiration' field (constructor 0x{valCode:X2}).");
+                var unixMs = System.Buffers.Binary.BinaryPrimitives.ReadInt64BigEndian(els[(o + 1)..]);
+                return DateTimeOffset.FromUnixTimeMilliseconds(unixMs);
+            }
+            var valLen = AmqpValueScanner.Measure(els[o..]);
+            o += valLen;
+        }
+        throw new InvalidDataException($"Service Bus {operation} response missing 'expiration' field.");
     }
 
     public async ValueTask DisposeAsync()

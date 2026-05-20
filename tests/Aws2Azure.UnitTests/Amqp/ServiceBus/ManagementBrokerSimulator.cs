@@ -78,10 +78,22 @@ internal static class ManagementBrokerSimulator
             var payload = f.Body.Slice(perfLen).ToArray();
             var requestMsg = AmqpMessage.Parse(payload);
 
-            captureOperation(requestMsg.ApplicationProperties?["operation"] as string);
-            lockTokens = ExtractLockTokens(requestMsg);
+            var operation = requestMsg.ApplicationProperties?["operation"] as string;
+            captureOperation(operation);
 
-            var responseBody = EncodeRenewLockResponse(renewExpiry, lockTokens?.Length ?? 0);
+            byte[] responseBody;
+            if (operation == ServiceBusManagementClient.RenewSessionLockOperation)
+            {
+                // Session-flavoured response: singular 'expiration' field
+                // (timestamp), not an array.
+                responseBody = EncodeRenewSessionLockResponse(renewExpiry);
+            }
+            else
+            {
+                // Default: non-session renew-lock — array response.
+                lockTokens = ExtractLockTokens(requestMsg);
+                responseBody = EncodeRenewLockResponse(renewExpiry, lockTokens?.Length ?? 0);
+            }
 
             var appProps = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
@@ -199,6 +211,40 @@ internal static class ManagementBrokerSimulator
         return null;
     }
 
+    /// <summary>
+    /// Reads a single string-typed field by symbol name out of a
+    /// <c>$management</c> request body's value map. Returns null when
+    /// the body is empty or the key is absent. Used to extract
+    /// <c>session-id</c> from a <c>com.microsoft:renew-session-lock</c>
+    /// request.
+    /// </summary>
+    public static string? ExtractStringField(AmqpMessage msg, string fieldName)
+    {
+        if (msg.BodyValueBytes is not { } bodyMem || bodyMem.IsEmpty)
+            return null;
+        var span = bodyMem.Span;
+        var map = AmqpCompoundReader.ReadMap(span, out _);
+        var els = map.Elements;
+        var pairs = map.Count / 2;
+        int o = 0;
+        for (int i = 0; i < pairs; i++)
+        {
+            string key;
+            int kLen;
+            var code = els[o];
+            if (code == AmqpFormatCode.Symbol8 || code == AmqpFormatCode.Symbol32)
+                key = AmqpVariableReader.ReadSymbol(els[o..], out kLen);
+            else
+                key = AmqpVariableReader.ReadString(els[o..], out kLen);
+            o += kLen;
+            if (key == fieldName)
+                return AmqpVariableReader.ReadString(els[o..], out _);
+            var valLen = AmqpValueScanner.Measure(els[o..]);
+            o += valLen;
+        }
+        return null;
+    }
+
     public static byte[] EncodeRenewLockResponse(DateTimeOffset expiry, int count)
     {
         var unixMs = expiry.ToUnixTimeMilliseconds();
@@ -220,6 +266,33 @@ internal static class ManagementBrokerSimulator
         var pair = new byte[keyLen + arrLen];
         keyBytes[..keyLen].CopyTo(pair);
         arrayBytes[..arrLen].CopyTo(pair.AsSpan(keyLen));
+
+        var mapOut = new byte[pair.Length + 16];
+        AmqpCompoundWriter.WriteMap(mapOut, pair, pairCount: 1, out var mapLen);
+        Array.Resize(ref mapOut, mapLen);
+        return mapOut;
+    }
+
+    /// <summary>
+    /// Builds the value-map body for a successful renew-session-lock
+    /// response: a single <c>expiration</c> symbol → timestamp_ms
+    /// pair (singular, unlike the array-typed non-session response).
+    /// </summary>
+    public static byte[] EncodeRenewSessionLockResponse(DateTimeOffset expiry)
+    {
+        var unixMs = expiry.ToUnixTimeMilliseconds();
+
+        // Timestamp value: format code (0x83) + 8 bytes big-endian.
+        Span<byte> valueBytes = stackalloc byte[9];
+        valueBytes[0] = AmqpFormatCode.TimestampMs;
+        BinaryPrimitives.WriteInt64BigEndian(valueBytes[1..], unixMs);
+
+        Span<byte> keyBytes = stackalloc byte[64];
+        AmqpVariableWriter.WriteSymbol(keyBytes, "expiration", out var keyLen);
+
+        var pair = new byte[keyLen + valueBytes.Length];
+        keyBytes[..keyLen].CopyTo(pair);
+        valueBytes.CopyTo(pair.AsSpan(keyLen));
 
         var mapOut = new byte[pair.Length + 16];
         AmqpCompoundWriter.WriteMap(mapOut, pair, pairCount: 1, out var mapLen);
