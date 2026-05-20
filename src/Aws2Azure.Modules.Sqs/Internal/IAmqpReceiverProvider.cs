@@ -41,6 +41,19 @@ internal interface IAmqpReceiverProvider
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Acquires a broker-assigned session receiver for
+    /// <paramref name="queueName"/> — the SQS FIFO receive path's
+    /// entry point. Service Bus picks any available session; the
+    /// returned receiver's <see cref="ServiceBusReceiver.SessionId"/>
+    /// carries the bound id, which the handler stamps into the SQS
+    /// receipt handle so settle requests route back to the same
+    /// session (see slice 7c.3d / 7c.4).
+    /// </summary>
+    Task<ServiceBusReceiver> AcquireBrokerAssignedSessionReceiverAsync(
+        string queueName,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Evicts the cached session receiver for
     /// (<paramref name="queueName"/>, <paramref name="sessionId"/>)
     /// after a link-level failure. The connection (and other session /

@@ -149,6 +149,64 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     }
 
     /// <summary>
+    /// Opens a <b>broker-assigned</b> session receiver for the given
+    /// queue: passes <c>sessionId: null</c> to
+    /// <see cref="ServiceBusAmqpConnection.OpenSessionReceiverAsync"/>
+    /// so Service Bus picks any currently-available session, then
+    /// adopts the resulting receiver into the pool keyed by the
+    /// resolved <see cref="ServiceBusReceiver.SessionId"/>.
+    /// <para>
+    /// This is the entry point the SQS FIFO <c>ReceiveMessage</c> path
+    /// uses: AWS clients hit FIFO queues without knowing the
+    /// MessageGroupId/SessionId in advance, so the broker is the only
+    /// party that can pick one. After the first acquire, subsequent
+    /// settle requests (DeleteMessage / ChangeMessageVisibility)
+    /// route back to the same session receiver via the cached slot,
+    /// which is essential for SB session-bound disposition.
+    /// </para>
+    /// <para>
+    /// Race: if a concurrent caller already adopted a receiver for the
+    /// same resolved session-id, the freshly-opened receiver is
+    /// disposed and the cached one is returned. The receiver returned
+    /// is owned by the pool; callers must not dispose it directly —
+    /// use <see cref="InvalidateSessionReceiverAsync"/> instead.
+    /// </para>
+    /// </summary>
+    public async Task<ServiceBusReceiver> AcquireBrokerAssignedSessionReceiverAsync(
+        string namespaceFqdn,
+        string sasKeyName,
+        string sasKey,
+        string queueName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sasKeyName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sasKey);
+        ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
+        ThrowIfDisposed();
+
+        var key = new ServiceBusAmqpConnectionKey(namespaceFqdn, sasKeyName);
+        while (true)
+        {
+            var slot = _connections.GetOrAdd(key, static _ => new ConnectionSlot());
+            try
+            {
+                var connection = await slot.GetOrCreateConnectionAsync(
+                    _factory, key, sasKey, cancellationToken).ConfigureAwait(false);
+                var receiver = await slot.AcquireBrokerAssignedSessionReceiverAsync(
+                    connection, key, queueName, cancellationToken).ConfigureAwait(false);
+                ThrowIfDisposed();
+                return receiver;
+            }
+            catch (ObjectDisposedException) when (Volatile.Read(ref _disposed) == 0)
+            {
+                _connections.TryRemove(KeyValuePair.Create(key, slot));
+                continue;
+            }
+        }
+    }
+
+    /// <summary>
     /// Evicts the cached session receiver for
     /// (namespace, key, queue, session-id). The receiver link is
     /// detached and the connection stays warm so other session and
@@ -363,6 +421,47 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                 static _ => new SessionReceiverSlot());
             return await slot
                 .GetOrCreateAsync(connection, key.NamespaceFqdn, queueName, sessionId, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        public async Task<ServiceBusReceiver> AcquireBrokerAssignedSessionReceiverAsync(
+            ServiceBusAmqpConnection connection,
+            ServiceBusAmqpConnectionKey key,
+            string queueName,
+            CancellationToken cancellationToken)
+        {
+            ThrowIfDisposed();
+            var audience = ServiceBusEndpoint.BuildQueueAudience(key.NamespaceFqdn, queueName);
+            // Open a fresh broker-assigned session receiver. The
+            // connection.OpenSessionReceiverAsync contract guarantees a
+            // non-null SessionId on success (it throws otherwise).
+            var fresh = await connection
+                .OpenSessionReceiverAsync(queueName, audience, sessionId: null, prefetchCredit: 0, cancellationToken)
+                .ConfigureAwait(false);
+            var resolvedId = fresh.SessionId!;
+            var slotKey = new SessionReceiverKey(queueName, resolvedId);
+            var ourSlot = SessionReceiverSlot.FromExisting(fresh);
+            var inserted = _sessionReceivers.GetOrAdd(slotKey, ourSlot);
+            if (ReferenceEquals(inserted, ourSlot))
+            {
+                // We won — pool now owns 'fresh'. Re-check disposal so
+                // we surface ObjectDisposedException to the outer retry
+                // loop rather than leaking the slot we just published.
+                if (Volatile.Read(ref _disposed) != 0)
+                {
+                    _sessionReceivers.TryRemove(KeyValuePair.Create(slotKey, ourSlot));
+                    await ourSlot.DisposeAsync().ConfigureAwait(false);
+                    throw new ObjectDisposedException(nameof(ConnectionSlot));
+                }
+                return fresh;
+            }
+
+            // Raced — another caller already adopted a receiver for the
+            // same resolved session-id. Drop ours and return the cached
+            // one. Dispose our slot (which also disposes 'fresh').
+            await ourSlot.DisposeAsync().ConfigureAwait(false);
+            return await inserted
+                .GetOrCreateAsync(connection, key.NamespaceFqdn, queueName, resolvedId, cancellationToken)
                 .ConfigureAwait(false);
         }
 
@@ -603,6 +702,21 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         private readonly SemaphoreSlim _lock = new(1, 1);
         private ServiceBusReceiver? _receiver;
         private int _disposed;
+
+        /// <summary>
+        /// Creates a slot that already owns a pre-opened receiver.
+        /// Used by the broker-assigned acquire path: the caller opens
+        /// the receiver against the connection before the slot key
+        /// (session-id) is known, then publishes the slot into the
+        /// dict keyed by the resolved session-id.
+        /// </summary>
+        public static SessionReceiverSlot FromExisting(ServiceBusReceiver receiver)
+        {
+            ArgumentNullException.ThrowIfNull(receiver);
+            var slot = new SessionReceiverSlot();
+            slot._receiver = receiver;
+            return slot;
+        }
 
         public async Task<ServiceBusReceiver> GetOrCreateAsync(
             ServiceBusAmqpConnection connection,
