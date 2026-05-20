@@ -232,6 +232,32 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     }
 
     /// <summary>
+    /// Looks up the cached session receiver for (namespace, key, queue,
+    /// session-id) without opening a fresh session lock. Returns
+    /// <c>null</c> when the connection or the session slot have not
+    /// been materialised yet. Used by settle paths (DeleteMessage,
+    /// CMV=0) that must not acquire a new session lock — opening one
+    /// just to fail the lock-token lookup would starve the
+    /// MessageGroupId until the session lock expires.
+    /// </summary>
+    public ServiceBusReceiver? TryGetExistingSessionReceiver(
+        string namespaceFqdn,
+        string sasKeyName,
+        string queueName,
+        string sessionId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sasKeyName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        if (Volatile.Read(ref _disposed) != 0) return null;
+
+        var key = new ServiceBusAmqpConnectionKey(namespaceFqdn, sasKeyName);
+        if (!_connections.TryGetValue(key, out var slot)) return null;
+        return slot.TryGetExistingSessionReceiver(queueName, sessionId);
+    }
+
+    /// <summary>
     /// Returns the shared management client for the (namespace, key,
     /// queue) tuple, opening the connection and the CBS-authorised
     /// <c>$management</c> request-response link on first use. Owned by
@@ -487,6 +513,20 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         {
             if (_sessionReceivers.TryRemove(new SessionReceiverKey(queueName, sessionId), out var slot))
                 await slot.DisposeAsync().ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Returns the receiver cached for (queue, sessionId) without
+        /// opening a fresh session. Returns <c>null</c> when no slot
+        /// exists yet or the cached slot has been disposed. The pool
+        /// keeps ownership of the returned receiver — callers must not
+        /// dispose it.
+        /// </summary>
+        public ServiceBusReceiver? TryGetExistingSessionReceiver(string queueName, string sessionId)
+        {
+            if (!_sessionReceivers.TryGetValue(new SessionReceiverKey(queueName, sessionId), out var slot))
+                return null;
+            return slot.TryGetExisting();
         }
 
         public async Task<ServiceBusManagementClient> GetOrCreateManagementClientAsync(
@@ -765,6 +805,21 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             {
                 _lock.Release();
             }
+        }
+
+        /// <summary>
+        /// Returns the cached receiver if one has already been opened
+        /// (or adopted from the broker-assigned acquire path), without
+        /// opening a fresh session. Returns <c>null</c> when the slot
+        /// has not yet materialised a receiver — used by settle paths
+        /// (DeleteMessage, CMV=0) where opening a new session-lock
+        /// just to immediately fail the lock-token lookup would starve
+        /// the message group.
+        /// </summary>
+        public ServiceBusReceiver? TryGetExisting()
+        {
+            if (Volatile.Read(ref _disposed) != 0) return null;
+            return Volatile.Read(ref _receiver);
         }
 
         private void ThrowIfDisposed()

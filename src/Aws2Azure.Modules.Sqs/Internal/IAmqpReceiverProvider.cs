@@ -41,6 +41,19 @@ internal interface IAmqpReceiverProvider
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Returns the cached session-bound receiver for
+    /// (<paramref name="queueName"/>, <paramref name="sessionId"/>) if
+    /// one exists, or <c>null</c> when no slot has been opened (or it
+    /// was evicted). Unlike
+    /// <see cref="GetSessionReceiverAsync"/>, this never opens a fresh
+    /// session lock — settle paths (DeleteMessage, CMV=0) must use
+    /// this so a cache miss surfaces as a stale receipt handle instead
+    /// of starving the MessageGroupId by acquiring (and then never
+    /// releasing) a new session lock.
+    /// </summary>
+    ServiceBusReceiver? TryGetExistingSessionReceiver(string queueName, string sessionId);
+
+    /// <summary>
     /// Acquires a broker-assigned session receiver for
     /// <paramref name="queueName"/> — the SQS FIFO receive path's
     /// entry point. Service Bus picks any available session; the
