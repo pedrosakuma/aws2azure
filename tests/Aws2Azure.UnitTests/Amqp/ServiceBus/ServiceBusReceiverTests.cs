@@ -120,6 +120,166 @@ public sealed class ServiceBusReceiverTests
         Assert.Equal(AmqpDispositionOutcome.Rejected, broker.Dispositions[msg.DeliveryId].Outcome);
     }
 
+    [Fact]
+    public async Task ReceiveBatchAsync_caches_messages_with_16_byte_delivery_tags_by_lock_token()
+    {
+        var (conn, broker, receiver) = await SetupReceiverWithTagsAsync(
+            "q",
+            (Guid.Parse("11111111-2222-3333-4444-555555555555").ToByteArray(), EncodeMessage("m1")),
+            (Guid.Parse("66666666-7777-8888-9999-aaaaaaaaaaaa").ToByteArray(), EncodeMessage("m2")));
+        await using var _c = conn;
+        await using var _r = receiver;
+
+        var batch = await receiver.ReceiveBatchAsync(2, TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(15));
+
+        Assert.Equal(2, batch.Count);
+        Assert.Equal(2, receiver.InFlightCount);
+        Assert.All(batch, m => Assert.NotNull(m.LockToken));
+    }
+
+    [Fact]
+    public async Task ReceiveBatchAsync_does_not_cache_messages_with_non_guid_delivery_tags()
+    {
+        // Default SetupReceiverAsync emits single-byte tags → not GUIDs.
+        var (conn, _, receiver, _) = await SetupReceiverAsync("q", EncodeMessage("m1"));
+        await using var _c = conn;
+        await using var _r = receiver;
+
+        var batch = await receiver.ReceiveBatchAsync(1, TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(15));
+
+        Assert.Single(batch);
+        Assert.Equal(0, receiver.InFlightCount);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_by_lock_token_settles_and_returns_true()
+    {
+        var tag = Guid.Parse("aabbccdd-eeff-0011-2233-445566778899").ToByteArray();
+        var (conn, broker, receiver) = await SetupReceiverWithTagsAsync("q", (tag, EncodeMessage("m1")));
+        await using var _c = conn;
+        await using var _r = receiver;
+
+        var batch = await receiver.ReceiveBatchAsync(1, TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(15));
+        var msg = Assert.Single(batch);
+
+        var settled = await receiver.CompleteAsync(new Guid(tag)).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(settled);
+        Assert.Equal(0, receiver.InFlightCount);
+        await WaitForDispositionAsync(broker, msg.DeliveryId);
+        Assert.Equal(AmqpDispositionOutcome.Accepted, broker.Dispositions[msg.DeliveryId].Outcome);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_by_unknown_lock_token_returns_false_without_disposition()
+    {
+        var tag = Guid.Parse("aabbccdd-eeff-0011-2233-445566778899").ToByteArray();
+        var (conn, broker, receiver) = await SetupReceiverWithTagsAsync("q", (tag, EncodeMessage("m1")));
+        await using var _c = conn;
+        await using var _r = receiver;
+
+        await receiver.ReceiveBatchAsync(1, TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(15));
+
+        var settled = await receiver
+            .CompleteAsync(Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff"))
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.False(settled);
+        Assert.Equal(1, receiver.InFlightCount);
+        Assert.Empty(broker.Dispositions);
+    }
+
+    [Fact]
+    public async Task AbandonAsync_and_DeadLetterAsync_by_lock_token_emit_correct_dispositions()
+    {
+        var tag1 = Guid.Parse("11111111-1111-1111-1111-111111111111").ToByteArray();
+        var tag2 = Guid.Parse("22222222-2222-2222-2222-222222222222").ToByteArray();
+        var (conn, broker, receiver) = await SetupReceiverWithTagsAsync(
+            "q",
+            (tag1, EncodeMessage("m1")),
+            (tag2, EncodeMessage("m2")));
+        await using var _c = conn;
+        await using var _r = receiver;
+
+        var batch = await receiver.ReceiveBatchAsync(2, TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.Equal(2, batch.Count);
+
+        var abandoned = await receiver.AbandonAsync(new Guid(tag1)).WaitAsync(TimeSpan.FromSeconds(5));
+        var deadLettered = await receiver.DeadLetterAsync(new Guid(tag2), "TooMany", "exceeded").WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(abandoned);
+        Assert.True(deadLettered);
+        Assert.Equal(0, receiver.InFlightCount);
+
+        await WaitForDispositionAsync(broker, batch[0].DeliveryId);
+        await WaitForDispositionAsync(broker, batch[1].DeliveryId);
+        Assert.Equal(AmqpDispositionOutcome.Modified, broker.Dispositions[batch[0].DeliveryId].Outcome);
+        Assert.Equal(AmqpDispositionOutcome.Rejected, broker.Dispositions[batch[1].DeliveryId].Outcome);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_with_message_object_evicts_from_in_flight_cache()
+    {
+        var tag = Guid.Parse("dededede-dede-dede-dede-dededededede").ToByteArray();
+        var (conn, broker, receiver) = await SetupReceiverWithTagsAsync("q", (tag, EncodeMessage("m1")));
+        await using var _c = conn;
+        await using var _r = receiver;
+
+        var batch = await receiver.ReceiveBatchAsync(1, TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(15));
+        var msg = Assert.Single(batch);
+        Assert.Equal(1, receiver.InFlightCount);
+
+        await receiver.CompleteAsync(msg).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(0, receiver.InFlightCount);
+        await WaitForDispositionAsync(broker, msg.DeliveryId);
+    }
+
+    [Fact]
+    public async Task Settling_after_lock_token_winner_removed_entry_does_not_double_dispose()
+    {
+        // Race scenario: CompleteAsync(Guid) wins the TryRemove, then a stale caller
+        // re-settles using the message object. The second call must not emit a second
+        // disposition against the broker.
+        var tag = Guid.Parse("cafecafe-cafe-cafe-cafe-cafecafecafe").ToByteArray();
+        var (conn, broker, receiver) = await SetupReceiverWithTagsAsync("q", (tag, EncodeMessage("m1")));
+        await using var _c = conn;
+        await using var _r = receiver;
+
+        var batch = await receiver.ReceiveBatchAsync(1, TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(15));
+        var msg = Assert.Single(batch);
+
+        Assert.True(await receiver.CompleteAsync(new Guid(tag)).WaitAsync(TimeSpan.FromSeconds(5)));
+        await WaitForDispositionAsync(broker, msg.DeliveryId);
+
+        // Stale double-settle attempts via every message-instance overload — all no-op.
+        await receiver.CompleteAsync(msg).WaitAsync(TimeSpan.FromSeconds(5));
+        await receiver.AbandonAsync(msg).WaitAsync(TimeSpan.FromSeconds(5));
+        await receiver.DeadLetterAsync(msg, "x", "y").WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Single(broker.Dispositions);
+        Assert.Equal(AmqpDispositionOutcome.Accepted, broker.Dispositions[msg.DeliveryId].Outcome);
+    }
+
+    private static async Task<(ServiceBusAmqpConnection conn, ServiceBusBrokerSimulator broker, ServiceBusReceiver recv)>
+        SetupReceiverWithTagsAsync(string queueName, params (byte[] tag, byte[] payload)[] messages)
+    {
+        var (client, server) = PipePairTransport.CreatePair();
+        var broker = new ServiceBusBrokerSimulator(server);
+        broker.Start();
+        var conn = await ServiceBusAmqpConnection
+            .OpenAsync(client, new FakeTokenProvider(), DefaultSettings())
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        var audience = ServiceBusEndpoint.BuildQueueAudience("ns.servicebus.windows.net", queueName);
+        var receiver = await conn.OpenReceiverAsync(queueName, audience, prefetchCredit: 0)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        var queue = new Queue<ServiceBusBrokerSimulator.DeliveryToSend>();
+        foreach (var (tag, payload) in messages)
+            queue.Enqueue(new ServiceBusBrokerSimulator.DeliveryToSend(tag, payload));
+        broker.Inbox[receiver.Link.Name] = queue;
+        return (conn, broker, receiver);
+    }
+
     private static async Task WaitForDispositionAsync(ServiceBusBrokerSimulator broker, uint deliveryId)
     {
         var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);

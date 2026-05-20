@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Aws2Azure.Amqp.Connection;
 using Aws2Azure.Amqp.Framing;
 
@@ -31,6 +32,7 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     private const string DeadLetterCondition = "com.microsoft:dead-letter";
 
     private readonly AmqpLink _link;
+    private readonly ConcurrentDictionary<Guid, ServiceBusReceivedMessage> _inFlight = new();
     private int _disposed;
 
     internal ServiceBusReceiver(AmqpLink link, string queueName)
@@ -43,6 +45,26 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
 
     /// <summary>The underlying receiver link. Exposed for diagnostics / advanced flow control.</summary>
     internal AmqpLink Link => _link;
+
+    /// <summary>
+    /// In-flight deliveries that have been handed to a caller but are not
+    /// yet settled, keyed by the 16-byte delivery-tag (lock-token) GUID.
+    /// Used by the lock-token-only settlement overloads so a stateless
+    /// HTTP request (e.g. SQS <c>DeleteMessage</c>) can settle a
+    /// previously-received message without holding a reference to the
+    /// original <see cref="ServiceBusReceivedMessage"/>.
+    /// <para>
+    /// Entries are added on a successful
+    /// <see cref="ReceiveBatchAsync"/> for messages whose tag is exactly
+    /// 16 bytes (the SB lock-token convention) and removed by
+    /// <see cref="CompleteAsync(Guid, CancellationToken)"/> /
+    /// <see cref="AbandonAsync(Guid, CancellationToken)"/> /
+    /// <see cref="DeadLetterAsync(Guid, string?, string?, CancellationToken)"/>.
+    /// Cap: callers must settle (or invalidate the receiver) within the
+    /// queue's lock duration; this slice does no time-based eviction.
+    /// </para>
+    /// </summary>
+    public int InFlightCount => _inFlight.Count;
 
     /// <summary>
     /// Receives up to <paramref name="maxMessages"/> messages, blocking
@@ -60,16 +82,47 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
         if (deliveries.Count == 0) return Array.Empty<ServiceBusReceivedMessage>();
         var result = new ServiceBusReceivedMessage[deliveries.Count];
         for (var i = 0; i < deliveries.Count; i++)
-            result[i] = new ServiceBusReceivedMessage(deliveries[i]);
+        {
+            var msg = new ServiceBusReceivedMessage(deliveries[i]);
+            result[i] = msg;
+            // Register only deliveries whose tag matches the SB
+            // lock-token convention (16 bytes ↔ GUID). Sender-settled
+            // deliveries or peers that use a non-GUID tag are still
+            // returned to the caller but cannot be looked up later.
+            if (msg.LockToken is { } token)
+                _inFlight[token] = msg;
+        }
         return result;
     }
 
-    /// <summary>Accepts the message — SB removes it.</summary>
+    /// <summary>
+    /// Accepts the message — SB removes it. When the message carries a
+    /// lock-token, settlement is gated by an atomic <c>TryRemove</c> so a
+    /// concurrent call against the same delivery (via the lock-token
+    /// overload or another message-instance call) cannot double-settle.
+    /// </summary>
     public Task CompleteAsync(ServiceBusReceivedMessage message, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(message);
         ThrowIfDisposed();
+        if (message.LockToken is { } token && !_inFlight.TryRemove(token, out _))
+            return Task.CompletedTask;
         return _link.AcceptAsync(message.Delivery, cancellationToken);
+    }
+
+    /// <summary>
+    /// Lock-token-only overload. Looks the delivery up in the in-flight
+    /// cache (populated by <see cref="ReceiveBatchAsync"/>) and accepts
+    /// it. Returns <c>false</c> when the lock-token is unknown — either
+    /// the message was already settled, the lock expired, or it came in
+    /// over a different receiver instance.
+    /// </summary>
+    public async Task<bool> CompleteAsync(Guid lockToken, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (!_inFlight.TryRemove(lockToken, out var message)) return false;
+        await _link.AcceptAsync(message.Delivery, cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     /// <summary>
@@ -82,7 +135,18 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(message);
         ThrowIfDisposed();
+        if (message.LockToken is { } token && !_inFlight.TryRemove(token, out _))
+            return Task.CompletedTask;
         return _link.ModifyAsync(message.Delivery, deliveryFailed: true, undeliverableHere: null, cancellationToken);
+    }
+
+    /// <summary>Lock-token-only overload (see <see cref="CompleteAsync(Guid, CancellationToken)"/>).</summary>
+    public async Task<bool> AbandonAsync(Guid lockToken, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (!_inFlight.TryRemove(lockToken, out var message)) return false;
+        await _link.ModifyAsync(message.Delivery, deliveryFailed: true, undeliverableHere: null, cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     /// <summary>
@@ -107,7 +171,27 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(message);
         ThrowIfDisposed();
+        if (message.LockToken is { } token && !_inFlight.TryRemove(token, out _))
+            return Task.CompletedTask;
+        return RejectInternal(message.Delivery, reason, description, cancellationToken);
+    }
 
+    /// <summary>Lock-token-only overload (see <see cref="CompleteAsync(Guid, CancellationToken)"/>).</summary>
+    public async Task<bool> DeadLetterAsync(
+        Guid lockToken,
+        string? reason = null,
+        string? description = null,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (!_inFlight.TryRemove(lockToken, out var message)) return false;
+        await RejectInternal(message.Delivery, reason, description, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    private Task RejectInternal(
+        AmqpIncomingDelivery delivery, string? reason, string? description, CancellationToken cancellationToken)
+    {
         // reason is intentionally collapsed into the description until
         // Slice 8c can encode it into the AMQP error.info map. Surface it
         // anyway so callers don't lose information.
@@ -118,18 +202,18 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
             (null, { } d) => d,
             _ => null,
         };
-
         var error = new AmqpError
         {
             Condition = DeadLetterCondition,
             Description = combined,
         };
-        return _link.RejectAsync(message.Delivery, error, cancellationToken);
+        return _link.RejectAsync(delivery, error, cancellationToken);
     }
 
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        _inFlight.Clear();
         try { await _link.DetachAsync(closed: true).ConfigureAwait(false); }
         catch { /* best-effort cleanup */ }
     }
