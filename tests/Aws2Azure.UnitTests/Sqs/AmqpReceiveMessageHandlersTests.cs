@@ -411,6 +411,13 @@ public sealed class AmqpReceiveMessageHandlersTests
             InvalidateManagementCount++;
             return Task.CompletedTask;
         }
+
+        public Task<ServiceBusReceiver> GetSessionReceiverAsync(
+            string queueName, string sessionId, CancellationToken cancellationToken)
+            => throw new NotSupportedException("Session receivers are not exercised by this fixture.");
+
+        public Task InvalidateSessionReceiverAsync(string queueName, string sessionId)
+            => Task.CompletedTask;
     }
 
     // --- shared helpers ------------------------------------------------

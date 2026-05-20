@@ -94,6 +94,86 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     }
 
     /// <summary>
+    /// Returns the shared session-bound <see cref="ServiceBusReceiver"/>
+    /// for the (namespace, key, queue, session-id) tuple, opening the
+    /// connection and a session-filtered receiver link on first use.
+    /// The returned receiver is owned by the pool — callers must
+    /// <b>not</b> dispose it directly; call
+    /// <see cref="InvalidateSessionReceiverAsync"/> instead when a
+    /// failure occurs.
+    /// <para>
+    /// <paramref name="sessionId"/> is required: the pool is only
+    /// useful when the cache key is stable, so the "ask the broker
+    /// for any available session" mode is intentionally not exposed
+    /// here. Callers needing that should go through
+    /// <see cref="ServiceBusAmqpConnection.OpenSessionReceiverAsync"/>
+    /// directly and either own the lifecycle or hand the resulting
+    /// receiver back to the pool keyed by its resolved
+    /// <see cref="ServiceBusReceiver.SessionId"/> (future slice 7c).
+    /// </para>
+    /// </summary>
+    public async Task<ServiceBusReceiver> GetSessionReceiverAsync(
+        string namespaceFqdn,
+        string sasKeyName,
+        string sasKey,
+        string queueName,
+        string sessionId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sasKeyName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sasKey);
+        ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        ThrowIfDisposed();
+
+        var key = new ServiceBusAmqpConnectionKey(namespaceFqdn, sasKeyName);
+        while (true)
+        {
+            var slot = _connections.GetOrAdd(key, static _ => new ConnectionSlot());
+            try
+            {
+                var connection = await slot.GetOrCreateConnectionAsync(
+                    _factory, key, sasKey, cancellationToken).ConfigureAwait(false);
+                var receiver = await slot.GetOrCreateSessionReceiverAsync(
+                    connection, key, queueName, sessionId, cancellationToken).ConfigureAwait(false);
+                ThrowIfDisposed();
+                return receiver;
+            }
+            catch (ObjectDisposedException) when (Volatile.Read(ref _disposed) == 0)
+            {
+                _connections.TryRemove(KeyValuePair.Create(key, slot));
+                continue;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Evicts the cached session receiver for
+    /// (namespace, key, queue, session-id). The receiver link is
+    /// detached and the connection stays warm so other session and
+    /// non-session receivers under the same key keep working. Next
+    /// <see cref="GetSessionReceiverAsync"/> call for the same session
+    /// rebuilds the link.
+    /// </summary>
+    public async Task InvalidateSessionReceiverAsync(
+        string namespaceFqdn,
+        string sasKeyName,
+        string queueName,
+        string sessionId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sasKeyName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        if (Volatile.Read(ref _disposed) != 0) return;
+
+        var key = new ServiceBusAmqpConnectionKey(namespaceFqdn, sasKeyName);
+        if (!_connections.TryGetValue(key, out var slot)) return;
+        await slot.InvalidateSessionReceiverAsync(queueName, sessionId).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Returns the shared management client for the (namespace, key,
     /// queue) tuple, opening the connection and the CBS-authorised
     /// <c>$management</c> request-response link on first use. Owned by
@@ -215,6 +295,8 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         private readonly SemaphoreSlim _connectionLock = new(1, 1);
         private readonly ConcurrentDictionary<string, ReceiverSlot> _receivers
             = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<SessionReceiverKey, SessionReceiverSlot> _sessionReceivers
+            = new();
         private readonly ConcurrentDictionary<string, ManagementSlot> _managementClients
             = new(StringComparer.OrdinalIgnoreCase);
         private ServiceBusAmqpConnection? _connection;
@@ -268,6 +350,28 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                 await slot.DisposeAsync().ConfigureAwait(false);
         }
 
+        public async Task<ServiceBusReceiver> GetOrCreateSessionReceiverAsync(
+            ServiceBusAmqpConnection connection,
+            ServiceBusAmqpConnectionKey key,
+            string queueName,
+            string sessionId,
+            CancellationToken cancellationToken)
+        {
+            ThrowIfDisposed();
+            var slot = _sessionReceivers.GetOrAdd(
+                new SessionReceiverKey(queueName, sessionId),
+                static _ => new SessionReceiverSlot());
+            return await slot
+                .GetOrCreateAsync(connection, key.NamespaceFqdn, queueName, sessionId, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        public async Task InvalidateSessionReceiverAsync(string queueName, string sessionId)
+        {
+            if (_sessionReceivers.TryRemove(new SessionReceiverKey(queueName, sessionId), out var slot))
+                await slot.DisposeAsync().ConfigureAwait(false);
+        }
+
         public async Task<ServiceBusManagementClient> GetOrCreateManagementClientAsync(
             ServiceBusAmqpConnection connection,
             ServiceBusAmqpConnectionKey key,
@@ -288,6 +392,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         }
 
         public int ReceiverCount => _receivers.Count;
+        public int SessionReceiverCount => _sessionReceivers.Count;
         public int ManagementClientCount => _managementClients.Count;
 
         private void ThrowIfDisposed()
@@ -318,6 +423,11 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                 var receivers = _receivers.Values.ToArray();
                 _receivers.Clear();
                 foreach (var r in receivers)
+                    await r.DisposeAsync().ConfigureAwait(false);
+
+                var sessionReceivers = _sessionReceivers.Values.ToArray();
+                _sessionReceivers.Clear();
+                foreach (var r in sessionReceivers)
                     await r.DisposeAsync().ConfigureAwait(false);
 
                 var clients = _managementClients.Values.ToArray();
@@ -462,6 +572,91 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                 var client = Interlocked.Exchange(ref _client, null);
                 if (client is not null)
                     await client.DisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                _lock.Release();
+                _lock.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Cache key for session receivers. Queue name is case-insensitive
+    /// to mirror SB's queue-path matching; session-id is case-sensitive
+    /// because SB treats session ids as opaque byte-equal tokens.
+    /// </summary>
+    private readonly record struct SessionReceiverKey(string QueueName, string SessionId)
+    {
+        public bool Equals(SessionReceiverKey other) =>
+            string.Equals(QueueName, other.QueueName, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(SessionId, other.SessionId, StringComparison.Ordinal);
+
+        public override int GetHashCode() =>
+            HashCode.Combine(
+                StringComparer.OrdinalIgnoreCase.GetHashCode(QueueName),
+                StringComparer.Ordinal.GetHashCode(SessionId));
+    }
+
+    private sealed class SessionReceiverSlot : IAsyncDisposable
+    {
+        private readonly SemaphoreSlim _lock = new(1, 1);
+        private ServiceBusReceiver? _receiver;
+        private int _disposed;
+
+        public async Task<ServiceBusReceiver> GetOrCreateAsync(
+            ServiceBusAmqpConnection connection,
+            string namespaceFqdn,
+            string queueName,
+            string sessionId,
+            CancellationToken cancellationToken)
+        {
+            var existing = Volatile.Read(ref _receiver);
+            if (existing is not null) return existing;
+            ThrowIfDisposed();
+
+            await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                ThrowIfDisposed();
+                existing = _receiver;
+                if (existing is not null) return existing;
+
+                var audience = ServiceBusEndpoint.BuildQueueAudience(namespaceFqdn, queueName);
+                var created = await connection
+                    .OpenSessionReceiverAsync(queueName, audience, sessionId, prefetchCredit: 0, cancellationToken)
+                    .ConfigureAwait(false);
+                Volatile.Write(ref _receiver, created);
+                return created;
+            }
+            finally
+            {
+                _lock.Release();
+            }
+        }
+
+        private void ThrowIfDisposed()
+        {
+            if (Volatile.Read(ref _disposed) != 0)
+                throw new ObjectDisposedException(nameof(SessionReceiverSlot));
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            try
+            {
+                await _lock.WaitAsync().ConfigureAwait(false);
+            }
+            catch (ObjectDisposedException)
+            {
+                return;
+            }
+            try
+            {
+                var receiver = Interlocked.Exchange(ref _receiver, null);
+                if (receiver is not null)
+                    await receiver.DisposeAsync().ConfigureAwait(false);
             }
             finally
             {

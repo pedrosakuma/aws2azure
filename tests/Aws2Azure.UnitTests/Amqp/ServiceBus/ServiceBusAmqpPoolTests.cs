@@ -185,6 +185,116 @@ public sealed class ServiceBusAmqpPoolTests
         Assert.Equal(1, factory.CreateCallCount);
     }
 
+    [Fact]
+    public async Task GetSessionReceiverAsync_creates_and_caches_per_session_id()
+    {
+        await using var factory = new FakeFactory(DefaultSettings());
+        await using var pool = new ServiceBusAmqpPool(factory);
+
+        var r1 = await pool.GetSessionReceiverAsync(
+            "ns.servicebus.windows.net", "Root", "k", "fifo-q", "session-1")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        var r2 = await pool.GetSessionReceiverAsync(
+            "ns.servicebus.windows.net", "Root", "k", "fifo-q", "session-1")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Same(r1, r2);
+        Assert.Equal("session-1", r1.SessionId);
+        Assert.Equal(1, factory.CreateCallCount);
+        Assert.Equal(1, pool.ConnectionCount);
+    }
+
+    [Fact]
+    public async Task GetSessionReceiverAsync_creates_separate_links_for_different_sessions()
+    {
+        await using var factory = new FakeFactory(DefaultSettings());
+        await using var pool = new ServiceBusAmqpPool(factory);
+
+        var ra = await pool.GetSessionReceiverAsync(
+            "ns.servicebus.windows.net", "Root", "k", "fifo-q", "session-a")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        var rb = await pool.GetSessionReceiverAsync(
+            "ns.servicebus.windows.net", "Root", "k", "fifo-q", "session-b")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.NotSame(ra, rb);
+        Assert.Equal("session-a", ra.SessionId);
+        Assert.Equal("session-b", rb.SessionId);
+        Assert.Equal(1, factory.CreateCallCount);
+    }
+
+    [Fact]
+    public async Task GetSessionReceiverAsync_session_id_is_case_sensitive()
+    {
+        await using var factory = new FakeFactory(DefaultSettings());
+        await using var pool = new ServiceBusAmqpPool(factory);
+
+        var r1 = await pool.GetSessionReceiverAsync(
+            "ns.servicebus.windows.net", "Root", "k", "fifo-q", "Session-1")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        var r2 = await pool.GetSessionReceiverAsync(
+            "ns.servicebus.windows.net", "Root", "k", "fifo-q", "session-1")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        // SB treats session ids as opaque byte-equal tokens; differing
+        // casing must produce distinct cached receivers.
+        Assert.NotSame(r1, r2);
+    }
+
+    [Fact]
+    public async Task GetSessionReceiverAsync_queue_name_is_case_insensitive()
+    {
+        await using var factory = new FakeFactory(DefaultSettings());
+        await using var pool = new ServiceBusAmqpPool(factory);
+
+        var r1 = await pool.GetSessionReceiverAsync(
+            "ns.servicebus.windows.net", "Root", "k", "Fifo-Q", "session-1")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        var r2 = await pool.GetSessionReceiverAsync(
+            "ns.servicebus.windows.net", "Root", "k", "fifo-q", "session-1")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Same(r1, r2);
+    }
+
+    [Fact]
+    public async Task InvalidateSessionReceiverAsync_drops_cached_link_only()
+    {
+        await using var factory = new FakeFactory(DefaultSettings());
+        await using var pool = new ServiceBusAmqpPool(factory);
+
+        var r1 = await pool.GetSessionReceiverAsync(
+            "ns.servicebus.windows.net", "Root", "k", "fifo-q", "session-1")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        await pool.InvalidateSessionReceiverAsync(
+            "ns.servicebus.windows.net", "Root", "fifo-q", "session-1");
+
+        Assert.Equal(1, pool.ConnectionCount);
+
+        var r2 = await pool.GetSessionReceiverAsync(
+            "ns.servicebus.windows.net", "Root", "k", "fifo-q", "session-1")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.NotSame(r1, r2);
+        Assert.Equal(1, factory.CreateCallCount);
+    }
+
+    [Fact]
+    public async Task GetSessionReceiverAsync_rejects_null_or_empty_session_id()
+    {
+        await using var factory = new FakeFactory(DefaultSettings());
+        await using var pool = new ServiceBusAmqpPool(factory);
+
+        // ThrowIfNullOrWhiteSpace dispatches: null → ArgumentNullException,
+        // empty/whitespace → ArgumentException. Either flavour is fine —
+        // both derive from ArgumentException.
+        await Assert.ThrowsAnyAsync<ArgumentException>(() =>
+            pool.GetSessionReceiverAsync("ns.servicebus.windows.net", "Root", "k", "q", sessionId: null!));
+        await Assert.ThrowsAnyAsync<ArgumentException>(() =>
+            pool.GetSessionReceiverAsync("ns.servicebus.windows.net", "Root", "k", "q", sessionId: ""));
+    }
+
     /// <summary>
     /// Wraps another factory and gates each <c>CreateAsync</c> on an
     /// external task so tests can interleave it with pool disposal.

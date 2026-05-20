@@ -28,6 +28,27 @@ internal interface IAmqpReceiverProvider
     Task<ServiceBusReceiver> GetReceiverAsync(string queueName, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Returns the shared session-bound receiver for the
+    /// (<paramref name="queueName"/>, <paramref name="sessionId"/>)
+    /// pair, opening the AMQP connection / link on first request and
+    /// caching the link for subsequent calls under the same session
+    /// id. Used by the SQS FIFO handlers when settling messages back
+    /// to the specific session that issued them.
+    /// </summary>
+    Task<ServiceBusReceiver> GetSessionReceiverAsync(
+        string queueName,
+        string sessionId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Evicts the cached session receiver for
+    /// (<paramref name="queueName"/>, <paramref name="sessionId"/>)
+    /// after a link-level failure. The connection (and other session /
+    /// non-session receivers) stays warm.
+    /// </summary>
+    Task InvalidateSessionReceiverAsync(string queueName, string sessionId);
+
+    /// <summary>
     /// Returns the shared <c>$management</c> request-response client for
     /// <paramref name="queueName"/>'s audience. Opens on first request
     /// and caches per (connection, queue). Used by
