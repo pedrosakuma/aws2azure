@@ -165,15 +165,13 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     /// <summary>
     /// Dead-letters the message via the SB-specific rejected variant.
     /// <para>
-    /// <b>Slice 8a limitation:</b> Service Bus normally surfaces
-    /// <c>DeadLetterReason</c> / <c>DeadLetterErrorDescription</c> on the
-    /// DLQ copy by reading them from the <c>error.info</c> map on the
-    /// rejected disposition. Encoding a typed AMQP map into that opaque
-    /// field is deferred to Slice 8c (<c>ChangeMessageVisibility</c> +
-    /// error mapping). Until then, only <paramref name="description"/> is
-    /// carried — via the <c>error.description</c> string, which SB
-    /// preserves on the dead-lettered message's
-    /// <c>x-opt-deadletter-description</c> annotation.
+    /// The <c>error.info</c> map is encoded with the well-known
+    /// <c>DeadLetterReason</c> + <c>DeadLetterErrorDescription</c>
+    /// symbol-keyed string entries; Service Bus copies them onto the
+    /// dead-lettered message's application-properties so SDK clients
+    /// reading off the DLQ see them as native fields. The same values
+    /// are mirrored into <c>error.description</c> as a fallback for
+    /// peers that ignore the info map.
     /// </para>
     /// </summary>
     public Task DeadLetterAsync(
@@ -205,10 +203,11 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     private Task RejectInternal(
         AmqpIncomingDelivery delivery, string? reason, string? description, CancellationToken cancellationToken)
     {
-        // reason is intentionally collapsed into the description until
-        // Slice 8c can encode it into the AMQP error.info map. Surface it
-        // anyway so callers don't lose information.
-        var combined = (reason, description) switch
+        // Primary channel for the values is the typed fields map on
+        // error.info (slice 8c.4) — SB reads from there. Mirror into
+        // error.description as a fallback for peers that don't decode
+        // the info map.
+        var fallback = (reason, description) switch
         {
             ({ } r, { } d) => r + ": " + d,
             ({ } r, null) => r,
@@ -218,7 +217,8 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
         var error = new AmqpError
         {
             Condition = DeadLetterCondition,
-            Description = combined,
+            Description = fallback,
+            Info = ServiceBusDeadLetterInfo.Encode(reason, description),
         };
         return _link.RejectAsync(delivery, error, cancellationToken);
     }

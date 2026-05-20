@@ -56,6 +56,16 @@ internal sealed class ServiceBusBrokerSimulator
     /// <summary>Dispositions observed on receiver links, keyed by delivery-id.</summary>
     public Dictionary<uint, DispositionRecord> Dispositions { get; } = new();
 
+    /// <summary>
+    /// AMQP error payloads carried on <c>rejected</c> dispositions,
+    /// keyed by delivery-id. Populated alongside
+    /// <see cref="Dispositions"/> when the outcome is
+    /// <see cref="AmqpDispositionOutcome.Rejected"/>; lets dead-letter
+    /// tests inspect the <c>error.info</c> map written by
+    /// <see cref="ServiceBusReceiver"/>.
+    /// </summary>
+    public Dictionary<uint, AmqpError> RejectedErrors { get; } = new();
+
     /// <summary>Transfers to deliver to the client on demand, keyed by client receiver-link name.</summary>
     public Dictionary<string, Queue<DeliveryToSend>> Inbox { get; } = new(StringComparer.Ordinal);
 
@@ -258,9 +268,20 @@ internal sealed class ServiceBusBrokerSimulator
         var first = d.First;
         var last = d.Last ?? first;
         var outcome = AmqpDispositionOutcomeExtractor.From(d.State);
+        AmqpError? rejectedError = null;
+        if (outcome == AmqpDispositionOutcome.Rejected && !d.State.IsEmpty)
+        {
+            Rejected.Read(d.State, out var rejected, out _);
+            if (!rejected.Error.IsEmpty)
+            {
+                AmqpError.Read(rejected.Error, out var err, out _);
+                rejectedError = err;
+            }
+        }
         for (var id = first; id <= last; id++)
         {
             Dispositions[id] = new DispositionRecord(outcome, d.Settled ?? false);
+            if (rejectedError is { } re) RejectedErrors[id] = re;
         }
     }
 
