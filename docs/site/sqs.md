@@ -39,6 +39,7 @@
 - SB renew-lock semantics do not accept a caller-supplied duration — every renew extends by the queue's LockDuration. Callers asking for a longer (or shorter) timeout get the queue-level value instead; the requested value is echoed on the Aws2Azure-VisibilityClamped response header for diagnostics.
 - VisibilityTimeout=0 is *not* supported by SB REST (there is no 'unlock immediately' verb on this endpoint). The renew still extends the lock; clients needing immediate release must either DeleteMessage or wait for the lock to expire.
 - Verified against in-process fakes; emulator-backed end-to-end validation lands with Slice 4's emulator fixture build-out.
+- AMQP transport (Phase 2.5 slice 8b.4c): when the queue is configured with `transport: Amqp`, ChangeMessageVisibility short-circuits to a success response with the `Aws2Azure-VisibilityClamped: <requested-seconds>` header, but does NOT actually extend the lock. Real renew-lock over AMQP travels via the Service Bus `$management` request-response link and lands in slice 8c. Until then the AMQP path also does not validate that the lock-token is still in flight (the REST path gets a 404 from SB for an expired/wrong lock). Callers that depend on visibility extension must use the REST transport for now.
 
 ### References
 
@@ -119,6 +120,7 @@
 
 - If the SB lock has expired before DeleteMessage arrives, the proxy returns ReceiptHandleIsInvalid (404). AWS SQS would return success (idempotent) for already-deleted messages and an error only for genuinely invalid handles — these two cases are indistinguishable on SB REST without an extra round-trip.
 - Verified against in-process fakes; emulator-backed end-to-end validation lands with Slice 4's emulator fixture build-out.
+- AMQP transport (Phase 2.5 slice 8b.4c): when the queue is configured with `transport: Amqp`, DeleteMessage settles the in-flight delivery via the AMQP `accepted` outcome against the cached receiver (via the lock-token in-flight cache landed in slice 8b.4b). Cache miss — already settled, lock expired, sender-settled at receive, or delivery came from a torn-down receiver instance — surfaces as ReceiptHandleIsInvalid, identical to the REST path's 404→ReceiptHandleIsInvalid mapping. Receipt handles minted by the AMQP path (version `2`) are rejected if presented to a REST-configured queue and vice versa — a queue's transport setting is part of the handle's contract.
 
 ### References
 
@@ -340,6 +342,7 @@
 - FIFO ordering gap: SQS FIFO guarantees strict per-MessageGroupId order on receive (one in-flight message per group at a time, others stay invisible until the in-flight one is deleted). SB only enforces ordering when the receiver opens a session-aware receive link (AMQP) and pins one consumer per session — semantics SB REST cannot express. As a result, ReceiveMessage on a .fifo queue surfaces MessageGroupId on each message (so application-side de-grouping still works) but does not block other messages of the same group from being delivered concurrently to different consumers. Tracked for Phase 2.5 (hand-rolled AMQP 1.0 lib).
 - MessageGroupId is surfaced from BrokerProperties.SessionId; MessageDeduplicationId from BrokerProperties.MessageId. Both only appear in the response when the AttributeNames filter requests them (or 'All').
 - Verified against in-process fakes; emulator-backed end-to-end validation is blocked (SB emulator does not expose runtime REST). Real-Azure validation pending — see ADR-0001.
+- AMQP transport (Phase 2.5 slice 8b.4c): when a queue is configured with `transport: Amqp` (see ServiceBusCredentials.Queues), ReceiveMessage uses the in-process Service Bus AMQP 1.0 client via a shared connection pool. The receipt handle minted on the AMQP path is a distinct opaque format (version `2`, base64 of `{queueName, lockToken-GUID, lockedUntilUtc}`) carrying the SB lock-token directly rather than the REST messageId/lockToken pair. Long polling (WaitTimeSeconds) is honoured on the first receive; the polling-loop emulation that the REST path uses to batch up to 10 messages is replaced by a single `ReceiveBatchAsync` call against the cached AMQP link, which is more efficient. MessageAttributes (DataType round-trip) and FIFO MessageGroupId are NOT surfaced on the AMQP path yet (the bare-message parser does not model application-properties round-trip or `group-id`); these land in subsequent slices.
 
 ### References
 

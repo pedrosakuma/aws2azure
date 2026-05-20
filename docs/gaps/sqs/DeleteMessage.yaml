@@ -8,6 +8,7 @@ sub_features:
 behavior_differences:
   - "If the SB lock has expired before DeleteMessage arrives, the proxy returns ReceiptHandleIsInvalid (404). AWS SQS would return success (idempotent) for already-deleted messages and an error only for genuinely invalid handles — these two cases are indistinguishable on SB REST without an extra round-trip."
   - "Verified against in-process fakes; emulator-backed end-to-end validation lands with Slice 4's emulator fixture build-out."
+  - "AMQP transport (Phase 2.5 slice 8b.4c): when the queue is configured with `transport: Amqp`, DeleteMessage settles the in-flight delivery via the AMQP `accepted` outcome against the cached receiver (via the lock-token in-flight cache landed in slice 8b.4b). Cache miss — already settled, lock expired, sender-settled at receive, or delivery came from a torn-down receiver instance — surfaces as ReceiptHandleIsInvalid, identical to the REST path's 404→ReceiptHandleIsInvalid mapping. Receipt handles minted by the AMQP path (version `2`) are rejected if presented to a REST-configured queue and vice versa — a queue's transport setting is part of the handle's contract."
 references:
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteMessage.html
   - https://learn.microsoft.com/rest/api/servicebus/delete-message

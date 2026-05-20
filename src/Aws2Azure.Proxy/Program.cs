@@ -1,4 +1,6 @@
 using System.Text.Json.Serialization;
+using Aws2Azure.Amqp.Connection;
+using Aws2Azure.Amqp.ServiceBus;
 using Aws2Azure.Core;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
@@ -43,6 +45,24 @@ builder.Services.AddSingleton(sigV4Validator);
 var azureHttpClient = new AzureHttpClient();
 builder.Services.AddSingleton(azureHttpClient);
 
+// Service Bus AMQP pool — shared across all credential entries. Lazy:
+// connections / receivers materialise on first AMQP queue use, so a
+// REST-only deployment pays zero cost. The pool is registered as a
+// singleton so the host's DI lifecycle (DisposeAsync on shutdown)
+// tears down every cached connection cleanly.
+//
+// ContainerId is the AMQP "client identity"; SB uses it for diagnostics
+// and to disambiguate clients sharing a SAS key. We tag it with the
+// process so a fleet of proxies under the same key is distinguishable
+// in the broker's audit logs.
+var amqpConnectionSettings = new AmqpConnectionSettings
+{
+    ContainerId = $"aws2azure-{Environment.MachineName}-{Environment.ProcessId}",
+};
+var amqpFactory = new ServiceBusAmqpConnectionFactory(amqpConnectionSettings);
+var amqpPool = new ServiceBusAmqpPool(amqpFactory);
+builder.Services.AddSingleton(amqpPool);
+
 // Manual, reflection-free module registration. Capability matrices come from
 // the generated registry (single source of truth: docs/gaps/**/*.yaml). The
 // S3 module is real as of Phase-1 slice 1 (bucket lifecycle); the rest stay
@@ -50,7 +70,7 @@ builder.Services.AddSingleton(azureHttpClient);
 IServiceModule[] modules =
 [
     new S3ServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.S3),
-    new SqsServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.Sqs),
+    new SqsServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.Sqs, amqpPool),
     new StubServiceModule(CapabilityRegistry.Dynamodb, AwsErrorFormat.Json, "dynamodb."),
     new StubServiceModule(CapabilityRegistry.Kinesis, AwsErrorFormat.Json, "kinesis."),
     new StubServiceModule(CapabilityRegistry.Sns, AwsErrorFormat.Json, "sns."),

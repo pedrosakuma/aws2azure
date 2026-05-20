@@ -261,6 +261,32 @@ public sealed class ServiceBusReceiverTests
         Assert.Equal(AmqpDispositionOutcome.Accepted, broker.Dispositions[msg.DeliveryId].Outcome);
     }
 
+    [Fact]
+    public async Task ReceiveBatchAsync_does_not_over_grant_credit_on_repeated_empty_calls()
+    {
+        // Regression: a shared pooled receiver used to call
+        // AmqpLink.GrantCreditAsync(maxMessages) on every receive →
+        // empty timeouts left credit outstanding, and subsequent calls
+        // additively granted more credit. The fix tops up to maxMessages
+        // total in-flight credit instead. We assert the second call does
+        // not emit any new flow frame because credit is already adequate.
+        var (conn, _broker, receiver, linkName) = await SetupReceiverAsync("q");
+        await using var _c = conn;
+        await using var _r = receiver;
+
+        var first = await receiver.ReceiveBatchAsync(10, TimeSpan.FromMilliseconds(50)).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Empty(first);
+
+        var flowsAfterFirst = _broker.FlowCreditsByLink.TryGetValue(linkName, out var l) ? l.Count : 0;
+
+        var second = await receiver.ReceiveBatchAsync(10, TimeSpan.FromMilliseconds(50)).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Empty(second);
+
+        var flowsAfterSecond = _broker.FlowCreditsByLink[linkName].Count;
+        Assert.Equal(flowsAfterFirst, flowsAfterSecond);
+        Assert.Equal(10u, _broker.FlowCreditsByLink[linkName][^1]);
+    }
+
     private static async Task<(ServiceBusAmqpConnection conn, ServiceBusBrokerSimulator broker, ServiceBusReceiver recv)>
         SetupReceiverWithTagsAsync(string queueName, params (byte[] tag, byte[] payload)[] messages)
     {

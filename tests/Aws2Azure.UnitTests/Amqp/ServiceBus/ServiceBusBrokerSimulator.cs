@@ -59,6 +59,9 @@ internal sealed class ServiceBusBrokerSimulator
     /// <summary>Transfers to deliver to the client on demand, keyed by client receiver-link name.</summary>
     public Dictionary<string, Queue<DeliveryToSend>> Inbox { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>Flow frames received per link name (recorded as the granted credit value).</summary>
+    public Dictionary<string, List<uint>> FlowCreditsByLink { get; } = new(StringComparer.Ordinal);
+
     public Task BrokerLoopTask { get; private set; } = Task.CompletedTask;
 
     public void Start(CancellationToken cancellationToken = default)
@@ -193,9 +196,16 @@ internal sealed class ServiceBusBrokerSimulator
         }
         if (linkName is null) return;
 
+        var credit = (int)(flow.LinkCredit ?? 0u);
+        if (!FlowCreditsByLink.TryGetValue(linkName, out var creditLog))
+        {
+            creditLog = new List<uint>();
+            FlowCreditsByLink[linkName] = creditLog;
+        }
+        creditLog.Add(flow.LinkCredit ?? 0u);
+
         if (!Inbox.TryGetValue(linkName, out var queue) || queue.Count == 0) return;
 
-        var credit = (int)(flow.LinkCredit ?? 0u);
         while (credit-- > 0 && queue.Count > 0)
         {
             var item = queue.Dequeue();
