@@ -24,18 +24,25 @@ internal static class AmqpFrameIO
     /// the transport. Flushes the underlying pipe. The header+body are
     /// staged in a pooled buffer to avoid heap churn on the hot path.
     /// </summary>
+    /// <param name="maxFrameSize">
+    /// Maximum outgoing frame size in bytes. Pass
+    /// <see cref="InitialMaxFrameSize"/> before <c>open</c> negotiation
+    /// completes; after that pass the value derived from the peer's
+    /// <c>open.max-frame-size</c>.
+    /// </param>
     public static async ValueTask WriteFrameAsync(
         IAmqpTransport transport,
         AmqpFrameType type,
         ushort channel,
         ReadOnlyMemory<byte> body,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        int maxFrameSize = InitialMaxFrameSize)
     {
         ArgumentNullException.ThrowIfNull(transport);
         var total = AmqpFrameCodec.HeaderSize + body.Length;
-        if (total > InitialMaxFrameSize)
+        if (total > maxFrameSize)
             throw new InvalidOperationException(
-                $"Frame size {total} exceeds the {InitialMaxFrameSize}-byte initial max-frame-size.");
+                $"Frame size {total} exceeds the {maxFrameSize}-byte max-frame-size.");
 
         var rented = ArrayPool<byte>.Shared.Rent(total);
         try

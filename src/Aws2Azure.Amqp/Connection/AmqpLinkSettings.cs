@@ -34,4 +34,13 @@ internal sealed record AmqpLinkSettings
     /// §2.7.3). Receivers leave this null.
     /// </summary>
     public uint? InitialDeliveryCount { get; init; } = 0;
+
+    /// <summary>
+    /// Local <c>max-message-size</c> advertised on attach (§2.7.3). When
+    /// non-zero, the receiver enforces this cap during multi-frame
+    /// reassembly and detaches the link with
+    /// <c>amqp:link:message-size-exceeded</c> if the peer over-sends.
+    /// Default 1 MiB; pass <c>0</c> for "no limit".
+    /// </summary>
+    public ulong MaxMessageSize { get; init; } = 1024UL * 1024UL;
 }

@@ -320,12 +320,19 @@ internal sealed class AmqpSession
 
         if (prior == StateOpened)
         {
-            // Peer initiated — mirror an end back on the same channel.
-            try
+            // Peer initiated — mirror an end back on the same channel,
+            // then transition to Final and unregister so any concurrent
+            // CloseAsync sees the session is fully torn down.
+            _ = Task.Run(async () =>
             {
-                _ = SendEndAsync(error: null, CancellationToken.None);
-            }
-            catch { /* best effort */ }
+                try { await SendEndAsync(error: null, CancellationToken.None).ConfigureAwait(false); }
+                catch { /* best effort */ }
+                finally
+                {
+                    Interlocked.Exchange(ref _state, StateFinal);
+                    _connection.UnregisterSession(this);
+                }
+            });
         }
     }
 

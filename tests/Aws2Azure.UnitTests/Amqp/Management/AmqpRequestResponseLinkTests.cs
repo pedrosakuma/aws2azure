@@ -119,6 +119,12 @@ public sealed class AmqpRequestResponseLinkTests
                 {
                     Name = a.Name, Handle = 10, Role = AmqpRole.Receiver, InitialDeliveryCount = 0,
                 }, AmqpAttach.Write);
+                await SendPerfAsync(server, channel: 4, new AmqpFlow
+                {
+                    NextIncomingId = 0, IncomingWindow = uint.MaxValue,
+                    NextOutgoingId = 0, OutgoingWindow = uint.MaxValue,
+                    Handle = 10, DeliveryCount = 0, LinkCredit = 100,
+                }, AmqpFlow.Write);
             }
             // Receiver attach.
             using (var f = await AmqpFrameIO.ReadFrameAsync(server))
@@ -199,6 +205,12 @@ public sealed class AmqpRequestResponseLinkTests
             {
                 Name = a.Name, Handle = 100, Role = AmqpRole.Receiver, InitialDeliveryCount = 0,
             }, AmqpAttach.Write);
+            await SendPerfAsync(server, channel: 3, new AmqpFlow
+            {
+                NextIncomingId = 0, IncomingWindow = uint.MaxValue,
+                NextOutgoingId = 0, OutgoingWindow = uint.MaxValue,
+                Handle = 100, DeliveryCount = 0, LinkCredit = 100,
+            }, AmqpFlow.Write);
         }
         // Receiver attach (response channel) — peer handle 101.
         using (var f = await AmqpFrameIO.ReadFrameAsync(server))

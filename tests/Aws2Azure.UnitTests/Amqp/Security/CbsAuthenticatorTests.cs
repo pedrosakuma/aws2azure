@@ -117,6 +117,12 @@ public sealed class CbsAuthenticatorTests
             {
                 Name = a.Name, Handle = 50, Role = AmqpRole.Receiver, InitialDeliveryCount = 0,
             }, AmqpAttach.Write);
+            await SendPerfAsync(server, channel: 2, new AmqpFlow
+            {
+                NextIncomingId = 0, IncomingWindow = uint.MaxValue,
+                NextOutgoingId = 0, OutgoingWindow = uint.MaxValue,
+                Handle = 50, DeliveryCount = 0, LinkCredit = 100,
+            }, AmqpFlow.Write);
         }
         // Receiver attach.
         using (var f = await AmqpFrameIO.ReadFrameAsync(server))

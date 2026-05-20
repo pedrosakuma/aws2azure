@@ -72,6 +72,13 @@ public sealed class AmqpTransferTests
             {
                 Name = "snd", Handle = 99, Role = AmqpRole.Receiver, InitialDeliveryCount = 0,
             }, AmqpAttach.Write);
+            // Grant credit so the client may transfer.
+            await SendPerfAsync(server, channel: 7, new AmqpFlow
+            {
+                NextIncomingId = 0, IncomingWindow = uint.MaxValue,
+                NextOutgoingId = 0, OutgoingWindow = uint.MaxValue,
+                Handle = 99, DeliveryCount = 0, LinkCredit = 100,
+            }, AmqpFlow.Write);
 
             // Read the transfer frame.
             using (var f = await AmqpFrameIO.ReadFrameAsync(server))
@@ -141,6 +148,12 @@ public sealed class AmqpTransferTests
             {
                 Name = "us", Handle = 5, Role = AmqpRole.Receiver, InitialDeliveryCount = 0,
             }, AmqpAttach.Write);
+            await SendPerfAsync(server, channel: 11, new AmqpFlow
+            {
+                NextIncomingId = 0, IncomingWindow = uint.MaxValue,
+                NextOutgoingId = 0, OutgoingWindow = uint.MaxValue,
+                Handle = 5, DeliveryCount = 0, LinkCredit = 100,
+            }, AmqpFlow.Write);
 
             uint deliveryId = 0;
             using (var f = await AmqpFrameIO.ReadFrameAsync(server))
