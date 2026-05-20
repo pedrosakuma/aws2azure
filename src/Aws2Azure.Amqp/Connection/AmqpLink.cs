@@ -463,9 +463,13 @@ internal sealed class AmqpLink
             }
 
             // If the channel was completed (link is terminal) before the
-            // deadline elapsed, the long-poll did not just time out — the
-            // link is broken/closed. Don't mask that as an empty receive.
-            if (_incoming.Reader.Completion.IsCompleted
+            // deadline elapsed AND we drained nothing, the long-poll did
+            // not just time out — surface the broken link to the caller.
+            // If we did collect deliveries, return them so the caller can
+            // disposition them; a subsequent receive will surface the
+            // terminal state on its own.
+            if (batch.Count == 0
+                && _incoming.Reader.Completion.IsCompleted
                 && !deadlineCts.IsCancellationRequested
                 && !cancellationToken.IsCancellationRequested)
             {

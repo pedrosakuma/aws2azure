@@ -378,4 +378,56 @@ public sealed class AmqpReceiverTests
         AmqpError.Write(rented, in err, out var len);
         return new ReadOnlyMemory<byte>(rented, 0, len);
     }
+
+    [Fact]
+    public async Task ReceiveBatchAsync_returns_partial_batch_even_if_link_closes_mid_wait()
+    {
+        var (clientTransport, serverTransport) = PipePairTransport.CreatePair();
+        await using var server = serverTransport;
+        var conn = new AmqpConnection(clientTransport, DefaultConnSettings());
+
+        var serverTask = Task.Run(async () =>
+        {
+            await ConsumeOpenAsync(server);
+            await ConsumeBeginAndReply(server, peerChannel: 4);
+            using (var _ = await AmqpFrameIO.ReadFrameAsync(server)) { }
+            await SendPerfAsync(server, channel: 4, new AmqpAttach
+            {
+                Name = "rcv", Handle = 8, Role = AmqpRole.Sender, InitialDeliveryCount = 0,
+            }, AmqpAttach.Write);
+            // Drain credit-granting flow.
+            using (var _ = await AmqpFrameIO.ReadFrameAsync(server)) { }
+
+            // Send two deliveries, then detach before the caller's 10-msg
+            // batch is full.
+            await SendTransferPayloadAsync(server, channel: 4, handle: 8,
+                deliveryId: 0u, deliveryTag: new byte[] { 0x01 },
+                payload: new byte[] { 0xA0 }, more: false);
+            await SendTransferPayloadAsync(server, channel: 4, handle: 8,
+                deliveryId: 1u, deliveryTag: new byte[] { 0x02 },
+                payload: new byte[] { 0xA1 }, more: false);
+            await SendPerfAsync(server, channel: 4, new AmqpDetach { Handle = 8, Closed = true }, AmqpDetach.Write);
+
+            await DrainUntilCloseAsync(server);
+        });
+
+        await conn.OpenAsync();
+        var session = await conn.BeginSessionAsync();
+        var link = await session.AttachLinkAsync(new AmqpLinkSettings
+        {
+            Name = "rcv", Role = AmqpRole.Receiver, SourceAddress = "q",
+        });
+
+        // Even though the link closes before we reach max=10, the caller
+        // must still get the two deliveries that were drained — they
+        // need to be dispositioned.
+        var batch = await link.ReceiveBatchAsync(maxMessages: 10, maxWait: TimeSpan.FromSeconds(10))
+            .WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.Equal(2, batch.Count);
+        Assert.Equal(new byte[] { 0xA0 }, batch[0].Payload);
+        Assert.Equal(new byte[] { 0xA1 }, batch[1].Payload);
+
+        await conn.CloseAsync();
+        await serverTask.WaitAsync(TimeSpan.FromSeconds(10));
+    }
 }
