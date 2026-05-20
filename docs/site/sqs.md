@@ -24,7 +24,7 @@
 ## ChangeMessageVisibility
 
 - **Status:** 🟡 partial
-- **Azure equivalent:** `Azure Service Bus queue runtime REST API — POST /{queue}/messages/{messageId}/{lockToken}?api-version=2021-05 (renew-lock)`
+- **Azure equivalent:** `Azure Service Bus queue runtime REST API — POST /{queue}/messages/{messageId}/{lockToken}?api-version=2021-05 (renew-lock); AMQP — `com.microsoft:renew-lock` over the queue's `$management` request-response link; visibility=0 maps to AMQP Abandon on the receiver link.`
 
 ### Sub-features
 
@@ -32,19 +32,21 @@
 |---|---|---|---|---|
 | ReceiptHandle round-trip | ✅ implemented |  |  |  |
 | VisibilityTimeout 0..43200 validation | ✅ implemented |  |  |  |
-| Arbitrary new visibility duration | ⛔ unsupported | SB extends the lock by the queue's configured LockDuration only. The proxy still issues the renew and annotates the response with Aws2Azure-VisibilityClamped: <requested-seconds>. |  |  |
+| VisibilityTimeout=0 (immediate release) | ✅ implemented | AMQP transport: dispatched to ServiceBusReceiver.AbandonAsync (matches SQS semantics — message becomes immediately available again, redelivery counter bumped). REST transport: unsupported; renew still extends the lock by LockDuration. |  |  |
+| Arbitrary new visibility duration | ⛔ unsupported | SB extends the lock by the queue's configured LockDuration only (max 5 min). The proxy issues the renew and, when the granted seconds differ from the requested value, annotates the response with Aws2Azure-VisibilityClamped: requested=<N>;granted=<M>. |  |  |
 
 ### Behaviour differences
 
-- SB renew-lock semantics do not accept a caller-supplied duration — every renew extends by the queue's LockDuration. Callers asking for a longer (or shorter) timeout get the queue-level value instead; the requested value is echoed on the Aws2Azure-VisibilityClamped response header for diagnostics.
-- VisibilityTimeout=0 is *not* supported by SB REST (there is no 'unlock immediately' verb on this endpoint). The renew still extends the lock; clients needing immediate release must either DeleteMessage or wait for the lock to expire.
-- Verified against in-process fakes; emulator-backed end-to-end validation lands with Slice 4's emulator fixture build-out.
-- AMQP transport (Phase 2.5 slice 8b.4c): when the queue is configured with `transport: Amqp`, ChangeMessageVisibility short-circuits to a success response with the `Aws2Azure-VisibilityClamped: <requested-seconds>` header, but does NOT actually extend the lock. Real renew-lock over AMQP travels via the Service Bus `$management` request-response link and lands in slice 8c. Until then the AMQP path also does not validate that the lock-token is still in flight (the REST path gets a 404 from SB for an expired/wrong lock). Callers that depend on visibility extension must use the REST transport for now.
+- SB renew-lock semantics do not accept a caller-supplied duration — every renew extends by the queue's LockDuration. When the requested timeout differs from what SB grants the proxy emits the Aws2Azure-VisibilityClamped: requested=<N>;granted=<M> diagnostic header. (The header is suppressed when they agree — typical for queues whose LockDuration equals the SDK default 30 s called with VisibilityTimeout=30.)
+- VisibilityTimeout=0 is supported on the AMQP transport via Abandon (immediate release, redelivery counter incremented). It is NOT supported on the REST transport — the renew still extends the lock; clients needing immediate release on REST must DeleteMessage or wait for the lock to expire.
+- Verified against in-process fakes; emulator-backed end-to-end validation lands with the Service Bus emulator fixture work.
+- Header format: granted-seconds is derived from `lockedUntil - DateTimeOffset.UtcNow` (rounded to whole seconds). Clock skew between the proxy host and Service Bus can shift the value by 1-2 s; consumers should treat it as a diagnostic hint, not an SLA.
 
 ### References
 
 - <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ChangeMessageVisibility.html>
 - <https://learn.microsoft.com/rest/api/servicebus/renew-lock-for-a-message>
+- <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-amqp-protocol-guide>
 
 ## ChangeMessageVisibilityBatch
 

@@ -90,7 +90,7 @@
 | sns | [Subscribe](sns.md#subscribe) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
 | sns | [Unsubscribe](sns.md#unsubscribe) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
 | sqs | [AddPermission](sqs.md#addpermission) | ⚪ stub | `No native Service Bus equivalent — validates queue existence and returns success.` |
-| sqs | [ChangeMessageVisibility](sqs.md#changemessagevisibility) | 🟡 partial | `Azure Service Bus queue runtime REST API — POST /{queue}/messages/{messageId}/{lockToken}?api-version=2021-05 (renew-lock)` |
+| sqs | [ChangeMessageVisibility](sqs.md#changemessagevisibility) | 🟡 partial | `Azure Service Bus queue runtime REST API — POST /{queue}/messages/{messageId}/{lockToken}?api-version=2021-05 (renew-lock); AMQP — `com.microsoft:renew-lock` over the queue's `$management` request-response link; visibility=0 maps to AMQP Abandon on the receiver link.` |
 | sqs | [ChangeMessageVisibilityBatch](sqs.md#changemessagevisibilitybatch) | 🟡 partial | `Azure Service Bus queue runtime REST API — N parallel POST /{queue}/messages/{messageId}/{lockToken}?action=renewlock&api-version=2021-05` |
 | sqs | [CreateQueue](sqs.md#createqueue) | ✅ implemented | `PUT https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (Atom QueueDescription)` |
 | sqs | [DeleteMessage](sqs.md#deletemessage) | ✅ implemented | `Azure Service Bus queue runtime REST API — DELETE /{queue}/messages/{messageId}/{lockToken}?api-version=2021-05` |
