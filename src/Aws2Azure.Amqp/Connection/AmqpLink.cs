@@ -601,15 +601,34 @@ internal sealed class AmqpLink
         AmqpError? error = null,
         CancellationToken cancellationToken = default)
     {
-        var prior = Interlocked.CompareExchange(ref _state, StateDetachingLocal, StateAttached);
-        if (prior == StateFinal || prior == StateClosed) return;
-        if (prior == StateDetachingLocal || prior == StateDetachingRemote)
+        // Accept both StateAttached and StateAttaching as valid starting
+        // points. The latter covers a window where an inbound condition
+        // (e.g. oversize transfer) demands a detach before the attach
+        // handshake has finished. CAS in a loop so we observe the right
+        // prior value race-free.
+        int prior;
+        while (true)
         {
-            await WaitForFinalAsync(cancellationToken).ConfigureAwait(false);
-            return;
+            prior = Volatile.Read(ref _state);
+            if (prior == StateFinal || prior == StateClosed) return;
+            if (prior == StateDetachingLocal || prior == StateDetachingRemote)
+            {
+                await WaitForFinalAsync(cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            if (prior != StateAttached && prior != StateAttaching)
+                throw new InvalidOperationException($"Cannot detach link from state {prior}.");
+            if (Interlocked.CompareExchange(ref _state, StateDetachingLocal, prior) == prior)
+                break;
         }
-        if (prior != StateAttached)
-            throw new InvalidOperationException($"Cannot detach link from state {prior}.");
+
+        if (prior == StateAttaching)
+        {
+            // Surface the detach to any pending AttachAsync waiter so it
+            // doesn't hang on _peerAttachReceived.
+            _peerAttachReceived.TrySetException(new InvalidOperationException(
+                "Link detached during attach handshake."));
+        }
 
         try
         {
