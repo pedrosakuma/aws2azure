@@ -26,12 +26,22 @@ internal static class MessageSectionDescriptor
 
 /// <summary>
 /// AMQP 1.0 <c>properties</c> message section (§3.2.4, descriptor 0x73).
-/// Slice 5c models only the three fields CBS uses: <see cref="MessageId"/>,
-/// <see cref="ReplyTo"/>, <see cref="CorrelationId"/>. Per spec each of
-/// message-id / correlation-id may be one of (ulong | uuid | binary |
-/// string); this profile reads/writes the string variant only. Other
-/// variants are surfaced as <c>null</c> on read so a peer-generated
-/// non-string id won't crash decoding.
+/// This profile models the five fields aws2azure cares about:
+/// <see cref="MessageId"/>, <see cref="ReplyTo"/>,
+/// <see cref="CorrelationId"/>, <see cref="GroupId"/>,
+/// <see cref="GroupSequence"/>. Per spec each of message-id /
+/// correlation-id may be one of (ulong | uuid | binary | string); this
+/// profile reads/writes the string variant only. Other variants are
+/// surfaced as <c>null</c> on read so a peer-generated non-string id
+/// won't crash decoding.
+///
+/// <para>
+/// <see cref="GroupId"/> carries the Service Bus session-id on
+/// session-bound queues (slice 7 FIFO support) — it's the same
+/// AMQP field SQS will surface as <c>MessageGroupId</c> on FIFO
+/// receive. <see cref="GroupSequence"/> is its monotonic counter
+/// within a group.
+/// </para>
 /// </summary>
 internal readonly record struct AmqpProperties
 {
@@ -40,6 +50,8 @@ internal readonly record struct AmqpProperties
     public string? MessageId { get; init; }
     public string? ReplyTo { get; init; }
     public string? CorrelationId { get; init; }
+    public string? GroupId { get; init; }
+    public uint? GroupSequence { get; init; }
 
     public static void Write(Span<byte> destination, in AmqpProperties value, out int written)
     {
@@ -72,9 +84,15 @@ internal readonly record struct AmqpProperties
         // 9 creation-time
         offsets[9] = o; PerformativeCodec.WriteNullField(scratch[o..], out len); o += len;
         // 10 group-id
-        offsets[10] = o; PerformativeCodec.WriteNullField(scratch[o..], out len); o += len;
-        // 11 group-sequence
-        offsets[11] = o; PerformativeCodec.WriteNullField(scratch[o..], out len); o += len;
+        offsets[10] = o;
+        PerformativeCodec.WriteStringOrNull(scratch[o..], value.GroupId, out len); o += len;
+        // 11 group-sequence (sequence-no := uint)
+        offsets[11] = o;
+        if (value.GroupSequence is { } seq)
+            AmqpPrimitiveWriter.WriteUInt(scratch[o..], seq, out len);
+        else
+            PerformativeCodec.WriteNullField(scratch[o..], out len);
+        o += len;
         // 12 reply-to-group-id
         offsets[12] = o; PerformativeCodec.WriteNullField(scratch[o..], out len); o += len;
 
@@ -102,13 +120,26 @@ internal readonly record struct AmqpProperties
         string? correlationId = null;
         if (view.Count >= 6) correlationId = ReadStringOrSkip(els, ref o, out len);
 
-        // remaining fields are ignored
+        if (view.Count >= 7) SkipField(els, ref o);                                  // content-type
+        if (view.Count >= 8) SkipField(els, ref o);                                  // content-encoding
+        if (view.Count >= 9) SkipField(els, ref o);                                  // absolute-expiry-time
+        if (view.Count >= 10) SkipField(els, ref o);                                 // creation-time
+
+        string? groupId = null;
+        if (view.Count >= 11) groupId = ReadStringOrSkip(els, ref o, out len);
+
+        uint? groupSequence = null;
+        if (view.Count >= 12) groupSequence = ReadUIntOrSkip(els, ref o);
+
+        // remaining fields (reply-to-group-id) are ignored
 
         value = new AmqpProperties
         {
             MessageId = messageId,
             ReplyTo = replyTo,
             CorrelationId = correlationId,
+            GroupId = groupId,
+            GroupSequence = groupSequence,
         };
     }
 
@@ -129,6 +160,27 @@ internal readonly record struct AmqpProperties
         // unknown variant — measure and skip
         len = AmqpValueScanner.Measure(els[o..]);
         o += len;
+        return null;
+    }
+
+    /// <summary>
+    /// Reads the next field: if it is one of the AMQP uint encodings,
+    /// returns the value; null/other variants are skipped and return
+    /// null. Mirrors <see cref="ReadStringOrSkip"/> for the
+    /// <c>group-sequence</c> (sequence-no := uint) field.
+    /// </summary>
+    private static uint? ReadUIntOrSkip(ReadOnlySpan<byte> els, ref int o)
+    {
+        if (PerformativeCodec.TryConsumeNull(els, ref o)) return null;
+        var fc = els[o];
+        if (fc is AmqpFormatCode.UInt0 or AmqpFormatCode.UIntSmall or AmqpFormatCode.UInt)
+        {
+            var v = AmqpPrimitiveReader.ReadUInt(els[o..], out var len);
+            o += len;
+            return v;
+        }
+        var measured = AmqpValueScanner.Measure(els[o..]);
+        o += measured;
         return null;
     }
 
