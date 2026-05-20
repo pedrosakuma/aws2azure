@@ -203,22 +203,30 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     private Task RejectInternal(
         AmqpIncomingDelivery delivery, string? reason, string? description, CancellationToken cancellationToken)
     {
-        // Primary channel for the values is the typed fields map on
-        // error.info (slice 8c.4) — SB reads from there. Mirror into
-        // error.description as a fallback for peers that don't decode
-        // the info map.
-        var fallback = (reason, description) switch
+        // Service Bus reads DeadLetterReason / DeadLetterErrorDescription
+        // off the typed fields map on error.info (slice 8c.4). When the
+        // info map carries the values we deliberately leave
+        // error.description unset so the payload isn't duplicated (the
+        // current AmqpError.Write path uses a fixed 4 KiB scratch
+        // buffer, and a multi-KiB description would otherwise blow it).
+        // When neither field is supplied we still emit the bare condition.
+        var info = ServiceBusDeadLetterInfo.Encode(reason, description);
+        string? fallbackDescription = null;
+        if (info.IsEmpty)
         {
-            ({ } r, { } d) => r + ": " + d,
-            ({ } r, null) => r,
-            (null, { } d) => d,
-            _ => null,
-        };
+            fallbackDescription = (reason, description) switch
+            {
+                ({ } r, { } d) => r + ": " + d,
+                ({ } r, null) => r,
+                (null, { } d) => d,
+                _ => null,
+            };
+        }
         var error = new AmqpError
         {
             Condition = DeadLetterCondition,
-            Description = fallback,
-            Info = ServiceBusDeadLetterInfo.Encode(reason, description),
+            Description = fallbackDescription,
+            Info = info,
         };
         return _link.RejectAsync(delivery, error, cancellationToken);
     }
