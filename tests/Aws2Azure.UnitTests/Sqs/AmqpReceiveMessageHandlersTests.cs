@@ -416,6 +416,10 @@ public sealed class AmqpReceiveMessageHandlersTests
             string queueName, string sessionId, CancellationToken cancellationToken)
             => throw new NotSupportedException("Session receivers are not exercised by this fixture.");
 
+        public Task<ServiceBusReceiver> AcquireBrokerAssignedSessionReceiverAsync(
+            string queueName, CancellationToken cancellationToken)
+            => throw new NotSupportedException("Broker-assigned session receivers are not exercised by this fixture.");
+
         public Task InvalidateSessionReceiverAsync(string queueName, string sessionId)
             => Task.CompletedTask;
     }

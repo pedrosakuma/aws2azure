@@ -281,6 +281,67 @@ public sealed class ServiceBusAmqpPoolTests
     }
 
     [Fact]
+    public async Task AcquireBrokerAssignedSessionReceiverAsync_resolves_and_caches_by_assigned_session_id()
+    {
+        await using var factory = new FakeFactory(DefaultSettings());
+        await using var pool = new ServiceBusAmqpPool(factory);
+
+        // FakeFactory's broker simulator returns "broker-assigned-session"
+        // when the client asks for sessionId: null (no AssignedSessionByLink
+        // override is set). Acquire path resolves that and adopts the
+        // receiver into the pool keyed by the resolved id.
+        var r1 = await pool.AcquireBrokerAssignedSessionReceiverAsync(
+            "ns.servicebus.windows.net", "Root", "k", "fifo-q")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal("broker-assigned-session", r1.SessionId);
+
+        // A subsequent GetSessionReceiverAsync for the resolved id sees
+        // the cached slot (no second OpenSessionReceiverAsync round-trip).
+        var r2 = await pool.GetSessionReceiverAsync(
+            "ns.servicebus.windows.net", "Root", "k", "fifo-q", "broker-assigned-session")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Same(r1, r2);
+        Assert.Equal(1, factory.CreateCallCount);
+    }
+
+    [Fact]
+    public async Task AcquireBrokerAssignedSessionReceiverAsync_repeated_calls_open_fresh_sessions()
+    {
+        // Two acquires with the simulator's default behaviour both
+        // resolve to "broker-assigned-session" — the second call's
+        // freshly-opened receiver races with the cached slot, so the
+        // acquire path disposes the new one and returns the cached
+        // receiver. End state: still one slot, same receiver instance.
+        await using var factory = new FakeFactory(DefaultSettings());
+        await using var pool = new ServiceBusAmqpPool(factory);
+
+        var r1 = await pool.AcquireBrokerAssignedSessionReceiverAsync(
+            "ns.servicebus.windows.net", "Root", "k", "fifo-q")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        var r2 = await pool.AcquireBrokerAssignedSessionReceiverAsync(
+            "ns.servicebus.windows.net", "Root", "k", "fifo-q")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Same(r1, r2);
+        Assert.Equal("broker-assigned-session", r1.SessionId);
+        Assert.Equal(1, factory.CreateCallCount);
+    }
+
+    [Fact]
+    public async Task AcquireBrokerAssignedSessionReceiverAsync_rejects_blank_arguments()
+    {
+        await using var factory = new FakeFactory(DefaultSettings());
+        await using var pool = new ServiceBusAmqpPool(factory);
+
+        await Assert.ThrowsAnyAsync<ArgumentException>(() =>
+            pool.AcquireBrokerAssignedSessionReceiverAsync("ns.servicebus.windows.net", "Root", "k", queueName: null!));
+        await Assert.ThrowsAnyAsync<ArgumentException>(() =>
+            pool.AcquireBrokerAssignedSessionReceiverAsync("ns.servicebus.windows.net", "Root", "k", queueName: ""));
+    }
+
+    [Fact]
     public async Task GetSessionReceiverAsync_rejects_null_or_empty_session_id()
     {
         await using var factory = new FakeFactory(DefaultSettings());
