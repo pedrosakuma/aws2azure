@@ -288,6 +288,37 @@ internal sealed class AmqpConnection : IAsyncDisposable
     internal ValueTask WriteSessionFrameAsync(ushort channel, ReadOnlyMemory<byte> body, CancellationToken ct)
         => WriteFrameLockedAsync(AmqpFrameType.Amqp, channel, body, ct);
 
+    /// <summary>
+    /// Effective post-open max-frame-size for outbound writes. Returns
+    /// <see cref="AmqpFrameIO.InitialMaxFrameSize"/> until <c>open</c>
+    /// completes.
+    /// </summary>
+    internal int CurrentMaxFrameSize => Volatile.Read(ref _state) == StateOpened
+        ? (int)Math.Min(EffectiveOutgoingMaxFrameSize, int.MaxValue)
+        : AmqpFrameIO.InitialMaxFrameSize;
+
+    /// <summary>
+    /// Writes a sequence of frames atomically (under the connection write
+    /// lock) so that multi-frame transfers (§2.6.14) cannot interleave
+    /// with other frames on the same connection. Each segment is a
+    /// pre-encoded <c>{performative ++ payload}</c> buffer for one frame.
+    /// </summary>
+    internal async ValueTask WriteSessionFramesAtomicAsync(
+        ushort channel, IReadOnlyList<ReadOnlyMemory<byte>> segments, CancellationToken ct)
+    {
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var maxFrame = CurrentMaxFrameSize;
+            for (int i = 0; i < segments.Count; i++)
+            {
+                await AmqpFrameIO.WriteFrameAsync(
+                    _transport, AmqpFrameType.Amqp, channel, segments[i], ct, maxFrame).ConfigureAwait(false);
+            }
+        }
+        finally { _writeLock.Release(); }
+    }
+
     /// <summary>Internal hook used by <see cref="AmqpSession"/> on close/abort.</summary>
     internal void UnregisterSession(AmqpSession session)
     {

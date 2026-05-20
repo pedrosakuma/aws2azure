@@ -120,31 +120,15 @@ internal sealed class AmqpLink
         // delivery-tag: 4 bytes of delivery-id (big-endian) — uniqueness only matters per-link-per-unsettled.
         Span<byte> tag = stackalloc byte[4];
         System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(tag, deliveryId);
+        var tagArr = tag.ToArray();
 
         // Encode bare message into pooled buffer.
         using var payload = message.EncodePooled();
 
-        // Build transfer performative and concatenate with payload.
-        var transferPerf = new AmqpTransfer
-        {
-            Handle = OutgoingHandle,
-            DeliveryId = deliveryId,
-            DeliveryTag = tag.ToArray(),
-            MessageFormat = 0,
-            Settled = settled,
-        };
-
-        var rentedT = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
-        var rentedFrame = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize + payload.Length);
         try
         {
-            AmqpTransfer.Write(rentedT, in transferPerf, out var tlen);
-            rentedT.AsSpan(0, tlen).CopyTo(rentedFrame);
-            payload.Memory.Span.CopyTo(rentedFrame.AsSpan(tlen));
-            await _session.Connection.WriteSessionFrameAsync(
-                _session.OutgoingChannel,
-                rentedFrame.AsMemory(0, tlen + payload.Length),
-                cancellationToken).ConfigureAwait(false);
+            await WriteTransferFragmentedAsync(
+                deliveryId, tagArr, payload.Memory, settled, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -154,11 +138,6 @@ internal sealed class AmqpLink
                 lock (_deliveryLock) _pendingSends.Remove(deliveryId);
             }
             throw;
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(rentedT);
-            ArrayPool<byte>.Shared.Return(rentedFrame);
         }
 
         if (settled)
@@ -170,6 +149,155 @@ internal sealed class AmqpLink
             tcs!.TrySetCanceled(cancellationToken);
         }))
             return await tcs!.Task.ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// §2.6.14 outbound multi-frame transfer. Emits a single
+    /// <c>transfer</c> when the encoded message fits in one frame;
+    /// otherwise splits across N frames where the first carries
+    /// <c>delivery-id</c>+<c>delivery-tag</c> and intermediates set
+    /// <c>more=true</c>. All segments share the connection's write lock
+    /// so they cannot interleave with other writers on the same
+    /// connection.
+    /// </summary>
+    private async ValueTask WriteTransferFragmentedAsync(
+        uint deliveryId, byte[] tag, ReadOnlyMemory<byte> body, bool settled, CancellationToken ct)
+    {
+        const int FrameHeaderSize = 8;
+        var maxFrame = _session.Connection.CurrentMaxFrameSize;
+
+        // Encode the "first" transfer perf (full descriptor) to measure overhead.
+        var rentedFirstPerf = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
+        var rentedContPerf = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
+        try
+        {
+            int firstPerfLen;
+            {
+                var firstPerf = new AmqpTransfer
+                {
+                    Handle = OutgoingHandle,
+                    DeliveryId = deliveryId,
+                    DeliveryTag = tag,
+                    MessageFormat = 0,
+                    Settled = settled,
+                };
+                AmqpTransfer.Write(rentedFirstPerf, in firstPerf, out firstPerfLen);
+            }
+
+            int singleFrameCapacity = maxFrame - FrameHeaderSize - firstPerfLen;
+            if (singleFrameCapacity < 0)
+                throw new InvalidOperationException(
+                    $"Transfer performative ({firstPerfLen} B) exceeds negotiated max-frame-size ({maxFrame} B).");
+
+            // Fast path: fits in one frame.
+            if (body.Length <= singleFrameCapacity)
+            {
+                var rentedFrame = ArrayPool<byte>.Shared.Rent(firstPerfLen + body.Length);
+                try
+                {
+                    rentedFirstPerf.AsSpan(0, firstPerfLen).CopyTo(rentedFrame);
+                    body.Span.CopyTo(rentedFrame.AsSpan(firstPerfLen));
+                    await _session.Connection.WriteSessionFrameAsync(
+                        _session.OutgoingChannel,
+                        rentedFrame.AsMemory(0, firstPerfLen + body.Length), ct).ConfigureAwait(false);
+                }
+                finally { ArrayPool<byte>.Shared.Return(rentedFrame); }
+                return;
+            }
+
+            // Multi-frame: re-encode the first perf with more=true.
+            {
+                var firstPerf = new AmqpTransfer
+                {
+                    Handle = OutgoingHandle,
+                    DeliveryId = deliveryId,
+                    DeliveryTag = tag,
+                    MessageFormat = 0,
+                    Settled = settled,
+                    More = true,
+                };
+                AmqpTransfer.Write(rentedFirstPerf, in firstPerf, out firstPerfLen);
+            }
+            // Continuation perf: §2.6.14 omits delivery-id / delivery-tag.
+            int contPerfMoreLen;
+            {
+                var contPerf = new AmqpTransfer
+                {
+                    Handle = OutgoingHandle,
+                    MessageFormat = 0,
+                    Settled = settled,
+                    More = true,
+                };
+                AmqpTransfer.Write(rentedContPerf, in contPerf, out contPerfMoreLen);
+            }
+            // Final continuation perf: more absent (= false).
+            int contPerfFinalLen;
+            var rentedContFinalPerf = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
+            try
+            {
+                var contFinalPerf = new AmqpTransfer
+                {
+                    Handle = OutgoingHandle,
+                    MessageFormat = 0,
+                    Settled = settled,
+                };
+                AmqpTransfer.Write(rentedContFinalPerf, in contFinalPerf, out contPerfFinalLen);
+
+                int firstCap = maxFrame - FrameHeaderSize - firstPerfLen;
+                int contCap = maxFrame - FrameHeaderSize - contPerfMoreLen;
+                if (firstCap <= 0 || contCap <= 0)
+                    throw new InvalidOperationException(
+                        $"Negotiated max-frame-size ({maxFrame} B) leaves no room for transfer payload.");
+
+                // Pre-allocate the segment list (avoid per-frame allocation in inner loop).
+                int remaining = body.Length - firstCap;
+                int contFrames = (remaining + contCap - 1) / contCap;
+                int totalFrames = 1 + contFrames;
+                var segments = new ReadOnlyMemory<byte>[totalFrames];
+                var rented = new byte[totalFrames][];
+
+                int offset = 0;
+                try
+                {
+                    // First frame.
+                    int take = firstCap;
+                    var buf0 = ArrayPool<byte>.Shared.Rent(firstPerfLen + take);
+                    rented[0] = buf0;
+                    rentedFirstPerf.AsSpan(0, firstPerfLen).CopyTo(buf0);
+                    body.Span.Slice(offset, take).CopyTo(buf0.AsSpan(firstPerfLen));
+                    segments[0] = buf0.AsMemory(0, firstPerfLen + take);
+                    offset += take;
+
+                    // Continuation frames.
+                    for (int i = 1; i < totalFrames; i++)
+                    {
+                        bool isLast = i == totalFrames - 1;
+                        int perfLen = isLast ? contPerfFinalLen : contPerfMoreLen;
+                        var perfSrc = isLast ? rentedContFinalPerf : rentedContPerf;
+                        int contTake = Math.Min(contCap, body.Length - offset);
+                        var bufI = ArrayPool<byte>.Shared.Rent(perfLen + contTake);
+                        rented[i] = bufI;
+                        perfSrc.AsSpan(0, perfLen).CopyTo(bufI);
+                        body.Span.Slice(offset, contTake).CopyTo(bufI.AsSpan(perfLen));
+                        segments[i] = bufI.AsMemory(0, perfLen + contTake);
+                        offset += contTake;
+                    }
+
+                    await _session.Connection.WriteSessionFramesAtomicAsync(
+                        _session.OutgoingChannel, segments, ct).ConfigureAwait(false);
+                }
+                finally
+                {
+                    foreach (var r in rented) if (r is not null) ArrayPool<byte>.Shared.Return(r);
+                }
+            }
+            finally { ArrayPool<byte>.Shared.Return(rentedContFinalPerf); }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rentedFirstPerf);
+            ArrayPool<byte>.Shared.Return(rentedContPerf);
+        }
     }
 
     // ---- receiver-side API (Slice 5c) -----------------------------------
@@ -275,6 +403,7 @@ internal sealed class AmqpLink
                 InitialDeliveryCount = _settings.Role == AmqpRole.Sender
                     ? (_settings.InitialDeliveryCount ?? 0u)
                     : null,
+                MaxMessageSize = _settings.MaxMessageSize == 0 ? null : _settings.MaxMessageSize,
             };
 
             var rentedAtt = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
@@ -385,7 +514,10 @@ internal sealed class AmqpLink
             _peerReceiverLinkCredit = receiverLinkCredit;
             _peerFlowSeen = true;
             var available = (long)receiverDeliveryCount + receiverLinkCredit - _deliveryCount;
-            releaseCount = available > 0 && available <= int.MaxValue ? (int)available : 0;
+            // §2.6.7: link-credit is uint, so `available` may exceed int.MaxValue
+            // (e.g. peer grants uint.MaxValue). Clamp to semaphore capacity so the
+            // sender can drain permits up to int.MaxValue without being starved.
+            releaseCount = available <= 0 ? 0 : (int)Math.Min(available, int.MaxValue);
             // Drain any stale permits so the semaphore reflects the new window.
             while (_creditAvailable.CurrentCount > 0 && _creditAvailable.Wait(0)) { }
         }
@@ -393,6 +525,14 @@ internal sealed class AmqpLink
     }
 
     internal void OnRemoteHandleLearned(uint remoteHandle) => RemoteHandle = remoteHandle;
+
+    /// <summary>
+    /// True if <paramref name="bytes"/> would exceed the configured local
+    /// <c>max-message-size</c> (§2.7.3). A configured value of <c>0</c>
+    /// means "no limit".
+    /// </summary>
+    private bool ExceedsMaxMessageSize(ulong bytes)
+        => _settings.MaxMessageSize != 0 && bytes > _settings.MaxMessageSize;
 
     /// <summary>
     /// Receives a transfer frame for this link. The body memory belongs
@@ -415,6 +555,7 @@ internal sealed class AmqpLink
         uint completedDeliveryId = 0;
         byte[]? completedTag = null;
         bool completedSettled = false;
+        bool sizeExceeded = false;
 
         lock (_reassemblyLock)
         {
@@ -449,27 +590,68 @@ internal sealed class AmqpLink
             {
                 _currentInboundPayload ??= new System.IO.MemoryStream();
                 if (!payload.IsEmpty) _currentInboundPayload.Write(payload.Span);
+                if (ExceedsMaxMessageSize((ulong)_currentInboundPayload.Length))
+                {
+                    _currentInboundPayload.Dispose();
+                    _currentInboundPayload = null;
+                    _currentInboundDeliveryId = null;
+                    _currentInboundTag = null;
+                    _currentInboundSettled = null;
+                    sizeExceeded = true;
+                }
             }
             else if (_currentInboundDeliveryId is { } activeId)
             {
-                if (_currentInboundPayload is { } stream)
+                long total = (_currentInboundPayload?.Length ?? 0L) + payload.Length;
+                if (ExceedsMaxMessageSize((ulong)total))
                 {
-                    if (!payload.IsEmpty) stream.Write(payload.Span);
-                    completed = stream.ToArray();
-                    stream.Dispose();
+                    _currentInboundPayload?.Dispose();
+                    _currentInboundPayload = null;
+                    _currentInboundDeliveryId = null;
+                    _currentInboundTag = null;
+                    _currentInboundSettled = null;
+                    sizeExceeded = true;
                 }
                 else
                 {
-                    completed = payload.IsEmpty ? Array.Empty<byte>() : payload.ToArray();
+                    if (_currentInboundPayload is { } stream)
+                    {
+                        if (!payload.IsEmpty) stream.Write(payload.Span);
+                        completed = stream.ToArray();
+                        stream.Dispose();
+                    }
+                    else
+                    {
+                        completed = payload.IsEmpty ? Array.Empty<byte>() : payload.ToArray();
+                    }
+                    completedDeliveryId = activeId;
+                    completedTag = _currentInboundTag ?? Array.Empty<byte>();
+                    completedSettled = _currentInboundSettled ?? settled;
+                    _currentInboundPayload = null;
+                    _currentInboundDeliveryId = null;
+                    _currentInboundTag = null;
+                    _currentInboundSettled = null;
                 }
-                completedDeliveryId = activeId;
-                completedTag = _currentInboundTag ?? Array.Empty<byte>();
-                completedSettled = _currentInboundSettled ?? settled;
-                _currentInboundPayload = null;
-                _currentInboundDeliveryId = null;
-                _currentInboundTag = null;
-                _currentInboundSettled = null;
             }
+        }
+
+        if (sizeExceeded)
+        {
+            // §2.7.3: receiver enforces max-message-size by detaching the
+            // link with amqp:link:message-size-exceeded.
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await DetachAsync(closed: true, error: new AmqpError
+                    {
+                        Condition = AmqpErrorCondition.LinkMessageSizeExceeded,
+                        Description = "incoming message exceeds advertised max-message-size",
+                    }, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch { /* best effort */ }
+            });
+            return;
         }
 
         // §2.6.7: advance delivery-count, but guard against underflowing

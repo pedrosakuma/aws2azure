@@ -320,6 +320,215 @@ public sealed class AmqpReviewFixTests
         await conn.CloseAsync();
     }
 
+    // ====================================================================
+    // PR #50 review fixes (Major findings, gpt-5.5).
+    // ====================================================================
+
+    // ---------- Finding 1: huge credit grants must release permits ----------
+
+    [Fact]
+    public async Task Flow_with_credit_beyond_int_max_value_still_unblocks_sender()
+    {
+        var (clientTransport, serverTransport) = PipePairTransport.CreatePair();
+        await using var server = serverTransport;
+        var conn = new AmqpConnection(clientTransport, DefaultConnSettings());
+
+        var serverTask = Task.Run(async () =>
+        {
+            await ConsumeOpenAsync(server);
+            await ConsumeBeginAndReply(server, peerChannel: 4);
+            using (var _ = await AmqpFrameIO.ReadFrameAsync(server)) { }
+            await SendPerfAsync(server, channel: 4, new AmqpAttach
+            {
+                Name = "snd", Handle = 7, Role = AmqpRole.Receiver, InitialDeliveryCount = 0,
+            }, AmqpAttach.Write);
+            // §2.7.4: link-credit is uint — broker is allowed to grant uint.MaxValue.
+            await SendPerfAsync(server, channel: 4, new AmqpFlow
+            {
+                NextIncomingId = 0, IncomingWindow = uint.MaxValue,
+                NextOutgoingId = 0, OutgoingWindow = uint.MaxValue,
+                Handle = 7, DeliveryCount = 0, LinkCredit = uint.MaxValue,
+            }, AmqpFlow.Write);
+            await DrainUntilCloseAsync(server);
+        });
+
+        await conn.OpenAsync();
+        var session = await conn.BeginSessionAsync();
+        var link = await session.AttachLinkAsync(new AmqpLinkSettings
+        {
+            Name = "snd", Role = AmqpRole.Sender, TargetAddress = "q",
+            SenderSettleMode = AmqpSenderSettleMode.Settled,
+        });
+
+        var outcome = await link.SendMessageAsync(new AmqpMessage
+        {
+            Properties = new AmqpProperties { MessageId = "m1" },
+            Body = new byte[] { 1 },
+        }, settled: true).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(AmqpDispositionOutcome.Accepted, outcome);
+
+        await conn.CloseAsync().WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    // ---------- Finding 2: outbound transfers must fragment across frames ----
+
+    [Fact]
+    public async Task Outbound_message_larger_than_max_frame_size_is_fragmented()
+    {
+        var (clientTransport, serverTransport) = PipePairTransport.CreatePair();
+        await using var server = serverTransport;
+        var conn = new AmqpConnection(clientTransport, new AmqpConnectionSettings
+        {
+            ContainerId = "c", Hostname = "h", IdleTimeout = TimeSpan.Zero,
+            MaxFrameSize = 4096,
+        });
+
+        var fragmentCount = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstDeliveryId = new TaskCompletionSource<uint?>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var serverTask = Task.Run(async () =>
+        {
+            await ConsumeOpenAsync(server, maxFrameSize: 4096);
+            await ConsumeBeginAndReply(server, peerChannel: 4);
+            using (var _ = await AmqpFrameIO.ReadFrameAsync(server, 4096)) { }
+            await SendPerfAsync(server, channel: 4, new AmqpAttach
+            {
+                Name = "snd", Handle = 7, Role = AmqpRole.Receiver, InitialDeliveryCount = 0,
+            }, AmqpAttach.Write);
+            await SendPerfAsync(server, channel: 4, new AmqpFlow
+            {
+                NextIncomingId = 0, IncomingWindow = uint.MaxValue,
+                NextOutgoingId = 0, OutgoingWindow = uint.MaxValue,
+                Handle = 7, DeliveryCount = 0, LinkCredit = 10,
+            }, AmqpFlow.Write);
+
+            int seen = 0;
+            int reassembledLen = 0;
+            uint? firstId = null;
+            while (true)
+            {
+                using var f = await AmqpFrameIO.ReadFrameAsync(server, 4096);
+                var kind = PerformativeCodec.PeekKind(f.Body.Span, out _);
+                if (kind == PerformativeKind.Transfer)
+                {
+                    AmqpTransfer.Read(f.Body, out var t, out var perfLen);
+                    reassembledLen += f.Body.Length - perfLen;
+                    if (seen == 0) firstId = t.DeliveryId;
+                    seen++;
+                    if (!(t.More ?? false))
+                    {
+                        fragmentCount.TrySetResult(seen);
+                        firstDeliveryId.TrySetResult(firstId);
+                    }
+                }
+                else if (kind == PerformativeKind.Close)
+                {
+                    await SendPerfAsync(server, channel: 0, new AmqpClose(), AmqpClose.Write);
+                    return;
+                }
+                else if (kind == PerformativeKind.End)
+                {
+                    await SendPerfAsync(server, channel: 4, new AmqpEnd(), AmqpEnd.Write);
+                }
+                else if (kind == PerformativeKind.Detach)
+                {
+                    AmqpDetach.Read(f.Body, out var d, out _);
+                    await SendPerfAsync(server, channel: 4, new AmqpDetach { Handle = d.Handle, Closed = true }, AmqpDetach.Write);
+                }
+            }
+        });
+
+        await conn.OpenAsync();
+        var session = await conn.BeginSessionAsync();
+        var link = await session.AttachLinkAsync(new AmqpLinkSettings
+        {
+            Name = "snd", Role = AmqpRole.Sender, TargetAddress = "q",
+            SenderSettleMode = AmqpSenderSettleMode.Settled,
+            MaxMessageSize = 0,
+        });
+
+        // 12 KiB payload — must split across multiple 4 KiB frames.
+        var body = new byte[12 * 1024];
+        for (int i = 0; i < body.Length; i++) body[i] = (byte)(i & 0xFF);
+
+        var outcome = await link.SendMessageAsync(new AmqpMessage
+        {
+            Properties = new AmqpProperties { MessageId = "big" },
+            Body = body,
+        }, settled: true).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(AmqpDispositionOutcome.Accepted, outcome);
+
+        var n = await fragmentCount.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(n >= 3, $"expected ≥3 transfer frames for 12 KiB body over 4 KiB max-frame-size, got {n}");
+        var first = await firstDeliveryId.Task;
+        Assert.NotNull(first);
+
+        await conn.CloseAsync().WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    // ---------- Finding 3: inbound reassembly must cap at max-message-size ---
+
+    [Fact]
+    public async Task Inbound_payload_exceeding_max_message_size_detaches_link()
+    {
+        var (clientTransport, serverTransport) = PipePairTransport.CreatePair();
+        await using var server = serverTransport;
+        var conn = new AmqpConnection(clientTransport, DefaultConnSettings());
+
+        var sawDetach = new TaskCompletionSource<AmqpDetach>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var serverTask = Task.Run(async () =>
+        {
+            await ConsumeOpenAsync(server);
+            await ConsumeBeginAndReply(server, peerChannel: 4);
+            using (var _ = await AmqpFrameIO.ReadFrameAsync(server)) { }
+            await SendPerfAsync(server, channel: 4, new AmqpAttach
+            {
+                Name = "rcv", Handle = 11, Role = AmqpRole.Sender, InitialDeliveryCount = 0,
+            }, AmqpAttach.Write);
+            // Two more=true continuations whose combined payload exceeds 256 B.
+            var part = new byte[200];
+            await SendTransferPayloadAsync(server, 4, handle: 11,
+                deliveryId: 0, deliveryTag: new byte[] { 1 }, payload: part, more: true);
+            await SendTransferPayloadAsync(server, 4, handle: 11,
+                deliveryId: null, deliveryTag: ReadOnlyMemory<byte>.Empty, payload: part, more: true);
+
+            // Expect a Detach back with link:message-size-exceeded.
+            while (true)
+            {
+                using var f = await AmqpFrameIO.ReadFrameAsync(server);
+                var kind = PerformativeCodec.PeekKind(f.Body.Span, out _);
+                if (kind == PerformativeKind.Detach)
+                {
+                    AmqpDetach.Read(f.Body, out var d, out _);
+                    sawDetach.TrySetResult(d);
+                    await SendPerfAsync(server, channel: 4, new AmqpDetach { Handle = d.Handle, Closed = true }, AmqpDetach.Write);
+                    break;
+                }
+            }
+            await DrainUntilCloseAsync(server);
+        });
+
+        await conn.OpenAsync();
+        var session = await conn.BeginSessionAsync();
+        var link = await session.AttachLinkAsync(new AmqpLinkSettings
+        {
+            Name = "rcv", Role = AmqpRole.Receiver, SourceAddress = "q",
+            InitialDeliveryCount = null,
+            MaxMessageSize = 256,
+        });
+        await link.GrantCreditAsync(5);
+
+        var d = await sawDetach.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(d.Closed ?? false);
+        // The error payload should carry amqp:link:message-size-exceeded.
+        Assert.False(d.Error.IsEmpty);
+        AmqpError.Read(d.Error, out var err, out _);
+        Assert.Equal(AmqpErrorCondition.LinkMessageSizeExceeded, err.Condition);
+
+        await conn.CloseAsync().WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
     // ---- helpers ----------------------------------------------------------
 
     private delegate void PerfWriter<T>(Span<byte> destination, in T value, out int written);

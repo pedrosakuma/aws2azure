@@ -135,7 +135,12 @@ internal sealed class AmqpMessage
     /// </summary>
     public PooledPayload EncodePooled()
     {
-        var rented = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
+        // Body payload may exceed the perf scratch size for large messages.
+        // Size for: scratch overhead + body bytes + a safety margin for
+        // properties/application-properties/header encodings.
+        var bodyLen = Body.Length;
+        var rentedSize = Performatives.ScratchSize + bodyLen + 256;
+        var rented = ArrayPool<byte>.Shared.Rent(rentedSize);
         try
         {
             Write(rented, out var written);
