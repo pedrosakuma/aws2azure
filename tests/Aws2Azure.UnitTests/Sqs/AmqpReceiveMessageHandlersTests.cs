@@ -423,10 +423,40 @@ public sealed class AmqpReceiveMessageHandlersTests
     }
 
     [Fact]
-    public async Task ChangeMessageVisibility_positive_on_fifo_queue_rejects_until_slice_7c4()
+    public async Task ChangeMessageVisibility_positive_on_fifo_queue_renews_session_lock_and_emits_clamp_header()
     {
         const string SessionId = "group-A";
-        await using var harness = await TestHarness.OpenSessionAsync(FifoQueueName, SessionId);
+        var grantedExpiry = DateTimeOffset.UtcNow.AddSeconds(30);
+        grantedExpiry = DateTimeOffset.FromUnixTimeMilliseconds(grantedExpiry.ToUnixTimeMilliseconds());
+        await using var harness = await TestHarness.OpenWithManagementAsync(
+            FifoQueueName, renewExpiry: grantedExpiry, sessionId: SessionId);
+
+        var v3 = AmqpReceiptHandle.Encode(FifoQueueName, Guid.NewGuid(), DateTimeOffset.UtcNow, SessionId);
+        var ctx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(ctx,
+            QueryParsed(SqsOperation.ChangeMessageVisibility,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+                ("ReceiptHandle", v3),
+                ("VisibilityTimeout", "300")),
+            harness.Provider, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        var clamp = ctx.Response.Headers["Aws2Azure-VisibilityClamped"].ToString();
+        Assert.StartsWith("requested=300;granted=", clamp);
+        Assert.Contains("ChangeMessageVisibilityResponse", ReadBody(ctx));
+    }
+
+    [Fact]
+    public async Task ChangeMessageVisibility_positive_on_fifo_queue_maps_session_lock_lost_to_MessageNotInflight()
+    {
+        const string SessionId = "group-B";
+        await using var harness = await TestHarness.OpenWithManagementAsync(
+            FifoQueueName,
+            renewExpiry: DateTimeOffset.UtcNow,
+            statusCode: 410,
+            statusDescription: "SessionLockLost",
+            errorCondition: "com.microsoft:session-lock-lost",
+            sessionId: SessionId);
 
         var v3 = AmqpReceiptHandle.Encode(FifoQueueName, Guid.NewGuid(), DateTimeOffset.UtcNow, SessionId);
         var ctx = NewCtx();
@@ -438,9 +468,7 @@ public sealed class AmqpReceiveMessageHandlersTests
             harness.Provider, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
-        var body = ReadBody(ctx);
-        Assert.Contains("InvalidParameterValue", body);
-        Assert.Contains("VisibilityTimeout", body);
+        Assert.Contains("MessageNotInflight", ReadBody(ctx));
     }
 
     // --- harness -------------------------------------------------------
@@ -526,9 +554,12 @@ public sealed class AmqpReceiveMessageHandlersTests
             int statusCode = 200,
             string? statusDescription = "OK",
             string? errorCondition = null,
+            string? sessionId = null,
             params (byte[] tag, byte[] payload)[] messages)
         {
-            var baseHarness = await OpenAsync(queueName, messages);
+            var baseHarness = sessionId is null
+                ? await OpenAsync(queueName, messages)
+                : await OpenSessionAsync(queueName, sessionId, messages);
 
             var (mgmtClient, mgmtServer) = PipePairTransport.CreatePair();
             var mgmtBrokerTask = Task.Run(async () =>
@@ -552,7 +583,8 @@ public sealed class AmqpReceiveMessageHandlersTests
                 Connection = baseHarness.Connection,
                 Receiver = baseHarness.Receiver,
                 Broker = baseHarness.Broker,
-                Provider = new FakeAmqpReceiverProvider(queueName, baseHarness.Receiver, mgmt),
+                Provider = new FakeAmqpReceiverProvider(queueName, baseHarness.Receiver, mgmt,
+                    brokerAssignedSessionReceiver: sessionId is null ? null : baseHarness.Receiver),
                 MgmtConnection = mgmtConn,
                 MgmtSession = mgmtSession,
                 Management = mgmt,

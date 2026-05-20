@@ -32,15 +32,19 @@ namespace Aws2Azure.Modules.Sqs.Operations;
 ///   <item><c>DeleteMessage</c> routes by lock-token via
 ///   <see cref="ServiceBusReceiver.CompleteAsync(Guid, CancellationToken)"/>.
 ///   Cache miss → SQS <c>ReceiptHandleIsInvalid</c>.</item>
-///   <item><c>ChangeMessageVisibility</c> short-circuits success and
-///   stamps <c>Aws2Azure-VisibilityClamped</c> on the response.
-///   Real <c>$management</c> renew-lock over AMQP is deferred to slice
-///   8c; until then the AMQP path mirrors the REST handler's clamp
-///   divergence.</item>
+///   <item><c>ChangeMessageVisibility</c> round-trips through the SB
+///   <c>$management</c> link: <c>com.microsoft:renew-lock</c> for
+///   non-session deliveries and <c>com.microsoft:renew-session-lock</c>
+///   for FIFO deliveries (v3 receipt handle carries the session-id).
+///   SB always extends by the queue-level <c>LockDuration</c> — when
+///   the granted seconds differ from the requested
+///   <c>VisibilityTimeout</c> the response carries an
+///   <c>Aws2Azure-VisibilityClamped</c> diagnostic header.
+///   <c>VisibilityTimeout=0</c> short-circuits to AMQP Abandon on the
+///   receiver link (no $management round-trip).</item>
 /// </list>
 ///
-/// <para>Out of scope: long-polling (slice 8c), CMV via $management
-/// for session-bound deliveries (slice 7c.4),
+/// <para>Out of scope: long-polling (slice 8c),
 /// <c>x-opt-deadletter-source</c> system-attribute surfacing on
 /// dead-lettered messages.</para>
 /// </summary>
@@ -340,19 +344,12 @@ internal static class AmqpReceiveMessageHandlers
         // Aws2Azure-VisibilityClamped header so anyone debugging the
         // proxy can tell what happened. See docs/gaps/sqs/ChangeMessageVisibility.yaml.
         //
-        // Session-bound messages (v3 receipt handle) require the
-        // session-flavoured $management RenewLock primitive
-        // (com.microsoft:renew-session-lock) which is slice 7c.4 — until
-        // that lands we reject FIFO+CMV>0 with a clear error rather than
-        // attempting a non-session RenewLock that the broker would reject.
-        if (!string.IsNullOrEmpty(decoded.SessionId))
-        {
-            await WriteErrorAsync(context, parsed.Protocol,
-                SqsErrorMapping.InvalidParameterValue(
-                    "VisibilityTimeout",
-                    "ChangeMessageVisibility with VisibilityTimeout > 0 is not yet supported for FIFO queues; use VisibilityTimeout=0 to release the message back to the group.")).ConfigureAwait(false);
-            return;
-        }
+        // Session-bound messages (v3 receipt handle) take the
+        // session-flavoured renew path: SB extends the lock the broker
+        // holds on the session itself, not on the individual delivery.
+        // From the SQS-client perspective the effect is the same (the
+        // group's in-flight messages stay locked) and the granted
+        // duration / clamping semantics are identical.
         ServiceBusManagementClient mgmt;
         try
         {
@@ -368,7 +365,9 @@ internal static class AmqpReceiveMessageHandlers
         DateTimeOffset lockedUntil;
         try
         {
-            lockedUntil = await mgmt.RenewLockAsync(decoded.LockToken, ct).ConfigureAwait(false);
+            lockedUntil = string.IsNullOrEmpty(decoded.SessionId)
+                ? await mgmt.RenewLockAsync(decoded.LockToken, ct).ConfigureAwait(false)
+                : await mgmt.RenewSessionLockAsync(decoded.SessionId, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
         catch (ServiceBusManagementException ex)
