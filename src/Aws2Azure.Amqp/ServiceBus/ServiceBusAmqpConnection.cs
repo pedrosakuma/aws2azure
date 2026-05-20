@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Aws2Azure.Amqp.Connection;
 using Aws2Azure.Amqp.Framing;
 using Aws2Azure.Amqp.Security;
@@ -31,21 +32,21 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
 {
     private readonly AmqpConnection _connection;
     private readonly AmqpSession _cbsSession;
-    private readonly AmqpSession _dataSession;
     private readonly CbsAuthenticator _cbs;
     private readonly SemaphoreSlim _authorizeLock = new(1, 1);
-    private readonly Dictionary<string, DateTimeOffset?> _authorized = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _dataSessionLock = new(1, 1);
+    private readonly ConcurrentDictionary<string, DateTimeOffset?> _authorized =
+        new(StringComparer.Ordinal);
+    private AmqpSession? _dataSession;
     private int _disposed;
 
     private ServiceBusAmqpConnection(
         AmqpConnection connection,
         AmqpSession cbsSession,
-        AmqpSession dataSession,
         CbsAuthenticator cbs)
     {
         _connection = connection;
         _cbsSession = cbsSession;
-        _dataSession = dataSession;
         _cbs = cbs;
     }
 
@@ -71,7 +72,6 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
 
         var connection = new AmqpConnection(transport, connectionSettings);
         AmqpSession? cbsSession = null;
-        AmqpSession? dataSession = null;
         CbsAuthenticator? cbs = null;
         try
         {
@@ -81,9 +81,11 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
             cbs = new CbsAuthenticator(cbsSession, tokenProvider);
             await cbs.OpenAsync(cancellationToken).ConfigureAwait(false);
 
-            dataSession = await connection.BeginSessionAsync(new AmqpSessionSettings(), cancellationToken).ConfigureAwait(false);
-
-            return new ServiceBusAmqpConnection(connection, cbsSession, dataSession, cbs);
+            // The data session is opened lazily on first OpenReceiverAsync,
+            // strictly *after* the first successful put-token. This matches
+            // the Service Bus protocol expectation:
+            // open → begin(cbs) → attach cbs → put-token → begin(data) → attach receiver.
+            return new ServiceBusAmqpConnection(connection, cbsSession, cbs);
         }
         catch
         {
@@ -120,6 +122,7 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
         ThrowIfDisposed();
 
         await EnsureAuthorizedAsync(audience, cancellationToken).ConfigureAwait(false);
+        var dataSession = await EnsureDataSessionAsync(cancellationToken).ConfigureAwait(false);
 
         var settings = new AmqpLinkSettings
         {
@@ -132,7 +135,7 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
             InitialDeliveryCount = null,
         };
 
-        var link = await _dataSession.AttachLinkAsync(settings, cancellationToken).ConfigureAwait(false);
+        var link = await dataSession.AttachLinkAsync(settings, cancellationToken).ConfigureAwait(false);
         try
         {
             if (prefetchCredit > 0)
@@ -171,8 +174,9 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
 
     private async Task EnsureAuthorizedAsync(string audience, CancellationToken cancellationToken)
     {
-        // Cache lookup outside the lock for the hot path.
-        if (_authorized.TryGetValue(audience, out _)) return;
+        // Lock-free fast path: ConcurrentDictionary makes the read safe to
+        // race against concurrent writers under the lock.
+        if (_authorized.ContainsKey(audience)) return;
         await _authorizeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -183,6 +187,27 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
         finally
         {
             _authorizeLock.Release();
+        }
+    }
+
+    private async Task<AmqpSession> EnsureDataSessionAsync(CancellationToken cancellationToken)
+    {
+        var existing = Volatile.Read(ref _dataSession);
+        if (existing is not null) return existing;
+        await _dataSessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            existing = _dataSession;
+            if (existing is not null) return existing;
+            var created = await _connection
+                .BeginSessionAsync(new AmqpSessionSettings(), cancellationToken)
+                .ConfigureAwait(false);
+            Volatile.Write(ref _dataSession, created);
+            return created;
+        }
+        finally
+        {
+            _dataSessionLock.Release();
         }
     }
 
@@ -206,5 +231,6 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
         catch { /* swallow during shutdown */ }
         await _connection.DisposeAsync().ConfigureAwait(false);
         _authorizeLock.Dispose();
+        _dataSessionLock.Dispose();
     }
 }
