@@ -43,6 +43,9 @@ internal sealed class ServiceBusAmqpReceiverProvider : IAmqpReceiverProvider
     public Task<ServiceBusReceiver> GetSessionReceiverAsync(string queueName, string sessionId, CancellationToken cancellationToken) =>
         _pool.GetSessionReceiverAsync(_namespaceFqdn, _sasKeyName, _sasKey, queueName, sessionId, cancellationToken);
 
+    public ServiceBusReceiver? TryGetExistingSessionReceiver(string queueName, string sessionId) =>
+        _pool.TryGetExistingSessionReceiver(_namespaceFqdn, _sasKeyName, queueName, sessionId);
+
     public Task<ServiceBusReceiver> AcquireBrokerAssignedSessionReceiverAsync(string queueName, CancellationToken cancellationToken) =>
         _pool.AcquireBrokerAssignedSessionReceiverAsync(_namespaceFqdn, _sasKeyName, _sasKey, queueName, cancellationToken);
 

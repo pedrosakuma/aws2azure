@@ -203,15 +203,25 @@ internal static class AmqpReceiveMessageHandlers
             return;
         }
 
-        ServiceBusReceiver receiver;
+        ServiceBusReceiver? receiver;
         try
         {
-            receiver = await receivers.GetReceiverAsync(queueName, ct).ConfigureAwait(false);
+            receiver = await TryAcquireSettleReceiverAsync(receivers, queueName, decoded.SessionId, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             await WriteErrorAsync(context, parsed.Protocol,
                 MapAmqpException(ex, "DeleteMessage")).ConfigureAwait(false);
+            return;
+        }
+        if (receiver is null)
+        {
+            // FIFO + no cached session receiver for this session-id =
+            // the lock that minted this handle is gone (session expired,
+            // receiver invalidated, or proxy restarted). Surface as a
+            // stale handle without acquiring a fresh session lock that
+            // would block the MessageGroupId.
+            await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.ReceiptHandleInvalid()).ConfigureAwait(false);
             return;
         }
 
@@ -223,7 +233,7 @@ internal static class AmqpReceiveMessageHandlers
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            await receivers.InvalidateAsync(queueName, closeConnection: false).ConfigureAwait(false);
+            await InvalidateSettleReceiverAsync(receivers, queueName, decoded.SessionId).ConfigureAwait(false);
             await WriteErrorAsync(context, parsed.Protocol,
                 MapAmqpException(ex, "DeleteMessage")).ConfigureAwait(false);
             return;
@@ -281,15 +291,23 @@ internal static class AmqpReceiveMessageHandlers
         // honours the SB redelivery counter).
         if (visibility == 0)
         {
-            ServiceBusReceiver receiver;
+            ServiceBusReceiver? receiver;
             try
             {
-                receiver = await receivers.GetReceiverAsync(queueName, ct).ConfigureAwait(false);
+                receiver = await TryAcquireSettleReceiverAsync(receivers, queueName, decoded.SessionId, ct).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 await WriteErrorAsync(context, parsed.Protocol,
                     MapAmqpException(ex, "ChangeMessageVisibility")).ConfigureAwait(false);
+                return;
+            }
+            if (receiver is null)
+            {
+                // Same stale-handle semantics as DeleteMessage above:
+                // surface ReceiptHandleIsInvalid rather than opening a
+                // fresh session lock.
+                await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.ReceiptHandleInvalid()).ConfigureAwait(false);
                 return;
             }
             bool abandoned;
@@ -300,7 +318,7 @@ internal static class AmqpReceiveMessageHandlers
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
-                await receivers.InvalidateAsync(queueName, closeConnection: false).ConfigureAwait(false);
+                await InvalidateSettleReceiverAsync(receivers, queueName, decoded.SessionId).ConfigureAwait(false);
                 await WriteErrorAsync(context, parsed.Protocol,
                     MapAmqpException(ex, "ChangeMessageVisibility")).ConfigureAwait(false);
                 return;
@@ -321,6 +339,20 @@ internal static class AmqpReceiveMessageHandlers
         // from the requested value we surface the divergence via the
         // Aws2Azure-VisibilityClamped header so anyone debugging the
         // proxy can tell what happened. See docs/gaps/sqs/ChangeMessageVisibility.yaml.
+        //
+        // Session-bound messages (v3 receipt handle) require the
+        // session-flavoured $management RenewLock primitive
+        // (com.microsoft:renew-session-lock) which is slice 7c.4 — until
+        // that lands we reject FIFO+CMV>0 with a clear error rather than
+        // attempting a non-session RenewLock that the broker would reject.
+        if (!string.IsNullOrEmpty(decoded.SessionId))
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.InvalidParameterValue(
+                    "VisibilityTimeout",
+                    "ChangeMessageVisibility with VisibilityTimeout > 0 is not yet supported for FIFO queues; use VisibilityTimeout=0 to release the message back to the group.")).ConfigureAwait(false);
+            return;
+        }
         ServiceBusManagementClient mgmt;
         try
         {
@@ -362,6 +394,40 @@ internal static class AmqpReceiveMessageHandlers
         }
         await SqsResponseWriter.WriteChangeMessageVisibilityAsync(context, parsed.Protocol).ConfigureAwait(false);
     }
+
+    // --- settle helpers (FIFO-aware) -----------------------------------
+
+    /// <summary>
+    /// Picks the receiver that DeleteMessage / CMV(0) should settle the
+    /// lock token on. v3 receipt handles carry a session-id and route
+    /// to the <em>existing</em> cached session-bound receiver in the
+    /// pool — returns <c>null</c> when no slot exists. The settle paths
+    /// must <b>not</b> open a fresh session lock here: acquiring a new
+    /// lock just to fail the lock-token lookup would starve the
+    /// MessageGroupId until the session lock expires. v2 handles fall
+    /// through to <see cref="IAmqpReceiverProvider.GetReceiverAsync"/>
+    /// as before (the non-session receiver is allowed to open on
+    /// demand).
+    /// </summary>
+    private static async Task<ServiceBusReceiver?> TryAcquireSettleReceiverAsync(
+        IAmqpReceiverProvider receivers, string queueName, string? sessionId, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(sessionId))
+            return await receivers.GetReceiverAsync(queueName, ct).ConfigureAwait(false);
+        return receivers.TryGetExistingSessionReceiver(queueName, sessionId);
+    }
+
+    /// <summary>
+    /// Mirror of <see cref="TryAcquireSettleReceiverAsync"/>: invalidates the
+    /// pool slot that owns the receiver we just failed against, so a
+    /// torn-down session-bound link is replaced on the next attempt
+    /// instead of evicting the unrelated non-session receiver.
+    /// </summary>
+    private static Task InvalidateSettleReceiverAsync(
+        IAmqpReceiverProvider receivers, string queueName, string? sessionId)
+        => string.IsNullOrEmpty(sessionId)
+            ? receivers.InvalidateAsync(queueName, closeConnection: false)
+            : receivers.InvalidateSessionReceiverAsync(queueName, sessionId);
 
     // --- SB AMQP message → SQS message translation ---------------------
 

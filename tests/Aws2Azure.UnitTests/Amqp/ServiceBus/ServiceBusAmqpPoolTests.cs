@@ -186,6 +186,51 @@ public sealed class ServiceBusAmqpPoolTests
     }
 
     [Fact]
+    public async Task TryGetExistingSessionReceiver_returns_null_when_no_slot_exists()
+    {
+        await using var factory = new FakeFactory(DefaultSettings());
+        await using var pool = new ServiceBusAmqpPool(factory);
+
+        // Connection never opened — no slot exists.
+        var none = pool.TryGetExistingSessionReceiver(
+            "ns.servicebus.windows.net", "Root", "fifo-q", "session-x");
+        Assert.Null(none);
+        Assert.Equal(0, factory.CreateCallCount);
+
+        // Connection opened for a *different* session — slot for the
+        // queried session-id still does not exist. Crucially, the
+        // probe must not open a new session lock.
+        await pool.GetSessionReceiverAsync(
+            "ns.servicebus.windows.net", "Root", "k", "fifo-q", "session-1")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Null(pool.TryGetExistingSessionReceiver(
+            "ns.servicebus.windows.net", "Root", "fifo-q", "session-other"));
+
+        // Existing slot is returned.
+        var cached = pool.TryGetExistingSessionReceiver(
+            "ns.servicebus.windows.net", "Root", "fifo-q", "session-1");
+        Assert.NotNull(cached);
+        Assert.Equal("session-1", cached!.SessionId);
+    }
+
+    [Fact]
+    public async Task TryGetExistingSessionReceiver_returns_null_after_invalidate()
+    {
+        await using var factory = new FakeFactory(DefaultSettings());
+        await using var pool = new ServiceBusAmqpPool(factory);
+
+        await pool.GetSessionReceiverAsync(
+            "ns.servicebus.windows.net", "Root", "k", "fifo-q", "session-1")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        await pool.InvalidateSessionReceiverAsync(
+            "ns.servicebus.windows.net", "Root", "fifo-q", "session-1");
+
+        Assert.Null(pool.TryGetExistingSessionReceiver(
+            "ns.servicebus.windows.net", "Root", "fifo-q", "session-1"));
+    }
+
+    [Fact]
     public async Task GetSessionReceiverAsync_creates_and_caches_per_session_id()
     {
         await using var factory = new FakeFactory(DefaultSettings());

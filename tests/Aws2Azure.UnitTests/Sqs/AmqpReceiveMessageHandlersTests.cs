@@ -333,6 +333,116 @@ public sealed class AmqpReceiveMessageHandlersTests
         Assert.DoesNotContain("Mzo", body);
     }
 
+    [Fact]
+    public async Task DeleteMessage_on_fifo_queue_routes_via_session_receiver()
+    {
+        const string SessionId = "group-A";
+        var tag = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee").ToByteArray();
+        await using var harness = await TestHarness.OpenSessionAsync(
+            FifoQueueName, SessionId,
+            (tag, EncodeMessage("fifo-to-delete", groupId: SessionId)));
+
+        // 1) Receive — mints a v3 handle and populates the session
+        //    receiver's in-flight cache.
+        var receiveCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(receiveCtx,
+            QueryParsed(SqsOperation.ReceiveMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}")),
+            harness.Provider, CancellationToken.None);
+        var handle = ExtractReceiptHandle(ReadBody(receiveCtx));
+        Assert.StartsWith("Mzo", handle);
+        Assert.Equal(1, harness.Receiver.InFlightCount);
+
+        // 2) Delete — must route via GetSessionReceiverAsync (the v2
+        //    fall-back path would query the non-session receiver and
+        //    miss the cache, returning ReceiptHandleIsInvalid).
+        var deleteCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(deleteCtx,
+            QueryParsed(SqsOperation.DeleteMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+                ("ReceiptHandle", handle)),
+            harness.Provider, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, deleteCtx.Response.StatusCode);
+        Assert.Contains("DeleteMessageResponse", ReadBody(deleteCtx));
+        Assert.Equal(0, harness.Receiver.InFlightCount);
+    }
+
+    [Fact]
+    public async Task ChangeMessageVisibility_zero_on_fifo_queue_abandons_via_session_receiver()
+    {
+        const string SessionId = "group-A";
+        var tag = Guid.Parse("ffffffff-eeee-dddd-cccc-bbbbbbbbbbbb").ToByteArray();
+        await using var harness = await TestHarness.OpenSessionAsync(
+            FifoQueueName, SessionId,
+            (tag, EncodeMessage("fifo-to-abandon", groupId: SessionId)));
+
+        var receiveCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(receiveCtx,
+            QueryParsed(SqsOperation.ReceiveMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}")),
+            harness.Provider, CancellationToken.None);
+        var handle = ExtractReceiptHandle(ReadBody(receiveCtx));
+        Assert.StartsWith("Mzo", handle);
+        Assert.Equal(1, harness.Receiver.InFlightCount);
+
+        var cmvCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(cmvCtx,
+            QueryParsed(SqsOperation.ChangeMessageVisibility,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+                ("ReceiptHandle", handle),
+                ("VisibilityTimeout", "0")),
+            harness.Provider, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, cmvCtx.Response.StatusCode);
+        Assert.Equal(0, harness.Receiver.InFlightCount);
+    }
+
+    [Fact]
+    public async Task DeleteMessage_on_fifo_queue_returns_invalid_handle_without_opening_session_on_cache_miss()
+    {
+        const string SessionId = "expired-session";
+        // No session receiver wired: simulates the "session lock is
+        // gone" path (proxy restarted, session evicted, lock expired).
+        // The pool's TryGetExistingSessionReceiver must return null and
+        // the handler must surface ReceiptHandleIsInvalid — crucially
+        // without round-tripping to the broker to grab a new session
+        // lock that would starve the MessageGroupId.
+        await using var harness = await TestHarness.OpenAsync(FifoQueueName);
+
+        var v3 = AmqpReceiptHandle.Encode(FifoQueueName, Guid.NewGuid(), DateTimeOffset.UtcNow, SessionId);
+        var ctx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(ctx,
+            QueryParsed(SqsOperation.DeleteMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+                ("ReceiptHandle", v3)),
+            harness.Provider, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status404NotFound, ctx.Response.StatusCode);
+        Assert.Contains("ReceiptHandleIsInvalid", ReadBody(ctx));
+    }
+
+    [Fact]
+    public async Task ChangeMessageVisibility_positive_on_fifo_queue_rejects_until_slice_7c4()
+    {
+        const string SessionId = "group-A";
+        await using var harness = await TestHarness.OpenSessionAsync(FifoQueueName, SessionId);
+
+        var v3 = AmqpReceiptHandle.Encode(FifoQueueName, Guid.NewGuid(), DateTimeOffset.UtcNow, SessionId);
+        var ctx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(ctx,
+            QueryParsed(SqsOperation.ChangeMessageVisibility,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+                ("ReceiptHandle", v3),
+                ("VisibilityTimeout", "30")),
+            harness.Provider, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        var body = ReadBody(ctx);
+        Assert.Contains("InvalidParameterValue", body);
+        Assert.Contains("VisibilityTimeout", body);
+    }
+
     // --- harness -------------------------------------------------------
 
     private sealed class TestHarness : IAsyncDisposable
@@ -516,15 +626,24 @@ public sealed class AmqpReceiveMessageHandlersTests
         public Task<ServiceBusReceiver> GetSessionReceiverAsync(
             string queueName, string sessionId, CancellationToken cancellationToken)
         {
-            // Slice 7c.3d will exercise the (queue, sessionId)-keyed
-            // settle path; until then GetSessionReceiverAsync is only
-            // reached if a v3 receipt handle is decoded — return the
-            // same session receiver the acquire path produced when
-            // available.
+            // Slice 7c.3d switched the settle paths to TryGetExisting,
+            // so GetSessionReceiverAsync is not reached for that flow.
+            // Kept for future callers that need open-on-demand semantics.
             Assert.Equal(_expectedQueue, queueName);
             if (_brokerAssignedSessionReceiver is null)
                 throw new NotSupportedException("Test harness did not wire a session receiver.");
             return Task.FromResult(_brokerAssignedSessionReceiver);
+        }
+
+        public ServiceBusReceiver? TryGetExistingSessionReceiver(string queueName, string sessionId)
+        {
+            Assert.Equal(_expectedQueue, queueName);
+            // The fake tracks a single bound session receiver — once
+            // wired (by OpenSessionAsync) it stays cached for the test
+            // duration. Returning null lets tests exercise the
+            // stale-handle path by constructing a fake with
+            // brokerAssignedSessionReceiver: null.
+            return _brokerAssignedSessionReceiver;
         }
 
         public Task<ServiceBusReceiver> AcquireBrokerAssignedSessionReceiverAsync(
