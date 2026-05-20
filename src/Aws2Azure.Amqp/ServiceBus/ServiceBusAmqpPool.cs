@@ -69,7 +69,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         var key = new ServiceBusAmqpConnectionKey(namespaceFqdn, sasKeyName);
         while (true)
         {
-            var slot = _connections.GetOrAdd(key, static _ => new ConnectionSlot());
+            var slot = await GetOrCreateConnectionSlotAsync(key).ConfigureAwait(false);
             try
             {
                 var connection = await slot.GetOrCreateConnectionAsync(
@@ -130,7 +130,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         var key = new ServiceBusAmqpConnectionKey(namespaceFqdn, sasKeyName);
         while (true)
         {
-            var slot = _connections.GetOrAdd(key, static _ => new ConnectionSlot());
+            var slot = await GetOrCreateConnectionSlotAsync(key).ConfigureAwait(false);
             try
             {
                 var connection = await slot.GetOrCreateConnectionAsync(
@@ -188,7 +188,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         var key = new ServiceBusAmqpConnectionKey(namespaceFqdn, sasKeyName);
         while (true)
         {
-            var slot = _connections.GetOrAdd(key, static _ => new ConnectionSlot());
+            var slot = await GetOrCreateConnectionSlotAsync(key).ConfigureAwait(false);
             try
             {
                 var connection = await slot.GetOrCreateConnectionAsync(
@@ -281,7 +281,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         var key = new ServiceBusAmqpConnectionKey(namespaceFqdn, sasKeyName);
         while (true)
         {
-            var slot = _connections.GetOrAdd(key, static _ => new ConnectionSlot());
+            var slot = await GetOrCreateConnectionSlotAsync(key).ConfigureAwait(false);
             try
             {
                 var connection = await slot.GetOrCreateConnectionAsync(
@@ -361,16 +361,65 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             throw new ObjectDisposedException(nameof(ServiceBusAmqpPool));
     }
 
+    /// <summary>
+    /// Publishes a fresh <see cref="ConnectionSlot"/> for
+    /// <paramref name="key"/> if none exists. Guards against the
+    /// add-after-snapshot dispose race on both sides: the
+    /// <see cref="ConcurrentDictionary{TKey,TValue}.TryGetValue"/>
+    /// fast path re-checks <c>_disposed</c> so a concurrent caller can
+    /// never observe a slot that has been (or is about to be)
+    /// reclaimed by <see cref="DisposeAsync"/>; and the publish path
+    /// awaits the cleanup <see cref="IAsyncDisposable.DisposeAsync"/>
+    /// so the pool's own <c>DisposeAsync</c> cannot return before
+    /// every connection it spawned has been disposed.
+    /// </summary>
+    private async ValueTask<ConnectionSlot> GetOrCreateConnectionSlotAsync(ServiceBusAmqpConnectionKey key)
+    {
+        if (_connections.TryGetValue(key, out var existing))
+        {
+            // If we observed a slot but the pool flipped to disposed
+            // in between, refuse it: another thread may have published
+            // it after a concurrent dispose snapshot, and we don't
+            // want to let work pile up on a slot that's racing toward
+            // cleanup.
+            if (Volatile.Read(ref _disposed) != 0)
+                throw new ObjectDisposedException(nameof(ServiceBusAmqpPool));
+            return existing;
+        }
+        var fresh = new ConnectionSlot();
+        var slot = _connections.GetOrAdd(key, fresh);
+        if (ReferenceEquals(slot, fresh) && Volatile.Read(ref _disposed) != 0)
+        {
+            // We published into a disposed pool. Await cleanup so the
+            // pool's DisposeAsync can rely on us not leaving any
+            // outstanding work — if a parallel caller managed to fast-
+            // path into this slot before the TryGetValue re-check
+            // above was added, the slot may now own a real connection
+            // whose disposal must complete synchronously with ours.
+            _connections.TryRemove(KeyValuePair.Create(key, slot));
+            await slot.DisposeAsync().ConfigureAwait(false);
+            throw new ObjectDisposedException(nameof(ServiceBusAmqpPool));
+        }
+        return slot;
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        // Snapshot then clear so concurrent InvalidateAsync calls can
-        // bail out via the disposed check above without double-disposing.
-        var slots = _connections.Values.ToArray();
-        _connections.Clear();
-        foreach (var slot in slots)
+        // Drain-loop: each GetOrCreateConnectionSlot call site checks
+        // _disposed after publishing, so once we've set the flag any
+        // concurrent publish either (a) sees the flag and self-cleans
+        // before this loop sees it, or (b) lands in the dict before
+        // self-cleaning, in which case this loop catches it. Iterating
+        // until empty closes the remaining gap where a publisher
+        // hasn't reached its disposed-check yet at our first snapshot.
+        while (!_connections.IsEmpty)
         {
-            await slot.DisposeAsync().ConfigureAwait(false);
+            foreach (var entry in _connections.ToArray())
+            {
+                if (_connections.TryRemove(entry))
+                    await entry.Value.DisposeAsync().ConfigureAwait(false);
+            }
         }
     }
 
@@ -422,10 +471,29 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             CancellationToken cancellationToken)
         {
             ThrowIfDisposed();
-            var slot = _receivers.GetOrAdd(queueName, static _ => new ReceiverSlot());
+            var slot = await GetOrPublishReceiverSlotAsync(queueName).ConfigureAwait(false);
             return await slot
                 .GetOrCreateAsync(connection, key.NamespaceFqdn, queueName, cancellationToken)
                 .ConfigureAwait(false);
+        }
+
+        private async ValueTask<ReceiverSlot> GetOrPublishReceiverSlotAsync(string queueName)
+        {
+            if (_receivers.TryGetValue(queueName, out var existing))
+            {
+                if (Volatile.Read(ref _disposed) != 0)
+                    throw new ObjectDisposedException(nameof(ConnectionSlot));
+                return existing;
+            }
+            var fresh = new ReceiverSlot();
+            var slot = _receivers.GetOrAdd(queueName, fresh);
+            if (ReferenceEquals(slot, fresh) && Volatile.Read(ref _disposed) != 0)
+            {
+                _receivers.TryRemove(KeyValuePair.Create(queueName, slot));
+                await slot.DisposeAsync().ConfigureAwait(false);
+                throw new ObjectDisposedException(nameof(ConnectionSlot));
+            }
+            return slot;
         }
 
         public async Task InvalidateReceiverAsync(string queueName)
@@ -442,12 +510,33 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             CancellationToken cancellationToken)
         {
             ThrowIfDisposed();
-            var slot = _sessionReceivers.GetOrAdd(
-                new SessionReceiverKey(queueName, sessionId),
-                static _ => new SessionReceiverSlot());
+            var slotKey = new SessionReceiverKey(queueName, sessionId);
+            var slot = await GetOrPublishSessionReceiverSlotAsync(slotKey, static () => new SessionReceiverSlot())
+                .ConfigureAwait(false);
             return await slot
                 .GetOrCreateAsync(connection, key.NamespaceFqdn, queueName, sessionId, cancellationToken)
                 .ConfigureAwait(false);
+        }
+
+        private async ValueTask<SessionReceiverSlot> GetOrPublishSessionReceiverSlotAsync(
+            SessionReceiverKey slotKey,
+            Func<SessionReceiverSlot> factory)
+        {
+            if (_sessionReceivers.TryGetValue(slotKey, out var existing))
+            {
+                if (Volatile.Read(ref _disposed) != 0)
+                    throw new ObjectDisposedException(nameof(ConnectionSlot));
+                return existing;
+            }
+            var fresh = factory();
+            var slot = _sessionReceivers.GetOrAdd(slotKey, fresh);
+            if (ReferenceEquals(slot, fresh) && Volatile.Read(ref _disposed) != 0)
+            {
+                _sessionReceivers.TryRemove(KeyValuePair.Create(slotKey, slot));
+                await slot.DisposeAsync().ConfigureAwait(false);
+                throw new ObjectDisposedException(nameof(ConnectionSlot));
+            }
+            return slot;
         }
 
         public async Task<ServiceBusReceiver> AcquireBrokerAssignedSessionReceiverAsync(
@@ -536,10 +625,29 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             CancellationToken cancellationToken)
         {
             ThrowIfDisposed();
-            var slot = _managementClients.GetOrAdd(queueName, static _ => new ManagementSlot());
+            var slot = await GetOrPublishManagementSlotAsync(queueName).ConfigureAwait(false);
             return await slot
                 .GetOrCreateAsync(connection, key.NamespaceFqdn, queueName, cancellationToken)
                 .ConfigureAwait(false);
+        }
+
+        private async ValueTask<ManagementSlot> GetOrPublishManagementSlotAsync(string queueName)
+        {
+            if (_managementClients.TryGetValue(queueName, out var existing))
+            {
+                if (Volatile.Read(ref _disposed) != 0)
+                    throw new ObjectDisposedException(nameof(ConnectionSlot));
+                return existing;
+            }
+            var fresh = new ManagementSlot();
+            var slot = _managementClients.GetOrAdd(queueName, fresh);
+            if (ReferenceEquals(slot, fresh) && Volatile.Read(ref _disposed) != 0)
+            {
+                _managementClients.TryRemove(KeyValuePair.Create(queueName, slot));
+                await slot.DisposeAsync().ConfigureAwait(false);
+                throw new ObjectDisposedException(nameof(ConnectionSlot));
+            }
+            return slot;
         }
 
         public async Task InvalidateManagementClientAsync(string queueName)
@@ -575,22 +683,41 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             }
             try
             {
-                // Receivers first — they're owned by this slot's connection
-                // and SB tears links down cleanly before we close the connection.
-                var receivers = _receivers.Values.ToArray();
-                _receivers.Clear();
-                foreach (var r in receivers)
-                    await r.DisposeAsync().ConfigureAwait(false);
+                // Drain-loop per dict: each GetOrPublish*Slot helper
+                // checks _disposed after publishing, so any concurrent
+                // publish either self-cleans (sees the flag we just set
+                // before this method snapshotted) or lands in the dict
+                // for us to drain here. Iterating until empty closes
+                // the gap where a publisher hasn't reached its
+                // disposed-check yet at our first snapshot. Receivers
+                // first — they're owned by this slot's connection and
+                // SB tears links down cleanly before we close it.
+                while (!_receivers.IsEmpty)
+                {
+                    foreach (var entry in _receivers.ToArray())
+                    {
+                        if (_receivers.TryRemove(entry))
+                            await entry.Value.DisposeAsync().ConfigureAwait(false);
+                    }
+                }
 
-                var sessionReceivers = _sessionReceivers.Values.ToArray();
-                _sessionReceivers.Clear();
-                foreach (var r in sessionReceivers)
-                    await r.DisposeAsync().ConfigureAwait(false);
+                while (!_sessionReceivers.IsEmpty)
+                {
+                    foreach (var entry in _sessionReceivers.ToArray())
+                    {
+                        if (_sessionReceivers.TryRemove(entry))
+                            await entry.Value.DisposeAsync().ConfigureAwait(false);
+                    }
+                }
 
-                var clients = _managementClients.Values.ToArray();
-                _managementClients.Clear();
-                foreach (var c in clients)
-                    await c.DisposeAsync().ConfigureAwait(false);
+                while (!_managementClients.IsEmpty)
+                {
+                    foreach (var entry in _managementClients.ToArray())
+                    {
+                        if (_managementClients.TryRemove(entry))
+                            await entry.Value.DisposeAsync().ConfigureAwait(false);
+                    }
+                }
 
                 var connection = Interlocked.Exchange(ref _connection, null);
                 if (connection is not null)

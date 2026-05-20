@@ -186,6 +186,87 @@ public sealed class ServiceBusAmqpPoolTests
     }
 
     [Fact]
+    public async Task DisposeAsync_concurrent_with_publishers_leaves_no_orphan_slots_or_connections()
+    {
+        // Reproduces the add-after-snapshot dispose race: many parallel
+        // GetReceiverAsync calls publish ConnectionSlots into the pool
+        // dict while a DisposeAsync racing in parallel snapshots and
+        // tears them down. Every connection the factory hands out must
+        // be either (a) returned to a caller that then sees it disposed
+        // via the post-publish ThrowIfDisposed re-check, or (b) drained
+        // by DisposeAsync. None should leak.
+
+        for (int iter = 0; iter < 5; iter++)
+        {
+            await using var factory = new TrackingFactory(DefaultSettings());
+            var pool = new ServiceBusAmqpPool(factory);
+
+            // Vary the (key, queue) tuples so we exercise both
+            // _connections and _receivers publish paths.
+            const int Parallelism = 32;
+            var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var tasks = new Task[Parallelism];
+            for (int i = 0; i < Parallelism; i++)
+            {
+                var keyName = $"key-{i % 4}";
+                var queue = $"q-{i % 8}";
+                tasks[i] = Task.Run(async () =>
+                {
+                    await start.Task.ConfigureAwait(false);
+                    try
+                    {
+                        await pool.GetReceiverAsync(
+                            "ns.servicebus.windows.net", keyName, "k", queue);
+                    }
+                    catch (ObjectDisposedException) { /* expected when racing */ }
+                });
+            }
+
+            // Fire all acquires and dispose roughly simultaneously.
+            start.SetResult();
+            var disposeTask = Task.Run(async () =>
+            {
+                // Tiny stagger so some acquires publish before dispose
+                // starts and others after.
+                await Task.Delay(1);
+                await pool.DisposeAsync();
+            });
+
+            await Task.WhenAll(tasks).WaitAsync(TimeSpan.FromSeconds(30));
+            await disposeTask.WaitAsync(TimeSpan.FromSeconds(30));
+
+            // Invariant 1: dict drained.
+            Assert.Equal(0, pool.ConnectionCount);
+
+            // Invariant 2: no connection leaked. Every connection that
+            // the factory created must have been disposed by either the
+            // pool's drain or the publish-and-guard self-cleanup.
+            Assert.Equal(factory.CreateCallCount, factory.DisposeCallCount);
+        }
+    }
+
+    [Fact]
+    public async Task GetReceiverAsync_after_dispose_does_not_publish_orphan_slot()
+    {
+        // Directly exercises the publish-and-guard path: after Dispose
+        // sets the flag, a subsequent GetReceiverAsync may race ahead
+        // and publish a fresh ConnectionSlot via GetOrAdd before the
+        // pool-level ThrowIfDisposed catches it. The guard inside
+        // GetOrCreateConnectionSlot must pull that slot back out so the
+        // dict stays empty.
+
+        await using var factory = new TrackingFactory(DefaultSettings());
+        var pool = new ServiceBusAmqpPool(factory);
+        await pool.DisposeAsync();
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(() =>
+            pool.GetReceiverAsync("ns.servicebus.windows.net", "Root", "k", "q1"));
+
+        Assert.Equal(0, pool.ConnectionCount);
+        Assert.Equal(0, factory.CreateCallCount); // bailed before opening anything
+    }
+
+    [Fact]
     public async Task TryGetExistingSessionReceiver_returns_null_when_no_slot_exists()
     {
         await using var factory = new FakeFactory(DefaultSettings());
@@ -473,6 +554,73 @@ public sealed class ServiceBusAmqpPoolTests
             foreach (var p in snapshot)
             {
                 try { await p.DisposeAsync().ConfigureAwait(false); } catch { }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Like <see cref="FakeFactory"/> but counts <em>disposals</em> of
+    /// the returned connections (via a tracking wrapper around the
+    /// client-side transport — ServiceBusAmqpConnection always disposes
+    /// the transport during its own DisposeAsync). Used by the
+    /// dispose-race tests to assert no opened connection leaks.
+    /// </summary>
+    private sealed class TrackingFactory : IServiceBusAmqpConnectionFactory, IAsyncDisposable
+    {
+        private readonly AmqpConnectionSettings _settings;
+        private readonly List<IAsyncDisposable> _peers = new();
+        private int _createCallCount;
+        private int _disposeCallCount;
+
+        public TrackingFactory(AmqpConnectionSettings settings) => _settings = settings;
+
+        public int CreateCallCount => Volatile.Read(ref _createCallCount);
+        public int DisposeCallCount => Volatile.Read(ref _disposeCallCount);
+
+        public async Task<ServiceBusAmqpConnection> CreateAsync(
+            string namespaceFqdn,
+            string sasKeyName,
+            string sasKey,
+            CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _createCallCount);
+            var (client, server) = PipePairTransport.CreatePair();
+            lock (_peers) _peers.Add(server);
+            var broker = new ServiceBusBrokerSimulator(server);
+            broker.Start();
+            var tracked = new CountingTransport(client, () => Interlocked.Increment(ref _disposeCallCount));
+            return await ServiceBusAmqpConnection
+                .OpenAsync(tracked, new FakeTokenProvider(), _settings, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            IAsyncDisposable[] snapshot;
+            lock (_peers) { snapshot = _peers.ToArray(); _peers.Clear(); }
+            foreach (var p in snapshot)
+            {
+                try { await p.DisposeAsync().ConfigureAwait(false); } catch { }
+            }
+        }
+
+        private sealed class CountingTransport : Aws2Azure.Amqp.Transport.IAmqpTransport
+        {
+            private readonly Aws2Azure.Amqp.Transport.IAmqpTransport _inner;
+            private readonly Action _onDispose;
+            private int _disposed;
+
+            public CountingTransport(Aws2Azure.Amqp.Transport.IAmqpTransport inner, Action onDispose)
+            { _inner = inner; _onDispose = onDispose; }
+
+            public System.IO.Pipelines.PipeReader Input => _inner.Input;
+            public System.IO.Pipelines.PipeWriter Output => _inner.Output;
+
+            public async ValueTask DisposeAsync()
+            {
+                if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+                _onDispose();
+                await _inner.DisposeAsync().ConfigureAwait(false);
             }
         }
     }
