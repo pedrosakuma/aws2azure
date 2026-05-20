@@ -505,6 +505,14 @@ public sealed class AmqpReviewFixTests
             {
                 Name = "rcv", Handle = 11, Role = AmqpRole.Sender, InitialDeliveryCount = 0,
             }, AmqpAttach.Write);
+            // Wait for the client's flow frame before pushing transfers —
+            // otherwise we race the client's attach completion and the
+            // oversize detach may fire before AttachAsync returns.
+            while (true)
+            {
+                using var f = await AmqpFrameIO.ReadFrameAsync(server);
+                if (PerformativeCodec.PeekKind(f.Body.Span, out _) == PerformativeKind.Flow) break;
+            }
             // Two more=true continuations whose combined payload exceeds 256 B.
             var part = new byte[200];
             await SendTransferPayloadAsync(server, 4, handle: 11,
