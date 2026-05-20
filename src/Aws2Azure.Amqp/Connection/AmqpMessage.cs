@@ -42,6 +42,18 @@ internal sealed class AmqpMessage
     public string? BodyValueString { get; set; }
 
     /// <summary>
+    /// Optional pre-encoded amqp-value body content (any AMQP value type
+    /// — typically a map or list). When non-null and
+    /// <see cref="BodyValueString"/> is null, the message is serialised
+    /// with an amqp-value section carrying these bytes verbatim.
+    /// On parse, non-string amqp-value bodies are surfaced here (e.g.
+    /// Service Bus <c>$management</c> response bodies which are maps).
+    /// Mutually exclusive with <see cref="BodyValueString"/>: setting
+    /// both is a programmer error.
+    /// </summary>
+    public ReadOnlyMemory<byte>? BodyValueBytes { get; set; }
+
+    /// <summary>
     /// Serialises the bare message into <paramref name="destination"/>.
     /// Sections are emitted in spec-defined order: properties (if any
     /// field present), application-properties (if any entry present),
@@ -75,6 +87,15 @@ internal sealed class AmqpMessage
             w += dl;
             Aws2Azure.Amqp.Codec.AmqpVariableWriter.WriteString(destination[w..], value, out var sl);
             w += sl;
+        }
+        else if (BodyValueBytes is { } bytes)
+        {
+            destination[w++] = Aws2Azure.Amqp.Codec.AmqpFormatCode.Described;
+            Aws2Azure.Amqp.Codec.AmqpPrimitiveWriter.WriteULong(
+                destination[w..], MessageSectionDescriptor.AmqpValue, out var dl);
+            w += dl;
+            bytes.Span.CopyTo(destination[w..]);
+            w += bytes.Length;
         }
         else
         {
@@ -124,9 +145,10 @@ internal sealed class AmqpMessage
                     break;
                 case MessageSectionDescriptor.AmqpValue:
                     // Skip the described constructor header (0x00 + ULong descriptor),
-                    // then read the value verbatim. We only model the string variant
-                    // (CBS responses are typically empty or status-text); other primitive
-                    // types fall through to AmqpValueScanner skip below.
+                    // then read the value verbatim. We model two variants:
+                    //   - string AmqpValue → BodyValueString (CBS responses, status-text)
+                    //   - any other type    → BodyValueBytes (Service Bus $management
+                    //     responses are maps; callers decode themselves).
                     var valueOffset = 1 + descLen;
                     var valueSpan = span[valueOffset..];
                     if (valueSpan.Length > 0 &&
@@ -139,7 +161,9 @@ internal sealed class AmqpMessage
                     }
                     else
                     {
-                        consumed = Aws2Azure.Amqp.Codec.AmqpValueScanner.Measure(span);
+                        var valueLen = Aws2Azure.Amqp.Codec.AmqpValueScanner.Measure(valueSpan);
+                        message.BodyValueBytes = remaining.Slice(valueOffset, valueLen);
+                        consumed = valueOffset + valueLen;
                     }
                     break;
                 default:
@@ -161,7 +185,7 @@ internal sealed class AmqpMessage
         // Body payload may exceed the perf scratch size for large messages.
         // Size for: scratch overhead + body bytes + a safety margin for
         // properties/application-properties/header encodings.
-        var bodyLen = Body.Length;
+        var bodyLen = Body.Length + (BodyValueBytes?.Length ?? 0);
         var rentedSize = Performatives.ScratchSize + bodyLen + 256;
         var rented = ArrayPool<byte>.Shared.Rent(rentedSize);
         try

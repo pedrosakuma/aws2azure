@@ -114,6 +114,18 @@ internal static class AmqpApplicationProperties
                 o += len;
                 return n;
             }
+            case AmqpFormatCode.Short:
+            {
+                var n = AmqpPrimitiveReader.ReadShort(els[o..], out var len);
+                o += len;
+                return (int)n;
+            }
+            case AmqpFormatCode.UShort:
+            {
+                var n = AmqpPrimitiveReader.ReadUShort(els[o..], out var len);
+                o += len;
+                return (int)n;
+            }
             default:
             {
                 var len = AmqpValueScanner.Measure(els[o..]);
