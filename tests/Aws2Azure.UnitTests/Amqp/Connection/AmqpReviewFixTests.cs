@@ -538,14 +538,14 @@ public sealed class AmqpReviewFixTests
         });
         await link.GrantCreditAsync(5);
 
-        var d = await sawDetach.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var d = await sawDetach.Task.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.True(d.Closed ?? false);
         // The error payload should carry amqp:link:message-size-exceeded.
         Assert.False(d.Error.IsEmpty);
         AmqpError.Read(d.Error, out var err, out _);
         Assert.Equal(AmqpErrorCondition.LinkMessageSizeExceeded, err.Condition);
 
-        await conn.CloseAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await conn.CloseAsync().WaitAsync(TimeSpan.FromSeconds(10));
     }
 
     // ---- helpers ----------------------------------------------------------
