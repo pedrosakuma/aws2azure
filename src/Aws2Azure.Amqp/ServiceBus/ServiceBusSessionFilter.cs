@@ -10,16 +10,33 @@ namespace Aws2Azure.Amqp.ServiceBus;
 /// <para>
 /// On the wire the filter is a single-entry map keyed by the symbol
 /// <c>com.microsoft:session-filter</c>; the value is a described type
-/// using the same symbol as descriptor, wrapping either an AMQP string
-/// (the session-id the receiver is binding to) or null (meaning "any
-/// available session", which the broker will then echo back on the
-/// attach response with the assigned session-id).
+/// using the ulong descriptor <c>0x0000_0137_0000_000C</c> (the canonical
+/// Service Bus code for the session-filter, matching the Microsoft AMQP
+/// libraries), wrapping either an AMQP string (the session-id the
+/// receiver is binding to) or null (meaning "any available session",
+/// which the broker will then echo back on the attach response with
+/// the assigned session-id).
 /// </para>
 /// </summary>
 internal static class ServiceBusSessionFilter
 {
-    /// <summary>Symbol both the map key and the descriptor use.</summary>
+    /// <summary>Symbol the source.filter map key uses.</summary>
     public const string FilterSymbol = "com.microsoft:session-filter";
+
+    /// <summary>
+    /// Canonical Service Bus descriptor for the session-filter described
+    /// type (see Microsoft.Azure.Amqp / go-amqp Service Bus session code).
+    /// </summary>
+    public const ulong FilterDescriptor = 0x0000_0137_0000_000CUL;
+
+    /// <summary>
+    /// Maximum session-id length we will accept before refusing to
+    /// encode. Service Bus enforces a 128-char limit on session-id; we
+    /// reject anything larger to keep <see cref="AmqpSource.Write"/>'s
+    /// fixed-size scratch buffer safe and to surface configuration
+    /// errors early.
+    /// </summary>
+    public const int MaxSessionIdLength = 128;
 
     /// <summary>
     /// Builds the encoded filter map for the receiver's
@@ -31,26 +48,36 @@ internal static class ServiceBusSessionFilter
     /// response and recovered via <see cref="TryDecode"/>.
     /// </para>
     /// </summary>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="sessionId"/> exceeds
+    /// <see cref="MaxSessionIdLength"/>.
+    /// </exception>
     public static ReadOnlyMemory<byte> Encode(string? sessionId)
     {
-        // Worst-case sizing: key symbol header(2) + 28 bytes for the
-        // symbol body + described constructor(1) + descriptor symbol
-        // header(2) + 28 bytes + value string header(5) + value bytes
-        // (worst-case 4 bytes per UTF-16 char) + padding.
+        if (sessionId is not null && sessionId.Length > MaxSessionIdLength)
+        {
+            throw new ArgumentException(
+                $"Service Bus session-id exceeds the {MaxSessionIdLength}-char limit (got {sessionId.Length}).",
+                nameof(sessionId));
+        }
+
+        // Worst-case sizing: key symbol header(2) + symbol body + described
+        // marker(1) + ulong descriptor (≤ 9) + value string header(5) +
+        // value bytes (worst-case 4 bytes per UTF-16 char) + padding.
         var valBytes = (sessionId?.Length ?? 0) * 4 + 16;
-        var elementsCap = 2 + FilterSymbol.Length        // key sym8
-                        + 1                              // described marker
-                        + 2 + FilterSymbol.Length        // descriptor sym8
-                        + 5 + valBytes;                  // value (string or null)
+        var elementsCap = 2 + FilterSymbol.Length      // key sym8
+                        + 1                            // described marker
+                        + 9                            // ulong descriptor (worst case)
+                        + 5 + valBytes;                // value (string or null)
         Span<byte> elements = stackalloc byte[elementsCap];
         int o = 0;
 
         AmqpVariableWriter.WriteSymbol(elements[o..], FilterSymbol, out var keyLen);
         o += keyLen;
 
-        // Described value: 0x00 + symbol descriptor + (string|null).
+        // Described value: 0x00 + ulong descriptor + (string|null).
         elements[o++] = AmqpFormatCode.Described;
-        AmqpVariableWriter.WriteSymbol(elements[o..], FilterSymbol, out var descLen);
+        AmqpPrimitiveWriter.WriteULong(elements[o..], FilterDescriptor, out var descLen);
         o += descLen;
 
         if (sessionId is null)
