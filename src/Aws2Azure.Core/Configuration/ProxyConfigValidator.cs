@@ -102,6 +102,30 @@ public static class ProxyConfigValidator
             {
                 errors.Add($"{prefix}.serviceBus.sasKey: required.");
             }
+            if (!Enum.IsDefined(typeof(SqsTransport), sb.Transport))
+            {
+                errors.Add($"{prefix}.serviceBus.transport: unknown value '{(int)sb.Transport}'.");
+            }
+            if (sb.Queues is { } queues)
+            {
+                foreach (var (name, settings) in queues)
+                {
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        errors.Add($"{prefix}.serviceBus.queues: queue name must be non-empty.");
+                        continue;
+                    }
+                    if (settings is null)
+                    {
+                        errors.Add($"{prefix}.serviceBus.queues.{name}: entry is null.");
+                        continue;
+                    }
+                    if (settings.Transport is { } t && !Enum.IsDefined(typeof(SqsTransport), t))
+                    {
+                        errors.Add($"{prefix}.serviceBus.queues.{name}.transport: unknown value '{(int)t}'.");
+                    }
+                }
+            }
         }
 
         if (azure.Cosmos is { } cosmos)

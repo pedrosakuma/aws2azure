@@ -122,13 +122,15 @@ public static class ProxyConfigLoader
 
             if (leaf == "AZURE" && path.Length >= 5)
             {
-                ApplyAzureOverride(entry.Azure, path[3].ToUpperInvariant(), path[4].ToUpperInvariant(), value);
+                ApplyAzureOverride(entry.Azure, path[3].ToUpperInvariant(), path, value);
             }
         }
     }
 
-    private static void ApplyAzureOverride(AzureCredentials azure, string serviceSegment, string fieldSegment, string? value)
+    private static void ApplyAzureOverride(AzureCredentials azure, string serviceSegment, string[] path, string? value)
     {
+        // path = [CREDENTIALS, idx, AZURE, <service>, <field>, ...]
+        var fieldSegment = path[4].ToUpperInvariant();
         switch (serviceSegment)
         {
             case "BLOB":
@@ -141,6 +143,31 @@ public static class ProxyConfigLoader
                 if (fieldSegment == "NAMESPACE") azure.ServiceBus.Namespace = value ?? string.Empty;
                 else if (fieldSegment == "SASKEYNAME") azure.ServiceBus.SasKeyName = value ?? string.Empty;
                 else if (fieldSegment == "SASKEY") azure.ServiceBus.SasKey = value ?? string.Empty;
+                else if (fieldSegment == "TRANSPORT")
+                {
+                    if (TryParseTransport(value, out var t)) azure.ServiceBus.Transport = t;
+                }
+                else if (fieldSegment == "QUEUES" && path.Length >= 7)
+                {
+                    // AZURE/SERVICEBUS/QUEUES/<queueName-segments…>/<field>
+                    // SQS queue names may contain underscores (incl. consecutive `__`),
+                    // so the queue name spans every segment between QUEUES and the
+                    // trailing field. Re-join them with the `__` separator so a
+                    // user with a `orders__dlq` queue can still address it via
+                    // `…__QUEUES__orders__dlq__TRANSPORT=amqp`.
+                    var queueName = string.Join("__", path, 5, path.Length - 6);
+                    var queueField = path[path.Length - 1].ToUpperInvariant();
+                    azure.ServiceBus.Queues ??= new Dictionary<string, SqsQueueSettings>(StringComparer.OrdinalIgnoreCase);
+                    if (!azure.ServiceBus.Queues.TryGetValue(queueName, out var settings) || settings is null)
+                    {
+                        settings = new SqsQueueSettings();
+                        azure.ServiceBus.Queues[queueName] = settings;
+                    }
+                    if (queueField == "TRANSPORT" && TryParseTransport(value, out var qt))
+                    {
+                        settings.Transport = qt;
+                    }
+                }
                 return;
             case "COSMOS":
                 azure.Cosmos ??= new CosmosCredentials();
@@ -148,5 +175,17 @@ public static class ProxyConfigLoader
                 else if (fieldSegment == "PRIMARYKEY") azure.Cosmos.PrimaryKey = value ?? string.Empty;
                 return;
         }
+    }
+
+    private static bool TryParseTransport(string? value, out SqsTransport transport)
+    {
+        if (!string.IsNullOrWhiteSpace(value)
+            && Enum.TryParse<SqsTransport>(value, ignoreCase: true, out transport)
+            && Enum.IsDefined(typeof(SqsTransport), transport))
+        {
+            return true;
+        }
+        transport = default;
+        return false;
     }
 }
