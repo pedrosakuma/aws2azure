@@ -172,6 +172,32 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Opens a Service Bus <c>$management</c> request-response client
+    /// scoped to <paramref name="audience"/>. CBS-authorises the
+    /// audience if needed, then attaches the paired sender/receiver on
+    /// the shared data session. Caller owns the returned client and
+    /// must dispose it when done.
+    /// </summary>
+    /// <remarks>
+    /// Note the <c>$management</c> node is per-connection on Service
+    /// Bus — the address is literally <c>$management</c> regardless of
+    /// queue. The CBS-authorised audience scopes which operations the
+    /// broker accepts. For renew-lock the audience must match the
+    /// entity whose lock-token is being renewed.
+    /// </remarks>
+    public async Task<ServiceBusManagementClient> OpenManagementClientAsync(
+        string audience, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(audience);
+        ThrowIfDisposed();
+
+        await EnsureAuthorizedAsync(audience, cancellationToken).ConfigureAwait(false);
+        var dataSession = await EnsureDataSessionAsync(cancellationToken).ConfigureAwait(false);
+        return await ServiceBusManagementClient.OpenAsync(dataSession, cancellationToken).ConfigureAwait(false);
+    }
+
+
     private async Task EnsureAuthorizedAsync(string audience, CancellationToken cancellationToken)
     {
         // Lock-free fast path: ConcurrentDictionary makes the read safe to
