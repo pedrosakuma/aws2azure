@@ -264,6 +264,75 @@ public sealed class AmqpReceiveMessageHandlersTests
         Assert.Contains("InvalidParameterValue", ReadBody(ctx));
     }
 
+    // --- FIFO (session-bound) receive ---------------------------------
+
+    private const string FifoQueueName = "orders.fifo";
+
+    [Fact]
+    public async Task ReceiveMessage_on_fifo_queue_acquires_broker_assigned_session_and_mints_v3_handle()
+    {
+        await using var harness = await TestHarness.OpenSessionAsync(
+            FifoQueueName, sessionId: "group-A",
+            (Guid.Parse("11111111-2222-3333-4444-555555555555").ToByteArray(), EncodeMessage("fifo-msg-1", groupId: "group-A")));
+
+        var ctx = NewCtx();
+        var parsed = QueryParsed(SqsOperation.ReceiveMessage,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+            ("AttributeName.1", "All"));
+
+        await AmqpReceiveMessageHandlers.HandleAsync(ctx, parsed, harness.Provider, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Equal(1, harness.Provider.AcquireSessionCount);
+        var body = ReadBody(ctx);
+        Assert.Contains("fifo-msg-1", body);
+        // v3 receipt handle (session-bound) — base64 prefix "Mzo".
+        Assert.Contains("<ReceiptHandle>Mzo", body);
+        // MessageGroupId surfaced from the message's properties.group-id.
+        Assert.Contains("<Name>MessageGroupId</Name><Value>group-A</Value>", body);
+    }
+
+    [Fact]
+    public async Task ReceiveMessage_on_fifo_queue_falls_back_to_receiver_session_id_when_group_id_absent()
+    {
+        // Producer that does not stamp properties.group-id explicitly:
+        // the bound session-id on the receiver is still the right
+        // MessageGroupId for SQS clients (SB couples the two anyway).
+        await using var harness = await TestHarness.OpenSessionAsync(
+            FifoQueueName, sessionId: "group-B",
+            (Guid.Parse("22222222-3333-4444-5555-666666666666").ToByteArray(), EncodeMessage("fifo-msg-2")));
+
+        var ctx = NewCtx();
+        var parsed = QueryParsed(SqsOperation.ReceiveMessage,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+            ("AttributeName.1", "MessageGroupId"));
+
+        await AmqpReceiveMessageHandlers.HandleAsync(ctx, parsed, harness.Provider, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        var body = ReadBody(ctx);
+        Assert.Contains("<Name>MessageGroupId</Name><Value>group-B</Value>", body);
+    }
+
+    [Fact]
+    public async Task ReceiveMessage_on_non_fifo_queue_does_not_call_session_acquire()
+    {
+        await using var harness = await TestHarness.OpenAsync(QueueName,
+            (Guid.Parse("33333333-4444-5555-6666-777777777777").ToByteArray(), EncodeMessage("std-msg")));
+
+        var ctx = NewCtx();
+        var parsed = QueryParsed(SqsOperation.ReceiveMessage,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"));
+
+        await AmqpReceiveMessageHandlers.HandleAsync(ctx, parsed, harness.Provider, CancellationToken.None);
+
+        Assert.Equal(0, harness.Provider.AcquireSessionCount);
+        var body = ReadBody(ctx);
+        // Non-FIFO keeps emitting the v2 (non-session) receipt handle prefix.
+        Assert.Contains("<ReceiptHandle>Mjo", body);
+        Assert.DoesNotContain("Mzo", body);
+    }
+
     // --- harness -------------------------------------------------------
 
     private sealed class TestHarness : IAsyncDisposable
@@ -280,6 +349,21 @@ public sealed class AmqpReceiveMessageHandlersTests
 
         public static async Task<TestHarness> OpenAsync(string queueName,
             params (byte[] tag, byte[] payload)[] messages)
+            => await OpenInternalAsync(queueName, sessionId: null, messages);
+
+        /// <summary>
+        /// Opens a session-bound receiver against the broker simulator.
+        /// The simulator binds the requested session-id verbatim, so the
+        /// returned <see cref="ServiceBusReceiver.SessionId"/> equals
+        /// <paramref name="sessionId"/>. Use this to exercise the FIFO
+        /// receive path (slice 7c.3c).
+        /// </summary>
+        public static async Task<TestHarness> OpenSessionAsync(string queueName, string sessionId,
+            params (byte[] tag, byte[] payload)[] messages)
+            => await OpenInternalAsync(queueName, sessionId: sessionId, messages);
+
+        private static async Task<TestHarness> OpenInternalAsync(string queueName, string? sessionId,
+            (byte[] tag, byte[] payload)[] messages)
         {
             var (client, server) = PipePairTransport.CreatePair();
             var broker = new ServiceBusBrokerSimulator(server);
@@ -293,8 +377,19 @@ public sealed class AmqpReceiveMessageHandlersTests
                 })
                 .WaitAsync(TimeSpan.FromSeconds(10));
             var audience = ServiceBusEndpoint.BuildQueueAudience("ns.servicebus.windows.net", queueName);
-            var receiver = await conn.OpenReceiverAsync(queueName, audience, prefetchCredit: 0)
-                .WaitAsync(TimeSpan.FromSeconds(10));
+
+            ServiceBusReceiver receiver;
+            if (sessionId is null)
+            {
+                receiver = await conn.OpenReceiverAsync(queueName, audience, prefetchCredit: 0)
+                    .WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            else
+            {
+                receiver = await conn.OpenSessionReceiverAsync(queueName, audience, sessionId, prefetchCredit: 0)
+                    .WaitAsync(TimeSpan.FromSeconds(10));
+            }
+
             var inbox = new Queue<ServiceBusBrokerSimulator.DeliveryToSend>();
             foreach (var (tag, payload) in messages)
                 inbox.Enqueue(new ServiceBusBrokerSimulator.DeliveryToSend(tag, payload));
@@ -305,7 +400,8 @@ public sealed class AmqpReceiveMessageHandlersTests
                 Connection = conn,
                 Receiver = receiver,
                 Broker = broker,
-                Provider = new FakeAmqpReceiverProvider(queueName, receiver),
+                Provider = new FakeAmqpReceiverProvider(queueName, receiver,
+                    brokerAssignedSessionReceiver: sessionId is null ? null : receiver),
             };
         }
 
@@ -374,16 +470,21 @@ public sealed class AmqpReceiveMessageHandlersTests
     {
         private readonly string _expectedQueue;
         private readonly ServiceBusReceiver _receiver;
+        private readonly ServiceBusReceiver? _brokerAssignedSessionReceiver;
         private readonly ServiceBusManagementClient? _management;
         public int InvalidateCount { get; private set; }
         public int InvalidateManagementCount { get; private set; }
+        public int InvalidateSessionCount { get; private set; }
+        public int AcquireSessionCount { get; private set; }
 
         public FakeAmqpReceiverProvider(string queueName, ServiceBusReceiver receiver,
-            ServiceBusManagementClient? management = null)
+            ServiceBusManagementClient? management = null,
+            ServiceBusReceiver? brokerAssignedSessionReceiver = null)
         {
             _expectedQueue = queueName;
             _receiver = receiver;
             _management = management;
+            _brokerAssignedSessionReceiver = brokerAssignedSessionReceiver;
         }
 
         public Task<ServiceBusReceiver> GetReceiverAsync(string queueName, CancellationToken cancellationToken)
@@ -414,21 +515,45 @@ public sealed class AmqpReceiveMessageHandlersTests
 
         public Task<ServiceBusReceiver> GetSessionReceiverAsync(
             string queueName, string sessionId, CancellationToken cancellationToken)
-            => throw new NotSupportedException("Session receivers are not exercised by this fixture.");
+        {
+            // Slice 7c.3d will exercise the (queue, sessionId)-keyed
+            // settle path; until then GetSessionReceiverAsync is only
+            // reached if a v3 receipt handle is decoded — return the
+            // same session receiver the acquire path produced when
+            // available.
+            Assert.Equal(_expectedQueue, queueName);
+            if (_brokerAssignedSessionReceiver is null)
+                throw new NotSupportedException("Test harness did not wire a session receiver.");
+            return Task.FromResult(_brokerAssignedSessionReceiver);
+        }
 
         public Task<ServiceBusReceiver> AcquireBrokerAssignedSessionReceiverAsync(
             string queueName, CancellationToken cancellationToken)
-            => throw new NotSupportedException("Broker-assigned session receivers are not exercised by this fixture.");
+        {
+            Assert.Equal(_expectedQueue, queueName);
+            if (_brokerAssignedSessionReceiver is null)
+                throw new NotSupportedException("Test harness did not wire a broker-assigned session receiver.");
+            AcquireSessionCount++;
+            return Task.FromResult(_brokerAssignedSessionReceiver);
+        }
 
         public Task InvalidateSessionReceiverAsync(string queueName, string sessionId)
-            => Task.CompletedTask;
+        {
+            InvalidateSessionCount++;
+            return Task.CompletedTask;
+        }
     }
 
     // --- shared helpers ------------------------------------------------
 
     private static byte[] EncodeMessage(string body)
+        => EncodeMessage(body, groupId: null);
+
+    private static byte[] EncodeMessage(string body, string? groupId)
     {
         var msg = new AmqpMessage { Body = Encoding.UTF8.GetBytes(body) };
+        if (!string.IsNullOrEmpty(groupId))
+            msg.Properties = msg.Properties with { GroupId = groupId };
         var rented = ArrayPool<byte>.Shared.Rent(4096);
         try
         {

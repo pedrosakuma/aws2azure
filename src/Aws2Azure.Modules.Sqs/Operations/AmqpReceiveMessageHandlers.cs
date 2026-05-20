@@ -40,8 +40,7 @@ namespace Aws2Azure.Modules.Sqs.Operations;
 /// </list>
 ///
 /// <para>Out of scope: long-polling (slice 8c), CMV via $management
-/// (slice 8c), FIFO <c>MessageGroupId</c> round-trip (Slice 5 — REST
-/// only until the bare-message parser gains <c>group-id</c>),
+/// for session-bound deliveries (slice 7c.4),
 /// <c>x-opt-deadletter-source</c> system-attribute surfacing on
 /// dead-lettered messages.</para>
 /// </summary>
@@ -102,9 +101,18 @@ internal static class AmqpReceiveMessageHandlers
         }
 
         ServiceBusReceiver receiver;
+        var isFifo = QueueName.IsFifo(queueName);
         try
         {
-            receiver = await receivers.GetReceiverAsync(queueName, ct).ConfigureAwait(false);
+            // FIFO queues map to SB session-aware receive. The client
+            // doesn't know the MessageGroupId in advance, so the broker
+            // picks any available session and we adopt the resulting
+            // receiver into the pool keyed by the resolved session-id
+            // (slice 7c.3a). Subsequent settle requests with a v3
+            // receipt handle route back via GetSessionReceiverAsync.
+            receiver = isFifo
+                ? await receivers.AcquireBrokerAssignedSessionReceiverAsync(queueName, ct).ConfigureAwait(false)
+                : await receivers.GetReceiverAsync(queueName, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -128,8 +136,12 @@ internal static class AmqpReceiveMessageHandlers
             // Link- or connection-level failure: drop the receiver so the
             // next call rebuilds. Don't tear down the connection — a stale
             // link can be detached without affecting peers under the same
-            // SAS key.
-            await receivers.InvalidateAsync(queueName, closeConnection: false).ConfigureAwait(false);
+            // SAS key. For FIFO the cached entry is keyed by session-id
+            // so we evict the session-receiver slot specifically.
+            if (isFifo && receiver.SessionId is { } sessionId)
+                await receivers.InvalidateSessionReceiverAsync(queueName, sessionId).ConfigureAwait(false);
+            else
+                await receivers.InvalidateAsync(queueName, closeConnection: false).ConfigureAwait(false);
             await WriteErrorAsync(context, parsed.Protocol,
                 MapAmqpException(ex, "ReceiveMessage")).ConfigureAwait(false);
             return;
@@ -139,7 +151,7 @@ internal static class AmqpReceiveMessageHandlers
         var collected = new List<ReceivedSqsMessage>(batch.Count);
         foreach (var msg in batch)
         {
-            var built = BuildReceivedMessage(queueName, msg, systemAttrFilter);
+            var built = BuildReceivedMessage(queueName, msg, receiver.SessionId, systemAttrFilter);
             if (built is null)
             {
                 // No lock-token (sender-settled / non-16-byte tag) → we
@@ -354,7 +366,7 @@ internal static class AmqpReceiveMessageHandlers
     // --- SB AMQP message → SQS message translation ---------------------
 
     private static ReceivedSqsMessage? BuildReceivedMessage(
-        string queueName, ServiceBusReceivedMessage msg, HashSet<string>? systemAttrFilter)
+        string queueName, ServiceBusReceivedMessage msg, string? receiverSessionId, HashSet<string>? systemAttrFilter)
     {
         if (msg.LockToken is not { } lockToken)
         {
@@ -389,10 +401,24 @@ internal static class AmqpReceiveMessageHandlers
         // ApproximateReceiveCount counts the current receive — add one.
         var deliveryCount = msg.DeliveryCount.HasValue ? (int)(msg.DeliveryCount.Value + 1) : 1;
 
-        var systemAttrs = BuildSystemAttributes(
-            enqueuedTimeMillis, deliveryCount, sequenceNumber, systemAttrFilter);
+        // MessageGroupId: SB stamps the SQS MessageGroupId onto both
+        // properties.group-id (slice 7c.2 parsed it) and the SB
+        // session-id. Prefer the per-message value (it survives across
+        // session-receiver rebinds) but fall back to the receiver's
+        // bound session-id when the producer skipped the explicit
+        // properties section.
+        var messageGroupId = msg.Message.Properties.GroupId;
+        if (string.IsNullOrEmpty(messageGroupId))
+            messageGroupId = receiverSessionId;
 
-        var handle = AmqpReceiptHandle.Encode(queueName, lockToken, lockedUntil);
+        var systemAttrs = BuildSystemAttributes(
+            enqueuedTimeMillis, deliveryCount, sequenceNumber, messageGroupId, systemAttrFilter);
+
+        // FIFO receives stamp the bound session-id into the handle so
+        // DeleteMessage / ChangeMessageVisibility can route back to the
+        // same session receiver in the pool (slice 7c.3d). Non-FIFO
+        // queues pass sessionId=null and the encoder emits v2.
+        var handle = AmqpReceiptHandle.Encode(queueName, lockToken, lockedUntil, receiverSessionId);
         return new ReceivedSqsMessage(
             MessageId: messageId!,
             ReceiptHandle: handle,
@@ -410,7 +436,8 @@ internal static class AmqpReceiveMessageHandlers
     }
 
     private static IReadOnlyDictionary<string, string>? BuildSystemAttributes(
-        long? enqueuedTimeMillis, int deliveryCount, string? sequenceNumber, HashSet<string>? filter)
+        long? enqueuedTimeMillis, int deliveryCount, string? sequenceNumber,
+        string? messageGroupId, HashSet<string>? filter)
     {
         if (filter is null || filter.Count == 0) return null;
 
@@ -425,6 +452,8 @@ internal static class AmqpReceiveMessageHandlers
         Add("ApproximateReceiveCount", deliveryCount.ToString(CultureInfo.InvariantCulture));
         if (!string.IsNullOrEmpty(sequenceNumber))
             Add("SequenceNumber", sequenceNumber!);
+        if (!string.IsNullOrEmpty(messageGroupId))
+            Add("MessageGroupId", messageGroupId!);
         return dict.Count == 0 ? null : dict;
     }
 
