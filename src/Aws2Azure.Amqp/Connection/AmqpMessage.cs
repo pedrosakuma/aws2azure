@@ -6,15 +6,31 @@ namespace Aws2Azure.Amqp.Connection;
 /// <summary>
 /// Outgoing or incoming AMQP 1.0 bare message (§3.2). Slice 5c carries
 /// the three sections CBS needs: <see cref="Properties"/>,
-/// <see cref="ApplicationProperties"/>, <see cref="Body"/>. Headers,
-/// annotations, footer, etc. are out of scope until a real workload
-/// demands them.
+/// <see cref="ApplicationProperties"/>, <see cref="Body"/>. Slice 8b.1
+/// extends the inbound path to also parse <see cref="Header"/> (§3.2.1,
+/// for <c>delivery-count</c>) and <see cref="MessageAnnotations"/>
+/// (§3.2.3, for the Service Bus <c>x-opt-*</c> metadata). These two
+/// extra sections are read-only — the proxy never authors them.
+/// Other inbound sections (delivery-annotations, footer) are still
+/// skipped opaquely.
 /// </summary>
 internal sealed class AmqpMessage
 {
     public AmqpProperties Properties { get; set; }
     public Dictionary<string, object?>? ApplicationProperties { get; set; }
     public ReadOnlyMemory<byte> Body { get; set; }
+
+    /// <summary>
+    /// Parsed <c>header</c> section (§3.2.1) if present on the wire.
+    /// Read-only — the proxy never authors a header section.
+    /// </summary>
+    public AmqpHeader? Header { get; set; }
+
+    /// <summary>
+    /// Parsed <c>message-annotations</c> section (§3.2.3) if present on
+    /// the wire. Read-only — the proxy never authors annotations.
+    /// </summary>
+    public AmqpMessageAnnotations? MessageAnnotations { get; set; }
 
     /// <summary>
     /// Optional amqp-value (§3.2, descriptor 0x77) string body. When set
@@ -89,6 +105,13 @@ internal sealed class AmqpMessage
             int consumed;
             switch (descriptor)
             {
+                case MessageSectionDescriptor.Header:
+                    AmqpHeader.Read(remaining, out var header, out consumed);
+                    message.Header = header;
+                    break;
+                case MessageSectionDescriptor.MessageAnnotations:
+                    message.MessageAnnotations = AmqpMessageAnnotations.Read(remaining, out consumed);
+                    break;
                 case MessageSectionDescriptor.Properties:
                     AmqpProperties.Read(remaining, out var props, out consumed);
                     message.Properties = props;
