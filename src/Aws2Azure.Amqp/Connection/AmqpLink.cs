@@ -29,6 +29,16 @@ internal sealed class AmqpLink
     private readonly TaskCompletionSource<AmqpDetach> _peerDetachReceived =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    // Captured peer error when the peer detached with one. Reads of
+    // _incoming after a peer-initiated detach surface this through
+    // AmqpLinkException so callers (e.g. the SQS AMQP handler) can map
+    // condition → SqsError without inspecting message text. Boxed in a
+    // small holder so Volatile.Read/Write can publish it across threads
+    // (AmqpError is a struct, so Volatile<T> on Nullable<AmqpError> is
+    // not legal).
+    private sealed class FaultBox { public AmqpError Error; }
+    private FaultBox? _pendingFault;
+
     // Sender-side delivery tracking.
     private readonly object _deliveryLock = new();
     private readonly Dictionary<uint, TaskCompletionSource<AmqpDispositionOutcome>> _pendingSends = new();
@@ -491,8 +501,9 @@ internal sealed class AmqpLink
                 && !deadlineCts.IsCancellationRequested
                 && !cancellationToken.IsCancellationRequested)
             {
-                throw new InvalidOperationException(
-                    "Receiver link is closed; no further deliveries will arrive.");
+                throw BuildPeerDetachException(
+                    "Receiver link is closed; no further deliveries will arrive.",
+                    Volatile.Read(ref _pendingFault)?.Error);
             }
         }
         catch (OperationCanceledException) when (deadlineCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
@@ -602,8 +613,9 @@ internal sealed class AmqpLink
             var prior = Interlocked.CompareExchange(ref _state, StateAttached, StateAttaching);
             if (prior != StateAttaching)
             {
-                throw new InvalidOperationException(
-                    "Peer detached during attach handshake.");
+                throw BuildPeerDetachException(
+                    "Peer detached during attach handshake.",
+                    Volatile.Read(ref _pendingFault)?.Error);
             }
         }
     }
@@ -957,6 +969,21 @@ internal sealed class AmqpLink
         // Per §2.6.5 the peer may detach at any time after sending its
         // attach, including before our own attach handshake completes
         // (e.g. broker rejects authorization). Accept from either state.
+        AmqpError? peerError = null;
+        if (!detach.Error.IsEmpty)
+        {
+            try
+            {
+                AmqpError.Read(detach.Error, out var parsed, out _);
+                peerError = parsed;
+                Volatile.Write(ref _pendingFault, new FaultBox { Error = parsed });
+            }
+            catch
+            {
+                // Malformed error payload — treat as no diagnostic.
+            }
+        }
+
         int prior;
         while (true)
         {
@@ -976,8 +1003,8 @@ internal sealed class AmqpLink
             if (prior == StateAttaching)
             {
                 // Surface a link-detached failure to AttachAsync.
-                _peerAttachReceived.TrySetException(new InvalidOperationException(
-                    "Peer detached during attach handshake."));
+                _peerAttachReceived.TrySetException(BuildPeerDetachException(
+                    "Peer detached during attach handshake.", peerError));
             }
             _ = Task.Run(async () =>
             {
@@ -990,6 +1017,22 @@ internal sealed class AmqpLink
                 }
             });
         }
+    }
+
+    private static AmqpLinkException BuildPeerDetachException(string baseMessage, AmqpError? peerError)
+    {
+        if (peerError is { } err)
+        {
+            var msg = string.IsNullOrEmpty(err.Description)
+                ? $"{baseMessage} condition={err.Condition}"
+                : $"{baseMessage} condition={err.Condition}: {err.Description}";
+            return new AmqpLinkException(msg, err.Kind)
+            {
+                PeerCondition = err.Condition,
+                PeerDescription = err.Description,
+            };
+        }
+        return new AmqpLinkException(baseMessage);
     }
 
     /// <summary>
@@ -1009,7 +1052,9 @@ internal sealed class AmqpLink
         foreach (var tcs in snapshot)
         {
             if (cancelled) tcs.TrySetCanceled();
-            else tcs.TrySetException(new InvalidOperationException("Link detached before disposition was received."));
+            else tcs.TrySetException(BuildPeerDetachException(
+                "Link detached before disposition was received.",
+                Volatile.Read(ref _pendingFault)?.Error));
         }
         // Wake any sender waiting on credit so it observes the terminal state.
         try { _creditAvailable.Release(int.MaxValue / 2); }

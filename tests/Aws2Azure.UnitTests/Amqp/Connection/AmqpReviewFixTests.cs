@@ -93,7 +93,12 @@ public sealed class AmqpReviewFixTests
         }
         catch (InvalidOperationException)
         {
-            // Peer detached during attach handshake — link never returned.
+            // Pre-slice-8c shape: peer detached without an AmqpError.
+        }
+        catch (AmqpLinkException)
+        {
+            // Post-slice-8c shape: peer detach surfaces typed link
+            // exception (carries AmqpError when present).
         }
 
         if (link is not null)

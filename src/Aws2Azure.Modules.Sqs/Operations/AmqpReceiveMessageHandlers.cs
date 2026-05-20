@@ -5,6 +5,8 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Aws2Azure.Amqp.Connection;
+using Aws2Azure.Amqp.Framing;
 using Aws2Azure.Amqp.ServiceBus;
 using Aws2Azure.Modules.Sqs.Errors;
 using Aws2Azure.Modules.Sqs.Internal;
@@ -107,7 +109,7 @@ internal static class AmqpReceiveMessageHandlers
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             await WriteErrorAsync(context, parsed.Protocol,
-                SqsErrorMapping.InternalError("AMQP connection failed: " + ex.Message)).ConfigureAwait(false);
+                MapAmqpException(ex, "ReceiveMessage")).ConfigureAwait(false);
             return;
         }
 
@@ -129,7 +131,7 @@ internal static class AmqpReceiveMessageHandlers
             // SAS key.
             await receivers.InvalidateAsync(queueName, closeConnection: false).ConfigureAwait(false);
             await WriteErrorAsync(context, parsed.Protocol,
-                SqsErrorMapping.InternalError("AMQP receive failed: " + ex.Message)).ConfigureAwait(false);
+                MapAmqpException(ex, "ReceiveMessage")).ConfigureAwait(false);
             return;
         }
 
@@ -197,7 +199,7 @@ internal static class AmqpReceiveMessageHandlers
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             await WriteErrorAsync(context, parsed.Protocol,
-                SqsErrorMapping.InternalError("AMQP connection failed: " + ex.Message)).ConfigureAwait(false);
+                MapAmqpException(ex, "DeleteMessage")).ConfigureAwait(false);
             return;
         }
 
@@ -211,7 +213,7 @@ internal static class AmqpReceiveMessageHandlers
         {
             await receivers.InvalidateAsync(queueName, closeConnection: false).ConfigureAwait(false);
             await WriteErrorAsync(context, parsed.Protocol,
-                SqsErrorMapping.InternalError("AMQP delete failed: " + ex.Message)).ConfigureAwait(false);
+                MapAmqpException(ex, "DeleteMessage")).ConfigureAwait(false);
             return;
         }
         if (!settled)
@@ -424,4 +426,26 @@ internal static class AmqpReceiveMessageHandlers
 
     private static Task WriteErrorAsync(HttpContext context, SqsWireProtocol protocol, SqsErrorMapping.Mapping mapping) =>
         SqsErrorResponse.WriteAsync(context, protocol, mapping.StatusCode, mapping.Code, mapping.Message, mapping.FaultType);
+
+    /// <summary>
+    /// Translates an exception from the AMQP stack into a structured
+    /// SQS error mapping. <see cref="AmqpLinkException"/> and
+    /// <see cref="AmqpConnectionException"/> carry the spec-classified
+    /// <see cref="AmqpErrorKind"/> plus the peer's condition symbol,
+    /// which <see cref="SqsErrorMapping.FromAmqp"/> uses to choose the
+    /// right SQS code (lock-lost → <c>MessageNotInflight</c>,
+    /// not-found → <c>NonExistentQueue</c>, throttled → 503, etc.).
+    /// Anything else falls back to a generic 500 — but unlike the
+    /// previous slice we no longer concatenate <c>ex.Message</c> into
+    /// the response body (it can leak broker-internal diagnostics).
+    /// </summary>
+    private static SqsErrorMapping.Mapping MapAmqpException(Exception ex, string operation)
+    {
+        return ex switch
+        {
+            AmqpLinkException link => SqsErrorMapping.FromAmqp(link.Kind, link.PeerCondition, operation),
+            AmqpConnectionException conn => SqsErrorMapping.FromAmqp(conn.Kind, conn.PeerCondition, operation),
+            _ => SqsErrorMapping.InternalError($"aws2azure: AMQP {operation} failed."),
+        };
+    }
 }
