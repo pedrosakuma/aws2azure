@@ -94,6 +94,48 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     }
 
     /// <summary>
+    /// Returns the shared management client for the (namespace, key,
+    /// queue) tuple, opening the connection and the CBS-authorised
+    /// <c>$management</c> request-response link on first use. Owned by
+    /// the pool — callers must <b>not</b> dispose it; use
+    /// <see cref="InvalidateManagementClientAsync"/> after a link
+    /// failure.
+    /// </summary>
+    public async Task<ServiceBusManagementClient> GetManagementClientAsync(
+        string namespaceFqdn,
+        string sasKeyName,
+        string sasKey,
+        string queueName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sasKeyName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sasKey);
+        ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
+        ThrowIfDisposed();
+
+        var key = new ServiceBusAmqpConnectionKey(namespaceFqdn, sasKeyName);
+        while (true)
+        {
+            var slot = _connections.GetOrAdd(key, static _ => new ConnectionSlot());
+            try
+            {
+                var connection = await slot.GetOrCreateConnectionAsync(
+                    _factory, key, sasKey, cancellationToken).ConfigureAwait(false);
+                var client = await slot.GetOrCreateManagementClientAsync(
+                    connection, key, queueName, cancellationToken).ConfigureAwait(false);
+                ThrowIfDisposed();
+                return client;
+            }
+            catch (ObjectDisposedException) when (Volatile.Read(ref _disposed) == 0)
+            {
+                _connections.TryRemove(KeyValuePair.Create(key, slot));
+                continue;
+            }
+        }
+    }
+
+    /// <summary>
     /// Evicts the receiver for <paramref name="queueName"/> under
     /// (namespace, key). When <paramref name="closeConnection"/> is
     /// <c>true</c> (the default when the failure looks
@@ -126,6 +168,26 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Evicts the cached management client for (namespace, key, queue)
+    /// without touching the receiver or connection. Next call to
+    /// <see cref="GetManagementClientAsync"/> rebuilds it.
+    /// </summary>
+    public async Task InvalidateManagementClientAsync(
+        string namespaceFqdn,
+        string sasKeyName,
+        string queueName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sasKeyName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
+        if (Volatile.Read(ref _disposed) != 0) return;
+
+        var key = new ServiceBusAmqpConnectionKey(namespaceFqdn, sasKeyName);
+        if (!_connections.TryGetValue(key, out var slot)) return;
+        await slot.InvalidateManagementClientAsync(queueName).ConfigureAwait(false);
+    }
+
     /// <summary>Number of cached connections; useful in tests.</summary>
     public int ConnectionCount => _connections.Count;
 
@@ -152,6 +214,8 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     {
         private readonly SemaphoreSlim _connectionLock = new(1, 1);
         private readonly ConcurrentDictionary<string, ReceiverSlot> _receivers
+            = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, ManagementSlot> _managementClients
             = new(StringComparer.OrdinalIgnoreCase);
         private ServiceBusAmqpConnection? _connection;
         private int _disposed;
@@ -204,7 +268,27 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                 await slot.DisposeAsync().ConfigureAwait(false);
         }
 
+        public async Task<ServiceBusManagementClient> GetOrCreateManagementClientAsync(
+            ServiceBusAmqpConnection connection,
+            ServiceBusAmqpConnectionKey key,
+            string queueName,
+            CancellationToken cancellationToken)
+        {
+            ThrowIfDisposed();
+            var slot = _managementClients.GetOrAdd(queueName, static _ => new ManagementSlot());
+            return await slot
+                .GetOrCreateAsync(connection, key.NamespaceFqdn, queueName, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        public async Task InvalidateManagementClientAsync(string queueName)
+        {
+            if (_managementClients.TryRemove(queueName, out var slot))
+                await slot.DisposeAsync().ConfigureAwait(false);
+        }
+
         public int ReceiverCount => _receivers.Count;
+        public int ManagementClientCount => _managementClients.Count;
 
         private void ThrowIfDisposed()
         {
@@ -235,6 +319,11 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                 _receivers.Clear();
                 foreach (var r in receivers)
                     await r.DisposeAsync().ConfigureAwait(false);
+
+                var clients = _managementClients.Values.ToArray();
+                _managementClients.Clear();
+                foreach (var c in clients)
+                    await c.DisposeAsync().ConfigureAwait(false);
 
                 var connection = Interlocked.Exchange(ref _connection, null);
                 if (connection is not null)
@@ -306,6 +395,73 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                 var receiver = Interlocked.Exchange(ref _receiver, null);
                 if (receiver is not null)
                     await receiver.DisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                _lock.Release();
+                _lock.Dispose();
+            }
+        }
+    }
+
+    private sealed class ManagementSlot : IAsyncDisposable
+    {
+        private readonly SemaphoreSlim _lock = new(1, 1);
+        private ServiceBusManagementClient? _client;
+        private int _disposed;
+
+        public async Task<ServiceBusManagementClient> GetOrCreateAsync(
+            ServiceBusAmqpConnection connection,
+            string namespaceFqdn,
+            string queueName,
+            CancellationToken cancellationToken)
+        {
+            var existing = Volatile.Read(ref _client);
+            if (existing is not null) return existing;
+            ThrowIfDisposed();
+
+            await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                ThrowIfDisposed();
+                existing = _client;
+                if (existing is not null) return existing;
+
+                var audience = ServiceBusEndpoint.BuildQueueAudience(namespaceFqdn, queueName);
+                var created = await connection
+                    .OpenManagementClientAsync(audience, cancellationToken)
+                    .ConfigureAwait(false);
+                Volatile.Write(ref _client, created);
+                return created;
+            }
+            finally
+            {
+                _lock.Release();
+            }
+        }
+
+        private void ThrowIfDisposed()
+        {
+            if (Volatile.Read(ref _disposed) != 0)
+                throw new ObjectDisposedException(nameof(ManagementSlot));
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            try
+            {
+                await _lock.WaitAsync().ConfigureAwait(false);
+            }
+            catch (ObjectDisposedException)
+            {
+                return;
+            }
+            try
+            {
+                var client = Interlocked.Exchange(ref _client, null);
+                if (client is not null)
+                    await client.DisposeAsync().ConfigureAwait(false);
             }
             finally
             {

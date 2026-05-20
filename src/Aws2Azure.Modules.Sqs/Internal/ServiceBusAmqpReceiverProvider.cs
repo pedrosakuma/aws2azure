@@ -40,6 +40,12 @@ internal sealed class ServiceBusAmqpReceiverProvider : IAmqpReceiverProvider
     public Task<ServiceBusReceiver> GetReceiverAsync(string queueName, CancellationToken cancellationToken) =>
         _pool.GetReceiverAsync(_namespaceFqdn, _sasKeyName, _sasKey, queueName, cancellationToken);
 
+    public Task<ServiceBusManagementClient> GetManagementClientAsync(string queueName, CancellationToken cancellationToken) =>
+        _pool.GetManagementClientAsync(_namespaceFqdn, _sasKeyName, _sasKey, queueName, cancellationToken);
+
     public Task InvalidateAsync(string queueName, bool closeConnection) =>
         _pool.InvalidateAsync(_namespaceFqdn, _sasKeyName, queueName, closeConnection);
+
+    public Task InvalidateManagementClientAsync(string queueName) =>
+        _pool.InvalidateManagementClientAsync(_namespaceFqdn, _sasKeyName, queueName);
 }

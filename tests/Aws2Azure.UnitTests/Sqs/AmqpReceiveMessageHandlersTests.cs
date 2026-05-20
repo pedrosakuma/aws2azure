@@ -166,9 +166,14 @@ public sealed class AmqpReceiveMessageHandlersTests
     }
 
     [Fact]
-    public async Task ChangeMessageVisibility_short_circuits_with_Aws2Azure_VisibilityClamped_header()
+    public async Task ChangeMessageVisibility_with_renewlock_emits_clamp_header_when_granted_differs()
     {
-        await using var harness = await TestHarness.OpenAsync(QueueName);
+        // Broker grants a ~30s expiry; client requests 300 → divergence
+        // surfaces via the Aws2Azure-VisibilityClamped header.
+        var grantedExpiry = DateTimeOffset.UtcNow.AddSeconds(30);
+        grantedExpiry = DateTimeOffset.FromUnixTimeMilliseconds(grantedExpiry.ToUnixTimeMilliseconds());
+        await using var harness = await TestHarness.OpenWithManagementAsync(
+            QueueName, renewExpiry: grantedExpiry);
 
         var handle = AmqpReceiptHandle.Encode(QueueName, Guid.NewGuid(), DateTimeOffset.UtcNow);
         var ctx = NewCtx();
@@ -180,7 +185,64 @@ public sealed class AmqpReceiveMessageHandlersTests
             harness.Provider, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
-        Assert.Equal("300", ctx.Response.Headers["Aws2Azure-VisibilityClamped"].ToString());
+        var clamp = ctx.Response.Headers["Aws2Azure-VisibilityClamped"].ToString();
+        Assert.StartsWith("requested=300;granted=", clamp);
+        Assert.Contains("ChangeMessageVisibilityResponse", ReadBody(ctx));
+    }
+
+    [Fact]
+    public async Task ChangeMessageVisibility_maps_lock_lost_to_MessageNotInflight()
+    {
+        await using var harness = await TestHarness.OpenWithManagementAsync(
+            QueueName,
+            renewExpiry: DateTimeOffset.UtcNow,
+            statusCode: 410,
+            statusDescription: "MessageLockLost",
+            errorCondition: "com.microsoft:message-lock-lost");
+
+        var handle = AmqpReceiptHandle.Encode(QueueName, Guid.NewGuid(), DateTimeOffset.UtcNow);
+        var ctx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(ctx,
+            QueryParsed(SqsOperation.ChangeMessageVisibility,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"),
+                ("ReceiptHandle", handle),
+                ("VisibilityTimeout", "30")),
+            harness.Provider, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        Assert.Contains("MessageNotInflight", ReadBody(ctx));
+    }
+
+    [Fact]
+    public async Task ChangeMessageVisibility_zero_calls_Abandon_on_receiver()
+    {
+        // visibility=0 → no $management round-trip; goes straight to
+        // ServiceBusReceiver.AbandonAsync. Receive first so the lock
+        // token lives in the receiver's in-flight cache; otherwise
+        // Abandon returns false and we'd see MessageNotInflight.
+        var tag = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee").ToByteArray();
+        await using var harness = await TestHarness.OpenAsync(QueueName,
+            (tag, EncodeMessage("to-abandon")));
+
+        var rcv = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(rcv,
+            QueryParsed(SqsOperation.ReceiveMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}")),
+            harness.Provider, CancellationToken.None);
+        var handle = ExtractReceiptHandle(ReadBody(rcv));
+        Assert.Equal(1, harness.Receiver.InFlightCount);
+
+        var ctx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(ctx,
+            QueryParsed(SqsOperation.ChangeMessageVisibility,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"),
+                ("ReceiptHandle", handle),
+                ("VisibilityTimeout", "0")),
+            harness.Provider, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.False(ctx.Response.Headers.ContainsKey("Aws2Azure-VisibilityClamped"));
+        Assert.Equal(0, harness.Receiver.InFlightCount); // Abandon removed it.
         Assert.Contains("ChangeMessageVisibilityResponse", ReadBody(ctx));
     }
 
@@ -210,6 +272,11 @@ public sealed class AmqpReceiveMessageHandlersTests
         public required ServiceBusReceiver Receiver { get; init; }
         public required FakeAmqpReceiverProvider Provider { get; init; }
         public required ServiceBusBrokerSimulator Broker { get; init; }
+        public Aws2Azure.Amqp.Connection.AmqpConnection? MgmtConnection { get; init; }
+        public Aws2Azure.Amqp.Connection.AmqpSession? MgmtSession { get; init; }
+        public ServiceBusManagementClient? Management { get; init; }
+        public Task<Guid[]?>? MgmtBrokerTask { get; init; }
+        public Aws2Azure.Amqp.Transport.IAmqpTransport? MgmtServer { get; init; }
 
         public static async Task<TestHarness> OpenAsync(string queueName,
             params (byte[] tag, byte[] payload)[] messages)
@@ -242,8 +309,62 @@ public sealed class AmqpReceiveMessageHandlersTests
             };
         }
 
+        /// <summary>
+        /// Opens a queue harness plus a dedicated management-client
+        /// fixture (separate pipe-pair + AmqpConnection driven by
+        /// <see cref="Aws2Azure.UnitTests.Amqp.ServiceBus.ManagementBrokerSimulator"/>).
+        /// </summary>
+        public static async Task<TestHarness> OpenWithManagementAsync(
+            string queueName,
+            DateTimeOffset renewExpiry,
+            int statusCode = 200,
+            string? statusDescription = "OK",
+            string? errorCondition = null,
+            params (byte[] tag, byte[] payload)[] messages)
+        {
+            var baseHarness = await OpenAsync(queueName, messages);
+
+            var (mgmtClient, mgmtServer) = PipePairTransport.CreatePair();
+            var mgmtBrokerTask = Task.Run(async () =>
+                await Aws2Azure.UnitTests.Amqp.ServiceBus.ManagementBrokerSimulator.RunFullAsync(
+                    mgmtServer, renewExpiry, statusCode, statusDescription, errorCondition,
+                    captureOperation: _ => { }));
+
+            var mgmtConn = new Aws2Azure.Amqp.Connection.AmqpConnection(mgmtClient,
+                new AmqpConnectionSettings
+                {
+                    ContainerId = "test-client-mgmt",
+                    Hostname = "ns.servicebus.windows.net",
+                    IdleTimeout = TimeSpan.Zero,
+                });
+            await mgmtConn.OpenAsync();
+            var mgmtSession = await mgmtConn.BeginSessionAsync();
+            var mgmt = await ServiceBusManagementClient.OpenAsync(mgmtSession);
+
+            return new TestHarness
+            {
+                Connection = baseHarness.Connection,
+                Receiver = baseHarness.Receiver,
+                Broker = baseHarness.Broker,
+                Provider = new FakeAmqpReceiverProvider(queueName, baseHarness.Receiver, mgmt),
+                MgmtConnection = mgmtConn,
+                MgmtSession = mgmtSession,
+                Management = mgmt,
+                MgmtBrokerTask = mgmtBrokerTask,
+                MgmtServer = mgmtServer,
+            };
+        }
+
         public async ValueTask DisposeAsync()
         {
+            if (Management is not null) await Management.DisposeAsync();
+            if (MgmtSession is not null) await MgmtSession.CloseAsync();
+            if (MgmtConnection is not null) await MgmtConnection.CloseAsync();
+            if (MgmtBrokerTask is not null)
+            {
+                try { await MgmtBrokerTask.WaitAsync(TimeSpan.FromSeconds(5)); } catch { }
+            }
+            if (MgmtServer is not null) await MgmtServer.DisposeAsync();
             await Receiver.DisposeAsync();
             await Connection.DisposeAsync();
         }
@@ -253,12 +374,16 @@ public sealed class AmqpReceiveMessageHandlersTests
     {
         private readonly string _expectedQueue;
         private readonly ServiceBusReceiver _receiver;
+        private readonly ServiceBusManagementClient? _management;
         public int InvalidateCount { get; private set; }
+        public int InvalidateManagementCount { get; private set; }
 
-        public FakeAmqpReceiverProvider(string queueName, ServiceBusReceiver receiver)
+        public FakeAmqpReceiverProvider(string queueName, ServiceBusReceiver receiver,
+            ServiceBusManagementClient? management = null)
         {
             _expectedQueue = queueName;
             _receiver = receiver;
+            _management = management;
         }
 
         public Task<ServiceBusReceiver> GetReceiverAsync(string queueName, CancellationToken cancellationToken)
@@ -267,9 +392,23 @@ public sealed class AmqpReceiveMessageHandlersTests
             return Task.FromResult(_receiver);
         }
 
+        public Task<ServiceBusManagementClient> GetManagementClientAsync(string queueName, CancellationToken cancellationToken)
+        {
+            Assert.Equal(_expectedQueue, queueName);
+            if (_management is null)
+                throw new InvalidOperationException("Test harness did not wire a management client.");
+            return Task.FromResult(_management);
+        }
+
         public Task InvalidateAsync(string queueName, bool closeConnection)
         {
             InvalidateCount++;
+            return Task.CompletedTask;
+        }
+
+        public Task InvalidateManagementClientAsync(string queueName)
+        {
+            InvalidateManagementCount++;
             return Task.CompletedTask;
         }
     }

@@ -263,22 +263,91 @@ internal static class AmqpReceiveMessageHandlers
             return;
         }
 
-        // AMQP renew-lock travels over a Service Bus $management
-        // request-response link (slice 8c). Until that lands the AMQP
-        // path mirrors the REST handler's clamp divergence: we accept
-        // the request, do NOT actually extend the lock, and signal the
-        // divergence on the response header so anyone debugging traffic
-        // can see what happened.
-        //
-        // Note: this differs from the REST handler in that we don't
-        // even validate the lock-token is still in flight (REST gets
-        // a 404 from SB on an expired/wrong lock). The CMV gap-doc
-        // tracks this — slice 8c reconciles when the $management link
-        // is wired up.
-        _ = receivers; // suppress unused warning; reserved for future RenewLock wiring.
+        // VisibilityTimeout == 0 is SQS's "make this message immediately
+        // available again" — closest SB primitive is Abandon on the
+        // receiver link (no $management round-trip required, and it
+        // honours the SB redelivery counter).
+        if (visibility == 0)
+        {
+            ServiceBusReceiver receiver;
+            try
+            {
+                receiver = await receivers.GetReceiverAsync(queueName, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await WriteErrorAsync(context, parsed.Protocol,
+                    MapAmqpException(ex, "ChangeMessageVisibility")).ConfigureAwait(false);
+                return;
+            }
+            bool abandoned;
+            try
+            {
+                abandoned = await receiver.AbandonAsync(decoded.LockToken, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                await receivers.InvalidateAsync(queueName, closeConnection: false).ConfigureAwait(false);
+                await WriteErrorAsync(context, parsed.Protocol,
+                    MapAmqpException(ex, "ChangeMessageVisibility")).ConfigureAwait(false);
+                return;
+            }
+            if (!abandoned)
+            {
+                await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.MessageNotInflight()).ConfigureAwait(false);
+                return;
+            }
+            await SqsResponseWriter.WriteChangeMessageVisibilityAsync(context, parsed.Protocol).ConfigureAwait(false);
+            return;
+        }
 
-        context.Response.Headers["Aws2Azure-VisibilityClamped"] =
-            visibility.ToString(CultureInfo.InvariantCulture);
+        // visibility > 0 — round-trip RenewLock through the SB
+        // $management link. Note SB always extends the lock by the
+        // queue-level LockDuration (max 5 min); we can't honour
+        // arbitrary visibility values. When the granted seconds differ
+        // from the requested value we surface the divergence via the
+        // Aws2Azure-VisibilityClamped header so anyone debugging the
+        // proxy can tell what happened. See docs/gaps/sqs/ChangeMessageVisibility.yaml.
+        ServiceBusManagementClient mgmt;
+        try
+        {
+            mgmt = await receivers.GetManagementClientAsync(queueName, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                MapAmqpException(ex, "ChangeMessageVisibility")).ConfigureAwait(false);
+            return;
+        }
+
+        DateTimeOffset lockedUntil;
+        try
+        {
+            lockedUntil = await mgmt.RenewLockAsync(decoded.LockToken, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (ServiceBusManagementException ex)
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                MapManagementException(ex, "ChangeMessageVisibility")).ConfigureAwait(false);
+            return;
+        }
+        catch (Exception ex)
+        {
+            await receivers.InvalidateManagementClientAsync(queueName).ConfigureAwait(false);
+            await WriteErrorAsync(context, parsed.Protocol,
+                MapAmqpException(ex, "ChangeMessageVisibility")).ConfigureAwait(false);
+            return;
+        }
+
+        var grantedSeconds = Math.Max(0, (int)Math.Round((lockedUntil - DateTimeOffset.UtcNow).TotalSeconds));
+        if (grantedSeconds != visibility)
+        {
+            context.Response.Headers["Aws2Azure-VisibilityClamped"] =
+                string.Create(CultureInfo.InvariantCulture,
+                    $"requested={visibility};granted={grantedSeconds}");
+        }
         await SqsResponseWriter.WriteChangeMessageVisibilityAsync(context, parsed.Protocol).ConfigureAwait(false);
     }
 
@@ -447,5 +516,33 @@ internal static class AmqpReceiveMessageHandlers
             AmqpConnectionException conn => SqsErrorMapping.FromAmqp(conn.Kind, conn.PeerCondition, operation),
             _ => SqsErrorMapping.InternalError($"aws2azure: AMQP {operation} failed."),
         };
+    }
+
+    /// <summary>
+    /// Translates a <see cref="ServiceBusManagementException"/> (raised
+    /// by the <c>$management</c> request-response link when SB returns a
+    /// non-2xx <c>statusCode</c>) onto an SQS-shaped error. Prefers the
+    /// AMQP error condition for classification when present; falls back
+    /// to HTTP-style status-code buckets when the broker omits it.
+    /// </summary>
+    private static SqsErrorMapping.Mapping MapManagementException(
+        ServiceBusManagementException ex, string operation)
+    {
+        if (!string.IsNullOrEmpty(ex.ErrorCondition))
+        {
+            var kind = AmqpErrorClassifier.Classify(ex.ErrorCondition);
+            return SqsErrorMapping.FromAmqp(kind, ex.ErrorCondition, operation);
+        }
+        // 404 / 410 from SB $management = lock no longer valid for this
+        // receiver — looks like an expired/settled message to the caller.
+        if (ex.StatusCode == 404 || ex.StatusCode == 410)
+            return SqsErrorMapping.MessageNotInflight();
+        if (ex.StatusCode == 401 || ex.StatusCode == 403)
+            return SqsErrorMapping.FromAmqp(AmqpErrorKind.Auth, condition: null, operation);
+        if (ex.StatusCode == 429 || ex.StatusCode == 503)
+            return SqsErrorMapping.FromAmqp(AmqpErrorKind.Throttled, condition: null, operation);
+        if (ex.StatusCode >= 500)
+            return SqsErrorMapping.FromAmqp(AmqpErrorKind.ServerFatal, condition: null, operation);
+        return SqsErrorMapping.FromAmqp(AmqpErrorKind.ClientFatal, condition: null, operation);
     }
 }

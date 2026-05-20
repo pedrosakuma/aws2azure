@@ -28,6 +28,15 @@ internal interface IAmqpReceiverProvider
     Task<ServiceBusReceiver> GetReceiverAsync(string queueName, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Returns the shared <c>$management</c> request-response client for
+    /// <paramref name="queueName"/>'s audience. Opens on first request
+    /// and caches per (connection, queue). Used by
+    /// <c>ChangeMessageVisibility</c> to drive
+    /// <c>com.microsoft:renew-lock</c>.
+    /// </summary>
+    Task<ServiceBusManagementClient> GetManagementClientAsync(string queueName, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Evicts the receiver for <paramref name="queueName"/> after a
     /// link- or connection-level failure. When
     /// <paramref name="closeConnection"/> is true the whole connection
@@ -35,4 +44,11 @@ internal interface IAmqpReceiverProvider
     /// the receiver link is detached and the connection stays warm.
     /// </summary>
     Task InvalidateAsync(string queueName, bool closeConnection);
+
+    /// <summary>
+    /// Evicts the management client for <paramref name="queueName"/>'s
+    /// audience after a link-level failure on the management link. The
+    /// connection (and any cached receiver) stays warm.
+    /// </summary>
+    Task InvalidateManagementClientAsync(string queueName);
 }
