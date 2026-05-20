@@ -118,6 +118,16 @@ public sealed class ServiceBusReceiverTests
 
         await WaitForDispositionAsync(broker, msg.DeliveryId);
         Assert.Equal(AmqpDispositionOutcome.Rejected, broker.Dispositions[msg.DeliveryId].Outcome);
+
+        // Slice 8c.4: error.info carries DeadLetterReason +
+        // DeadLetterErrorDescription as a typed fields map so SB
+        // surfaces them on the DLQ copy's app-properties.
+        Assert.True(broker.RejectedErrors.TryGetValue(msg.DeliveryId, out var err));
+        Assert.Equal("com.microsoft:dead-letter", err.Condition);
+        Assert.True(Aws2Azure.Amqp.ServiceBus.ServiceBusDeadLetterInfo.TryDecode(
+            err.Info, out var decodedReason, out var decodedDescription));
+        Assert.Equal("TooManyRetries", decodedReason);
+        Assert.Equal("exceeded", decodedDescription);
     }
 
     [Fact]
