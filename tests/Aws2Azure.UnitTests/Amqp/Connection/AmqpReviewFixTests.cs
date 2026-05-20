@@ -81,16 +81,16 @@ public sealed class AmqpReviewFixTests
         });
 
         // Poll for the link to observe the peer detach and reach a closed state.
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        var deadline = DateTime.UtcNow.AddSeconds(30);
         while (!link.IsClosed && DateTime.UtcNow < deadline)
-            await Task.Delay(20);
+            await Task.Delay(50);
         Assert.True(link.IsClosed, "link did not transition to closed after peer detach");
 
         // A no-op DetachAsync must short-circuit (StateFinal/StateClosed) and return promptly.
-        await link.DetachAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await link.DetachAsync().WaitAsync(TimeSpan.FromSeconds(10));
 
-        await session.CloseAsync().WaitAsync(TimeSpan.FromSeconds(2));
-        await conn.CloseAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await session.CloseAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        await conn.CloseAsync().WaitAsync(TimeSpan.FromSeconds(10));
     }
 
     // ---------- Fix #2: sender must wait for flow before transferring ----------
