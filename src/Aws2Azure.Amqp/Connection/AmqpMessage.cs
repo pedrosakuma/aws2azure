@@ -67,7 +67,9 @@ internal sealed class AmqpMessage
         int w = 0;
         var hasProps = Properties.MessageId is not null
                     || Properties.ReplyTo is not null
-                    || Properties.CorrelationId is not null;
+                    || Properties.CorrelationId is not null
+                    || Properties.GroupId is not null
+                    || Properties.GroupSequence is not null;
         if (hasProps)
         {
             var props = Properties;
