@@ -146,4 +146,29 @@ public class AmqpPropertiesTests
         Assert.Equal("g", read.GroupId);
         Assert.Null(read.GroupSequence);
     }
+
+    [Fact]
+    public void AmqpMessage_round_trip_preserves_group_only_properties()
+    {
+        // Regression for the slice 7c.2 review fix: AmqpMessage.Write
+        // used to gate the properties section on MessageId / ReplyTo /
+        // CorrelationId only; a message whose ONLY properties are
+        // GroupId / GroupSequence would silently drop the section.
+        var msg = new Aws2Azure.Amqp.Connection.AmqpMessage
+        {
+            Properties = new AmqpProperties
+            {
+                GroupId = "session-x",
+                GroupSequence = 7u,
+            },
+            Body = new byte[] { 1, 2, 3 },
+        };
+
+        var encoded = new byte[256];
+        msg.Write(encoded, out var written);
+
+        var parsed = Aws2Azure.Amqp.Connection.AmqpMessage.Parse(encoded.AsMemory(0, written));
+        Assert.Equal("session-x", parsed.Properties.GroupId);
+        Assert.Equal(7u, parsed.Properties.GroupSequence);
+    }
 }
