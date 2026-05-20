@@ -44,9 +44,21 @@ namespace Aws2Azure.Modules.Sqs.Operations;
 ///   receiver link (no $management round-trip).</item>
 /// </list>
 ///
-/// <para>Out of scope: long-polling (slice 8c),
-/// <c>x-opt-deadletter-source</c> system-attribute surfacing on
-/// dead-lettered messages.</para>
+/// <para>Dead-letter surfacing: when SB delivers a message from a
+/// <c>/$DeadLetterQueue</c> subqueue, the annotation
+/// <c>x-opt-deadletter-source</c> carries the originating queue name and
+/// the application-properties <c>DeadLetterReason</c> /
+/// <c>DeadLetterErrorDescription</c> carry the reason it was dead-lettered.
+/// The proxy surfaces all three as system attributes:
+/// <c>DeadLetterQueueSourceArn</c> (synthesised ARN using the placeholder
+/// account id),
+/// <c>Aws2Azure-DeadLetterReason</c>,
+/// <c>Aws2Azure-DeadLetterErrorDescription</c>. They are emitted only
+/// when the inbound message actually came from a DLQ; non-DLQ messages
+/// never see these attributes. Subject to the same
+/// <c>AttributeNames</c> filter as the standard system attributes.</para>
+///
+/// <para>Out of scope: long-polling (slice 8c).</para>
 /// </summary>
 internal static class AmqpReceiveMessageHandlers
 {
@@ -466,6 +478,29 @@ internal static class AmqpReceiveMessageHandlers
         // ApproximateReceiveCount counts the current receive — add one.
         var deliveryCount = msg.DeliveryCount.HasValue ? (int)(msg.DeliveryCount.Value + 1) : 1;
 
+        // DLQ surfacing: when the receiver is bound to an SB DLQ subqueue
+        // (path ends with /$DeadLetterQueue), SB stamps the originating
+        // queue name on `x-opt-deadletter-source` (annotation) and copies
+        // the optional reason / description onto the dead-lettered
+        // message's application-properties (DeadLetterReason /
+        // DeadLetterErrorDescription). Surface them as system attributes
+        // so AWS SDK clients can distinguish DLQ messages and read why
+        // each was dead-lettered.
+        var deadLetterSource = annotations?.DeadLetterSource;
+        string? deadLetterReason = null;
+        string? deadLetterDescription = null;
+        if (!string.IsNullOrEmpty(deadLetterSource))
+        {
+            var appProps = msg.Message.ApplicationProperties;
+            if (appProps is not null)
+            {
+                if (appProps.TryGetValue("DeadLetterReason", out var rv) && rv is string rs)
+                    deadLetterReason = rs;
+                if (appProps.TryGetValue("DeadLetterErrorDescription", out var dv) && dv is string ds)
+                    deadLetterDescription = ds;
+            }
+        }
+
         // MessageGroupId: SB stamps the SQS MessageGroupId onto both
         // properties.group-id (slice 7c.2 parsed it) and the SB
         // session-id. Prefer the per-message value (it survives across
@@ -477,7 +512,8 @@ internal static class AmqpReceiveMessageHandlers
             messageGroupId = receiverSessionId;
 
         var systemAttrs = BuildSystemAttributes(
-            enqueuedTimeMillis, deliveryCount, sequenceNumber, messageGroupId, systemAttrFilter);
+            enqueuedTimeMillis, deliveryCount, sequenceNumber, messageGroupId,
+            deadLetterSource, deadLetterReason, deadLetterDescription, systemAttrFilter);
 
         // FIFO receives stamp the bound session-id into the handle so
         // DeleteMessage / ChangeMessageVisibility can route back to the
@@ -502,7 +538,8 @@ internal static class AmqpReceiveMessageHandlers
 
     private static IReadOnlyDictionary<string, string>? BuildSystemAttributes(
         long? enqueuedTimeMillis, int deliveryCount, string? sequenceNumber,
-        string? messageGroupId, HashSet<string>? filter)
+        string? messageGroupId, string? deadLetterSource, string? deadLetterReason,
+        string? deadLetterDescription, HashSet<string>? filter)
     {
         if (filter is null || filter.Count == 0) return null;
 
@@ -519,6 +556,24 @@ internal static class AmqpReceiveMessageHandlers
             Add("SequenceNumber", sequenceNumber!);
         if (!string.IsNullOrEmpty(messageGroupId))
             Add("MessageGroupId", messageGroupId!);
+        if (!string.IsNullOrEmpty(deadLetterSource))
+        {
+            // DeadLetterQueueSourceArn is the SQS-canonical surface for
+            // "this message came from a DLQ". The proxy doesn't model AWS
+            // accounts/regions; synthesise a placeholder ARN consistent
+            // with QueueUrlBuilder.PlaceholderAccountId and the us-east-1
+            // region clients see in our virtual-host matrix.
+            Add("DeadLetterQueueSourceArn",
+                "arn:aws:sqs:us-east-1:" + QueueUrlBuilder.PlaceholderAccountId + ":" + deadLetterSource!);
+            // Reason/Description have no AWS-standard counterpart; expose
+            // under Aws2Azure-prefixed names so apps that know to look
+            // for them get full SB dead-letter context without colliding
+            // with future AWS attribute additions.
+            if (!string.IsNullOrEmpty(deadLetterReason))
+                Add("Aws2Azure-DeadLetterReason", deadLetterReason!);
+            if (!string.IsNullOrEmpty(deadLetterDescription))
+                Add("Aws2Azure-DeadLetterErrorDescription", deadLetterDescription!);
+        }
         return dict.Count == 0 ? null : dict;
     }
 

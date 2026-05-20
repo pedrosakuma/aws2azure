@@ -333,6 +333,81 @@ public sealed class AmqpReceiveMessageHandlersTests
         Assert.DoesNotContain("Mzo", body);
     }
 
+    // --- Dead-letter surfacing ----------------------------------------
+
+    [Fact]
+    public async Task ReceiveMessage_surfaces_dead_letter_attributes_when_message_came_from_dlq()
+    {
+        // Simulate SB delivering a message originally enqueued on
+        // "orders" but dead-lettered onto "orders/$DeadLetterQueue":
+        // x-opt-deadletter-source carries the source queue name and
+        // the application-properties carry the reason / description SB
+        // stamps on dead-letter.
+        var payload = EncodeMessage("dlq-payload", groupId: null,
+            deadLetterSource: "orders",
+            deadLetterReason: "MaxDeliveryCountExceeded",
+            deadLetterErrorDescription: "Message could not be consumed after 10 attempts.");
+        await using var harness = await TestHarness.OpenAsync(QueueName,
+            (Guid.Parse("12345678-1234-1234-1234-1234567890ab").ToByteArray(), payload));
+
+        var ctx = NewCtx();
+        var parsed = QueryParsed(SqsOperation.ReceiveMessage,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"),
+            ("AttributeName.1", "All"));
+
+        await AmqpReceiveMessageHandlers.HandleAsync(ctx, parsed, harness.Provider, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        var body = ReadBody(ctx);
+        Assert.Contains("<Name>DeadLetterQueueSourceArn</Name><Value>arn:aws:sqs:us-east-1:000000000000:orders</Value>", body);
+        Assert.Contains("<Name>Aws2Azure-DeadLetterReason</Name><Value>MaxDeliveryCountExceeded</Value>", body);
+        Assert.Contains("<Name>Aws2Azure-DeadLetterErrorDescription</Name><Value>Message could not be consumed after 10 attempts.</Value>", body);
+    }
+
+    [Fact]
+    public async Task ReceiveMessage_omits_dead_letter_attributes_for_non_dlq_messages()
+    {
+        await using var harness = await TestHarness.OpenAsync(QueueName,
+            (Guid.Parse("aaaaaaaa-1111-2222-3333-444444444444").ToByteArray(), EncodeMessage("live-msg")));
+
+        var ctx = NewCtx();
+        var parsed = QueryParsed(SqsOperation.ReceiveMessage,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"),
+            ("AttributeName.1", "All"));
+
+        await AmqpReceiveMessageHandlers.HandleAsync(ctx, parsed, harness.Provider, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        var body = ReadBody(ctx);
+        Assert.DoesNotContain("DeadLetterQueueSourceArn", body);
+        Assert.DoesNotContain("Aws2Azure-DeadLetter", body);
+    }
+
+    [Fact]
+    public async Task ReceiveMessage_filters_dead_letter_attributes_by_AttributeNames()
+    {
+        var payload = EncodeMessage("dlq-payload", groupId: null,
+            deadLetterSource: "src-q",
+            deadLetterReason: "TestReason",
+            deadLetterErrorDescription: "TestDescription");
+        await using var harness = await TestHarness.OpenAsync(QueueName,
+            (Guid.Parse("bbbbbbbb-2222-3333-4444-555555555555").ToByteArray(), payload));
+
+        var ctx = NewCtx();
+        // Request only DeadLetterQueueSourceArn — the two Aws2Azure-*
+        // attributes must NOT be emitted (no 'All' shorthand).
+        var parsed = QueryParsed(SqsOperation.ReceiveMessage,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"),
+            ("AttributeName.1", "DeadLetterQueueSourceArn"));
+
+        await AmqpReceiveMessageHandlers.HandleAsync(ctx, parsed, harness.Provider, CancellationToken.None);
+
+        var body = ReadBody(ctx);
+        Assert.Contains("DeadLetterQueueSourceArn", body);
+        Assert.DoesNotContain("Aws2Azure-DeadLetterReason", body);
+        Assert.DoesNotContain("Aws2Azure-DeadLetterErrorDescription", body);
+    }
+
     [Fact]
     public async Task DeleteMessage_on_fifo_queue_routes_via_session_receiver()
     {
@@ -701,15 +776,50 @@ public sealed class AmqpReceiveMessageHandlersTests
         => EncodeMessage(body, groupId: null);
 
     private static byte[] EncodeMessage(string body, string? groupId)
+        => EncodeMessage(body, groupId: groupId, deadLetterSource: null,
+            deadLetterReason: null, deadLetterErrorDescription: null);
+
+    private static byte[] EncodeMessage(string body, string? groupId,
+        string? deadLetterSource, string? deadLetterReason, string? deadLetterErrorDescription)
     {
+        // Build the optional message-annotations + application-properties
+        // sections by hand (AmqpMessage.Write does not author annotations
+        // — see its doc-comment) and prefix them onto a properties+body
+        // payload that AmqpMessage.Write does emit. The on-wire ordering
+        // header → message-annotations → properties → application-properties
+        // → body is what real Service Bus produces; the proxy's parser is
+        // tolerant to any subset.
+        var prefix = new Aws2Azure.UnitTests.Amqp.Framing.SectionWriter();
+        if (!string.IsNullOrEmpty(deadLetterSource))
+        {
+            prefix.WriteDescribed(Aws2Azure.Amqp.Framing.MessageSectionDescriptor.MessageAnnotations);
+            prefix.BeginMap8(pairCount: 1);
+            prefix.WriteSymbol(Aws2Azure.Amqp.Framing.AmqpMessageAnnotations.KeyDeadLetterSource);
+            prefix.WriteString(deadLetterSource!);
+            prefix.EndMap8();
+        }
+
         var msg = new AmqpMessage { Body = Encoding.UTF8.GetBytes(body) };
         if (!string.IsNullOrEmpty(groupId))
             msg.Properties = msg.Properties with { GroupId = groupId };
+        if (!string.IsNullOrEmpty(deadLetterReason) || !string.IsNullOrEmpty(deadLetterErrorDescription))
+        {
+            var app = new Dictionary<string, object?>(StringComparer.Ordinal);
+            if (!string.IsNullOrEmpty(deadLetterReason)) app["DeadLetterReason"] = deadLetterReason;
+            if (!string.IsNullOrEmpty(deadLetterErrorDescription)) app["DeadLetterErrorDescription"] = deadLetterErrorDescription;
+            msg.ApplicationProperties = app;
+        }
         var rented = ArrayPool<byte>.Shared.Rent(4096);
         try
         {
             msg.Write(rented, out var written);
-            return rented.AsSpan(0, written).ToArray();
+            if (prefix.Length == 0)
+                return rented.AsSpan(0, written).ToArray();
+            var head = prefix.ToArray();
+            var result = new byte[head.Length + written];
+            head.CopyTo(result, 0);
+            rented.AsSpan(0, written).CopyTo(result.AsSpan(head.Length));
+            return result;
         }
         finally { ArrayPool<byte>.Shared.Return(rented); }
     }
