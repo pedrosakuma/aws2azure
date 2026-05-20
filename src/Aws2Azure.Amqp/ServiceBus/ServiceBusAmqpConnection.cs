@@ -150,6 +150,78 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
     }
 
     /// <summary>
+    /// Opens a session-bound receiver link against
+    /// <paramref name="queueName"/> using the Service Bus
+    /// <c>com.microsoft:session-filter</c> (slice 7). Pass a specific
+    /// <paramref name="sessionId"/> to bind to a known session, or
+    /// <c>null</c> to ask the broker to assign any available session —
+    /// the actual bound session is returned via
+    /// <see cref="ServiceBusReceiver.SessionId"/>, read from the source
+    /// filter the broker echoes on the attach response.
+    /// </summary>
+    /// <param name="prefetchCredit">
+    /// Initial link credit issued at attach time. Pass <c>0</c> when the
+    /// caller intends to manage credit explicitly.
+    /// </param>
+    public async Task<ServiceBusReceiver> OpenSessionReceiverAsync(
+        string queueName,
+        string audience,
+        string? sessionId,
+        uint prefetchCredit,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(audience);
+        ThrowIfDisposed();
+
+        await EnsureAuthorizedAsync(audience, cancellationToken).ConfigureAwait(false);
+        var dataSession = await EnsureDataSessionAsync(cancellationToken).ConfigureAwait(false);
+
+        var filter = ServiceBusSessionFilter.Encode(sessionId);
+        var settings = new AmqpLinkSettings
+        {
+            Name = $"aws2azure-recv-{queueName}-session-{Guid.NewGuid():N}",
+            Role = AmqpRole.Receiver,
+            SourceAddress = ServiceBusEndpoint.BuildReceiverSourceAddress(queueName),
+            SourceFilter = filter,
+            TargetAddress = null,
+            SenderSettleMode = AmqpSenderSettleMode.Unsettled,
+            ReceiverSettleMode = AmqpReceiverSettleMode.First,
+            InitialDeliveryCount = null,
+        };
+
+        var link = await dataSession.AttachLinkAsync(settings, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // Decode the broker-echoed session-id from the attach
+            // response's source.filter. If the broker honoured our
+            // requested session-id verbatim it'll match; if we asked
+            // for "any" (null) it'll carry the assigned session.
+            string? boundSessionId = sessionId;
+            var remoteSource = link.RemoteAttach.Source;
+            if (!remoteSource.IsEmpty)
+            {
+                AmqpSource.Read(remoteSource, out var src, out _);
+                if (!src.Filter.IsEmpty &&
+                    ServiceBusSessionFilter.TryDecode(src.Filter, out var assigned) &&
+                    assigned is not null)
+                {
+                    boundSessionId = assigned;
+                }
+            }
+
+            if (prefetchCredit > 0)
+                await link.GrantCreditAsync(prefetchCredit, cancellationToken).ConfigureAwait(false);
+            return new ServiceBusReceiver(link, queueName, boundSessionId);
+        }
+        catch
+        {
+            await TryDetachAsync(link).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <summary>
     /// Re-runs CBS <c>put-token</c> for <paramref name="audience"/>
     /// regardless of cache state. Exposed so a future renewal task can
     /// push fresh tokens without tearing down existing links.

@@ -69,6 +69,24 @@ internal sealed class ServiceBusBrokerSimulator
     /// <summary>Transfers to deliver to the client on demand, keyed by client receiver-link name.</summary>
     public Dictionary<string, Queue<DeliveryToSend>> Inbox { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Session-id requested by each session-bound receiver attach (slice
+    /// 7b), keyed by client-side link name. <c>null</c> values represent
+    /// "any available session" requests. Empty when the link was not a
+    /// session receiver.
+    /// </summary>
+    public Dictionary<string, string?> SessionFiltersByLink { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Session-id the simulator binds to a given link name (slice 7b).
+    /// Pre-populate to control the broker's response when the client
+    /// asks for "any available session"; entries the test does not set
+    /// default to the literal "broker-assigned-session" so the round-trip
+    /// stays deterministic.
+    /// </summary>
+    public Dictionary<string, string> AssignedSessionByLink { get; } = new(StringComparer.Ordinal);
+
+
     /// <summary>Flow frames received per link name (recorded as the granted credit value).</summary>
     public Dictionary<string, List<uint>> FlowCreditsByLink { get; } = new(StringComparer.Ordinal);
 
@@ -185,9 +203,38 @@ internal sealed class ServiceBusBrokerSimulator
         _queueLinkHandles[a.Handle] = brokerHandle;
         _linkNameToClientChannel[a.Name] = f.Header.Channel;
         _linkNameToClientHandle[a.Name] = a.Handle;
+
+        // Detect a session-bound attach (slice 7b): if the client's source
+        // carries a com.microsoft:session-filter, echo the bound session
+        // back to the client via the response attach's source.filter.
+        ReadOnlyMemory<byte> responseSource = ReadOnlyMemory<byte>.Empty;
+        if (!a.Source.IsEmpty)
+        {
+            AmqpSource.Read(a.Source, out var clientSource, out _);
+            if (!clientSource.Filter.IsEmpty &&
+                ServiceBusSessionFilter.TryDecode(clientSource.Filter, out var requestedSession))
+            {
+                SessionFiltersByLink[a.Name] = requestedSession;
+                var assigned = requestedSession
+                    ?? (AssignedSessionByLink.TryGetValue(a.Name, out var fromTable)
+                        ? fromTable
+                        : "broker-assigned-session");
+                var responseFilter = ServiceBusSessionFilter.Encode(assigned);
+                var responseSrc = new AmqpSource
+                {
+                    Address = clientSource.Address,
+                    Filter = responseFilter,
+                };
+                var rented = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
+                AmqpSource.Write(rented, in responseSrc, out var srcLen);
+                responseSource = rented.AsMemory(0, srcLen);
+            }
+        }
+
         await AmqpTestBroker.SendPerfAsync(_server, brokerChannel, new AmqpAttach
         {
             Name = a.Name, Handle = brokerHandle, Role = AmqpRole.Sender, InitialDeliveryCount = 0,
+            Source = responseSource,
         }, AmqpAttach.Write);
     }
 

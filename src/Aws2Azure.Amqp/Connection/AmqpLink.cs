@@ -557,7 +557,11 @@ internal sealed class AmqpLink
             if (_settings.SourceAddress is not null)
             {
                 rentedSrc = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
-                var src = new AmqpSource { Address = _settings.SourceAddress };
+                var src = new AmqpSource
+                {
+                    Address = _settings.SourceAddress,
+                    Filter = _settings.SourceFilter,
+                };
                 AmqpSource.Write(rentedSrc, in src, out var srcLen);
                 sourceMem = rentedSrc.AsMemory(0, srcLen);
             }
