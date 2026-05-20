@@ -50,6 +50,49 @@ public sealed class ServiceBusCredentials
     public string Namespace { get; set; } = string.Empty;
     public string SasKeyName { get; set; } = string.Empty;
     public string SasKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Namespace-wide default transport for the SQS module: REST over
+    /// HTTPS or native AMQP 1.0. Per-queue overrides via
+    /// <see cref="Queues"/> take precedence. Defaults to
+    /// <see cref="SqsTransport.Rest"/> for backward compatibility with
+    /// the original handlers.
+    /// </summary>
+    public SqsTransport Transport { get; set; } = SqsTransport.Rest;
+
+    /// <summary>
+    /// Optional per-queue settings. Key is the canonical Service Bus
+    /// queue name (lowercase, as it appears in the AWS queue URL). When
+    /// a queue is absent from this map, the namespace defaults apply.
+    /// </summary>
+    public Dictionary<string, SqsQueueSettings>? Queues { get; set; }
+}
+
+/// <summary>
+/// Wire transport used by the SQS module to talk to Service Bus on
+/// behalf of a queue. <see cref="Rest"/> uses the REST proxy
+/// (POST <c>/{queue}/messages</c> &amp; peek-lock); <see cref="Amqp"/>
+/// uses the in-process AMQP 1.0 client built in Phase 2.5.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<SqsTransport>))]
+public enum SqsTransport
+{
+    Rest = 0,
+    Amqp = 1,
+}
+
+/// <summary>
+/// Per-queue overrides for the SQS module. Currently carries only the
+/// transport selector; future knobs (prefetch, idle-timeout) can be
+/// added without breaking existing configs.
+/// </summary>
+public sealed class SqsQueueSettings
+{
+    /// <summary>
+    /// Transport for this queue. When <c>null</c>, the namespace
+    /// default from <see cref="ServiceBusCredentials.Transport"/> wins.
+    /// </summary>
+    public SqsTransport? Transport { get; set; }
 }
 
 public sealed class CosmosCredentials
