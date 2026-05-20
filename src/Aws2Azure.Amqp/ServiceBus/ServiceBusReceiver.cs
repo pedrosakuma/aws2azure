@@ -33,6 +33,11 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
 
     private readonly AmqpLink _link;
     private readonly ConcurrentDictionary<Guid, ServiceBusReceivedMessage> _inFlight = new();
+    // Serialises concurrent ReceiveBatchAsync callers so the credit
+    // top-up computation in AmqpLink (read of _linkCredit followed by
+    // GrantCreditAsync) is not raced when several SQS callers hit the
+    // same pooled receiver simultaneously.
+    private readonly SemaphoreSlim _receiveGate = new(1, 1);
     private int _disposed;
 
     internal ServiceBusReceiver(AmqpLink link, string queueName)
@@ -78,21 +83,29 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        var deliveries = await _link.ReceiveBatchAsync(maxMessages, maxWait, cancellationToken).ConfigureAwait(false);
-        if (deliveries.Count == 0) return Array.Empty<ServiceBusReceivedMessage>();
-        var result = new ServiceBusReceivedMessage[deliveries.Count];
-        for (var i = 0; i < deliveries.Count; i++)
+        await _receiveGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            var msg = new ServiceBusReceivedMessage(deliveries[i]);
-            result[i] = msg;
-            // Register only deliveries whose tag matches the SB
-            // lock-token convention (16 bytes ↔ GUID). Sender-settled
-            // deliveries or peers that use a non-GUID tag are still
-            // returned to the caller but cannot be looked up later.
-            if (msg.LockToken is { } token)
-                _inFlight[token] = msg;
+            var deliveries = await _link.ReceiveBatchAsync(maxMessages, maxWait, cancellationToken).ConfigureAwait(false);
+            if (deliveries.Count == 0) return Array.Empty<ServiceBusReceivedMessage>();
+            var result = new ServiceBusReceivedMessage[deliveries.Count];
+            for (var i = 0; i < deliveries.Count; i++)
+            {
+                var msg = new ServiceBusReceivedMessage(deliveries[i]);
+                result[i] = msg;
+                // Register only deliveries whose tag matches the SB
+                // lock-token convention (16 bytes ↔ GUID). Sender-settled
+                // deliveries or peers that use a non-GUID tag are still
+                // returned to the caller but cannot be looked up later.
+                if (msg.LockToken is { } token)
+                    _inFlight[token] = msg;
+            }
+            return result;
         }
-        return result;
+        finally
+        {
+            _receiveGate.Release();
+        }
     }
 
     /// <summary>
@@ -216,6 +229,7 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
         _inFlight.Clear();
         try { await _link.DetachAsync(closed: true).ConfigureAwait(false); }
         catch { /* best-effort cleanup */ }
+        _receiveGate.Dispose();
     }
 
     private void ThrowIfDisposed()

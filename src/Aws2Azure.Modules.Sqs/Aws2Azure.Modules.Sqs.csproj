@@ -8,8 +8,10 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="..\Aws2Azure.Core\Aws2Azure.Core.csproj" />
+    <ProjectReference Include="..\Aws2Azure.Amqp\Aws2Azure.Amqp.csproj" />
     <InternalsVisibleTo Include="Aws2Azure.UnitTests" />
     <InternalsVisibleTo Include="Aws2Azure.IntegrationTests" />
+    <InternalsVisibleTo Include="Aws2Azure.Proxy" />
   </ItemGroup>
 
 </Project>

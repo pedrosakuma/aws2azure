@@ -10,6 +10,7 @@ behavior_differences:
   - "SB renew-lock semantics do not accept a caller-supplied duration — every renew extends by the queue's LockDuration. Callers asking for a longer (or shorter) timeout get the queue-level value instead; the requested value is echoed on the Aws2Azure-VisibilityClamped response header for diagnostics."
   - "VisibilityTimeout=0 is *not* supported by SB REST (there is no 'unlock immediately' verb on this endpoint). The renew still extends the lock; clients needing immediate release must either DeleteMessage or wait for the lock to expire."
   - "Verified against in-process fakes; emulator-backed end-to-end validation lands with Slice 4's emulator fixture build-out."
+  - "AMQP transport (Phase 2.5 slice 8b.4c): when the queue is configured with `transport: Amqp`, ChangeMessageVisibility short-circuits to a success response with the `Aws2Azure-VisibilityClamped: <requested-seconds>` header, but does NOT actually extend the lock. Real renew-lock over AMQP travels via the Service Bus `$management` request-response link and lands in slice 8c. Until then the AMQP path also does not validate that the lock-token is still in flight (the REST path gets a 404 from SB for an expired/wrong lock). Callers that depend on visibility extension must use the REST transport for now."
 references:
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ChangeMessageVisibility.html
   - https://learn.microsoft.com/rest/api/servicebus/renew-lock-for-a-message

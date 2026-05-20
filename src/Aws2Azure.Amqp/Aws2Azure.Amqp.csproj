@@ -9,6 +9,7 @@
     <InternalsVisibleTo Include="Aws2Azure.UnitTests" />
     <InternalsVisibleTo Include="Aws2Azure.IntegrationTests" />
     <InternalsVisibleTo Include="Aws2Azure.Modules.Sqs" />
+    <InternalsVisibleTo Include="Aws2Azure.Proxy" />
   </ItemGroup>
 
 </Project>

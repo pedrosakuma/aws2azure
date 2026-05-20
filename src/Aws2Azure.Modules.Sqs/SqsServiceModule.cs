@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using Aws2Azure.Amqp.ServiceBus;
 using Aws2Azure.Core;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
@@ -21,14 +22,40 @@ public sealed class SqsServiceModule : IServiceModule
 {
     private readonly AzureHttpClient _http;
     private readonly ICredentialResolver _credentials;
+    private readonly ServiceBusAmqpPool? _amqpPool;
 
     public SqsServiceModule(AzureHttpClient http, ICredentialResolver credentials, CapabilityMatrix capabilities)
+        : this(http, credentials, capabilities, amqpPool: null)
+    {
+    }
+
+    /// <summary>
+    /// Overload that lets the host wire an AMQP connection pool. When
+    /// the pool is present, queues whose effective transport (per
+    /// <see cref="SqsTransportResolver"/>) is
+    /// <see cref="SqsTransport.Amqp"/> route ReceiveMessage /
+    /// DeleteMessage / ChangeMessageVisibility through native AMQP
+    /// instead of the REST handlers. Queues configured for
+    /// <see cref="SqsTransport.Rest"/> still take the REST path even
+    /// when a pool is supplied.
+    ///
+    /// <para>Internal because <see cref="ServiceBusAmqpPool"/> itself is
+    /// internal to <c>Aws2Azure.Amqp</c>; the host
+    /// (<c>Aws2Azure.Proxy</c>) consumes it via the InternalsVisibleTo
+    /// grant on both assemblies.</para>
+    /// </summary>
+    internal SqsServiceModule(
+        AzureHttpClient http,
+        ICredentialResolver credentials,
+        CapabilityMatrix capabilities,
+        ServiceBusAmqpPool? amqpPool)
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(credentials);
         ArgumentNullException.ThrowIfNull(capabilities);
         _http = http;
         _credentials = credentials;
+        _amqpPool = amqpPool;
         Capabilities = capabilities;
     }
 
@@ -126,6 +153,13 @@ public sealed class SqsServiceModule : IServiceModule
             or SqsOperation.DeleteMessage
             or SqsOperation.ChangeMessageVisibility)
         {
+            if (_amqpPool is not null && TryRouteToAmqp(parsed, sbCreds, out var receivers))
+            {
+                await Operations.AmqpReceiveMessageHandlers
+                    .HandleAsync(context, parsed, receivers, context.RequestAborted)
+                    .ConfigureAwait(false);
+                return;
+            }
             await Operations.ReceiveMessageHandlers
                 .HandleAsync(context, parsed, sbClient, context.RequestAborted)
                 .ConfigureAwait(false);
@@ -159,5 +193,31 @@ public sealed class SqsServiceModule : IServiceModule
         var notImpl = SqsErrorMapping.NotImplemented(parsed.Operation);
         await SqsErrorResponse.WriteAsync(context, parsed.Protocol,
             notImpl.StatusCode, notImpl.Code, notImpl.Message, notImpl.FaultType).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Per-request decision: should this Receive/Delete/CMV go over
+    /// native AMQP? The dispatch is queue-scoped so an installation can
+    /// migrate one queue at a time. Returns false when the queue is
+    /// REST or when we can't extract a queue name from the request —
+    /// the REST handlers report the missing-parameter error in that
+    /// case, so we let them.
+    /// </summary>
+    private bool TryRouteToAmqp(
+        SqsParseResult parsed, ServiceBusCredentials sbCreds, out IAmqpReceiverProvider receivers)
+    {
+        receivers = null!;
+        if (_amqpPool is null) return false;
+
+        if (!parsed.Parameters.TryGetValue("QueueUrl", out var url) || string.IsNullOrEmpty(url))
+            return false;
+        var queueName = Internal.QueueUrlBuilder.ExtractQueueName(url);
+        if (string.IsNullOrEmpty(queueName)) return false;
+
+        if (SqsTransportResolver.Resolve(sbCreds, queueName) != SqsTransport.Amqp)
+            return false;
+
+        receivers = new ServiceBusAmqpReceiverProvider(_amqpPool, sbCreds);
+        return true;
     }
 }

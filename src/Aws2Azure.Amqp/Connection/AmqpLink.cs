@@ -420,18 +420,24 @@ internal sealed class AmqpLink
     }
 
     /// <summary>
-    /// Long-poll equivalent: grants <paramref name="maxMessages"/> credit
-    /// and drains up to that many deliveries within
+    /// Long-poll equivalent: grants enough additional credit to cover
+    /// <paramref name="maxMessages"/> deliveries (accounting for credit
+    /// already outstanding with the peer and messages already buffered
+    /// locally) and drains up to that many deliveries within
     /// <paramref name="maxWait"/>. Returns early as soon as the cap is
     /// reached. The returned list may be empty if the wait elapses
     /// with no deliveries.
     /// </summary>
     /// <remarks>
-    /// Single-shot semantics: granted credit is additive. Repeated
-    /// calls on the same link will over-grant. Higher layers that
-    /// reuse a long-lived receiver should track outstanding credit
-    /// themselves and use <see cref="GrantCreditAsync"/> +
-    /// <see cref="ReceiveMessageAsync"/> directly.
+    /// Top-up semantics (not additive): repeated calls on the same
+    /// receiver only top up to <paramref name="maxMessages"/> total
+    /// in-flight credit, so a long-lived receiver shared across many
+    /// SQS receive requests never over-grants and never causes the
+    /// peer to push messages that no caller is waiting to drain.
+    /// Higher layers that need fully independent receive batches
+    /// should still serialise concurrent calls to this method to
+    /// avoid races between the read of <c>_linkCredit</c> and the
+    /// subsequent grant.
     /// </remarks>
     public async Task<IReadOnlyList<AmqpIncomingDelivery>> ReceiveBatchAsync(
         int maxMessages,
@@ -442,7 +448,19 @@ internal sealed class AmqpLink
             throw new InvalidOperationException("ReceiveBatchAsync requires a receiver link.");
         if (maxMessages <= 0) throw new ArgumentOutOfRangeException(nameof(maxMessages));
 
-        await GrantCreditAsync((uint)maxMessages, cancellationToken).ConfigureAwait(false);
+        // Compute the credit top-up: in-flight = credit already granted
+        // to the peer (broker may still transfer) + deliveries already
+        // sitting in our local buffer (broker has transferred, no caller
+        // yet drained). Only grant the difference up to maxMessages.
+        uint toGrant;
+        lock (_deliveryLock)
+        {
+            var buffered = (uint)_incoming.Reader.Count;
+            var inFlight = _linkCredit + buffered;
+            toGrant = (uint)maxMessages > inFlight ? (uint)maxMessages - inFlight : 0u;
+        }
+        if (toGrant > 0)
+            await GrantCreditAsync(toGrant, cancellationToken).ConfigureAwait(false);
 
         var batch = new List<AmqpIncomingDelivery>(maxMessages);
 
