@@ -461,6 +461,17 @@ internal sealed class AmqpLink
                 while (batch.Count < maxMessages && _incoming.Reader.TryRead(out var item))
                     batch.Add(item);
             }
+
+            // If the channel was completed (link is terminal) before the
+            // deadline elapsed, the long-poll did not just time out — the
+            // link is broken/closed. Don't mask that as an empty receive.
+            if (_incoming.Reader.Completion.IsCompleted
+                && !deadlineCts.IsCancellationRequested
+                && !cancellationToken.IsCancellationRequested)
+            {
+                throw new InvalidOperationException(
+                    "Receiver link is closed; no further deliveries will arrive.");
+            }
         }
         catch (OperationCanceledException) when (deadlineCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
@@ -562,7 +573,16 @@ internal sealed class AmqpLink
         {
             var peerAttach = await _peerAttachReceived.Task.ConfigureAwait(false);
             RemoteAttach = peerAttach;
-            Interlocked.Exchange(ref _state, StateAttached);
+            // CAS only from StateAttaching → StateAttached. If HandlePeerDetach
+            // raced ahead and moved us to StateDetachingRemote / StateFinal
+            // (peer sent attach immediately followed by detach), don't
+            // resurrect the link — surface the detach to the caller.
+            var prior = Interlocked.CompareExchange(ref _state, StateAttached, StateAttaching);
+            if (prior != StateAttaching)
+            {
+                throw new InvalidOperationException(
+                    "Peer detached during attach handshake.");
+            }
         }
     }
 

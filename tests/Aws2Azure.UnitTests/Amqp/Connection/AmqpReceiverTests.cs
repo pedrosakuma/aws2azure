@@ -263,4 +263,119 @@ public sealed class AmqpReceiverTests
         await conn.CloseAsync();
         await serverTask.WaitAsync(TimeSpan.FromSeconds(10));
     }
+
+    // ---------- PR-review follow-ups ---------------------------------------
+
+    [Fact]
+    public async Task AttachAsync_throws_when_peer_detaches_immediately_after_attach()
+    {
+        var (clientTransport, serverTransport) = PipePairTransport.CreatePair();
+        await using var server = serverTransport;
+        var conn = new AmqpConnection(clientTransport, DefaultConnSettings());
+
+        var serverTask = Task.Run(async () =>
+        {
+            await ConsumeOpenAsync(server);
+            await ConsumeBeginAndReply(server, peerChannel: 4);
+            using (var _ = await AmqpFrameIO.ReadFrameAsync(server)) { }
+            // Peer attaches and immediately detaches — the link must NOT
+            // be reported as successfully attached.
+            await SendPerfAsync(server, channel: 4, new AmqpAttach
+            {
+                Name = "rcv", Handle = 8, Role = AmqpRole.Sender, InitialDeliveryCount = 0,
+            }, AmqpAttach.Write);
+            await SendPerfAsync(server, channel: 4, new AmqpDetach
+            {
+                Handle = 8, Closed = true,
+                Error = EncodeError(AmqpErrorCondition.UnauthorizedAccess, "no auth"),
+            }, AmqpDetach.Write);
+
+            await DrainUntilCloseAsync(server);
+        });
+
+        await conn.OpenAsync();
+        var session = await conn.BeginSessionAsync();
+
+        // Either AttachLinkAsync surfaces the detach as an exception, or
+        // the returned link transitions to terminal soon after. Both
+        // outcomes are acceptable — the bug we're guarding against is
+        // returning a "successfully attached" link that the peer already
+        // tore down and that stays usable.
+        AmqpLink? link = null;
+        Exception? attachEx = null;
+        try
+        {
+            link = await session.AttachLinkAsync(new AmqpLinkSettings
+            {
+                Name = "rcv", Role = AmqpRole.Receiver, SourceAddress = "q",
+            }).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (Exception ex) { attachEx = ex; }
+
+        if (attachEx is null)
+        {
+            Assert.NotNull(link);
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (!link!.IsClosed && DateTime.UtcNow < deadline)
+                await Task.Delay(25);
+            Assert.True(link.IsClosed,
+                "AttachAsync returned a link that never transitioned to closed despite peer detach.");
+        }
+
+        await conn.CloseAsync();
+        await serverTask.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public async Task ReceiveBatchAsync_throws_when_link_closed_before_deadline()
+    {
+        var (clientTransport, serverTransport) = PipePairTransport.CreatePair();
+        await using var server = serverTransport;
+        var conn = new AmqpConnection(clientTransport, DefaultConnSettings());
+
+        var serverTask = Task.Run(async () =>
+        {
+            await ConsumeOpenAsync(server);
+            await ConsumeBeginAndReply(server, peerChannel: 4);
+            using (var _ = await AmqpFrameIO.ReadFrameAsync(server)) { }
+            await SendPerfAsync(server, channel: 4, new AmqpAttach
+            {
+                Name = "rcv", Handle = 8, Role = AmqpRole.Sender, InitialDeliveryCount = 0,
+            }, AmqpAttach.Write);
+            // Drain the credit-granting flow then detach the link.
+            using (var _ = await AmqpFrameIO.ReadFrameAsync(server)) { }
+            await SendPerfAsync(server, channel: 4, new AmqpDetach
+            {
+                Handle = 8, Closed = true,
+            }, AmqpDetach.Write);
+
+            await DrainUntilCloseAsync(server);
+        });
+
+        await conn.OpenAsync();
+        var session = await conn.BeginSessionAsync();
+        var link = await session.AttachLinkAsync(new AmqpLinkSettings
+        {
+            Name = "rcv", Role = AmqpRole.Receiver, SourceAddress = "q",
+        });
+
+        // Long-poll with a generous deadline. The peer detach should
+        // complete the incoming channel before the deadline elapses, and
+        // ReceiveBatchAsync must surface the broken link rather than
+        // returning an empty list as if the deadline fired.
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await link.ReceiveBatchAsync(maxMessages: 5, maxWait: TimeSpan.FromSeconds(10))
+                .WaitAsync(TimeSpan.FromSeconds(15)));
+
+        await conn.CloseAsync();
+        await serverTask.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    private static ReadOnlyMemory<byte> EncodeError(string condition, string description)
+    {
+        var rented = new byte[256];
+        var err = new AmqpError { Condition = condition, Description = description };
+        AmqpError.Write(rented, in err, out var len);
+        return new ReadOnlyMemory<byte>(rented, 0, len);
+    }
 }

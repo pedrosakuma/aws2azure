@@ -76,19 +76,37 @@ public sealed class AmqpReviewFixTests
 
         await conn.OpenAsync();
         var session = await conn.BeginSessionAsync();
-        var link = await session.AttachLinkAsync(new AmqpLinkSettings
+
+        // After the slice-6 race fix, AttachLinkAsync may either return a
+        // link that subsequently transitions to closed (race won by
+        // attach) or throw because the peer detach won the race and the
+        // attach CAS observes a terminal state. Both outcomes are correct;
+        // the original bug was a deadlock waiting on Final, which neither
+        // path exhibits.
+        AmqpLink? link = null;
+        try
         {
-            Name = "link", Role = AmqpRole.Sender, TargetAddress = "q",
-        });
+            link = await session.AttachLinkAsync(new AmqpLinkSettings
+            {
+                Name = "link", Role = AmqpRole.Sender, TargetAddress = "q",
+            });
+        }
+        catch (InvalidOperationException)
+        {
+            // Peer detached during attach handshake — link never returned.
+        }
 
-        // Poll for the link to observe the peer detach and reach a closed state.
-        var deadline = DateTime.UtcNow.AddSeconds(30);
-        while (!link.IsClosed && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
-        Assert.True(link.IsClosed, "link did not transition to closed after peer detach");
+        if (link is not null)
+        {
+            // Poll for the link to observe the peer detach and reach a closed state.
+            var deadline = DateTime.UtcNow.AddSeconds(30);
+            while (!link.IsClosed && DateTime.UtcNow < deadline)
+                await Task.Delay(50);
+            Assert.True(link.IsClosed, "link did not transition to closed after peer detach");
 
-        // A no-op DetachAsync must short-circuit (StateFinal/StateClosed) and return promptly.
-        await link.DetachAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            // A no-op DetachAsync must short-circuit (StateFinal/StateClosed) and return promptly.
+            await link.DetachAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        }
 
         await session.CloseAsync().WaitAsync(TimeSpan.FromSeconds(10));
         await conn.CloseAsync().WaitAsync(TimeSpan.FromSeconds(10));
