@@ -1,4 +1,5 @@
 using Aws2Azure.Amqp.Connection;
+using Aws2Azure.Amqp.Framing;
 
 namespace Aws2Azure.Amqp.ServiceBus;
 
@@ -7,14 +8,13 @@ namespace Aws2Azure.Amqp.ServiceBus;
 /// AMQP <see cref="AmqpIncomingDelivery"/> plus its parsed bare-message
 /// sections so callers do not have to re-walk the payload.
 /// <para>
-/// SB-specific metadata (lock-token, sequence-number, locked-until,
-/// enqueued-time, delivery-count) lives in the <c>message-annotations</c>
-/// section. Slice 8a does NOT decode annotations: the
-/// <see cref="AmqpMessage"/> parser models properties /
-/// application-properties / body only, and SB happily delivers (and
-/// settles) messages without us decoding the annotation map. Slice 8b
-/// adds an annotations parser when wiring SQS receipt-handle generation
-/// and ChangeMessageVisibility.
+/// SB-specific metadata (sequence-number, locked-until, enqueued-time,
+/// dead-letter source) lives in the <c>message-annotations</c> section
+/// and is surfaced via <see cref="Annotations"/>. The redelivery counter
+/// comes from the <c>header.delivery-count</c> field
+/// (<see cref="DeliveryCount"/>). The lock token is the raw AMQP
+/// delivery-tag — SB stamps a 16-byte GUID there so disposition frames
+/// can target it (<see cref="LockToken"/>).
 /// </para>
 /// </summary>
 internal sealed class ServiceBusReceivedMessage
@@ -40,7 +40,7 @@ internal sealed class ServiceBusReceivedMessage
     /// <summary>Raw encoded bare-message bytes (all sections, in spec order).</summary>
     public ReadOnlyMemory<byte> RawPayload => Delivery.Payload;
 
-    /// <summary>Lazily-parsed message sections (properties / application-properties / body).</summary>
+    /// <summary>Lazily-parsed message sections (header / properties / annotations / application-properties / body).</summary>
     public AmqpMessage Message => _parsed ??= Delivery.ToMessage();
 
     /// <summary>Convenience accessor for the body bytes.</summary>
@@ -48,4 +48,37 @@ internal sealed class ServiceBusReceivedMessage
 
     /// <summary>Convenience accessor for <c>properties.message-id</c> (string variant).</summary>
     public string? MessageId => Message.Properties.MessageId;
+
+    /// <summary>
+    /// SB-specific message annotations (sequence-number, locked-until,
+    /// enqueued-time, etc). Null when the broker omitted the section —
+    /// callers should treat absence as "not delivered by SB" rather than
+    /// "default to 0".
+    /// </summary>
+    public AmqpMessageAnnotations? Annotations => Message.MessageAnnotations;
+
+    /// <summary>
+    /// AMQP redelivery count (<c>header.delivery-count</c>). Zero on the
+    /// first delivery; SB increments on each redelivery after a lock
+    /// expiry or explicit abandon. Null when the broker omitted the
+    /// header section. To map onto SQS <c>ApproximateReceiveCount</c>
+    /// (which counts the current delivery), callers add one.
+    /// </summary>
+    public uint? DeliveryCount => Message.Header?.DeliveryCount;
+
+    /// <summary>
+    /// The lock token — for Service Bus this is exactly the 16-byte
+    /// delivery-tag interpreted as a little-endian GUID (matching the
+    /// MS-MQ wire convention). Null when the delivery was sender-settled
+    /// (no lock to take) or when the tag isn't 16 bytes.
+    /// </summary>
+    public Guid? LockToken
+    {
+        get
+        {
+            var tag = Delivery.DeliveryTag;
+            if (tag is null || tag.Length != 16) return null;
+            return new Guid(tag);
+        }
+    }
 }
