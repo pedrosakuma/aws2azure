@@ -138,6 +138,27 @@ public sealed class DynamoDbServiceModule : IServiceModule
             case DynamoDbOperation.BatchWriteItem:
                 await BatchWriteItemHandler.HandleBatchWriteItemAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
                 return;
+            case DynamoDbOperation.TransactGetItems:
+                await TransactGetItemsHandler.HandleTransactGetItemsAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                return;
+            case DynamoDbOperation.TransactWriteItems:
+                await TransactWriteItemsHandler.HandleTransactWriteItemsAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                return;
+            case DynamoDbOperation.DescribeTimeToLive:
+                await TimeToLiveHandlers.HandleDescribeTimeToLiveAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                return;
+            case DynamoDbOperation.UpdateTimeToLive:
+                await TimeToLiveHandlers.HandleUpdateTimeToLiveAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                return;
+            case DynamoDbOperation.TagResource:
+                await TaggingHandlers.HandleTagResourceAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                return;
+            case DynamoDbOperation.UntagResource:
+                await TaggingHandlers.HandleUntagResourceAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                return;
+            case DynamoDbOperation.ListTagsOfResource:
+                await TaggingHandlers.HandleListTagsOfResourceAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                return;
         }
 
         await DynamoDbErrorResponse.WriteAsync(context,

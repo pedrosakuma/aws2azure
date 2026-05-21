@@ -1,0 +1,12 @@
+service: dynamodb
+operation: UntagResource
+azure_equivalent: "Azure Cosmos DB account/resource tags (control plane)"
+status: stub
+sub_features:
+  - name: Accept & no-op
+    status: implemented
+    notes: "Returns an empty 200 after validating ResourceArn + non-empty TagKeys. There is no persisted state to untag."
+behavior_differences:
+  - "Mirrors the `TagResource` stub: tags are never persisted, so removal is unconditionally a no-op."
+references:
+  - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UntagResource.html

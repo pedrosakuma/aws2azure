@@ -1,0 +1,28 @@
+service: dynamodb
+operation: TransactGetItems
+azure_equivalent: "Azure Cosmos DB (Core SQL API)"
+status: partial
+sub_features:
+  - name: Per-item strong-consistency reads
+    status: implemented
+    notes: "Each Get fans out to a Cosmos GET with `x-ms-consistency-level: Strong`. Bounded parallelism (16) keeps the response sub-second on small batches."
+  - name: 100-item-per-call cap
+    status: implemented
+    notes: "Requests over 100 items rejected with ValidationException."
+  - name: Positional Responses alignment
+    status: implemented
+    notes: "Missing items emit an empty `{}` entry to preserve index alignment with TransactItems (matches DynamoDB)."
+  - name: ProjectionExpression / ExpressionAttributeNames (per item)
+    status: partial
+    notes: "Top-level attribute names + `#alias` honoured. Nested paths rejected."
+  - name: TransactionCanceledException on Cosmos error
+    status: implemented
+    notes: "Any non-2xx, non-404 from a fan-out call cancels the transaction with `TransactionCanceledException`. `CancellationReasons` is aligned positionally — `None` for successful items, the Cosmos-derived AWS code (e.g. `ProvisionedThroughputExceededException`, `InternalServerError`) for failed ones."
+  - name: ReturnConsumedCapacity
+    status: unsupported
+    notes: "Silently ignored; response omits ConsumedCapacity."
+behavior_differences:
+  - "Not a true cross-container ACID read — each fan-out call sees Cosmos' latest committed value independently. For items in the same logical partition this is functionally equivalent to DynamoDB; cross-partition or cross-container reads can in theory observe writes that committed mid-fan-out (DynamoDB internally serializes the entire transaction)."
+  - "Only validated against scripted Cosmos REST fakes; not yet exercised against real Azure Cosmos."
+references:
+  - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TransactGetItems.html

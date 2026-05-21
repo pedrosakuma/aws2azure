@@ -1,0 +1,13 @@
+service: dynamodb
+operation: TagResource
+azure_equivalent: "Azure Cosmos DB account/resource tags (control plane)"
+status: stub
+sub_features:
+  - name: Accept & discard tags
+    status: implemented
+    notes: "Returns an empty 200 after validating ResourceArn + non-empty Tags. Tags are not persisted anywhere and have no effect on Azure billing or routing."
+behavior_differences:
+  - "AWS SDK callers that tag tables on creation as a bookkeeping side-effect work; callers that rely on tag-based access control or cost allocation do not."
+  - "Round-trip with `ListTagsOfResource` is not supported — listing always returns an empty array."
+references:
+  - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TagResource.html

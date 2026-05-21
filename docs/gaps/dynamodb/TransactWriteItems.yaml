@@ -1,0 +1,14 @@
+service: dynamodb
+operation: TransactWriteItems
+azure_equivalent: "Azure Cosmos DB (Core SQL API) — no cross-container ACID"
+status: unsupported
+sub_features:
+  - name: ACID writes across items
+    status: unsupported
+    notes: "Azure Cosmos DB only offers transactional batches within a single logical partition of a single container. DynamoDB TransactWriteItems supports up to 100 writes across multiple tables with full ACID guarantees — there is no faithful mapping."
+  - name: ConditionCheck / ConditionExpression
+    status: unsupported
+behavior_differences:
+  - "Every TransactWriteItems call returns `TransactionCanceledException` with an explanatory message. Callers must fall back to `BatchWriteItem` (no atomicity) or per-item `PutItem` / `UpdateItem` / `DeleteItem` with their own application-level coordination."
+references:
+  - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TransactWriteItems.html
