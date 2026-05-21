@@ -484,4 +484,38 @@ public sealed class AmqpSaslAndErrorCodecTests
             Assert.Equal(kind, k);
         }
     }
+
+    // ---------- AmqpErrorKindExtensions predicates --------------------
+
+    public static IEnumerable<object[]> KindPredicateCases()
+    {
+        // Columns: kind, isRetryable, isThrottled, isAuth, requiresLockRenewal, isRedirect, isFatal
+        yield return new object[] { AmqpErrorKind.Transient,    true,  false, false, false, false, false };
+        yield return new object[] { AmqpErrorKind.Throttled,    true,  true,  false, false, false, false };
+        yield return new object[] { AmqpErrorKind.Auth,         false, false, true,  false, false, false };
+        yield return new object[] { AmqpErrorKind.LockLost,     false, false, false, true,  false, false };
+        yield return new object[] { AmqpErrorKind.Redirect,     false, false, false, false, true,  false };
+        yield return new object[] { AmqpErrorKind.ClientFatal,  false, false, false, false, false, true  };
+        yield return new object[] { AmqpErrorKind.ServerFatal,  false, false, false, false, false, true  };
+        yield return new object[] { AmqpErrorKind.Unknown,      false, false, false, false, false, true  };
+    }
+
+    [Theory]
+    [MemberData(nameof(KindPredicateCases))]
+    internal void AmqpErrorKindExtensions_predicates_match_table(
+        AmqpErrorKind kind,
+        bool isRetryable,
+        bool isThrottled,
+        bool isAuth,
+        bool requiresLockRenewal,
+        bool isRedirect,
+        bool isFatal)
+    {
+        Assert.Equal(isRetryable, kind.IsRetryable());
+        Assert.Equal(isThrottled, kind.IsThrottled());
+        Assert.Equal(isAuth, kind.IsAuth());
+        Assert.Equal(requiresLockRenewal, kind.RequiresLockRenewal());
+        Assert.Equal(isRedirect, kind.IsRedirect());
+        Assert.Equal(isFatal, kind.IsFatal());
+    }
 }
