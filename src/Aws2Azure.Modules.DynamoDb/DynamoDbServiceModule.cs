@@ -9,6 +9,7 @@ using Aws2Azure.Modules.DynamoDb.Internal;
 using Aws2Azure.Modules.DynamoDb.Operations;
 using Aws2Azure.Modules.DynamoDb.WireProtocol;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 
 namespace Aws2Azure.Modules.DynamoDb;
 
@@ -23,12 +24,14 @@ public sealed class DynamoDbServiceModule : IServiceModule
     private readonly AzureHttpClient _http;
     private readonly ICredentialResolver _credentials;
     private readonly EntraIdTokenProvider _tokenProvider;
+    private readonly ILogger? _scanLogger;
 
     public DynamoDbServiceModule(
         AzureHttpClient http,
         ICredentialResolver credentials,
         CapabilityMatrix capabilities,
-        EntraIdTokenProvider? tokenProvider = null)
+        EntraIdTokenProvider? tokenProvider = null,
+        ILoggerFactory? loggerFactory = null)
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(credentials);
@@ -39,6 +42,9 @@ public sealed class DynamoDbServiceModule : IServiceModule
         // master-key callers never touch it. Default to a self-contained
         // instance so callers that don't share Entra caches still work.
         _tokenProvider = tokenProvider ?? new EntraIdTokenProvider(http);
+        // Logger is optional — when null, hot paths simply skip emission;
+        // tests construct the module without a factory.
+        _scanLogger = loggerFactory?.CreateLogger("Aws2Azure.Modules.DynamoDb.Scan");
         Capabilities = capabilities;
     }
 
@@ -124,7 +130,7 @@ public sealed class DynamoDbServiceModule : IServiceModule
                 await QueryHandler.HandleQueryAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
                 return;
             case DynamoDbOperation.Scan:
-                await ScanHandler.HandleScanAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                await ScanHandler.HandleScanAsync(context, parsed.Body, cosmos, _scanLogger, context.RequestAborted).ConfigureAwait(false);
                 return;
         }
 

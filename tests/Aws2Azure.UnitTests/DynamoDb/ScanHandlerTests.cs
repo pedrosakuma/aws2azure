@@ -114,7 +114,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\"}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         var qr = handler.Requests[1];
@@ -149,7 +149,7 @@ public class ScanHandlerTests
                   + "\"FilterExpression\":\"v > :min\","
                   + "\"ExpressionAttributeValues\":{\":min\":{\"N\":\"2\"}}}";
 
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
 
         using var resp = JsonDocument.Parse(ReadResponse(body));
         Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
@@ -175,7 +175,7 @@ public class ScanHandlerTests
                   + "\"ProjectionExpression\":\"pk, #v\","
                   + "\"ExpressionAttributeNames\":{\"#v\":\"v\"}}";
 
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
 
         using var resp = JsonDocument.Parse(ReadResponse(body));
         var item = resp.RootElement.GetProperty("Items")[0];
@@ -200,7 +200,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"Select\":\"COUNT\"}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
 
         using var resp = JsonDocument.Parse(ReadResponse(body));
         Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
@@ -222,7 +222,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"ConsistentRead\":true}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
 
         Assert.Equal("Strong", handler.Requests[1].Headers["x-ms-consistency-level"]);
     }
@@ -245,7 +245,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"Limit\":2}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
 
         Assert.Equal(2, handler.Requests.Count);
         Assert.Equal("2", handler.Requests[1].Headers["x-ms-max-item-count"]);
@@ -274,7 +274,7 @@ public class ScanHandlerTests
         var req = "{\"TableName\":\"orders\","
                   + "\"ExclusiveStartKey\":{\"__a2a_continuation\":{\"S\":\"" + b64 + "\"}}}";
 
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
 
         Assert.Equal("RESUME-Z", handler.Requests[1].Headers["x-ms-continuation"]);
     }
@@ -286,7 +286,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(new ScriptedHandler());
 
         var req = "{\"TableName\":\"orders\",\"IndexName\":\"gsi1\"}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("secondary indexes", ReadResponse(body));
@@ -299,7 +299,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(new ScriptedHandler());
 
         var req = "{\"TableName\":\"orders\",\"Segment\":0,\"TotalSegments\":4}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("Parallel scan", ReadResponse(body));
@@ -313,7 +313,7 @@ public class ScanHandlerTests
 
         var req = "{\"TableName\":\"orders\","
                   + "\"ScanFilter\":{\"pk\":{\"AttributeValueList\":[{\"S\":\"a\"}],\"ComparisonOperator\":\"EQ\"}}}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("Legacy", ReadResponse(body));
@@ -326,7 +326,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(new ScriptedHandler());
 
         var req = "{\"TableName\":\"orders\",\"AttributesToGet\":[\"pk\"]}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
     }
@@ -345,7 +345,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"missing\"}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("ResourceNotFoundException", ReadResponse(body));
@@ -359,7 +359,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"a/b\"}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Empty(handler.Requests);
@@ -371,7 +371,7 @@ public class ScanHandlerTests
         var (ctx, body) = NewCtx();
         var cosmos = BuildClient(new ScriptedHandler());
 
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes("{"), cosmos, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes("{"), cosmos, logger: null, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("SerializationException", ReadResponse(body));
@@ -395,13 +395,37 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\"}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
 
         Assert.Equal(3, handler.Requests.Count);
         Assert.Equal("P2", handler.Requests[2].Headers["x-ms-continuation"]);
         using var resp = JsonDocument.Parse(ReadResponse(body));
         Assert.Equal(2, resp.RootElement.GetProperty("ScannedCount").GetInt32());
         Assert.False(resp.RootElement.TryGetProperty("LastEvaluatedKey", out _));
+    }
+
+    [Fact]
+    public async Task Scan_emits_cost_warning_for_each_request()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(Metadata),
+                CosmosOk(QueryEnvelope()),
+            },
+        };
+        var cosmos = BuildClient(handler);
+        var logger = new RecordingLogger();
+
+        var req = "{\"TableName\":\"orders\"}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger, default);
+
+        var warn = Assert.Single(logger.Entries);
+        Assert.Equal(Microsoft.Extensions.Logging.LogLevel.Warning, warn.Level);
+        Assert.Contains("orders", warn.Message);
+        Assert.Contains("Scan", warn.Message);
     }
 
     // ---- harness ----
@@ -436,4 +460,17 @@ public class ScanHandlerTests
 
     private sealed record CapturedRequest(
         HttpMethod Method, Uri Uri, Dictionary<string, string> Headers, string? Body);
+
+    private sealed class RecordingLogger : Microsoft.Extensions.Logging.ILogger
+    {
+        public List<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> Entries { get; } = new();
+
+        IDisposable? Microsoft.Extensions.Logging.ILogger.BeginScope<TState>(TState state) => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+            TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            Entries.Add((logLevel, formatter(state, exception)));
+        }
+    }
 }

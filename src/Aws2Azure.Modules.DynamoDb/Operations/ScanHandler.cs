@@ -10,6 +10,7 @@ using Aws2Azure.Modules.DynamoDb.Errors;
 using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 
 namespace Aws2Azure.Modules.DynamoDb.Operations;
 
@@ -48,7 +49,7 @@ internal static class ScanHandler
     private const int MaxBatchSize = 1000;
 
     public static async Task HandleScanAsync(
-        HttpContext ctx, byte[] body, CosmosClient cosmos, CancellationToken ct)
+        HttpContext ctx, byte[] body, CosmosClient cosmos, ILogger? logger, CancellationToken ct)
     {
         ScanRequest? req;
         try
@@ -66,6 +67,13 @@ internal static class ScanHandler
             await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
                 "TableName is required and must match [a-zA-Z0-9_.-]{3,255}.").ConfigureAwait(false);
             return;
+        }
+        // Cost-warning telemetry: Scan is intrinsically expensive on
+        // cross-partition Cosmos. Emit once per request so operators
+        // can identify hot callers in dashboards / logs.
+        if (logger is not null)
+        {
+            ScanLog.CrossPartitionScan(logger, req.TableName!);
         }
         if (!string.IsNullOrEmpty(req.IndexName))
         {
@@ -399,4 +407,19 @@ internal static class ScanHandler
             _ => true,
         };
     }
+}
+
+/// <summary>
+/// Source-generated logging helpers for <see cref="ScanHandler"/>.
+/// Kept as a separate static partial class so the
+/// <c>LoggerMessage</c> generator (AOT-safe, zero reflection) can
+/// emit the backing implementation.
+/// </summary>
+internal static partial class ScanLog
+{
+    [LoggerMessage(
+        EventId = 3001,
+        Level = LogLevel.Warning,
+        Message = "Cross-partition DynamoDB Scan against {Table} — Scan walks every partition and is expensive on Cosmos; prefer Query when a partition key is known.")]
+    public static partial void CrossPartitionScan(ILogger logger, string table);
 }

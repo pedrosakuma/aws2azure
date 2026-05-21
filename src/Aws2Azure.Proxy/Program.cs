@@ -68,24 +68,33 @@ builder.Services.AddSingleton(amqpPool);
 // the generated registry (single source of truth: docs/gaps/**/*.yaml). The
 // S3 module is real as of Phase-1 slice 1 (bucket lifecycle); the rest stay
 // stubbed until their respective phases.
-IServiceModule[] modules =
-[
-    new S3ServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.S3),
-    new SqsServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.Sqs, amqpPool),
-    new DynamoDbServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.Dynamodb),
-    new StubServiceModule(CapabilityRegistry.Kinesis, AwsErrorFormat.Json, "kinesis."),
-    new StubServiceModule(CapabilityRegistry.Sns, AwsErrorFormat.Json, "sns."),
-];
-
-builder.Services.AddSingleton(new ServiceModuleRegistry(modules, sigV4Validator));
+//
+// Registered via factory so modules that need the host's ILoggerFactory
+// (e.g. DynamoDB Scan cost-warning telemetry) can resolve it from DI
+// without us duplicating a separate factory.
+builder.Services.AddSingleton<ServiceModuleRegistry>(sp =>
+{
+    var loggerFactory = sp.GetService<ILoggerFactory>();
+    IServiceModule[] modules =
+    [
+        new S3ServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.S3),
+        new SqsServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.Sqs, amqpPool),
+        new DynamoDbServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.Dynamodb,
+            loggerFactory: loggerFactory),
+        new StubServiceModule(CapabilityRegistry.Kinesis, AwsErrorFormat.Json, "kinesis."),
+        new StubServiceModule(CapabilityRegistry.Sns, AwsErrorFormat.Json, "sns."),
+    ];
+    return new ServiceModuleRegistry(modules, sigV4Validator);
+});
 
 var app = builder.Build();
 
+var registry = app.Services.GetRequiredService<ServiceModuleRegistry>();
 var startupLogger = app.Services.GetRequiredService<ILoggerFactory>()
     .CreateLogger("Aws2Azure.Proxy");
-ProxyLog.HostStarting(startupLogger, modules.Length, proxyConfig.Credentials.Count);
+ProxyLog.HostStarting(startupLogger, registry.Modules.Count, proxyConfig.Credentials.Count);
 
-app.MapGet("/_aws2azure/health", () => Results.Ok(new HealthResponse("ok", modules.Length)));
+app.MapGet("/_aws2azure/health", () => Results.Ok(new HealthResponse("ok", registry.Modules.Count)));
 
 app.MapGet("/_aws2azure/modules", (ServiceModuleRegistry registry) =>
     Results.Ok(registry.Modules.Select(m => m.ServiceName).ToArray()));
