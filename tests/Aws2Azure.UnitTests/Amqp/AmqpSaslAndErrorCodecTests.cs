@@ -269,6 +269,141 @@ public sealed class AmqpSaslAndErrorCodecTests
         Assert.Equal(expected, AmqpErrorClassifier.Classify(condition));
     }
 
+    // ---------- AmqpErrorClassifier (alloc-free byte overload) ---------
+
+    /// <summary>
+    /// Cross-check that every condition the string overload knows about
+    /// is also classified identically by the <see cref="ReadOnlySpan{Byte}"/>
+    /// overload (and shares the same UTF-8 bytes). Catches drift between
+    /// <see cref="AmqpErrorCondition"/> and
+    /// <see cref="AmqpErrorConditionU8"/>.
+    /// </summary>
+    [Theory]
+    [InlineData(AmqpErrorCondition.InternalError)]
+    [InlineData(AmqpErrorCondition.NotFound)]
+    [InlineData(AmqpErrorCondition.UnauthorizedAccess)]
+    [InlineData(AmqpErrorCondition.DecodeError)]
+    [InlineData(AmqpErrorCondition.ResourceLimitExceeded)]
+    [InlineData(AmqpErrorCondition.NotAllowed)]
+    [InlineData(AmqpErrorCondition.InvalidField)]
+    [InlineData(AmqpErrorCondition.NotImplemented)]
+    [InlineData(AmqpErrorCondition.ResourceLocked)]
+    [InlineData(AmqpErrorCondition.PreconditionFailed)]
+    [InlineData(AmqpErrorCondition.ResourceDeleted)]
+    [InlineData(AmqpErrorCondition.IllegalState)]
+    [InlineData(AmqpErrorCondition.FrameSizeTooSmall)]
+    [InlineData(AmqpErrorCondition.ConnectionForced)]
+    [InlineData(AmqpErrorCondition.ConnectionFramingError)]
+    [InlineData(AmqpErrorCondition.ConnectionRedirect)]
+    [InlineData(AmqpErrorCondition.SessionWindowViolation)]
+    [InlineData(AmqpErrorCondition.SessionErrantLink)]
+    [InlineData(AmqpErrorCondition.SessionHandleInUse)]
+    [InlineData(AmqpErrorCondition.SessionUnattachedHandle)]
+    [InlineData(AmqpErrorCondition.LinkDetachForced)]
+    [InlineData(AmqpErrorCondition.LinkTransferLimitExceeded)]
+    [InlineData(AmqpErrorCondition.LinkMessageSizeExceeded)]
+    [InlineData(AmqpErrorCondition.LinkRedirect)]
+    [InlineData(AmqpErrorCondition.LinkStolen)]
+    [InlineData(AmqpErrorCondition.ServerBusy)]
+    [InlineData(AmqpErrorCondition.ArgumentError)]
+    [InlineData(AmqpErrorCondition.ArgumentOutOfRange)]
+    [InlineData(AmqpErrorCondition.Timeout)]
+    [InlineData(AmqpErrorCondition.MessageLockLost)]
+    [InlineData(AmqpErrorCondition.SessionLockLost)]
+    [InlineData(AmqpErrorCondition.SessionCannotBeLocked)]
+    [InlineData(AmqpErrorCondition.EntityDisabled)]
+    [InlineData(AmqpErrorCondition.PublisherRevoked)]
+    [InlineData(AmqpErrorCondition.PartitionNotOwned)]
+    [InlineData(AmqpErrorCondition.StoreLockLost)]
+    [InlineData(AmqpErrorCondition.TokenExpired)]
+    public void Classifier_byte_overload_matches_string_overload(string condition)
+    {
+        var bytes = System.Text.Encoding.ASCII.GetBytes(condition);
+        Assert.Equal(
+            AmqpErrorClassifier.Classify(condition),
+            AmqpErrorClassifier.Classify(bytes.AsSpan()));
+    }
+
+    [Fact]
+    public void Classifier_byte_overload_returns_Unknown_for_unknown_or_empty()
+    {
+        Assert.Equal(AmqpErrorKind.Unknown,
+            AmqpErrorClassifier.Classify(System.Text.Encoding.ASCII.GetBytes("amqp:not-a-real-condition").AsSpan()));
+        Assert.Equal(AmqpErrorKind.Unknown,
+            AmqpErrorClassifier.Classify(ReadOnlySpan<byte>.Empty));
+    }
+
+    // ---------- AmqpMultipleSymbol enumerator / ContainsSymbol ---------
+
+    [Fact]
+    public void MultipleSymbol_Enumerate_yields_each_symbol_without_allocating_strings()
+    {
+        var symbols = new[] { "ANONYMOUS", "PLAIN", "EXTERNAL", "MSSBCBS" };
+        var buf = new byte[128];
+        AmqpMultipleSymbol.Write(buf, symbols, out var written);
+
+        var seen = new List<string>();
+        foreach (var sym in AmqpMultipleSymbol.Enumerate(buf.AsSpan(0, written)))
+        {
+            seen.Add(System.Text.Encoding.ASCII.GetString(sym));
+        }
+        Assert.Equal(symbols, seen);
+    }
+
+    [Fact]
+    public void MultipleSymbol_Enumerate_yields_single_symbol_form()
+    {
+        var buf = new byte[16];
+        AmqpVariableWriter.WriteSymbol(buf, "PLAIN", out var written);
+
+        var seen = new List<string>();
+        foreach (var sym in AmqpMultipleSymbol.Enumerate(buf.AsSpan(0, written)))
+        {
+            seen.Add(System.Text.Encoding.ASCII.GetString(sym));
+        }
+        Assert.Single(seen);
+        Assert.Equal("PLAIN", seen[0]);
+    }
+
+    [Fact]
+    public void MultipleSymbol_Enumerate_null_yields_no_elements()
+    {
+        ReadOnlySpan<byte> nul = stackalloc byte[] { AmqpFormatCode.Null };
+        var enumerator = AmqpMultipleSymbol.Enumerate(nul);
+        Assert.False(enumerator.MoveNext());
+    }
+
+    [Fact]
+    public void MultipleSymbol_ContainsSymbol_matches_array_form()
+    {
+        var symbols = new[] { "ANONYMOUS", "PLAIN", "MSSBCBS" };
+        var buf = new byte[64];
+        AmqpMultipleSymbol.Write(buf, symbols, out var written);
+        var wire = buf.AsSpan(0, written);
+
+        Assert.True(AmqpMultipleSymbol.ContainsSymbol(wire, "ANONYMOUS"u8));
+        Assert.True(AmqpMultipleSymbol.ContainsSymbol(wire, "MSSBCBS"u8));
+        Assert.False(AmqpMultipleSymbol.ContainsSymbol(wire, "EXTERNAL"u8));
+        Assert.False(AmqpMultipleSymbol.ContainsSymbol(wire, "ANONYMOU"u8));   // prefix only
+        Assert.False(AmqpMultipleSymbol.ContainsSymbol(wire, "ANONYMOUS!"u8)); // longer
+    }
+
+    [Fact]
+    public void MultipleSymbol_ContainsSymbol_matches_single_symbol_form()
+    {
+        var buf = new byte[16];
+        AmqpVariableWriter.WriteSymbol(buf, "PLAIN", out var written);
+        Assert.True(AmqpMultipleSymbol.ContainsSymbol(buf.AsSpan(0, written), "PLAIN"u8));
+        Assert.False(AmqpMultipleSymbol.ContainsSymbol(buf.AsSpan(0, written), "ANONYMOUS"u8));
+    }
+
+    [Fact]
+    public void MultipleSymbol_ContainsSymbol_null_returns_false()
+    {
+        ReadOnlySpan<byte> nul = stackalloc byte[] { AmqpFormatCode.Null };
+        Assert.False(AmqpMultipleSymbol.ContainsSymbol(nul, "PLAIN"u8));
+    }
+
     // ---------- Delivery states ----------------------------------------
 
     [Fact]

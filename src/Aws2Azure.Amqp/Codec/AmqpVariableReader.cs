@@ -117,6 +117,46 @@ internal static class AmqpVariableReader
         return Encoding.ASCII.GetString(payload);
     }
 
+    /// <summary>
+    /// Allocation-free counterpart to <see cref="ReadSymbol"/>: returns
+    /// the on-wire ASCII bytes of a <c>symbol8</c> / <c>symbol32</c>
+    /// payload as a slice into <paramref name="source"/>. ASCII
+    /// validation matches <see cref="ReadSymbol"/>. The returned span
+    /// must not outlive the source buffer.
+    /// </summary>
+    public static ReadOnlySpan<byte> ReadSymbolBytes(ReadOnlySpan<byte> source, out int consumed)
+    {
+        var code = source[0];
+        int length, headerLen;
+        switch (code)
+        {
+            case AmqpFormatCode.Symbol8:
+                length = source[1];
+                headerLen = 2;
+                break;
+            case AmqpFormatCode.Symbol32:
+                length = checked((int)BinaryPrimitives.ReadUInt32BigEndian(source[1..]));
+                headerLen = 5;
+                break;
+            default:
+                throw UnexpectedCode("symbol", code);
+        }
+        consumed = headerLen + length;
+        if (consumed > source.Length)
+        {
+            throw new InvalidDataException("Truncated AMQP symbol payload.");
+        }
+        var payload = source.Slice(headerLen, length);
+        for (var i = 0; i < payload.Length; i++)
+        {
+            if (payload[i] > 0x7F)
+            {
+                throw new InvalidDataException("AMQP symbol contains non-ASCII byte.");
+            }
+        }
+        return payload;
+    }
+
     private static InvalidDataException UnexpectedCode(string what, byte actual)
     {
         return new InvalidDataException($"Expected {what}, got AMQP format code 0x{actual:X2}.");
