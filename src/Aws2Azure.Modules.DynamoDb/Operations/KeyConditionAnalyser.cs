@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Text.Json;
 using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
-
 namespace Aws2Azure.Modules.DynamoDb.Operations;
 
 /// <summary>
@@ -66,7 +65,7 @@ internal static class KeyConditionAnalyser
             skNode = null;
         }
 
-        string hashValue = ExtractHashEquality(hashNode, hash.Name);
+        string hashValue = ExtractHashEquality(hashNode, hash.Name, meta);
 
         SkPredicate? sk = null;
         if (skNode is not null)
@@ -74,7 +73,7 @@ internal static class KeyConditionAnalyser
             if (range is null)
                 throw new KeyConditionException(
                     "KeyConditionExpression references a sort-key predicate but the table has no RANGE key.");
-            sk = ExtractSkPredicate(skNode, range.Name);
+            sk = ExtractSkPredicate(skNode, range.Name, meta);
         }
 
         return new AnalysedKeyCondition(hashValue, sk);
@@ -90,7 +89,7 @@ internal static class KeyConditionAnalyser
         return null;
     }
 
-    private static string ExtractHashEquality(ConditionNode node, string hashName)
+    private static string ExtractHashEquality(ConditionNode node, string hashName, TableMetadata meta)
     {
         if (node is not CompareCondition cmp || cmp.Op != CompareOp.Equal)
             throw new KeyConditionException(
@@ -98,10 +97,10 @@ internal static class KeyConditionAnalyser
         if (!IsAttributeReference(cmp.Left, hashName) || cmp.Right is not ConditionValueOperand vr)
             throw new KeyConditionException(
                 $"KeyConditionExpression must be of the form '{hashName} = :value'.");
-        return ScalarFromValueRef(vr.Value, hashName);
+        return ScalarFromValueRef(vr.Value, hashName, meta);
     }
 
-    private static SkPredicate ExtractSkPredicate(ConditionNode node, string skName)
+    private static SkPredicate ExtractSkPredicate(ConditionNode node, string skName, TableMetadata meta)
     {
         switch (node)
         {
@@ -119,20 +118,20 @@ internal static class KeyConditionAnalyser
                     _ => throw new KeyConditionException(
                         $"Sort-key predicate operator {cmp.Op} is not supported in KeyConditionExpression."),
                 };
-                return new SkCompare(opStr, ScalarFromValueRef(v.Value, skName));
+                return new SkCompare(opStr, ScalarFromValueRef(v.Value, skName, meta));
             case BetweenCondition bt:
                 if (!IsAttributeReference(bt.Value, skName)
                     || bt.Lower is not ConditionValueOperand lo
                     || bt.Upper is not ConditionValueOperand hi)
                     throw new KeyConditionException(
                         $"BETWEEN sort-key predicate must reference '{skName}' and two value placeholders.");
-                return new SkBetween(ScalarFromValueRef(lo.Value, skName), ScalarFromValueRef(hi.Value, skName));
+                return new SkBetween(ScalarFromValueRef(lo.Value, skName, meta), ScalarFromValueRef(hi.Value, skName, meta));
             case BeginsWithCondition bw:
                 if (!IsAttributeReference(bw.Path, skName)
                     || bw.Prefix is not ConditionValueOperand pr)
                     throw new KeyConditionException(
                         $"begins_with sort-key predicate must reference '{skName}' and a value placeholder.");
-                return new SkBeginsWith(ScalarFromValueRef(pr.Value, skName));
+                return new SkBeginsWith(ScalarFromValueRef(pr.Value, skName, meta));
             default:
                 throw new KeyConditionException(
                     "Sort-key predicate must be one of: =, <, <=, >, >=, BETWEEN, begins_with.");
@@ -160,19 +159,20 @@ internal static class KeyConditionAnalyser
 
     /// <summary>
     /// Extracts a scalar string from a typed attribute value
-    /// (<c>{"S":"x"}</c>, <c>{"N":"123"}</c>, or <c>{"B":"base64"}</c>).
-    /// Mirrors <see cref="ItemKeyFormatter"/>'s scalar extraction so a
-    /// query operand routes to exactly the same partition / id that a
+    /// (<c>{"S":"x"}</c>, <c>{"N":"123"}</c>, or <c>{"B":"base64"}</c>),
+    /// after validating that the operand's type tag matches the table's
+    /// declared <c>AttributeDefinitions</c>. Mirrors
+    /// <see cref="ItemKeyFormatter"/>'s scalar extraction so a query
+    /// operand routes to exactly the same partition / id that a
     /// matching PutItem produced.
     /// </summary>
-    private static string ScalarFromValueRef(ValueRefOperand vr, string attrName)
+    private static string ScalarFromValueRef(ValueRefOperand vr, string attrName, TableMetadata meta)
     {
+        if (!ItemKeyFormatter.ValidateKeyAttributeType(vr.Value, meta, attrName, out var typeError))
+            throw new KeyConditionException(typeError);
         if (!ParsedAttributeValue.TryParse(vr.Value, out var parsed))
             throw new KeyConditionException(
                 $"Value bound to '{attrName}' is not a typed attribute value.");
-        if (!AttributeValueTypes.IsScalarKeyType(parsed.TypeTag))
-            throw new KeyConditionException(
-                $"Key attribute '{attrName}' must be of type S, N, or B; got {parsed.TypeTag}.");
         if (parsed.Value.ValueKind != JsonValueKind.String)
             throw new KeyConditionException(
                 $"Key attribute '{attrName}' value must be a JSON string per DynamoDB wire format.");

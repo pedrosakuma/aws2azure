@@ -492,11 +492,13 @@ public class QueryHandlerTests
     }
 
     [Fact]
-    public async Task Query_filter_expression_with_consistent_read_paginates_until_limit()
+    public async Task Query_filter_expression_with_limit_caps_scanned_not_matched()
     {
-        // Page 1 returns 2 items but FilterExpression keeps only 1.
-        // Page 2 returns 1 more matching. Limit=2 → should fetch both
-        // pages and stop.
+        // DynamoDB Limit caps *evaluated* (pre-filter) items. With
+        // Limit=2 and a page that returns 2 items where the filter
+        // keeps only 1, we stop after page 1 (scanned == Limit) and
+        // return whatever continuation the page came with — we do NOT
+        // fetch a second page to top up matches.
         var (ctx, body) = NewCtx();
         var handler = new ScriptedHandler
         {
@@ -507,8 +509,6 @@ public class QueryHandlerTests
                     DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"1\"}}"),
                     DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"10\"}}")),
                     continuation: "P2"),
-                CosmosOk(QueryEnvelope(
-                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"20\"}}"))),
             },
         };
         var cosmos = BuildClient(handler);
@@ -521,9 +521,12 @@ public class QueryHandlerTests
 
         await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
 
+        // Exactly one Cosmos query call (no second-page fetch).
+        Assert.Equal(2, handler.Requests.Count);
         using var resp = JsonDocument.Parse(ReadResponse(body));
-        Assert.Equal(2, resp.RootElement.GetProperty("Count").GetInt32());
-        Assert.Equal(3, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+        Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
+        Assert.Equal(2, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+        Assert.True(resp.RootElement.TryGetProperty("LastEvaluatedKey", out _));
     }
 
     // ---- harness ----

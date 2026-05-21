@@ -59,14 +59,14 @@ internal static class QueryHandler
         }
         catch (JsonException ex)
         {
-            await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+            await CosmosOpsShared.WriteErrorAsync(ctx, 400, "SerializationException",
                 "Malformed JSON: " + ex.Message).ConfigureAwait(false);
             return;
         }
-        if (req is null || string.IsNullOrEmpty(req.TableName))
+        if (req is null || !DynamoDbNames.IsValidTableName(req.TableName))
         {
             await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
-                "TableName is required.").ConfigureAwait(false);
+                "TableName is required and must match [a-zA-Z0-9_.-]{3,255}.").ConfigureAwait(false);
             return;
         }
         if (string.IsNullOrWhiteSpace(req.KeyConditionExpression))
@@ -114,7 +114,7 @@ internal static class QueryHandler
             return;
         }
 
-        using var metaResult = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, req.TableName, ct).ConfigureAwait(false);
+        using var metaResult = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, req.TableName!, ct).ConfigureAwait(false);
         if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.CosmosError)
         {
             await CosmosOpsShared.WriteCosmosErrorAsync(ctx, metaResult.ErrorResponse!, ct).ConfigureAwait(false);
@@ -190,9 +190,7 @@ internal static class QueryHandler
         var collUri = "/" + collLink + "/docs";
         var pkHeader = CosmosOpsShared.BuildPartitionKeyHeader(keyCond.HashValue);
 
-        int wantedItems = req.Limit ?? int.MaxValue;
-        int pageSize = Math.Min(MaxBatchSize, wantedItems);
-
+        int wantedScanned = req.Limit ?? int.MaxValue;
         var items = new List<Dictionary<string, JsonElement>>();
         int scanned = 0;
         int matched = 0;
@@ -200,6 +198,16 @@ internal static class QueryHandler
 
         while (true)
         {
+            // DynamoDB's Limit caps *evaluated* items (pre-filter). Ask
+            // Cosmos for at most as many docs as we still have budget
+            // for so we never read past the Limit boundary — that lets
+            // us return the per-page continuation as the
+            // LastEvaluatedKey without silently dropping rows.
+            int remaining = wantedScanned == int.MaxValue
+                ? MaxBatchSize
+                : Math.Max(1, wantedScanned - scanned);
+            int pageSize = Math.Min(MaxBatchSize, remaining);
+
             using var content = new StringContent(queryBody, Encoding.UTF8);
             content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/query+json");
 
@@ -242,9 +250,9 @@ internal static class QueryHandler
             {
                 foreach (var docEl in docsEl.EnumerateArray())
                 {
-                    scanned++;
                     var itemMap = ExtractItemEnvelope(docEl);
                     if (itemMap is null) continue;
+                    scanned++;
 
                     if (filter is not null)
                     {
@@ -262,7 +270,6 @@ internal static class QueryHandler
                     {
                         items.Add(projection is null ? itemMap : Project(itemMap, projection));
                     }
-                    if (matched >= wantedItems) break;
                 }
             }
 
@@ -272,7 +279,7 @@ internal static class QueryHandler
                 foreach (var v in ctValues) { continuationOut = v; break; }
             }
 
-            if (matched >= wantedItems) break;
+            if (scanned >= wantedScanned) break;
             if (string.IsNullOrEmpty(continuationOut)) break;
         }
 

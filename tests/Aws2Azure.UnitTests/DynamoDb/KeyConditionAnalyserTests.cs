@@ -18,6 +18,10 @@ public class KeyConditionAnalyserTests
     private static TableMetadata HashOnlyMeta() => new()
     {
         TableName = "t",
+        AttributeDefinitions = new List<TableAttributeDefinition>
+        {
+            new() { Name = "pk", Type = "S" },
+        },
         KeySchema = new List<TableKeySchemaElement>
         {
             new() { Name = "pk", KeyType = "HASH" },
@@ -27,6 +31,11 @@ public class KeyConditionAnalyserTests
     private static TableMetadata CompositeMeta() => new()
     {
         TableName = "t",
+        AttributeDefinitions = new List<TableAttributeDefinition>
+        {
+            new() { Name = "pk", Type = "S" },
+            new() { Name = "sk", Type = "S" },
+        },
         KeySchema = new List<TableKeySchemaElement>
         {
             new() { Name = "pk", KeyType = "HASH" },
@@ -153,6 +162,10 @@ public class KeyConditionAnalyserTests
         var meta = new TableMetadata
         {
             TableName = "t",
+            AttributeDefinitions = new List<TableAttributeDefinition>
+            {
+                new() { Name = "id", Type = "N" },
+            },
             KeySchema = new List<TableKeySchemaElement>
             {
                 new() { Name = "id", KeyType = "HASH" },
@@ -160,5 +173,13 @@ public class KeyConditionAnalyserTests
         };
         var r = Analyse("id = :v", meta, Values((":v", "{\"N\":\"42\"}")));
         Assert.Equal("42", r.HashValue);
+    }
+
+    [Fact]
+    public void Key_value_with_mismatched_type_is_rejected()
+    {
+        // table declares pk as S; query passes {"N":"42"} → reject.
+        Assert.Throws<KeyConditionException>(() => Analyse("pk = :v",
+            HashOnlyMeta(), Values((":v", "{\"N\":\"42\"}"))));
     }
 }
