@@ -460,6 +460,13 @@ internal static class AmqpReceiveMessageHandlers
 
         var ok = new List<BatchEntryOk>(entries.Count);
         var failed = new List<BatchEntryError>();
+        // Deferred invalidation: collect (sessionId) keys whose settle
+        // receiver hit a transport error during fan-out, then invalidate
+        // once after Task.WhenAll. This avoids disposing a receiver under
+        // sibling entries that may still hold pending AMQP requests on
+        // it, while still ensuring a broken cached client doesn't linger
+        // across subsequent batches. Empty string == non-session handle.
+        var receiversToInvalidate = new HashSet<string>(StringComparer.Ordinal);
         await BatchAdminHandlers.ForEachBoundedAsync(entries, BatchAdminHandlers.MaxBatchConcurrency, async entry =>
         {
             if (!AmqpReceiptHandle.TryDecode(entry.ReceiptHandle, out var decoded) ||
@@ -499,11 +506,10 @@ internal static class AmqpReceiveMessageHandlers
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
-                // See ChangeMessageVisibilityBatch below for the
-                // rationale: invalidating a settle receiver shared by
-                // sibling entries can dispose it while siblings still
-                // have settle calls in flight, hanging them. Let the
-                // next singular call invalidate.
+                // Defer invalidation until after sibling entries finish
+                // (see receiversToInvalidate above): disposing the
+                // shared session receiver mid-batch can hang siblings.
+                lock (receiversToInvalidate) receiversToInvalidate.Add(decoded.SessionId ?? string.Empty);
                 var m = MapAmqpException(ex, "DeleteMessageBatch");
                 lock (failed) failed.Add(new BatchEntryError(entry.Id, m.Code, m.Message,
                     SenderFault: m.FaultType == SqsErrorResponse.FaultType.Sender));
@@ -518,6 +524,12 @@ internal static class AmqpReceiveMessageHandlers
             }
             lock (ok) ok.Add(new BatchEntryOk(entry.Id));
         }, ct).ConfigureAwait(false);
+
+        foreach (var sessionId in receiversToInvalidate)
+        {
+            await InvalidateSettleReceiverAsync(
+                receivers, queueName, sessionId.Length == 0 ? null : sessionId).ConfigureAwait(false);
+        }
 
         var order = new Dictionary<string, int>(StringComparer.Ordinal);
         for (var i = 0; i < entries.Count; i++) order[entries[i].Id] = i;
@@ -573,6 +585,9 @@ internal static class AmqpReceiveMessageHandlers
 
         var ok = new List<BatchEntryOk>(entries.Count);
         var failed = new List<BatchEntryError>();
+        // Deferred invalidation (see DeleteMessageBatchAsync above).
+        var receiversToInvalidate = new HashSet<string>(StringComparer.Ordinal);
+        var mgmtFailed = 0;
         await BatchAdminHandlers.ForEachBoundedAsync(entries, BatchAdminHandlers.MaxBatchConcurrency, async entry =>
         {
             if (entry.VisibilityTimeout < 0 || entry.VisibilityTimeout > MaxVisibilityTimeoutSeconds)
@@ -620,10 +635,8 @@ internal static class AmqpReceiveMessageHandlers
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
-                    // Same rationale as DeleteMessageBatch above: skip
-                    // invalidation to avoid disposing the shared session
-                    // receiver while siblings still have settle calls in
-                    // flight on it.
+                    // Defer invalidation (see DeleteMessageBatchAsync).
+                    lock (receiversToInvalidate) receiversToInvalidate.Add(decoded.SessionId ?? string.Empty);
                     var m = MapAmqpException(ex, "ChangeMessageVisibilityBatch");
                     lock (failed) failed.Add(new BatchEntryError(entry.Id, m.Code, m.Message,
                         SenderFault: m.FaultType == SqsErrorResponse.FaultType.Sender));
@@ -671,14 +684,11 @@ internal static class AmqpReceiveMessageHandlers
             }
             catch (Exception ex)
             {
-                // Deliberately do NOT call InvalidateManagementClientAsync
-                // here: sibling entries in the same batch share the cached
-                // mgmt client and may have requests pending on it. A
-                // concurrent dispose-while-in-use can hang those siblings
-                // (their pending requests never get a receive pump to
-                // complete them — see ServiceBusAmqpPool dispose path).
-                // Instead, surface the per-entry failure and let the next
-                // singular call's failure path invalidate the slot.
+                // Defer invalidation: sibling entries may still have
+                // requests pending on the shared mgmt client. We flag
+                // it here and invalidate once after Task.WhenAll
+                // (see mgmtFailed handling below the fan-out).
+                Interlocked.Exchange(ref mgmtFailed, 1);
                 var m = MapAmqpException(ex, "ChangeMessageVisibilityBatch");
                 lock (failed) failed.Add(new BatchEntryError(entry.Id, m.Code, m.Message,
                     SenderFault: m.FaultType == SqsErrorResponse.FaultType.Sender));
@@ -686,6 +696,16 @@ internal static class AmqpReceiveMessageHandlers
             }
             lock (ok) ok.Add(new BatchEntryOk(entry.Id));
         }, ct).ConfigureAwait(false);
+
+        foreach (var sessionId in receiversToInvalidate)
+        {
+            await InvalidateSettleReceiverAsync(
+                receivers, queueName, sessionId.Length == 0 ? null : sessionId).ConfigureAwait(false);
+        }
+        if (Volatile.Read(ref mgmtFailed) == 1)
+        {
+            await receivers.InvalidateManagementClientAsync(queueName).ConfigureAwait(false);
+        }
 
         var order = new Dictionary<string, int>(StringComparer.Ordinal);
         for (var i = 0; i < entries.Count; i++) order[entries[i].Id] = i;
