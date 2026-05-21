@@ -1,9 +1,29 @@
 service: dynamodb
 operation: DeleteItem
 azure_equivalent: "Azure Cosmos DB (Core SQL API)"
-status: stub
-sub_features: []
+status: partial
+sub_features:
+  - name: HASH-only key tables
+    status: implemented
+  - name: HASH+RANGE composite key tables
+    status: implemented
+  - name: Idempotent delete (missing item returns success)
+    status: implemented
+    notes: "Cosmos 404 → DynamoDB 200 empty, matching DynamoDB semantics."
+  - name: ConditionExpression / Expected / ConditionalOperator
+    status: unsupported
+    notes: "Rejected with ValidationException pending expression parser slice (#12)."
+  - name: ExpressionAttributeNames / ExpressionAttributeValues
+    status: unsupported
+  - name: ReturnValues
+    status: partial
+    notes: "Only NONE accepted; ALL_OLD rejected with ValidationException."
+  - name: ReturnConsumedCapacity / ReturnItemCollectionMetrics
+    status: unsupported
 behavior_differences:
-  - "DynamoDB JSON type system mapped onto Cosmos JSON; consistency model differs"
+  - "Missing container (table deleted mid-op) is distinguished from missing item via Cosmos `x-ms-substatus: 1003` and surfaces as ResourceNotFoundException; missing items remain idempotent successes."
+  - "Key values containing `/`, `\\`, `?`, `#`, empty strings, or values longer than 255 chars are rejected with ValidationException."
+  - "Cosmos 429 surfaced as DynamoDB ProvisionedThroughputExceededException — including 429 on metadata read."
+  - "Only validated against scripted Cosmos REST + emulator; not yet exercised against real Azure Cosmos."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DeleteItem.html

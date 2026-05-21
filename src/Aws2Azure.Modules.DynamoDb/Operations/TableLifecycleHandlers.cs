@@ -484,17 +484,11 @@ internal static class TableLifecycleHandlers
 
     /// <summary>
     /// Builds the Cosmos partition-key header value
-    /// <c>["&lt;value&gt;"]</c>. Done by hand because the array form is
-    /// fixed-shape and going through <c>JsonSerializer</c> would either
-    /// drag in reflection or require a dedicated source-gen context for
-    /// a one-line literal.
+    /// <c>["&lt;value&gt;"]</c>. Delegates to <see cref="CosmosOpsShared"/>
+    /// so every handler agrees on the encoding.
     /// </summary>
     internal static string BuildPartitionKeyHeader(string value)
-    {
-        // JsonEncodedText handles the escaping rules (quotes, control chars,
-        // surrogates) without allocating an options bag.
-        return "[\"" + JsonEncodedText.Encode(value).ToString() + "\"]";
-    }
+        => CosmosOpsShared.BuildPartitionKeyHeader(value);
 
     private static string BuildContainerBody(string tableName)
     {
@@ -552,25 +546,12 @@ internal static class TableLifecycleHandlers
 
     private static async Task<TableMetadata?> TryReadMetadataAsync(CosmosClient cosmos, string tableName, CancellationToken ct)
     {
-        var docLink = "dbs/" + cosmos.DatabaseName + "/colls/" + tableName + "/docs/" + TableMetadata.DocId;
-        var pkHeader = BuildPartitionKeyHeader(TableMetadata.DocId);
-        var headers = new[]
-        {
-            new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
-        };
-        using var resp = await cosmos.SendAsync(
-            HttpMethod.Get, "docs", docLink, "/" + docLink,
-            content: null, headers, ct).ConfigureAwait(false);
-        if (!resp.IsSuccessStatusCode) return null;
-        await using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-        try
-        {
-            return JsonSerializer.Deserialize(stream, TableMetadataJsonContext.Default.TableMetadata);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
+        using var result = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, tableName, ct).ConfigureAwait(false);
+        // Lifecycle handlers only need the metadata when present; they
+        // already issue the authoritative container call separately and
+        // surface 429/auth failures from that path. Treat any non-Found
+        // outcome (NotFound or CosmosError) as "no sidecar available".
+        return result.Status == CosmosOpsShared.TableMetadataReadStatus.Found ? result.Metadata : null;
     }
 
     internal static List<string> ParseContainerNames(Stream cosmosListBody)
@@ -596,37 +577,13 @@ internal static class TableLifecycleHandlers
         }
     }
 
-    private static async Task WriteCosmosErrorAsync(HttpContext ctx, HttpResponseMessage cosmosResp, CancellationToken ct)
-    {
-        // Translate Cosmos status → DynamoDB exception. The mappings here
-        // cover the lifecycle-op failure surface; item-op handlers (later
-        // slices) extend this with conditional-write specifics.
-        var status = (int)cosmosResp.StatusCode;
-        var (awsStatus, code) = status switch
-        {
-            401 or 403 => (400, "AccessDeniedException"),
-            408 => (500, "InternalServerError"),
-            429 => (400, "ProvisionedThroughputExceededException"),
-            503 => (500, "InternalServerError"),
-            _ when status >= 500 => (500, "InternalServerError"),
-            _ => (400, "ValidationException"),
-        };
-        string body = string.Empty;
-        try { body = await cosmosResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false); }
-        catch { }
-        var message = string.IsNullOrEmpty(body) ? cosmosResp.ReasonPhrase ?? "Cosmos request failed." : body;
-        await WriteErrorAsync(ctx, awsStatus, code, message).ConfigureAwait(false);
-    }
+    private static Task WriteCosmosErrorAsync(HttpContext ctx, HttpResponseMessage cosmosResp, CancellationToken ct)
+        => CosmosOpsShared.WriteCosmosErrorAsync(ctx, cosmosResp, ct);
 
     private static Task WriteErrorAsync(HttpContext ctx, int status, string code, string message)
-        => DynamoDbErrorResponse.WriteAsync(ctx, status, code, message);
+        => CosmosOpsShared.WriteErrorAsync(ctx, status, code, message);
 
-    private static async Task WriteJsonAsync<T>(HttpContext ctx, int status, T payload, JsonTypeInfo<T> typeInfo)
+    private static Task WriteJsonAsync<T>(HttpContext ctx, int status, T payload, JsonTypeInfo<T> typeInfo)
         where T : class
-    {
-        ctx.Response.StatusCode = status;
-        ctx.Response.ContentType = "application/x-amz-json-1.0";
-        var json = JsonSerializer.Serialize(payload, typeInfo);
-        await ctx.Response.WriteAsync(json).ConfigureAwait(false);
-    }
+        => CosmosOpsShared.WriteJsonAsync(ctx, status, payload, typeInfo);
 }
