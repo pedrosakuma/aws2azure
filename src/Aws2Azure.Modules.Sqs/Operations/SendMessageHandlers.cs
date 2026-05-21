@@ -145,6 +145,19 @@ internal static class SendMessageHandlers
                 SqsErrorMapping.MissingParameter("MessageGroupId")).ConfigureAwait(false);
             return;
         }
+        if (isFifoQueue && string.IsNullOrEmpty(dedupId))
+        {
+            // AWS FIFO requires MessageDeduplicationId unless the queue is
+            // configured with ContentBasedDeduplication=true. The proxy
+            // doesn't track per-queue dedup configuration, so the safe and
+            // AWS-compatible default is to reject. Auto-minting a random
+            // GUID here would defeat SB's dedup window — every retry of
+            // the same logical send would get a different MessageId — so
+            // we never silently substitute.
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.MissingParameter("MessageDeduplicationId")).ConfigureAwait(false);
+            return;
+        }
         if (!isFifoQueue && !string.IsNullOrEmpty(groupId))
         {
             await WriteErrorAsync(context, parsed.Protocol,
@@ -166,11 +179,9 @@ internal static class SendMessageHandlers
         // SKU, or Standard via per-queue config) the broker collapses the
         // accidental duplicates into a single delivery; on others the
         // MessageId is at least stable across retries which clients can
-        // use for their own dedup. For FIFO with caller-supplied dedup id
-        // the dedup id IS the MessageId — preserve that.
-        var idempotencyKey = (isFifoQueue && !string.IsNullOrEmpty(dedupId))
-            ? dedupId!
-            : Guid.NewGuid().ToString();
+        // use for their own dedup. For FIFO the caller-supplied dedup id
+        // IS the MessageId (validated above to be present).
+        var idempotencyKey = isFifoQueue ? dedupId! : Guid.NewGuid().ToString();
 
         var brokerProps = BuildBrokerProperties(messageId: idempotencyKey, sessionId: groupId, delaySeconds);
         var appHeaders = BuildAppPropertyHeaders(attrs);
@@ -254,6 +265,17 @@ internal static class SendMessageHandlers
                     SqsErrorMapping.MissingParameter("MessageGroupId")).ConfigureAwait(false);
                 return;
             }
+            if (batchIsFifoQueue && string.IsNullOrEmpty(e.DeduplicationId))
+            {
+                // Same rationale as the single-send path: never silently
+                // substitute a random GUID for a missing dedup id on FIFO
+                // — that would defeat SB's dedup window because retries
+                // of the same logical send would each get a different
+                // MessageId.
+                await WriteErrorAsync(context, parsed.Protocol,
+                    SqsErrorMapping.MissingParameter("MessageDeduplicationId")).ConfigureAwait(false);
+                return;
+            }
             if (!batchIsFifoQueue && !string.IsNullOrEmpty(e.GroupId))
             {
                 await WriteErrorAsync(context, parsed.Protocol,
@@ -279,14 +301,13 @@ internal static class SendMessageHandlers
 
         // Mint stable per-entry idempotency keys BEFORE the HTTP retry
         // path so every retry of the same batch carries the same
-        // MessageId per entry. Same rationale as the single-send path.
+        // MessageId per entry. Same rationale as the single-send path;
+        // FIFO entries are validated above to carry an explicit dedup id.
         var idempotencyKeys = new string[entries.Count];
         for (var i = 0; i < entries.Count; i++)
         {
             var e = entries[i];
-            idempotencyKeys[i] = (batchIsFifoQueue && !string.IsNullOrEmpty(e.DeduplicationId))
-                ? e.DeduplicationId!
-                : Guid.NewGuid().ToString();
+            idempotencyKeys[i] = batchIsFifoQueue ? e.DeduplicationId! : Guid.NewGuid().ToString();
         }
 
         // Build the SB batch envelope.

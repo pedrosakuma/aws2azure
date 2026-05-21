@@ -111,6 +111,55 @@ public sealed class SqsIdempotencyKeyTests
     }
 
     [Fact]
+    public async Task SendMessage_on_fifo_queue_without_dedup_id_is_rejected()
+    {
+        // Per AWS, FIFO sends without MessageDeduplicationId require
+        // ContentBasedDeduplication=true on the queue. The proxy doesn't
+        // know per-queue dedup config, so the safe default is to reject —
+        // auto-minting a GUID would defeat SB's dedup window because
+        // every retry would carry a different MessageId.
+        var ctx = NewCtx();
+        var parsed = QueryParsed(SqsOperation.SendMessage,
+            ("QueueUrl", "https://sqs.us-east-1.amazonaws.com/000000000000/orders.fifo"),
+            ("MessageBody", "hello"),
+            ("MessageGroupId", "g1"));
+
+        var handler = new CapturingHandler(_ => new HttpResponseMessage(HttpStatusCode.Created));
+        using var http = NewHttpClient(handler);
+        var sb = new ServiceBusClient(http, Creds);
+        await SendMessageHandlers.HandleAsync(ctx, parsed, sb, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        var body = ReadBody(ctx);
+        Assert.Contains("MissingParameter", body);
+        Assert.Contains("MessageDeduplicationId", body);
+        Assert.Empty(handler.Calls); // never reached SB
+    }
+
+    [Fact]
+    public async Task SendMessageBatch_on_fifo_queue_rejects_entry_without_dedup_id()
+    {
+        var ctx = NewCtx();
+        var parsed = QueryParsed(SqsOperation.SendMessageBatch,
+            ("QueueUrl", "https://sqs.us-east-1.amazonaws.com/000000000000/orders.fifo"),
+            ("SendMessageBatchRequestEntry.1.Id", "e1"),
+            ("SendMessageBatchRequestEntry.1.MessageBody", "m1"),
+            ("SendMessageBatchRequestEntry.1.MessageGroupId", "g1"));
+            // missing MessageDeduplicationId
+
+        var handler = new CapturingHandler(_ => new HttpResponseMessage(HttpStatusCode.Created));
+        using var http = NewHttpClient(handler);
+        var sb = new ServiceBusClient(http, Creds);
+        await SendMessageHandlers.HandleAsync(ctx, parsed, sb, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        var body = ReadBody(ctx);
+        Assert.Contains("MissingParameter", body);
+        Assert.Contains("MessageDeduplicationId", body);
+        Assert.Empty(handler.Calls);
+    }
+
+    [Fact]
     public async Task SendMessageBatch_each_entry_carries_unique_stable_messageid()
     {
         var ctx = NewCtx();

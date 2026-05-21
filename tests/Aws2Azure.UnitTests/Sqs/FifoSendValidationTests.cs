@@ -94,8 +94,10 @@ public sealed class FifoSendValidationTests
             ("SendMessageBatchRequestEntry.1.Id", "e1"),
             ("SendMessageBatchRequestEntry.1.MessageBody", "m1"),
             ("SendMessageBatchRequestEntry.1.MessageGroupId", "g1"),
+            ("SendMessageBatchRequestEntry.1.MessageDeduplicationId", "d1"),
             ("SendMessageBatchRequestEntry.2.Id", "e2"),
-            ("SendMessageBatchRequestEntry.2.MessageBody", "m2")); // missing MessageGroupId
+            ("SendMessageBatchRequestEntry.2.MessageBody", "m2"),
+            ("SendMessageBatchRequestEntry.2.MessageDeduplicationId", "d2")); // missing MessageGroupId
 
         using var http = new AzureHttpClient(new RecordingHandler(), ownsHandler: true);
         var sb = new ServiceBusClient(http, Creds);
