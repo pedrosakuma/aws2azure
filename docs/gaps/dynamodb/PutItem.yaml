@@ -1,9 +1,30 @@
 service: dynamodb
 operation: PutItem
 azure_equivalent: "Azure Cosmos DB (Core SQL API)"
-status: stub
-sub_features: []
+status: partial
+sub_features:
+  - name: HASH-only key tables
+    status: implemented
+  - name: HASH+RANGE composite key tables
+    status: implemented
+  - name: Full DynamoDB wire-form round-trip (S/N/B/BOOL/NULL/M/L/SS/NS/BS)
+    status: implemented
+    notes: "Item stored verbatim under Cosmos doc `item` envelope; numeric precision (N) preserved via raw JSON pass-through."
+  - name: ConditionExpression / Expected / ConditionalOperator
+    status: unsupported
+    notes: "Rejected with ValidationException pending expression parser slice (#12)."
+  - name: ExpressionAttributeNames / ExpressionAttributeValues
+    status: unsupported
+  - name: ReturnValues
+    status: partial
+    notes: "Only NONE accepted; ALL_OLD/UPDATED_* rejected with ValidationException."
+  - name: ReturnConsumedCapacity / ReturnItemCollectionMetrics
+    status: unsupported
+    notes: "Silently ignored; response omits ConsumedCapacity / ItemCollectionMetrics."
 behavior_differences:
-  - "DynamoDB JSON type system mapped onto Cosmos JSON; consistency model differs"
+  - "Item is persisted under a Cosmos envelope `{id, pk, _a2a:\"item\", item:{...}}`; the raw DynamoDB wire form lives under `item`."
+  - "Sentinel id `__aws2azure_table_meta__` is reserved for the table-metadata sidecar and rejected at the API surface."
+  - "Cosmos 429 (throttled) is surfaced to clients as DynamoDB ProvisionedThroughputExceededException."
+  - "Only validated against scripted Cosmos REST + emulator; not yet exercised against real Azure Cosmos."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_PutItem.html

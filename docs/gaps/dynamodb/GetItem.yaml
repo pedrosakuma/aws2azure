@@ -1,9 +1,27 @@
 service: dynamodb
 operation: GetItem
 azure_equivalent: "Azure Cosmos DB (Core SQL API)"
-status: stub
-sub_features: []
+status: partial
+sub_features:
+  - name: HASH-only key tables
+    status: implemented
+  - name: HASH+RANGE composite key tables
+    status: implemented
+  - name: Full wire-form round-trip on response Item
+    status: implemented
+  - name: ConsistentRead
+    status: partial
+    notes: "Mapped to Cosmos `x-ms-consistency-level: Strong` request header. Honoured only when the account's max consistency permits Strong; Session/weaker accounts silently downgrade."
+  - name: ProjectionExpression / AttributesToGet
+    status: unsupported
+    notes: "Rejected with ValidationException pending expression parser slice (#12)."
+  - name: ExpressionAttributeNames
+    status: unsupported
+  - name: ReturnConsumedCapacity
+    status: unsupported
 behavior_differences:
-  - "DynamoDB JSON type system mapped onto Cosmos JSON; consistency model differs"
+  - "Missing item yields 200 with no `Item` field (matches DynamoDB)."
+  - "ConsistentRead effectiveness is account-dependent; document divergence per deployment."
+  - "Only validated against scripted Cosmos REST + emulator; not yet exercised against real Azure Cosmos."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_GetItem.html

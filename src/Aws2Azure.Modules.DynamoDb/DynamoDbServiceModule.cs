@@ -108,6 +108,15 @@ public sealed class DynamoDbServiceModule : IServiceModule
             case DynamoDbOperation.ListTables:
                 await TableLifecycleHandlers.HandleListTablesAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
                 return;
+            case DynamoDbOperation.PutItem:
+                await ItemHandlers.HandlePutItemAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                return;
+            case DynamoDbOperation.GetItem:
+                await ItemHandlers.HandleGetItemAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                return;
+            case DynamoDbOperation.DeleteItem:
+                await ItemHandlers.HandleDeleteItemAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                return;
         }
 
         await DynamoDbErrorResponse.WriteAsync(context,

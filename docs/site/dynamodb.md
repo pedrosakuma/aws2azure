@@ -34,12 +34,25 @@
 
 ## DeleteItem
 
-- **Status:** ⚪ stub
+- **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| HASH-only key tables | ✅ implemented |  |  |  |
+| HASH+RANGE composite key tables | ✅ implemented |  |  |  |
+| Idempotent delete (missing item returns success) | ✅ implemented | Cosmos 404 → DynamoDB 200 empty, matching DynamoDB semantics. |  |  |
+| ConditionExpression / Expected / ConditionalOperator | ⛔ unsupported | Rejected with ValidationException pending expression parser slice (#12). |  |  |
+| ExpressionAttributeNames / ExpressionAttributeValues | ⛔ unsupported |  |  |  |
+| ReturnValues | 🟡 partial | Only NONE accepted; ALL_OLD rejected with ValidationException. |  |  |
+| ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported |  |  |  |
 
 ### Behaviour differences
 
-- DynamoDB JSON type system mapped onto Cosmos JSON; consistency model differs
+- Cosmos 429 surfaced as DynamoDB ProvisionedThroughputExceededException.
+- Only validated against scripted Cosmos REST + emulator; not yet exercised against real Azure Cosmos.
 
 ### References
 
@@ -96,12 +109,26 @@
 
 ## GetItem
 
-- **Status:** ⚪ stub
+- **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| HASH-only key tables | ✅ implemented |  |  |  |
+| HASH+RANGE composite key tables | ✅ implemented |  |  |  |
+| Full wire-form round-trip on response Item | ✅ implemented |  |  |  |
+| ConsistentRead | 🟡 partial | Mapped to Cosmos `x-ms-consistency-level: Strong` request header. Honoured only when the account's max consistency permits Strong; Session/weaker accounts silently downgrade. |  |  |
+| ProjectionExpression / AttributesToGet | ⛔ unsupported | Rejected with ValidationException pending expression parser slice (#12). |  |  |
+| ExpressionAttributeNames | ⛔ unsupported |  |  |  |
+| ReturnConsumedCapacity | ⛔ unsupported |  |  |  |
 
 ### Behaviour differences
 
-- DynamoDB JSON type system mapped onto Cosmos JSON; consistency model differs
+- Missing item yields 200 with no `Item` field (matches DynamoDB).
+- ConsistentRead effectiveness is account-dependent; document divergence per deployment.
+- Only validated against scripted Cosmos REST + emulator; not yet exercised against real Azure Cosmos.
 
 ### References
 
@@ -133,12 +160,27 @@
 
 ## PutItem
 
-- **Status:** ⚪ stub
+- **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| HASH-only key tables | ✅ implemented |  |  |  |
+| HASH+RANGE composite key tables | ✅ implemented |  |  |  |
+| Full DynamoDB wire-form round-trip (S/N/B/BOOL/NULL/M/L/SS/NS/BS) | ✅ implemented | Item stored verbatim under Cosmos doc `item` envelope; numeric precision (N) preserved via raw JSON pass-through. |  |  |
+| ConditionExpression / Expected / ConditionalOperator | ⛔ unsupported | Rejected with ValidationException pending expression parser slice (#12). |  |  |
+| ExpressionAttributeNames / ExpressionAttributeValues | ⛔ unsupported |  |  |  |
+| ReturnValues | 🟡 partial | Only NONE accepted; ALL_OLD/UPDATED_* rejected with ValidationException. |  |  |
+| ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported | Silently ignored; response omits ConsumedCapacity / ItemCollectionMetrics. |  |  |
 
 ### Behaviour differences
 
-- DynamoDB JSON type system mapped onto Cosmos JSON; consistency model differs
+- Item is persisted under a Cosmos envelope `{id, pk, _a2a:"item", item:{...}}`; the raw DynamoDB wire form lives under `item`.
+- Sentinel id `__aws2azure_table_meta__` is reserved for the table-metadata sidecar and rejected at the API surface.
+- Cosmos 429 (throttled) is surfaced to clients as DynamoDB ProvisionedThroughputExceededException.
+- Only validated against scripted Cosmos REST + emulator; not yet exercised against real Azure Cosmos.
 
 ### References
 
