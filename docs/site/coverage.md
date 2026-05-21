@@ -8,12 +8,19 @@
 | dynamodb | [DeleteItem](dynamodb.md#deleteitem) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [DeleteTable](dynamodb.md#deletetable) | ✅ implemented | `Azure Cosmos DB (Core SQL API) — DELETE /dbs/{db}/colls/{name}` |
 | dynamodb | [DescribeTable](dynamodb.md#describetable) | ✅ implemented | `Azure Cosmos DB (Core SQL API) — GET /dbs/{db}/colls/{name} + sidecar metadata` |
+| dynamodb | [DescribeTimeToLive](dynamodb.md#describetimetolive) | ⚪ stub | `Azure Cosmos DB container `defaultTtl` / per-item `ttl`` |
 | dynamodb | [GetItem](dynamodb.md#getitem) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [ListTables](dynamodb.md#listtables) | ✅ implemented | `Azure Cosmos DB (Core SQL API) — GET /dbs/{db}/colls` |
+| dynamodb | [ListTagsOfResource](dynamodb.md#listtagsofresource) | ⚪ stub | `Azure Cosmos DB account/resource tags (control plane)` |
 | dynamodb | [PutItem](dynamodb.md#putitem) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [Query](dynamodb.md#query) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [Scan](dynamodb.md#scan) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
+| dynamodb | [TagResource](dynamodb.md#tagresource) | ⚪ stub | `Azure Cosmos DB account/resource tags (control plane)` |
+| dynamodb | [TransactGetItems](dynamodb.md#transactgetitems) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
+| dynamodb | [TransactWriteItems](dynamodb.md#transactwriteitems) | ⛔ unsupported | `Azure Cosmos DB (Core SQL API) — no cross-container ACID` |
+| dynamodb | [UntagResource](dynamodb.md#untagresource) | ⚪ stub | `Azure Cosmos DB account/resource tags (control plane)` |
 | dynamodb | [UpdateItem](dynamodb.md#updateitem) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
+| dynamodb | [UpdateTimeToLive](dynamodb.md#updatetimetolive) | ⛔ unsupported | `Azure Cosmos DB container `defaultTtl` / per-item `ttl`` |
 | kinesis | [GetRecords](kinesis.md#getrecords) | ⚪ stub | `Azure Event Hubs Kafka/HTTP surface` |
 | kinesis | [GetShardIterator](kinesis.md#getsharditerator) | ⚪ stub | `Azure Event Hubs Kafka/HTTP surface` |
 | kinesis | [PutRecord](kinesis.md#putrecord) | ⚪ stub | `Azure Event Hubs Kafka/HTTP surface` |

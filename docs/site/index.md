@@ -4,7 +4,7 @@ Authoritative inventory of which AWS operations the proxy translates, with the A
 
 ## Services
 
-- [dynamodb](dynamodb.md) — 12 operation(s)
+- [dynamodb](dynamodb.md) — 19 operation(s)
 - [kinesis](kinesis.md) — 4 operation(s)
 - [s3](s3.md) — 72 operation(s)
 - [sns](sns.md) — 5 operation(s)

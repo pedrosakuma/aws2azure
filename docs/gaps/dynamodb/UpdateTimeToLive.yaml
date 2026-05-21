@@ -1,0 +1,12 @@
+service: dynamodb
+operation: UpdateTimeToLive
+azure_equivalent: "Azure Cosmos DB container `defaultTtl` / per-item `ttl`"
+status: unsupported
+sub_features:
+  - name: TTL enable/disable
+    status: unsupported
+    notes: "Honouring DynamoDB TTL semantics requires translating the named attribute's epoch-seconds value into Cosmos' per-item `ttl` field on every PutItem / UpdateItem write. That translation is not yet implemented; accepting the call without translating would silently break the user's expiration contract."
+behavior_differences:
+  - "Returns `ValidationException` with an explanatory message. Operators who need TTL on Azure should configure Cosmos container `defaultTtl` directly out-of-band and not rely on this API."
+references:
+  - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTimeToLive.html

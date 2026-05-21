@@ -1,0 +1,12 @@
+service: dynamodb
+operation: ListTagsOfResource
+azure_equivalent: "Azure Cosmos DB account/resource tags (control plane)"
+status: stub
+sub_features:
+  - name: Returns empty tag list
+    status: implemented
+    notes: "Returns `{Tags: []}` after validating ResourceArn. No pagination because there is nothing to page over."
+behavior_differences:
+  - "Always returns an empty tag list, even immediately after a `TagResource` call (tags are not persisted by the proxy)."
+references:
+  - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ListTagsOfResource.html

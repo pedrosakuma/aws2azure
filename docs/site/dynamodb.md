@@ -170,6 +170,26 @@
 - <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DescribeTable.html>
 - <https://learn.microsoft.com/rest/api/cosmos-db/get-a-collection>
 
+## DescribeTimeToLive
+
+- **Status:** ⚪ stub
+- **Azure equivalent:** `Azure Cosmos DB container `defaultTtl` / per-item `ttl``
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| Returns DISABLED | ✅ implemented | Returns `{TimeToLiveDescription: {TimeToLiveStatus: "DISABLED"}}` for every table without consulting Cosmos. SDK callers that probe TTL on every connection get a clean shape instead of a 501. |  |  |
+
+### Behaviour differences
+
+- Always reports DISABLED — even if a Cosmos container has `defaultTtl` configured out-of-band, this proxy will not surface that state.
+- Pairs with `UpdateTimeToLive` which is currently `unsupported`; once item-level TTL translation lands, this op will be promoted to `partial`.
+
+### References
+
+- <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DescribeTimeToLive.html>
+
 ## GetItem
 
 - **Status:** 🟡 partial
@@ -223,6 +243,25 @@
 
 - <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ListTables.html>
 - <https://learn.microsoft.com/rest/api/cosmos-db/list-collections>
+
+## ListTagsOfResource
+
+- **Status:** ⚪ stub
+- **Azure equivalent:** `Azure Cosmos DB account/resource tags (control plane)`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| Returns empty tag list | ✅ implemented | Returns `{Tags: []}` after validating ResourceArn. No pagination because there is nothing to page over. |  |  |
+
+### Behaviour differences
+
+- Always returns an empty tag list, even immediately after a `TagResource` call (tags are not persisted by the proxy).
+
+### References
+
+- <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ListTagsOfResource.html>
 
 ## PutItem
 
@@ -320,6 +359,90 @@
 
 - <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Scan.html>
 
+## TagResource
+
+- **Status:** ⚪ stub
+- **Azure equivalent:** `Azure Cosmos DB account/resource tags (control plane)`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| Accept & discard tags | ✅ implemented | Returns an empty 200 after validating ResourceArn + non-empty Tags. Tags are not persisted anywhere and have no effect on Azure billing or routing. |  |  |
+
+### Behaviour differences
+
+- AWS SDK callers that tag tables on creation as a bookkeeping side-effect work; callers that rely on tag-based access control or cost allocation do not.
+- Round-trip with `ListTagsOfResource` is not supported — listing always returns an empty array.
+
+### References
+
+- <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TagResource.html>
+
+## TransactGetItems
+
+- **Status:** 🟡 partial
+- **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| Per-item strong-consistency reads | ✅ implemented | Each Get fans out to a Cosmos GET with `x-ms-consistency-level: Strong`. Bounded parallelism (16) keeps the response sub-second on small batches. |  |  |
+| 100-item-per-call cap | ✅ implemented | Requests over 100 items rejected with ValidationException. |  |  |
+| Positional Responses alignment | ✅ implemented | Missing items emit an empty `{}` entry to preserve index alignment with TransactItems (matches DynamoDB). |  |  |
+| ProjectionExpression / ExpressionAttributeNames (per item) | 🟡 partial | Top-level attribute names + `#alias` honoured. Nested paths rejected. |  |  |
+| TransactionCanceledException on Cosmos error | ✅ implemented | Any non-2xx, non-404 from a fan-out call cancels the transaction with `TransactionCanceledException`. `CancellationReasons` is aligned positionally — `None` for successful items, the Cosmos-derived AWS code (e.g. `ProvisionedThroughputExceededException`, `InternalServerError`) for failed ones. |  |  |
+| ReturnConsumedCapacity | ⛔ unsupported | Silently ignored; response omits ConsumedCapacity. |  |  |
+
+### Behaviour differences
+
+- Not a true cross-container ACID read — each fan-out call sees Cosmos' latest committed value independently. For items in the same logical partition this is functionally equivalent to DynamoDB; cross-partition or cross-container reads can in theory observe writes that committed mid-fan-out (DynamoDB internally serializes the entire transaction).
+- Only validated against scripted Cosmos REST fakes; not yet exercised against real Azure Cosmos.
+
+### References
+
+- <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TransactGetItems.html>
+
+## TransactWriteItems
+
+- **Status:** ⛔ unsupported
+- **Azure equivalent:** `Azure Cosmos DB (Core SQL API) — no cross-container ACID`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| ACID writes across items | ⛔ unsupported | Azure Cosmos DB only offers transactional batches within a single logical partition of a single container. DynamoDB TransactWriteItems supports up to 100 writes across multiple tables with full ACID guarantees — there is no faithful mapping. |  |  |
+| ConditionCheck / ConditionExpression | ⛔ unsupported |  |  |  |
+
+### Behaviour differences
+
+- Every TransactWriteItems call returns `TransactionCanceledException` with an explanatory message. Callers must fall back to `BatchWriteItem` (no atomicity) or per-item `PutItem` / `UpdateItem` / `DeleteItem` with their own application-level coordination.
+
+### References
+
+- <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TransactWriteItems.html>
+
+## UntagResource
+
+- **Status:** ⚪ stub
+- **Azure equivalent:** `Azure Cosmos DB account/resource tags (control plane)`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| Accept & no-op | ✅ implemented | Returns an empty 200 after validating ResourceArn + non-empty TagKeys. There is no persisted state to untag. |  |  |
+
+### Behaviour differences
+
+- Mirrors the `TagResource` stub: tags are never persisted, so removal is unconditionally a no-op.
+
+### References
+
+- <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UntagResource.html>
+
 ## UpdateItem
 
 - **Status:** 🟡 partial
@@ -356,4 +479,23 @@
 
 - <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateItem.html>
 - <https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Expressions.UpdateExpressions.html>
+
+## UpdateTimeToLive
+
+- **Status:** ⛔ unsupported
+- **Azure equivalent:** `Azure Cosmos DB container `defaultTtl` / per-item `ttl``
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| TTL enable/disable | ⛔ unsupported | Honouring DynamoDB TTL semantics requires translating the named attribute's epoch-seconds value into Cosmos' per-item `ttl` field on every PutItem / UpdateItem write. That translation is not yet implemented; accepting the call without translating would silently break the user's expiration contract. |  |  |
+
+### Behaviour differences
+
+- Returns `ValidationException` with an explanatory message. Operators who need TTL on Azure should configure Cosmos container `defaultTtl` directly out-of-band and not rely on this API.
+
+### References
+
+- <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTimeToLive.html>
 
