@@ -85,7 +85,34 @@ public static class DynamoDbWireProtocolParser
                     $"Unknown DynamoDB operation: {target}"));
         }
 
-        var body = await ReadBoundedBodyAsync(context, ct).ConfigureAwait(false);
+        // Reject up front when ContentLength advertises a body bigger than
+        // we'll buffer — avoids accepting then truncating, and matches the
+        // pattern the registry's pre-validation buffer uses.
+        if (context.Request.ContentLength is long cl && cl > MaxBodyBytes)
+        {
+            return new DynamoDbParseResult(
+                op, target, Body: Array.Empty<byte>(),
+                Error: new DynamoDbParseError(
+                    StatusCodes.Status413PayloadTooLarge,
+                    "RequestEntityTooLarge",
+                    $"Request body exceeds the {MaxBodyBytes}-byte limit."));
+        }
+
+        byte[] body;
+        try
+        {
+            body = await ReadBoundedBodyAsync(context, ct).ConfigureAwait(false);
+        }
+        catch (RequestBodyTooLargeException ex)
+        {
+            return new DynamoDbParseResult(
+                op, target, Body: Array.Empty<byte>(),
+                Error: new DynamoDbParseError(
+                    StatusCodes.Status413PayloadTooLarge,
+                    "RequestEntityTooLarge",
+                    ex.Message));
+        }
+
         if (body.Length > 0 && !LooksLikeJsonObject(body))
         {
             return new DynamoDbParseResult(

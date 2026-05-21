@@ -24,6 +24,31 @@ public interface IServiceModule
     /// </summary>
     bool RequiresSigV4 { get; }
 
+    /// <summary>
+    /// When <c>true</c>, the registry buffers the entire request body
+    /// into memory (bounded) and computes its SHA-256 hash before
+    /// invoking SigV4 validation. The hash is fed to the validator
+    /// even when the client omits the <c>x-amz-content-sha256</c>
+    /// header — modern AWS SDKs (boto3, AWSSDK.NET, Java v2) always
+    /// send the header, but the SigV4 spec permits omitting it for
+    /// non-S3 services since the hash is still part of the canonical
+    /// request. Without buffering, a spec-compliant client without
+    /// the header signs with the real hash while the proxy validates
+    /// against an unresolved sentinel and rejects with
+    /// <c>SignatureDoesNotMatch</c>.
+    ///
+    /// <para>Defaults to <c>false</c> for backward compatibility. S3
+    /// keeps it off because S3 has its own streaming/multipart payload
+    /// strategy. Services that speak AWS JSON 1.0/1.1 with bounded
+    /// request bodies (DynamoDB, SQS-Json) should enable it.</para>
+    ///
+    /// <para>The registry re-points
+    /// <see cref="HttpRequest.Body"/> at the buffered copy so the
+    /// module's parser sees the same bytes it would have read from
+    /// the original stream.</para>
+    /// </summary>
+    bool BuffersRequestBodyForSigV4 => false;
+
     /// <summary>Format used to render error responses (XML for S3, JSON elsewhere).</summary>
     AwsErrorFormat ErrorFormat { get; }
 

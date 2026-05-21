@@ -42,6 +42,7 @@ public sealed class DynamoDbServiceModule : IServiceModule
 
     public string ServiceName => "dynamodb";
     public bool RequiresSigV4 => true;
+    public bool BuffersRequestBodyForSigV4 => true;
     public AwsErrorFormat ErrorFormat => AwsErrorFormat.Json;
     public CapabilityMatrix Capabilities { get; }
 
