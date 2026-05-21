@@ -120,6 +120,9 @@ public sealed class DynamoDbServiceModule : IServiceModule
             case DynamoDbOperation.UpdateItem:
                 await UpdateItemHandler.HandleUpdateItemAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
                 return;
+            case DynamoDbOperation.Query:
+                await QueryHandler.HandleQueryAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                return;
         }
 
         await DynamoDbErrorResponse.WriteAsync(context,

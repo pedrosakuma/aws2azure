@@ -1,0 +1,561 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Aws2Azure.Core.Azure;
+using Aws2Azure.Core.Configuration;
+using Aws2Azure.Modules.DynamoDb.Internal;
+using Aws2Azure.Modules.DynamoDb.Operations;
+using Microsoft.AspNetCore.Http;
+using Xunit;
+
+namespace Aws2Azure.UnitTests.DynamoDb;
+
+/// <summary>
+/// Coverage for <see cref="QueryHandler"/> against a scripted Cosmos
+/// REST surface. Pins:
+/// <list type="bullet">
+///   <item>HASH-only / composite KCE translation to partition-scoped
+///   Cosmos SQL.</item>
+///   <item>FilterExpression evaluated in-process (Count vs ScannedCount
+///   divergence).</item>
+///   <item>ProjectionExpression on top-level attributes.</item>
+///   <item>ScanIndexForward / ConsistentRead header plumbing.</item>
+///   <item>Limit + pagination round-trip via the
+///   <c>__a2a_continuation</c> sentinel.</item>
+///   <item>Loud rejection of IndexName and legacy KeyConditions /
+///   QueryFilter.</item>
+/// </list>
+/// </summary>
+public class QueryHandlerTests
+{
+    private const string Table = "orders";
+
+    private static readonly string MetadataHashOnly =
+        "{\"id\":\"__aws2azure_table_meta__\",\"pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        + "\"tableName\":\"orders\","
+        + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"}],"
+        + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}],"
+        + "\"billingMode\":\"PAY_PER_REQUEST\"}";
+
+    private static readonly string MetadataComposite =
+        "{\"id\":\"__aws2azure_table_meta__\",\"pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        + "\"tableName\":\"orders\","
+        + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"sk\",\"type\":\"S\"}],"
+        + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
+        + "\"billingMode\":\"PAY_PER_REQUEST\"}";
+
+    private static CosmosClient BuildClient(ScriptedHandler handler)
+    {
+        var http = new AzureHttpClient(handler, ownsHandler: false,
+            new AzureHttpClientOptions { MaxAttempts = 1 });
+        var creds = new CosmosCredentials
+        {
+            Endpoint = "https://example.documents.azure.com/",
+            PrimaryKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+            DatabaseName = "main",
+        };
+        return new CosmosClient(http, creds, new MasterKeyCosmosAuthenticator(creds.PrimaryKey));
+    }
+
+    private static (DefaultHttpContext ctx, MemoryStream body) NewCtx()
+    {
+        var ctx = new DefaultHttpContext();
+        var ms = new MemoryStream();
+        ctx.Response.Body = ms;
+        return (ctx, ms);
+    }
+
+    private static string ReadResponse(MemoryStream body)
+    {
+        body.Position = 0;
+        return new StreamReader(body).ReadToEnd();
+    }
+
+    private static HttpResponseMessage CosmosOk(string body, string? continuation = null)
+    {
+        var r = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json"),
+        };
+        if (continuation is not null)
+            r.Headers.TryAddWithoutValidation("x-ms-continuation", continuation);
+        return r;
+    }
+
+    private static string DocWithItem(string pk, string id, string itemJson)
+        => $"{{\"id\":\"{id}\",\"pk\":\"{pk}\",\"_a2a\":\"item\",\"item\":{itemJson}}}";
+
+    private static string QueryEnvelope(params string[] docs)
+    {
+        var sb = new StringBuilder("{\"_rid\":\"x\",\"Documents\":[");
+        for (int i = 0; i < docs.Length; i++)
+        {
+            if (i > 0) sb.Append(',');
+            sb.Append(docs[i]);
+        }
+        sb.Append("],\"_count\":").Append(docs.Length).Append('}');
+        return sb.ToString();
+    }
+
+    [Fact]
+    public async Task Query_hash_only_returns_matching_item()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataHashOnly),
+                CosmosOk(QueryEnvelope(DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"1\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"KeyConditionExpression\":\"pk = :v\","
+                  + "\"ExpressionAttributeValues\":{\":v\":{\"S\":\"a\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        var queryReq = handler.Requests[1];
+        Assert.Equal(HttpMethod.Post, queryReq.Method);
+        Assert.Equal("[\"a\"]", queryReq.Headers["x-ms-documentdb-partitionkey"]);
+        Assert.Equal("true", queryReq.Headers["x-ms-documentdb-isquery"]);
+        Assert.Contains("c._a2a = 'item'", queryReq.Body);
+        Assert.DoesNotContain("ORDER BY", queryReq.Body);
+
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        var root = resp.RootElement;
+        Assert.Equal(1, root.GetProperty("Count").GetInt32());
+        Assert.Equal(1, root.GetProperty("ScannedCount").GetInt32());
+        Assert.Equal("a", root.GetProperty("Items")[0].GetProperty("pk").GetProperty("S").GetString());
+        Assert.False(root.TryGetProperty("LastEvaluatedKey", out _));
+    }
+
+    [Fact]
+    public async Task Query_composite_with_sk_between_translates_to_sql()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataComposite),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "b", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"b\"}}"),
+                    DocWithItem("a", "c", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"c\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"KeyConditionExpression\":\"pk = :p AND sk BETWEEN :lo AND :hi\","
+                  + "\"ExpressionAttributeValues\":{"
+                  + "\":p\":{\"S\":\"a\"},\":lo\":{\"S\":\"b\"},\":hi\":{\"S\":\"c\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        var queryReq = handler.Requests[1];
+        Assert.Contains("c.id >= @skLo", queryReq.Body);
+        Assert.Contains("c.id <= @skHi", queryReq.Body);
+        Assert.Contains("ORDER BY c.id ASC", queryReq.Body);
+        using var qbody = JsonDocument.Parse(queryReq.Body!);
+        var parameters = qbody.RootElement.GetProperty("parameters");
+        Assert.Equal(2, parameters.GetArrayLength());
+
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(2, resp.RootElement.GetProperty("Count").GetInt32());
+    }
+
+    [Fact]
+    public async Task Query_begins_with_sort_key()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataComposite),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "ord#1", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"ord#1\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"KeyConditionExpression\":\"pk = :p AND begins_with(sk, :pre)\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":pre\":{\"S\":\"ord#\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        var queryReq = handler.Requests[1];
+        Assert.Contains("STARTSWITH(c.id, @sk0)", queryReq.Body);
+    }
+
+    [Fact]
+    public async Task Query_filter_expression_applies_in_process()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataHashOnly),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"1\"}}"),
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"5\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"FilterExpression\":\"v > :min\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":min\":{\"N\":\"2\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
+        Assert.Equal(2, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+    }
+
+    [Fact]
+    public async Task Query_projection_expression_drops_other_attributes()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataHashOnly),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"1\"},\"extra\":{\"S\":\"hidden\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"ProjectionExpression\":\"pk, #v\","
+                  + "\"ExpressionAttributeNames\":{\"#v\":\"v\"},"
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        var item = resp.RootElement.GetProperty("Items")[0];
+        Assert.True(item.TryGetProperty("pk", out _));
+        Assert.True(item.TryGetProperty("v", out _));
+        Assert.False(item.TryGetProperty("extra", out _));
+    }
+
+    [Fact]
+    public async Task Query_select_count_omits_items_array()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataHashOnly),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"Select\":\"COUNT\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
+        Assert.False(resp.RootElement.TryGetProperty("Items", out _));
+    }
+
+    [Fact]
+    public async Task Query_consistent_read_sets_strong_consistency_header()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataHashOnly),
+                CosmosOk(QueryEnvelope()),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"ConsistentRead\":true,"
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.Equal("Strong", handler.Requests[1].Headers["x-ms-consistency-level"]);
+    }
+
+    [Fact]
+    public async Task Query_scan_index_forward_false_emits_desc_order()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataComposite),
+                CosmosOk(QueryEnvelope()),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"ScanIndexForward\":false,"
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Contains("ORDER BY c.id DESC", handler.Requests[1].Body);
+    }
+
+    [Fact]
+    public async Task Query_returns_last_evaluated_key_on_limit_hit()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataComposite),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "b", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"b\"}}"),
+                    DocWithItem("a", "c", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"c\"}}")),
+                    continuation: "TOKEN-XYZ"),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"Limit\":2,"
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.True(resp.RootElement.TryGetProperty("LastEvaluatedKey", out var lek));
+        var sentinel = lek.GetProperty("__a2a_continuation").GetProperty("S").GetString()!;
+        var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(sentinel));
+        Assert.Equal("TOKEN-XYZ", decoded);
+    }
+
+    [Fact]
+    public async Task Query_exclusive_start_key_round_trips_continuation()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataHashOnly),
+                CosmosOk(QueryEnvelope()),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes("RESUME-1"));
+        var req = "{\"TableName\":\"orders\","
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"ExclusiveStartKey\":{\"__a2a_continuation\":{\"S\":\"" + b64 + "\"}},"
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.Equal("RESUME-1", handler.Requests[1].Headers["x-ms-continuation"]);
+    }
+
+    [Fact]
+    public async Task Query_index_name_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"gsi1\","
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("secondary indexes", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task Query_legacy_key_conditions_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"KeyConditions\":{\"pk\":{\"AttributeValueList\":[{\"S\":\"a\"}],\"ComparisonOperator\":\"EQ\"}},"
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("Legacy KeyConditions", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task Query_missing_table_returns_resource_not_found()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("{}") },
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"missing\","
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("ResourceNotFoundException", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task Query_keycondition_without_hash_equality_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataHashOnly) },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"KeyConditionExpression\":\"pk > :p\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("ValidationException", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task Query_sort_key_predicate_against_hash_only_table_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataHashOnly) },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"KeyConditionExpression\":\"pk = :p AND sk = :s\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":s\":{\"S\":\"b\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Query_filter_expression_with_consistent_read_paginates_until_limit()
+    {
+        // Page 1 returns 2 items but FilterExpression keeps only 1.
+        // Page 2 returns 1 more matching. Limit=2 → should fetch both
+        // pages and stop.
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataHashOnly),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"1\"}}"),
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"10\"}}")),
+                    continuation: "P2"),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"20\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"FilterExpression\":\"v > :min\","
+                  + "\"Limit\":2,"
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":min\":{\"N\":\"5\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(2, resp.RootElement.GetProperty("Count").GetInt32());
+        Assert.Equal(3, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+    }
+
+    // ---- harness ----
+
+    private sealed class ScriptedHandler : HttpMessageHandler
+    {
+        public List<HttpResponseMessage> Responses { get; } = new();
+        public List<CapturedRequest> Requests { get; } = new();
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            string? body = null;
+            if (request.Content is not null)
+            {
+                body = await request.Content.ReadAsStringAsync(ct);
+            }
+            var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var h in request.Headers) headers[h.Key] = string.Join(",", h.Value);
+            if (request.Content is not null)
+            {
+                foreach (var h in request.Content.Headers) headers[h.Key] = string.Join(",", h.Value);
+            }
+            Requests.Add(new CapturedRequest(request.Method, request.RequestUri!, headers, body));
+
+            if (Responses.Count == 0)
+                return new HttpResponseMessage(HttpStatusCode.InternalServerError);
+            var next = Responses[0];
+            Responses.RemoveAt(0);
+            return next;
+        }
+    }
+
+    private sealed record CapturedRequest(
+        HttpMethod Method, Uri Uri, Dictionary<string, string> Headers, string? Body);
+}
