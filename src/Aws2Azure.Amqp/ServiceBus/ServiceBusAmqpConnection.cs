@@ -37,17 +37,23 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
     private readonly SemaphoreSlim _dataSessionLock = new(1, 1);
     private readonly ConcurrentDictionary<string, DateTimeOffset?> _authorized =
         new(StringComparer.Ordinal);
+    private readonly TimeProvider _clock;
+    private readonly TimeSpan _refreshSafetyWindow;
     private AmqpSession? _dataSession;
     private int _disposed;
 
     private ServiceBusAmqpConnection(
         AmqpConnection connection,
         AmqpSession cbsSession,
-        CbsAuthenticator cbs)
+        CbsAuthenticator cbs,
+        TimeProvider clock,
+        TimeSpan refreshSafetyWindow)
     {
         _connection = connection;
         _cbsSession = cbsSession;
         _cbs = cbs;
+        _clock = clock;
+        _refreshSafetyWindow = refreshSafetyWindow;
     }
 
     /// <summary>The underlying AMQP connection. Exposed for diagnostics.</summary>
@@ -65,10 +71,30 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
         IAmqpTokenProvider tokenProvider,
         AmqpConnectionSettings connectionSettings,
         CancellationToken cancellationToken = default)
+        => await OpenAsync(transport, tokenProvider, connectionSettings, clock: null, refreshSafetyWindow: null, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>
+    /// Opens the connection with explicit clock + refresh-safety overrides.
+    /// Tests inject a fake <see cref="TimeProvider"/> to drive the
+    /// proactive CBS-token renewal path deterministically.
+    /// </summary>
+    internal static async Task<ServiceBusAmqpConnection> OpenAsync(
+        IAmqpTransport transport,
+        IAmqpTokenProvider tokenProvider,
+        AmqpConnectionSettings connectionSettings,
+        TimeProvider? clock,
+        TimeSpan? refreshSafetyWindow,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(transport);
         ArgumentNullException.ThrowIfNull(tokenProvider);
         ArgumentNullException.ThrowIfNull(connectionSettings);
+
+        var effectiveClock = clock ?? TimeProvider.System;
+        // 5-minute window mirrors EntraIdTokenProvider; Service Bus rejects
+        // tokens that are about to expire and detaches links unceremoniously,
+        // so we want the refresh to happen well before the broker notices.
+        var effectiveSafety = refreshSafetyWindow ?? TimeSpan.FromMinutes(5);
 
         var connection = new AmqpConnection(transport, connectionSettings);
         AmqpSession? cbsSession = null;
@@ -85,7 +111,7 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
             // strictly *after* the first successful put-token. This matches
             // the Service Bus protocol expectation:
             // open → begin(cbs) → attach cbs → put-token → begin(data) → attach receiver.
-            return new ServiceBusAmqpConnection(connection, cbsSession, cbs);
+            return new ServiceBusAmqpConnection(connection, cbsSession, cbs, effectiveClock, effectiveSafety);
         }
         catch
         {
@@ -288,12 +314,20 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
     private async Task EnsureAuthorizedAsync(string audience, CancellationToken cancellationToken)
     {
         // Lock-free fast path: ConcurrentDictionary makes the read safe to
-        // race against concurrent writers under the lock.
-        if (_authorized.ContainsKey(audience)) return;
+        // race against concurrent writers under the lock. We refresh the
+        // token when its expiry is within `_refreshSafetyWindow` from now —
+        // Service Bus rejects requests carrying an about-to-expire token
+        // and detaches links without warning, so we proactively renew well
+        // before the broker would notice. A null cached expiry means
+        // "the token has no advertised expiry" (some custom providers) and
+        // is treated as never-expires.
+        if (_authorized.TryGetValue(audience, out var cached) && !ShouldRefresh(cached)) return;
+
         await _authorizeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (_authorized.ContainsKey(audience)) return;
+            // Re-check under the lock — another waiter may have refreshed.
+            if (_authorized.TryGetValue(audience, out cached) && !ShouldRefresh(cached)) return;
             var expiry = await _cbs.PutTokenAsync(audience, cancellationToken).ConfigureAwait(false);
             _authorized[audience] = expiry;
         }
@@ -301,6 +335,25 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
         {
             _authorizeLock.Release();
         }
+    }
+
+    private bool ShouldRefresh(DateTimeOffset? cachedExpiry)
+        => ShouldRefreshAuthorization(cachedExpiry, _clock.GetUtcNow(), _refreshSafetyWindow);
+
+    /// <summary>
+    /// Pure decision function for the CBS proactive-renewal cache.
+    /// Refreshes when <paramref name="cachedExpiry"/> is within
+    /// <paramref name="safetyWindow"/> of <paramref name="now"/>; never
+    /// refreshes when the cached entry has no expiry. Extracted to be
+    /// directly unit-testable without spinning up the AMQP broker stub.
+    /// </summary>
+    internal static bool ShouldRefreshAuthorization(
+        DateTimeOffset? cachedExpiry,
+        DateTimeOffset now,
+        TimeSpan safetyWindow)
+    {
+        if (cachedExpiry is not { } expiry) return false;
+        return now + safetyWindow >= expiry;
     }
 
     private async Task<AmqpSession> EnsureDataSessionAsync(CancellationToken cancellationToken)
