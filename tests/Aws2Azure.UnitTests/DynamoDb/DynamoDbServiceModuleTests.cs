@@ -34,7 +34,7 @@ public class DynamoDbServiceModuleTests
     public async Task HandleAsync_returns_not_implemented_for_recognised_op()
     {
         var module = NewModule();
-        var ctx = NewCtx("DynamoDB_20120810.Scan", body: "{}");
+        var ctx = NewCtx("DynamoDB_20120810.BatchGetItem", body: "{}");
         ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
 
         await module.HandleAsync(ctx);
@@ -43,7 +43,7 @@ public class DynamoDbServiceModuleTests
         var body = ReadBody(ctx);
         Assert.Contains("\"__type\"", body);
         Assert.Contains("com.amazonaws.dynamodb.v20120810#InternalServerError", body);
-        Assert.Contains("Scan", body);
+        Assert.Contains("BatchGetItem", body);
     }
 
     [Fact]
