@@ -73,6 +73,19 @@ public class ItemHandlersTests
     private static HttpResponseMessage CosmosOk(string body)
         => new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
+    private static HttpResponseMessage CosmosOk(string body, string etag)
+    {
+        var r = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json"),
+        };
+        r.Headers.TryAddWithoutValidation("etag", etag);
+        return r;
+    }
+
+    private static string DocWithItem(string pk, string id, string itemJson)
+        => $"{{\"id\":\"{id}\",\"pk\":\"{pk}\",\"_a2a\":\"item\",\"item\":{itemJson}}}";
+
     [Fact]
     public async Task PutItem_writes_doc_with_routing_fields_and_envelope()
     {
@@ -191,19 +204,48 @@ public class ItemHandlersTests
     }
 
     [Fact]
-    public async Task PutItem_rejects_condition_expression()
+    public async Task PutItem_condition_attribute_not_exists_on_missing_item_writes()
     {
         var (ctx, body) = NewCtx();
-        var handler = new ScriptedHandler();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDocHashOnly),
+                new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("{}") },
+                new HttpResponseMessage(HttpStatusCode.Created) { Content = new StringContent("{}") },
+            },
+        };
         var cosmos = BuildClient(handler);
 
-        var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"x\"},\"sk\":{\"S\":\"y\"}},"
+        var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"x\"}},"
+                  + "\"ConditionExpression\":\"attribute_not_exists(pk)\"}";
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.Equal("*", handler.Requests[2].Headers["If-None-Match"]);
+    }
+
+    [Fact]
+    public async Task PutItem_condition_attribute_not_exists_on_existing_fails()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDocHashOnly),
+                CosmosOk(DocWithItem("x", "x", "{\"pk\":{\"S\":\"x\"},\"v\":{\"N\":\"1\"}}"), etag: "\"e1\""),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"x\"}},"
                   + "\"ConditionExpression\":\"attribute_not_exists(pk)\"}";
         await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
 
         Assert.Equal(400, ctx.Response.StatusCode);
-        Assert.Contains("Conditional writes", ReadResponse(body));
-        Assert.Empty(handler.Requests);
+        Assert.Contains("ConditionalCheckFailedException", ReadResponse(body));
     }
 
     [Fact]
@@ -366,18 +408,50 @@ public class ItemHandlersTests
     }
 
     [Fact]
-    public async Task DeleteItem_rejects_condition_expression()
+    public async Task DeleteItem_condition_attribute_exists_passes_and_deletes()
     {
         var (ctx, body) = NewCtx();
-        var handler = new ScriptedHandler();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDocHashOnly),
+                CosmosOk(DocWithItem("x", "x", "{\"pk\":{\"S\":\"x\"}}"), etag: "\"e1\""),
+                new HttpResponseMessage(HttpStatusCode.NoContent),
+            },
+        };
         var cosmos = BuildClient(handler);
 
-        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"x\"},\"sk\":{\"S\":\"y\"}},"
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"x\"}},"
                   + "\"ConditionExpression\":\"attribute_exists(pk)\"}";
         await ItemHandlers.HandleDeleteItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
 
+        Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.Equal(HttpMethod.Delete, handler.Requests[2].Method);
+        Assert.Equal("\"e1\"", handler.Requests[2].Headers["If-Match"]);
+    }
+
+    [Fact]
+    public async Task DeleteItem_condition_fail_returns_conditional_check_failed()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDocHashOnly),
+                CosmosOk(DocWithItem("x", "x", "{\"pk\":{\"S\":\"x\"},\"v\":{\"N\":\"99\"}}"), etag: "\"e1\""),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"x\"}},"
+                  + "\"ConditionExpression\":\"v = :v\","
+                  + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"1\"}}}";
+        await ItemHandlers.HandleDeleteItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+
         Assert.Equal(400, ctx.Response.StatusCode);
-        Assert.Contains("Conditional", ReadResponse(body));
+        Assert.Contains("ConditionalCheckFailedException", ReadResponse(body));
     }
 
     [Fact]

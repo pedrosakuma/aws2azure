@@ -11,8 +11,8 @@ sub_features:
     status: implemented
     notes: "Cosmos 404 → DynamoDB 200 empty, matching DynamoDB semantics."
   - name: ConditionExpression / Expected / ConditionalOperator
-    status: unsupported
-    notes: "Rejected with ValidationException pending expression parser slice (#12)."
+    status: implemented
+    notes: "Conditional path performs GET → evaluate → DELETE(If-Match) with retry on 412/Conflict/404. If the condition evaluates true against a missing item, the operation returns success as a no-op. Failure returns HTTP 400 ConditionalCheckFailedException with optional Item when ReturnValuesOnConditionCheckFailure=ALL_OLD."
   - name: ExpressionAttributeNames / ExpressionAttributeValues
     status: unsupported
   - name: ReturnValues

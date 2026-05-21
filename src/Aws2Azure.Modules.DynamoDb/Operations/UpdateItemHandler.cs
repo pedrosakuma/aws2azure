@@ -56,14 +56,16 @@ internal static class UpdateItemHandler
                 "TableName is required and must match [a-zA-Z0-9_.-]{3,255}.");
         }
 
-        if (HasContent(req.ConditionExpression) || HasContent(req.Expected)
-            || HasContent(req.ConditionalOperator))
+        if (HasContent(req.ConditionExpression) && (HasContent(req.Expected) || HasContent(req.ConditionalOperator)))
         {
-            // ConditionExpression wiring lands in Slice 4. We surface the
-            // gap explicitly so callers don't silently get a non-conditional
-            // write.
             return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
-                "Conditional updates (ConditionExpression / Expected / ConditionalOperator) are not supported in this slice.");
+                "ConditionExpression and the legacy Expected/ConditionalOperator parameters are mutually exclusive.");
+        }
+
+        if (!IsAllowedReturnValuesOnConditionCheckFailure(
+                req.ReturnValuesOnConditionCheckFailure, out var rvccfCanonical, out var rvccfErr))
+        {
+            return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", rvccfErr);
         }
 
         var hasUpdateExpr = HasContent(req.UpdateExpression);
@@ -80,12 +82,15 @@ internal static class UpdateItemHandler
         }
 
         UpdateExpressionAst ast;
+        ConditionNode? condition;
         try
         {
+            IReadOnlyDictionary<string, string>? names = null;
+            IReadOnlyDictionary<string, JsonElement>? values = null;
             if (hasUpdateExpr)
             {
-                var names = TryMaterialise(req.ExpressionAttributeNames, requireStringValues: true);
-                var values = TryMaterialiseValues(req.ExpressionAttributeValues);
+                names = TryMaterialise(req.ExpressionAttributeNames, requireStringValues: true);
+                values = TryMaterialiseValues(req.ExpressionAttributeValues);
                 ast = UpdateExpressionParser.Parse(req.UpdateExpression!, names, values);
             }
             else
@@ -97,23 +102,30 @@ internal static class UpdateItemHandler
                 }
                 ast = AttributeUpdatesNormaliser.Build(req.AttributeUpdates!.Value);
             }
+            condition = ConditionGate.TryParse(
+                req.ConditionExpression, req.Expected, req.ConditionalOperator, names, values);
         }
         catch (ExpressionSyntaxException ex)
         {
             return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
-                $"Invalid UpdateExpression (offset {ex.Position}): {ex.Message}");
+                $"Invalid expression (offset {ex.Position}): {ex.Message}");
         }
         catch (UpdateValidationException ex)
         {
             return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", ex.Message);
         }
+        catch (ConditionParseConflictException ex)
+        {
+            return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", ex.Message);
+        }
 
-        return UpdateItemCoreAsync(ctx, req, ast, rvCanonical, cosmos, ct);
+        return UpdateItemCoreAsync(ctx, req, ast, condition, rvCanonical, rvccfCanonical, cosmos, ct);
     }
 
     private static async Task UpdateItemCoreAsync(
-        HttpContext ctx, UpdateItemRequest req, UpdateExpressionAst ast,
-        string returnValues, CosmosClient cosmos, CancellationToken ct)
+        HttpContext ctx, UpdateItemRequest req, UpdateExpressionAst ast, ConditionNode? condition,
+        string returnValues, string returnValuesOnConditionCheckFailure,
+        CosmosClient cosmos, CancellationToken ct)
     {
         using var metaResult = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, req.TableName!, ct).ConfigureAwait(false);
         if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.CosmosError)
@@ -186,6 +198,22 @@ internal static class UpdateItemHandler
             UpdateExecutor.ExecutionResult execResult;
             try
             {
+                if (condition is not null)
+                {
+                    bool pass;
+                    try { pass = ConditionEvaluator.Evaluate(condition, existingItem); }
+                    catch (ConditionEvaluationException cex)
+                    {
+                        await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", cex.Message).ConfigureAwait(false);
+                        return;
+                    }
+                    if (!pass)
+                    {
+                        await ConditionFailureResponder.WriteAsync(
+                            ctx, existingItem, returnValuesOnConditionCheckFailure).ConfigureAwait(false);
+                        return;
+                    }
+                }
                 execResult = UpdateExecutor.Apply(ast, existingItem);
             }
             catch (UpdateValidationException ex)
@@ -392,6 +420,19 @@ internal static class UpdateItemHandler
             return true;
         }
         error = $"ReturnValues='{raw}' is not a valid UpdateItem ReturnValues mode.";
+        return false;
+    }
+
+    private static bool IsAllowedReturnValuesOnConditionCheckFailure(
+        string? raw, out string canonical, out string error)
+    {
+        canonical = string.IsNullOrEmpty(raw) ? "NONE" : raw!;
+        if (canonical is "NONE" or "ALL_OLD")
+        {
+            error = string.Empty;
+            return true;
+        }
+        error = $"ReturnValuesOnConditionCheckFailure='{raw}' must be NONE or ALL_OLD.";
         return false;
     }
 
