@@ -71,56 +71,80 @@ public sealed class AzureHttpClient : IDisposable
 
         // Per-endpoint circuit breaker: pre-check once per logical request,
         // not once per attempt. Inner retries don't get a second vote.
+        // The admission token must be reported back exactly once via
+        // OnSuccess/OnFailure on terminal paths and OnAbandon if we leave
+        // the method without reporting (e.g. caller cancellation).
         var endpointKey = _breaker is null ? null : CircuitBreaker.TryBuildEndpointKey(request.RequestUri);
+        var admission = default(CircuitBreakerAdmission);
+        var hasAdmission = false;
         if (_breaker is not null && endpointKey is not null)
         {
-            var decision = _breaker.OnBeforeRequest(endpointKey);
+            var decision = _breaker.OnBeforeRequest(endpointKey, out admission);
             if (decision == CircuitBreakerDecision.RejectOpen)
             {
                 var snapshot = _breaker.Inspect(endpointKey);
                 throw new CircuitBreakerOpenException(endpointKey, snapshot.OpenUntil);
             }
+            hasAdmission = true;
         }
 
-        while (true)
+        var outcomeReported = false;
+        try
         {
-            attempt++;
-            HttpResponseMessage? response = null;
-            RetryCategory category;
-            try
+            while (true)
             {
-                response = await _client.SendAsync(request, completionOption, cancellationToken).ConfigureAwait(false);
-                category = ClassifyStatus(response.StatusCode);
-                if (category == RetryCategory.None || attempt >= maxAttempts)
+                attempt++;
+                HttpResponseMessage? response = null;
+                RetryCategory category;
+                try
                 {
-                    RecordOutcome(endpointKey, category);
-                    return response;
+                    response = await _client.SendAsync(request, completionOption, cancellationToken).ConfigureAwait(false);
+                    category = ClassifyStatus(response.StatusCode);
+                    if (category == RetryCategory.None || attempt >= maxAttempts)
+                    {
+                        RecordOutcome(endpointKey, hasAdmission, admission, category);
+                        outcomeReported = true;
+                        return response;
+                    }
                 }
-            }
-            catch (HttpRequestException) when (attempt < maxAttempts)
-            {
-                category = RetryCategory.Transport;
-            }
-            catch (HttpRequestException)
-            {
-                RecordOutcome(endpointKey, RetryCategory.Transport);
-                throw;
-            }
-            catch (TaskCanceledException) when (attempt < maxAttempts && !cancellationToken.IsCancellationRequested)
-            {
-                // Internal HttpClient timeout (not the caller's CT).
-                category = RetryCategory.Timeout;
-            }
-            catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                RecordOutcome(endpointKey, RetryCategory.Timeout);
-                throw;
-            }
+                catch (HttpRequestException) when (attempt < maxAttempts)
+                {
+                    category = RetryCategory.Transport;
+                }
+                catch (HttpRequestException)
+                {
+                    RecordOutcome(endpointKey, hasAdmission, admission, RetryCategory.Transport);
+                    outcomeReported = true;
+                    throw;
+                }
+                catch (TaskCanceledException) when (attempt < maxAttempts && !cancellationToken.IsCancellationRequested)
+                {
+                    // Internal HttpClient timeout (not the caller's CT).
+                    category = RetryCategory.Timeout;
+                }
+                catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    RecordOutcome(endpointKey, hasAdmission, admission, RetryCategory.Timeout);
+                    outcomeReported = true;
+                    throw;
+                }
 
-            var delay = ComputeDelay(attempt, category, response);
-            response?.Dispose();
-            request = await CloneRequestAsync(request, cancellationToken).ConfigureAwait(false);
-            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                var delay = ComputeDelay(attempt, category, response);
+                response?.Dispose();
+                request = await CloneRequestAsync(request, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            // Any path that didn't explicitly record an outcome (caller
+            // cancellation, exception from CloneRequestAsync, async-state-
+            // machine teardown) must release the admission so a half-open
+            // probe slot is never latched.
+            if (!outcomeReported && hasAdmission && _breaker is not null && endpointKey is not null)
+            {
+                _breaker.OnAbandon(endpointKey, admission);
+            }
         }
     }
 
@@ -131,13 +155,13 @@ public sealed class AzureHttpClient : IDisposable
     /// 4xx/auth do not surface here because <see cref="ClassifyStatus"/> maps
     /// them to <see cref="RetryCategory.None"/>.
     /// </summary>
-    private void RecordOutcome(string? endpointKey, RetryCategory finalCategory)
+    private void RecordOutcome(string? endpointKey, bool hasAdmission, CircuitBreakerAdmission admission, RetryCategory finalCategory)
     {
-        if (_breaker is null || endpointKey is null) return;
+        if (_breaker is null || endpointKey is null || !hasAdmission) return;
         if (finalCategory == RetryCategory.None)
-            _breaker.OnSuccess(endpointKey);
+            _breaker.OnSuccess(endpointKey, admission);
         else
-            _breaker.OnFailure(endpointKey);
+            _breaker.OnFailure(endpointKey, admission);
     }
 
     /// <summary>

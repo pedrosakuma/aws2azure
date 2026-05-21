@@ -199,6 +199,147 @@ public class CircuitBreakerTests
         Assert.Null(CircuitBreaker.TryBuildEndpointKey(null));
     }
 
+    [Fact]
+    public void StaleClosedEraSuccessAfterTripDoesNotReopenBreaker()
+    {
+        // Simulate the race directly against the breaker: two requests
+        // admitted while closed; then enough failures to trip; then the
+        // first admission reports success (it was in-flight from before).
+        // The success must not re-close the breaker.
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var breaker = new CircuitBreaker(new CircuitBreakerOptions
+        {
+            FailureThreshold = 2,
+            OpenDuration = TimeSpan.FromSeconds(30)
+        }, clock);
+
+        var key = "https://example.test:443";
+        // Request A admitted while closed.
+        Assert.Equal(CircuitBreakerDecision.Allow, breaker.OnBeforeRequest(key, out var admA));
+        // Request B admitted, fails, trips threshold-but-not-yet.
+        Assert.Equal(CircuitBreakerDecision.Allow, breaker.OnBeforeRequest(key, out var admB));
+        breaker.OnFailure(key, admB);
+        // Request C admitted (still closed), fails -> trips.
+        Assert.Equal(CircuitBreakerDecision.Allow, breaker.OnBeforeRequest(key, out var admC));
+        breaker.OnFailure(key, admC);
+        Assert.Equal(CircuitBreakerStateName.Open, breaker.Inspect(key).State);
+
+        // Now request A (admitted before the trip) reports success — STALE.
+        breaker.OnSuccess(key, admA);
+        // Breaker must still be open.
+        Assert.Equal(CircuitBreakerStateName.Open, breaker.Inspect(key).State);
+        // And new requests must still fail fast.
+        Assert.Equal(CircuitBreakerDecision.RejectOpen, breaker.OnBeforeRequest(key, out _));
+    }
+
+    [Fact]
+    public void StaleClosedEraFailureAfterTripDoesNotExtendOpenWindow()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var breaker = new CircuitBreaker(new CircuitBreakerOptions
+        {
+            FailureThreshold = 2,
+            OpenDuration = TimeSpan.FromSeconds(30)
+        }, clock);
+
+        var key = "https://example.test:443";
+        breaker.OnBeforeRequest(key, out var admA);
+        breaker.OnBeforeRequest(key, out var admB);
+        breaker.OnBeforeRequest(key, out var admC);
+        breaker.OnFailure(key, admB);
+        breaker.OnFailure(key, admC); // trips at t=0; openUntil=t+30s
+        var openUntil1 = breaker.Inspect(key).OpenUntil!.Value;
+
+        // 25s later, the stale request A reports failure.
+        clock.Advance(TimeSpan.FromSeconds(25));
+        breaker.OnFailure(key, admA);
+        var openUntil2 = breaker.Inspect(key).OpenUntil!.Value;
+
+        // Open-until window must NOT be extended by the stale outcome.
+        Assert.Equal(openUntil1, openUntil2);
+    }
+
+    [Fact]
+    public void AbandonedProbeReopensBreakerInsteadOfLatching()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var breaker = new CircuitBreaker(new CircuitBreakerOptions
+        {
+            FailureThreshold = 1,
+            OpenDuration = TimeSpan.FromSeconds(10)
+        }, clock);
+
+        var key = "https://example.test:443";
+        // Trip.
+        breaker.OnBeforeRequest(key, out var adm1);
+        breaker.OnFailure(key, adm1);
+        Assert.Equal(CircuitBreakerStateName.Open, breaker.Inspect(key).State);
+
+        // Cool-down elapses -> probe admitted.
+        clock.Advance(TimeSpan.FromSeconds(11));
+        Assert.Equal(CircuitBreakerDecision.AllowProbe, breaker.OnBeforeRequest(key, out var probe));
+
+        // Probe is abandoned (caller cancellation, etc.). Without a fix
+        // the state would stay HalfOpen forever and reject every future
+        // request.
+        breaker.OnAbandon(key, probe);
+
+        // Breaker is reopened with a fresh cooldown.
+        Assert.Equal(CircuitBreakerStateName.Open, breaker.Inspect(key).State);
+
+        // After the new cooldown, another probe is admissible.
+        clock.Advance(TimeSpan.FromSeconds(11));
+        Assert.Equal(CircuitBreakerDecision.AllowProbe, breaker.OnBeforeRequest(key, out _));
+    }
+
+    [Fact]
+    public async Task SendAsyncCallsOnAbandonWhenCallerCancellationLeavesNoOutcome()
+    {
+        // Simulates the high-severity finding via an explicit cancellation
+        // before the request even completes a network attempt: the
+        // try/finally in SendAsync must release the admission so the
+        // half-open slot isn't latched.
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var responses = new Queue<Func<HttpResponseMessage>>();
+        for (int i = 0; i < 3; i++)
+            responses.Enqueue(() => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        var handler = new CancellingHandler(responses);
+        using var client = new AzureHttpClient(handler, ownsHandler: true,
+            FastOpts(threshold: 3, maxAttempts: 1, openDuration: TimeSpan.FromSeconds(10)),
+            clock);
+
+        // Trip.
+        for (int i = 0; i < 3; i++)
+            (await client.SendAsync(Req("https://example.test/x"))).Dispose();
+
+        // Past cooldown: next call is the probe.
+        clock.Advance(TimeSpan.FromSeconds(11));
+        // Caller cancels immediately so the probe never reports an outcome.
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => client.SendAsync(Req("https://example.test/x"), HttpCompletionOption.ResponseHeadersRead, cts.Token));
+
+        // Without OnAbandon this would stay HalfOpen and reject every
+        // future request. With OnAbandon the breaker reopened with a
+        // fresh cooldown — advance the clock and a new probe is admitted.
+        clock.Advance(TimeSpan.FromSeconds(11));
+        var r = await client.SendAsync(Req("https://example.test/x"));
+        Assert.NotNull(r);
+    }
+
+    private sealed class CancellingHandler : HttpMessageHandler
+    {
+        private readonly Queue<Func<HttpResponseMessage>> _queue;
+        public CancellingHandler(Queue<Func<HttpResponseMessage>> queue) { _queue = queue; }
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (_queue.Count > 0) return Task.FromResult(_queue.Dequeue()());
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }
+    }
+
     private static HttpRequestMessage Req(string url) => new(HttpMethod.Get, url);
 
     private static AzureHttpClient NewClient(HttpMessageHandler handler, AzureHttpClientOptions opts, TimeProvider? clock = null)

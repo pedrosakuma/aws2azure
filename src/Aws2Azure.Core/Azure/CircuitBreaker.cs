@@ -36,39 +36,58 @@ internal sealed class CircuitBreaker
     }
 
     /// <summary>
-    /// Returns the breaker's current decision for a request bound for
-    /// <paramref name="endpointKey"/>. Callers must check this before
-    /// dispatching the request and bail with
-    /// <see cref="CircuitBreakerOpenException"/> when the result is
-    /// <see cref="CircuitBreakerDecision.RejectOpen"/>.
+    /// Decides whether a request bound for <paramref name="endpointKey"/>
+    /// may proceed. Returns the verdict plus an <see cref="CircuitBreakerAdmission"/>
+    /// token that callers MUST pass back to <see cref="OnSuccess"/>,
+    /// <see cref="OnFailure"/>, or <see cref="OnAbandon"/> exactly once.
+    /// The token carries the admission epoch so stale outcomes from
+    /// requests admitted before the breaker tripped cannot mutate the
+    /// current state.
     /// </summary>
-    public CircuitBreakerDecision OnBeforeRequest(string endpointKey)
+    public CircuitBreakerDecision OnBeforeRequest(string endpointKey, out CircuitBreakerAdmission admission)
     {
         var state = _endpoints.GetOrAdd(endpointKey, static _ => new EndpointState());
         var now = _clock.GetUtcNow();
-        return state.OnBeforeRequest(now, _options);
-    }
-
-    /// <summary>Records a successful logical request — resets failure counters and closes the breaker.</summary>
-    public void OnSuccess(string endpointKey)
-    {
-        if (_endpoints.TryGetValue(endpointKey, out var state))
-            state.OnSuccess();
+        return state.OnBeforeRequest(now, _options, out admission);
     }
 
     /// <summary>
-    /// Records a failed logical request (after retry exhaustion or an
-    /// unhandled exception). The breaker trips when consecutive failures
-    /// reach <see cref="CircuitBreakerOptions.FailureThreshold"/>.
-    /// Callers should NOT invoke this for 4xx responses (bad request,
-    /// not-found, etc.) or auth failures — those are request-level, not
-    /// endpoint-health, signals.
+    /// Reports a successful logical request. Closed-era admissions whose
+    /// epoch no longer matches are silently ignored (a concurrent failure
+    /// already tripped the breaker; we must not undo that). Probe success
+    /// snaps the breaker back to closed.
     /// </summary>
-    public void OnFailure(string endpointKey)
+    public void OnSuccess(string endpointKey, CircuitBreakerAdmission admission)
+    {
+        if (_endpoints.TryGetValue(endpointKey, out var state))
+            state.OnSuccess(admission);
+    }
+
+    /// <summary>
+    /// Reports a failed logical request (after retry exhaustion or an
+    /// unhandled transport/timeout exception). Stale closed-era outcomes
+    /// are ignored. Probe failure restarts the open window from now.
+    /// </summary>
+    public void OnFailure(string endpointKey, CircuitBreakerAdmission admission)
     {
         var state = _endpoints.GetOrAdd(endpointKey, static _ => new EndpointState());
         var now = _clock.GetUtcNow();
-        state.OnFailure(now, _options);
+        state.OnFailure(now, _options, admission);
+    }
+
+    /// <summary>
+    /// Releases an admission whose outcome cannot be determined (e.g.
+    /// caller cancellation before completion). For probe admissions this
+    /// re-opens the breaker for a fresh cool-down so the half-open slot
+    /// is never latched. For closed-era admissions this is a no-op.
+    /// </summary>
+    public void OnAbandon(string endpointKey, CircuitBreakerAdmission admission)
+    {
+        if (_endpoints.TryGetValue(endpointKey, out var state))
+        {
+            var now = _clock.GetUtcNow();
+            state.OnAbandon(now, _options, admission);
+        }
     }
 
     /// <summary>
@@ -79,8 +98,8 @@ internal sealed class CircuitBreaker
     public static string? TryBuildEndpointKey(Uri? requestUri)
     {
         if (requestUri is null || !requestUri.IsAbsoluteUri) return null;
-        // Use Host (already lowercased per RFC 3986 normalization) + explicit
-        // port so http://x and https://x are distinct breakers.
+        // Uri.Scheme is normalized to lower-case; Uri.Host is normalized per
+        // RFC 3986. Explicit port keeps http://x:443 and https://x:443 distinct.
         return $"{requestUri.Scheme}://{requestUri.Host}:{requestUri.Port}";
     }
 
@@ -98,8 +117,12 @@ internal sealed class CircuitBreaker
         private CircuitBreakerStateName _state;
         private int _consecutiveFailures;
         private DateTimeOffset _openUntil;
+        // Bumped every time the breaker transitions away from the closed
+        // run that admitted a request. Used to ignore stale outcomes from
+        // in-flight requests that were admitted before a trip / probe.
+        private int _epoch;
 
-        public CircuitBreakerDecision OnBeforeRequest(DateTimeOffset now, CircuitBreakerOptions opts)
+        public CircuitBreakerDecision OnBeforeRequest(DateTimeOffset now, CircuitBreakerOptions opts, out CircuitBreakerAdmission admission)
         {
             lock (_lock)
             {
@@ -107,48 +130,99 @@ internal sealed class CircuitBreaker
                 {
                     if (now >= _openUntil)
                     {
-                        // Cool-down elapsed: promote to half-open and let
-                        // exactly one probe through.
+                        // Cool-down elapsed: promote to half-open and admit
+                        // exactly one probe. Bump the epoch so any straggler
+                        // outcomes from the previous closed run can't mutate
+                        // the current state.
                         _state = CircuitBreakerStateName.HalfOpen;
+                        _epoch++;
+                        admission = new CircuitBreakerAdmission(isProbe: true, epoch: _epoch);
                         return CircuitBreakerDecision.AllowProbe;
                     }
+                    admission = default;
                     return CircuitBreakerDecision.RejectOpen;
                 }
                 if (_state == CircuitBreakerStateName.HalfOpen)
                 {
                     // A probe is already in flight; reject everyone else.
+                    admission = default;
                     return CircuitBreakerDecision.RejectOpen;
                 }
+                admission = new CircuitBreakerAdmission(isProbe: false, epoch: _epoch);
                 return CircuitBreakerDecision.Allow;
             }
         }
 
-        public void OnSuccess()
+        public void OnSuccess(CircuitBreakerAdmission admission)
         {
             lock (_lock)
             {
-                _consecutiveFailures = 0;
-                _state = CircuitBreakerStateName.Closed;
+                if (admission.IsProbe)
+                {
+                    if (_state != CircuitBreakerStateName.HalfOpen || admission.Epoch != _epoch)
+                        return; // Probe already resolved by abandon / re-admission.
+                    // Probe success: snap to closed, reset counters, bump
+                    // epoch so any closed-era stragglers from before the
+                    // trip cannot poison the freshly-closed state.
+                    _state = CircuitBreakerStateName.Closed;
+                    _consecutiveFailures = 0;
+                    _epoch++;
+                    return;
+                }
+                // Closed-era admission: only act if the breaker is still in
+                // the same closed run we were admitted under. If a
+                // concurrent failure tripped the breaker meanwhile, this
+                // outcome is stale and must be ignored.
+                if (_state == CircuitBreakerStateName.Closed && admission.Epoch == _epoch)
+                {
+                    _consecutiveFailures = 0;
+                }
             }
         }
 
-        public void OnFailure(DateTimeOffset now, CircuitBreakerOptions opts)
+        public void OnFailure(DateTimeOffset now, CircuitBreakerOptions opts, CircuitBreakerAdmission admission)
         {
             lock (_lock)
             {
-                if (_state == CircuitBreakerStateName.HalfOpen)
+                if (admission.IsProbe)
                 {
-                    // Probe failed: reopen the breaker for another cool-down.
+                    if (_state != CircuitBreakerStateName.HalfOpen || admission.Epoch != _epoch)
+                        return;
                     _state = CircuitBreakerStateName.Open;
                     _openUntil = now + opts.OpenDuration;
+                    _epoch++;
                     return;
                 }
+                if (_state != CircuitBreakerStateName.Closed || admission.Epoch != _epoch)
+                    return; // Stale: trip already happened on another thread.
                 _consecutiveFailures++;
                 if (_consecutiveFailures >= opts.FailureThreshold)
                 {
                     _state = CircuitBreakerStateName.Open;
                     _openUntil = now + opts.OpenDuration;
+                    _epoch++;
                 }
+            }
+        }
+
+        public void OnAbandon(DateTimeOffset now, CircuitBreakerOptions opts, CircuitBreakerAdmission admission)
+        {
+            lock (_lock)
+            {
+                if (admission.IsProbe)
+                {
+                    // Probe outcome is unknown (caller cancelled, clone
+                    // failed, etc.). Don't treat as success — that would
+                    // bypass the cooldown protection. Reopen with a fresh
+                    // window so the half-open slot isn't latched forever.
+                    if (_state != CircuitBreakerStateName.HalfOpen || admission.Epoch != _epoch)
+                        return;
+                    _state = CircuitBreakerStateName.Open;
+                    _openUntil = now + opts.OpenDuration;
+                    _epoch++;
+                }
+                // Closed-era abandon is a no-op: the request didn't
+                // signal endpoint health either way.
             }
         }
 
@@ -163,6 +237,23 @@ internal sealed class CircuitBreaker
             }
         }
     }
+}
+
+/// <summary>
+/// Token returned by <see cref="CircuitBreaker.OnBeforeRequest"/> identifying
+/// an admitted request and the breaker generation it was admitted under.
+/// Outcomes carrying a stale epoch are ignored, preventing in-flight
+/// closed-era requests from mutating the breaker after a trip.
+/// </summary>
+internal readonly struct CircuitBreakerAdmission
+{
+    public CircuitBreakerAdmission(bool isProbe, int epoch)
+    {
+        IsProbe = isProbe;
+        Epoch = epoch;
+    }
+    public bool IsProbe { get; }
+    public int Epoch { get; }
 }
 
 /// <summary>Tunables for <see cref="CircuitBreaker"/>.</summary>
