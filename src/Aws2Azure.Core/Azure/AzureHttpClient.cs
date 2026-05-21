@@ -160,14 +160,21 @@ public sealed class AzureHttpClient : IDisposable
         if (category == RetryCategory.Throttled)
         {
             // Floor: half the max. Server explicitly told us to slow down.
-            var halfMax = TimeSpan.FromMilliseconds(_options.MaxRetryDelay.TotalMilliseconds / 2);
-            var exp = TimeSpan.FromMilliseconds(_options.BaseRetryDelay.TotalMilliseconds * Math.Pow(2, attempt - 1));
-            baseDelay = Max(halfMax, Min(exp, _options.MaxRetryDelay));
+            // Clamp the exponential as a double before constructing a
+            // TimeSpan — for large attempt counts `Math.Pow(2, n)` can
+            // overflow into infinity and `TimeSpan.FromMilliseconds`
+            // throws on non-finite/over-range values.
+            var maxMs = _options.MaxRetryDelay.TotalMilliseconds;
+            var expMs = _options.BaseRetryDelay.TotalMilliseconds * Math.Pow(2, attempt - 1);
+            var clampedMs = double.IsFinite(expMs) ? Math.Min(maxMs, expMs) : maxMs;
+            var halfMaxMs = maxMs / 2.0;
+            baseDelay = TimeSpan.FromMilliseconds(Math.Max(halfMaxMs, clampedMs));
         }
         else
         {
-            var exp = _options.BaseRetryDelay.TotalMilliseconds * Math.Pow(2, attempt - 1);
-            baseDelay = TimeSpan.FromMilliseconds(Math.Min(_options.MaxRetryDelay.TotalMilliseconds, exp));
+            var expMs = _options.BaseRetryDelay.TotalMilliseconds * Math.Pow(2, attempt - 1);
+            var clampedMs = double.IsFinite(expMs) ? Math.Min(_options.MaxRetryDelay.TotalMilliseconds, expMs) : _options.MaxRetryDelay.TotalMilliseconds;
+            baseDelay = TimeSpan.FromMilliseconds(clampedMs);
         }
 
         return ApplyJitter(baseDelay);
@@ -184,7 +191,6 @@ public sealed class AzureHttpClient : IDisposable
     }
 
     private static TimeSpan Min(TimeSpan a, TimeSpan b) => a < b ? a : b;
-    private static TimeSpan Max(TimeSpan a, TimeSpan b) => a > b ? a : b;
 
     private static async Task<HttpRequestMessage> CloneRequestAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {

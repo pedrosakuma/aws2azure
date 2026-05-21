@@ -123,6 +123,26 @@ public class AzureHttpClientTests
         Assert.Equal(expected, AzureHttpClient.ClassifyStatus(status));
     }
 
+    [Fact]
+    public async Task SendAsync_LargeAttemptNumber_DoesNotOverflowDelay()
+    {
+        // Regression: with high attempt counts the exponential `Math.Pow(2, n-1)`
+        // can produce a non-finite double that overflows TimeSpan.FromMilliseconds.
+        // Compute should clamp to MaxRetryDelay even when the math overflows.
+        var first = new HttpResponseMessage((HttpStatusCode)429); // Throttled path
+        var handler = new SequenceHandler(first, new HttpResponseMessage(HttpStatusCode.OK));
+        var client = new AzureHttpClient(handler, ownsHandler: true, new AzureHttpClientOptions
+        {
+            MaxAttempts = 2000,
+            BaseRetryDelay = TimeSpan.FromMilliseconds(1),
+            MaxRetryDelay = TimeSpan.FromMilliseconds(2)
+        });
+
+        // Manually drive several attempts to force a high exponent before delivering OK.
+        var response = await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://example.test/x"));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
     private sealed class SequenceHandler : HttpMessageHandler
     {
         private readonly Queue<HttpResponseMessage> _responses;
