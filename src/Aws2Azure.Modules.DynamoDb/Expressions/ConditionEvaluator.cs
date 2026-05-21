@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Numerics;
 using System.Text.Json;
 using Aws2Azure.Modules.DynamoDb.Operations;
 
@@ -171,10 +170,28 @@ internal static class ConditionEvaluator
 
         if (op is CompareOp.Equal or CompareOp.NotEqual)
         {
-            // Equality is allowed across any matching type tag including
-            // BOOL, NULL, M, L, and sets. Different type tags compare
-            // false (not error).
-            var eq = lp.TypeTag == rp.TypeTag && JsonEquals(lp.Value, rp.Value);
+            bool eq;
+            if (lp.TypeTag != rp.TypeTag)
+            {
+                // Different type tags compare false (not error).
+                eq = false;
+            }
+            else if (lp.TypeTag == AttributeValueTypes.Number)
+            {
+                // Numbers compare by numeric value, not by raw textual form
+                // (e.g. "1" == "1.0" == "1.00" must hold).
+                eq = CompareNumeric(lp.Value.GetString()!, rp.Value.GetString()!) == 0;
+            }
+            else if (lp.TypeTag == AttributeValueTypes.Binary)
+            {
+                eq = CompareBinary(lp.Value.GetString()!, rp.Value.GetString()!) == 0;
+            }
+            else
+            {
+                // Equality is allowed across any other matching type tag
+                // including S, BOOL, NULL, M, L, and sets.
+                eq = JsonEquals(lp.Value, rp.Value);
+            }
             return op == CompareOp.Equal ? eq : !eq;
         }
 
@@ -280,20 +297,149 @@ internal static class ConditionEvaluator
 
     private static int CompareNumeric(string a, string b)
     {
-        if (BigInteger.TryParse(a, NumberStyles.Integer, CultureInfo.InvariantCulture, out var ai)
-            && BigInteger.TryParse(b, NumberStyles.Integer, CultureInfo.InvariantCulture, out var bi))
-        {
-            return ai.CompareTo(bi);
-        }
-        // Fractional or out-of-int — fall back to Decimal. We deliberately
-        // do not enforce a 28-digit precision check here because we are
-        // only comparing, not arithmetic: surface a ValidationException
-        // only when the value can't be parsed at all.
-        if (!decimal.TryParse(a, NumberStyles.Float, CultureInfo.InvariantCulture, out var ad)
-            || !decimal.TryParse(b, NumberStyles.Float, CultureInfo.InvariantCulture, out var bd))
+        // Lossless decimal compare on canonicalised string representations.
+        // DynamoDB stores numbers as decimal strings with up to 38 significant
+        // digits; System.Decimal silently rounds at 28-29 digits and would
+        // make distinct large/precise operands compare equal. We therefore
+        // compare digit-by-digit after normalising the two operands.
+        if (!TryNormaliseDecimal(a, out var aNorm))
             throw new ConditionEvaluationException(
-                "Numeric comparison operand exceeds the proxy's 28-digit precision.");
-        return ad.CompareTo(bd);
+                $"Numeric comparison operand '{a}' is not a valid number.");
+        if (!TryNormaliseDecimal(b, out var bNorm))
+            throw new ConditionEvaluationException(
+                $"Numeric comparison operand '{b}' is not a valid number.");
+
+        if (aNorm.IsZero && bNorm.IsZero) return 0;
+        if (aNorm.IsNegative != bNorm.IsNegative)
+            return aNorm.IsNegative ? -1 : 1;
+
+        int magCmp = CompareMagnitude(aNorm, bNorm);
+        return aNorm.IsNegative ? -magCmp : magCmp;
+    }
+
+    private readonly struct NormalisedDecimal
+    {
+        public NormalisedDecimal(bool isNegative, string intDigits, string fracDigits, bool isZero)
+        {
+            IsNegative = isNegative;
+            IntDigits = intDigits;
+            FracDigits = fracDigits;
+            IsZero = isZero;
+        }
+        public bool IsNegative { get; }
+        public string IntDigits { get; }   // leading zeros stripped
+        public string FracDigits { get; }  // trailing zeros stripped
+        public bool IsZero { get; }
+    }
+
+    private static bool TryNormaliseDecimal(string s, out NormalisedDecimal result)
+    {
+        result = default;
+        if (string.IsNullOrEmpty(s)) return false;
+
+        int i = 0;
+        bool neg = false;
+        if (s[i] == '+' || s[i] == '-')
+        {
+            neg = s[i] == '-';
+            i++;
+        }
+        if (i >= s.Length) return false;
+
+        int intStart = i;
+        while (i < s.Length && s[i] >= '0' && s[i] <= '9') i++;
+        int intEnd = i;
+
+        int fracStart = i, fracEnd = i;
+        if (i < s.Length && s[i] == '.')
+        {
+            i++;
+            fracStart = i;
+            while (i < s.Length && s[i] >= '0' && s[i] <= '9') i++;
+            fracEnd = i;
+        }
+
+        int expSign = 1, expVal = 0;
+        if (i < s.Length && (s[i] == 'e' || s[i] == 'E'))
+        {
+            i++;
+            if (i >= s.Length) return false;
+            if (s[i] == '+' || s[i] == '-')
+            {
+                if (s[i] == '-') expSign = -1;
+                i++;
+            }
+            int expDigitStart = i;
+            while (i < s.Length && s[i] >= '0' && s[i] <= '9') i++;
+            if (i == expDigitStart) return false;
+            // Bound the exponent magnitude to avoid pathological growth.
+            if (i - expDigitStart > 6) return false;
+            expVal = int.Parse(s.AsSpan(expDigitStart, i - expDigitStart), CultureInfo.InvariantCulture);
+        }
+        if (i != s.Length) return false;
+        if (intStart == intEnd && fracStart == fracEnd) return false;
+
+        var intDigits = s.Substring(intStart, intEnd - intStart);
+        var fracDigits = s.Substring(fracStart, fracEnd - fracStart);
+
+        // Apply exponent by shifting the decimal point.
+        int shift = expSign * expVal;
+        if (shift > 0)
+        {
+            // Pull digits from fraction into integer.
+            int take = Math.Min(shift, fracDigits.Length);
+            intDigits += fracDigits.Substring(0, take);
+            fracDigits = fracDigits.Substring(take);
+            if (shift > take) intDigits += new string('0', shift - take);
+        }
+        else if (shift < 0)
+        {
+            int neg2 = -shift;
+            int take = Math.Min(neg2, intDigits.Length);
+            fracDigits = intDigits.Substring(intDigits.Length - take) + fracDigits;
+            intDigits = intDigits.Substring(0, intDigits.Length - take);
+            if (neg2 > take) fracDigits = new string('0', neg2 - take) + fracDigits;
+        }
+
+        // Strip leading zeros from integer portion.
+        int li = 0;
+        while (li < intDigits.Length - 1 && intDigits[li] == '0') li++;
+        if (intDigits.Length > 0) intDigits = intDigits.Substring(li);
+        // Strip trailing zeros from fractional portion.
+        int fe = fracDigits.Length;
+        while (fe > 0 && fracDigits[fe - 1] == '0') fe--;
+        fracDigits = fracDigits.Substring(0, fe);
+
+        bool isZero = (intDigits.Length == 0 || intDigits == "0") && fracDigits.Length == 0;
+        if (isZero) neg = false;
+
+        result = new NormalisedDecimal(neg, intDigits, fracDigits, isZero);
+        return true;
+    }
+
+    private static int CompareMagnitude(NormalisedDecimal a, NormalisedDecimal b)
+    {
+        // Compare integer-part lengths (after stripping leading zeros) first.
+        var aInt = a.IntDigits.Length == 0 ? "0" : a.IntDigits;
+        var bInt = b.IntDigits.Length == 0 ? "0" : b.IntDigits;
+        // Treat a bare "0" as zero-length for comparison purposes.
+        int aIntLen = aInt == "0" ? 0 : aInt.Length;
+        int bIntLen = bInt == "0" ? 0 : bInt.Length;
+        if (aIntLen != bIntLen) return aIntLen < bIntLen ? -1 : 1;
+        if (aIntLen > 0)
+        {
+            int cmp = string.CompareOrdinal(aInt, bInt);
+            if (cmp != 0) return cmp < 0 ? -1 : 1;
+        }
+        // Integer parts equal — compare fractional digits left-to-right.
+        int min = Math.Min(a.FracDigits.Length, b.FracDigits.Length);
+        for (int i = 0; i < min; i++)
+        {
+            if (a.FracDigits[i] != b.FracDigits[i])
+                return a.FracDigits[i] < b.FracDigits[i] ? -1 : 1;
+        }
+        if (a.FracDigits.Length == b.FracDigits.Length) return 0;
+        return a.FracDigits.Length < b.FracDigits.Length ? -1 : 1;
     }
 
     private static int CompareBinary(string a, string b)

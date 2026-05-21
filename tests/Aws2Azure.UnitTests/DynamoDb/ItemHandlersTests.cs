@@ -204,6 +204,22 @@ public class ItemHandlersTests
     }
 
     [Fact]
+    public async Task PutItem_legacy_expected_with_orphan_placeholders_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"x\"}},"
+                  + "\"Expected\":{\"v\":{\"Value\":{\"N\":\"1\"}}},"
+                  + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"1\"}}}";
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("no ConditionExpression", ReadResponse(body));
+    }
+
+    [Fact]
     public async Task PutItem_condition_attribute_not_exists_on_missing_item_writes()
     {
         var (ctx, body) = NewCtx();
@@ -405,6 +421,22 @@ public class ItemHandlersTests
         Assert.Equal(HttpMethod.Delete, delReq.Method);
         Assert.EndsWith("/docs/order-42", delReq.Uri.AbsolutePath);
         Assert.Equal("[\"customer-1\"]", delReq.Headers["x-ms-documentdb-partitionkey"]);
+    }
+
+    [Fact]
+    public async Task DeleteItem_legacy_expected_with_orphan_placeholders_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"x\"}},"
+                  + "\"Expected\":{\"v\":{\"Value\":{\"N\":\"1\"}}},"
+                  + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"1\"}}}";
+        await ItemHandlers.HandleDeleteItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("no ConditionExpression", ReadResponse(body));
     }
 
     [Fact]

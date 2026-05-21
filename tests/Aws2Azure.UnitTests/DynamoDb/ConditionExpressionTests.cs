@@ -148,4 +148,46 @@ public class ConditionExpressionTests
     public void Eq_across_different_tags_is_false() =>
         Assert.False(Eval("a = :v", "{\"a\":{\"S\":\"1\"}}",
             values: new Dictionary<string, JsonElement> { [":v"] = V("{\"N\":\"1\"}") }));
+
+    [Fact]
+    public void Numeric_eq_is_value_based_not_textual() =>
+        Assert.True(Eval("a = :v", "{\"a\":{\"N\":\"1\"}}",
+            values: new Dictionary<string, JsonElement> { [":v"] = V("{\"N\":\"1.0\"}") }));
+
+    [Fact]
+    public void Numeric_eq_with_trailing_zeros_and_sign() =>
+        Assert.True(Eval("a = :v", "{\"a\":{\"N\":\"100.00\"}}",
+            values: new Dictionary<string, JsonElement> { [":v"] = V("{\"N\":\"+100\"}") }));
+
+    [Fact]
+    public void Numeric_ne_distinguishes_high_precision_values() =>
+        Assert.True(Eval("a <> :v",
+            "{\"a\":{\"N\":\"0.12345678901234567890123456789012345678\"}}",
+            values: new Dictionary<string, JsonElement>
+            {
+                [":v"] = V("{\"N\":\"0.12345678901234567890123456789012345677\"}"),
+            }));
+
+    [Fact]
+    public void Numeric_compare_handles_exponent_form() =>
+        Assert.True(Eval("a = :v", "{\"a\":{\"N\":\"1000\"}}",
+            values: new Dictionary<string, JsonElement> { [":v"] = V("{\"N\":\"1e3\"}") }));
+
+    [Fact]
+    public void Numeric_compare_negative_zero_equals_zero() =>
+        Assert.True(Eval("a = :v", "{\"a\":{\"N\":\"-0.00\"}}",
+            values: new Dictionary<string, JsonElement> { [":v"] = V("{\"N\":\"0\"}") }));
+
+    [Fact]
+    public void Numeric_ordered_high_precision()
+    {
+        // 38-significant-digit operands beyond System.Decimal capacity must
+        // still compare lossless.
+        Assert.True(Eval("a < :v",
+            "{\"a\":{\"N\":\"0.12345678901234567890123456789012345677\"}}",
+            values: new Dictionary<string, JsonElement>
+            {
+                [":v"] = V("{\"N\":\"0.12345678901234567890123456789012345678\"}"),
+            }));
+    }
 }

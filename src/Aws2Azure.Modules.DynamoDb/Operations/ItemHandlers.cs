@@ -91,7 +91,7 @@ internal static class ItemHandlers
             return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", ex.Message);
         }
 
-        if (condition is null
+        if (string.IsNullOrWhiteSpace(req.ConditionExpression)
             && (HasContent(req.ExpressionAttributeNames) || HasContent(req.ExpressionAttributeValues)))
         {
             return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
@@ -441,7 +441,7 @@ internal static class ItemHandlers
             return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", ex.Message);
         }
 
-        if (condition is null
+        if (string.IsNullOrWhiteSpace(req.ConditionExpression)
             && (HasContent(req.ExpressionAttributeNames) || HasContent(req.ExpressionAttributeValues)))
         {
             return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",

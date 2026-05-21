@@ -87,6 +87,7 @@ internal static class UpdateItemHandler
         {
             IReadOnlyDictionary<string, string>? names = null;
             IReadOnlyDictionary<string, JsonElement>? values = null;
+            bool hasConditionExpr = !string.IsNullOrWhiteSpace(req.ConditionExpression);
             if (hasUpdateExpr)
             {
                 names = TryMaterialise(req.ExpressionAttributeNames, requireStringValues: true);
@@ -95,10 +96,16 @@ internal static class UpdateItemHandler
             }
             else
             {
-                if (HasContent(req.ExpressionAttributeNames) || HasContent(req.ExpressionAttributeValues))
+                if ((HasContent(req.ExpressionAttributeNames) || HasContent(req.ExpressionAttributeValues))
+                    && !hasConditionExpr)
                 {
                     return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
-                        "ExpressionAttributeNames / ExpressionAttributeValues require UpdateExpression.");
+                        "ExpressionAttributeNames / ExpressionAttributeValues require UpdateExpression or ConditionExpression.");
+                }
+                if (hasConditionExpr)
+                {
+                    names = TryMaterialise(req.ExpressionAttributeNames, requireStringValues: true);
+                    values = TryMaterialiseValues(req.ExpressionAttributeValues);
                 }
                 ast = AttributeUpdatesNormaliser.Build(req.AttributeUpdates!.Value);
             }
