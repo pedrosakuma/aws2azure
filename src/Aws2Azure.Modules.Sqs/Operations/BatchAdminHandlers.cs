@@ -41,8 +41,8 @@ namespace Aws2Azure.Modules.Sqs.Operations;
 /// </summary>
 internal static class BatchAdminHandlers
 {
-    public const int MaxBatchEntries = 10;
-    public const int MaxBatchConcurrency = 5;
+    internal const int MaxBatchEntries = 10;
+    internal const int MaxBatchConcurrency = 5;
     public static readonly TimeSpan PurgeCoolDown = TimeSpan.FromSeconds(60);
     public static readonly TimeSpan PurgeBudget = TimeSpan.FromSeconds(60);
 
@@ -71,7 +71,7 @@ internal static class BatchAdminHandlers
 
     // --- DeleteMessageBatch / ChangeMessageVisibilityBatch ---------------
 
-    private sealed record ChangeVisEntry(string Id, string ReceiptHandle, int VisibilityTimeout);
+    internal sealed record ChangeVisEntry(string Id, string ReceiptHandle, int VisibilityTimeout);
 
     private static async Task DeleteMessageBatchAsync(
         HttpContext context, SqsParseResult parsed, ServiceBusClient sb, CancellationToken ct)
@@ -419,7 +419,7 @@ internal static class BatchAdminHandlers
 
     // --- Entry parsing helpers ------------------------------------------
 
-    private static List<(string Id, string ReceiptHandle)>? ParseDeleteEntries(SqsParseResult parsed)
+    internal static List<(string Id, string ReceiptHandle)>? ParseDeleteEntries(SqsParseResult parsed)
     {
         if (parsed.Protocol == SqsWireProtocol.AwsJson)
         {
@@ -472,7 +472,7 @@ internal static class BatchAdminHandlers
         }
     }
 
-    private static List<ChangeVisEntry>? ParseChangeVisEntries(SqsParseResult parsed)
+    internal static List<ChangeVisEntry>? ParseChangeVisEntries(SqsParseResult parsed)
     {
         if (parsed.Protocol == SqsWireProtocol.AwsJson)
         {
@@ -607,22 +607,39 @@ internal static class BatchAdminHandlers
         return true;
     }
 
-    private static async Task ForEachBoundedAsync<T>(
+    internal static async Task ForEachBoundedAsync<T>(
         IReadOnlyList<T> items, int maxConcurrency, Func<T, Task> body, CancellationToken ct)
     {
         if (items.Count == 0) return;
-        using var sem = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+        var sem = new SemaphoreSlim(maxConcurrency, maxConcurrency);
         var tasks = new List<Task>(items.Count);
-        foreach (var item in items)
+        try
         {
-            await sem.WaitAsync(ct).ConfigureAwait(false);
-            tasks.Add(Task.Run(async () =>
+            foreach (var item in items)
             {
-                try { await body(item).ConfigureAwait(false); }
-                finally { sem.Release(); }
-            }, ct));
+                // If scheduling is cancelled (WaitAsync throws OCE) we still
+                // need to await any tasks already started before disposing
+                // the semaphore — otherwise their `sem.Release()` raises
+                // ObjectDisposedException and AMQP side effects keep running
+                // on a torn-down call stack.
+                await sem.WaitAsync(ct).ConfigureAwait(false);
+                tasks.Add(Task.Run(async () =>
+                {
+                    try { await body(item).ConfigureAwait(false); }
+                    finally { sem.Release(); }
+                }, ct));
+            }
+            await Task.WhenAll(tasks).ConfigureAwait(false);
         }
-        await Task.WhenAll(tasks).ConfigureAwait(false);
+        finally
+        {
+            if (tasks.Count > 0)
+            {
+                try { await Task.WhenAll(tasks).ConfigureAwait(false); }
+                catch { /* swallow — the original throw (cancel or body error) propagates from the try block. */ }
+            }
+            sem.Dispose();
+        }
     }
 
     // --- Parameter extraction (shared with QueueLifecycleHandlers) -----

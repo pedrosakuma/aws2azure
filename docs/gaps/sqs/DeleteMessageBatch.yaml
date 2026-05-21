@@ -12,6 +12,7 @@ behavior_differences:
   - "SB REST has no native batch-delete; the proxy fans out parallel DELETEs. A failing entry never aborts the batch — callers see per-entry results matching SQS semantics."
   - "Expired-lock vs already-deleted ambiguity from DeleteMessage applies per entry (see DeleteMessage.yaml behavior_differences)."
   - "Verified against in-process fakes; emulator-backed end-to-end validation lands with the SbEmulatorFixture build-out (tracked in p2-sb-emulator-fixture)."
+  - "AMQP transport (Phase 2.5): when a queue is configured with `transport: Amqp`, DeleteMessageBatch routes to the AMQP path — each entry decodes the v2/v3 AMQP receipt handle minted by AMQP ReceiveMessage, looks up the cached (session) receiver via the lock-token cache, and calls `ServiceBusReceiver.CompleteAsync`. FIFO-aware: entries with different session-ids fan out to their own cached session receivers in parallel. Per-entry failures (stale handle, queue mismatch, cache miss, transport error) are surfaced as BatchResultErrorEntry items just like the REST path."
 references:
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteMessageBatch.html
   - https://learn.microsoft.com/rest/api/servicebus/delete-message

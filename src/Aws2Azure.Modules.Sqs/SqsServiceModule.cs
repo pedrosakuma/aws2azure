@@ -151,7 +151,9 @@ public sealed class SqsServiceModule : IServiceModule
 
         if (parsed.Operation is SqsOperation.ReceiveMessage
             or SqsOperation.DeleteMessage
-            or SqsOperation.ChangeMessageVisibility)
+            or SqsOperation.ChangeMessageVisibility
+            or SqsOperation.DeleteMessageBatch
+            or SqsOperation.ChangeMessageVisibilityBatch)
         {
             if (_amqpPool is not null && TryRouteToAmqp(parsed, sbCreds, out var receivers))
             {
@@ -160,15 +162,23 @@ public sealed class SqsServiceModule : IServiceModule
                     .ConfigureAwait(false);
                 return;
             }
-            await Operations.ReceiveMessageHandlers
+            if (parsed.Operation is SqsOperation.ReceiveMessage
+                or SqsOperation.DeleteMessage
+                or SqsOperation.ChangeMessageVisibility)
+            {
+                await Operations.ReceiveMessageHandlers
+                    .HandleAsync(context, parsed, sbClient, context.RequestAborted)
+                    .ConfigureAwait(false);
+                return;
+            }
+            // Batch fall-through routes to BatchAdminHandlers (REST).
+            await Operations.BatchAdminHandlers
                 .HandleAsync(context, parsed, sbClient, context.RequestAborted)
                 .ConfigureAwait(false);
             return;
         }
 
-        if (parsed.Operation is SqsOperation.DeleteMessageBatch
-            or SqsOperation.ChangeMessageVisibilityBatch
-            or SqsOperation.SetQueueAttributes
+        if (parsed.Operation is SqsOperation.SetQueueAttributes
             or SqsOperation.PurgeQueue)
         {
             await Operations.BatchAdminHandlers
