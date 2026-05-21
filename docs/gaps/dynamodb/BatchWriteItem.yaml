@@ -1,0 +1,34 @@
+service: dynamodb
+operation: BatchWriteItem
+azure_equivalent: "Azure Cosmos DB (Core SQL API)"
+status: partial
+sub_features:
+  - name: PutRequest fan-out
+    status: implemented
+    notes: "Each PutRequest issues a Cosmos POST with `x-ms-documentdb-is-upsert: true`, matching the existing PutItem fast-path. Item is stored verbatim under the `item` envelope for round-trip fidelity."
+  - name: DeleteRequest fan-out
+    status: implemented
+    notes: "Each DeleteRequest routes to a Cosmos DELETE on the (pk, id) derived from the key. Deletes of missing items are successful no-ops — matches DynamoDB idempotency."
+  - name: Bounded parallelism
+    status: implemented
+    notes: "Up to 10 concurrent Cosmos writes per batch (SemaphoreSlim-gated)."
+  - name: 25-item-per-call cap
+    status: implemented
+    notes: "Requests over 25 writes (across all tables) rejected with ValidationException, matching the DynamoDB hard limit."
+  - name: Duplicate-key rejection
+    status: implemented
+    notes: "Two writes targeting the same (table, pk, id) in a single call are rejected with ValidationException — matches DynamoDB."
+  - name: Throttling → UnprocessedItems
+    status: implemented
+    notes: "Cosmos 429 on any individual write surfaces the original PutRequest/DeleteRequest envelope in `UnprocessedItems`, preserving ordering within the table. Hard errors (5xx, 4xx other than 429/404) fail the whole batch."
+  - name: ReturnConsumedCapacity / ReturnItemCollectionMetrics
+    status: unsupported
+    notes: "Silently ignored; responses omit ConsumedCapacity and ItemCollectionMetrics."
+behavior_differences:
+  - "16 MB request body cap (DynamoDB) not enforced — bounded only by Kestrel limits."
+  - "Per-item 400 KB cap not enforced — bounded only by Cosmos document size limits."
+  - "Cosmos 429 maps to `UnprocessedItems` rather than `ProvisionedThroughputExceededException`; matches DDB SDK retry behaviour."
+  - "Order is preserved within a table when echoing into `UnprocessedItems`, but Cosmos calls execute in parallel — no guarantee that writes within a table commit in the order they were submitted."
+  - "Only validated against scripted Cosmos REST fakes; not yet exercised against real Azure Cosmos."
+references:
+  - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_BatchWriteItem.html

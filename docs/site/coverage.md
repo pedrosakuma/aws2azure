@@ -2,6 +2,8 @@
 
 | Service | Operation | Status | Azure equivalent |
 |---|---|---|---|
+| dynamodb | [BatchGetItem](dynamodb.md#batchgetitem) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
+| dynamodb | [BatchWriteItem](dynamodb.md#batchwriteitem) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [CreateTable](dynamodb.md#createtable) | ✅ implemented | `Azure Cosmos DB (Core SQL API) — POST /dbs/{db}/colls` |
 | dynamodb | [DeleteItem](dynamodb.md#deleteitem) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [DeleteTable](dynamodb.md#deletetable) | ✅ implemented | `Azure Cosmos DB (Core SQL API) — DELETE /dbs/{db}/colls/{name}` |

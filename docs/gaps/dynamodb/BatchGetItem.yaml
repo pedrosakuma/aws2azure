@@ -1,0 +1,38 @@
+service: dynamodb
+operation: BatchGetItem
+azure_equivalent: "Azure Cosmos DB (Core SQL API)"
+status: partial
+sub_features:
+  - name: Multi-table fan-out
+    status: implemented
+    notes: "Each table's keys are fanned out via per-item Cosmos GETs. Bounded parallelism (16 concurrent calls) keeps a single request from saturating the proxy."
+  - name: Per-item miss semantics
+    status: implemented
+    notes: "Missing items are omitted from `Responses` (matching DynamoDB), not surfaced as errors."
+  - name: Throttling → UnprocessedKeys
+    status: implemented
+    notes: "Cosmos 429 on any individual GET drops that key into `UnprocessedKeys` so SDK retry loops re-issue only the throttled subset. The rest of the batch still returns 200."
+  - name: ProjectionExpression (per table)
+    status: partial
+    notes: "Top-level attribute names + `#alias` honoured. Nested paths (`a.b`, `a[0]`) rejected."
+  - name: ExpressionAttributeNames (per table)
+    status: implemented
+  - name: ConsistentRead (per table)
+    status: implemented
+    notes: "Sets `x-ms-consistency-level: Strong` on every Cosmos GET for that table; account-level consistency cap still applies."
+  - name: 100-item-per-call cap
+    status: implemented
+    notes: "Requests over 100 keys (across all tables) rejected with ValidationException, matching the DynamoDB hard limit."
+  - name: Legacy AttributesToGet
+    status: unsupported
+    notes: "Rejected with ValidationException — use ProjectionExpression."
+  - name: ReturnConsumedCapacity
+    status: unsupported
+    notes: "Silently ignored; response omits ConsumedCapacity."
+behavior_differences:
+  - "16 MB total response size cap (DynamoDB) not enforced — bounded only by the underlying Cosmos response sizes."
+  - "Hard error on any single item (non-429, non-404) fails the whole batch with a single error response — DynamoDB has the same all-or-nothing semantics for non-throttle failures."
+  - "Cosmos 429 maps to `UnprocessedKeys` rather than `ProvisionedThroughputExceededException`; matches DDB SDK retry behaviour."
+  - "Only validated against scripted Cosmos REST fakes; not yet exercised against real Azure Cosmos."
+references:
+  - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_BatchGetItem.html

@@ -1,5 +1,64 @@
 # dynamodb
 
+## BatchGetItem
+
+- **Status:** 🟡 partial
+- **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| Multi-table fan-out | ✅ implemented | Each table's keys are fanned out via per-item Cosmos GETs. Bounded parallelism (16 concurrent calls) keeps a single request from saturating the proxy. |  |  |
+| Per-item miss semantics | ✅ implemented | Missing items are omitted from `Responses` (matching DynamoDB), not surfaced as errors. |  |  |
+| Throttling → UnprocessedKeys | ✅ implemented | Cosmos 429 on any individual GET drops that key into `UnprocessedKeys` so SDK retry loops re-issue only the throttled subset. The rest of the batch still returns 200. |  |  |
+| ProjectionExpression (per table) | 🟡 partial | Top-level attribute names + `#alias` honoured. Nested paths (`a.b`, `a[0]`) rejected. |  |  |
+| ExpressionAttributeNames (per table) | ✅ implemented |  |  |  |
+| ConsistentRead (per table) | ✅ implemented | Sets `x-ms-consistency-level: Strong` on every Cosmos GET for that table; account-level consistency cap still applies. |  |  |
+| 100-item-per-call cap | ✅ implemented | Requests over 100 keys (across all tables) rejected with ValidationException, matching the DynamoDB hard limit. |  |  |
+| Legacy AttributesToGet | ⛔ unsupported | Rejected with ValidationException — use ProjectionExpression. |  |  |
+| ReturnConsumedCapacity | ⛔ unsupported | Silently ignored; response omits ConsumedCapacity. |  |  |
+
+### Behaviour differences
+
+- 16 MB total response size cap (DynamoDB) not enforced — bounded only by the underlying Cosmos response sizes.
+- Hard error on any single item (non-429, non-404) fails the whole batch with a single error response — DynamoDB has the same all-or-nothing semantics for non-throttle failures.
+- Cosmos 429 maps to `UnprocessedKeys` rather than `ProvisionedThroughputExceededException`; matches DDB SDK retry behaviour.
+- Only validated against scripted Cosmos REST fakes; not yet exercised against real Azure Cosmos.
+
+### References
+
+- <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_BatchGetItem.html>
+
+## BatchWriteItem
+
+- **Status:** 🟡 partial
+- **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| PutRequest fan-out | ✅ implemented | Each PutRequest issues a Cosmos POST with `x-ms-documentdb-is-upsert: true`, matching the existing PutItem fast-path. Item is stored verbatim under the `item` envelope for round-trip fidelity. |  |  |
+| DeleteRequest fan-out | ✅ implemented | Each DeleteRequest routes to a Cosmos DELETE on the (pk, id) derived from the key. Deletes of missing items are successful no-ops — matches DynamoDB idempotency. |  |  |
+| Bounded parallelism | ✅ implemented | Up to 10 concurrent Cosmos writes per batch (SemaphoreSlim-gated). |  |  |
+| 25-item-per-call cap | ✅ implemented | Requests over 25 writes (across all tables) rejected with ValidationException, matching the DynamoDB hard limit. |  |  |
+| Duplicate-key rejection | ✅ implemented | Two writes targeting the same (table, pk, id) in a single call are rejected with ValidationException — matches DynamoDB. |  |  |
+| Throttling → UnprocessedItems | ✅ implemented | Cosmos 429 on any individual write surfaces the original PutRequest/DeleteRequest envelope in `UnprocessedItems`, preserving ordering within the table. Hard errors (5xx, 4xx other than 429/404) fail the whole batch. |  |  |
+| ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported | Silently ignored; responses omit ConsumedCapacity and ItemCollectionMetrics. |  |  |
+
+### Behaviour differences
+
+- 16 MB request body cap (DynamoDB) not enforced — bounded only by Kestrel limits.
+- Per-item 400 KB cap not enforced — bounded only by Cosmos document size limits.
+- Cosmos 429 maps to `UnprocessedItems` rather than `ProvisionedThroughputExceededException`; matches DDB SDK retry behaviour.
+- Order is preserved within a table when echoing into `UnprocessedItems`, but Cosmos calls execute in parallel — no guarantee that writes within a table commit in the order they were submitted.
+- Only validated against scripted Cosmos REST fakes; not yet exercised against real Azure Cosmos.
+
+### References
+
+- <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_BatchWriteItem.html>
+
 ## CreateTable
 
 - **Status:** ✅ implemented
