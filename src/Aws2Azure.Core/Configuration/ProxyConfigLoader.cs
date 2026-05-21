@@ -173,6 +173,10 @@ public static class ProxyConfigLoader
                 azure.Cosmos ??= new CosmosCredentials();
                 if (fieldSegment == "ENDPOINT") azure.Cosmos.Endpoint = value ?? string.Empty;
                 else if (fieldSegment == "PRIMARYKEY") azure.Cosmos.PrimaryKey = value ?? string.Empty;
+                else if (fieldSegment == "DATABASENAME") azure.Cosmos.DatabaseName = value ?? string.Empty;
+                else if (fieldSegment == "TENANTID") azure.Cosmos.TenantId = value;
+                else if (fieldSegment == "CLIENTID") azure.Cosmos.ClientId = value;
+                else if (fieldSegment == "CLIENTSECRET") azure.Cosmos.ClientSecret = value;
                 return;
         }
     }

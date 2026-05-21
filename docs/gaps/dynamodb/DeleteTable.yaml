@@ -1,0 +1,14 @@
+service: dynamodb
+operation: DeleteTable
+azure_equivalent: "Azure Cosmos DB (Core SQL API) — DELETE /dbs/{db}/colls/{name}"
+status: implemented
+sub_features:
+  - { name: "Synchronous delete", status: implemented }
+  - { name: "TableDescription echoed (key schema, attrs) via sidecar metadata", status: implemented }
+behavior_differences:
+  - "DynamoDB DeleteTable is asynchronous (returns DELETING). The proxy returns the same DELETING status for SDK parity even though the Cosmos delete is synchronous."
+  - "On a non-existent table the proxy returns ResourceNotFoundException."
+  - "Tested against scripted Cosmos handlers; not yet exercised against real Azure."
+references:
+  - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DeleteTable.html
+  - https://learn.microsoft.com/rest/api/cosmos-db/delete-a-collection

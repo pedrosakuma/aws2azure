@@ -1,0 +1,15 @@
+service: dynamodb
+operation: ListTables
+azure_equivalent: "Azure Cosmos DB (Core SQL API) — GET /dbs/{db}/colls"
+status: implemented
+sub_features:
+  - { name: "Limit (1..100)", status: implemented }
+  - { name: "ExclusiveStartTableName cursor", status: implemented }
+  - { name: "LastEvaluatedTableName pagination", status: implemented }
+behavior_differences:
+  - "Container names are sorted ordinally (case-sensitive). DynamoDB pagination is also ordinal so the cursor semantics match."
+  - "All containers in the configured database are surfaced, including sidecar-less ones. Operators using a shared database for non-DynamoDB workloads will see those container ids too."
+  - "Pagination is server-side: the proxy fetches all containers once and slices in-memory. For databases with thousands of containers this should be split across Cosmos result pages — tracked as a follow-up."
+references:
+  - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ListTables.html
+  - https://learn.microsoft.com/rest/api/cosmos-db/list-collections

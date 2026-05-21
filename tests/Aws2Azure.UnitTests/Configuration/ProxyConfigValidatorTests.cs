@@ -82,7 +82,8 @@ public class ProxyConfigValidatorTests
         Assert.Contains("serviceBus.sasKeyName: required", ex.Message);
         Assert.Contains("serviceBus.sasKey: required", ex.Message);
         Assert.Contains("cosmos.endpoint: required", ex.Message);
-        Assert.Contains("cosmos.primaryKey: required", ex.Message);
+        Assert.Contains("cosmos.databaseName: required", ex.Message);
+        Assert.Contains("either primaryKey OR (tenantId+clientId+clientSecret)", ex.Message);
     }
 
     [Fact]

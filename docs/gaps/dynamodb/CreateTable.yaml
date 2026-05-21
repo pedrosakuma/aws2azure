@@ -1,0 +1,23 @@
+service: dynamodb
+operation: CreateTable
+azure_equivalent: "Azure Cosmos DB (Core SQL API) — POST /dbs/{db}/colls"
+status: implemented
+sub_features:
+  - { name: "HASH key", status: implemented }
+  - { name: "HASH + RANGE composite key", status: implemented }
+  - { name: "PAY_PER_REQUEST + PROVISIONED billing mode (informational)", status: implemented }
+  - { name: "AttributeDefinitions round-trip via sidecar metadata", status: implemented }
+  - { name: "GlobalSecondaryIndexes", status: unsupported }
+  - { name: "LocalSecondaryIndexes", status: unsupported }
+  - { name: "StreamSpecification", status: unsupported }
+  - { name: "SSESpecification", status: unsupported }
+  - { name: "Tags", status: unsupported }
+behavior_differences:
+  - "Cosmos containers use a fixed /pk partition path. Composite tables synthesise pk = '<HASH>#<RANGE>'."
+  - "ProvisionedThroughput / BillingMode values are accepted but not enforced; throughput is governed by the Cosmos account/database, not per-table."
+  - "TableStatus is always returned as ACTIVE since Cosmos container creation is synchronous."
+  - "On metadata-sidecar persist failure the container is best-effort deleted to avoid orphan containers."
+  - "Tested against scripted Cosmos handlers in unit tests; not yet exercised against real Azure Cosmos DB."
+references:
+  - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_CreateTable.html
+  - https://learn.microsoft.com/rest/api/cosmos-db/create-a-collection

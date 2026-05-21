@@ -10,58 +10,48 @@ namespace Aws2Azure.Modules.DynamoDb.Internal;
 
 /// <summary>
 /// Thin REST client over <see cref="AzureHttpClient"/> that handles
-/// Cosmos-specific concerns: master-key signing, the
+/// Cosmos-specific concerns: master-key OR AAD signing, the
 /// <c>x-ms-date</c> / <c>x-ms-version</c> / <c>x-ms-documentdb-*</c>
 /// header set, and partition-key threading.
 ///
-/// <para>This is the equivalent of the SQS module's
-/// <c>ServiceBusClient</c>. It exposes a single
-/// <see cref="SendAsync"/> entry that takes the Cosmos resource
-/// triple (verb, resourceType, resourceLink) and the relative request
-/// URL, signs the request, sends it through the shared
-/// <see cref="AzureHttpClient"/> (so retries / breaker / metrics are
-/// reused), and returns the raw response for op handlers to parse.</para>
-///
-/// <para>Slice 0 ships master-key auth only; the AAD path lands in
-/// Slice 1 when CreateTable surfaces it.</para>
+/// <para>Auth scheme is injected via <see cref="ICosmosAuthenticator"/>
+/// so the same client serves both credential shapes the proxy
+/// supports. The chosen authenticator is fixed per credential
+/// (i.e. per AWS access key) at module composition time.</para>
 /// </summary>
 internal sealed class CosmosClient
 {
     private readonly AzureHttpClient _http;
-    private readonly CosmosCredentials _credentials;
-    private readonly Func<DateTimeOffset> _clock;
+    private readonly string _endpoint;
+    private readonly ICosmosAuthenticator _authenticator;
 
     public const string ApiVersion = "2018-12-31";
 
-    public CosmosClient(AzureHttpClient http, CosmosCredentials credentials)
-        : this(http, credentials, clock: null) { }
+    public string DatabaseName { get; }
 
-    internal CosmosClient(AzureHttpClient http, CosmosCredentials credentials, Func<DateTimeOffset>? clock)
+    public CosmosClient(AzureHttpClient http, CosmosCredentials credentials, ICosmosAuthenticator authenticator)
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(credentials);
+        ArgumentNullException.ThrowIfNull(authenticator);
         if (string.IsNullOrEmpty(credentials.Endpoint))
             throw new ArgumentException("Cosmos endpoint must be configured.", nameof(credentials));
-        if (string.IsNullOrEmpty(credentials.PrimaryKey))
-            throw new ArgumentException("Cosmos primary key must be configured.", nameof(credentials));
+        if (string.IsNullOrEmpty(credentials.DatabaseName))
+            throw new ArgumentException("Cosmos database name must be configured.", nameof(credentials));
 
         _http = http;
-        _credentials = credentials;
-        _clock = clock ?? (() => DateTimeOffset.UtcNow);
+        _endpoint = credentials.Endpoint;
+        _authenticator = authenticator;
+        DatabaseName = credentials.DatabaseName;
     }
 
     /// <summary>
     /// Sends a signed Cosmos REST request. The <paramref name="resourceType"/>
-    /// and <paramref name="resourceLink"/> are used **only** for signing — the
-    /// caller is responsible for putting the request URL together (typically
-    /// the resource link with a leading slash, optionally with query string).
+    /// and <paramref name="resourceLink"/> are used by master-key signing
+    /// (and forwarded to RBAC checks under AAD); the caller is
+    /// responsible for putting the request URL together (typically the
+    /// resource link with a leading slash, optionally with query string).
     /// </summary>
-    /// <param name="method">HTTP verb.</param>
-    /// <param name="resourceType">Cosmos resource type singular (<c>dbs</c>, <c>colls</c>, <c>docs</c>, …).</param>
-    /// <param name="resourceLink">Resource link without leading slash (<c>dbs/{db}</c>, <c>dbs/{db}/colls/{col}/docs/{id}</c>), or empty string for resource-type root operations.</param>
-    /// <param name="requestUri">Path + query relative to the Cosmos endpoint, with leading slash.</param>
-    /// <param name="content">Optional request body. Caller sets Content-Type.</param>
-    /// <param name="extraHeaders">Optional headers to add (e.g. <c>x-ms-documentdb-partitionkey</c>).</param>
     public async Task<HttpResponseMessage> SendAsync(
         HttpMethod method,
         string resourceType,
@@ -76,14 +66,10 @@ internal sealed class CosmosClient
         ArgumentNullException.ThrowIfNull(resourceLink);
         ArgumentException.ThrowIfNullOrEmpty(requestUri);
 
-        var baseUri = new Uri(_credentials.Endpoint.TrimEnd('/') + "/", UriKind.Absolute);
+        var baseUri = new Uri(_endpoint.TrimEnd('/') + "/", UriKind.Absolute);
         using var request = new HttpRequestMessage(method, new Uri(baseUri, requestUri.TrimStart('/')));
 
-        var utcDate = CosmosMasterKeyAuth.GetHttpUtcDate(_clock());
-        var auth = CosmosMasterKeyAuth.Build(method.Method, resourceType, resourceLink, utcDate, _credentials.PrimaryKey);
-
-        request.Headers.TryAddWithoutValidation("authorization", auth);
-        request.Headers.TryAddWithoutValidation("x-ms-date", utcDate);
+        await _authenticator.AuthenticateAsync(request, resourceType, resourceLink, ct).ConfigureAwait(false);
         request.Headers.TryAddWithoutValidation("x-ms-version", ApiVersion);
 
         if (extraHeaders is not null)
@@ -107,3 +93,4 @@ internal sealed class CosmosClient
             .ConfigureAwait(false);
     }
 }
+

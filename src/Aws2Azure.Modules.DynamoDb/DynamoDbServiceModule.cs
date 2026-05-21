@@ -6,37 +6,39 @@ using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Modules.DynamoDb.Errors;
 using Aws2Azure.Modules.DynamoDb.Internal;
+using Aws2Azure.Modules.DynamoDb.Operations;
 using Aws2Azure.Modules.DynamoDb.WireProtocol;
 using Microsoft.AspNetCore.Http;
 
 namespace Aws2Azure.Modules.DynamoDb;
 
 /// <summary>
-/// DynamoDB → Cosmos DB Core (SQL) module. Slice 0 wires routing,
-/// AWS JSON 1.0 parsing, error rendering, and the Cosmos REST client.
-/// Every operation currently surfaces a <c>NotImplemented</c> response
-/// in the DynamoDB JSON envelope; per-op handlers land in Slice 1+.
-///
-/// <para>DynamoDB callers always use a single wire format
-/// (POST <c>/</c> with <c>X-Amz-Target: DynamoDB_20120810.&lt;Op&gt;</c>
-/// and a JSON body), so the module is simpler than SQS, which had to
-/// negotiate between query-protocol and AWS JSON.</para>
+/// DynamoDB → Cosmos DB Core (SQL) module. Routes JSON 1.0 requests
+/// matched by Host to per-op handlers; unimplemented operations return
+/// a DynamoDB-shaped <c>InternalServerError</c> so SDK callers surface
+/// a clean exception.
 /// </summary>
 public sealed class DynamoDbServiceModule : IServiceModule
 {
     private readonly AzureHttpClient _http;
     private readonly ICredentialResolver _credentials;
+    private readonly EntraIdTokenProvider _tokenProvider;
 
     public DynamoDbServiceModule(
         AzureHttpClient http,
         ICredentialResolver credentials,
-        CapabilityMatrix capabilities)
+        CapabilityMatrix capabilities,
+        EntraIdTokenProvider? tokenProvider = null)
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(credentials);
         ArgumentNullException.ThrowIfNull(capabilities);
         _http = http;
         _credentials = credentials;
+        // Token provider is only required for AAD-credentialled tenants;
+        // master-key callers never touch it. Default to a self-contained
+        // instance so callers that don't share Entra caches still work.
+        _tokenProvider = tokenProvider ?? new EntraIdTokenProvider(http);
         Capabilities = capabilities;
     }
 
@@ -52,9 +54,6 @@ public sealed class DynamoDbServiceModule : IServiceModule
     public bool MatchesHost(string host)
     {
         if (string.IsNullOrEmpty(host)) return false;
-        // DynamoDB endpoints: dynamodb.<region>.amazonaws.com,
-        // dynamodb-fips.<region>.amazonaws.com, and the bare
-        // dynamodb.<region>.api.aws variant used by some SDKs.
         return host.StartsWith("dynamodb.", StringComparison.OrdinalIgnoreCase)
             || host.StartsWith("dynamodb-", StringComparison.OrdinalIgnoreCase)
             || host.Equals("dynamodb", StringComparison.OrdinalIgnoreCase);
@@ -83,7 +82,7 @@ public sealed class DynamoDbServiceModule : IServiceModule
             return;
         }
 
-        if (_credentials.GetAzureCredentialsFor(accessKey, AzureService.Cosmos) is not CosmosCredentials cosmos)
+        if (_credentials.GetAzureCredentialsFor(accessKey, AzureService.Cosmos) is not CosmosCredentials cosmosCreds)
         {
             await DynamoDbErrorResponse.WriteAsync(context,
                 StatusCodes.Status403Forbidden,
@@ -92,17 +91,46 @@ public sealed class DynamoDbServiceModule : IServiceModule
             return;
         }
 
-        // Construct per-request; the underlying AzureHttpClient + breaker are
-        // shared across modules so retries/circuit-state survive instance churn.
-        _ = new CosmosClient(_http, cosmos);
+        var auth = CreateAuthenticator(cosmosCreds);
+        var cosmos = new CosmosClient(_http, cosmosCreds, auth);
 
-        // Slice 0 has no per-op handlers yet — every recognised target
-        // returns NotImplemented in DynamoDB's JSON envelope so SDKs can
-        // surface a clean exception.
+        switch (parsed.Operation)
+        {
+            case DynamoDbOperation.CreateTable:
+                await TableLifecycleHandlers.HandleCreateTableAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                return;
+            case DynamoDbOperation.DeleteTable:
+                await TableLifecycleHandlers.HandleDeleteTableAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                return;
+            case DynamoDbOperation.DescribeTable:
+                await TableLifecycleHandlers.HandleDescribeTableAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                return;
+            case DynamoDbOperation.ListTables:
+                await TableLifecycleHandlers.HandleListTablesAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                return;
+        }
+
         await DynamoDbErrorResponse.WriteAsync(context,
             StatusCodes.Status501NotImplemented,
             "InternalServerError",
             $"Operation {DynamoDbOperationNames.ToShortName(parsed.Operation)} is not yet implemented.")
             .ConfigureAwait(false);
     }
+
+    private ICosmosAuthenticator CreateAuthenticator(CosmosCredentials creds)
+    {
+        // Validation already guarantees exactly one shape — guard
+        // anyway so a misconfigured shadow build never silently picks
+        // the wrong scheme.
+        if (!string.IsNullOrEmpty(creds.PrimaryKey))
+        {
+            return new MasterKeyCosmosAuthenticator(creds.PrimaryKey);
+        }
+        return new AadCosmosAuthenticator(
+            _tokenProvider,
+            creds.TenantId!,
+            creds.ClientId!,
+            creds.ClientSecret!);
+    }
 }
+

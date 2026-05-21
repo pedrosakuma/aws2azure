@@ -24,7 +24,7 @@ public class StaticCredentialResolverTests
                 AwsSecretAccessKey = "secret2",
                 Azure = new AzureCredentials
                 {
-                    Cosmos = new CosmosCredentials { Endpoint = "https://x", PrimaryKey = "pk" },
+                    Cosmos = new CosmosCredentials { Endpoint = "https://x", PrimaryKey = "pk", DatabaseName = "main" },
                 },
             },
         },
