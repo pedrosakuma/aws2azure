@@ -238,14 +238,14 @@
 | ExpressionAttributeNames / ExpressionAttributeValues (`#name`, `:value`) | ✅ implemented |  |  |  |
 | Path overlap detection | ✅ implemented | Two paths in the same expression where one is a prefix of the other are rejected with ValidationException. |  |  |
 | ReturnValues (NONE / ALL_OLD / UPDATED_OLD / ALL_NEW / UPDATED_NEW) | ✅ implemented | UPDATED_OLD/UPDATED_NEW project only the top-level attributes touched by the expression, matching AWS. |  |  |
-| Create-if-missing (upsert) semantics | ✅ implemented | Cosmos POST with `x-ms-documentdb-is-upsert: true` when the target item does not exist at the time of GET. |  |  |
+| Create-if-missing (upsert) semantics | ✅ implemented | Atomic create with `If-None-Match: *` when the target item does not exist; concurrent create races surface as Cosmos 409 and are replayed by the optimistic-retry loop against the winner's state. |  |  |
 | ConditionExpression / Expected / ConditionalOperator | ⛔ unsupported | Rejected with ValidationException. Conditional writes land in the next slice via the shared expression parser. |  |  |
 | ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported | Silently ignored; response omits ConsumedCapacity / ItemCollectionMetrics. |  |  |
 
 ### Behaviour differences
 
-- Atomicity is implemented as a GET → modify → PUT(If-Match) loop with up to 4 retries on Cosmos 412. Sustained contention surfaces as InternalServerError after the retry budget is exhausted.
-- Numeric arithmetic is performed with System.Decimal (28-29 significant digits) rather than DynamoDB's 38-digit precision. Overflow throws ValidationException.
+- Atomicity is implemented as a GET → modify → PUT(If-Match) (or atomic-create with If-None-Match) loop with up to 4 retries on Cosmos 412/409. Sustained contention surfaces as InternalServerError after the retry budget is exhausted.
+- Numeric arithmetic is performed with System.Decimal (28-29 significant digits) rather than DynamoDB's 38-digit precision. Operands exceeding the proxy's precision are rejected up front with ValidationException to avoid silent rounding; overflow also throws ValidationException.
 - Key attributes referenced by the request are always reinforced into the resulting item — a REMOVE targeting the partition or sort key never deletes them in the stored doc.
 - Cosmos 429 (throttled) is surfaced to clients as DynamoDB ProvisionedThroughputExceededException.
 - Only validated against scripted Cosmos REST in unit tests; not yet exercised against real Azure Cosmos.

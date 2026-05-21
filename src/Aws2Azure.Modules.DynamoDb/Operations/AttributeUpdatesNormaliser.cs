@@ -79,9 +79,13 @@ internal static class AttributeUpdatesNormaliser
                     }
                     else
                     {
-                        // DELETE with a non-set Value is undefined in the
-                        // legacy spec; AWS removes the attribute outright.
-                        removePaths.Add(path);
+                        // Legacy AttributeUpdates only permits DELETE
+                        // with no Value (remove attribute) or with a
+                        // set-typed Value (subtract members). A scalar
+                        // Value is invalid; reject explicitly rather
+                        // than silently wiping the attribute.
+                        throw new UpdateValidationException(
+                            $"AttributeUpdates['{attrName}'].Value for DELETE must be a set (SS/NS/BS); scalar values are not allowed.");
                     }
                     break;
                 }

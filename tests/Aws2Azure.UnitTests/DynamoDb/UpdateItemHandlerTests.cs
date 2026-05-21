@@ -107,7 +107,7 @@ public class UpdateItemHandlerTests
     }
 
     [Fact]
-    public async Task UpdateItem_on_missing_item_upserts_via_post()
+    public async Task UpdateItem_on_missing_item_atomic_creates_with_if_none_match()
     {
         var (ctx, body) = NewCtx();
         var handler = new ScriptedHandler
@@ -130,7 +130,45 @@ public class UpdateItemHandlerTests
         Assert.Equal(200, ctx.Response.StatusCode);
         var post = handler.Requests[2];
         Assert.Equal(HttpMethod.Post, post.Method);
-        Assert.Equal("true", post.Headers["x-ms-documentdb-is-upsert"]);
+        Assert.Equal("*", post.Headers["If-None-Match"]);
+        // We must NOT fall back to upsert: that's what the original race
+        // bug used. Confirm the upsert header is absent.
+        Assert.False(post.Headers.ContainsKey("x-ms-documentdb-is-upsert"));
+    }
+
+    [Fact]
+    public async Task UpdateItem_on_create_conflict_replays_against_winner()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDocHashOnly),
+                // Initial GET → not found, attempt atomic create...
+                new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("{}") },
+                // ...conflict because another writer beat us to it.
+                new HttpResponseMessage(HttpStatusCode.Conflict) { Content = new StringContent("{}") },
+                // Loop body re-reads → the winner's doc is now present.
+                CosmosOk(DocWithItem("k", "k", "{\"pk\":{\"S\":\"k\"},\"counter\":{\"N\":\"1\"}}"), etag: "\"w1\""),
+                CosmosOk("{}"),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        // Two concurrent ADDs must converge to +2 — replay path proves
+        // we re-applied the update against the winner's state.
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"k\"}},"
+                  + "\"UpdateExpression\":\"ADD counter :one\","
+                  + "\"ExpressionAttributeValues\":{\":one\":{\"N\":\"1\"}}}";
+
+        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.Equal(5, handler.Requests.Count);
+        using var doc = JsonDocument.Parse(handler.Requests[4].Body!);
+        Assert.Equal("2",
+            doc.RootElement.GetProperty("item").GetProperty("counter").GetProperty("N").GetString());
     }
 
     [Fact]

@@ -222,14 +222,15 @@ internal static class UpdateItemHandler
             }
             else
             {
-                // Item did not exist → create via upsert POST. The
-                // upsert header gives us last-write-wins semantics if a
-                // concurrent create races us, matching DynamoDB.
+                // Item did not exist → atomic create with If-None-Match: *
+                // so a concurrent UpdateItem cannot race us and lose the
+                // other writer's mutation. On 409/412 the loop re-reads
+                // and replays the update against the winner's state.
                 using var content = new StringContent(docJson, Encoding.UTF8, "application/json");
                 var headers = new[]
                 {
                     new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
-                    new KeyValuePair<string, string>("x-ms-documentdb-is-upsert", "true"),
+                    new KeyValuePair<string, string>("If-None-Match", "*"),
                 };
                 writeResp = await cosmos.SendAsync(
                     HttpMethod.Post, "docs", collLink, "/" + collLink + "/docs",
@@ -238,10 +239,12 @@ internal static class UpdateItemHandler
 
             using (writeResp)
             {
-                if (writeResp.StatusCode == HttpStatusCode.PreconditionFailed)
+                if (writeResp.StatusCode == HttpStatusCode.PreconditionFailed
+                    || writeResp.StatusCode == HttpStatusCode.Conflict)
                 {
-                    // Lost a race; another writer mutated the doc since
-                    // our GET. Re-loop.
+                    // Lost a race; another writer mutated or created the
+                    // doc since our GET. Re-loop so the next iteration
+                    // re-reads and re-applies the update to the winner.
                     continue;
                 }
                 if (writeResp.StatusCode == HttpStatusCode.NotFound)

@@ -170,11 +170,128 @@ public class UpdateExecutorTests
     }
 
     [Fact]
+    public void Nested_set_on_existing_map_persists_mutation()
+    {
+        var item = Item(
+            ("pk", "{\"S\":\"k\"}"),
+            ("addr", "{\"M\":{\"zip\":{\"S\":\"old\"},\"city\":{\"S\":\"sp\"}}}"));
+        var r = Run("SET addr.zip = :z", item,
+            new Dictionary<string, JsonElement> { [":z"] = V("{\"S\":\"new\"}") });
+        var addr = r.NewItem["addr"].GetProperty("M");
+        Assert.Equal("new", addr.GetProperty("zip").GetProperty("S").GetString());
+        Assert.Equal("sp", addr.GetProperty("city").GetProperty("S").GetString());
+    }
+
+    [Fact]
+    public void Nested_remove_on_existing_map_persists_mutation()
+    {
+        var item = Item(
+            ("pk", "{\"S\":\"k\"}"),
+            ("addr", "{\"M\":{\"zip\":{\"S\":\"old\"},\"city\":{\"S\":\"sp\"}}}"));
+        var r = Run("REMOVE addr.zip", item, new Dictionary<string, JsonElement>());
+        var addr = r.NewItem["addr"].GetProperty("M");
+        Assert.False(addr.TryGetProperty("zip", out _));
+        Assert.Equal("sp", addr.GetProperty("city").GetProperty("S").GetString());
+    }
+
+    [Fact]
+    public void Set_list_index_replaces_element()
+    {
+        var item = Item(
+            ("pk", "{\"S\":\"k\"}"),
+            ("xs", "{\"L\":[{\"N\":\"1\"},{\"N\":\"2\"},{\"N\":\"3\"}]}"));
+        var r = Run("SET xs[1] = :v", item,
+            new Dictionary<string, JsonElement> { [":v"] = V("{\"N\":\"99\"}") });
+        var xs = r.NewItem["xs"].GetProperty("L");
+        Assert.Equal(3, xs.GetArrayLength());
+        Assert.Equal("99", xs[1].GetProperty("N").GetString());
+    }
+
+    [Fact]
+    public void Set_list_index_beyond_length_appends_at_end()
+    {
+        var item = Item(
+            ("pk", "{\"S\":\"k\"}"),
+            ("xs", "{\"L\":[{\"N\":\"1\"}]}"));
+        var r = Run("SET xs[5] = :v", item,
+            new Dictionary<string, JsonElement> { [":v"] = V("{\"N\":\"9\"}") });
+        var xs = r.NewItem["xs"].GetProperty("L");
+        Assert.Equal(2, xs.GetArrayLength());
+        Assert.Equal("9", xs[1].GetProperty("N").GetString());
+    }
+
+    [Fact]
+    public void Remove_list_index_shrinks_list()
+    {
+        var item = Item(
+            ("pk", "{\"S\":\"k\"}"),
+            ("xs", "{\"L\":[{\"N\":\"1\"},{\"N\":\"2\"},{\"N\":\"3\"}]}"));
+        var r = Run("REMOVE xs[1]", item, new Dictionary<string, JsonElement>());
+        var xs = r.NewItem["xs"].GetProperty("L");
+        Assert.Equal(2, xs.GetArrayLength());
+        Assert.Equal("1", xs[0].GetProperty("N").GetString());
+        Assert.Equal("3", xs[1].GetProperty("N").GetString());
+    }
+
+    [Fact]
+    public void Remove_list_index_beyond_length_is_noop()
+    {
+        var item = Item(
+            ("pk", "{\"S\":\"k\"}"),
+            ("xs", "{\"L\":[{\"N\":\"1\"}]}"));
+        var r = Run("REMOVE xs[5]", item, new Dictionary<string, JsonElement>());
+        var xs = r.NewItem["xs"].GetProperty("L");
+        Assert.Equal(1, xs.GetArrayLength());
+    }
+
+    [Fact]
     public void Decimal_arithmetic_preserves_precision_within_range()
     {
         var item = Item(("pk", "{\"S\":\"k\"}"), ("v", "{\"N\":\"1.5\"}"));
         var r = Run("SET v = v + :d", item,
             new Dictionary<string, JsonElement> { [":d"] = V("{\"N\":\"0.25\"}") });
         Assert.Equal("1.75", r.NewItem["v"].GetProperty("N").GetString());
+    }
+
+    [Fact]
+    public void Decimal_arithmetic_rejects_oversized_input()
+    {
+        var item = Item(("pk", "{\"S\":\"k\"}"), ("v", "{\"N\":\"1.5\"}"));
+        Assert.Throws<UpdateValidationException>(() =>
+            Run("SET v = v + :d", item,
+                new Dictionary<string, JsonElement>
+                {
+                    [":d"] = V("{\"N\":\"1.0000000000000000000000000001\"}"),
+                }));
+    }
+
+    [Fact]
+    public void Legacy_delete_with_scalar_value_is_rejected()
+    {
+        var attrUpdates = JsonDocument.Parse(
+            "{\"name\":{\"Action\":\"DELETE\",\"Value\":{\"S\":\"oops\"}}}"
+        ).RootElement;
+        Assert.Throws<UpdateValidationException>(() =>
+            AttributeUpdatesNormaliser.Build(attrUpdates));
+    }
+
+    [Fact]
+    public void Legacy_delete_with_no_value_removes_attribute()
+    {
+        var attrUpdates = JsonDocument.Parse(
+            "{\"name\":{\"Action\":\"DELETE\"}}"
+        ).RootElement;
+        var ast = AttributeUpdatesNormaliser.Build(attrUpdates);
+        Assert.NotNull(ast.Remove);
+    }
+
+    [Fact]
+    public void Legacy_delete_with_set_value_emits_delete_action()
+    {
+        var attrUpdates = JsonDocument.Parse(
+            "{\"tags\":{\"Action\":\"DELETE\",\"Value\":{\"SS\":[\"a\"]}}}"
+        ).RootElement;
+        var ast = AttributeUpdatesNormaliser.Build(attrUpdates);
+        Assert.NotNull(ast.Delete);
     }
 }

@@ -148,9 +148,17 @@ internal static class UpdateExecutor
             return;
         }
 
-        // Walk to the parent container, then write the leaf.
-        var parent = WalkToParent(root, path, createIntermediate: false);
-        WriteLeaf(parent, path.Segments[^1], value, path);
+        // Nested SET: build a mutable tree from the top-level attribute,
+        // walk down to the leaf parent, write, then serialise the entire
+        // top-level back. Anything less than this loses the mutation
+        // because the typed-container unwrap creates detached copies.
+        if (!root.TryGetValue(path.Root, out var topLevel))
+            throw new UpdateValidationException(
+                $"The document path provided in the update expression is invalid for update: {path.Display}");
+
+        var tree = MutableNode.FromTopLevel(topLevel, path);
+        ApplySetInTree(tree, path, 1, value);
+        root[path.Root] = tree.SerialiseTopLevel();
     }
 
     private static void ApplyRemove(
@@ -161,13 +169,121 @@ internal static class UpdateExecutor
             root.Remove(path.Root);
             return;
         }
-        if (!TryWalkToParent(root, path, out var parent))
+
+        if (!root.TryGetValue(path.Root, out var topLevel))
         {
-            // REMOVE on a path whose parent doesn't exist is a no-op,
-            // matching DynamoDB.
+            // Parent attribute missing → REMOVE is a no-op.
             return;
         }
-        RemoveLeaf(parent, path.Segments[^1]);
+
+        MutableNode tree;
+        try
+        {
+            tree = MutableNode.FromTopLevel(topLevel, path);
+        }
+        catch (UpdateValidationException)
+        {
+            // Path traverses through a non-navigable type — REMOVE
+            // semantics in DDB are tolerant; treat as no-op only when
+            // the attribute itself isn't a map/list. If the top-level
+            // is e.g. a string and the path expects map navigation,
+            // that's a user error — keep the original exception.
+            throw;
+        }
+
+        if (ApplyRemoveInTree(tree, path, 1))
+        {
+            root[path.Root] = tree.SerialiseTopLevel();
+        }
+    }
+
+    private static void ApplySetInTree(MutableNode node, DocumentPath path, int segIndex, JsonElement value)
+    {
+        var seg = path.Segments[segIndex];
+        var isLeaf = segIndex == path.Segments.Count - 1;
+        if (isLeaf)
+        {
+            switch (seg)
+            {
+                case AttributePathSegment a:
+                    if (node is not MutableMap map)
+                        throw new UpdateValidationException(
+                            $"The document path provided in the update expression is invalid for update: {path.Display}");
+                    map.Children[a.Name] = new MutableLeaf(value);
+                    return;
+                case IndexPathSegment idx:
+                    if (node is not MutableList list)
+                        throw new UpdateValidationException(
+                            $"The document path provided in the update expression is invalid for update: {path.Display}");
+                    // DynamoDB: SET on an index ≥ length appends (single
+                    // position at the end). Equal-or-less indices replace.
+                    if (idx.Index < list.Children.Count) list.Children[idx.Index] = new MutableLeaf(value);
+                    else list.Children.Add(new MutableLeaf(value));
+                    return;
+            }
+        }
+        var child = DescendChild(node, seg, path);
+        ApplySetInTree(child, path, segIndex + 1, value);
+    }
+
+    private static bool ApplyRemoveInTree(MutableNode node, DocumentPath path, int segIndex)
+    {
+        var seg = path.Segments[segIndex];
+        var isLeaf = segIndex == path.Segments.Count - 1;
+        if (isLeaf)
+        {
+            switch (seg)
+            {
+                case AttributePathSegment a:
+                    if (node is not MutableMap map) return false;
+                    return map.Children.Remove(a.Name);
+                case IndexPathSegment idx:
+                    if (node is not MutableList list) return false;
+                    if (idx.Index >= list.Children.Count) return false;
+                    list.Children.RemoveAt(idx.Index);
+                    return true;
+            }
+            return false;
+        }
+        var child = TryDescendChild(node, seg);
+        if (child is null) return false;
+        return ApplyRemoveInTree(child, path, segIndex + 1);
+    }
+
+    private static MutableNode DescendChild(MutableNode node, PathSegment seg, DocumentPath path)
+    {
+        switch (seg)
+        {
+            case AttributePathSegment a:
+                if (node is not MutableMap map
+                    || !map.Children.TryGetValue(a.Name, out var c1))
+                    throw new UpdateValidationException(
+                        $"The document path provided in the update expression is invalid for update: {path.Display}");
+                return c1;
+            case IndexPathSegment idx:
+                if (node is not MutableList list
+                    || idx.Index >= list.Children.Count)
+                    throw new UpdateValidationException(
+                        $"The document path provided in the update expression is invalid for update: {path.Display}");
+                return list.Children[idx.Index];
+            default:
+                throw new UpdateValidationException("Internal: unknown path segment kind.");
+        }
+    }
+
+    private static MutableNode? TryDescendChild(MutableNode node, PathSegment seg)
+    {
+        switch (seg)
+        {
+            case AttributePathSegment a:
+                if (node is MutableMap map && map.Children.TryGetValue(a.Name, out var c1)) return c1;
+                return null;
+            case IndexPathSegment idx:
+                if (node is MutableList list && idx.Index < list.Children.Count) return list.Children[idx.Index];
+                return null;
+            default:
+                return null;
+        }
     }
 
     private static void ApplyAdd(
@@ -246,129 +362,113 @@ internal static class UpdateExecutor
 
     // ----- path walking ----------------------------------------------
 
-    private static Dictionary<string, JsonElement> WalkToParent(
-        Dictionary<string, JsonElement> root, DocumentPath path, bool createIntermediate)
-    {
-        // Returns a container (either a top-level Dictionary or the
-        // attribute map inside a nested {"M": ...} envelope) holding the
-        // leaf segment of the path. Throws if any intermediate is
-        // missing or of the wrong kind, matching DynamoDB behaviour.
-        object container = root;
-        for (int i = 0; i < path.Segments.Count - 1; i++)
-        {
-            var seg = path.Segments[i];
-            container = DescendInto(container, seg, path);
-        }
-        if (container is Dictionary<string, JsonElement> dict) return dict;
-        if (container is List<JsonElement>)
-            throw new UpdateValidationException(
-                $"The document path tries to assign a named attribute to a list at '{path.Display}'.");
-        throw new UpdateValidationException(
-            $"Internal: unexpected container type for path '{path.Display}'.");
-    }
-
-    private static bool TryWalkToParent(
-        Dictionary<string, JsonElement> root, DocumentPath path,
-        out Dictionary<string, JsonElement> parent)
-    {
-        parent = root;
-        object container = root;
-        try
-        {
-            for (int i = 0; i < path.Segments.Count - 1; i++)
-            {
-                var seg = path.Segments[i];
-                container = DescendInto(container, seg, path);
-            }
-            if (container is Dictionary<string, JsonElement> dict)
-            {
-                parent = dict;
-                return true;
-            }
-            return false;
-        }
-        catch (UpdateValidationException)
-        {
-            return false;
-        }
-    }
-
-    private static object DescendInto(object container, PathSegment seg, DocumentPath fullPath)
-    {
-        switch (seg)
-        {
-            case AttributePathSegment a:
-            {
-                if (container is not Dictionary<string, JsonElement> dict)
-                    throw new UpdateValidationException(
-                        $"The document path tries to access attribute '{a.Name}' on a list at '{fullPath.Display}'.");
-                if (!dict.TryGetValue(a.Name, out var child))
-                    throw new UpdateValidationException(
-                        $"The document path provided in the update expression is invalid for update: {fullPath.Display}");
-                return UnwrapTypedContainer(child, a.Name, fullPath);
-            }
-            case IndexPathSegment idx:
-            {
-                if (container is not List<JsonElement> list)
-                    throw new UpdateValidationException(
-                        $"The document path tries to index into a non-list at '{fullPath.Display}'.");
-                if (idx.Index >= list.Count)
-                    throw new UpdateValidationException(
-                        $"The document path provided in the update expression is invalid for update: {fullPath.Display}");
-                return UnwrapTypedContainer(list[idx.Index], $"[{idx.Index}]", fullPath);
-            }
-            default:
-                throw new UpdateValidationException(
-                    $"Internal: unknown path segment kind in '{fullPath.Display}'.");
-        }
-    }
+    // ----- mutable nested-node tree ----------------------------------
 
     /// <summary>
-    /// Unwraps a single-property typed attribute value
-    /// (<c>{"M":{...}}</c> or <c>{"L":[...]}</c>) into its inner
-    /// container so the next path segment can descend. Other type tags
-    /// (S/N/B/SS/etc.) are not navigable.
+    /// Recursive mutable view of a DynamoDB typed attribute value, used
+    /// while applying nested SET / REMOVE operations. A leaf carries the
+    /// original single-property typed JsonElement (S/N/B/BOOL/NULL/SS/NS/BS);
+    /// only <c>M</c> and <c>L</c> values are navigable and so become
+    /// <see cref="MutableMap"/> / <see cref="MutableList"/> nodes. The
+    /// tree is re-serialised back into a single JsonElement once all
+    /// mutations for the top-level attribute are complete.
     /// </summary>
-    private static object UnwrapTypedContainer(JsonElement value, string segLabel, DocumentPath fullPath)
+    private abstract class MutableNode
     {
-        if (!ParsedAttributeValue.TryParse(value, out var parsed))
-            throw new UpdateValidationException(
-                $"The document path provided in the update expression is invalid for update: {fullPath.Display}");
-        switch (parsed.TypeTag)
+        public abstract void Write(Utf8JsonWriter w);
+
+        /// <summary>Serialise this node as a top-level attribute value
+        /// (wrapping maps/lists in their typed envelope).</summary>
+        public JsonElement SerialiseTopLevel()
         {
-            case AttributeValueTypes.Map:
-            {
-                var d = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-                foreach (var p in parsed.Value.EnumerateObject()) d[p.Name] = p.Value;
-                return d;
-            }
-            case AttributeValueTypes.List:
-            {
-                var list = new List<JsonElement>();
-                foreach (var e in parsed.Value.EnumerateArray()) list.Add(e);
-                return list;
-            }
-            default:
+            using var ms = new MemoryStream();
+            using (var w = new Utf8JsonWriter(ms)) Write(w);
+            ms.Position = 0;
+            using var doc = JsonDocument.Parse(ms);
+            return doc.RootElement.Clone();
+        }
+
+        public static MutableNode FromTopLevel(JsonElement value, DocumentPath path)
+        {
+            if (!ParsedAttributeValue.TryParse(value, out var parsed))
                 throw new UpdateValidationException(
-                    $"The document path provided in the update expression is invalid for update: {fullPath.Display}");
+                    $"The document path provided in the update expression is invalid for update: {path.Display}");
+            return parsed.TypeTag switch
+            {
+                AttributeValueTypes.Map => MutableMap.FromMapEnvelope(parsed.Value),
+                AttributeValueTypes.List => MutableList.FromListEnvelope(parsed.Value),
+                _ => throw new UpdateValidationException(
+                    $"The document path provided in the update expression is invalid for update: {path.Display}"),
+            };
         }
-    }
 
-    private static void WriteLeaf(
-        Dictionary<string, JsonElement> parent, PathSegment leaf, JsonElement value, DocumentPath fullPath)
-    {
-        if (leaf is AttributePathSegment a)
+        public static MutableNode FromTypedValue(JsonElement value)
         {
-            parent[a.Name] = value;
-            return;
+            if (!ParsedAttributeValue.TryParse(value, out var parsed)) return new MutableLeaf(value);
+            return parsed.TypeTag switch
+            {
+                AttributeValueTypes.Map => MutableMap.FromMapEnvelope(parsed.Value),
+                AttributeValueTypes.List => MutableList.FromListEnvelope(parsed.Value),
+                _ => new MutableLeaf(value),
+            };
         }
-        throw new UpdateValidationException(
-            $"Cannot write list index leaf via parent dictionary at '{fullPath.Display}'.");
     }
 
-    private static void RemoveLeaf(Dictionary<string, JsonElement> parent, PathSegment leaf)
+    private sealed class MutableMap : MutableNode
     {
-        if (leaf is AttributePathSegment a) parent.Remove(a.Name);
+        public Dictionary<string, MutableNode> Children { get; } = new(StringComparer.Ordinal);
+
+        public static MutableMap FromMapEnvelope(JsonElement inner)
+        {
+            var m = new MutableMap();
+            foreach (var p in inner.EnumerateObject())
+                m.Children[p.Name] = FromTypedValue(p.Value);
+            return m;
+        }
+
+        public override void Write(Utf8JsonWriter w)
+        {
+            w.WriteStartObject();
+            w.WritePropertyName("M");
+            w.WriteStartObject();
+            foreach (var kv in Children)
+            {
+                w.WritePropertyName(kv.Key);
+                kv.Value.Write(w);
+            }
+            w.WriteEndObject();
+            w.WriteEndObject();
+        }
+    }
+
+    private sealed class MutableList : MutableNode
+    {
+        public List<MutableNode> Children { get; } = new();
+
+        public static MutableList FromListEnvelope(JsonElement inner)
+        {
+            var l = new MutableList();
+            foreach (var e in inner.EnumerateArray())
+                l.Children.Add(FromTypedValue(e));
+            return l;
+        }
+
+        public override void Write(Utf8JsonWriter w)
+        {
+            w.WriteStartObject();
+            w.WritePropertyName("L");
+            w.WriteStartArray();
+            foreach (var c in Children) c.Write(w);
+            w.WriteEndArray();
+            w.WriteEndObject();
+        }
+    }
+
+    private sealed class MutableLeaf : MutableNode
+    {
+        public JsonElement Value { get; }
+        public MutableLeaf(JsonElement value) { Value = value; }
+        public override void Write(Utf8JsonWriter w) => Value.WriteTo(w);
     }
 
     /// <summary>
@@ -434,13 +534,15 @@ internal static class UpdateExecutor
 
     private static string AddNumbers(string a, string b)
     {
-        // Use BigInteger when both are pure integers; otherwise fall
-        // back to System.Decimal. DynamoDB's contract is 38 significant
-        // digits, ±10^126 magnitude — Decimal covers the common case;
-        // for the long tail we'd need a custom big-decimal but in this
-        // slice we surface OverflowException as a ValidationException.
+        // Use BigInteger when both are pure integers (handles up to
+        // DynamoDB's 38 significant digits and beyond). For fractional
+        // values we fall back to System.Decimal which only carries
+        // 28-29 digits — anything that won't round-trip through that is
+        // rejected up-front rather than silently truncated.
         if (TryInt(a, out var ai) && TryInt(b, out var bi))
             return (ai + bi).ToString(CultureInfo.InvariantCulture);
+        EnsureFitsInDecimal(a);
+        EnsureFitsInDecimal(b);
         try
         {
             var ad = decimal.Parse(a, NumberStyles.Float, CultureInfo.InvariantCulture);
@@ -458,6 +560,8 @@ internal static class UpdateExecutor
     {
         if (TryInt(a, out var ai) && TryInt(b, out var bi))
             return (ai - bi).ToString(CultureInfo.InvariantCulture);
+        EnsureFitsInDecimal(a);
+        EnsureFitsInDecimal(b);
         try
         {
             var ad = decimal.Parse(a, NumberStyles.Float, CultureInfo.InvariantCulture);
@@ -469,6 +573,30 @@ internal static class UpdateExecutor
             throw new UpdateValidationException(
                 "Arithmetic overflow: result exceeds the proxy's 28-digit precision in this slice.");
         }
+    }
+
+    /// <summary>
+    /// Guards fractional-arithmetic operands against silent truncation:
+    /// rejects any N-string with more than 28 significant digits, which
+    /// is the upper bound of <see cref="System.Decimal"/> and the price
+    /// of not yet shipping a 38-digit big-decimal. The gap doc records
+    /// this divergence from DynamoDB explicitly.
+    /// </summary>
+    private static void EnsureFitsInDecimal(string n)
+    {
+        int sig = 0;
+        bool seenNonZero = false;
+        for (int i = 0; i < n.Length; i++)
+        {
+            var c = n[i];
+            if (c is '-' or '+' or '.' ) continue;
+            if (c is 'e' or 'E') break;
+            if (c == '0' && !seenNonZero) continue;
+            if (c >= '0' && c <= '9') { seenNonZero = true; sig++; }
+        }
+        if (sig > 28)
+            throw new UpdateValidationException(
+                "Arithmetic operand has more than 28 significant digits; the proxy cannot represent this without precision loss.");
     }
 
     private static bool TryInt(string s, out BigInteger value)
