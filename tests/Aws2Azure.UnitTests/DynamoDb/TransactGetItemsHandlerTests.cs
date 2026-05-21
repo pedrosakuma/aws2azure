@@ -297,6 +297,42 @@ public class TransactGetItemsHandlerTests
         Assert.Contains("SerializationException", ReadResponse(body));
     }
 
+    [Fact]
+    public async Task TransactGet_rejects_non_string_ExpressionAttributeName_value()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler { Responses = { CosmosOk(MetaHashOnly) } };
+        var cosmos = BuildClient(handler);
+        var req = "{\"TransactItems\":[" +
+            "{\"Get\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}}," +
+            "\"ProjectionExpression\":\"#a\",\"ExpressionAttributeNames\":{\"#a\":1}}}" +
+            "]}";
+
+        await TransactGetItemsHandler.HandleTransactGetItemsAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        var text = ReadResponse(body);
+        Assert.Contains("ValidationException", text);
+        Assert.Contains("ExpressionAttributeNames", text);
+    }
+
+    [Fact]
+    public async Task TransactGet_rejects_non_object_ExpressionAttributeNames()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler { Responses = { CosmosOk(MetaHashOnly) } };
+        var cosmos = BuildClient(handler);
+        var req = "{\"TransactItems\":[" +
+            "{\"Get\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}}," +
+            "\"ProjectionExpression\":\"#a\",\"ExpressionAttributeNames\":\"oops\"}}" +
+            "]}";
+
+        await TransactGetItemsHandler.HandleTransactGetItemsAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("ValidationException", ReadResponse(body));
+    }
+
     private sealed class ScriptedHandler : HttpMessageHandler
     {
         public List<HttpResponseMessage> Responses { get; } = new();

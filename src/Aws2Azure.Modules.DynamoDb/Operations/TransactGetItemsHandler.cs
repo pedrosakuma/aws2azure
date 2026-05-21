@@ -137,12 +137,23 @@ internal static class TransactGetItemsHandler
             if (entry.Get.TryGetProperty("ProjectionExpression", out var peEl) && peEl.ValueKind == JsonValueKind.String)
             {
                 IReadOnlyDictionary<string, string>? names = null;
-                if (entry.Get.TryGetProperty("ExpressionAttributeNames", out var eanEl)
-                    && eanEl.ValueKind == JsonValueKind.Object)
+                if (entry.Get.TryGetProperty("ExpressionAttributeNames", out var eanEl))
                 {
+                    if (eanEl.ValueKind != JsonValueKind.Object)
+                    {
+                        await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                            $"TransactItems[{i}].Get.ExpressionAttributeNames must be a JSON object.").ConfigureAwait(false);
+                        return;
+                    }
                     var d = new Dictionary<string, string>(StringComparer.Ordinal);
                     foreach (var p in eanEl.EnumerateObject())
                     {
+                        if (p.Value.ValueKind != JsonValueKind.String)
+                        {
+                            await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                                $"TransactItems[{i}].Get.ExpressionAttributeNames['{p.Name}'] must be a string.").ConfigureAwait(false);
+                            return;
+                        }
                         d[p.Name] = p.Value.GetString()!;
                     }
                     names = d;
