@@ -32,9 +32,13 @@ public sealed class DynamoDbIntegrationFixture : IAsyncLifetime
     public string CosmosEndpoint { get; private set; } = string.Empty;
     public HttpClient Client { get; private set; } = default!;
 
+    /// <summary>Well-known master key shared by every Cosmos emulator instance.</summary>
+    public const string EmulatorMasterKey =
+        "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
+
     public string AccessKeyId => "AKIA-IT-DDB";
     public string Secret { get; } = "test-secret-" + Guid.NewGuid().ToString("N");
-    public string CosmosKey => Fixtures.CosmosEmulatorFixture.EmulatorMasterKey;
+    public string CosmosKey => EmulatorMasterKey;
     public string DatabaseName => "aws2azure-it";
 
     public async Task InitializeAsync()
