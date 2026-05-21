@@ -168,4 +168,66 @@ public sealed class ServiceBusAmqpConnectionTests
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             conn.OpenSessionReceiverAsync("fifo-queue", audience, sessionId: null, prefetchCredit: 0));
     }
+
+    [Fact]
+    public async Task OpenReceiverAsync_proactively_renews_authorisation_within_safety_window()
+    {
+        var (client, server) = PipePairTransport.CreatePair();
+        await using var _ = server;
+
+        var broker = new ServiceBusBrokerSimulator(server);
+        broker.Start();
+
+        var fakeClock = new global::Aws2Azure.UnitTests.Azure.FakeTimeProvider(
+            new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var tokenProvider = new FakeTokenProvider { Expiry = fakeClock.GetUtcNow().AddMinutes(20) };
+
+        await using var conn = await ServiceBusAmqpConnection
+            .OpenAsync(client, tokenProvider, DefaultSettings(),
+                clock: fakeClock,
+                refreshSafetyWindow: TimeSpan.FromMinutes(5))
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        var audience = ServiceBusEndpoint.BuildQueueAudience("ns.servicebus.windows.net", "queue1");
+
+        // First open: authorises once.
+        await using (var r1 = await conn.OpenReceiverAsync("queue1", audience, 0).WaitAsync(TimeSpan.FromSeconds(10))) { }
+        Assert.Single(broker.AuthorizedAudiences, a => a == audience);
+
+        // Advance clock 14 min — token still has 6 min left, outside the 5-min
+        // safety window. Cache must hold.
+        fakeClock.Advance(TimeSpan.FromMinutes(14));
+        await using (var r2 = await conn.OpenReceiverAsync("queue1", audience, 0).WaitAsync(TimeSpan.FromSeconds(10))) { }
+        Assert.Single(broker.AuthorizedAudiences, a => a == audience);
+
+        // Advance clock another 2 min — token now has 4 min left, within the
+        // safety window. Next open must trigger a put-token refresh.
+        fakeClock.Advance(TimeSpan.FromMinutes(2));
+        tokenProvider.Expiry = fakeClock.GetUtcNow().AddMinutes(20);
+        await using (var r3 = await conn.OpenReceiverAsync("queue1", audience, 0).WaitAsync(TimeSpan.FromSeconds(10))) { }
+        Assert.Equal(2, broker.AuthorizedAudiences.Count(a => a == audience));
+    }
+
+    [Theory]
+    // (cachedExpiry minutes from now, safety window minutes, expected refresh)
+    [InlineData(20, 5, false)] // plenty of headroom
+    [InlineData(6, 5, false)]  // just outside safety window
+    [InlineData(5, 5, true)]   // exactly on the boundary → refresh
+    [InlineData(4, 5, true)]   // inside safety window
+    [InlineData(-1, 5, true)]  // already expired
+    public void ShouldRefreshAuthorization_table(int expiryMinutesFromNow, int safetyMinutes, bool expected)
+    {
+        var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var expiry = now.AddMinutes(expiryMinutesFromNow);
+        Assert.Equal(expected, ServiceBusAmqpConnection.ShouldRefreshAuthorization(
+            expiry, now, TimeSpan.FromMinutes(safetyMinutes)));
+    }
+
+    [Fact]
+    public void ShouldRefreshAuthorization_null_expiry_never_refreshes()
+    {
+        var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        Assert.False(ServiceBusAmqpConnection.ShouldRefreshAuthorization(
+            cachedExpiry: null, now, TimeSpan.FromMinutes(5)));
+    }
 }
