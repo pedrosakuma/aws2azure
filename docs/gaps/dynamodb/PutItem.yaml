@@ -11,8 +11,8 @@ sub_features:
     status: implemented
     notes: "Item stored verbatim under Cosmos doc `item` envelope; numeric precision (N) preserved via raw JSON pass-through."
   - name: ConditionExpression / Expected / ConditionalOperator
-    status: unsupported
-    notes: "Rejected with ValidationException pending expression parser slice (#12)."
+    status: implemented
+    notes: "Conditional path performs GET → evaluate → PUT(If-Match) or POST(If-None-Match: *) with up to 4 retries on Cosmos 412/409. Failure returns HTTP 400 ConditionalCheckFailedException with optional Item when ReturnValuesOnConditionCheckFailure=ALL_OLD. attribute_not_exists(pk) is the standard idiom for first-time create."
   - name: ExpressionAttributeNames / ExpressionAttributeValues
     status: unsupported
   - name: ReturnValues

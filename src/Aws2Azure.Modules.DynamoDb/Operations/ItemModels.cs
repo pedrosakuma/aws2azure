@@ -28,6 +28,7 @@ internal sealed class PutItemRequest
     [JsonPropertyName("ConditionExpression")] public string? ConditionExpression { get; set; }
     [JsonPropertyName("Expected")] public JsonElement? Expected { get; set; }
     [JsonPropertyName("ConditionalOperator")] public string? ConditionalOperator { get; set; }
+    [JsonPropertyName("ReturnValuesOnConditionCheckFailure")] public string? ReturnValuesOnConditionCheckFailure { get; set; }
     [JsonPropertyName("ExpressionAttributeNames")] public JsonElement? ExpressionAttributeNames { get; set; }
     [JsonPropertyName("ExpressionAttributeValues")] public JsonElement? ExpressionAttributeValues { get; set; }
 }
@@ -55,6 +56,7 @@ internal sealed class DeleteItemRequest
     [JsonPropertyName("ConditionExpression")] public string? ConditionExpression { get; set; }
     [JsonPropertyName("Expected")] public JsonElement? Expected { get; set; }
     [JsonPropertyName("ConditionalOperator")] public string? ConditionalOperator { get; set; }
+    [JsonPropertyName("ReturnValuesOnConditionCheckFailure")] public string? ReturnValuesOnConditionCheckFailure { get; set; }
     [JsonPropertyName("ExpressionAttributeNames")] public JsonElement? ExpressionAttributeNames { get; set; }
     [JsonPropertyName("ExpressionAttributeValues")] public JsonElement? ExpressionAttributeValues { get; set; }
 }
@@ -88,6 +90,7 @@ internal sealed class UpdateItemRequest
     [JsonPropertyName("ConditionExpression")] public string? ConditionExpression { get; set; }
     [JsonPropertyName("Expected")] public JsonElement? Expected { get; set; }
     [JsonPropertyName("ConditionalOperator")] public string? ConditionalOperator { get; set; }
+    [JsonPropertyName("ReturnValuesOnConditionCheckFailure")] public string? ReturnValuesOnConditionCheckFailure { get; set; }
 }
 
 /// <summary>
@@ -124,6 +127,7 @@ internal sealed class UpdateItemResponse
 [JsonSerializable(typeof(GetItemResponse))]
 [JsonSerializable(typeof(DeleteItemResponse))]
 [JsonSerializable(typeof(UpdateItemResponse))]
+[JsonSerializable(typeof(ConditionFailurePayload))]
 [JsonSourceGenerationOptions(
     PropertyNameCaseInsensitive = true,
     AllowTrailingCommas = true,

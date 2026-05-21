@@ -3,10 +3,12 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
 using Microsoft.AspNetCore.Http;
 
@@ -65,12 +67,35 @@ internal static class ItemHandlers
                 "Item is required and must be a JSON object.");
         }
 
-        if (HasContent(req.ConditionExpression) || HasContent(req.Expected)
-            || HasContent(req.ConditionalOperator)
-            || HasContent(req.ExpressionAttributeNames) || HasContent(req.ExpressionAttributeValues))
+        if (HasContent(req.ConditionExpression) && (HasContent(req.Expected) || HasContent(req.ConditionalOperator)))
         {
             return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
-                "Conditional writes and expression attributes are not supported in this slice.");
+                "ConditionExpression and the legacy Expected/ConditionalOperator parameters are mutually exclusive.");
+        }
+
+        ConditionNode? condition;
+        try
+        {
+            var names = TryMaterialiseNames(req.ExpressionAttributeNames);
+            var values = TryMaterialiseValues(req.ExpressionAttributeValues);
+            condition = ConditionGate.TryParse(
+                req.ConditionExpression, req.Expected, req.ConditionalOperator, names, values);
+        }
+        catch (ExpressionSyntaxException ex)
+        {
+            return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                $"Invalid expression (offset {ex.Position}): {ex.Message}");
+        }
+        catch (ConditionParseConflictException ex)
+        {
+            return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", ex.Message);
+        }
+
+        if (string.IsNullOrWhiteSpace(req.ConditionExpression)
+            && (HasContent(req.ExpressionAttributeNames) || HasContent(req.ExpressionAttributeValues)))
+        {
+            return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                "ExpressionAttributeNames/Values were supplied but no ConditionExpression references them.");
         }
 
         if (!IsAllowedReturnValuesForWrite(req.ReturnValues, out var rvError))
@@ -78,11 +103,17 @@ internal static class ItemHandlers
             return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", rvError);
         }
 
-        return PutItemCoreAsync(ctx, req, cosmos, ct);
+        if (!IsAllowedRvccf(req.ReturnValuesOnConditionCheckFailure, out var rvccf, out var rvccfErr))
+        {
+            return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", rvccfErr);
+        }
+
+        return PutItemCoreAsync(ctx, req, condition, rvccf, cosmos, ct);
     }
 
     private static async Task PutItemCoreAsync(
-        HttpContext ctx, PutItemRequest req, CosmosClient cosmos, CancellationToken ct)
+        HttpContext ctx, PutItemRequest req, ConditionNode? condition, string rvccf,
+        CosmosClient cosmos, CancellationToken ct)
     {
         using var metaResult = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, req.TableName!, ct).ConfigureAwait(false);
         if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.CosmosError)
@@ -119,36 +150,144 @@ internal static class ItemHandlers
         }
 
         var docJson = BuildItemDocument(id, pk, req.Item);
-        using var content = new StringContent(docJson, Encoding.UTF8, "application/json");
         var pkHeader = CosmosOpsShared.BuildPartitionKeyHeader(pk);
-        var headers = new[]
-        {
-            new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
-            new KeyValuePair<string, string>("x-ms-documentdb-is-upsert", "true"),
-        };
         var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + req.TableName;
-        using var resp = await cosmos.SendAsync(
-            HttpMethod.Post, "docs", collLink, "/" + collLink + "/docs",
-            content, headers, ct).ConfigureAwait(false);
+        var docLink = collLink + "/docs/" + id;
 
-        if (resp.StatusCode == HttpStatusCode.NotFound)
+        if (condition is null)
         {
-            // Container exists at metadata-read time but vanished mid-op,
-            // or the database link is wrong. Surface as table-not-found.
-            await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
-                $"Table not found: {req.TableName}").ConfigureAwait(false);
+            // Fast path: no condition → unconditional upsert (existing
+            // behaviour, preserves the property that PutItem is idempotent
+            // when the caller doesn't care about prior state).
+            using var content = new StringContent(docJson, Encoding.UTF8, "application/json");
+            var headers = new[]
+            {
+                new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
+                new KeyValuePair<string, string>("x-ms-documentdb-is-upsert", "true"),
+            };
+            using var resp = await cosmos.SendAsync(
+                HttpMethod.Post, "docs", collLink, "/" + collLink + "/docs",
+                content, headers, ct).ConfigureAwait(false);
+
+            if (resp.StatusCode == HttpStatusCode.NotFound)
+            {
+                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
+                    $"Table not found: {req.TableName}").ConfigureAwait(false);
+                return;
+            }
+            if (!resp.IsSuccessStatusCode)
+            {
+                await CosmosOpsShared.WriteCosmosErrorAsync(ctx, resp, ct).ConfigureAwait(false);
+                return;
+            }
+            await CosmosOpsShared.WriteJsonAsync(ctx, 200, new PutItemResponse(),
+                ItemJsonContext.Default.PutItemResponse).ConfigureAwait(false);
             return;
         }
 
-        if (!resp.IsSuccessStatusCode)
+        // Conditional path: GET → evaluate → PUT(If-Match) or POST(If-None-Match: *),
+        // with bounded retry on 412/409 so concurrent writers replay.
+        const int MaxRetries = 4;
+        for (int attempt = 0; attempt < MaxRetries; attempt++)
         {
-            await CosmosOpsShared.WriteCosmosErrorAsync(ctx, resp, ct).ConfigureAwait(false);
+            Dictionary<string, JsonElement>? existingItem = null;
+            string? etag = null;
+            using (var getResp = await cosmos.SendAsync(
+                HttpMethod.Get, "docs", docLink, "/" + docLink,
+                content: null,
+                new[] { new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader) },
+                ct).ConfigureAwait(false))
+            {
+                if (getResp.StatusCode == HttpStatusCode.NotFound)
+                {
+                    if (CosmosOpsShared.Is404ContainerMissing(getResp))
+                    {
+                        await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
+                            $"Table not found: {req.TableName}").ConfigureAwait(false);
+                        return;
+                    }
+                }
+                else if (!getResp.IsSuccessStatusCode)
+                {
+                    await CosmosOpsShared.WriteCosmosErrorAsync(ctx, getResp, ct).ConfigureAwait(false);
+                    return;
+                }
+                else
+                {
+                    etag = ExtractETag(getResp);
+                    await using var s = await getResp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+                    existingItem = ExtractItemFromCosmosDoc(s);
+                }
+            }
+
+            bool pass;
+            try { pass = ConditionEvaluator.Evaluate(condition, existingItem); }
+            catch (ConditionEvaluationException cex)
+            {
+                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", cex.Message).ConfigureAwait(false);
+                return;
+            }
+            if (!pass)
+            {
+                await ConditionFailureResponder.WriteAsync(ctx, existingItem, rvccf).ConfigureAwait(false);
+                return;
+            }
+
+            HttpResponseMessage writeResp;
+            using (var content = new StringContent(docJson, Encoding.UTF8, "application/json"))
+            {
+                if (existingItem is not null && etag is not null)
+                {
+                    var headers = new[]
+                    {
+                        new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
+                        new KeyValuePair<string, string>("If-Match", etag),
+                    };
+                    writeResp = await cosmos.SendAsync(
+                        HttpMethod.Put, "docs", docLink, "/" + docLink,
+                        content, headers, ct).ConfigureAwait(false);
+                }
+                else
+                {
+                    var headers = new[]
+                    {
+                        new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
+                        new KeyValuePair<string, string>("If-None-Match", "*"),
+                    };
+                    writeResp = await cosmos.SendAsync(
+                        HttpMethod.Post, "docs", collLink, "/" + collLink + "/docs",
+                        content, headers, ct).ConfigureAwait(false);
+                }
+            }
+
+            using (writeResp)
+            {
+                if (writeResp.StatusCode == HttpStatusCode.PreconditionFailed
+                    || writeResp.StatusCode == HttpStatusCode.Conflict)
+                {
+                    // Lost a race; loop re-reads and re-checks.
+                    continue;
+                }
+                if (writeResp.StatusCode == HttpStatusCode.NotFound)
+                {
+                    await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
+                        $"Table not found: {req.TableName}").ConfigureAwait(false);
+                    return;
+                }
+                if (!writeResp.IsSuccessStatusCode)
+                {
+                    await CosmosOpsShared.WriteCosmosErrorAsync(ctx, writeResp, ct).ConfigureAwait(false);
+                    return;
+                }
+            }
+
+            await CosmosOpsShared.WriteJsonAsync(ctx, 200, new PutItemResponse(),
+                ItemJsonContext.Default.PutItemResponse).ConfigureAwait(false);
             return;
         }
 
-        // ReturnValues = NONE → DynamoDB returns an empty object.
-        await CosmosOpsShared.WriteJsonAsync(ctx, 200, new PutItemResponse(),
-            ItemJsonContext.Default.PutItemResponse).ConfigureAwait(false);
+        await CosmosOpsShared.WriteErrorAsync(ctx, 500, "InternalServerError",
+            "Failed to converge on a conditional PutItem after multiple retries due to contention.").ConfigureAwait(false);
     }
 
     public static Task HandleGetItemAsync(HttpContext ctx, byte[] body, CosmosClient cosmos, CancellationToken ct)
@@ -278,12 +417,35 @@ internal static class ItemHandlers
                 "TableName is required and must match [a-zA-Z0-9_.-]{3,255}.");
         }
 
-        if (HasContent(req.ConditionExpression) || HasContent(req.Expected)
-            || HasContent(req.ConditionalOperator)
-            || HasContent(req.ExpressionAttributeNames) || HasContent(req.ExpressionAttributeValues))
+        if (HasContent(req.ConditionExpression) && (HasContent(req.Expected) || HasContent(req.ConditionalOperator)))
         {
             return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
-                "Conditional deletes and expression attributes are not supported in this slice.");
+                "ConditionExpression and the legacy Expected/ConditionalOperator parameters are mutually exclusive.");
+        }
+
+        ConditionNode? condition;
+        try
+        {
+            var names = TryMaterialiseNames(req.ExpressionAttributeNames);
+            var values = TryMaterialiseValues(req.ExpressionAttributeValues);
+            condition = ConditionGate.TryParse(
+                req.ConditionExpression, req.Expected, req.ConditionalOperator, names, values);
+        }
+        catch (ExpressionSyntaxException ex)
+        {
+            return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                $"Invalid expression (offset {ex.Position}): {ex.Message}");
+        }
+        catch (ConditionParseConflictException ex)
+        {
+            return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", ex.Message);
+        }
+
+        if (string.IsNullOrWhiteSpace(req.ConditionExpression)
+            && (HasContent(req.ExpressionAttributeNames) || HasContent(req.ExpressionAttributeValues)))
+        {
+            return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                "ExpressionAttributeNames/Values were supplied but no ConditionExpression references them.");
         }
 
         if (!IsAllowedReturnValuesForWrite(req.ReturnValues, out var rvError))
@@ -291,11 +453,17 @@ internal static class ItemHandlers
             return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", rvError);
         }
 
-        return DeleteItemCoreAsync(ctx, req, cosmos, ct);
+        if (!IsAllowedRvccf(req.ReturnValuesOnConditionCheckFailure, out var rvccf, out var rvccfErr))
+        {
+            return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", rvccfErr);
+        }
+
+        return DeleteItemCoreAsync(ctx, req, condition, rvccf, cosmos, ct);
     }
 
     private static async Task DeleteItemCoreAsync(
-        HttpContext ctx, DeleteItemRequest req, CosmosClient cosmos, CancellationToken ct)
+        HttpContext ctx, DeleteItemRequest req, ConditionNode? condition, string rvccf,
+        CosmosClient cosmos, CancellationToken ct)
     {
         using var metaResult = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, req.TableName!, ct).ConfigureAwait(false);
         if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.CosmosError)
@@ -325,37 +493,142 @@ internal static class ItemHandlers
 
         var docLink = "dbs/" + cosmos.DatabaseName + "/colls/" + req.TableName + "/docs/" + id;
         var pkHeader = CosmosOpsShared.BuildPartitionKeyHeader(pk);
-        var headers = new[]
-        {
-            new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
-        };
-        using var resp = await cosmos.SendAsync(
-            HttpMethod.Delete, "docs", docLink, "/" + docLink,
-            content: null, headers, ct).ConfigureAwait(false);
 
-        // DynamoDB DeleteItem is idempotent: a missing item is a success.
-        // But a missing container (table deleted between metadata read
-        // and op) must still surface as ResourceNotFoundException.
-        if (resp.StatusCode == HttpStatusCode.NotFound)
+        if (condition is null)
         {
-            if (CosmosOpsShared.Is404ContainerMissing(resp))
+            // Fast path: unconditional delete (existing behaviour). DDB's
+            // DeleteItem is idempotent — a missing item is a success.
+            var headers = new[]
             {
-                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
-                    $"Table not found: {req.TableName}").ConfigureAwait(false);
+                new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
+            };
+            using var resp = await cosmos.SendAsync(
+                HttpMethod.Delete, "docs", docLink, "/" + docLink,
+                content: null, headers, ct).ConfigureAwait(false);
+
+            if (resp.StatusCode == HttpStatusCode.NotFound)
+            {
+                if (CosmosOpsShared.Is404ContainerMissing(resp))
+                {
+                    await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
+                        $"Table not found: {req.TableName}").ConfigureAwait(false);
+                    return;
+                }
+                await CosmosOpsShared.WriteJsonAsync(ctx, 200, new DeleteItemResponse(),
+                    ItemJsonContext.Default.DeleteItemResponse).ConfigureAwait(false);
                 return;
             }
-            await CosmosOpsShared.WriteJsonAsync(ctx, 200, new DeleteItemResponse(),
-                ItemJsonContext.Default.DeleteItemResponse).ConfigureAwait(false);
+            if (resp.IsSuccessStatusCode)
+            {
+                await CosmosOpsShared.WriteJsonAsync(ctx, 200, new DeleteItemResponse(),
+                    ItemJsonContext.Default.DeleteItemResponse).ConfigureAwait(false);
+                return;
+            }
+
+            await CosmosOpsShared.WriteCosmosErrorAsync(ctx, resp, ct).ConfigureAwait(false);
             return;
         }
-        if (resp.IsSuccessStatusCode)
+
+        // Conditional path: GET → evaluate → DELETE(If-Match), with
+        // bounded retry on 412 so concurrent writers replay.
+        const int MaxRetries = 4;
+        for (int attempt = 0; attempt < MaxRetries; attempt++)
         {
+            Dictionary<string, JsonElement>? existingItem = null;
+            string? etag = null;
+            using (var getResp = await cosmos.SendAsync(
+                HttpMethod.Get, "docs", docLink, "/" + docLink,
+                content: null,
+                new[] { new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader) },
+                ct).ConfigureAwait(false))
+            {
+                if (getResp.StatusCode == HttpStatusCode.NotFound)
+                {
+                    if (CosmosOpsShared.Is404ContainerMissing(getResp))
+                    {
+                        await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
+                            $"Table not found: {req.TableName}").ConfigureAwait(false);
+                        return;
+                    }
+                    // Item missing → existingItem stays null. Condition must
+                    // still be evaluated against the missing-item state so
+                    // e.g. attribute_not_exists conditions on a missing item
+                    // pass and DeleteItem is a successful no-op.
+                }
+                else if (!getResp.IsSuccessStatusCode)
+                {
+                    await CosmosOpsShared.WriteCosmosErrorAsync(ctx, getResp, ct).ConfigureAwait(false);
+                    return;
+                }
+                else
+                {
+                    etag = ExtractETag(getResp);
+                    await using var s = await getResp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+                    existingItem = ExtractItemFromCosmosDoc(s);
+                }
+            }
+
+            bool pass;
+            try { pass = ConditionEvaluator.Evaluate(condition, existingItem); }
+            catch (ConditionEvaluationException cex)
+            {
+                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", cex.Message).ConfigureAwait(false);
+                return;
+            }
+            if (!pass)
+            {
+                await ConditionFailureResponder.WriteAsync(ctx, existingItem, rvccf).ConfigureAwait(false);
+                return;
+            }
+
+            if (existingItem is null)
+            {
+                // Condition passed against a missing item → nothing to
+                // delete. DDB returns success with no Attributes.
+                await CosmosOpsShared.WriteJsonAsync(ctx, 200, new DeleteItemResponse(),
+                    ItemJsonContext.Default.DeleteItemResponse).ConfigureAwait(false);
+                return;
+            }
+
+            var deleteHeaders = new[]
+            {
+                new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
+                new KeyValuePair<string, string>("If-Match", etag!),
+            };
+            using var delResp = await cosmos.SendAsync(
+                HttpMethod.Delete, "docs", docLink, "/" + docLink,
+                content: null, deleteHeaders, ct).ConfigureAwait(false);
+
+            if (delResp.StatusCode == HttpStatusCode.PreconditionFailed)
+            {
+                continue;
+            }
+            if (delResp.StatusCode == HttpStatusCode.NotFound)
+            {
+                if (CosmosOpsShared.Is404ContainerMissing(delResp))
+                {
+                    await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
+                        $"Table not found: {req.TableName}").ConfigureAwait(false);
+                    return;
+                }
+                // Doc deleted between GET and DELETE (another writer) →
+                // re-loop so the condition is re-evaluated against the
+                // new state.
+                continue;
+            }
+            if (!delResp.IsSuccessStatusCode)
+            {
+                await CosmosOpsShared.WriteCosmosErrorAsync(ctx, delResp, ct).ConfigureAwait(false);
+                return;
+            }
+
             await CosmosOpsShared.WriteJsonAsync(ctx, 200, new DeleteItemResponse(),
                 ItemJsonContext.Default.DeleteItemResponse).ConfigureAwait(false);
             return;
         }
 
-        await CosmosOpsShared.WriteCosmosErrorAsync(ctx, resp, ct).ConfigureAwait(false);
+        await CosmosOpsShared.WriteErrorAsync(ctx, 500, "InternalServerError",
+            "Failed to converge on a conditional DeleteItem after multiple retries due to contention.").ConfigureAwait(false);
     }
 
     // ----- helpers ---------------------------------------------------
@@ -492,5 +765,52 @@ internal static class ItemHandlers
         }
         error = $"ReturnValues='{rv}' is not supported in this slice (only NONE).";
         return false;
+    }
+
+    private static bool IsAllowedRvccf(string? raw, out string canonical, out string error)
+    {
+        canonical = string.IsNullOrEmpty(raw) ? "NONE" : raw!;
+        if (canonical is "NONE" or "ALL_OLD")
+        {
+            error = string.Empty;
+            return true;
+        }
+        error = $"ReturnValuesOnConditionCheckFailure='{raw}' must be NONE or ALL_OLD.";
+        return false;
+    }
+
+    private static IReadOnlyDictionary<string, string>? TryMaterialiseNames(JsonElement? el)
+    {
+        if (el is not { } v || v.ValueKind != JsonValueKind.Object) return null;
+        var dict = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var prop in v.EnumerateObject())
+        {
+            if (prop.Value.ValueKind != JsonValueKind.String)
+                throw new ExpressionSyntaxException(0,
+                    $"ExpressionAttributeNames['{prop.Name}'] must be a string.");
+            dict[prop.Name] = prop.Value.GetString() ?? string.Empty;
+        }
+        return dict;
+    }
+
+    private static IReadOnlyDictionary<string, JsonElement>? TryMaterialiseValues(JsonElement? el)
+    {
+        if (el is not { } v || v.ValueKind != JsonValueKind.Object) return null;
+        var dict = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        foreach (var prop in v.EnumerateObject())
+        {
+            dict[prop.Name] = prop.Value.Clone();
+        }
+        return dict;
+    }
+
+    private static string? ExtractETag(HttpResponseMessage resp)
+    {
+        if (resp.Headers.ETag is { } e) return e.Tag;
+        if (resp.Headers.TryGetValues("etag", out var vs))
+        {
+            foreach (var v in vs) return v;
+        }
+        return null;
     }
 }

@@ -283,20 +283,117 @@ public class UpdateItemHandlerTests
     }
 
     [Fact]
-    public async Task UpdateItem_rejects_condition_expression()
+    public async Task UpdateItem_condition_pass_proceeds_with_update()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDocHashOnly),
+                CosmosOk(DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"1\"}}"), etag: "\"e1\""),
+                CosmosOk("{}"),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}},"
+                  + "\"UpdateExpression\":\"SET v = :n\","
+                  + "\"ConditionExpression\":\"v = :v\","
+                  + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"1\"},\":n\":{\"N\":\"2\"}}}";
+        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdateItem_condition_fail_returns_conditional_check_failed()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDocHashOnly),
+                CosmosOk(DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"99\"}}"), etag: "\"e1\""),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}},"
+                  + "\"UpdateExpression\":\"SET v = :n\","
+                  + "\"ConditionExpression\":\"v = :v\","
+                  + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"1\"},\":n\":{\"N\":\"2\"}}}";
+        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("ConditionalCheckFailedException", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task UpdateItem_condition_fail_with_all_old_returns_item()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDocHashOnly),
+                CosmosOk(DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"99\"}}"), etag: "\"e1\""),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}},"
+                  + "\"UpdateExpression\":\"SET v = :n\","
+                  + "\"ConditionExpression\":\"v = :v\","
+                  + "\"ReturnValuesOnConditionCheckFailure\":\"ALL_OLD\","
+                  + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"1\"},\":n\":{\"N\":\"2\"}}}";
+        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        using var doc = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal("99", doc.RootElement.GetProperty("Item").GetProperty("v").GetProperty("N").GetString());
+    }
+
+    [Fact]
+    public async Task UpdateItem_attribute_updates_with_condition_expression_allows_placeholders()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDocHashOnly),
+                CosmosOk(DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"1\"}}"), etag: "\"e1\""),
+                CosmosOk("{}"),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}},"
+                  + "\"AttributeUpdates\":{\"v\":{\"Action\":\"PUT\",\"Value\":{\"N\":\"2\"}}},"
+                  + "\"ConditionExpression\":\"v = :v\","
+                  + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"1\"}}}";
+        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdateItem_attribute_updates_with_orphan_placeholders_rejected()
     {
         var (ctx, body) = NewCtx();
         var handler = new ScriptedHandler();
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}},"
-                  + "\"UpdateExpression\":\"SET v = :v\","
-                  + "\"ConditionExpression\":\"v = :v\","
+                  + "\"AttributeUpdates\":{\"v\":{\"Action\":\"PUT\",\"Value\":{\"N\":\"2\"}}},"
                   + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"1\"}}}";
         await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
-        Assert.Contains("Conditional", ReadResponse(body));
+        Assert.Contains("UpdateExpression or ConditionExpression", ReadResponse(body));
     }
 
     [Fact]

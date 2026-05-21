@@ -44,7 +44,7 @@
 | HASH-only key tables | ✅ implemented |  |  |  |
 | HASH+RANGE composite key tables | ✅ implemented |  |  |  |
 | Idempotent delete (missing item returns success) | ✅ implemented | Cosmos 404 → DynamoDB 200 empty, matching DynamoDB semantics. |  |  |
-| ConditionExpression / Expected / ConditionalOperator | ⛔ unsupported | Rejected with ValidationException pending expression parser slice (#12). |  |  |
+| ConditionExpression / Expected / ConditionalOperator | ✅ implemented | Conditional path performs GET → evaluate → DELETE(If-Match) with retry on 412/Conflict/404. If the condition evaluates true against a missing item, the operation returns success as a no-op. Failure returns HTTP 400 ConditionalCheckFailedException with optional Item when ReturnValuesOnConditionCheckFailure=ALL_OLD. |  |  |
 | ExpressionAttributeNames / ExpressionAttributeValues | ⛔ unsupported |  |  |  |
 | ReturnValues | 🟡 partial | Only NONE accepted; ALL_OLD rejected with ValidationException. |  |  |
 | ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported |  |  |  |
@@ -175,7 +175,7 @@
 | HASH-only key tables | ✅ implemented |  |  |  |
 | HASH+RANGE composite key tables | ✅ implemented |  |  |  |
 | Full DynamoDB wire-form round-trip (S/N/B/BOOL/NULL/M/L/SS/NS/BS) | ✅ implemented | Item stored verbatim under Cosmos doc `item` envelope; numeric precision (N) preserved via raw JSON pass-through. |  |  |
-| ConditionExpression / Expected / ConditionalOperator | ⛔ unsupported | Rejected with ValidationException pending expression parser slice (#12). |  |  |
+| ConditionExpression / Expected / ConditionalOperator | ✅ implemented | Conditional path performs GET → evaluate → PUT(If-Match) or POST(If-None-Match: *) with up to 4 retries on Cosmos 412/409. Failure returns HTTP 400 ConditionalCheckFailedException with optional Item when ReturnValuesOnConditionCheckFailure=ALL_OLD. attribute_not_exists(pk) is the standard idiom for first-time create. |  |  |
 | ExpressionAttributeNames / ExpressionAttributeValues | ⛔ unsupported |  |  |  |
 | ReturnValues | 🟡 partial | Only NONE accepted; ALL_OLD/UPDATED_* rejected with ValidationException. |  |  |
 | ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported | Silently ignored; response omits ConsumedCapacity / ItemCollectionMetrics. |  |  |
@@ -239,7 +239,7 @@
 | Path overlap detection | ✅ implemented | Two paths in the same expression where one is a prefix of the other are rejected with ValidationException. |  |  |
 | ReturnValues (NONE / ALL_OLD / UPDATED_OLD / ALL_NEW / UPDATED_NEW) | ✅ implemented | UPDATED_OLD/UPDATED_NEW project only the top-level attributes touched by the expression, matching AWS. |  |  |
 | Create-if-missing (upsert) semantics | ✅ implemented | Atomic create with `If-None-Match: *` when the target item does not exist; concurrent create races surface as Cosmos 409 and are replayed by the optimistic-retry loop against the winner's state. |  |  |
-| ConditionExpression / Expected / ConditionalOperator | ⛔ unsupported | Rejected with ValidationException. Conditional writes land in the next slice via the shared expression parser. |  |  |
+| ConditionExpression / Expected / ConditionalOperator | ✅ implemented | Modern ConditionExpression and legacy Expected + ConditionalOperator both supported; mutual exclusion enforced with ValidationException. Evaluator covers comparisons, AND/OR/NOT, BETWEEN, IN, attribute_exists/not_exists/type, begins_with, contains, size(). Failure returns HTTP 400 ConditionalCheckFailedException; ReturnValuesOnConditionCheckFailure=ALL_OLD includes the prior item. |  |  |
 | ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported | Silently ignored; response omits ConsumedCapacity / ItemCollectionMetrics. |  |  |
 
 ### Behaviour differences
