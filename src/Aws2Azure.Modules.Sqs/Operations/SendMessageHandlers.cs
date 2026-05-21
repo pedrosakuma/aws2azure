@@ -160,7 +160,19 @@ internal static class SendMessageHandlers
             return;
         }
 
-        var brokerProps = BuildBrokerProperties(messageId: dedupId, sessionId: groupId, delaySeconds);
+        // Mint a stable idempotency key BEFORE entering the HTTP retry path
+        // so every retry attempt of this logical send carries the same
+        // SB MessageId. On queues with duplicate-detection enabled (Premium
+        // SKU, or Standard via per-queue config) the broker collapses the
+        // accidental duplicates into a single delivery; on others the
+        // MessageId is at least stable across retries which clients can
+        // use for their own dedup. For FIFO with caller-supplied dedup id
+        // the dedup id IS the MessageId — preserve that.
+        var idempotencyKey = (isFifoQueue && !string.IsNullOrEmpty(dedupId))
+            ? dedupId!
+            : Guid.NewGuid().ToString();
+
+        var brokerProps = BuildBrokerProperties(messageId: idempotencyKey, sessionId: groupId, delaySeconds);
         var appHeaders = BuildAppPropertyHeaders(attrs);
 
         using var content = new ByteArrayContent(bodyBytes);
@@ -173,16 +185,14 @@ internal static class SendMessageHandlers
             return;
         }
 
-        // SB doesn't echo the MessageId in the response body — derive one
-        // from the dedup id when the queue is FIFO (where dedup actually
-        // applies), else mint a fresh guid. SQS clients never reuse the
-        // value other than to log it.
-        var messageId = (isFifoQueue && !string.IsNullOrEmpty(dedupId)) ? dedupId : Guid.NewGuid().ToString();
+        // SB doesn't echo the MessageId — the SQS response carries the
+        // idempotency key we minted above so AWS-SDK clients see a stable
+        // MessageId even across silent broker-side dedup of retries.
         var md5OfBody = SqsMessageMd5.OfBody(bodyBytes);
         var md5OfAttrs = attrs.Count == 0 ? null : SqsMessageMd5.OfAttributes(attrs);
 
         await SqsResponseWriter.WriteSendMessageAsync(
-            context, parsed.Protocol, messageId, md5OfBody, md5OfAttrs, sequenceNumber: null).ConfigureAwait(false);
+            context, parsed.Protocol, idempotencyKey, md5OfBody, md5OfAttrs, sequenceNumber: null).ConfigureAwait(false);
     }
 
     // --- SendMessageBatch ----------------------------------------------
@@ -267,8 +277,20 @@ internal static class SendMessageHandlers
             return;
         }
 
+        // Mint stable per-entry idempotency keys BEFORE the HTTP retry
+        // path so every retry of the same batch carries the same
+        // MessageId per entry. Same rationale as the single-send path.
+        var idempotencyKeys = new string[entries.Count];
+        for (var i = 0; i < entries.Count; i++)
+        {
+            var e = entries[i];
+            idempotencyKeys[i] = (batchIsFifoQueue && !string.IsNullOrEmpty(e.DeduplicationId))
+                ? e.DeduplicationId!
+                : Guid.NewGuid().ToString();
+        }
+
         // Build the SB batch envelope.
-        var batchJson = BuildSbBatchEnvelope(entries);
+        var batchJson = BuildSbBatchEnvelope(entries, idempotencyKeys);
         using var response = await sb.SendMessageBatchAsync(queueName, batchJson, ct).ConfigureAwait(false);
 
         // SB returns a single status for the whole batch. If anything failed
@@ -290,11 +312,10 @@ internal static class SendMessageHandlers
         }
 
         var successful = new List<SendMessageBatchEntryResult>(entries.Count);
-        foreach (var e in entries)
+        for (var i = 0; i < entries.Count; i++)
         {
-            var messageId = (batchIsFifoQueue && !string.IsNullOrEmpty(e.DeduplicationId))
-                ? e.DeduplicationId
-                : Guid.NewGuid().ToString();
+            var e = entries[i];
+            var messageId = idempotencyKeys[i];
             var md5OfBody = SqsMessageMd5.OfBody(e.BodyBytes);
             var md5OfAttrs = e.Attributes.Count == 0 ? null : SqsMessageMd5.OfAttributes(e.Attributes);
             successful.Add(new SendMessageBatchEntryResult(
@@ -495,7 +516,7 @@ internal static class SendMessageHandlers
         return headers;
     }
 
-    private static string BuildSbBatchEnvelope(IReadOnlyList<BatchEntry> entries)
+    private static string BuildSbBatchEnvelope(IReadOnlyList<BatchEntry> entries, IReadOnlyList<string> messageIds)
     {
         // Service Bus expects an array of:
         //   { "Body": "...", "BrokerProperties": {...}, "UserProperties": {...} }
@@ -509,7 +530,11 @@ internal static class SendMessageHandlers
             sb.Append("\"Body\":\"").Append(JsonEncodedText.Encode(Encoding.UTF8.GetString(e.BodyBytes))).Append("\",");
 
             // BrokerProperties as a JSON sub-object string (per SB REST spec).
-            var bp = BuildBrokerProperties(e.DeduplicationId, e.GroupId, e.DelaySeconds);
+            // Inject the per-entry idempotency key as MessageId so retries
+            // of the batch don't double-publish entries on dedup-enabled
+            // queues. For FIFO with a caller-supplied DeduplicationId this
+            // collapses to the dedup id (same value).
+            var bp = BuildBrokerProperties(messageIds[i], e.GroupId, e.DelaySeconds);
             if (!string.IsNullOrEmpty(bp))
             {
                 sb.Append("\"BrokerProperties\":").Append(bp).Append(',');
