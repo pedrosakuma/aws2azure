@@ -60,6 +60,37 @@ internal sealed class DeleteItemRequest
 }
 
 /// <summary>
+/// UpdateItem request. Two ways callers express the mutation:
+/// <list type="bullet">
+/// <item><c>UpdateExpression</c> (modern, e.g. <c>SET a = :v REMOVE b</c>)
+///   with <c>ExpressionAttributeValues</c> + optional
+///   <c>ExpressionAttributeNames</c>.</item>
+/// <item><c>AttributeUpdates</c> (legacy map of
+///   <c>{name: {Action: PUT|DELETE, Value: {...}}}</c>).</item>
+/// </list>
+/// Exactly one form must be present. Conditional knobs and any
+/// arithmetic / list / function-call grammar are deferred to the
+/// expression-parser slice.
+/// </summary>
+internal sealed class UpdateItemRequest
+{
+    [JsonPropertyName("TableName")] public string? TableName { get; set; }
+    [JsonPropertyName("Key")] public JsonElement Key { get; set; }
+    [JsonPropertyName("UpdateExpression")] public string? UpdateExpression { get; set; }
+    [JsonPropertyName("AttributeUpdates")] public JsonElement? AttributeUpdates { get; set; }
+    [JsonPropertyName("ExpressionAttributeNames")] public JsonElement? ExpressionAttributeNames { get; set; }
+    [JsonPropertyName("ExpressionAttributeValues")] public JsonElement? ExpressionAttributeValues { get; set; }
+    [JsonPropertyName("ReturnValues")] public string? ReturnValues { get; set; }
+    [JsonPropertyName("ReturnConsumedCapacity")] public string? ReturnConsumedCapacity { get; set; }
+    [JsonPropertyName("ReturnItemCollectionMetrics")] public string? ReturnItemCollectionMetrics { get; set; }
+
+    // Rejected pending the expression-parser slice.
+    [JsonPropertyName("ConditionExpression")] public string? ConditionExpression { get; set; }
+    [JsonPropertyName("Expected")] public JsonElement? Expected { get; set; }
+    [JsonPropertyName("ConditionalOperator")] public string? ConditionalOperator { get; set; }
+}
+
+/// <summary>
 /// PutItem response. DynamoDB normally returns an empty object except
 /// when <c>ReturnValues = ALL_OLD</c>. The proxy only supports NONE in
 /// this slice; the <c>Attributes</c> property is reserved for the
@@ -80,12 +111,19 @@ internal sealed class DeleteItemResponse
     [JsonPropertyName("Attributes")] public Dictionary<string, JsonElement>? Attributes { get; set; }
 }
 
+internal sealed class UpdateItemResponse
+{
+    [JsonPropertyName("Attributes")] public Dictionary<string, JsonElement>? Attributes { get; set; }
+}
+
 [JsonSerializable(typeof(PutItemRequest))]
 [JsonSerializable(typeof(GetItemRequest))]
 [JsonSerializable(typeof(DeleteItemRequest))]
+[JsonSerializable(typeof(UpdateItemRequest))]
 [JsonSerializable(typeof(PutItemResponse))]
 [JsonSerializable(typeof(GetItemResponse))]
 [JsonSerializable(typeof(DeleteItemResponse))]
+[JsonSerializable(typeof(UpdateItemResponse))]
 [JsonSourceGenerationOptions(
     PropertyNameCaseInsensitive = true,
     AllowTrailingCommas = true,

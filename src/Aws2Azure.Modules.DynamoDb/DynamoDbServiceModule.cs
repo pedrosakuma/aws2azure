@@ -117,6 +117,9 @@ public sealed class DynamoDbServiceModule : IServiceModule
             case DynamoDbOperation.DeleteItem:
                 await ItemHandlers.HandleDeleteItemAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
                 return;
+            case DynamoDbOperation.UpdateItem:
+                await UpdateItemHandler.HandleUpdateItemAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                return;
         }
 
         await DynamoDbErrorResponse.WriteAsync(context,

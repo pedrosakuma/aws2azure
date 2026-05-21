@@ -11,7 +11,7 @@
 | dynamodb | [PutItem](dynamodb.md#putitem) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [Query](dynamodb.md#query) | ⚪ stub | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [Scan](dynamodb.md#scan) | ⚪ stub | `Azure Cosmos DB (Core SQL API)` |
-| dynamodb | [UpdateItem](dynamodb.md#updateitem) | ⚪ stub | `Azure Cosmos DB (Core SQL API)` |
+| dynamodb | [UpdateItem](dynamodb.md#updateitem) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
 | kinesis | [GetRecords](kinesis.md#getrecords) | ⚪ stub | `Azure Event Hubs Kafka/HTTP surface` |
 | kinesis | [GetShardIterator](kinesis.md#getsharditerator) | ⚪ stub | `Azure Event Hubs Kafka/HTTP surface` |
 | kinesis | [PutRecord](kinesis.md#putrecord) | ⚪ stub | `Azure Event Hubs Kafka/HTTP surface` |
