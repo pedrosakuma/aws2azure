@@ -1,3 +1,7 @@
+using System;
+using System.Buffers;
+using System.IO;
+using System.Security.Cryptography;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Core.SigV4;
 using Microsoft.AspNetCore.Http;
@@ -57,7 +61,30 @@ public sealed class ServiceModuleRegistry
                 return;
             }
 
-            var payloadHash = ResolvePayloadHash(context, module);
+            // For modules that opt in (AWS-JSON services with bounded bodies)
+            // we buffer the request body up front so we can compute the SHA-256
+            // ourselves. Modern SDKs always send x-amz-content-sha256, but the
+            // SigV4 spec allows omitting it for non-S3 services — and a client
+            // doing so still signs with the real hash. Without buffering, the
+            // ResolvePayloadHash sentinel makes those valid signatures fail.
+            string? bufferedHash = null;
+            if (module.BuffersRequestBodyForSigV4
+                && !context.Request.Headers.ContainsKey(SigV4Constants.AmzContentSha256Header)
+                && !context.Request.Query.ContainsKey(SigV4Constants.AmzSignatureQuery))
+            {
+                var bufferResult = await BufferAndHashRequestBodyAsync(context).ConfigureAwait(false);
+                if (bufferResult.TooLarge)
+                {
+                    await module.EmitAuthErrorAsync(context,
+                        StatusCodes.Status413PayloadTooLarge,
+                        code: "RequestEntityTooLarge",
+                        message: $"Request body exceeds the per-module buffering limit of {MaxBufferedBodyBytes} bytes.");
+                    return;
+                }
+                bufferedHash = bufferResult.PayloadHash;
+            }
+
+            var payloadHash = bufferedHash ?? ResolvePayloadHash(context, module);
             var sigRequest = context.BuildSigV4Request(payloadHash, s3PathStyle: module.ServiceName == "s3");
             var result = _sigV4.Validate(sigRequest);
             if (!result.IsValid)
@@ -71,6 +98,63 @@ public sealed class ServiceModuleRegistry
         }
 
         await module.HandleAsync(context);
+    }
+
+    /// <summary>
+    /// Upper bound on bodies the registry will buffer for pre-validation
+    /// SHA-256 hashing. Generous (16 MiB) to cover DynamoDB BatchWriteItem
+    /// (16 MiB) and similar AWS-JSON ops without rejecting legal traffic.
+    /// </summary>
+    public const int MaxBufferedBodyBytes = 16 * 1024 * 1024;
+
+    private static async Task<(string? PayloadHash, bool TooLarge)> BufferAndHashRequestBodyAsync(HttpContext context)
+    {
+        if (context.Request.ContentLength is 0)
+        {
+            // Empty body: short-circuit to the well-known empty-payload hash.
+            return (SigV4Constants.EmptyPayloadSha256, false);
+        }
+
+        if (context.Request.ContentLength is long cl && cl > MaxBufferedBodyBytes)
+        {
+            // Reject up front so we don't accept-then-truncate.
+            return (null, true);
+        }
+
+        var contentLength = context.Request.ContentLength;
+        var capacity = contentLength is > 0 ? (int)contentLength.Value : 8192;
+        var ms = new MemoryStream(capacity);
+        var buffer = ArrayPool<byte>.Shared.Rent(8192);
+        try
+        {
+            int read;
+            int total = 0;
+            while ((read = await context.Request.Body.ReadAsync(buffer.AsMemory(0, buffer.Length))
+                .ConfigureAwait(false)) > 0)
+            {
+                total += read;
+                if (total > MaxBufferedBodyBytes)
+                {
+                    return (null, true);
+                }
+                ms.Write(buffer, 0, read);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+
+        var bytes = ms.GetBuffer().AsSpan(0, (int)ms.Length);
+        Span<byte> hash = stackalloc byte[32];
+        SHA256.HashData(bytes, hash);
+
+        // Replace the request body with a rewound copy so the module's parser
+        // sees the same bytes it would have read from the original stream.
+        ms.Position = 0;
+        context.Request.Body = ms;
+
+        return (Convert.ToHexStringLower(hash), false);
     }
 
     private static string ResolvePayloadHash(HttpContext context, IServiceModule module)
