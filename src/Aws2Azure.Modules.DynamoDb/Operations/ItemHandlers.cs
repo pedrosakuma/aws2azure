@@ -639,7 +639,7 @@ internal static class ItemHandlers
     /// inputs early so a write can't poison the partition with a doc
     /// that GetItem cannot parse.
     /// </summary>
-    private static bool ValidateItemShape(JsonElement item, out string error)
+    internal static bool ValidateItemShape(JsonElement item, out string error)
     {
         foreach (var prop in item.EnumerateObject())
         {

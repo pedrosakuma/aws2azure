@@ -132,6 +132,12 @@ public sealed class DynamoDbServiceModule : IServiceModule
             case DynamoDbOperation.Scan:
                 await ScanHandler.HandleScanAsync(context, parsed.Body, cosmos, _scanLogger, context.RequestAborted).ConfigureAwait(false);
                 return;
+            case DynamoDbOperation.BatchGetItem:
+                await BatchGetItemHandler.HandleBatchGetItemAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                return;
+            case DynamoDbOperation.BatchWriteItem:
+                await BatchWriteItemHandler.HandleBatchWriteItemAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                return;
         }
 
         await DynamoDbErrorResponse.WriteAsync(context,
