@@ -280,6 +280,28 @@ public class BatchGetItemHandlerTests
     }
 
     [Fact]
+    public async Task BatchGet_duplicate_key_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaHashOnly),
+            },
+        };
+        var cosmos = BuildClient(handler);
+        var req = "{\"RequestItems\":{\"orders\":{\"Keys\":[{\"pk\":{\"S\":\"k1\"}},{\"pk\":{\"S\":\"k1\"}}]}}}";
+
+        await BatchGetItemHandler.HandleBatchGetItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("duplicate", ReadResponse(body), StringComparison.OrdinalIgnoreCase);
+        // Only the metadata GET happened — no per-key GET issued.
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
     public async Task BatchGet_empty_request_items_is_rejected()
     {
         var (ctx, body) = NewCtx();

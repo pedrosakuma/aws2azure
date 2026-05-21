@@ -278,6 +278,38 @@ public class BatchWriteItemHandlerTests
     }
 
     [Fact]
+    public async Task BatchWrite_put_with_malformed_attribute_value_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler { Responses = { CosmosOk(MetaHashOnly) } };
+        var cosmos = BuildClient(handler);
+
+        // 'bad' attribute value is a bare string, not a typed {"S":...} envelope.
+        var req = "{\"RequestItems\":{\"orders\":[{\"PutRequest\":{\"Item\":{\"pk\":{\"S\":\"k1\"},\"bad\":\"not-an-attribute-value\"}}}]}}";
+        await BatchWriteItemHandler.HandleBatchWriteItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("bad", ReadResponse(body));
+        // No Cosmos write — only the metadata GET happened.
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task BatchWrite_entry_with_put_and_null_delete_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler { Responses = { CosmosOk(MetaHashOnly) } };
+        var cosmos = BuildClient(handler);
+
+        // Both keys present — DeleteRequest:null still counts as "both specified".
+        var req = "{\"RequestItems\":{\"orders\":[{\"PutRequest\":{\"Item\":{\"pk\":{\"S\":\"k1\"}}},\"DeleteRequest\":null}]}}";
+        await BatchWriteItemHandler.HandleBatchWriteItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("exactly one", ReadResponse(body), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task BatchWrite_empty_request_items_is_rejected()
     {
         var (ctx, body) = NewCtx();

@@ -16,6 +16,7 @@
 | ExpressionAttributeNames (per table) | ✅ implemented |  |  |  |
 | ConsistentRead (per table) | ✅ implemented | Sets `x-ms-consistency-level: Strong` on every Cosmos GET for that table; account-level consistency cap still applies. |  |  |
 | 100-item-per-call cap | ✅ implemented | Requests over 100 keys (across all tables) rejected with ValidationException, matching the DynamoDB hard limit. |  |  |
+| Duplicate-key rejection | ✅ implemented | Same (table, pk, id) repeated in a single call → ValidationException, matching DynamoDB. |  |  |
 | Legacy AttributesToGet | ⛔ unsupported | Rejected with ValidationException — use ProjectionExpression. |  |  |
 | ReturnConsumedCapacity | ⛔ unsupported | Silently ignored; response omits ConsumedCapacity. |  |  |
 
@@ -43,6 +44,7 @@
 | DeleteRequest fan-out | ✅ implemented | Each DeleteRequest routes to a Cosmos DELETE on the (pk, id) derived from the key. Deletes of missing items are successful no-ops — matches DynamoDB idempotency. |  |  |
 | Bounded parallelism | ✅ implemented | Up to 10 concurrent Cosmos writes per batch (SemaphoreSlim-gated). |  |  |
 | 25-item-per-call cap | ✅ implemented | Requests over 25 writes (across all tables) rejected with ValidationException, matching the DynamoDB hard limit. |  |  |
+| Item shape validation (Put) | ✅ implemented | Every attribute in PutRequest.Item must be a single-property typed AttributeValue (same validator as PutItem). Malformed entries rejected with ValidationException before any Cosmos write. |  |  |
 | Duplicate-key rejection | ✅ implemented | Two writes targeting the same (table, pk, id) in a single call are rejected with ValidationException — matches DynamoDB. |  |  |
 | Throttling → UnprocessedItems | ✅ implemented | Cosmos 429 on any individual write surfaces the original PutRequest/DeleteRequest envelope in `UnprocessedItems`, preserving ordering within the table. Hard errors (5xx, 4xx other than 429/404) fail the whole batch. |  |  |
 | ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported | Silently ignored; responses omit ConsumedCapacity and ItemCollectionMetrics. |  |  |

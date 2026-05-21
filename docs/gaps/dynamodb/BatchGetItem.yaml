@@ -23,6 +23,9 @@ sub_features:
   - name: 100-item-per-call cap
     status: implemented
     notes: "Requests over 100 keys (across all tables) rejected with ValidationException, matching the DynamoDB hard limit."
+  - name: Duplicate-key rejection
+    status: implemented
+    notes: "Same (table, pk, id) repeated in a single call → ValidationException, matching DynamoDB."
   - name: Legacy AttributesToGet
     status: unsupported
     notes: "Rejected with ValidationException — use ProjectionExpression."

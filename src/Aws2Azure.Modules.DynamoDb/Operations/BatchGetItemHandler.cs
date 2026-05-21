@@ -66,6 +66,7 @@ internal static class BatchGetItemHandler
         var tableMeta = new Dictionary<string, TableMetadata>(StringComparer.Ordinal);
         var tableProjection = new Dictionary<string, IReadOnlyList<string>?>(StringComparer.Ordinal);
         var tableConsistent = new Dictionary<string, bool>(StringComparer.Ordinal);
+        var seenKeys = new HashSet<(string Table, string Pk, string Id)>();
 
         int totalKeys = 0;
         foreach (var (tableName, perTable) in req.RequestItems)
@@ -196,6 +197,12 @@ internal static class BatchGetItemHandler
                 if (!ItemKeyFormatter.TryBuild(keyEl, meta, out var pk, out var id, out var keyError))
                 {
                     await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", keyError).ConfigureAwait(false);
+                    return;
+                }
+                if (!seenKeys.Add((tableName, pk, id)))
+                {
+                    await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                        $"BatchGetItem contains duplicate key in table '{tableName}'.").ConfigureAwait(false);
                     return;
                 }
                 var cloned = keyEl.Clone();

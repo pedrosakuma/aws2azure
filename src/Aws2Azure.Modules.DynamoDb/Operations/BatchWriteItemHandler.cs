@@ -106,12 +106,25 @@ internal static class BatchWriteItemHandler
                         $"RequestItems['{tableName}'] entries must be objects with exactly one of PutRequest/DeleteRequest.").ConfigureAwait(false);
                     return;
                 }
-                bool hasPut = entry.TryGetProperty("PutRequest", out var putEl) && putEl.ValueKind == JsonValueKind.Object;
-                bool hasDel = entry.TryGetProperty("DeleteRequest", out var delEl) && delEl.ValueKind == JsonValueKind.Object;
-                if (hasPut == hasDel)
+                bool putPresent = entry.TryGetProperty("PutRequest", out var putEl);
+                bool delPresent = entry.TryGetProperty("DeleteRequest", out var delEl);
+                if (putPresent == delPresent)
                 {
                     await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
                         "Each entry must specify exactly one of PutRequest or DeleteRequest.").ConfigureAwait(false);
+                    return;
+                }
+                bool hasPut = putPresent;
+                if (hasPut && putEl.ValueKind != JsonValueKind.Object)
+                {
+                    await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                        "PutRequest must be an object.").ConfigureAwait(false);
+                    return;
+                }
+                if (!hasPut && delEl.ValueKind != JsonValueKind.Object)
+                {
+                    await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                        "DeleteRequest must be an object.").ConfigureAwait(false);
                     return;
                 }
 
@@ -121,6 +134,11 @@ internal static class BatchWriteItemHandler
                     {
                         await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
                             "PutRequest.Item is required and must be an object.").ConfigureAwait(false);
+                        return;
+                    }
+                    if (!ItemHandlers.ValidateItemShape(itemEl, out var shapeError))
+                    {
+                        await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", shapeError).ConfigureAwait(false);
                         return;
                     }
                     foreach (var k in meta.KeySchema)

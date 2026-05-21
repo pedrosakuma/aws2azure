@@ -15,6 +15,9 @@ sub_features:
   - name: 25-item-per-call cap
     status: implemented
     notes: "Requests over 25 writes (across all tables) rejected with ValidationException, matching the DynamoDB hard limit."
+  - name: Item shape validation (Put)
+    status: implemented
+    notes: "Every attribute in PutRequest.Item must be a single-property typed AttributeValue (same validator as PutItem). Malformed entries rejected with ValidationException before any Cosmos write."
   - name: Duplicate-key rejection
     status: implemented
     notes: "Two writes targeting the same (table, pk, id) in a single call are rejected with ValidationException — matches DynamoDB."
