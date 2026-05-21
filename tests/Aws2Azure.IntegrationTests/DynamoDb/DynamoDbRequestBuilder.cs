@@ -28,7 +28,8 @@ internal static class DynamoDbRequestBuilder
         req.Headers.TryAddWithoutValidation("X-Amz-Target", "DynamoDB_20120810." + operation);
 
         TestSigV4Signer.SignHeader(req, bytes, accessKey, secret,
-            region: "us-east-1", service: "dynamodb");
+            region: "us-east-1", service: "dynamodb",
+            extraSignedHeaders: new[] { "x-amz-target" });
         return req;
     }
 }

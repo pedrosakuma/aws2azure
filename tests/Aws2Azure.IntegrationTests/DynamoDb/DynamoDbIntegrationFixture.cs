@@ -58,8 +58,16 @@ public sealed class DynamoDbIntegrationFixture : IAsyncLifetime
             CosmosEndpoint = $"http://{_container.Hostname}:{port}/";
             DockerAvailable = true;
         }
-        catch
+        catch (Exception ex) when (
+            ex is ArgumentException ||
+            ex is InvalidOperationException ||
+            ex.GetType().FullName?.StartsWith("Docker", StringComparison.Ordinal) == true ||
+            ex.Message.Contains("docker", StringComparison.OrdinalIgnoreCase))
         {
+            // Docker truly not reachable on this host: skip cleanly. Any
+            // other failure (image missing readiness marker, bootstrap HTTP
+            // error, container crash) should fail loudly — those are real
+            // regressions and must not be silently downgraded to "skipped".
             DockerAvailable = false;
             return;
         }

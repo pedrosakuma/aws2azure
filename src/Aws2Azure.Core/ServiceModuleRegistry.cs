@@ -93,6 +93,37 @@ public sealed class ServiceModuleRegistry
                 return;
             }
 
+            // Enforce module-specific signed-header requirements (e.g. DynamoDB
+            // dispatches on X-Amz-Target; if the client didn't sign it, the
+            // header could be swapped after-signature without invalidating the
+            // signature — which would let a caller redirect a signed payload
+            // to a different operation).
+            var required = module.RequiredSignedHeaders;
+            if (required.Count > 0)
+            {
+                var signed = result.SignedHeaders ?? Array.Empty<string>();
+                foreach (var name in required)
+                {
+                    var found = false;
+                    for (var i = 0; i < signed.Length; i++)
+                    {
+                        if (string.Equals(signed[i], name, StringComparison.OrdinalIgnoreCase))
+                        {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found)
+                    {
+                        await module.EmitAuthErrorAsync(context,
+                            StatusCodes.Status403Forbidden,
+                            code: "SignatureDoesNotMatch",
+                            message: $"Required header '{name}' must be included in SignedHeaders.");
+                        return;
+                    }
+                }
+            }
+
             // Surface the authenticated identity for downstream consumers.
             context.Items["aws2azure.accessKeyId"] = result.AccessKeyId;
         }

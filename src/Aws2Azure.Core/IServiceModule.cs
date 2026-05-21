@@ -49,6 +49,17 @@ public interface IServiceModule
     /// </summary>
     bool BuffersRequestBodyForSigV4 => false;
 
+    /// <summary>
+    /// Headers (lowercase) that MUST appear in the request's
+    /// <c>SignedHeaders</c> list for the signature to be accepted.
+    /// Used by services whose dispatch / routing depends on a header
+    /// that isn't part of the canonical request by default — most
+    /// notably AWS-JSON services that dispatch on <c>X-Amz-Target</c>.
+    /// An empty list (default) means no additional headers beyond
+    /// SigV4's intrinsic ones are required to be signed.
+    /// </summary>
+    IReadOnlyList<string> RequiredSignedHeaders => Array.Empty<string>();
+
     /// <summary>Format used to render error responses (XML for S3, JSON elsewhere).</summary>
     AwsErrorFormat ErrorFormat { get; }
 
