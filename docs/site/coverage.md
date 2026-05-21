@@ -9,7 +9,7 @@
 | dynamodb | [GetItem](dynamodb.md#getitem) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [ListTables](dynamodb.md#listtables) | ✅ implemented | `Azure Cosmos DB (Core SQL API) — GET /dbs/{db}/colls` |
 | dynamodb | [PutItem](dynamodb.md#putitem) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
-| dynamodb | [Query](dynamodb.md#query) | ⚪ stub | `Azure Cosmos DB (Core SQL API)` |
+| dynamodb | [Query](dynamodb.md#query) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [Scan](dynamodb.md#scan) | ⚪ stub | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [UpdateItem](dynamodb.md#updateitem) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
 | kinesis | [GetRecords](kinesis.md#getrecords) | ⚪ stub | `Azure Event Hubs Kafka/HTTP surface` |

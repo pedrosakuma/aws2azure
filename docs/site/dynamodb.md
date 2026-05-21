@@ -194,12 +194,33 @@
 
 ## Query
 
-- **Status:** ⚪ stub
+- **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| KeyConditionExpression on HASH-only tables | ✅ implemented |  |  |  |
+| KeyConditionExpression on HASH+RANGE tables (= / < / <= / > / >= / BETWEEN / begins_with) | ✅ implemented | Translated to a partition-scoped Cosmos SQL query against `c.pk = <hash>` with a predicate on `c.id` (which holds the formatted RANGE value). |  |  |
+| FilterExpression | ✅ implemented | Evaluated in-process after the Cosmos page returns, so ScannedCount reflects pre-filter rows and Count reflects post-filter rows — matching DynamoDB semantics. |  |  |
+| ProjectionExpression | 🟡 partial | Top-level attributes and `#alias` references are honoured. Nested paths (`a.b`, `a[0]`) are not yet supported and are rejected with ValidationException. |  |  |
+| ExpressionAttributeNames / ExpressionAttributeValues | ✅ implemented |  |  |  |
+| Limit | ✅ implemented |  |  |  |
+| ExclusiveStartKey / LastEvaluatedKey | ✅ implemented | Pagination round-trips the Cosmos `x-ms-continuation` token inside a sentinel attribute `__a2a_continuation` (typed-string `S`). Most AWS SDKs treat LastEvaluatedKey as opaque and pass it back verbatim, which is what the proxy requires. |  |  |
+| ScanIndexForward | ✅ implemented | Maps to `ORDER BY c.id ASC\|DESC`; only emitted for composite-key tables (hash-only Query returns at most one item). |  |  |
+| ConsistentRead | ✅ implemented | Forwards `x-ms-consistency-level: Strong` for the Cosmos query when true; account-level consistency cap still applies. |  |  |
+| Select | 🟡 partial | ALL_ATTRIBUTES (default), SPECIFIC_ATTRIBUTES, and COUNT supported. ALL_PROJECTED_ATTRIBUTES requires IndexName and is rejected. |  |  |
+| IndexName (GSI / LSI) | ⛔ unsupported | Querying secondary indexes is not yet supported; requests carrying IndexName are rejected with ValidationException. |  |  |
+| Legacy KeyConditions / QueryFilter / ConditionalOperator | ⛔ unsupported | Legacy v1 parameters are rejected loudly with ValidationException — use KeyConditionExpression / FilterExpression. |  |  |
+| ReturnConsumedCapacity | ⛔ unsupported | Silently ignored; response omits ConsumedCapacity. |  |  |
 
 ### Behaviour differences
 
-- DynamoDB JSON type system mapped onto Cosmos JSON; consistency model differs
+- Sort-key ordering is the lexical order of the Cosmos document id (which is the formatted RANGE scalar string). Numeric sort keys are therefore not numerically ordered — zero-pad them or use a string sort key if order matters.
+- Every Query is partition-scoped — there is no cross-partition fan-out — matching DynamoDB's single-partition guarantee.
+- Cosmos 429 (throttled) is surfaced as DynamoDB ProvisionedThroughputExceededException.
+- Only validated against scripted Cosmos REST fakes; not yet exercised against real Azure Cosmos.
 
 ### References
 
