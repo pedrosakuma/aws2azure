@@ -60,41 +60,87 @@ public sealed class AzureHttpClient : IDisposable
         {
             attempt++;
             HttpResponseMessage? response = null;
+            RetryCategory category;
             try
             {
                 response = await _client.SendAsync(request, completionOption, cancellationToken).ConfigureAwait(false);
-                if (!ShouldRetry(response.StatusCode) || attempt >= maxAttempts)
+                category = ClassifyStatus(response.StatusCode);
+                if (category == RetryCategory.None || attempt >= maxAttempts)
                 {
                     return response;
                 }
             }
             catch (HttpRequestException) when (attempt < maxAttempts)
             {
+                category = RetryCategory.Transport;
             }
             catch (TaskCanceledException) when (attempt < maxAttempts && !cancellationToken.IsCancellationRequested)
             {
+                // Internal HttpClient timeout (not the caller's CT).
+                category = RetryCategory.Timeout;
             }
 
-            var delay = ComputeDelay(attempt, response);
+            var delay = ComputeDelay(attempt, category, response);
             response?.Dispose();
             request = await CloneRequestAsync(request, cancellationToken).ConfigureAwait(false);
             await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
         }
     }
 
-    private static bool ShouldRetry(HttpStatusCode statusCode)
+    /// <summary>
+    /// Categorises an HTTP response so the retry loop can pick a
+    /// per-category back-off. Kept distinct from <c>HttpStatusCode</c>
+    /// so it can be unit-tested directly and so a future circuit
+    /// breaker can drive its trip logic from the same enum.
+    /// </summary>
+    internal enum RetryCategory
     {
-        var code = (int)statusCode;
-        if (code == 408 || code == 429)
-        {
-            return true;
-        }
-        return code >= 500 && code <= 599;
+        /// <summary>2xx/3xx/4xx (other than 408/429): not retried.</summary>
+        None,
+        /// <summary>HTTP 408 (Request Timeout): retry with exponential back-off.</summary>
+        RequestTimeout,
+        /// <summary>HTTP 429 (Too Many Requests): retry honouring Retry-After; longer floor when absent.</summary>
+        Throttled,
+        /// <summary>HTTP 503 (Service Unavailable): retry honouring Retry-After; exponential when absent.</summary>
+        ServiceUnavailable,
+        /// <summary>HTTP 5xx other than 503: retry with exponential back-off.</summary>
+        ServerError,
+        /// <summary>Connection-level failure raised as <see cref="HttpRequestException"/>.</summary>
+        Transport,
+        /// <summary>Internal client-side timeout (HttpClient.Timeout) raised as <see cref="TaskCanceledException"/>.</summary>
+        Timeout,
     }
 
-    private TimeSpan ComputeDelay(int attempt, HttpResponseMessage? response)
+    internal static RetryCategory ClassifyStatus(HttpStatusCode statusCode)
     {
-        if (response?.Headers.RetryAfter is { } retryAfter)
+        var code = (int)statusCode;
+        return code switch
+        {
+            408 => RetryCategory.RequestTimeout,
+            429 => RetryCategory.Throttled,
+            503 => RetryCategory.ServiceUnavailable,
+            >= 500 and <= 599 => RetryCategory.ServerError,
+            _ => RetryCategory.None,
+        };
+    }
+
+    private TimeSpan ComputeDelay(int attempt, RetryCategory category, HttpResponseMessage? response)
+    {
+        // Per-category strategy:
+        //   Throttled (429): always honour Retry-After. When absent the
+        //     floor is half MaxRetryDelay because the server told us to
+        //     slow down — exponential back-off from BaseRetryDelay would
+        //     be too aggressive.
+        //   ServiceUnavailable (503): honour Retry-After when present,
+        //     otherwise exponential back-off (the most common Azure 503
+        //     pattern — transient capacity issue).
+        //   RequestTimeout / ServerError / Transport / Timeout:
+        //     exponential back-off from BaseRetryDelay capped at
+        //     MaxRetryDelay.
+        // Final delay always carries jitter (decorrelated half-window) to
+        // avoid synchronised retries from concurrent requests hitting the
+        // same Azure endpoint.
+        if (response is { Headers.RetryAfter: { } retryAfter })
         {
             if (retryAfter.Delta is { } delta && delta > TimeSpan.Zero)
             {
@@ -110,13 +156,35 @@ public sealed class AzureHttpClient : IDisposable
             }
         }
 
-        var backoffMs = (int)Math.Min(
-            _options.MaxRetryDelay.TotalMilliseconds,
-            _options.BaseRetryDelay.TotalMilliseconds * Math.Pow(2, attempt - 1));
-        return TimeSpan.FromMilliseconds(backoffMs);
+        TimeSpan baseDelay;
+        if (category == RetryCategory.Throttled)
+        {
+            // Floor: half the max. Server explicitly told us to slow down.
+            var halfMax = TimeSpan.FromMilliseconds(_options.MaxRetryDelay.TotalMilliseconds / 2);
+            var exp = TimeSpan.FromMilliseconds(_options.BaseRetryDelay.TotalMilliseconds * Math.Pow(2, attempt - 1));
+            baseDelay = Max(halfMax, Min(exp, _options.MaxRetryDelay));
+        }
+        else
+        {
+            var exp = _options.BaseRetryDelay.TotalMilliseconds * Math.Pow(2, attempt - 1);
+            baseDelay = TimeSpan.FromMilliseconds(Math.Min(_options.MaxRetryDelay.TotalMilliseconds, exp));
+        }
+
+        return ApplyJitter(baseDelay);
+    }
+
+    private static TimeSpan ApplyJitter(TimeSpan baseDelay)
+    {
+        // Half-window jitter: pick uniformly from [base/2, base]. Keeps a
+        // floor so we never fire instantly while still spreading retries.
+        if (baseDelay <= TimeSpan.Zero) return baseDelay;
+        var ms = baseDelay.TotalMilliseconds;
+        var jittered = (ms / 2.0) + Random.Shared.NextDouble() * (ms / 2.0);
+        return TimeSpan.FromMilliseconds(jittered);
     }
 
     private static TimeSpan Min(TimeSpan a, TimeSpan b) => a < b ? a : b;
+    private static TimeSpan Max(TimeSpan a, TimeSpan b) => a > b ? a : b;
 
     private static async Task<HttpRequestMessage> CloneRequestAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {

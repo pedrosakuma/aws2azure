@@ -52,6 +52,77 @@ public class AzureHttpClientTests
         Assert.Equal(2, handler.CallCount);
     }
 
+    [Fact]
+    public async Task SendAsync_Retries429_HonoringRetryAfterDelta()
+    {
+        var first = new HttpResponseMessage((HttpStatusCode)429);
+        first.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromMilliseconds(5));
+        var handler = new SequenceHandler(first, new HttpResponseMessage(HttpStatusCode.OK));
+        var client = new AzureHttpClient(handler, ownsHandler: true, new AzureHttpClientOptions
+        {
+            MaxAttempts = 3,
+            BaseRetryDelay = TimeSpan.FromMilliseconds(1),
+            MaxRetryDelay = TimeSpan.FromSeconds(1)
+        });
+
+        var response = await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://example.test/x"));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task SendAsync_Retries408()
+    {
+        var handler = new SequenceHandler(
+            new HttpResponseMessage(HttpStatusCode.RequestTimeout),
+            new HttpResponseMessage(HttpStatusCode.OK));
+        var client = new AzureHttpClient(handler, ownsHandler: true, new AzureHttpClientOptions
+        {
+            MaxAttempts = 3,
+            BaseRetryDelay = TimeSpan.FromMilliseconds(1),
+            MaxRetryDelay = TimeSpan.FromMilliseconds(2)
+        });
+
+        var response = await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://example.test/x"));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, handler.CallCount);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.Conflict)]
+    public async Task SendAsync_DoesNotRetry4xxOtherThan408And429(HttpStatusCode status)
+    {
+        var handler = new SequenceHandler(new HttpResponseMessage(status));
+        var client = new AzureHttpClient(handler, ownsHandler: true, new AzureHttpClientOptions
+        {
+            MaxAttempts = 5,
+            BaseRetryDelay = TimeSpan.FromMilliseconds(1),
+            MaxRetryDelay = TimeSpan.FromMilliseconds(2)
+        });
+
+        var response = await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://example.test/x"));
+        Assert.Equal(status, response.StatusCode);
+        Assert.Equal(1, handler.CallCount);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.OK, AzureHttpClient.RetryCategory.None)]
+    [InlineData(HttpStatusCode.NotFound, AzureHttpClient.RetryCategory.None)]
+    [InlineData(HttpStatusCode.RequestTimeout, AzureHttpClient.RetryCategory.RequestTimeout)]
+    [InlineData((HttpStatusCode)429, AzureHttpClient.RetryCategory.Throttled)]
+    [InlineData(HttpStatusCode.InternalServerError, AzureHttpClient.RetryCategory.ServerError)]
+    [InlineData(HttpStatusCode.BadGateway, AzureHttpClient.RetryCategory.ServerError)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, AzureHttpClient.RetryCategory.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.GatewayTimeout, AzureHttpClient.RetryCategory.ServerError)]
+    internal void ClassifyStatus_AssignsExpectedCategory(HttpStatusCode status, AzureHttpClient.RetryCategory expected)
+    {
+        Assert.Equal(expected, AzureHttpClient.ClassifyStatus(status));
+    }
+
     private sealed class SequenceHandler : HttpMessageHandler
     {
         private readonly Queue<HttpResponseMessage> _responses;

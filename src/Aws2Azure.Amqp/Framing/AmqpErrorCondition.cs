@@ -322,3 +322,67 @@ internal static class AmqpErrorClassifier
         return AmqpErrorKind.Unknown;
     }
 }
+
+/// <summary>
+/// Predicates over <see cref="AmqpErrorKind"/> that callers use to
+/// pick a recovery strategy without re-encoding the
+/// transient/throttled/fatal taxonomy in every call site. Centralising
+/// the predicates here keeps the retry semantics consistent across the
+/// AMQP connection layer, the SQS module's exception mapper, and any
+/// future resilience helper (HTTP retry classifier, circuit breaker).
+/// </summary>
+internal static class AmqpErrorKindExtensions
+{
+    /// <summary>
+    /// True for <see cref="AmqpErrorKind.Transient"/> and
+    /// <see cref="AmqpErrorKind.Throttled"/> — the only kinds that are
+    /// safe to retry without first re-authenticating, re-acquiring a
+    /// lock, or following a redirect. Throttled retries should still
+    /// honour the broker's back-off hint where present.
+    /// </summary>
+    public static bool IsRetryable(this AmqpErrorKind kind) =>
+        kind is AmqpErrorKind.Transient or AmqpErrorKind.Throttled;
+
+    /// <summary>
+    /// True for <see cref="AmqpErrorKind.Throttled"/>; callers can use
+    /// this to switch on a longer baseline back-off and to look for a
+    /// Retry-After-style hint in the error info map.
+    /// </summary>
+    public static bool IsThrottled(this AmqpErrorKind kind) =>
+        kind == AmqpErrorKind.Throttled;
+
+    /// <summary>
+    /// True for <see cref="AmqpErrorKind.Auth"/>. The caller should
+    /// drop the cached SAS / OAuth token and acquire a fresh one before
+    /// retrying.
+    /// </summary>
+    public static bool IsAuth(this AmqpErrorKind kind) =>
+        kind == AmqpErrorKind.Auth;
+
+    /// <summary>
+    /// True for <see cref="AmqpErrorKind.LockLost"/>. The caller must
+    /// abandon the current message/session lock and re-receive before
+    /// retrying — a plain retry would just be rejected again.
+    /// </summary>
+    public static bool RequiresLockRenewal(this AmqpErrorKind kind) =>
+        kind == AmqpErrorKind.LockLost;
+
+    /// <summary>
+    /// True for <see cref="AmqpErrorKind.Redirect"/>. The caller should
+    /// follow the address in the error info map.
+    /// </summary>
+    public static bool IsRedirect(this AmqpErrorKind kind) =>
+        kind == AmqpErrorKind.Redirect;
+
+    /// <summary>
+    /// True for kinds that must not be retried with the same input
+    /// (<see cref="AmqpErrorKind.ClientFatal"/>,
+    /// <see cref="AmqpErrorKind.ServerFatal"/>) and for
+    /// <see cref="AmqpErrorKind.Unknown"/> (closed-registry rule:
+    /// surface and review). Kinds with a recovery action of their own
+    /// (Auth, LockLost, Redirect) are not "fatal" in this sense — the
+    /// caller is expected to take that action and then retry.
+    /// </summary>
+    public static bool IsFatal(this AmqpErrorKind kind) =>
+        kind is AmqpErrorKind.ClientFatal or AmqpErrorKind.ServerFatal or AmqpErrorKind.Unknown;
+}
