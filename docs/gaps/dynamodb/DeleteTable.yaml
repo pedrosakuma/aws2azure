@@ -8,7 +8,7 @@ sub_features:
 behavior_differences:
   - "DynamoDB DeleteTable is asynchronous (returns DELETING). The proxy returns the same DELETING status for SDK parity even though the Cosmos delete is synchronous."
   - "On a non-existent table the proxy returns ResourceNotFoundException."
-  - "Tested against scripted Cosmos handlers; not yet exercised against real Azure."
+  - "Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DeleteTable.html
   - https://learn.microsoft.com/rest/api/cosmos-db/delete-a-collection

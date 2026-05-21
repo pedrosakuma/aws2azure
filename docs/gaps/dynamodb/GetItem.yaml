@@ -25,6 +25,6 @@ behavior_differences:
   - "Key values containing `/`, `\\`, `?`, `#`, empty strings, or values longer than 255 chars are rejected with ValidationException."
   - "ConsistentRead effectiveness is account-dependent; document divergence per deployment."
   - "Cosmos 429 on metadata read surfaces as ProvisionedThroughputExceededException (not a fake ResourceNotFoundException)."
-  - "Only validated against scripted Cosmos REST + emulator; not yet exercised against real Azure Cosmos."
+  - "Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_GetItem.html

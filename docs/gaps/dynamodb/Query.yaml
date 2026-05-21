@@ -43,7 +43,7 @@ behavior_differences:
   - "Sort-key ordering is the lexical order of the Cosmos document id (which is the formatted RANGE scalar string). Numeric sort keys are therefore not numerically ordered — zero-pad them or use a string sort key if order matters."
   - "Every Query is partition-scoped — there is no cross-partition fan-out — matching DynamoDB's single-partition guarantee."
   - "Cosmos 429 (throttled) is surfaced as DynamoDB ProvisionedThroughputExceededException."
-  - "Only validated against scripted Cosmos REST fakes; not yet exercised against real Azure Cosmos."
+  - "Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Query.html
 

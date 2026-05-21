@@ -24,6 +24,6 @@ behavior_differences:
   - "Missing container (table deleted mid-op) is distinguished from missing item via Cosmos `x-ms-substatus: 1003` and surfaces as ResourceNotFoundException; missing items remain idempotent successes."
   - "Key values containing `/`, `\\`, `?`, `#`, empty strings, or values longer than 255 chars are rejected with ValidationException."
   - "Cosmos 429 surfaced as DynamoDB ProvisionedThroughputExceededException — including 429 on metadata read."
-  - "Only validated against scripted Cosmos REST + emulator; not yet exercised against real Azure Cosmos."
+  - "Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DeleteItem.html

@@ -26,6 +26,6 @@ behavior_differences:
   - "Sentinel id `__aws2azure_table_meta__` is reserved for the table-metadata sidecar and rejected at the API surface."
   - "Key values containing `/`, `\\`, `?`, `#`, empty strings, or values longer than 255 chars are rejected with ValidationException pending an encoding scheme."
   - "Cosmos 429 (throttled) is surfaced to clients as DynamoDB ProvisionedThroughputExceededException — including 429 on the sidecar metadata read."
-  - "Only validated against scripted Cosmos REST + emulator; not yet exercised against real Azure Cosmos."
+  - "Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_PutItem.html

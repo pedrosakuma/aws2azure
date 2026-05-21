@@ -49,10 +49,10 @@ public class ProxyHostInProcessTests
     public async Task StubModule_Returns501()
     {
         var client = _fx.CreateClient();
-        // DynamoDB/Kinesis/SNS remain stubbed; S3 and SQS are real modules
-        // as of Phase-1 slice 1 and Phase-2 slice 0 respectively.
+        // Kinesis/SNS remain stubbed; S3, SQS and DynamoDB are real modules
+        // as of Phase-1 slice 1, Phase-2 slice 0 and Phase-3 slice 0.
         var request = new HttpRequestMessage(HttpMethod.Get, "/");
-        request.Headers.Host = "dynamodb.proxy.localtest.me";
+        request.Headers.Host = "kinesis.proxy.localtest.me";
         var response = await client.SendAsync(request);
         Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode);
     }

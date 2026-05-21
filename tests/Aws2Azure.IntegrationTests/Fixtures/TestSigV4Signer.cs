@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Aws2Azure.Core.SigV4;
 
-namespace Aws2Azure.IntegrationTests.S3;
+namespace Aws2Azure.IntegrationTests.Fixtures;
 
 /// <summary>
 /// Minimal SigV4 signer used by S3 integration tests. Mirrors what boto3 /
@@ -20,7 +20,8 @@ internal static class TestSigV4Signer
         string secret,
         string region = "us-east-1",
         string service = "s3",
-        DateTimeOffset? now = null)
+        DateTimeOffset? now = null,
+        IReadOnlyList<string>? extraSignedHeaders = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (request.RequestUri is null)
@@ -47,8 +48,37 @@ internal static class TestSigV4Signer
             new(SigV4Constants.AmzContentSha256Header, payloadHash),
         };
 
-        var signedHeaders = new[] { "host", SigV4Constants.AmzContentSha256Header, SigV4Constants.AmzDateHeader };
-        Array.Sort(signedHeaders, StringComparer.Ordinal);
+        var signedSet = new SortedSet<string>(StringComparer.Ordinal)
+        {
+            "host",
+            SigV4Constants.AmzContentSha256Header,
+            SigV4Constants.AmzDateHeader,
+        };
+        if (extraSignedHeaders is not null)
+        {
+            foreach (var name in extraSignedHeaders)
+            {
+                var lower = name.ToLowerInvariant();
+                if (!signedSet.Add(lower)) continue;
+                // Pull the value off the request (header or content header).
+                string? value = null;
+                if (request.Headers.TryGetValues(lower, out var hv))
+                {
+                    value = string.Join(",", hv);
+                }
+                else if (request.Content?.Headers.TryGetValues(lower, out var chv) == true)
+                {
+                    value = string.Join(",", chv);
+                }
+                if (value is null)
+                {
+                    throw new InvalidOperationException(
+                        $"TestSigV4Signer: extra signed header '{lower}' is not present on the request.");
+                }
+                headers.Add(new KeyValuePair<string, string>(lower, value));
+            }
+        }
+        var signedHeaders = signedSet.ToArray();
 
         var canonical = CanonicalRequest.Build(
             request.Method.Method,

@@ -86,7 +86,7 @@
 - ProvisionedThroughput / BillingMode values are accepted but not enforced; throughput is governed by the Cosmos account/database, not per-table.
 - TableStatus is always returned as ACTIVE since Cosmos container creation is synchronous.
 - On metadata-sidecar persist failure the container is best-effort deleted to avoid orphan containers.
-- Tested against scripted Cosmos handlers in unit tests; not yet exercised against real Azure Cosmos DB.
+- Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB.
 
 ### References
 
@@ -115,7 +115,7 @@
 - Missing container (table deleted mid-op) is distinguished from missing item via Cosmos `x-ms-substatus: 1003` and surfaces as ResourceNotFoundException; missing items remain idempotent successes.
 - Key values containing `/`, `\`, `?`, `#`, empty strings, or values longer than 255 chars are rejected with ValidationException.
 - Cosmos 429 surfaced as DynamoDB ProvisionedThroughputExceededException — including 429 on metadata read.
-- Only validated against scripted Cosmos REST + emulator; not yet exercised against real Azure Cosmos.
+- Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB.
 
 ### References
 
@@ -137,7 +137,7 @@
 
 - DynamoDB DeleteTable is asynchronous (returns DELETING). The proxy returns the same DELETING status for SDK parity even though the Cosmos delete is synchronous.
 - On a non-existent table the proxy returns ResourceNotFoundException.
-- Tested against scripted Cosmos handlers; not yet exercised against real Azure.
+- Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB.
 
 ### References
 
@@ -214,7 +214,7 @@
 - Key values containing `/`, `\`, `?`, `#`, empty strings, or values longer than 255 chars are rejected with ValidationException.
 - ConsistentRead effectiveness is account-dependent; document divergence per deployment.
 - Cosmos 429 on metadata read surfaces as ProvisionedThroughputExceededException (not a fake ResourceNotFoundException).
-- Only validated against scripted Cosmos REST + emulator; not yet exercised against real Azure Cosmos.
+- Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB.
 
 ### References
 
@@ -286,7 +286,7 @@
 - Sentinel id `__aws2azure_table_meta__` is reserved for the table-metadata sidecar and rejected at the API surface.
 - Key values containing `/`, `\`, `?`, `#`, empty strings, or values longer than 255 chars are rejected with ValidationException pending an encoding scheme.
 - Cosmos 429 (throttled) is surfaced to clients as DynamoDB ProvisionedThroughputExceededException — including 429 on the sidecar metadata read.
-- Only validated against scripted Cosmos REST + emulator; not yet exercised against real Azure Cosmos.
+- Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB.
 
 ### References
 
@@ -320,7 +320,7 @@
 - Sort-key ordering is the lexical order of the Cosmos document id (which is the formatted RANGE scalar string). Numeric sort keys are therefore not numerically ordered — zero-pad them or use a string sort key if order matters.
 - Every Query is partition-scoped — there is no cross-partition fan-out — matching DynamoDB's single-partition guarantee.
 - Cosmos 429 (throttled) is surfaced as DynamoDB ProvisionedThroughputExceededException.
-- Only validated against scripted Cosmos REST fakes; not yet exercised against real Azure Cosmos.
+- Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB.
 
 ### References
 
@@ -353,7 +353,7 @@
 - Scan order is **not** stable. Cosmos cross-partition query does not guarantee a deterministic walk across partitions; DynamoDB Scan is also unordered, but specific item ordering across pages may differ.
 - Cosmos 429 (throttled) is surfaced as DynamoDB ProvisionedThroughputExceededException — expect this often on large scans.
 - RU cost is significant for cross-partition scans; the proxy does no rate-limiting beyond what Cosmos imposes.
-- Only validated against scripted Cosmos REST fakes; not yet exercised against real Azure Cosmos.
+- Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB.
 
 ### References
 
@@ -473,7 +473,7 @@
 - Numeric arithmetic is performed with System.Decimal (28-29 significant digits) rather than DynamoDB's 38-digit precision. Operands exceeding the proxy's precision are rejected up front with ValidationException to avoid silent rounding; overflow also throws ValidationException.
 - Key attributes referenced by the request are always reinforced into the resulting item — a REMOVE targeting the partition or sort key never deletes them in the stored doc.
 - Cosmos 429 (throttled) is surfaced to clients as DynamoDB ProvisionedThroughputExceededException.
-- Only validated against scripted Cosmos REST in unit tests; not yet exercised against real Azure Cosmos.
+- Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB.
 
 ### References
 

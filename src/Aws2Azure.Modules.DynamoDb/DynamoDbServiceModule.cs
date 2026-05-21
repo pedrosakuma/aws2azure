@@ -51,6 +51,9 @@ public sealed class DynamoDbServiceModule : IServiceModule
     public string ServiceName => "dynamodb";
     public bool RequiresSigV4 => true;
     public bool BuffersRequestBodyForSigV4 => true;
+    // Dispatch is keyed on X-Amz-Target — refuse signatures that don't cover it
+    // so the operation can't be tampered with after-signature.
+    public IReadOnlyList<string> RequiredSignedHeaders { get; } = new[] { "x-amz-target" };
     public AwsErrorFormat ErrorFormat => AwsErrorFormat.Json;
     public CapabilityMatrix Capabilities { get; }
 

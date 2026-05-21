@@ -43,8 +43,41 @@ builder.Services.AddSingleton(sigV4Validator);
 
 // Single shared Azure HTTP client per process — pooled SocketsHttpHandler
 // inside. Disposed on host shutdown via the DI container.
-var azureHttpClient = new AzureHttpClient();
+//
+// Test-only knob: AWS2AZURE_INSECURE_TLS=1 disables remote-cert validation on
+// outbound Azure calls. Required by the Cosmos DB Linux emulator (vNext
+// preview), which serves its 8081 endpoint with a self-signed certificate.
+// MUST stay off in production — the value is read once at host start and
+// logged at warning level so accidental enablement is obvious.
+var azureHttpClient = BuildAzureHttpClient();
 builder.Services.AddSingleton(azureHttpClient);
+
+static AzureHttpClient BuildAzureHttpClient()
+{
+    if (string.Equals(
+            Environment.GetEnvironmentVariable("AWS2AZURE_INSECURE_TLS"),
+            "1",
+            StringComparison.Ordinal))
+    {
+        Console.Error.WriteLine(
+            "WARNING: AWS2AZURE_INSECURE_TLS=1 — outbound TLS validation is DISABLED. " +
+            "This is for local emulator testing only; do not use in production.");
+        var insecure = new System.Net.Http.SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+            PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1),
+            MaxConnectionsPerServer = 64,
+            AutomaticDecompression = System.Net.DecompressionMethods.None,
+            EnableMultipleHttp2Connections = true,
+            SslOptions = new System.Net.Security.SslClientAuthenticationOptions
+            {
+                RemoteCertificateValidationCallback = (_, _, _, _) => true,
+            },
+        };
+        return new AzureHttpClient(insecure, ownsHandler: true);
+    }
+    return new AzureHttpClient();
+}
 
 // Service Bus AMQP pool — shared across all credential entries. Lazy:
 // connections / receivers materialise on first AMQP queue use, so a

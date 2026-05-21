@@ -42,7 +42,7 @@ behavior_differences:
   - "Scan order is **not** stable. Cosmos cross-partition query does not guarantee a deterministic walk across partitions; DynamoDB Scan is also unordered, but specific item ordering across pages may differ."
   - "Cosmos 429 (throttled) is surfaced as DynamoDB ProvisionedThroughputExceededException — expect this often on large scans."
   - "RU cost is significant for cross-partition scans; the proxy does no rate-limiting beyond what Cosmos imposes."
-  - "Only validated against scripted Cosmos REST fakes; not yet exercised against real Azure Cosmos."
+  - "Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Scan.html
 
