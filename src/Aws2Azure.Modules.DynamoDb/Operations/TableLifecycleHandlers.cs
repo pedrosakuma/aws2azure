@@ -57,6 +57,25 @@ internal static class TableLifecycleHandlers
                 "TableName must match [a-zA-Z0-9_.-]{3,255}.");
         }
 
+        if (HasNonEmptyArray(req.GlobalSecondaryIndexes))
+        {
+            return WriteErrorAsync(ctx, 400, "ValidationException",
+                "GlobalSecondaryIndexes are not supported by the aws2azure proxy.");
+        }
+        if (HasNonEmptyArray(req.LocalSecondaryIndexes))
+        {
+            return WriteErrorAsync(ctx, 400, "ValidationException",
+                "LocalSecondaryIndexes are not supported by the aws2azure proxy.");
+        }
+
+        if (!string.IsNullOrEmpty(req.BillingMode)
+            && req.BillingMode != ProvisionedBillingMode
+            && req.BillingMode != PayPerRequestBillingMode)
+        {
+            return WriteErrorAsync(ctx, 400, "ValidationException",
+                $"BillingMode must be {ProvisionedBillingMode} or {PayPerRequestBillingMode}.");
+        }
+
         if (req.KeySchema is null || req.KeySchema.Count is < 1 or > 2)
         {
             return WriteErrorAsync(ctx, 400, "ValidationException",
@@ -67,6 +86,11 @@ internal static class TableLifecycleHandlers
         {
             return WriteErrorAsync(ctx, 400, "ValidationException",
                 "AttributeDefinitions is required.");
+        }
+
+        if (!ValidateAttributeDefinitions(req.AttributeDefinitions, out var attrError))
+        {
+            return WriteErrorAsync(ctx, 400, "ValidationException", attrError);
         }
 
         if (!ValidateKeyConsistency(req.KeySchema, req.AttributeDefinitions, out var keyError))
@@ -276,18 +300,47 @@ internal static class TableLifecycleHandlers
         }
 
         var dbLink = "dbs/" + cosmos.DatabaseName;
-        using var listResp = await cosmos.SendAsync(
-            HttpMethod.Get, "colls", dbLink, "/" + dbLink + "/colls",
-            content: null, extraHeaders: null, ct).ConfigureAwait(false);
+        var names = new List<string>();
+        string? continuation = null;
 
-        if (!listResp.IsSuccessStatusCode)
+        // Cosmos read-feed paginates via x-ms-continuation; loop until the
+        // feed is exhausted so DynamoDB's ListTables sees a complete view
+        // before we apply ExclusiveStartTableName / Limit slicing.
+        do
         {
-            await WriteCosmosErrorAsync(ctx, listResp, ct).ConfigureAwait(false);
-            return;
-        }
+            IReadOnlyList<KeyValuePair<string, string>>? headers = null;
+            if (!string.IsNullOrEmpty(continuation))
+            {
+                headers = new[]
+                {
+                    new KeyValuePair<string, string>("x-ms-continuation", continuation),
+                };
+            }
 
-        var stream = await listResp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-        var names = ParseContainerNames(stream);
+            using var listResp = await cosmos.SendAsync(
+                HttpMethod.Get, "colls", dbLink, "/" + dbLink + "/colls",
+                content: null, headers, ct).ConfigureAwait(false);
+
+            if (!listResp.IsSuccessStatusCode)
+            {
+                await WriteCosmosErrorAsync(ctx, listResp, ct).ConfigureAwait(false);
+                return;
+            }
+
+            var stream = await listResp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            ParseContainerNamesInto(stream, names);
+
+            continuation = null;
+            if (listResp.Headers.TryGetValues("x-ms-continuation", out var values))
+            {
+                foreach (var v in values)
+                {
+                    if (!string.IsNullOrEmpty(v)) { continuation = v; break; }
+                }
+            }
+        }
+        while (!string.IsNullOrEmpty(continuation));
+
         names.Sort(StringComparer.Ordinal);
 
         // ExclusiveStartTableName cursor: skip names <= start.
@@ -328,34 +381,76 @@ internal static class TableLifecycleHandlers
 
     // ----- helpers ---------------------------------------------------
 
+    private static bool ValidateAttributeDefinitions(
+        List<AttributeDefinitionDto> attrs, out string error)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var a in attrs)
+        {
+            if (string.IsNullOrEmpty(a.AttributeName))
+            {
+                error = "AttributeDefinitions entries must include AttributeName.";
+                return false;
+            }
+            if (a.AttributeType is not ("S" or "N" or "B"))
+            {
+                error = $"AttributeDefinitions[{a.AttributeName}].AttributeType must be one of S, N, B.";
+                return false;
+            }
+            if (!seen.Add(a.AttributeName))
+            {
+                error = $"AttributeDefinitions contains duplicate AttributeName '{a.AttributeName}'.";
+                return false;
+            }
+        }
+        error = string.Empty;
+        return true;
+    }
+
     private static bool ValidateKeyConsistency(
         List<KeySchemaElementDto> keys,
         List<AttributeDefinitionDto> attrs,
         out string error)
     {
-        var hashCount = 0;
-        var rangeCount = 0;
-        foreach (var k in keys)
+        // Order matters: KeySchema[0] must be HASH, KeySchema[1] (if any) must be RANGE.
+        for (int i = 0; i < keys.Count; i++)
         {
+            var k = keys[i];
             if (string.IsNullOrEmpty(k.AttributeName) || string.IsNullOrEmpty(k.KeyType))
             {
                 error = "KeySchema entries must include AttributeName and KeyType.";
                 return false;
             }
-            if (string.Equals(k.KeyType, "HASH", StringComparison.Ordinal)) hashCount++;
-            else if (string.Equals(k.KeyType, "RANGE", StringComparison.Ordinal)) rangeCount++;
-            else { error = $"Unknown KeyType '{k.KeyType}'. Expected HASH or RANGE."; return false; }
+            var expected = i == 0 ? "HASH" : "RANGE";
+            if (!string.Equals(k.KeyType, expected, StringComparison.Ordinal))
+            {
+                error = i == 0
+                    ? "KeySchema[0].KeyType must be HASH."
+                    : "KeySchema[1].KeyType must be RANGE.";
+                return false;
+            }
+        }
 
+        if (keys.Count == 2
+            && string.Equals(keys[0].AttributeName, keys[1].AttributeName, StringComparison.Ordinal))
+        {
+            error = "KeySchema HASH and RANGE attributes must differ.";
+            return false;
+        }
+
+        // Every key must reference a declared attribute, and — because
+        // indexes are not yet supported — every declared attribute must
+        // be used by the key schema (no orphan definitions).
+        var keyNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var k in keys) keyNames.Add(k.AttributeName!);
+
+        foreach (var k in keys)
+        {
             bool found = false;
             foreach (var a in attrs)
             {
                 if (string.Equals(a.AttributeName, k.AttributeName, StringComparison.Ordinal))
                 {
-                    if (a.AttributeType is not ("S" or "N" or "B"))
-                    {
-                        error = $"AttributeType for {a.AttributeName} must be S, N, or B for key attributes.";
-                        return false;
-                    }
                     found = true;
                     break;
                 }
@@ -367,19 +462,24 @@ internal static class TableLifecycleHandlers
             }
         }
 
-        if (hashCount != 1)
+        foreach (var a in attrs)
         {
-            error = "KeySchema must contain exactly one HASH key.";
-            return false;
-        }
-        if (rangeCount > 1)
-        {
-            error = "KeySchema may contain at most one RANGE key.";
-            return false;
+            if (!keyNames.Contains(a.AttributeName!))
+            {
+                error = $"AttributeDefinition '{a.AttributeName}' is not referenced by KeySchema "
+                        + "(secondary indexes are not yet supported, so extra definitions are not allowed).";
+                return false;
+            }
         }
 
         error = string.Empty;
         return true;
+    }
+
+    private static bool HasNonEmptyArray(JsonElement? value)
+    {
+        if (value is not { } v) return false;
+        return v.ValueKind == JsonValueKind.Array && v.GetArrayLength() > 0;
     }
 
     /// <summary>
@@ -475,11 +575,17 @@ internal static class TableLifecycleHandlers
 
     internal static List<string> ParseContainerNames(Stream cosmosListBody)
     {
-        // Cosmos returns: { "_rid":"...", "DocumentCollections":[ {"id":"name", ...}, ... ], "_count":N }
         var names = new List<string>();
+        ParseContainerNamesInto(cosmosListBody, names);
+        return names;
+    }
+
+    internal static void ParseContainerNamesInto(Stream cosmosListBody, List<string> names)
+    {
+        // Cosmos returns: { "_rid":"...", "DocumentCollections":[ {"id":"name", ...}, ... ], "_count":N }
         using var doc = JsonDocument.Parse(cosmosListBody);
         if (!doc.RootElement.TryGetProperty("DocumentCollections", out var arr) || arr.ValueKind != JsonValueKind.Array)
-            return names;
+            return;
         foreach (var item in arr.EnumerateArray())
         {
             if (item.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.String)
@@ -488,7 +594,6 @@ internal static class TableLifecycleHandlers
                 if (!string.IsNullOrEmpty(id)) names.Add(id);
             }
         }
-        return names;
     }
 
     private static async Task WriteCosmosErrorAsync(HttpContext ctx, HttpResponseMessage cosmosResp, CancellationToken ct)

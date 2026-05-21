@@ -1,13 +1,15 @@
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Aws2Azure.Modules.DynamoDb.Operations;
 
 /// <summary>
-/// DynamoDB CreateTable request body. Only the fields actually mapped
-/// to Cosmos are modeled; unmapped fields (ProvisionedThroughput,
-/// BillingMode, Tags, SSESpecification…) are accepted but ignored —
-/// see the matching gap doc for divergence notes.
+/// DynamoDB CreateTable request body. Index/throughput/SSE fields are
+/// modeled as raw <see cref="JsonElement"/> so the handler can detect
+/// when a caller asks for an unsupported feature and reject the call
+/// instead of silently dropping it — see the matching gap doc for the
+/// divergence list.
 /// </summary>
 internal sealed class CreateTableRequest
 {
@@ -15,6 +17,8 @@ internal sealed class CreateTableRequest
     [JsonPropertyName("AttributeDefinitions")] public List<AttributeDefinitionDto>? AttributeDefinitions { get; set; }
     [JsonPropertyName("KeySchema")] public List<KeySchemaElementDto>? KeySchema { get; set; }
     [JsonPropertyName("BillingMode")] public string? BillingMode { get; set; }
+    [JsonPropertyName("GlobalSecondaryIndexes")] public JsonElement? GlobalSecondaryIndexes { get; set; }
+    [JsonPropertyName("LocalSecondaryIndexes")] public JsonElement? LocalSecondaryIndexes { get; set; }
 }
 
 internal sealed class AttributeDefinitionDto

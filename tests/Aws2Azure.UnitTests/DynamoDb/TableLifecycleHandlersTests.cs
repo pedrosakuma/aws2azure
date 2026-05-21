@@ -442,6 +442,192 @@ public class TableLifecycleHandlersTests
         Assert.Equal("a", got[0]);
     }
 
+    [Fact]
+    public async Task CreateTable_rejects_global_secondary_indexes()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+        var cosmos = BuildClient(handler);
+
+        var reqBody = "{\"TableName\":\"orders\",\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"}],"
+                      + "\"AttributeDefinitions\":[{\"AttributeName\":\"pk\",\"AttributeType\":\"S\"}],"
+                      + "\"GlobalSecondaryIndexes\":[{\"IndexName\":\"gsi1\"}]}";
+        await TableLifecycleHandlers.HandleCreateTableAsync(
+            ctx, Encoding.UTF8.GetBytes(reqBody), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        var resp = ReadResponse(body);
+        Assert.Contains("ValidationException", resp);
+        Assert.Contains("GlobalSecondaryIndexes", resp);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task CreateTable_rejects_local_secondary_indexes()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+        var cosmos = BuildClient(handler);
+
+        var reqBody = "{\"TableName\":\"orders\",\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"}],"
+                      + "\"AttributeDefinitions\":[{\"AttributeName\":\"pk\",\"AttributeType\":\"S\"}],"
+                      + "\"LocalSecondaryIndexes\":[{\"IndexName\":\"lsi1\"}]}";
+        await TableLifecycleHandlers.HandleCreateTableAsync(
+            ctx, Encoding.UTF8.GetBytes(reqBody), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("LocalSecondaryIndexes", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task CreateTable_accepts_empty_index_arrays()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                new HttpResponseMessage(HttpStatusCode.Created) { Content = new StringContent("{\"id\":\"orders\"}") },
+                new HttpResponseMessage(HttpStatusCode.Created) { Content = new StringContent("{}") },
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var reqBody = "{\"TableName\":\"orders\",\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"}],"
+                      + "\"AttributeDefinitions\":[{\"AttributeName\":\"pk\",\"AttributeType\":\"S\"}],"
+                      + "\"GlobalSecondaryIndexes\":[],\"LocalSecondaryIndexes\":[]}";
+        await TableLifecycleHandlers.HandleCreateTableAsync(
+            ctx, Encoding.UTF8.GetBytes(reqBody), cosmos, CancellationToken.None);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateTable_rejects_invalid_billing_mode()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+        var cosmos = BuildClient(handler);
+
+        var reqBody = "{\"TableName\":\"orders\",\"BillingMode\":\"SOMETHING\","
+                      + "\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"}],"
+                      + "\"AttributeDefinitions\":[{\"AttributeName\":\"pk\",\"AttributeType\":\"S\"}]}";
+        await TableLifecycleHandlers.HandleCreateTableAsync(
+            ctx, Encoding.UTF8.GetBytes(reqBody), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("BillingMode", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task CreateTable_rejects_range_before_hash()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+        var cosmos = BuildClient(handler);
+
+        var reqBody = "{\"TableName\":\"orders\","
+                      + "\"KeySchema\":[{\"AttributeName\":\"sk\",\"KeyType\":\"RANGE\"},{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"}],"
+                      + "\"AttributeDefinitions\":[{\"AttributeName\":\"pk\",\"AttributeType\":\"S\"},{\"AttributeName\":\"sk\",\"AttributeType\":\"S\"}]}";
+        await TableLifecycleHandlers.HandleCreateTableAsync(
+            ctx, Encoding.UTF8.GetBytes(reqBody), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("HASH", ReadResponse(body));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task CreateTable_rejects_duplicate_key_attribute()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+        var cosmos = BuildClient(handler);
+
+        var reqBody = "{\"TableName\":\"orders\","
+                      + "\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"},{\"AttributeName\":\"pk\",\"KeyType\":\"RANGE\"}],"
+                      + "\"AttributeDefinitions\":[{\"AttributeName\":\"pk\",\"AttributeType\":\"S\"}]}";
+        await TableLifecycleHandlers.HandleCreateTableAsync(
+            ctx, Encoding.UTF8.GetBytes(reqBody), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("differ", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task CreateTable_rejects_unused_attribute_definition()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+        var cosmos = BuildClient(handler);
+
+        var reqBody = "{\"TableName\":\"orders\","
+                      + "\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"}],"
+                      + "\"AttributeDefinitions\":["
+                      + "{\"AttributeName\":\"pk\",\"AttributeType\":\"S\"},"
+                      + "{\"AttributeName\":\"orphan\",\"AttributeType\":\"S\"}]}";
+        await TableLifecycleHandlers.HandleCreateTableAsync(
+            ctx, Encoding.UTF8.GetBytes(reqBody), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("orphan", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task CreateTable_rejects_duplicate_attribute_definition()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+        var cosmos = BuildClient(handler);
+
+        var reqBody = "{\"TableName\":\"orders\","
+                      + "\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"}],"
+                      + "\"AttributeDefinitions\":["
+                      + "{\"AttributeName\":\"pk\",\"AttributeType\":\"S\"},"
+                      + "{\"AttributeName\":\"pk\",\"AttributeType\":\"N\"}]}";
+        await TableLifecycleHandlers.HandleCreateTableAsync(
+            ctx, Encoding.UTF8.GetBytes(reqBody), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("duplicate", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task ListTables_follows_cosmos_continuation_token()
+    {
+        var (ctx, body) = NewCtx();
+        var page1 = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"DocumentCollections\":[{\"id\":\"users\"},{\"id\":\"orders\"}],\"_count\":2}",
+                Encoding.UTF8, "application/json"),
+        };
+        page1.Headers.TryAddWithoutValidation("x-ms-continuation", "page2token");
+        var page2 = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"DocumentCollections\":[{\"id\":\"audit\"},{\"id\":\"events\"}],\"_count\":2}",
+                Encoding.UTF8, "application/json"),
+        };
+
+        var handler = new ScriptedHandler { Responses = { page1, page2 } };
+        var cosmos = BuildClient(handler);
+
+        await TableLifecycleHandlers.HandleListTablesAsync(
+            ctx, Encoding.UTF8.GetBytes("{\"Limit\":100}"), cosmos, CancellationToken.None);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var doc = JsonDocument.Parse(ReadResponse(body));
+        var names = doc.RootElement.GetProperty("TableNames");
+        Assert.Equal(4, names.GetArrayLength());
+        Assert.Equal("audit", names[0].GetString());
+        Assert.Equal("users", names[3].GetString());
+
+        // Second request must carry the continuation header from the first.
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.False(handler.Requests[0].Headers.ContainsKey("x-ms-continuation"));
+        Assert.Equal("page2token", handler.Requests[1].Headers["x-ms-continuation"]);
+    }
+
+
     private sealed class ScriptedHandler : HttpMessageHandler
     {
         public List<HttpResponseMessage> Responses { get; } = new();
