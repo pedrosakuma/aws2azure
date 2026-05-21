@@ -178,6 +178,34 @@ public sealed class AmqpConnectionTests
         await conn.DisposeAsync();
     }
 
+    [Fact]
+    public async Task Peer_silence_past_twice_local_idle_timeout_aborts_connection()
+    {
+        var (clientTransport, serverTransport) = PipePairTransport.CreatePair();
+        await using var server = serverTransport;
+        // Local idle-time-out 200 ms ⇒ silence deadline ~400 ms.
+        var conn = new AmqpConnection(clientTransport, DefaultSettings(TimeSpan.FromMilliseconds(200)));
+
+        var serverTask = Task.Run(async () =>
+        {
+            using (var _ = await AmqpFrameIO.ReadFrameAsync(server)) { }
+            // Server advertises no idle-time-out so client won't send heartbeats either,
+            // then stays silent.
+            await SendPerfAsync(server, new AmqpOpen { ContainerId = "srv" }, AmqpOpen.Write);
+        });
+
+        await conn.OpenAsync();
+        await serverTask;
+
+        // Wait past the 400 ms deadline + tick (50ms floor) + scheduling slack.
+        await Task.Delay(TimeSpan.FromMilliseconds(900));
+
+        var ex = await Assert.ThrowsAsync<AmqpConnectionException>(() => conn.CloseAsync());
+        Assert.Equal(AmqpErrorKind.Transient, ex.Kind);
+        Assert.Contains("idle", ex.Message, StringComparison.OrdinalIgnoreCase);
+        await conn.DisposeAsync();
+    }
+
     // -- helpers ----------------------------------------------------------
 
     private delegate void PerfWriter<T>(Span<byte> destination, in T value, out int written);

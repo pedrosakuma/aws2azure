@@ -110,7 +110,12 @@ internal sealed class AmqpConnection : IAsyncDisposable
             Volatile.Write(ref _lastReceivedTicks, Environment.TickCount64);
             Interlocked.Exchange(ref _state, StateOpened);
             _readLoopTask = Task.Run(() => ReadLoopAsync(_shutdownCts.Token));
-            if (EffectiveOutgoingIdleTimeout > TimeSpan.Zero)
+            // §2.4.5: start the maintenance loop whenever either side has
+            // a non-zero idle-time-out — we may be sending heartbeats,
+            // detecting peer silence, or both.
+            var sendHeartbeats = EffectiveOutgoingIdleTimeout > TimeSpan.Zero;
+            var detectPeerSilence = _settings.IdleTimeout > TimeSpan.Zero;
+            if (sendHeartbeats || detectPeerSilence)
                 _heartbeatTask = Task.Run(() => HeartbeatLoopAsync(_shutdownCts.Token));
         }
         catch
@@ -440,18 +445,72 @@ internal sealed class AmqpConnection : IAsyncDisposable
 
     private async Task HeartbeatLoopAsync(CancellationToken ct)
     {
-        // §2.4.5: send no later than the peer's idle-time-out. We aim at
-        // half to leave a safety margin.
-        var period = TimeSpan.FromMilliseconds(EffectiveOutgoingIdleTimeout.TotalMilliseconds / 2);
-        if (period <= TimeSpan.Zero) return;
+        // §2.4.5 — we have two responsibilities:
+        //   (a) send empty frames at half the peer's advertised idle-time-out
+        //       so the peer never declares us silent;
+        //   (b) close the connection if we receive nothing for twice our own
+        //       advertised idle-time-out (the AMQP spec's MUST clause).
+        // Either responsibility is independently disabled when the
+        // corresponding side advertised idle-time-out=0.
+        var heartbeatPeriodMs = EffectiveOutgoingIdleTimeout > TimeSpan.Zero
+            ? EffectiveOutgoingIdleTimeout.TotalMilliseconds / 2.0
+            : 0.0;
+        var incomingDeadlineMs = _settings.IdleTimeout > TimeSpan.Zero
+            ? _settings.IdleTimeout.TotalMilliseconds * 2.0
+            : 0.0;
+        if (heartbeatPeriodMs <= 0 && incomingDeadlineMs <= 0) return;
 
+        // Tick at the smaller of the two periods so we never miss either
+        // event by more than one tick. Floor at 50 ms so very small
+        // negotiated timeouts don't busy-loop.
+        double tickMs;
+        if (heartbeatPeriodMs > 0 && incomingDeadlineMs > 0)
+            tickMs = Math.Min(heartbeatPeriodMs, incomingDeadlineMs / 4.0);
+        else if (heartbeatPeriodMs > 0)
+            tickMs = heartbeatPeriodMs;
+        else
+            tickMs = incomingDeadlineMs / 4.0;
+        var tick = TimeSpan.FromMilliseconds(Math.Max(50.0, tickMs));
+
+        var lastHeartbeatSent = Environment.TickCount64;
         try
         {
             while (!ct.IsCancellationRequested)
             {
-                await Task.Delay(period, ct).ConfigureAwait(false);
+                await Task.Delay(tick, ct).ConfigureAwait(false);
                 if (Volatile.Read(ref _state) != StateOpened) return;
-                await WriteFrameLockedAsync(AmqpFrameType.Amqp, 0, ReadOnlyMemory<byte>.Empty, ct).ConfigureAwait(false);
+
+                // (b) Peer-silence detection — must run before sending so a
+                // single tick that finds the deadline crossed terminates us
+                // even if we've been quietly heartbeating.
+                if (incomingDeadlineMs > 0)
+                {
+                    var sinceLastReceived = Environment.TickCount64 - Volatile.Read(ref _lastReceivedTicks);
+                    if (sinceLastReceived > (long)incomingDeadlineMs)
+                    {
+                        // Surface as a transient error so retry layers above
+                        // can re-establish the connection. We do not send
+                        // close — the peer is presumed unresponsive and
+                        // adding write timeouts here would just hang.
+                        var ex = new AmqpConnectionException(
+                            $"Peer idle for {sinceLastReceived} ms (>= 2 * idle-time-out of {_settings.IdleTimeout.TotalMilliseconds} ms).",
+                            AmqpErrorKind.Transient);
+                        _peerCloseReceived.TrySetException(ex);
+                        try { _shutdownCts.Cancel(); } catch { }
+                        return;
+                    }
+                }
+
+                // (a) Heartbeat send — only when peer asked for one.
+                if (heartbeatPeriodMs > 0)
+                {
+                    var sinceLastHeartbeat = Environment.TickCount64 - lastHeartbeatSent;
+                    if (sinceLastHeartbeat >= (long)heartbeatPeriodMs)
+                    {
+                        await WriteFrameLockedAsync(AmqpFrameType.Amqp, 0, ReadOnlyMemory<byte>.Empty, ct).ConfigureAwait(false);
+                        lastHeartbeatSent = Environment.TickCount64;
+                    }
+                }
             }
         }
         catch (OperationCanceledException) { /* normal shutdown */ }
