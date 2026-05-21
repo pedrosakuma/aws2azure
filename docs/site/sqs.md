@@ -68,6 +68,7 @@
 - SB has no per-call visibility override on REST. The proxy validates and accepts the VisibilityTimeout value but SB always extends by the queue's LockDuration. Callers needing an arbitrary new visibility must Delete+Send or rely on SetQueueAttributes to change the queue-wide LockDuration.
 - VisibilityTimeout of 0 (which AWS uses to make a message immediately re-visible) is currently treated as a renewlock too — the message is not made re-visible. This divergence is tracked for Phase-2 NFR follow-up.
 - Verified against in-process fakes; emulator-backed end-to-end validation lands with the SbEmulatorFixture build-out (tracked in p2-sb-emulator-fixture).
+- AMQP transport (Phase 2.5): when a queue is configured with `transport: Amqp`, ChangeMessageVisibilityBatch routes to the AMQP path — each entry with VisibilityTimeout=0 abandons via the cached (session) receiver, restoring the SQS 'immediately re-visible' semantics on this path (closing the divergence above for AMQP queues). Positive VisibilityTimeout values RenewLock via the SB `$management` link (session-aware for v3 receipt handles); SB clamping is silent in the batch shape (the singular CMV emits the `Aws2Azure-VisibilityClamped` header but the batch response has no per-entry place to carry it).
 
 ### References
 
@@ -149,6 +150,7 @@
 - SB REST has no native batch-delete; the proxy fans out parallel DELETEs. A failing entry never aborts the batch — callers see per-entry results matching SQS semantics.
 - Expired-lock vs already-deleted ambiguity from DeleteMessage applies per entry (see DeleteMessage.yaml behavior_differences).
 - Verified against in-process fakes; emulator-backed end-to-end validation lands with the SbEmulatorFixture build-out (tracked in p2-sb-emulator-fixture).
+- AMQP transport (Phase 2.5): when a queue is configured with `transport: Amqp`, DeleteMessageBatch routes to the AMQP path — each entry decodes the v2/v3 AMQP receipt handle minted by AMQP ReceiveMessage, looks up the cached (session) receiver via the lock-token cache, and calls `ServiceBusReceiver.CompleteAsync`. FIFO-aware: entries with different session-ids fan out to their own cached session receivers in parallel. Per-entry failures (stale handle, queue mismatch, cache miss, transport error) are surfaced as BatchResultErrorEntry items just like the REST path.
 
 ### References
 

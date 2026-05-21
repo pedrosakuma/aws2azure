@@ -76,11 +76,13 @@ internal static class AmqpReceiveMessageHandlers
         CancellationToken ct) =>
         parsed.Operation switch
         {
-            SqsOperation.ReceiveMessage          => ReceiveMessageAsync(context, parsed, receivers, ct),
-            SqsOperation.DeleteMessage           => DeleteMessageAsync(context, parsed, receivers, ct),
-            SqsOperation.ChangeMessageVisibility => ChangeMessageVisibilityAsync(context, parsed, receivers, ct),
-            _                                    => WriteErrorAsync(context, parsed.Protocol,
-                                                       SqsErrorMapping.NotImplemented(parsed.Operation)),
+            SqsOperation.ReceiveMessage              => ReceiveMessageAsync(context, parsed, receivers, ct),
+            SqsOperation.DeleteMessage               => DeleteMessageAsync(context, parsed, receivers, ct),
+            SqsOperation.ChangeMessageVisibility     => ChangeMessageVisibilityAsync(context, parsed, receivers, ct),
+            SqsOperation.DeleteMessageBatch          => DeleteMessageBatchAsync(context, parsed, receivers, ct),
+            SqsOperation.ChangeMessageVisibilityBatch => ChangeMessageVisibilityBatchAsync(context, parsed, receivers, ct),
+            _                                        => WriteErrorAsync(context, parsed.Protocol,
+                                                           SqsErrorMapping.NotImplemented(parsed.Operation)),
         };
 
     // --- ReceiveMessage ------------------------------------------------
@@ -404,6 +406,293 @@ internal static class AmqpReceiveMessageHandlers
                     $"requested={visibility};granted={grantedSeconds}");
         }
         await SqsResponseWriter.WriteChangeMessageVisibilityAsync(context, parsed.Protocol).ConfigureAwait(false);
+    }
+
+    // --- DeleteMessageBatch / ChangeMessageVisibilityBatch -------------
+
+    /// <summary>
+    /// AMQP-flavoured DeleteMessageBatch. Mirrors the REST batch handler's
+    /// shape (parallel per-entry fan-out bounded by
+    /// <see cref="BatchAdminHandlers.MaxBatchConcurrency"/>, ID-ordered
+    /// Successful/Failed aggregation) but each entry takes the same
+    /// AMQP-flavoured settle path as <see cref="DeleteMessageAsync"/>:
+    /// decode the AMQP receipt handle, look up the cached
+    /// (session) receiver via
+    /// <see cref="TryAcquireSettleReceiverAsync"/>, and call
+    /// <see cref="ServiceBusReceiver.CompleteAsync"/>. Per-entry failures
+    /// (stale handle, queue mismatch, lock-token cache miss, transport
+    /// error) are surfaced as BatchResultErrorEntry items — the request
+    /// only fails wholesale on parse / shape / queue-name errors.
+    /// FIFO-aware: when the entry batch mixes session-ids the per-entry
+    /// settle calls naturally route each to its own cached session
+    /// receiver because <see cref="TryAcquireSettleReceiverAsync"/> keys
+    /// on <c>(queueName, sessionId)</c>.
+    /// </summary>
+    private static async Task DeleteMessageBatchAsync(
+        HttpContext context, SqsParseResult parsed, IAmqpReceiverProvider receivers, CancellationToken ct)
+    {
+        var queueName = ExtractQueueName(parsed);
+        if (queueName is null)
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.InvalidParameterValue("QueueUrl", "QueueUrl is required and must be a queue URL.")).ConfigureAwait(false);
+            return;
+        }
+        if (!QueueName.IsValid(queueName))
+        {
+            await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.QueueNameInvalid()).ConfigureAwait(false);
+            return;
+        }
+        var entries = BatchAdminHandlers.ParseDeleteEntries(parsed);
+        if (entries is null)
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.InvalidParameterValue("Entries", "Could not parse batch entries.")).ConfigureAwait(false);
+            return;
+        }
+        var ids = new List<string>(entries.Count);
+        foreach (var e in entries) ids.Add(e.Id);
+        if (!BatchAdminHandlers.ValidateBatchShape(ids, out var shapeError))
+        {
+            await WriteErrorAsync(context, parsed.Protocol, shapeError!.Value).ConfigureAwait(false);
+            return;
+        }
+
+        var ok = new List<BatchEntryOk>(entries.Count);
+        var failed = new List<BatchEntryError>();
+        await BatchAdminHandlers.ForEachBoundedAsync(entries, BatchAdminHandlers.MaxBatchConcurrency, async entry =>
+        {
+            if (!AmqpReceiptHandle.TryDecode(entry.ReceiptHandle, out var decoded) ||
+                !string.Equals(decoded.QueueName, queueName, StringComparison.OrdinalIgnoreCase))
+            {
+                var m = SqsErrorMapping.ReceiptHandleInvalid();
+                lock (failed) failed.Add(new BatchEntryError(entry.Id, m.Code, m.Message,
+                    SenderFault: m.FaultType == SqsErrorResponse.FaultType.Sender));
+                return;
+            }
+
+            ServiceBusReceiver? receiver;
+            try
+            {
+                receiver = await TryAcquireSettleReceiverAsync(receivers, queueName, decoded.SessionId, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                var m = MapAmqpException(ex, "DeleteMessageBatch");
+                lock (failed) failed.Add(new BatchEntryError(entry.Id, m.Code, m.Message,
+                    SenderFault: m.FaultType == SqsErrorResponse.FaultType.Sender));
+                return;
+            }
+            if (receiver is null)
+            {
+                var m = SqsErrorMapping.ReceiptHandleInvalid();
+                lock (failed) failed.Add(new BatchEntryError(entry.Id, m.Code, m.Message,
+                    SenderFault: m.FaultType == SqsErrorResponse.FaultType.Sender));
+                return;
+            }
+
+            bool settled;
+            try
+            {
+                settled = await receiver.CompleteAsync(decoded.LockToken, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                // See ChangeMessageVisibilityBatch below for the
+                // rationale: invalidating a settle receiver shared by
+                // sibling entries can dispose it while siblings still
+                // have settle calls in flight, hanging them. Let the
+                // next singular call invalidate.
+                var m = MapAmqpException(ex, "DeleteMessageBatch");
+                lock (failed) failed.Add(new BatchEntryError(entry.Id, m.Code, m.Message,
+                    SenderFault: m.FaultType == SqsErrorResponse.FaultType.Sender));
+                return;
+            }
+            if (!settled)
+            {
+                var m = SqsErrorMapping.ReceiptHandleInvalid();
+                lock (failed) failed.Add(new BatchEntryError(entry.Id, m.Code, m.Message,
+                    SenderFault: m.FaultType == SqsErrorResponse.FaultType.Sender));
+                return;
+            }
+            lock (ok) ok.Add(new BatchEntryOk(entry.Id));
+        }, ct).ConfigureAwait(false);
+
+        var order = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var i = 0; i < entries.Count; i++) order[entries[i].Id] = i;
+        ok.Sort((a, b) => order[a.Id].CompareTo(order[b.Id]));
+        failed.Sort((a, b) => order[a.Id].CompareTo(order[b.Id]));
+
+        await SqsResponseWriter.WriteDeleteMessageBatchAsync(context, parsed.Protocol, ok, failed).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// AMQP-flavoured ChangeMessageVisibilityBatch. Each entry follows the
+    /// singular CMV path: <c>VisibilityTimeout == 0</c> takes the Abandon
+    /// shortcut on the cached (session) receiver; positive values RenewLock
+    /// through the SB <c>$management</c> link (session-aware when the
+    /// handle is v3). Per-entry failures are folded into the batch
+    /// response. Note: the granted seconds may differ from the requested
+    /// value because SB always extends by the queue-level LockDuration —
+    /// the REST CMV path surfaces this via the
+    /// <c>Aws2Azure-VisibilityClamped</c> response header on the singular
+    /// call, but the batch shape has no per-entry place to carry it, so
+    /// clamping is silent here (matches the SQS batch contract: the
+    /// response body just lists successes by Id).
+    /// </summary>
+    private static async Task ChangeMessageVisibilityBatchAsync(
+        HttpContext context, SqsParseResult parsed, IAmqpReceiverProvider receivers, CancellationToken ct)
+    {
+        var queueName = ExtractQueueName(parsed);
+        if (queueName is null)
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.InvalidParameterValue("QueueUrl", "QueueUrl is required and must be a queue URL.")).ConfigureAwait(false);
+            return;
+        }
+        if (!QueueName.IsValid(queueName))
+        {
+            await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.QueueNameInvalid()).ConfigureAwait(false);
+            return;
+        }
+        var entries = BatchAdminHandlers.ParseChangeVisEntries(parsed);
+        if (entries is null)
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.InvalidParameterValue("Entries", "Could not parse batch entries.")).ConfigureAwait(false);
+            return;
+        }
+        var ids = new List<string>(entries.Count);
+        foreach (var e in entries) ids.Add(e.Id);
+        if (!BatchAdminHandlers.ValidateBatchShape(ids, out var shapeError))
+        {
+            await WriteErrorAsync(context, parsed.Protocol, shapeError!.Value).ConfigureAwait(false);
+            return;
+        }
+
+        var ok = new List<BatchEntryOk>(entries.Count);
+        var failed = new List<BatchEntryError>();
+        await BatchAdminHandlers.ForEachBoundedAsync(entries, BatchAdminHandlers.MaxBatchConcurrency, async entry =>
+        {
+            if (entry.VisibilityTimeout < 0 || entry.VisibilityTimeout > MaxVisibilityTimeoutSeconds)
+            {
+                var m = SqsErrorMapping.VisibilityTimeoutInvalid();
+                lock (failed) failed.Add(new BatchEntryError(entry.Id, m.Code, m.Message,
+                    SenderFault: m.FaultType == SqsErrorResponse.FaultType.Sender));
+                return;
+            }
+            if (!AmqpReceiptHandle.TryDecode(entry.ReceiptHandle, out var decoded) ||
+                !string.Equals(decoded.QueueName, queueName, StringComparison.OrdinalIgnoreCase))
+            {
+                var m = SqsErrorMapping.ReceiptHandleInvalid();
+                lock (failed) failed.Add(new BatchEntryError(entry.Id, m.Code, m.Message,
+                    SenderFault: m.FaultType == SqsErrorResponse.FaultType.Sender));
+                return;
+            }
+
+            if (entry.VisibilityTimeout == 0)
+            {
+                ServiceBusReceiver? receiver;
+                try
+                {
+                    receiver = await TryAcquireSettleReceiverAsync(receivers, queueName, decoded.SessionId, ct).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    var m = MapAmqpException(ex, "ChangeMessageVisibilityBatch");
+                    lock (failed) failed.Add(new BatchEntryError(entry.Id, m.Code, m.Message,
+                        SenderFault: m.FaultType == SqsErrorResponse.FaultType.Sender));
+                    return;
+                }
+                if (receiver is null)
+                {
+                    var m = SqsErrorMapping.ReceiptHandleInvalid();
+                    lock (failed) failed.Add(new BatchEntryError(entry.Id, m.Code, m.Message,
+                        SenderFault: m.FaultType == SqsErrorResponse.FaultType.Sender));
+                    return;
+                }
+                bool abandoned;
+                try
+                {
+                    abandoned = await receiver.AbandonAsync(decoded.LockToken, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    // Same rationale as DeleteMessageBatch above: skip
+                    // invalidation to avoid disposing the shared session
+                    // receiver while siblings still have settle calls in
+                    // flight on it.
+                    var m = MapAmqpException(ex, "ChangeMessageVisibilityBatch");
+                    lock (failed) failed.Add(new BatchEntryError(entry.Id, m.Code, m.Message,
+                        SenderFault: m.FaultType == SqsErrorResponse.FaultType.Sender));
+                    return;
+                }
+                if (!abandoned)
+                {
+                    var m = SqsErrorMapping.MessageNotInflight();
+                    lock (failed) failed.Add(new BatchEntryError(entry.Id, m.Code, m.Message,
+                        SenderFault: m.FaultType == SqsErrorResponse.FaultType.Sender));
+                    return;
+                }
+                lock (ok) ok.Add(new BatchEntryOk(entry.Id));
+                return;
+            }
+
+            // visibility > 0 — RenewLock via $management (session-aware
+            // when the handle carries a session-id).
+            ServiceBusManagementClient mgmt;
+            try
+            {
+                mgmt = await receivers.GetManagementClientAsync(queueName, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                var m = MapAmqpException(ex, "ChangeMessageVisibilityBatch");
+                lock (failed) failed.Add(new BatchEntryError(entry.Id, m.Code, m.Message,
+                    SenderFault: m.FaultType == SqsErrorResponse.FaultType.Sender));
+                return;
+            }
+
+            try
+            {
+                _ = string.IsNullOrEmpty(decoded.SessionId)
+                    ? await mgmt.RenewLockAsync(decoded.LockToken, ct).ConfigureAwait(false)
+                    : await mgmt.RenewSessionLockAsync(decoded.SessionId, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (ServiceBusManagementException ex)
+            {
+                var m = MapManagementException(ex, "ChangeMessageVisibilityBatch");
+                lock (failed) failed.Add(new BatchEntryError(entry.Id, m.Code, m.Message,
+                    SenderFault: m.FaultType == SqsErrorResponse.FaultType.Sender));
+                return;
+            }
+            catch (Exception ex)
+            {
+                // Deliberately do NOT call InvalidateManagementClientAsync
+                // here: sibling entries in the same batch share the cached
+                // mgmt client and may have requests pending on it. A
+                // concurrent dispose-while-in-use can hang those siblings
+                // (their pending requests never get a receive pump to
+                // complete them — see ServiceBusAmqpPool dispose path).
+                // Instead, surface the per-entry failure and let the next
+                // singular call's failure path invalidate the slot.
+                var m = MapAmqpException(ex, "ChangeMessageVisibilityBatch");
+                lock (failed) failed.Add(new BatchEntryError(entry.Id, m.Code, m.Message,
+                    SenderFault: m.FaultType == SqsErrorResponse.FaultType.Sender));
+                return;
+            }
+            lock (ok) ok.Add(new BatchEntryOk(entry.Id));
+        }, ct).ConfigureAwait(false);
+
+        var order = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var i = 0; i < entries.Count; i++) order[entries[i].Id] = i;
+        ok.Sort((a, b) => order[a.Id].CompareTo(order[b.Id]));
+        failed.Sort((a, b) => order[a.Id].CompareTo(order[b.Id]));
+
+        await SqsResponseWriter.WriteChangeMessageVisibilityBatchAsync(context, parsed.Protocol, ok, failed).ConfigureAwait(false);
     }
 
     // --- settle helpers (FIFO-aware) -----------------------------------

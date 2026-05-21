@@ -546,6 +546,160 @@ public sealed class AmqpReceiveMessageHandlersTests
         Assert.Contains("MessageNotInflight", ReadBody(ctx));
     }
 
+    // --- DeleteMessageBatch / ChangeMessageVisibilityBatch (AMQP) -----
+
+    [Fact]
+    public async Task DeleteMessageBatch_settles_multiple_in_flight_deliveries()
+    {
+        var tag1 = Guid.Parse("aaaa1111-2222-3333-4444-555555555555").ToByteArray();
+        var tag2 = Guid.Parse("bbbb1111-2222-3333-4444-555555555555").ToByteArray();
+        await using var harness = await TestHarness.OpenAsync(QueueName,
+            (tag1, EncodeMessage("batch-1")),
+            (tag2, EncodeMessage("batch-2")));
+
+        var receiveCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(receiveCtx,
+            QueryParsed(SqsOperation.ReceiveMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"),
+                ("MaxNumberOfMessages", "2")),
+            harness.Provider, CancellationToken.None);
+        Assert.Equal(2, harness.Receiver.InFlightCount);
+        var handles = ExtractAllReceiptHandles(ReadBody(receiveCtx));
+        Assert.Equal(2, handles.Count);
+
+        var deleteCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(deleteCtx,
+            QueryParsed(SqsOperation.DeleteMessageBatch,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"),
+                ("DeleteMessageBatchRequestEntry.1.Id", "d1"),
+                ("DeleteMessageBatchRequestEntry.1.ReceiptHandle", handles[0]),
+                ("DeleteMessageBatchRequestEntry.2.Id", "d2"),
+                ("DeleteMessageBatchRequestEntry.2.ReceiptHandle", handles[1])),
+            harness.Provider, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, deleteCtx.Response.StatusCode);
+        var body = ReadBody(deleteCtx);
+        Assert.Contains("<DeleteMessageBatchResponse", body);
+        Assert.Contains("<Id>d1</Id>", body);
+        Assert.Contains("<Id>d2</Id>", body);
+        Assert.DoesNotContain("BatchResultErrorEntry", body);
+        Assert.Equal(0, harness.Receiver.InFlightCount);
+    }
+
+    [Fact]
+    public async Task DeleteMessageBatch_on_fifo_queue_settles_via_session_receiver()
+    {
+        const string SessionId = "group-A";
+        var tag1 = Guid.Parse("11111111-aaaa-bbbb-cccc-111111111111").ToByteArray();
+        var tag2 = Guid.Parse("22222222-aaaa-bbbb-cccc-222222222222").ToByteArray();
+        await using var harness = await TestHarness.OpenSessionAsync(
+            FifoQueueName, SessionId,
+            (tag1, EncodeMessage("fifo-batch-1", groupId: SessionId)),
+            (tag2, EncodeMessage("fifo-batch-2", groupId: SessionId)));
+
+        var receiveCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(receiveCtx,
+            QueryParsed(SqsOperation.ReceiveMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+                ("MaxNumberOfMessages", "2")),
+            harness.Provider, CancellationToken.None);
+        Assert.Equal(2, harness.Receiver.InFlightCount);
+        var handles = ExtractAllReceiptHandles(ReadBody(receiveCtx));
+        Assert.Equal(2, handles.Count);
+        Assert.All(handles, h => Assert.StartsWith("Mzo", h));  // v3 session-bound
+
+        var deleteCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(deleteCtx,
+            QueryParsed(SqsOperation.DeleteMessageBatch,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+                ("DeleteMessageBatchRequestEntry.1.Id", "f1"),
+                ("DeleteMessageBatchRequestEntry.1.ReceiptHandle", handles[0]),
+                ("DeleteMessageBatchRequestEntry.2.Id", "f2"),
+                ("DeleteMessageBatchRequestEntry.2.ReceiptHandle", handles[1])),
+            harness.Provider, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, deleteCtx.Response.StatusCode);
+        var body = ReadBody(deleteCtx);
+        Assert.Contains("<Id>f1</Id>", body);
+        Assert.Contains("<Id>f2</Id>", body);
+        Assert.DoesNotContain("BatchResultErrorEntry", body);
+        Assert.Equal(0, harness.Receiver.InFlightCount);
+    }
+
+    [Fact]
+    public async Task DeleteMessageBatch_aggregates_per_entry_failures_for_invalid_handles()
+    {
+        var tag = Guid.Parse("cccc1111-2222-3333-4444-555555555555").ToByteArray();
+        await using var harness = await TestHarness.OpenAsync(QueueName,
+            (tag, EncodeMessage("good-msg")));
+
+        var receiveCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(receiveCtx,
+            QueryParsed(SqsOperation.ReceiveMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}")),
+            harness.Provider, CancellationToken.None);
+        var goodHandle = ExtractReceiptHandle(ReadBody(receiveCtx));
+
+        var deleteCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(deleteCtx,
+            QueryParsed(SqsOperation.DeleteMessageBatch,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"),
+                ("DeleteMessageBatchRequestEntry.1.Id", "ok"),
+                ("DeleteMessageBatchRequestEntry.1.ReceiptHandle", goodHandle),
+                ("DeleteMessageBatchRequestEntry.2.Id", "bad"),
+                ("DeleteMessageBatchRequestEntry.2.ReceiptHandle", "not-a-real-handle")),
+            harness.Provider, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, deleteCtx.Response.StatusCode);
+        var body = ReadBody(deleteCtx);
+        Assert.Contains("<Id>ok</Id>", body);
+        Assert.Contains("<BatchResultErrorEntry>", body);
+        Assert.Contains("<Id>bad</Id>", body);
+        Assert.Contains("ReceiptHandleIsInvalid", body);
+    }
+
+    [Fact]
+    public async Task ChangeMessageVisibilityBatch_zero_on_fifo_queue_abandons_each_via_session_receiver()
+    {
+        const string SessionId = "group-X";
+        var tag1 = Guid.Parse("eeeeeeee-1111-2222-3333-444444444444").ToByteArray();
+        var tag2 = Guid.Parse("eeeeeeee-5555-6666-7777-888888888888").ToByteArray();
+        await using var harness = await TestHarness.OpenSessionAsync(
+            FifoQueueName, SessionId,
+            (tag1, EncodeMessage("fifo-cmv-1", groupId: SessionId)),
+            (tag2, EncodeMessage("fifo-cmv-2", groupId: SessionId)));
+
+        var receiveCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(receiveCtx,
+            QueryParsed(SqsOperation.ReceiveMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+                ("MaxNumberOfMessages", "2")),
+            harness.Provider, CancellationToken.None);
+        var handles = ExtractAllReceiptHandles(ReadBody(receiveCtx));
+        Assert.Equal(2, handles.Count);
+        Assert.Equal(2, harness.Receiver.InFlightCount);
+
+        var cmvCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(cmvCtx,
+            QueryParsed(SqsOperation.ChangeMessageVisibilityBatch,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+                ("ChangeMessageVisibilityBatchRequestEntry.1.Id", "c1"),
+                ("ChangeMessageVisibilityBatchRequestEntry.1.ReceiptHandle", handles[0]),
+                ("ChangeMessageVisibilityBatchRequestEntry.1.VisibilityTimeout", "0"),
+                ("ChangeMessageVisibilityBatchRequestEntry.2.Id", "c2"),
+                ("ChangeMessageVisibilityBatchRequestEntry.2.ReceiptHandle", handles[1]),
+                ("ChangeMessageVisibilityBatchRequestEntry.2.VisibilityTimeout", "0")),
+            harness.Provider, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, cmvCtx.Response.StatusCode);
+        var body = ReadBody(cmvCtx);
+        Assert.Contains("<ChangeMessageVisibilityBatchResponse", body);
+        Assert.Contains("<Id>c1</Id>", body);
+        Assert.Contains("<Id>c2</Id>", body);
+        Assert.DoesNotContain("BatchResultErrorEntry", body);
+        Assert.Equal(0, harness.Receiver.InFlightCount);
+    }
+
     // --- harness -------------------------------------------------------
 
     private sealed class TestHarness : IAsyncDisposable
@@ -857,5 +1011,23 @@ public sealed class AmqpReceiveMessageHandlersTests
         var j = xml.IndexOf(close, i, StringComparison.Ordinal);
         if (j < 0) return string.Empty;
         return xml.Substring(i + open.Length, j - i - open.Length);
+    }
+
+    private static List<string> ExtractAllReceiptHandles(string xml)
+    {
+        const string open = "<ReceiptHandle>";
+        const string close = "</ReceiptHandle>";
+        var list = new List<string>();
+        var cursor = 0;
+        while (true)
+        {
+            var i = xml.IndexOf(open, cursor, StringComparison.Ordinal);
+            if (i < 0) break;
+            var j = xml.IndexOf(close, i, StringComparison.Ordinal);
+            if (j < 0) break;
+            list.Add(xml.Substring(i + open.Length, j - i - open.Length));
+            cursor = j + close.Length;
+        }
+        return list;
     }
 }
