@@ -228,12 +228,32 @@
 
 ## Scan
 
-- **Status:** ⚪ stub
+- **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| Full-table scan | ✅ implemented | Translated to a cross-partition Cosmos SQL query (`x-ms-documentdb-query-enablecrosspartition: true`). Every Scan is an O(N) walk of the container — expensive in RU. |  |  |
+| FilterExpression | ✅ implemented | Evaluated in-process after each Cosmos page returns, so ScannedCount reflects pre-filter rows and Count reflects post-filter rows — matching DynamoDB. |  |  |
+| ProjectionExpression | 🟡 partial | Top-level attributes and `#alias` references are honoured. Nested paths (`a.b`, `a[0]`) are not yet supported and are rejected with ValidationException. |  |  |
+| ExpressionAttributeNames / ExpressionAttributeValues | ✅ implemented |  |  |  |
+| Limit | ✅ implemented | Caps the *scanned* (pre-filter) row count, matching DynamoDB. pageSize is sized to the remaining evaluation budget so the per-page continuation never skips rows. |  |  |
+| ExclusiveStartKey / LastEvaluatedKey | ✅ implemented | Pagination round-trips the Cosmos `x-ms-continuation` token inside a sentinel attribute `__a2a_continuation` (typed-string `S`). Most AWS SDKs treat LastEvaluatedKey as opaque and pass it back verbatim. |  |  |
+| ConsistentRead | ✅ implemented | Forwards `x-ms-consistency-level: Strong` for the Cosmos query when true; account-level consistency cap still applies. |  |  |
+| Select | 🟡 partial | ALL_ATTRIBUTES (default), SPECIFIC_ATTRIBUTES, and COUNT supported. ALL_PROJECTED_ATTRIBUTES requires IndexName and is rejected. |  |  |
+| IndexName (GSI / LSI) | ⛔ unsupported | Scanning secondary indexes is not yet supported; requests carrying IndexName are rejected with ValidationException. |  |  |
+| Parallel scan (Segment / TotalSegments) | ⛔ unsupported | Rejected with ValidationException. Cosmos cross-partition queries fan out internally; explicit per-segment parallelism is deferred to a later slice. |  |  |
+| Legacy ScanFilter / ConditionalOperator / AttributesToGet | ⛔ unsupported | Legacy v1 parameters are rejected loudly with ValidationException — use FilterExpression / ProjectionExpression. |  |  |
+| ReturnConsumedCapacity | ⛔ unsupported | Silently ignored; response omits ConsumedCapacity. |  |  |
 
 ### Behaviour differences
 
-- DynamoDB JSON type system mapped onto Cosmos JSON; consistency model differs
+- Scan order is **not** stable. Cosmos cross-partition query does not guarantee a deterministic walk across partitions; DynamoDB Scan is also unordered, but specific item ordering across pages may differ.
+- Cosmos 429 (throttled) is surfaced as DynamoDB ProvisionedThroughputExceededException — expect this often on large scans.
+- RU cost is significant for cross-partition scans; the proxy does no rate-limiting beyond what Cosmos imposes.
+- Only validated against scripted Cosmos REST fakes; not yet exercised against real Azure Cosmos.
 
 ### References
 
