@@ -2,8 +2,12 @@
 
 | Service | Operation | Status | Azure equivalent |
 |---|---|---|---|
+| dynamodb | [CreateTable](dynamodb.md#createtable) | ✅ implemented | `Azure Cosmos DB (Core SQL API) — POST /dbs/{db}/colls` |
 | dynamodb | [DeleteItem](dynamodb.md#deleteitem) | ⚪ stub | `Azure Cosmos DB (Core SQL API)` |
+| dynamodb | [DeleteTable](dynamodb.md#deletetable) | ✅ implemented | `Azure Cosmos DB (Core SQL API) — DELETE /dbs/{db}/colls/{name}` |
+| dynamodb | [DescribeTable](dynamodb.md#describetable) | ✅ implemented | `Azure Cosmos DB (Core SQL API) — GET /dbs/{db}/colls/{name} + sidecar metadata` |
 | dynamodb | [GetItem](dynamodb.md#getitem) | ⚪ stub | `Azure Cosmos DB (Core SQL API)` |
+| dynamodb | [ListTables](dynamodb.md#listtables) | ✅ implemented | `Azure Cosmos DB (Core SQL API) — GET /dbs/{db}/colls` |
 | dynamodb | [PutItem](dynamodb.md#putitem) | ⚪ stub | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [Query](dynamodb.md#query) | ⚪ stub | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [Scan](dynamodb.md#scan) | ⚪ stub | `Azure Cosmos DB (Core SQL API)` |

@@ -134,9 +134,32 @@ public static class ProxyConfigValidator
             {
                 errors.Add($"{prefix}.cosmos.endpoint: required.");
             }
-            if (string.IsNullOrWhiteSpace(cosmos.PrimaryKey))
+            if (string.IsNullOrWhiteSpace(cosmos.DatabaseName))
             {
-                errors.Add($"{prefix}.cosmos.primaryKey: required.");
+                errors.Add($"{prefix}.cosmos.databaseName: required.");
+            }
+
+            var hasKey = !string.IsNullOrWhiteSpace(cosmos.PrimaryKey);
+            var hasTenant = !string.IsNullOrWhiteSpace(cosmos.TenantId);
+            var hasClientId = !string.IsNullOrWhiteSpace(cosmos.ClientId);
+            var hasClientSecret = !string.IsNullOrWhiteSpace(cosmos.ClientSecret);
+            var hasAnyAad = hasTenant || hasClientId || hasClientSecret;
+            var hasCompleteAad = hasTenant && hasClientId && hasClientSecret;
+
+            if (!hasKey && !hasCompleteAad)
+            {
+                if (hasAnyAad)
+                {
+                    errors.Add($"{prefix}.cosmos: AAD requires tenantId, clientId, and clientSecret together.");
+                }
+                else
+                {
+                    errors.Add($"{prefix}.cosmos: either primaryKey OR (tenantId+clientId+clientSecret) is required.");
+                }
+            }
+            if (hasKey && hasAnyAad)
+            {
+                errors.Add($"{prefix}.cosmos: primaryKey and AAD fields are mutually exclusive — supply one shape.");
             }
         }
     }

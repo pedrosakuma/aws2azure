@@ -82,7 +82,8 @@ public class ProxyConfigValidatorTests
         Assert.Contains("serviceBus.sasKeyName: required", ex.Message);
         Assert.Contains("serviceBus.sasKey: required", ex.Message);
         Assert.Contains("cosmos.endpoint: required", ex.Message);
-        Assert.Contains("cosmos.primaryKey: required", ex.Message);
+        Assert.Contains("cosmos.databaseName: required", ex.Message);
+        Assert.Contains("either primaryKey OR (tenantId+clientId+clientSecret)", ex.Message);
     }
 
     [Fact]
@@ -98,5 +99,64 @@ public class ProxyConfigValidatorTests
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
         Assert.True(ex.Message.Split("\n  - ").Length >= 3);
+    }
+
+    [Fact]
+    public void Throws_on_partial_aad_fields()
+    {
+        var config = new ProxyConfig
+        {
+            Credentials =
+            {
+                new CredentialEntry
+                {
+                    AwsAccessKeyId = "AKIA1",
+                    AwsSecretAccessKey = "secret",
+                    Azure = new AzureCredentials
+                    {
+                        Cosmos = new CosmosCredentials
+                        {
+                            Endpoint = "https://x.documents.azure.com/",
+                            DatabaseName = "main",
+                            TenantId = "tenant",
+                            ClientId = "client",
+                            // ClientSecret missing → partial AAD shape.
+                        },
+                    },
+                },
+            },
+        };
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+        Assert.Contains("AAD requires tenantId, clientId, and clientSecret together", ex.Message);
+    }
+
+    [Fact]
+    public void Throws_when_primary_key_mixed_with_any_aad_field()
+    {
+        var config = new ProxyConfig
+        {
+            Credentials =
+            {
+                new CredentialEntry
+                {
+                    AwsAccessKeyId = "AKIA1",
+                    AwsSecretAccessKey = "secret",
+                    Azure = new AzureCredentials
+                    {
+                        Cosmos = new CosmosCredentials
+                        {
+                            Endpoint = "https://x.documents.azure.com/",
+                            DatabaseName = "main",
+                            PrimaryKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+                            TenantId = "tenant-only",
+                        },
+                    },
+                },
+            },
+        };
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+        Assert.Contains("mutually exclusive", ex.Message);
     }
 }

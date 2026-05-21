@@ -98,7 +98,38 @@ public sealed class SqsQueueSettings
 public sealed class CosmosCredentials
 {
     public string Endpoint { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Cosmos master key (primary or secondary). Mutually exclusive with
+    /// the AAD shape: when populated the proxy uses master-key HMAC
+    /// signing; when left empty the AAD fields are consulted instead.
+    /// </summary>
     public string PrimaryKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Logical Cosmos database that maps 1:1 to the AWS account's
+    /// DynamoDB namespace. All DynamoDB tables for this credential live
+    /// underneath <c>/dbs/{DatabaseName}</c> as Cosmos containers.
+    /// Required.
+    /// </summary>
+    public string DatabaseName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Entra ID tenant for AAD auth. Required when <see cref="PrimaryKey"/>
+    /// is empty.
+    /// </summary>
+    public string? TenantId { get; set; }
+
+    /// <summary>
+    /// Entra application (client) id for AAD auth.
+    /// </summary>
+    public string? ClientId { get; set; }
+
+    /// <summary>
+    /// Entra client secret for AAD auth. Future managed-identity
+    /// support can drop this in favour of a token-source abstraction.
+    /// </summary>
+    public string? ClientSecret { get; set; }
 }
 
 /// <summary>

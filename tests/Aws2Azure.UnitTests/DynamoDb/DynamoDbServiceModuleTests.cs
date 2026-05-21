@@ -103,6 +103,7 @@ public class DynamoDbServiceModuleTests
                               {
                                   Endpoint = "https://test.documents.azure.com:443/",
                                   PrimaryKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+                                  DatabaseName = "main",
                               }
                           }
                         : new AzureCredentials(),

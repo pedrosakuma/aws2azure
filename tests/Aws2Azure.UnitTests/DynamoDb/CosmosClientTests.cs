@@ -75,9 +75,10 @@ public class CosmosClientTests
         {
             Endpoint = "https://example.documents.azure.com:443/",
             PrimaryKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+            DatabaseName = "main",
         };
 
-        var client = new CosmosClient(http, creds);
+        var client = new CosmosClient(http, creds, new MasterKeyCosmosAuthenticator(creds.PrimaryKey));
         using var resp = await client.SendAsync(
             HttpMethod.Get, "dbs", "", "/dbs", content: null, extraHeaders: null, CancellationToken.None);
 
@@ -93,15 +94,17 @@ public class CosmosClientTests
     public void Constructor_rejects_empty_endpoint()
     {
         using var http = new AzureHttpClient(new RecordingHandler(), ownsHandler: false);
-        Assert.Throws<ArgumentException>(() => new CosmosClient(http, new CosmosCredentials { PrimaryKey = "x" }));
+        Assert.Throws<ArgumentException>(() => new CosmosClient(http,
+            new CosmosCredentials { DatabaseName = "main" }, new MasterKeyCosmosAuthenticator("MDE=")));
     }
 
     [Fact]
-    public void Constructor_rejects_empty_primary_key()
+    public void Constructor_rejects_empty_database_name()
     {
         using var http = new AzureHttpClient(new RecordingHandler(), ownsHandler: false);
         Assert.Throws<ArgumentException>(() => new CosmosClient(http,
-            new CosmosCredentials { Endpoint = "https://x.documents.azure.com" }));
+            new CosmosCredentials { Endpoint = "https://x.documents.azure.com" },
+            new MasterKeyCosmosAuthenticator("MDE=")));
     }
 
     private sealed class RecordingHandler : HttpMessageHandler
