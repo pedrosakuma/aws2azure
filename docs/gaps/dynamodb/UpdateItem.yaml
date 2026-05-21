@@ -1,9 +1,53 @@
 service: dynamodb
 operation: UpdateItem
 azure_equivalent: "Azure Cosmos DB (Core SQL API)"
-status: stub
-sub_features: []
+status: partial
+sub_features:
+  - name: UpdateExpression grammar (SET / REMOVE / ADD / DELETE)
+    status: implemented
+    notes: "Hand-rolled lexer + parser shared with the future Condition/Filter slice."
+  - name: SET arithmetic (`a = a + :i`, `a = :x - :y`)
+    status: implemented
+    notes: "Decimal arithmetic preserves up to 28-29 significant digits; DynamoDB allows 38. Overflow surfaces as ValidationException."
+  - name: SET functions `if_not_exists(path, fallback)` and `list_append(l1, l2)`
+    status: implemented
+  - name: SET on nested paths (`addr.zip`, `items[0].name`)
+    status: implemented
+    notes: "Parent path must already exist as a map/list, matching DynamoDB. Creating a deeply-nested fresh structure requires top-level SET."
+  - name: REMOVE on nested paths and missing attributes
+    status: implemented
+    notes: "REMOVE on a missing path is a no-op."
+  - name: ADD on numeric attribute (create-if-missing + addition)
+    status: implemented
+  - name: ADD / DELETE on string/number/binary sets (union / subtract)
+    status: implemented
+    notes: "Empty result set causes the attribute to be removed entirely, matching DynamoDB."
+  - name: AttributeUpdates (legacy) PUT / DELETE / ADD
+    status: implemented
+    notes: "Normalised internally into the same UpdateExpression AST."
+  - name: ExpressionAttributeNames / ExpressionAttributeValues (`#name`, `:value`)
+    status: implemented
+  - name: Path overlap detection
+    status: implemented
+    notes: "Two paths in the same expression where one is a prefix of the other are rejected with ValidationException."
+  - name: ReturnValues (NONE / ALL_OLD / UPDATED_OLD / ALL_NEW / UPDATED_NEW)
+    status: implemented
+    notes: "UPDATED_OLD/UPDATED_NEW project only the top-level attributes touched by the expression, matching AWS."
+  - name: Create-if-missing (upsert) semantics
+    status: implemented
+    notes: "Cosmos POST with `x-ms-documentdb-is-upsert: true` when the target item does not exist at the time of GET."
+  - name: ConditionExpression / Expected / ConditionalOperator
+    status: unsupported
+    notes: "Rejected with ValidationException. Conditional writes land in the next slice via the shared expression parser."
+  - name: ReturnConsumedCapacity / ReturnItemCollectionMetrics
+    status: unsupported
+    notes: "Silently ignored; response omits ConsumedCapacity / ItemCollectionMetrics."
 behavior_differences:
-  - "DynamoDB JSON type system mapped onto Cosmos JSON; consistency model differs"
+  - "Atomicity is implemented as a GET → modify → PUT(If-Match) loop with up to 4 retries on Cosmos 412. Sustained contention surfaces as InternalServerError after the retry budget is exhausted."
+  - "Numeric arithmetic is performed with System.Decimal (28-29 significant digits) rather than DynamoDB's 38-digit precision. Overflow throws ValidationException."
+  - "Key attributes referenced by the request are always reinforced into the resulting item — a REMOVE targeting the partition or sort key never deletes them in the stored doc."
+  - "Cosmos 429 (throttled) is surfaced to clients as DynamoDB ProvisionedThroughputExceededException."
+  - "Only validated against scripted Cosmos REST in unit tests; not yet exercised against real Azure Cosmos."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateItem.html
+  - https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Expressions.UpdateExpressions.html
