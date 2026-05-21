@@ -24,7 +24,8 @@ sub_features:
 behavior_differences:
   - "Item is persisted under a Cosmos envelope `{id, pk, _a2a:\"item\", item:{...}}`; the raw DynamoDB wire form lives under `item`."
   - "Sentinel id `__aws2azure_table_meta__` is reserved for the table-metadata sidecar and rejected at the API surface."
-  - "Cosmos 429 (throttled) is surfaced to clients as DynamoDB ProvisionedThroughputExceededException."
+  - "Key values containing `/`, `\\`, `?`, `#`, empty strings, or values longer than 255 chars are rejected with ValidationException pending an encoding scheme."
+  - "Cosmos 429 (throttled) is surfaced to clients as DynamoDB ProvisionedThroughputExceededException — including 429 on the sidecar metadata read."
   - "Only validated against scripted Cosmos REST + emulator; not yet exercised against real Azure Cosmos."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_PutItem.html

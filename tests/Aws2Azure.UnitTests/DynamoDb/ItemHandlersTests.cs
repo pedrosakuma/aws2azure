@@ -448,6 +448,131 @@ public class ItemHandlersTests
         Assert.Equal("hello", p.Value.GetString());
     }
 
+    [Fact]
+    public async Task PutItem_propagates_metadata_429_as_throttle_not_resource_not_found()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                // Metadata read itself is throttled — must surface as
+                // ProvisionedThroughputExceededException, NOT as a fake
+                // ResourceNotFoundException.
+                new HttpResponseMessage((HttpStatusCode)429) { Content = new StringContent("RU throttled") },
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"x\"},\"sk\":{\"S\":\"y\"}}}";
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        var text = ReadResponse(body);
+        Assert.Contains("ProvisionedThroughputExceededException", text);
+        Assert.DoesNotContain("ResourceNotFoundException", text);
+    }
+
+    [Fact]
+    public async Task GetItem_404_with_container_substatus_surfaces_resource_not_found()
+    {
+        var (ctx, body) = NewCtx();
+        var notFound = new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("{}") };
+        notFound.Headers.TryAddWithoutValidation("x-ms-substatus", "1003");
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDoc),
+                notFound,
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"b\"}}}";
+        await ItemHandlers.HandleGetItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("ResourceNotFoundException", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task DeleteItem_404_with_container_substatus_surfaces_resource_not_found()
+    {
+        var (ctx, body) = NewCtx();
+        var notFound = new HttpResponseMessage(HttpStatusCode.NotFound);
+        notFound.Headers.TryAddWithoutValidation("x-ms-substatus", "1003");
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDoc),
+                notFound,
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"b\"}}}";
+        await ItemHandlers.HandleDeleteItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("ResourceNotFoundException", ReadResponse(body));
+    }
+
+    [Theory]
+    [InlineData("/")]
+    [InlineData("\\\\")]
+    [InlineData("?")]
+    [InlineData("#")]
+    public async Task PutItem_rejects_key_value_with_cosmos_forbidden_chars(string jsonEscaped)
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler { Responses = { CosmosOk(MetadataDocHashOnly) } };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"abc" + jsonEscaped + "def\"}}}";
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        var text = ReadResponse(body);
+        Assert.Contains("ValidationException", text);
+        Assert.Contains("not yet supported", text);
+    }
+
+    [Fact]
+    public async Task PutItem_rejects_empty_key_value()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler { Responses = { CosmosOk(MetadataDocHashOnly) } };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"\"}}}";
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("ValidationException", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task PutItem_silently_accepts_return_consumed_capacity()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDocHashOnly),
+                new HttpResponseMessage(HttpStatusCode.Created) { Content = new StringContent("{}") },
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"k\"}},\"ReturnConsumedCapacity\":\"TOTAL\",\"ReturnItemCollectionMetrics\":\"SIZE\"}";
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+    }
+
     private sealed class ScriptedHandler : HttpMessageHandler
     {
         public List<HttpResponseMessage> Responses { get; } = new();

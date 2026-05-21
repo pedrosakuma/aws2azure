@@ -21,7 +21,9 @@ sub_features:
   - name: ReturnConsumedCapacity / ReturnItemCollectionMetrics
     status: unsupported
 behavior_differences:
-  - "Cosmos 429 surfaced as DynamoDB ProvisionedThroughputExceededException."
+  - "Missing container (table deleted mid-op) is distinguished from missing item via Cosmos `x-ms-substatus: 1003` and surfaces as ResourceNotFoundException; missing items remain idempotent successes."
+  - "Key values containing `/`, `\\`, `?`, `#`, empty strings, or values longer than 255 chars are rejected with ValidationException."
+  - "Cosmos 429 surfaced as DynamoDB ProvisionedThroughputExceededException — including 429 on metadata read."
   - "Only validated against scripted Cosmos REST + emulator; not yet exercised against real Azure Cosmos."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DeleteItem.html

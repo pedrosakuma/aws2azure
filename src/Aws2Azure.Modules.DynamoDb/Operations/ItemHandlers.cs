@@ -84,13 +84,19 @@ internal static class ItemHandlers
     private static async Task PutItemCoreAsync(
         HttpContext ctx, PutItemRequest req, CosmosClient cosmos, CancellationToken ct)
     {
-        var meta = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, req.TableName!, ct).ConfigureAwait(false);
-        if (meta is null)
+        using var metaResult = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, req.TableName!, ct).ConfigureAwait(false);
+        if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.CosmosError)
+        {
+            await CosmosOpsShared.WriteCosmosErrorAsync(ctx, metaResult.ErrorResponse!, ct).ConfigureAwait(false);
+            return;
+        }
+        if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.NotFound)
         {
             await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
                 $"Table not found: {req.TableName}").ConfigureAwait(false);
             return;
         }
+        var meta = metaResult.Metadata!;
 
         // Validate that key attribute type tags inside the Item match the
         // table's AttributeDefinitions before we touch Cosmos.
@@ -177,13 +183,19 @@ internal static class ItemHandlers
     private static async Task GetItemCoreAsync(
         HttpContext ctx, GetItemRequest req, CosmosClient cosmos, CancellationToken ct)
     {
-        var meta = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, req.TableName!, ct).ConfigureAwait(false);
-        if (meta is null)
+        using var metaResult = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, req.TableName!, ct).ConfigureAwait(false);
+        if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.CosmosError)
+        {
+            await CosmosOpsShared.WriteCosmosErrorAsync(ctx, metaResult.ErrorResponse!, ct).ConfigureAwait(false);
+            return;
+        }
+        if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.NotFound)
         {
             await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
                 $"Table not found: {req.TableName}").ConfigureAwait(false);
             return;
         }
+        var meta = metaResult.Metadata!;
 
         if (!ValidateKeyAttributesInKey(req.Key, meta, out var validationError))
         {
@@ -218,6 +230,16 @@ internal static class ItemHandlers
 
         if (resp.StatusCode == HttpStatusCode.NotFound)
         {
+            // Distinguish "container deleted between metadata read and op"
+            // (DynamoDB ResourceNotFoundException) from "item not present"
+            // (DynamoDB GetItem returns 200 with no `Item`). Cosmos signals
+            // the former via x-ms-substatus: 1003.
+            if (CosmosOpsShared.Is404ContainerMissing(resp))
+            {
+                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
+                    $"Table not found: {req.TableName}").ConfigureAwait(false);
+                return;
+            }
             // DynamoDB GetItem returns 200 with an empty body when the
             // item does not exist; consumers must not depend on a 404.
             await CosmosOpsShared.WriteJsonAsync(ctx, 200, new GetItemResponse(),
@@ -275,13 +297,19 @@ internal static class ItemHandlers
     private static async Task DeleteItemCoreAsync(
         HttpContext ctx, DeleteItemRequest req, CosmosClient cosmos, CancellationToken ct)
     {
-        var meta = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, req.TableName!, ct).ConfigureAwait(false);
-        if (meta is null)
+        using var metaResult = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, req.TableName!, ct).ConfigureAwait(false);
+        if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.CosmosError)
+        {
+            await CosmosOpsShared.WriteCosmosErrorAsync(ctx, metaResult.ErrorResponse!, ct).ConfigureAwait(false);
+            return;
+        }
+        if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.NotFound)
         {
             await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
                 $"Table not found: {req.TableName}").ConfigureAwait(false);
             return;
         }
+        var meta = metaResult.Metadata!;
 
         if (!ValidateKeyAttributesInKey(req.Key, meta, out var validationError))
         {
@@ -306,7 +334,21 @@ internal static class ItemHandlers
             content: null, headers, ct).ConfigureAwait(false);
 
         // DynamoDB DeleteItem is idempotent: a missing item is a success.
-        if (resp.StatusCode == HttpStatusCode.NotFound || resp.IsSuccessStatusCode)
+        // But a missing container (table deleted between metadata read
+        // and op) must still surface as ResourceNotFoundException.
+        if (resp.StatusCode == HttpStatusCode.NotFound)
+        {
+            if (CosmosOpsShared.Is404ContainerMissing(resp))
+            {
+                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
+                    $"Table not found: {req.TableName}").ConfigureAwait(false);
+                return;
+            }
+            await CosmosOpsShared.WriteJsonAsync(ctx, 200, new DeleteItemResponse(),
+                ItemJsonContext.Default.DeleteItemResponse).ConfigureAwait(false);
+            return;
+        }
+        if (resp.IsSuccessStatusCode)
         {
             await CosmosOpsShared.WriteJsonAsync(ctx, 200, new DeleteItemResponse(),
                 ItemJsonContext.Default.DeleteItemResponse).ConfigureAwait(false);

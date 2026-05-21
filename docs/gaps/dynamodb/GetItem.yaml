@@ -21,7 +21,10 @@ sub_features:
     status: unsupported
 behavior_differences:
   - "Missing item yields 200 with no `Item` field (matches DynamoDB)."
+  - "Missing container (table deleted mid-op) is distinguished from missing item via Cosmos `x-ms-substatus: 1003` and surfaces as ResourceNotFoundException."
+  - "Key values containing `/`, `\\`, `?`, `#`, empty strings, or values longer than 255 chars are rejected with ValidationException."
   - "ConsistentRead effectiveness is account-dependent; document divergence per deployment."
+  - "Cosmos 429 on metadata read surfaces as ProvisionedThroughputExceededException (not a fake ResourceNotFoundException)."
   - "Only validated against scripted Cosmos REST + emulator; not yet exercised against real Azure Cosmos."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_GetItem.html

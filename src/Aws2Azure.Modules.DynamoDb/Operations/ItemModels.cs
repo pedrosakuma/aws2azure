@@ -16,6 +16,12 @@ internal sealed class PutItemRequest
     [JsonPropertyName("Item")] public JsonElement Item { get; set; }
     [JsonPropertyName("ReturnValues")] public string? ReturnValues { get; set; }
 
+    // Modeled but accepted silently: the proxy never returns
+    // ConsumedCapacity / ItemCollectionMetrics in this slice. Surfaced
+    // explicitly in gap docs.
+    [JsonPropertyName("ReturnConsumedCapacity")] public string? ReturnConsumedCapacity { get; set; }
+    [JsonPropertyName("ReturnItemCollectionMetrics")] public string? ReturnItemCollectionMetrics { get; set; }
+
     // Fields the proxy explicitly rejects until later slices wire in the
     // expression parser. Modeled here so the handler can detect their
     // presence instead of silently dropping them.
@@ -31,6 +37,7 @@ internal sealed class GetItemRequest
     [JsonPropertyName("TableName")] public string? TableName { get; set; }
     [JsonPropertyName("Key")] public JsonElement Key { get; set; }
     [JsonPropertyName("ConsistentRead")] public bool? ConsistentRead { get; set; }
+    [JsonPropertyName("ReturnConsumedCapacity")] public string? ReturnConsumedCapacity { get; set; }
 
     [JsonPropertyName("AttributesToGet")] public JsonElement? AttributesToGet { get; set; }
     [JsonPropertyName("ProjectionExpression")] public string? ProjectionExpression { get; set; }
@@ -42,6 +49,8 @@ internal sealed class DeleteItemRequest
     [JsonPropertyName("TableName")] public string? TableName { get; set; }
     [JsonPropertyName("Key")] public JsonElement Key { get; set; }
     [JsonPropertyName("ReturnValues")] public string? ReturnValues { get; set; }
+    [JsonPropertyName("ReturnConsumedCapacity")] public string? ReturnConsumedCapacity { get; set; }
+    [JsonPropertyName("ReturnItemCollectionMetrics")] public string? ReturnItemCollectionMetrics { get; set; }
 
     [JsonPropertyName("ConditionExpression")] public string? ConditionExpression { get; set; }
     [JsonPropertyName("Expected")] public JsonElement? Expected { get; set; }

@@ -268,6 +268,34 @@ internal static class ItemKeyFormatter
 
         var raw = parsed.Value.GetString() ?? string.Empty;
 
+        // DynamoDB key values must be non-empty (1 byte minimum).
+        if (raw.Length == 0)
+        {
+            error = $"Key attribute '{schemaEntry.Name}' value must not be empty.";
+            return false;
+        }
+
+        // Cosmos forbids '/', '\\', '?', '#' in document ids, and
+        // partition-key strings must be ≤ 1023 bytes / id ≤ 255 chars.
+        // DynamoDB allows ~2 KiB keys with arbitrary content (binary
+        // values arrive as base64 strings on the wire, which can contain
+        // '/'). Until Slice N introduces an encoding scheme, reject keys
+        // we can't safely route — better a loud ValidationException than
+        // a silent partition-key collision.
+        foreach (var ch in raw)
+        {
+            if (ch == '/' || ch == '\\' || ch == '?' || ch == '#')
+            {
+                error = $"Key attribute '{schemaEntry.Name}' contains the character '{ch}' which is not yet supported by the Cosmos backend in this slice.";
+                return false;
+            }
+        }
+        if (raw.Length > 255)
+        {
+            error = $"Key attribute '{schemaEntry.Name}' value exceeds the 255-character routing limit imposed by the Cosmos backend.";
+            return false;
+        }
+
         // Type tag in the value must match the AttributeDefinition.
         // Cross-check against the schema so a caller can't sneak a Number
         // key into a table declared with a String key (and vice-versa) —

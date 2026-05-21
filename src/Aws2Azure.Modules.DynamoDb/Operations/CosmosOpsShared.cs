@@ -34,12 +34,34 @@ internal static class CosmosOpsShared
     }
 
     /// <summary>
-    /// Reads the sidecar metadata doc for <paramref name="tableName"/>.
-    /// Returns null when the container exists but has no sidecar (e.g.
-    /// created out-of-band) or when the container itself is missing.
-    /// Callers map null → ResourceNotFoundException when appropriate.
+    /// Outcome of a metadata-read call:
+    /// <see cref="Status"/> distinguishes Found from NotFound (Cosmos 404)
+    /// vs a Cosmos error (auth/throttle/server). For error outcomes the
+    /// raw <see cref="HttpResponseMessage"/> is held so callers can pass
+    /// it through <see cref="WriteCosmosErrorAsync"/> without losing the
+    /// 429/5xx classification.
     /// </summary>
-    public static async Task<TableMetadata?> TryReadTableMetadataAsync(
+    internal sealed class TableMetadataReadResult : IDisposable
+    {
+        public TableMetadataReadStatus Status { get; init; }
+        public TableMetadata? Metadata { get; init; }
+        public HttpResponseMessage? ErrorResponse { get; init; }
+        public void Dispose() => ErrorResponse?.Dispose();
+    }
+
+    internal enum TableMetadataReadStatus { Found, NotFound, CosmosError }
+
+    /// <summary>
+    /// Reads the sidecar metadata doc for <paramref name="tableName"/>.
+    /// Returns a tri-state result so callers can distinguish a true
+    /// missing-table (Cosmos 404) from a Cosmos error response (which
+    /// must NOT be reported as ResourceNotFoundException — e.g. 429
+    /// must surface as ProvisionedThroughputExceededException, 401/403
+    /// as AccessDeniedException). A malformed sidecar (valid 200 body
+    /// that fails to deserialize) is also reported as NotFound since the
+    /// table is effectively unusable.
+    /// </summary>
+    public static async Task<TableMetadataReadResult> TryReadTableMetadataAsync(
         CosmosClient cosmos, string tableName, CancellationToken ct)
     {
         var docLink = "dbs/" + cosmos.DatabaseName + "/colls/" + tableName + "/docs/" + TableMetadata.DocId;
@@ -48,19 +70,50 @@ internal static class CosmosOpsShared
         {
             new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
         };
-        using var resp = await cosmos.SendAsync(
+        var resp = await cosmos.SendAsync(
             HttpMethod.Get, "docs", docLink, "/" + docLink,
             content: null, headers, ct).ConfigureAwait(false);
-        if (!resp.IsSuccessStatusCode) return null;
-        await using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            resp.Dispose();
+            return new TableMetadataReadResult { Status = TableMetadataReadStatus.NotFound };
+        }
+        if (!resp.IsSuccessStatusCode)
+        {
+            return new TableMetadataReadResult { Status = TableMetadataReadStatus.CosmosError, ErrorResponse = resp };
+        }
         try
         {
-            return JsonSerializer.Deserialize(stream, TableMetadataJsonContext.Default.TableMetadata);
+            await using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            var meta = JsonSerializer.Deserialize(stream, TableMetadataJsonContext.Default.TableMetadata);
+            resp.Dispose();
+            if (meta is null) return new TableMetadataReadResult { Status = TableMetadataReadStatus.NotFound };
+            return new TableMetadataReadResult { Status = TableMetadataReadStatus.Found, Metadata = meta };
         }
         catch (JsonException)
         {
-            return null;
+            resp.Dispose();
+            return new TableMetadataReadResult { Status = TableMetadataReadStatus.NotFound };
         }
+    }
+
+    /// <summary>
+    /// True when a Cosmos 404 response carries the <c>x-ms-substatus</c>
+    /// header indicating the container itself is missing (sub-status 1003)
+    /// rather than just the requested document. Lets item handlers tell
+    /// "item not found" (DynamoDB-success) apart from "table deleted
+    /// between metadata read and op" (ResourceNotFoundException).
+    /// </summary>
+    public static bool Is404ContainerMissing(HttpResponseMessage resp)
+    {
+        if (resp.StatusCode != System.Net.HttpStatusCode.NotFound) return false;
+        if (!resp.Headers.TryGetValues("x-ms-substatus", out var values)) return false;
+        foreach (var v in values)
+        {
+            // 1003 = Collection (container) not found.
+            if (string.Equals(v?.Trim(), "1003", StringComparison.Ordinal)) return true;
+        }
+        return false;
     }
 
     public static async Task WriteCosmosErrorAsync(

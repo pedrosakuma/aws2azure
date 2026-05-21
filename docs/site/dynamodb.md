@@ -51,7 +51,9 @@
 
 ### Behaviour differences
 
-- Cosmos 429 surfaced as DynamoDB ProvisionedThroughputExceededException.
+- Missing container (table deleted mid-op) is distinguished from missing item via Cosmos `x-ms-substatus: 1003` and surfaces as ResourceNotFoundException; missing items remain idempotent successes.
+- Key values containing `/`, `\`, `?`, `#`, empty strings, or values longer than 255 chars are rejected with ValidationException.
+- Cosmos 429 surfaced as DynamoDB ProvisionedThroughputExceededException — including 429 on metadata read.
 - Only validated against scripted Cosmos REST + emulator; not yet exercised against real Azure Cosmos.
 
 ### References
@@ -127,7 +129,10 @@
 ### Behaviour differences
 
 - Missing item yields 200 with no `Item` field (matches DynamoDB).
+- Missing container (table deleted mid-op) is distinguished from missing item via Cosmos `x-ms-substatus: 1003` and surfaces as ResourceNotFoundException.
+- Key values containing `/`, `\`, `?`, `#`, empty strings, or values longer than 255 chars are rejected with ValidationException.
 - ConsistentRead effectiveness is account-dependent; document divergence per deployment.
+- Cosmos 429 on metadata read surfaces as ProvisionedThroughputExceededException (not a fake ResourceNotFoundException).
 - Only validated against scripted Cosmos REST + emulator; not yet exercised against real Azure Cosmos.
 
 ### References
@@ -179,7 +184,8 @@
 
 - Item is persisted under a Cosmos envelope `{id, pk, _a2a:"item", item:{...}}`; the raw DynamoDB wire form lives under `item`.
 - Sentinel id `__aws2azure_table_meta__` is reserved for the table-metadata sidecar and rejected at the API surface.
-- Cosmos 429 (throttled) is surfaced to clients as DynamoDB ProvisionedThroughputExceededException.
+- Key values containing `/`, `\`, `?`, `#`, empty strings, or values longer than 255 chars are rejected with ValidationException pending an encoding scheme.
+- Cosmos 429 (throttled) is surfaced to clients as DynamoDB ProvisionedThroughputExceededException — including 429 on the sidecar metadata read.
 - Only validated against scripted Cosmos REST + emulator; not yet exercised against real Azure Cosmos.
 
 ### References

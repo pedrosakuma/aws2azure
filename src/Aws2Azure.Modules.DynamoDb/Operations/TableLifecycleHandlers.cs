@@ -544,8 +544,15 @@ internal static class TableLifecycleHandlers
         };
     }
 
-    private static Task<TableMetadata?> TryReadMetadataAsync(CosmosClient cosmos, string tableName, CancellationToken ct)
-        => CosmosOpsShared.TryReadTableMetadataAsync(cosmos, tableName, ct);
+    private static async Task<TableMetadata?> TryReadMetadataAsync(CosmosClient cosmos, string tableName, CancellationToken ct)
+    {
+        using var result = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, tableName, ct).ConfigureAwait(false);
+        // Lifecycle handlers only need the metadata when present; they
+        // already issue the authoritative container call separately and
+        // surface 429/auth failures from that path. Treat any non-Found
+        // outcome (NotFound or CosmosError) as "no sidecar available".
+        return result.Status == CosmosOpsShared.TableMetadataReadStatus.Found ? result.Metadata : null;
+    }
 
     internal static List<string> ParseContainerNames(Stream cosmosListBody)
     {
