@@ -144,8 +144,13 @@ internal static class CosmosOpsShared
     {
         ctx.Response.StatusCode = status;
         ctx.Response.ContentType = "application/x-amz-json-1.0";
-        using var writer = new Utf8JsonWriter(ctx.Response.Body);
-        JsonSerializer.Serialize(writer, payload, typeInfo);
-        await writer.FlushAsync(ctx.RequestAborted).ConfigureAwait(false);
+        // SerializeAsync flushes to the response stream asynchronously, which
+        // is mandatory under TestServer (sync IO disallowed) and the default
+        // Kestrel config (AllowSynchronousIO=false). Wrapping a sync
+        // Utf8JsonWriter around ctx.Response.Body would issue blocking writes
+        // whenever the writer's 16 KB internal buffer fills mid-serialization.
+        await JsonSerializer.SerializeAsync(
+            ctx.Response.Body, payload, typeInfo, ctx.RequestAborted)
+            .ConfigureAwait(false);
     }
 }

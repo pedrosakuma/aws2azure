@@ -17,7 +17,7 @@ behavior_differences:
   - "ProvisionedThroughput / BillingMode values are accepted but not enforced; throughput is governed by the Cosmos account/database, not per-table."
   - "TableStatus is always returned as ACTIVE since Cosmos container creation is synchronous."
   - "On metadata-sidecar persist failure the container is best-effort deleted to avoid orphan containers."
-  - "Tested against scripted Cosmos handlers in unit tests; not yet exercised against real Azure Cosmos DB."
+  - "Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_CreateTable.html
   - https://learn.microsoft.com/rest/api/cosmos-db/create-a-collection

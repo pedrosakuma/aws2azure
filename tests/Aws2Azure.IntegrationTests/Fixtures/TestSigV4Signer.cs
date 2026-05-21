@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Aws2Azure.Core.SigV4;
 
-namespace Aws2Azure.IntegrationTests.S3;
+namespace Aws2Azure.IntegrationTests.Fixtures;
 
 /// <summary>
 /// Minimal SigV4 signer used by S3 integration tests. Mirrors what boto3 /

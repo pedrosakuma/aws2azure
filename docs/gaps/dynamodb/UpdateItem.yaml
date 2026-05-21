@@ -47,7 +47,7 @@ behavior_differences:
   - "Numeric arithmetic is performed with System.Decimal (28-29 significant digits) rather than DynamoDB's 38-digit precision. Operands exceeding the proxy's precision are rejected up front with ValidationException to avoid silent rounding; overflow also throws ValidationException."
   - "Key attributes referenced by the request are always reinforced into the resulting item — a REMOVE targeting the partition or sort key never deletes them in the stored doc."
   - "Cosmos 429 (throttled) is surfaced to clients as DynamoDB ProvisionedThroughputExceededException."
-  - "Only validated against scripted Cosmos REST in unit tests; not yet exercised against real Azure Cosmos."
+  - "Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateItem.html
   - https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Expressions.UpdateExpressions.html
