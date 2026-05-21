@@ -22,6 +22,7 @@
     <ProjectReference Include="..\..\src\Aws2Azure.Core\Aws2Azure.Core.csproj" />
     <ProjectReference Include="..\..\src\Aws2Azure.Modules.S3\Aws2Azure.Modules.S3.csproj" />
     <ProjectReference Include="..\..\src\Aws2Azure.Modules.Sqs\Aws2Azure.Modules.Sqs.csproj" />
+    <ProjectReference Include="..\..\src\Aws2Azure.Modules.DynamoDb\Aws2Azure.Modules.DynamoDb.csproj" />
   </ItemGroup>
 
 </Project>

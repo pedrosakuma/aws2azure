@@ -8,6 +8,7 @@ using Aws2Azure.Core.Modules;
 using Aws2Azure.Core.SigV4;
 using Aws2Azure.Modules.S3;
 using Aws2Azure.Modules.Sqs;
+using Aws2Azure.Modules.DynamoDb;
 using Aws2Azure.Proxy;
 using Microsoft.AspNetCore.Http;
 
@@ -71,7 +72,7 @@ IServiceModule[] modules =
 [
     new S3ServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.S3),
     new SqsServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.Sqs, amqpPool),
-    new StubServiceModule(CapabilityRegistry.Dynamodb, AwsErrorFormat.Json, "dynamodb."),
+    new DynamoDbServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.Dynamodb),
     new StubServiceModule(CapabilityRegistry.Kinesis, AwsErrorFormat.Json, "kinesis."),
     new StubServiceModule(CapabilityRegistry.Sns, AwsErrorFormat.Json, "sns."),
 ];
