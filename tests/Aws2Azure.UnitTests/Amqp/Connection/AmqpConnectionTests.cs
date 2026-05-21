@@ -197,8 +197,15 @@ public sealed class AmqpConnectionTests
         await conn.OpenAsync();
         await serverTask;
 
-        // Wait past the 400 ms deadline + tick (50ms floor) + scheduling slack.
-        await Task.Delay(TimeSpan.FromMilliseconds(900));
+        // Bounded poll on internal state until the silence detector marks
+        // the connection terminal (~400 ms deadline + tick + scheduling).
+        // We avoid going through CloseAsync to poll because its hardcoded
+        // 30-second peer-close wait would dominate any pre-trigger attempt.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < deadline && !conn.IsTerminallyFaulted)
+            await Task.Delay(25);
+
+        Assert.True(conn.IsTerminallyFaulted, "Silence detector did not mark the connection terminal within 5s.");
 
         var ex = await Assert.ThrowsAsync<AmqpConnectionException>(() => conn.CloseAsync());
         Assert.Equal(AmqpErrorKind.Transient, ex.Kind);

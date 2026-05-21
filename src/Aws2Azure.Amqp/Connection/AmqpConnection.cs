@@ -59,6 +59,16 @@ internal sealed class AmqpConnection : IAsyncDisposable
     public TimeSpan EffectiveOutgoingIdleTimeout { get; private set; }
 
     /// <summary>
+    /// True once the connection has been marked terminal as a result of
+    /// an abnormal condition (currently: peer-silence past
+    /// <c>2 * local idle-time-out</c>, AMQP §2.4.5). Test-visible hook
+    /// for the silence detector; production code observes the same
+    /// state via <see cref="CloseAsync"/> rethrowing the recorded fault.
+    /// </summary>
+    internal bool IsTerminallyFaulted =>
+        Volatile.Read(ref _state) == StateFinal && _peerCloseReceived.Task.IsFaulted;
+
+    /// <summary>
     /// Performs the AMQP open handshake: send our <c>open</c>, read the
     /// peer's <c>open</c>, validate, then start the read loop and idle
     /// heartbeat. Throws <see cref="AmqpConnectionException"/> on any
@@ -135,7 +145,17 @@ internal sealed class AmqpConnection : IAsyncDisposable
     {
         var prior = Interlocked.CompareExchange(ref _state, StateClosingLocal, StateOpened);
         if (prior == StateFinal || prior == StateClosed)
+        {
+            // Connection was torn down abnormally (e.g. silence detector
+            // marked us terminal). Surface the recorded fault so callers
+            // see the same transient error any in-flight session/link
+            // already saw, rather than a silent success.
+            if (_peerCloseReceived.Task.IsFaulted)
+            {
+                await _peerCloseReceived.Task.ConfigureAwait(false);
+            }
             return;
+        }
         if (prior == StateClosingLocal || prior == StateClosingRemote)
         {
             // Already closing — just await termination.
@@ -461,8 +481,11 @@ internal sealed class AmqpConnection : IAsyncDisposable
         if (heartbeatPeriodMs <= 0 && incomingDeadlineMs <= 0) return;
 
         // Tick at the smaller of the two periods so we never miss either
-        // event by more than one tick. Floor at 50 ms so very small
-        // negotiated timeouts don't busy-loop.
+        // event by more than one tick. We deliberately do NOT clamp the
+        // tick above the heartbeat period — a peer advertising e.g. 40 ms
+        // idle-time-out would otherwise be closed for our tardiness.
+        // The 5 ms floor is a busy-loop guard for deeply pathological
+        // configurations only; real Azure / Service Bus values are seconds.
         double tickMs;
         if (heartbeatPeriodMs > 0 && incomingDeadlineMs > 0)
             tickMs = Math.Min(heartbeatPeriodMs, incomingDeadlineMs / 4.0);
@@ -470,7 +493,7 @@ internal sealed class AmqpConnection : IAsyncDisposable
             tickMs = heartbeatPeriodMs;
         else
             tickMs = incomingDeadlineMs / 4.0;
-        var tick = TimeSpan.FromMilliseconds(Math.Max(50.0, tickMs));
+        var tick = TimeSpan.FromMilliseconds(Math.Max(5.0, tickMs));
 
         var lastHeartbeatSent = Environment.TickCount64;
         try
@@ -495,7 +518,16 @@ internal sealed class AmqpConnection : IAsyncDisposable
                         var ex = new AmqpConnectionException(
                             $"Peer idle for {sinceLastReceived} ms (>= 2 * idle-time-out of {_settings.IdleTimeout.TotalMilliseconds} ms).",
                             AmqpErrorKind.Transient);
+                        // Mark the connection terminal and tear down sessions
+                        // synchronously so any link/session waiter (Receive,
+                        // Settle, RenewLock, ...) fails fast with the same
+                        // transient error instead of blocking on a TCS that
+                        // will never complete. We MUST set state to Final
+                        // before aborting sessions so the pool's health-check
+                        // path (which reads _state) sees a dead connection.
+                        Interlocked.Exchange(ref _state, StateFinal);
                         _peerCloseReceived.TrySetException(ex);
+                        AbortAllSessions();
                         try { _shutdownCts.Cancel(); } catch { }
                         return;
                     }
