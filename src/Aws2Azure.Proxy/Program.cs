@@ -10,6 +10,7 @@ using Aws2Azure.Modules.S3;
 using Aws2Azure.Modules.Sqs;
 using Aws2Azure.Modules.DynamoDb;
 using Aws2Azure.Modules.Kinesis;
+using Aws2Azure.Modules.Kinesis.EventHubsAmqp;
 using Aws2Azure.Modules.Kinesis.EventHubsRest;
 using Aws2Azure.Modules.Kinesis.Operations;
 using Aws2Azure.Proxy;
@@ -63,6 +64,8 @@ builder.Services.AddSingleton<IEventHubsManagementClient>(sp =>
         azureHttpClient,
         sp.GetRequiredService<IEventHubsAuthenticator>(),
         sp.GetRequiredService<ILogger<EventHubsManagementClient>>()));
+builder.Services.AddSingleton<IEventHubMetadataCache>(sp =>
+    new EventHubMetadataCache(sp.GetRequiredService<IEventHubsManagementClient>()));
 builder.Services.AddSingleton<ListShardsCursorCodecFactory>(sp =>
     new ListShardsCursorCodecFactory(sp.GetRequiredService<ILogger<ListShardsCursorCodecFactory>>()));
 
@@ -110,6 +113,10 @@ var amqpConnectionSettings = new AmqpConnectionSettings
 var amqpFactory = new ServiceBusAmqpConnectionFactory(amqpConnectionSettings);
 var amqpPool = new ServiceBusAmqpPool(amqpFactory);
 builder.Services.AddSingleton(amqpPool);
+builder.Services.AddSingleton<IEventHubsAmqpSender>(sp =>
+    new EventHubsAmqpSender(
+        sp.GetRequiredService<EntraIdTokenProvider>(),
+        amqpConnectionSettings));
 
 // Manual, reflection-free module registration. Capability matrices come from
 // the generated registry (single source of truth: docs/gaps/**/*.yaml). The
@@ -133,6 +140,8 @@ builder.Services.AddSingleton<ServiceModuleRegistry>(sp =>
         new KinesisServiceModule(
             credentialResolver,
             sp.GetRequiredService<IEventHubsManagementClient>(),
+            sp.GetRequiredService<IEventHubMetadataCache>(),
+            sp.GetRequiredService<IEventHubsAmqpSender>(),
             sp.GetRequiredService<ListShardsCursorCodecFactory>(),
             CapabilityRegistry.Kinesis),
         new StubServiceModule(CapabilityRegistry.Sns, AwsErrorFormat.Json, "sns."),

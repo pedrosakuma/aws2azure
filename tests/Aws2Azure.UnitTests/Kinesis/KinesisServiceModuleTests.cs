@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Modules.Kinesis;
+using Aws2Azure.Modules.Kinesis.EventHubsAmqp;
 using Aws2Azure.Modules.Kinesis.EventHubsRest;
 using Aws2Azure.Modules.Kinesis.Operations;
 using Microsoft.AspNetCore.Http;
@@ -31,7 +32,6 @@ public class KinesisServiceModuleTests
     }
 
     [Theory]
-    [InlineData("Kinesis_20131202.PutRecord")]
     [InlineData("Kinesis_20131202.PutRecords")]
     [InlineData("Kinesis_20131202.GetRecords")]
     [InlineData("Kinesis_20131202.GetShardIterator")]
@@ -62,6 +62,19 @@ public class KinesisServiceModuleTests
 
         Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
         Assert.Contains("StreamDescription", ReadBody(ctx));
+    }
+
+    [Fact]
+    public async Task HandleAsync_dispatches_put_record_to_real_handler()
+    {
+        var module = NewModule();
+        var ctx = NewCtx("Kinesis_20131202.PutRecord", body: "{\"StreamName\":\"orders\",\"Data\":\"aGVsbG8=\",\"PartitionKey\":\"pk-1\"}");
+        ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+
+        await module.HandleAsync(ctx);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Contains("ShardId", ReadBody(ctx));
     }
 
     [Fact]
@@ -139,6 +152,8 @@ public class KinesisServiceModuleTests
         return new KinesisServiceModule(
             resolver,
             new FakeManagementClient(),
+            new FakeMetadataCache(),
+            new FakeAmqpSender(),
             new ListShardsCursorCodecFactory(NullLogger<ListShardsCursorCodecFactory>.Instance),
             new CapabilityMatrix("kinesis", Array.Empty<OperationCapability>()));
     }
@@ -170,5 +185,21 @@ public class KinesisServiceModuleTests
                 ["0"],
                 1,
                 new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero)));
+    }
+
+    private sealed class FakeMetadataCache : IEventHubMetadataCache
+    {
+        public ValueTask<EventHubDescription> GetEventHubAsync(EventHubsCredentials credentials, string namespaceFqdn, string eventHubName, System.Threading.CancellationToken cancellationToken)
+            => ValueTask.FromResult(new EventHubDescription(
+                1,
+                ["0"],
+                1,
+                new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero)));
+    }
+
+    private sealed class FakeAmqpSender : IEventHubsAmqpSender
+    {
+        public Task SendAsync(EventHubsCredentials credentials, string namespaceFqdn, string entityPath, ReadOnlyMemory<byte> body, IReadOnlyDictionary<string, object>? annotations, System.Threading.CancellationToken cancellationToken)
+            => Task.CompletedTask;
     }
 }
