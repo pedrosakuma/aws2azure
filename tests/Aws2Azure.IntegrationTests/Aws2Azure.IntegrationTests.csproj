@@ -21,4 +21,12 @@
   <ItemGroup>
     <Using Include="Aws2Azure.IntegrationTests.Fixtures" />
   </ItemGroup>
+  <ItemGroup>
+    <None Update="Fixtures\ServiceBusEmulatorConfig.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Fixtures\ServiceBusEmulator.Dockerfile">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 </Project>
