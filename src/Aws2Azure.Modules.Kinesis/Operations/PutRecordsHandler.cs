@@ -136,7 +136,7 @@ internal static class PutRecordsHandler
 
                 try
                 {
-                    await amqpSender.SendBatchAsync(
+                    var batchResult = await amqpSender.SendBatchAsync(
                             credentials,
                             namespaceFqdn,
                             eventHubName + "/Partitions/" + partitionRecords[0].PartitionId,
@@ -147,30 +147,29 @@ internal static class PutRecordsHandler
                     for (var i = 0; i < partitionRecords.Count; i++)
                     {
                         var record = partitionRecords[i];
-                        responseEntries[record.RequestIndex] = new PutRecordsResultEntry
+                        var outcome = batchResult.Outcomes[i];
+                        if (outcome.Succeeded)
                         {
-                            ShardId = record.ShardId,
-                        };
+                            responseEntries[record.RequestIndex] = new PutRecordsResultEntry
+                            {
+                                ShardId = record.ShardId,
+                            };
+                        }
+                        else
+                        {
+                            failedRecordCount++;
+                            responseEntries[record.RequestIndex] = new PutRecordsResultEntry
+                            {
+                                ErrorCode = outcome.ErrorCode,
+                                ErrorMessage = outcome.ErrorMessage,
+                            };
+                        }
                     }
-                }
-                catch (EventHubsAmqpException ex) when (ex.Kind == EventHubsAmqpFailureKind.Auth)
-                {
-                    await PutRecordCommon.WriteSendErrorAsync(context, ex, "PutRecords").ConfigureAwait(false);
-                    return;
                 }
                 catch (EventHubsAmqpException ex)
                 {
-                    var failure = PutRecordCommon.ResolveBatchFailure(ex, "PutRecords");
-                    failedRecordCount += partitionRecords.Count;
-                    for (var i = 0; i < partitionRecords.Count; i++)
-                    {
-                        var record = partitionRecords[i];
-                        responseEntries[record.RequestIndex] = new PutRecordsResultEntry
-                        {
-                            ErrorCode = failure.ErrorCode,
-                            ErrorMessage = failure.ErrorMessage,
-                        };
-                    }
+                    await PutRecordCommon.WriteSendErrorAsync(context, ex, "PutRecords").ConfigureAwait(false);
+                    return;
                 }
             }
 

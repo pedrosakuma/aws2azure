@@ -228,6 +228,12 @@ public static class ProxyConfigValidator
                     if (settings is null)
                     {
                         errors.Add($"{prefix}.eventHubs.streams.{name}: entry is null.");
+                        continue;
+                    }
+
+                    if (settings.PartitionCount is <= 0)
+                    {
+                        errors.Add($"{prefix}.eventHubs.streams.{name}.partitionCount: must be greater than zero when set.");
                     }
                 }
             }

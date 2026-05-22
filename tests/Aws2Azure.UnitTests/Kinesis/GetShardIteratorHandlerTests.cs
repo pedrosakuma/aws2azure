@@ -112,6 +112,26 @@ public sealed class GetShardIteratorHandlerTests
         Assert.Contains(expectedMessage, ReadBody(context));
     }
 
+    [Theory]
+    [InlineData(1e18)]
+    [InlineData(-1e18)]
+    public async Task HandleAsync_rejects_out_of_range_at_timestamp_values(double timestamp)
+    {
+        var context = NewContext();
+
+        await GetShardIteratorHandler.HandleAsync(
+            context,
+            NewParseResult(BuildRequestBody("AT_TIMESTAMP", null, timestamp)),
+            NewCredentials(),
+            NewMetadataCache(),
+            NewCodecFactory(),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("ValidationException", ReadBody(context));
+        Assert.Contains("Timestamp is invalid for AT_TIMESTAMP.", ReadBody(context));
+    }
+
     [Fact]
     public async Task HandleAsync_rejects_unknown_shards()
     {

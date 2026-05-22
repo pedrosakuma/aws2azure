@@ -55,6 +55,11 @@ public sealed class EventHubsManagementClient : IEventHubsManagementClient
         ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
         ArgumentException.ThrowIfNullOrWhiteSpace(eventHubName);
 
+        if (TryResolveConfiguredDescription(credentials, eventHubName, out var configured))
+        {
+            return configured;
+        }
+
         var requestUri = BuildRequestUri(credentials, namespaceFqdn, eventHubName);
         EventHubsManagementClientLog.FetchingEventHub(_logger, namespaceFqdn, eventHubName);
 
@@ -104,6 +109,42 @@ public sealed class EventHubsManagementClient : IEventHubsManagementClient
         }
 
         return new EventHubDescription(partitionIds.Count, partitionIds.ToArray(), retentionDays, createdAt);
+    }
+
+    private static bool TryResolveConfiguredDescription(EventHubsCredentials credentials, string eventHubName, out EventHubDescription description)
+    {
+        description = default!;
+        if (credentials.Streams is null)
+        {
+            return false;
+        }
+
+        foreach (var (streamName, settings) in credentials.Streams)
+        {
+            if (settings?.PartitionCount is not int partitionCount || partitionCount <= 0)
+            {
+                continue;
+            }
+
+            var resolvedEventHubName = !string.IsNullOrWhiteSpace(settings.EventHubName)
+                ? settings.EventHubName!
+                : streamName;
+            if (!string.Equals(resolvedEventHubName, eventHubName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var partitionIds = new string[partitionCount];
+            for (var i = 0; i < partitionIds.Length; i++)
+            {
+                partitionIds[i] = i.ToString(CultureInfo.InvariantCulture);
+            }
+
+            description = new EventHubDescription(partitionCount, partitionIds, 1, DateTimeOffset.UnixEpoch);
+            return true;
+        }
+
+        return false;
     }
 
     private static string ExtractEventHubDescriptionFragment(string content)

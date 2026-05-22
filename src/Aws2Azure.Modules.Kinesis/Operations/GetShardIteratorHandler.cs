@@ -10,6 +10,9 @@ namespace Aws2Azure.Modules.Kinesis.Operations;
 
 internal static class GetShardIteratorHandler
 {
+    private static readonly double MinUnixTimestampMilliseconds = DateTimeOffset.MinValue.ToUnixTimeMilliseconds();
+    private static readonly double MaxUnixTimestampMilliseconds = DateTimeOffset.MaxValue.ToUnixTimeMilliseconds();
+
     public static async Task HandleAsync(
         HttpContext context,
         KinesisParseResult parseResult,
@@ -133,9 +136,22 @@ internal static class GetShardIteratorHandler
 
                 return true;
             case ShardIteratorType.AtTimestamp:
-                if (!request.Timestamp.HasValue || double.IsNaN(request.Timestamp.Value) || double.IsInfinity(request.Timestamp.Value))
+                if (!request.Timestamp.HasValue)
                 {
                     error = "Timestamp is required for AT_TIMESTAMP.";
+                    return false;
+                }
+
+                var timestampSeconds = request.Timestamp.Value;
+                var timestampMilliseconds = timestampSeconds * 1000d;
+                if (double.IsNaN(timestampSeconds)
+                    || double.IsInfinity(timestampSeconds)
+                    || double.IsNaN(timestampMilliseconds)
+                    || double.IsInfinity(timestampMilliseconds)
+                    || timestampMilliseconds < MinUnixTimestampMilliseconds
+                    || timestampMilliseconds > MaxUnixTimestampMilliseconds)
+                {
+                    error = "Timestamp is invalid for AT_TIMESTAMP.";
                     return false;
                 }
 

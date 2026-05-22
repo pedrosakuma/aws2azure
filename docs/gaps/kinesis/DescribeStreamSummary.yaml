@@ -9,7 +9,7 @@ sub_features:
 behavior_differences:
   - "OpenShardCount is the Event Hub partition count; Event Hubs does not expose a separate open/closed shard lifecycle." 
   - "EnhancedMonitoring is always the empty [{ShardLevelMetrics: []}] shape and ConsumerCount is always 0 because Event Hubs does not expose Kinesis-compatible consumer metadata here."
-  - "Retention and creation metadata come from the Service Bus management REST API; this slice has only been verified with tests, not yet against a live Event Hubs namespace."
+  - "Retention and creation metadata come from the Service Bus management REST API (or an emulator-focused static partition-count override when configured); verified against Event Hubs emulator only, not yet against a live Event Hubs namespace."
   - "Stream lifecycle (CreateStream / DeleteStream / IncreaseStreamRetentionPeriod) is out of scope — Event Hubs entities are provisioned out-of-band via ARM."
 references:
   - https://docs.aws.amazon.com/kinesis/latest/APIReference/API_DescribeStreamSummary.html

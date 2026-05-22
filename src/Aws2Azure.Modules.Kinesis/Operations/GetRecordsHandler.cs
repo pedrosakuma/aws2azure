@@ -155,12 +155,13 @@ internal static class GetRecordsHandler
             ShardIteratorType.AtTimestamp => TryParseTimestampPosition(token.Position, out var timestamp)
                 ? new EventHubsReceivePosition.FromEnqueuedTime(timestamp)
                 : new EventHubsReceivePosition.FromStart(),
-            ShardIteratorType.AtSequenceNumber or ShardIteratorType.AfterSequenceNumber => TranslateSequencePosition(token.Position),
+            ShardIteratorType.AtSequenceNumber => TranslateSequencePosition(token.Position, inclusive: true),
+            ShardIteratorType.AfterSequenceNumber => TranslateSequencePosition(token.Position, inclusive: false),
             _ => new EventHubsReceivePosition.FromStart(),
         };
     }
 
-    private static EventHubsReceivePosition TranslateSequencePosition(string? position)
+    private static EventHubsReceivePosition TranslateSequencePosition(string? position, bool inclusive)
     {
         if (string.IsNullOrWhiteSpace(position))
         {
@@ -181,13 +182,16 @@ internal static class GetRecordsHandler
         if (position.StartsWith("time:", StringComparison.Ordinal)
             && long.TryParse(position["time:".Length..], NumberStyles.Integer, CultureInfo.InvariantCulture, out var millis))
         {
-            return new EventHubsReceivePosition.FromEnqueuedTime(DateTimeOffset.FromUnixTimeMilliseconds(millis));
+            return new EventHubsReceivePosition.FromEnqueuedTime(AdjustSequenceBoundary(DateTimeOffset.FromUnixTimeMilliseconds(millis), inclusive));
         }
 
         return TryExtractSyntheticSequenceTimestamp(position, out var enqueuedTime)
-            ? new EventHubsReceivePosition.FromEnqueuedTime(enqueuedTime)
+            ? new EventHubsReceivePosition.FromEnqueuedTime(AdjustSequenceBoundary(enqueuedTime, inclusive))
             : new EventHubsReceivePosition.FromStart();
     }
+
+    private static DateTimeOffset AdjustSequenceBoundary(DateTimeOffset timestamp, bool inclusive)
+        => inclusive ? timestamp.AddMilliseconds(-1) : timestamp;
 
     internal static bool TryExtractSyntheticSequenceTimestamp(string? sequenceNumber, out DateTimeOffset timestamp)
     {

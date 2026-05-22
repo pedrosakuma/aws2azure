@@ -241,7 +241,7 @@ public sealed class PutRecordHandlerTests
             }
         }
 
-        public Task SendBatchAsync(
+        public async Task<EventHubsBatchSendResult> SendBatchAsync(
             EventHubsCredentials credentials,
             string namespaceFqdn,
             string entityPath,
@@ -250,10 +250,11 @@ public sealed class PutRecordHandlerTests
         {
             if (messages.Count == 0)
             {
-                return Task.CompletedTask;
+                return new EventHubsBatchSendResult([]);
             }
 
-            return SendAsync(credentials, namespaceFqdn, entityPath, messages[0].body, messages[0].annotations, cancellationToken);
+            await SendAsync(credentials, namespaceFqdn, entityPath, messages[0].body, messages[0].annotations, cancellationToken);
+            return new EventHubsBatchSendResult([new EventHubsBatchSendOutcome(true, null, null)]);
         }
     }
 }

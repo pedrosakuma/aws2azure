@@ -176,26 +176,23 @@ public sealed class PutRecordsHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_marks_only_failed_partition_group_entries_when_batch_send_fails()
+    public async Task HandleAsync_marks_only_rejected_entries_failed_when_batch_returns_partial_outcomes()
     {
         var context = NewContext();
-        var sender = new FakeAmqpSender((_, _, entityPath, _, _) =>
-        {
-            if (entityPath.EndsWith("/1", StringComparison.Ordinal))
-            {
-                throw new EventHubsAmqpException("failed", new InvalidOperationException(), EventHubsAmqpFailureKind.Unknown);
-            }
-
-            return Task.CompletedTask;
-        });
+        var sender = new FakeAmqpSender((_, _, _, messages, _) => Task.FromResult(new EventHubsBatchSendResult(
+        [
+            new EventHubsBatchSendOutcome(true, null, null),
+            new EventHubsBatchSendOutcome(false, "InternalFailure", "Azure Event Hubs AMQP send failed."),
+            new EventHubsBatchSendOutcome(true, null, null),
+        ])));
         var requestBody = JsonSerializer.Serialize(new
         {
             StreamName = "orders",
             Records = new object[]
             {
-                new { Data = "YQ==", PartitionKey = "a" },
-                new { Data = "Yg==", PartitionKey = "d" },
-                new { Data = "Yw==", PartitionKey = "o" },
+                new { Data = "YQ==", PartitionKey = "same-partition" },
+                new { Data = "Yg==", PartitionKey = "same-partition" },
+                new { Data = "Yw==", PartitionKey = "same-partition" },
             },
         });
 
@@ -210,12 +207,13 @@ public sealed class PutRecordsHandlerTests
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
 
         using var document = ReadJson(context);
-        Assert.Equal(2, document.RootElement.GetProperty("FailedRecordCount").GetInt32());
+        Assert.Equal(1, document.RootElement.GetProperty("FailedRecordCount").GetInt32());
         var records = document.RootElement.GetProperty("Records");
         Assert.Equal(3, records.GetArrayLength());
-        AssertFailure(records[0], "InternalFailure", "AMQP send failed");
+        var shardId = records[0].GetProperty("ShardId").GetString();
+        AssertSuccess(records[0], shardId!);
         AssertFailure(records[1], "InternalFailure", "AMQP send failed");
-        AssertSuccess(records[2], PutRecordHandler.FormatShardId(0));
+        AssertSuccess(records[2], shardId!);
     }
 
     [Fact]
@@ -333,15 +331,21 @@ public sealed class PutRecordsHandlerTests
             => handler(credentials, namespaceFqdn, eventHubName, cancellationToken);
     }
 
-    private sealed class FakeAmqpSender(Func<EventHubsCredentials, string, string, IReadOnlyList<(ReadOnlyMemory<byte> body, IReadOnlyDictionary<string, object>? annotations)>, CancellationToken, Task>? batchHandler = null)
+    private sealed class FakeAmqpSender(Func<EventHubsCredentials, string, string, IReadOnlyList<(ReadOnlyMemory<byte> body, IReadOnlyDictionary<string, object>? annotations)>, CancellationToken, Task<EventHubsBatchSendResult>>? batchHandler = null)
         : IEventHubsAmqpSender
     {
         public List<BatchCall> BatchCalls { get; } = [];
 
-        public Task SendAsync(EventHubsCredentials credentials, string namespaceFqdn, string entityPath, ReadOnlyMemory<byte> body, IReadOnlyDictionary<string, object>? annotations, CancellationToken cancellationToken)
-            => SendBatchAsync(credentials, namespaceFqdn, entityPath, [(body, annotations)], cancellationToken);
+        public async Task SendAsync(EventHubsCredentials credentials, string namespaceFqdn, string entityPath, ReadOnlyMemory<byte> body, IReadOnlyDictionary<string, object>? annotations, CancellationToken cancellationToken)
+        {
+            var result = await SendBatchAsync(credentials, namespaceFqdn, entityPath, [(body, annotations)], cancellationToken);
+            if (!result.Outcomes[0].Succeeded)
+            {
+                throw new EventHubsAmqpException(result.Outcomes[0].ErrorMessage ?? "failed", new InvalidOperationException(), EventHubsAmqpFailureKind.Unknown);
+            }
+        }
 
-        public async Task SendBatchAsync(
+        public async Task<EventHubsBatchSendResult> SendBatchAsync(
             EventHubsCredentials credentials,
             string namespaceFqdn,
             string entityPath,
@@ -359,8 +363,10 @@ public sealed class PutRecordsHandlerTests
 
             if (batchHandler is not null)
             {
-                await batchHandler(credentials, namespaceFqdn, entityPath, messages, cancellationToken);
+                return await batchHandler(credentials, namespaceFqdn, entityPath, messages, cancellationToken);
             }
+
+            return new EventHubsBatchSendResult(messages.Select(_ => new EventHubsBatchSendOutcome(true, null, null)).ToArray());
         }
     }
 
