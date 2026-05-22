@@ -21,10 +21,13 @@
 | dynamodb | [UntagResource](dynamodb.md#untagresource) | ⚪ stub | `Azure Cosmos DB account/resource tags (control plane)` |
 | dynamodb | [UpdateItem](dynamodb.md#updateitem) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [UpdateTimeToLive](dynamodb.md#updatetimetolive) | ⛔ unsupported | `Azure Cosmos DB container `defaultTtl` / per-item `ttl`` |
-| kinesis | [GetRecords](kinesis.md#getrecords) | ⚪ stub | `Azure Event Hubs Kafka/HTTP surface` |
-| kinesis | [GetShardIterator](kinesis.md#getsharditerator) | ⚪ stub | `Azure Event Hubs Kafka/HTTP surface` |
-| kinesis | [PutRecord](kinesis.md#putrecord) | ⚪ stub | `Azure Event Hubs Kafka/HTTP surface` |
-| kinesis | [PutRecords](kinesis.md#putrecords) | ⚪ stub | `Azure Event Hubs Kafka/HTTP surface` |
+| kinesis | [DescribeStream](kinesis.md#describestream) | ⚪ stub | `Azure Event Hubs runtime + management API` |
+| kinesis | [DescribeStreamSummary](kinesis.md#describestreamsummary) | ⚪ stub | `Azure Event Hubs runtime + management API` |
+| kinesis | [GetRecords](kinesis.md#getrecords) | ⚪ stub | `Azure Event Hubs (AMQP 1.0 data plane)` |
+| kinesis | [GetShardIterator](kinesis.md#getsharditerator) | ⚪ stub | `Azure Event Hubs (AMQP 1.0 data plane)` |
+| kinesis | [ListShards](kinesis.md#listshards) | ⚪ stub | `Azure Event Hubs runtime + management API` |
+| kinesis | [PutRecord](kinesis.md#putrecord) | ⚪ stub | `Azure Event Hubs (AMQP 1.0 data plane)` |
+| kinesis | [PutRecords](kinesis.md#putrecords) | ⚪ stub | `Azure Event Hubs (AMQP 1.0 data plane)` |
 | s3 | [AbortMultipartUpload](s3.md#abortmultipartupload) | ✅ implemented | `(no-op; uncommitted blocks GC after 7 days)` |
 | s3 | [CompleteMultipartUpload](s3.md#completemultipartupload) | ✅ implemented | `Put Block List` |
 | s3 | [CopyObject](s3.md#copyobject) | ✅ implemented | `PUT https://{account}.blob.core.windows.net/{container}/{blob} with x-ms-copy-source` |

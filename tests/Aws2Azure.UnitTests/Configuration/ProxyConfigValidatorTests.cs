@@ -68,6 +68,7 @@ public class ProxyConfigValidatorTests
                         Blob       = new BlobCredentials(),
                         ServiceBus = new ServiceBusCredentials(),
                         Cosmos     = new CosmosCredentials(),
+                        EventHubs  = new EventHubsCredentials(),
                     },
                 },
             },
@@ -84,6 +85,65 @@ public class ProxyConfigValidatorTests
         Assert.Contains("cosmos.endpoint: required", ex.Message);
         Assert.Contains("cosmos.databaseName: required", ex.Message);
         Assert.Contains("either primaryKey OR (tenantId+clientId+clientSecret)", ex.Message);
+        Assert.Contains("eventHubs.namespace: required", ex.Message);
+        Assert.Contains("eventHubs: either (sasKeyName+sasKey) OR (tenantId+clientId+clientSecret)", ex.Message);
+    }
+
+    [Fact]
+    public void Throws_when_event_hubs_mixes_sas_and_aad()
+    {
+        var config = new ProxyConfig
+        {
+            Credentials =
+            {
+                new CredentialEntry
+                {
+                    AwsAccessKeyId = "AKIA1",
+                    AwsSecretAccessKey = "secret",
+                    Azure = new AzureCredentials
+                    {
+                        EventHubs = new EventHubsCredentials
+                        {
+                            Namespace = "myns",
+                            SasKeyName = "Root",
+                            SasKey = "ZGVhZGJlZWY=",
+                            TenantId = "tenant",
+                        },
+                    },
+                },
+            },
+        };
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+        Assert.Contains("eventHubs: SAS and AAD fields are mutually exclusive", ex.Message);
+    }
+
+    [Fact]
+    public void Accepts_event_hubs_with_complete_sas()
+    {
+        var config = new ProxyConfig
+        {
+            Credentials =
+            {
+                new CredentialEntry
+                {
+                    AwsAccessKeyId = "AKIA1",
+                    AwsSecretAccessKey = "secret",
+                    Azure = new AzureCredentials
+                    {
+                        EventHubs = new EventHubsCredentials
+                        {
+                            Namespace = "myns",
+                            SasKeyName = "Root",
+                            SasKey = "ZGVhZGJlZWY=",
+                        },
+                    },
+                },
+            },
+        };
+
+        var ex = Record.Exception(() => ProxyConfigValidator.Validate(config));
+        Assert.Null(ex);
     }
 
     [Fact]

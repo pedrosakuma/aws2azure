@@ -9,6 +9,7 @@ using Aws2Azure.Core.SigV4;
 using Aws2Azure.Modules.S3;
 using Aws2Azure.Modules.Sqs;
 using Aws2Azure.Modules.DynamoDb;
+using Aws2Azure.Modules.Kinesis;
 using Aws2Azure.Proxy;
 using Microsoft.AspNetCore.Http;
 
@@ -114,7 +115,7 @@ builder.Services.AddSingleton<ServiceModuleRegistry>(sp =>
         new SqsServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.Sqs, amqpPool),
         new DynamoDbServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.Dynamodb,
             loggerFactory: loggerFactory),
-        new StubServiceModule(CapabilityRegistry.Kinesis, AwsErrorFormat.Json, "kinesis."),
+        new KinesisServiceModule(credentialResolver, CapabilityRegistry.Kinesis),
         new StubServiceModule(CapabilityRegistry.Sns, AwsErrorFormat.Json, "sns."),
     ];
     return new ServiceModuleRegistry(modules, sigV4Validator);

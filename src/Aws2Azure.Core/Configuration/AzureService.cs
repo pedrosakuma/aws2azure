@@ -9,4 +9,5 @@ public enum AzureService
     Blob,
     ServiceBus,
     Cosmos,
+    EventHubs,
 }

@@ -14,7 +14,8 @@ public interface ICredentialResolver
     /// <c>null</c> if no credentials are configured for that service.
     /// The return type depends on <paramref name="service"/>:
     /// <see cref="BlobCredentials"/>, <see cref="ServiceBusCredentials"/>,
-    /// or <see cref="CosmosCredentials"/>.
+    /// <see cref="CosmosCredentials"/>, or
+    /// <see cref="EventHubsCredentials"/>.
     /// </summary>
     object? GetAzureCredentialsFor(string awsAccessKeyId, AzureService service);
 }
@@ -60,6 +61,7 @@ public sealed class StaticCredentialResolver : ICredentialResolver
             AzureService.Blob       => entry.Azure.Blob,
             AzureService.ServiceBus => entry.Azure.ServiceBus,
             AzureService.Cosmos     => entry.Azure.Cosmos,
+            AzureService.EventHubs  => entry.Azure.EventHubs,
             _ => null,
         };
     }
