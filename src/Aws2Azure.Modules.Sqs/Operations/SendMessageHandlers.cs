@@ -599,10 +599,10 @@ internal static class SendMessageHandlers
 
     // --- Misc utilities ------------------------------------------------
 
-    private static string? ExtractQueueName(SqsParseResult parsed) =>
+    internal static string? ExtractQueueName(SqsParseResult parsed) =>
         parsed.Parameters.TryGetValue("QueueUrl", out var url) ? QueueUrlBuilder.ExtractQueueName(url) : null;
 
-    private static bool TryGetParam(SqsParseResult parsed, string key, out string value)
+    internal static bool TryGetParam(SqsParseResult parsed, string key, out string value)
     {
         if (parsed.Parameters.TryGetValue(key, out var v) && v is not null)
         {
@@ -613,7 +613,7 @@ internal static class SendMessageHandlers
         return false;
     }
 
-    private static bool TryParseDelaySeconds(
+    internal static bool TryParseDelaySeconds(
         SqsParseResult parsed, out int delaySeconds, out SqsErrorMapping.Mapping? error)
     {
         delaySeconds = 0;
@@ -633,7 +633,7 @@ internal static class SendMessageHandlers
         return true;
     }
 
-    private static SqsMessageAttributeParser.ParseResult ParseMessageAttributes(
+    internal static SqsMessageAttributeParser.ParseResult ParseMessageAttributes(
         SqsParseResult parsed, string prefix)
     {
         if (parsed.Protocol == SqsWireProtocol.AwsJson && !string.IsNullOrEmpty(parsed.JsonBody))
@@ -666,6 +666,6 @@ internal static class SendMessageHandlers
         return true;
     }
 
-    private static Task WriteErrorAsync(HttpContext context, SqsWireProtocol protocol, SqsErrorMapping.Mapping mapping) =>
+    internal static Task WriteErrorAsync(HttpContext context, SqsWireProtocol protocol, SqsErrorMapping.Mapping mapping) =>
         SqsErrorResponse.WriteAsync(context, protocol, mapping.StatusCode, mapping.Code, mapping.Message, mapping.FaultType);
 }

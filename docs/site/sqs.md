@@ -395,6 +395,7 @@
 
 ### Behaviour differences
 
+- Per-queue transport selection (Phase 2.7 Slice 2): when the credential's serviceBus.transport (or per-queue override) is set to 'amqp', SendMessage is routed natively over AMQP via ServiceBusAmqpSender. The SQS-visible behaviour is identical to the REST path — same validation, same idempotency-key contract, same MD5 algorithm — only the wire to Service Bus differs. SendMessageBatch still goes over REST (Slice 3).
 - MessageId is synthesised proxy-side (SB does not echo the message id on the runtime POST). For FIFO the MessageDeduplicationId is reused as the MessageId; otherwise a fresh Guid is minted.
 - FIFO required-param validation (Slice 5): on a .fifo queue, MessageGroupId is required and the proxy returns MissingParameter when it is omitted. On standard queues, MessageGroupId and MessageDeduplicationId are rejected with InvalidParameterValue — matching SQS's per-attribute domain.
 - SQS attribute data types (String/Number/Binary/'String.Custom') are flattened to SB application-property strings. The proxy emits an Aws2Azure-AttrTypes side-channel header so the receive path can faithfully reconstruct the original SQS shape — without it, all attributes would surface as String on receive.
