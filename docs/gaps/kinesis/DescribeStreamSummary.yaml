@@ -1,0 +1,11 @@
+service: kinesis
+operation: DescribeStreamSummary
+azure_equivalent: "Azure Event Hubs runtime + management API"
+status: stub
+sub_features: []
+behavior_differences:
+  - "Phase 4 Slice 1 scaffolds routing + AWS-JSON-1.1 parsing + EventHubs credential gating only; the operation returns HTTP 501 InternalFailure until its dedicated slice lands."
+  - "Shard ids are synthesised from EH partition ids using a fixed 'shardId-<partitionId>' convention; AWS's 49-character base-36 shard ids are NOT preserved."
+  - "Stream lifecycle (CreateStream / DeleteStream / IncreaseStreamRetentionPeriod) is out of scope — Event Hubs entities are provisioned out-of-band via ARM."
+references:
+  - https://docs.aws.amazon.com/kinesis/latest/APIReference/API_DescribeStreamSummary.html

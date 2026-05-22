@@ -162,5 +162,75 @@ public static class ProxyConfigValidator
                 errors.Add($"{prefix}.cosmos: primaryKey and AAD fields are mutually exclusive — supply one shape.");
             }
         }
+
+        if (azure.EventHubs is { } eh)
+        {
+            if (string.IsNullOrWhiteSpace(eh.Namespace))
+            {
+                errors.Add($"{prefix}.eventHubs.namespace: required.");
+            }
+
+            if (!string.IsNullOrEmpty(eh.Endpoint))
+            {
+                if (!Uri.TryCreate(eh.Endpoint, UriKind.Absolute, out var ehUri))
+                {
+                    errors.Add($"{prefix}.eventHubs.endpoint: must be an absolute URI when set.");
+                }
+                else if (ehUri.Scheme != Uri.UriSchemeHttp
+                    && ehUri.Scheme != Uri.UriSchemeHttps
+                    && !ehUri.Scheme.Equals("amqp", StringComparison.OrdinalIgnoreCase)
+                    && !ehUri.Scheme.Equals("amqps", StringComparison.OrdinalIgnoreCase))
+                {
+                    errors.Add($"{prefix}.eventHubs.endpoint: must use http(s) or amqp(s) scheme.");
+                }
+            }
+
+            var ehHasSasName = !string.IsNullOrWhiteSpace(eh.SasKeyName);
+            var ehHasSasKey = !string.IsNullOrWhiteSpace(eh.SasKey);
+            var ehHasAnySas = ehHasSasName || ehHasSasKey;
+            var ehHasCompleteSas = ehHasSasName && ehHasSasKey;
+
+            var ehHasTenant = !string.IsNullOrWhiteSpace(eh.TenantId);
+            var ehHasClientId = !string.IsNullOrWhiteSpace(eh.ClientId);
+            var ehHasClientSecret = !string.IsNullOrWhiteSpace(eh.ClientSecret);
+            var ehHasAnyAad = ehHasTenant || ehHasClientId || ehHasClientSecret;
+            var ehHasCompleteAad = ehHasTenant && ehHasClientId && ehHasClientSecret;
+
+            if (!ehHasCompleteSas && !ehHasCompleteAad)
+            {
+                if (ehHasAnySas && !ehHasCompleteSas)
+                {
+                    errors.Add($"{prefix}.eventHubs: SAS auth requires both sasKeyName and sasKey.");
+                }
+                else if (ehHasAnyAad && !ehHasCompleteAad)
+                {
+                    errors.Add($"{prefix}.eventHubs: AAD requires tenantId, clientId, and clientSecret together.");
+                }
+                else
+                {
+                    errors.Add($"{prefix}.eventHubs: either (sasKeyName+sasKey) OR (tenantId+clientId+clientSecret) is required.");
+                }
+            }
+            if (ehHasAnySas && ehHasAnyAad)
+            {
+                errors.Add($"{prefix}.eventHubs: SAS and AAD fields are mutually exclusive — supply one shape.");
+            }
+
+            if (eh.Streams is { } streams)
+            {
+                foreach (var (name, settings) in streams)
+                {
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        errors.Add($"{prefix}.eventHubs.streams: stream name must be non-empty.");
+                        continue;
+                    }
+                    if (settings is null)
+                    {
+                        errors.Add($"{prefix}.eventHubs.streams.{name}: entry is null.");
+                    }
+                }
+            }
+        }
     }
 }

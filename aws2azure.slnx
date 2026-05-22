@@ -5,6 +5,7 @@
     <Project Path="src/Aws2Azure.Modules.S3/Aws2Azure.Modules.S3.csproj" />
     <Project Path="src/Aws2Azure.Modules.Sqs/Aws2Azure.Modules.Sqs.csproj" />
     <Project Path="src/Aws2Azure.Modules.DynamoDb/Aws2Azure.Modules.DynamoDb.csproj" />
+    <Project Path="src/Aws2Azure.Modules.Kinesis/Aws2Azure.Modules.Kinesis.csproj" />
     <Project Path="src/Aws2Azure.Proxy/Aws2Azure.Proxy.csproj" />
   </Folder>
   <Folder Name="/tests/">

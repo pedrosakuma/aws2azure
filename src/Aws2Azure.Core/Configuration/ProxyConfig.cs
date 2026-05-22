@@ -29,6 +29,7 @@ public sealed class AzureCredentials
     public BlobCredentials? Blob { get; set; }
     public ServiceBusCredentials? ServiceBus { get; set; }
     public CosmosCredentials? Cosmos { get; set; }
+    public EventHubsCredentials? EventHubs { get; set; }
 }
 
 public sealed class BlobCredentials
@@ -130,6 +131,103 @@ public sealed class CosmosCredentials
     /// support can drop this in favour of a token-source abstraction.
     /// </summary>
     public string? ClientSecret { get; set; }
+}
+
+/// <summary>
+/// Azure Event Hubs credentials used by the Kinesis module. Mirrors the
+/// dual-shape pattern of <see cref="ServiceBusCredentials"/> /
+/// <see cref="CosmosCredentials"/>: SAS-key for shared-access auth
+/// (per Event Hubs namespace) or AAD for managed identity / SP auth.
+/// Exactly one shape must be populated.
+/// </summary>
+public sealed class EventHubsCredentials
+{
+    /// <summary>
+    /// Event Hubs namespace short name (e.g. <c>mynamespace</c>). The
+    /// canonical FQDN <c>{Namespace}.servicebus.windows.net</c> is
+    /// derived from it unless <see cref="Endpoint"/> overrides.
+    /// </summary>
+    public string Namespace { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Optional absolute endpoint override. Use when targeting a
+    /// sovereign cloud (e.g. <c>{ns}.servicebus.usgovcloudapi.net</c>)
+    /// or a future EH emulator. When empty, the canonical
+    /// <c>{Namespace}.servicebus.windows.net</c> form is used.
+    /// </summary>
+    public string? Endpoint { get; set; }
+
+    /// <summary>
+    /// SAS rule name (per-namespace shared-access policy). Mutually
+    /// exclusive with the AAD shape.
+    /// </summary>
+    public string SasKeyName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// SAS rule key (primary or secondary). Mutually exclusive with
+    /// the AAD shape.
+    /// </summary>
+    public string SasKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Entra tenant id for AAD auth. Required when SAS fields are
+    /// empty; mutually exclusive with the SAS shape.
+    /// </summary>
+    public string? TenantId { get; set; }
+
+    /// <summary>
+    /// Entra application (client) id for AAD auth.
+    /// </summary>
+    public string? ClientId { get; set; }
+
+    /// <summary>
+    /// Entra client secret for AAD auth.
+    /// </summary>
+    public string? ClientSecret { get; set; }
+
+    /// <summary>
+    /// Signing secret used to HMAC the opaque shard-iterator tokens
+    /// the Kinesis module hands out from <c>GetShardIterator</c>.
+    /// Optional in the credential entry; falls back to a per-process
+    /// derived secret when empty, but operators are strongly
+    /// encouraged to set this in production so iterator tokens remain
+    /// valid across proxy restarts. UTF-8; minimum 32 bytes
+    /// recommended.
+    /// </summary>
+    public string? ShardIteratorSigningKey { get; set; }
+
+    /// <summary>
+    /// Optional per-stream overrides. Key is the Kinesis stream name
+    /// exactly as AWS callers send it; value carries the Event Hubs
+    /// entity name to back it with and any stream-level knobs (e.g.
+    /// consumer group). When a stream is absent from this map, the
+    /// proxy assumes the Event Hub entity name == stream name and
+    /// uses the namespace-level <c>$Default</c> consumer group.
+    /// </summary>
+    public Dictionary<string, KinesisStreamSettings>? Streams { get; set; }
+}
+
+/// <summary>
+/// Per-stream overrides for the Kinesis module. All fields optional —
+/// missing values fall back to the namespace-level defaults derived
+/// from the AWS stream name.
+/// </summary>
+public sealed class KinesisStreamSettings
+{
+    /// <summary>
+    /// Event Hubs entity name backing this Kinesis stream. When null,
+    /// the Kinesis stream name is used verbatim. Useful when AWS
+    /// stream names exceed Event Hubs naming rules or already exist
+    /// under different identifiers on the Azure side.
+    /// </summary>
+    public string? EventHubName { get; set; }
+
+    /// <summary>
+    /// Event Hubs consumer group used by <c>GetRecords</c>. Defaults
+    /// to <c>$Default</c>. Distinct AWS consumers sharing the same
+    /// stream should map to distinct consumer groups.
+    /// </summary>
+    public string? ConsumerGroup { get; set; }
 }
 
 /// <summary>
