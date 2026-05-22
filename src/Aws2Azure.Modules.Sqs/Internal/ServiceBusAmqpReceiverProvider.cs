@@ -16,7 +16,7 @@ namespace Aws2Azure.Modules.Sqs.Internal;
 internal sealed class ServiceBusAmqpReceiverProvider : IAmqpReceiverProvider
 {
     private readonly ServiceBusAmqpPool _pool;
-    private readonly string _namespaceFqdn;
+    private readonly ServiceBusAmqpEndpoint _endpoint;
     private readonly string _sasKeyName;
     private readonly string _sasKey;
 
@@ -30,34 +30,33 @@ internal sealed class ServiceBusAmqpReceiverProvider : IAmqpReceiverProvider
         // URL (emulator / sovereign cloud). The REST-side ServiceBusClient
         // already normalises both; we just lift the host out so the AMQP
         // pool gets the FQDN it expects.
-        var endpoint = ServiceBusClient.ResolveEndpoint(credentials.Namespace);
         _pool = pool;
-        _namespaceFqdn = endpoint.Host;
+        _endpoint = ServiceBusClient.ResolveAmqpEndpoint(credentials.Namespace);
         _sasKeyName = credentials.SasKeyName;
         _sasKey = credentials.SasKey;
     }
 
     public Task<ServiceBusReceiver> GetReceiverAsync(string queueName, CancellationToken cancellationToken) =>
-        _pool.GetReceiverAsync(_namespaceFqdn, _sasKeyName, _sasKey, queueName, cancellationToken);
+        _pool.GetReceiverAsync(_endpoint, _sasKeyName, _sasKey, queueName, cancellationToken);
 
     public Task<ServiceBusReceiver> GetSessionReceiverAsync(string queueName, string sessionId, CancellationToken cancellationToken) =>
-        _pool.GetSessionReceiverAsync(_namespaceFqdn, _sasKeyName, _sasKey, queueName, sessionId, cancellationToken);
+        _pool.GetSessionReceiverAsync(_endpoint, _sasKeyName, _sasKey, queueName, sessionId, cancellationToken);
 
     public ServiceBusReceiver? TryGetExistingSessionReceiver(string queueName, string sessionId) =>
-        _pool.TryGetExistingSessionReceiver(_namespaceFqdn, _sasKeyName, queueName, sessionId);
+        _pool.TryGetExistingSessionReceiver(_endpoint, _sasKeyName, queueName, sessionId);
 
     public Task<ServiceBusReceiver> AcquireBrokerAssignedSessionReceiverAsync(string queueName, CancellationToken cancellationToken) =>
-        _pool.AcquireBrokerAssignedSessionReceiverAsync(_namespaceFqdn, _sasKeyName, _sasKey, queueName, cancellationToken);
+        _pool.AcquireBrokerAssignedSessionReceiverAsync(_endpoint, _sasKeyName, _sasKey, queueName, cancellationToken);
 
     public Task InvalidateSessionReceiverAsync(string queueName, string sessionId) =>
-        _pool.InvalidateSessionReceiverAsync(_namespaceFqdn, _sasKeyName, queueName, sessionId);
+        _pool.InvalidateSessionReceiverAsync(_endpoint, _sasKeyName, queueName, sessionId);
 
     public Task<ServiceBusManagementClient> GetManagementClientAsync(string queueName, CancellationToken cancellationToken) =>
-        _pool.GetManagementClientAsync(_namespaceFqdn, _sasKeyName, _sasKey, queueName, cancellationToken);
+        _pool.GetManagementClientAsync(_endpoint, _sasKeyName, _sasKey, queueName, cancellationToken);
 
     public Task InvalidateAsync(string queueName, bool closeConnection) =>
-        _pool.InvalidateAsync(_namespaceFqdn, _sasKeyName, queueName, closeConnection);
+        _pool.InvalidateAsync(_endpoint, _sasKeyName, queueName, closeConnection);
 
     public Task InvalidateManagementClientAsync(string queueName) =>
-        _pool.InvalidateManagementClientAsync(_namespaceFqdn, _sasKeyName, queueName);
+        _pool.InvalidateManagementClientAsync(_endpoint, _sasKeyName, queueName);
 }

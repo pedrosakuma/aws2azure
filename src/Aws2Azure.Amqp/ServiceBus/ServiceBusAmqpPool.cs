@@ -54,19 +54,18 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     /// failure occurs.
     /// </summary>
     public async Task<ServiceBusReceiver> GetReceiverAsync(
-        string namespaceFqdn,
+        ServiceBusAmqpEndpoint endpoint,
         string sasKeyName,
         string sasKey,
         string queueName,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
         ArgumentException.ThrowIfNullOrWhiteSpace(sasKeyName);
         ArgumentException.ThrowIfNullOrWhiteSpace(sasKey);
         ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
         ThrowIfDisposed();
 
-        var key = new ServiceBusAmqpConnectionKey(namespaceFqdn, sasKeyName);
+        var key = new ServiceBusAmqpConnectionKey(endpoint, sasKeyName);
         while (true)
         {
             var slot = await GetOrCreateConnectionSlotAsync(key).ConfigureAwait(false);
@@ -113,21 +112,20 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     /// </para>
     /// </summary>
     public async Task<ServiceBusReceiver> GetSessionReceiverAsync(
-        string namespaceFqdn,
+        ServiceBusAmqpEndpoint endpoint,
         string sasKeyName,
         string sasKey,
         string queueName,
         string sessionId,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
         ArgumentException.ThrowIfNullOrWhiteSpace(sasKeyName);
         ArgumentException.ThrowIfNullOrWhiteSpace(sasKey);
         ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
         ThrowIfDisposed();
 
-        var key = new ServiceBusAmqpConnectionKey(namespaceFqdn, sasKeyName);
+        var key = new ServiceBusAmqpConnectionKey(endpoint, sasKeyName);
         while (true)
         {
             var slot = await GetOrCreateConnectionSlotAsync(key).ConfigureAwait(false);
@@ -173,19 +171,18 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     /// </para>
     /// </summary>
     public async Task<ServiceBusReceiver> AcquireBrokerAssignedSessionReceiverAsync(
-        string namespaceFqdn,
+        ServiceBusAmqpEndpoint endpoint,
         string sasKeyName,
         string sasKey,
         string queueName,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
         ArgumentException.ThrowIfNullOrWhiteSpace(sasKeyName);
         ArgumentException.ThrowIfNullOrWhiteSpace(sasKey);
         ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
         ThrowIfDisposed();
 
-        var key = new ServiceBusAmqpConnectionKey(namespaceFqdn, sasKeyName);
+        var key = new ServiceBusAmqpConnectionKey(endpoint, sasKeyName);
         while (true)
         {
             var slot = await GetOrCreateConnectionSlotAsync(key).ConfigureAwait(false);
@@ -215,18 +212,17 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     /// rebuilds the link.
     /// </summary>
     public async Task InvalidateSessionReceiverAsync(
-        string namespaceFqdn,
+        ServiceBusAmqpEndpoint endpoint,
         string sasKeyName,
         string queueName,
         string sessionId)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
         ArgumentException.ThrowIfNullOrWhiteSpace(sasKeyName);
         ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
         if (Volatile.Read(ref _disposed) != 0) return;
 
-        var key = new ServiceBusAmqpConnectionKey(namespaceFqdn, sasKeyName);
+        var key = new ServiceBusAmqpConnectionKey(endpoint, sasKeyName);
         if (!_connections.TryGetValue(key, out var slot)) return;
         await slot.InvalidateSessionReceiverAsync(queueName, sessionId).ConfigureAwait(false);
     }
@@ -241,18 +237,17 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     /// MessageGroupId until the session lock expires.
     /// </summary>
     public ServiceBusReceiver? TryGetExistingSessionReceiver(
-        string namespaceFqdn,
+        ServiceBusAmqpEndpoint endpoint,
         string sasKeyName,
         string queueName,
         string sessionId)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
         ArgumentException.ThrowIfNullOrWhiteSpace(sasKeyName);
         ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
         if (Volatile.Read(ref _disposed) != 0) return null;
 
-        var key = new ServiceBusAmqpConnectionKey(namespaceFqdn, sasKeyName);
+        var key = new ServiceBusAmqpConnectionKey(endpoint, sasKeyName);
         if (!_connections.TryGetValue(key, out var slot)) return null;
         return slot.TryGetExistingSessionReceiver(queueName, sessionId);
     }
@@ -266,19 +261,18 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     /// failure.
     /// </summary>
     public async Task<ServiceBusManagementClient> GetManagementClientAsync(
-        string namespaceFqdn,
+        ServiceBusAmqpEndpoint endpoint,
         string sasKeyName,
         string sasKey,
         string queueName,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
         ArgumentException.ThrowIfNullOrWhiteSpace(sasKeyName);
         ArgumentException.ThrowIfNullOrWhiteSpace(sasKey);
         ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
         ThrowIfDisposed();
 
-        var key = new ServiceBusAmqpConnectionKey(namespaceFqdn, sasKeyName);
+        var key = new ServiceBusAmqpConnectionKey(endpoint, sasKeyName);
         while (true)
         {
             var slot = await GetOrCreateConnectionSlotAsync(key).ConfigureAwait(false);
@@ -308,17 +302,16 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     /// receiver is detached and the connection stays warm.
     /// </summary>
     public async Task InvalidateAsync(
-        string namespaceFqdn,
+        ServiceBusAmqpEndpoint endpoint,
         string sasKeyName,
         string queueName,
         bool closeConnection = false)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
         ArgumentException.ThrowIfNullOrWhiteSpace(sasKeyName);
         ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
         if (Volatile.Read(ref _disposed) != 0) return;
 
-        var key = new ServiceBusAmqpConnectionKey(namespaceFqdn, sasKeyName);
+        var key = new ServiceBusAmqpConnectionKey(endpoint, sasKeyName);
         if (!_connections.TryGetValue(key, out var slot)) return;
 
         if (closeConnection)
@@ -341,19 +334,18 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     /// occurs.
     /// </summary>
     public async Task<ServiceBusAmqpSender> GetSenderAsync(
-        string namespaceFqdn,
+        ServiceBusAmqpEndpoint endpoint,
         string sasKeyName,
         string sasKey,
         string queueName,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
         ArgumentException.ThrowIfNullOrWhiteSpace(sasKeyName);
         ArgumentException.ThrowIfNullOrWhiteSpace(sasKey);
         ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
         ThrowIfDisposed();
 
-        var key = new ServiceBusAmqpConnectionKey(namespaceFqdn, sasKeyName);
+        var key = new ServiceBusAmqpConnectionKey(endpoint, sasKeyName);
         while (true)
         {
             var slot = await GetOrCreateConnectionSlotAsync(key).ConfigureAwait(false);
@@ -382,17 +374,16 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     /// is detached and the connection stays warm.
     /// </summary>
     public async Task InvalidateSenderAsync(
-        string namespaceFqdn,
+        ServiceBusAmqpEndpoint endpoint,
         string sasKeyName,
         string queueName,
         bool closeConnection = false)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
         ArgumentException.ThrowIfNullOrWhiteSpace(sasKeyName);
         ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
         if (Volatile.Read(ref _disposed) != 0) return;
 
-        var key = new ServiceBusAmqpConnectionKey(namespaceFqdn, sasKeyName);
+        var key = new ServiceBusAmqpConnectionKey(endpoint, sasKeyName);
         if (!_connections.TryGetValue(key, out var slot)) return;
 
         if (closeConnection)
@@ -412,16 +403,15 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     /// <see cref="GetManagementClientAsync"/> rebuilds it.
     /// </summary>
     public async Task InvalidateManagementClientAsync(
-        string namespaceFqdn,
+        ServiceBusAmqpEndpoint endpoint,
         string sasKeyName,
         string queueName)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
         ArgumentException.ThrowIfNullOrWhiteSpace(sasKeyName);
         ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
         if (Volatile.Read(ref _disposed) != 0) return;
 
-        var key = new ServiceBusAmqpConnectionKey(namespaceFqdn, sasKeyName);
+        var key = new ServiceBusAmqpConnectionKey(endpoint, sasKeyName);
         if (!_connections.TryGetValue(key, out var slot)) return;
         await slot.InvalidateManagementClientAsync(queueName).ConfigureAwait(false);
     }
@@ -529,7 +519,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                 if (existing is not null) return existing;
 
                 var created = await factory
-                    .CreateAsync(key.NamespaceFqdn, key.SasKeyName, sasKey, cancellationToken)
+                    .CreateAsync(key.Endpoint, key.SasKeyName, sasKey, cancellationToken)
                     .ConfigureAwait(false);
                 Volatile.Write(ref _connection, created);
                 return created;
@@ -549,7 +539,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             ThrowIfDisposed();
             var slot = await GetOrPublishReceiverSlotAsync(queueName).ConfigureAwait(false);
             return await slot
-                .GetOrCreateAsync(connection, key.NamespaceFqdn, queueName, cancellationToken)
+                .GetOrCreateAsync(connection, key.Endpoint, queueName, cancellationToken)
                 .ConfigureAwait(false);
         }
 
@@ -587,7 +577,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             ThrowIfDisposed();
             var slot = await GetOrPublishSenderSlotAsync(queueName).ConfigureAwait(false);
             return await slot
-                .GetOrCreateAsync(connection, key.NamespaceFqdn, queueName, cancellationToken)
+                .GetOrCreateAsync(connection, key.Endpoint, queueName, cancellationToken)
                 .ConfigureAwait(false);
         }
 
@@ -628,7 +618,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             var slot = await GetOrPublishSessionReceiverSlotAsync(slotKey, static () => new SessionReceiverSlot())
                 .ConfigureAwait(false);
             return await slot
-                .GetOrCreateAsync(connection, key.NamespaceFqdn, queueName, sessionId, cancellationToken)
+                .GetOrCreateAsync(connection, key.Endpoint, queueName, sessionId, cancellationToken)
                 .ConfigureAwait(false);
         }
 
@@ -694,7 +684,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                 try
                 {
                     return await inserted
-                        .GetOrCreateAsync(connection, key.NamespaceFqdn, queueName, resolvedId, cancellationToken)
+                        .GetOrCreateAsync(connection, key.Endpoint, queueName, resolvedId, cancellationToken)
                         .ConfigureAwait(false);
                 }
                 catch (ObjectDisposedException)
@@ -741,7 +731,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             ThrowIfDisposed();
             var slot = await GetOrPublishManagementSlotAsync(queueName).ConfigureAwait(false);
             return await slot
-                .GetOrCreateAsync(connection, key.NamespaceFqdn, queueName, cancellationToken)
+                .GetOrCreateAsync(connection, key.Endpoint, queueName, cancellationToken)
                 .ConfigureAwait(false);
         }
 
@@ -863,7 +853,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
 
         public async Task<ServiceBusReceiver> GetOrCreateAsync(
             ServiceBusAmqpConnection connection,
-            string namespaceFqdn,
+            ServiceBusAmqpEndpoint endpoint,
             string queueName,
             CancellationToken cancellationToken)
         {
@@ -878,7 +868,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                 existing = _receiver;
                 if (existing is not null) return existing;
 
-                var audience = ServiceBusEndpoint.BuildQueueAudience(namespaceFqdn, queueName);
+                var audience = ServiceBusEndpoint.BuildQueueAudience(endpoint.Host, queueName);
                 var created = await connection
                     .OpenReceiverAsync(queueName, audience, prefetchCredit: 0, cancellationToken)
                     .ConfigureAwait(false);
@@ -930,7 +920,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
 
         public async Task<ServiceBusAmqpSender> GetOrCreateAsync(
             ServiceBusAmqpConnection connection,
-            string namespaceFqdn,
+            ServiceBusAmqpEndpoint endpoint,
             string queueName,
             CancellationToken cancellationToken)
         {
@@ -945,7 +935,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                 existing = _sender;
                 if (existing is not null) return existing;
 
-                var audience = ServiceBusEndpoint.BuildQueueAudience(namespaceFqdn, queueName);
+                var audience = ServiceBusEndpoint.BuildQueueAudience(endpoint.Host, queueName);
                 var created = await connection
                     .OpenSenderAsync(queueName, audience, cancellationToken)
                     .ConfigureAwait(false);
@@ -991,7 +981,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
 
         public async Task<ServiceBusManagementClient> GetOrCreateAsync(
             ServiceBusAmqpConnection connection,
-            string namespaceFqdn,
+            ServiceBusAmqpEndpoint endpoint,
             string queueName,
             CancellationToken cancellationToken)
         {
@@ -1006,7 +996,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                 existing = _client;
                 if (existing is not null) return existing;
 
-                var audience = ServiceBusEndpoint.BuildQueueAudience(namespaceFqdn, queueName);
+                var audience = ServiceBusEndpoint.BuildQueueAudience(endpoint.Host, queueName);
                 var created = await connection
                     .OpenManagementClientAsync(audience, cancellationToken)
                     .ConfigureAwait(false);
@@ -1090,7 +1080,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
 
         public async Task<ServiceBusReceiver> GetOrCreateAsync(
             ServiceBusAmqpConnection connection,
-            string namespaceFqdn,
+            ServiceBusAmqpEndpoint endpoint,
             string queueName,
             string sessionId,
             CancellationToken cancellationToken)
@@ -1106,7 +1096,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                 existing = _receiver;
                 if (existing is not null) return existing;
 
-                var audience = ServiceBusEndpoint.BuildQueueAudience(namespaceFqdn, queueName);
+                var audience = ServiceBusEndpoint.BuildQueueAudience(endpoint.Host, queueName);
                 var created = await connection
                     .OpenSessionReceiverAsync(queueName, audience, sessionId, prefetchCredit: 0, cancellationToken)
                     .ConfigureAwait(false);

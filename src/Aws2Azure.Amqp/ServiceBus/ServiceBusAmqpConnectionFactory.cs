@@ -5,8 +5,9 @@ namespace Aws2Azure.Amqp.ServiceBus;
 
 /// <summary>
 /// Production <see cref="IServiceBusAmqpConnectionFactory"/>: opens a
-/// TLS+SASL transport to <c>{namespace}:5671</c>, instantiates a SAS
-/// token provider, and hands both to
+/// TCP (+ optional TLS) + SASL transport to
+/// <c>{endpoint.Host}:{endpoint.Port}</c>, instantiates a SAS token
+/// provider, and hands both to
 /// <see cref="ServiceBusAmqpConnection.OpenAsync"/>. Lifts the wiring
 /// out of the pool so the pool's unit tests can swap in a fake
 /// factory.
@@ -22,17 +23,16 @@ internal sealed class ServiceBusAmqpConnectionFactory : IServiceBusAmqpConnectio
     }
 
     public async Task<ServiceBusAmqpConnection> CreateAsync(
-        string namespaceFqdn,
+        ServiceBusAmqpEndpoint endpoint,
         string sasKeyName,
         string sasKey,
         CancellationToken cancellationToken)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
         ArgumentException.ThrowIfNullOrWhiteSpace(sasKeyName);
         ArgumentException.ThrowIfNullOrWhiteSpace(sasKey);
 
-        var transport = await ServiceBusAmqpTlsConnector
-            .ConnectAsync(namespaceFqdn, cancellationToken: cancellationToken)
+        var transport = await ServiceBusAmqpConnector
+            .ConnectAsync(endpoint, cancellationToken)
             .ConfigureAwait(false);
         try
         {
@@ -48,3 +48,4 @@ internal sealed class ServiceBusAmqpConnectionFactory : IServiceBusAmqpConnectio
         }
     }
 }
+

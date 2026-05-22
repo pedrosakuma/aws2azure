@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Aws2Azure.Amqp.ServiceBus;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
 
@@ -332,6 +333,27 @@ internal sealed class ServiceBusClient
                 nameof(nsOrUrl));
         }
         return new Uri($"https://{nsOrUrl}.servicebus.windows.net/", UriKind.Absolute);
+    }
+
+    /// <summary>
+    /// AMQP variant of <see cref="ResolveEndpoint"/>: maps the same
+    /// namespace-or-URL string to a wire-level
+    /// <see cref="ServiceBusAmqpEndpoint"/>. Bare namespaces and
+    /// <c>https://</c> URLs land on TLS (5671 by default, URL port
+    /// when explicit); <c>http://</c> URLs land on plain AMQP (5672
+    /// by default, URL port when explicit). The emulator path is the
+    /// only consumer of plain AMQP today.
+    /// </summary>
+    internal static ServiceBusAmqpEndpoint ResolveAmqpEndpoint(string nsOrUrl)
+    {
+        var uri = ResolveEndpoint(nsOrUrl);
+        if (uri.Scheme == Uri.UriSchemeHttp)
+        {
+            var port = uri.IsDefaultPort ? Amqp.ServiceBus.ServiceBusEndpoint.AmqpPort : uri.Port;
+            return ServiceBusAmqpEndpoint.Plain(uri.Host, port);
+        }
+        var tlsPort = uri.IsDefaultPort ? Amqp.ServiceBus.ServiceBusEndpoint.AmqpsPort : uri.Port;
+        return ServiceBusAmqpEndpoint.Tls(uri.Host, tlsPort);
     }
 
     // Azure Service Bus namespace naming rules (matches portal validation):
