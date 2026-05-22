@@ -20,6 +20,8 @@ public sealed class ShardIteratorTokenCodecFactory
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
+    public TimeProvider TimeProvider => _timeProvider;
+
     public ShardIteratorTokenCodec Create(EventHubsCredentials credentials)
     {
         ArgumentNullException.ThrowIfNull(credentials);

@@ -106,6 +106,51 @@ internal sealed class PutRecordsResponse
     public string EncryptionType { get; set; } = string.Empty;
 }
 
+internal sealed class GetShardIteratorRequest
+{
+    public string? StreamName { get; set; }
+    public string? StreamARN { get; set; }
+    public string? ShardId { get; set; }
+    public string? ShardIteratorType { get; set; }
+    public string? StartingSequenceNumber { get; set; }
+    public double? Timestamp { get; set; }
+}
+
+internal sealed class GetShardIteratorResponse
+{
+    public string ShardIterator { get; set; } = string.Empty;
+}
+
+internal sealed class GetRecordsRequest
+{
+    public string? ShardIterator { get; set; }
+    public int? Limit { get; set; }
+    public string? StreamARN { get; set; }
+}
+
+internal sealed class GetRecordsResponse
+{
+    public KinesisRecord[] Records { get; set; } = [];
+    public string NextShardIterator { get; set; } = string.Empty;
+    public long MillisBehindLatest { get; set; }
+    public KinesisChildShard[] ChildShards { get; set; } = [];
+}
+
+internal sealed class KinesisRecord
+{
+    public string SequenceNumber { get; set; } = string.Empty;
+    public string Data { get; set; } = string.Empty;
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? PartitionKey { get; set; }
+
+    public double ApproximateArrivalTimestamp { get; set; }
+}
+
+internal sealed class KinesisChildShard
+{
+}
+
 internal sealed class PutRecordsResultEntry
 {
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -164,6 +209,10 @@ internal sealed class EnhancedMonitoringDescription
 [JsonSerializable(typeof(PutRecordResponse))]
 [JsonSerializable(typeof(PutRecordsRequest))]
 [JsonSerializable(typeof(PutRecordsResponse))]
+[JsonSerializable(typeof(GetShardIteratorRequest))]
+[JsonSerializable(typeof(GetShardIteratorResponse))]
+[JsonSerializable(typeof(GetRecordsRequest))]
+[JsonSerializable(typeof(GetRecordsResponse))]
 [JsonSerializable(typeof(ListShardsRequest))]
 [JsonSerializable(typeof(ListShardsResponse))]
 internal sealed partial class KinesisJsonSerializerContext : JsonSerializerContext

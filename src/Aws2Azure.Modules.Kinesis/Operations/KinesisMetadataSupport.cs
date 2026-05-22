@@ -107,6 +107,22 @@ internal static class KinesisMetadataSupport
     public static string BuildStreamArn(EventHubsCredentials credentials, string streamName)
         => $"arn:aws:kinesis:azure:{credentials.Namespace}:stream/{streamName}";
 
+    public static string ResolveConsumerGroup(EventHubsCredentials credentials, string streamName)
+    {
+        ArgumentNullException.ThrowIfNull(credentials);
+        ArgumentException.ThrowIfNullOrWhiteSpace(streamName);
+
+        if (credentials.Streams is not null
+            && credentials.Streams.TryGetValue(streamName, out var settings)
+            && settings is not null
+            && !string.IsNullOrWhiteSpace(settings.ConsumerGroup))
+        {
+            return settings.ConsumerGroup;
+        }
+
+        return "$Default";
+    }
+
     public static double ToUnixTimeSeconds(DateTimeOffset value)
         => value.ToUnixTimeMilliseconds() / 1000d;
 
@@ -202,6 +218,25 @@ internal static class KinesisMetadataSupport
         }
 
         error = $"ShardFilter.Type '{filter.Type}' is not supported.";
+        return false;
+    }
+
+    public static bool TryResolveShard(EventHubDescription eventHub, string shardId, out MappedShard? shard)
+    {
+        ArgumentNullException.ThrowIfNull(eventHub);
+        ArgumentException.ThrowIfNullOrWhiteSpace(shardId);
+
+        var mappedShards = ShardMapper.MapShards(eventHub.PartitionIds);
+        for (var i = 0; i < mappedShards.Count; i++)
+        {
+            if (string.Equals(mappedShards[i].ShardId, shardId, StringComparison.Ordinal))
+            {
+                shard = mappedShards[i];
+                return true;
+            }
+        }
+
+        shard = null;
         return false;
     }
 

@@ -50,14 +50,24 @@
 
 ## GetRecords
 
-- **Status:** ⚪ stub
+- **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Event Hubs (AMQP 1.0 data plane)`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| Event Hubs AMQP partition receive | ✅ implemented | Consumes Event Hubs AMQP receive links against ConsumerGroups/{group}/Partitions/{id}. |  |  |
+| Core iterator types | ✅ implemented | Supports TRIM_HORIZON, LATEST, AT_TIMESTAMP, AT_SEQUENCE_NUMBER, and AFTER_SEQUENCE_NUMBER iterators via stateless proxy-issued tokens. |  |  |
 
 ### Behaviour differences
 
-- Phase 4 Slice 1 scaffolds routing + AWS-JSON-1.1 parsing + EventHubs credential gating only; the operation returns HTTP 501 InternalFailure until its dedicated slice lands.
-- Kinesis shards map 1:1 to Event Hubs partitions. Partition keys are hashed (MD5) into the shard index on AWS; the proxy will assign EH partitions deterministically from the same partition key but cannot guarantee identical shard ids without explicit stream-to-partition-count parity.
-- Sequence numbers are not the same as EH offsets; the proxy will surface EH offsets (or an opaque equivalent) where AWS surfaces sequence numbers.
+- Returned SequenceNumber values are Event Hubs-assigned x-opt-sequence-number annotations, which differ from the synthetic sequence numbers returned by PutRecord/PutRecords.
+- NextShardIterator uses the proxy's opaque token and internally prefers Event Hubs offsets (offset:<value>) to resume reads; callers must treat the token as opaque.
+- MillisBehindLatest is best-effort only and is derived from the last returned record's enqueue timestamp versus the proxy clock.
+- ChildShards is always an empty array because Event Hubs partitions are fixed and the proxy does not model Kinesis split/merge lineage.
+- AT_TIMESTAMP is translated to an Event Hubs enqueue-time selector that is exclusive (>) rather than AWS's inclusive semantics, so a record at the exact timestamp boundary may be skipped.
+- AT_SEQUENCE_NUMBER and AFTER_SEQUENCE_NUMBER are best-effort only: the proxy derives an Event Hubs enqueue-time position from aws2azure's synthetic PutRecord sequence number ((unixMs << 20) | counter). If parsing fails the read falls back to the start of the shard.
 
 ### References
 
@@ -65,14 +75,21 @@
 
 ## GetShardIterator
 
-- **Status:** ⚪ stub
+- **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Event Hubs (AMQP 1.0 data plane)`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| Stateless HMAC-signed iterator tokens | ✅ implemented | The proxy issues opaque shard iterators signed with the configured shard-iterator signing key (or the process-local fallback) and enforces a 5-minute TTL. |  |  |
+| Core iterator types | ✅ implemented | Supports TRIM_HORIZON, LATEST, AT_TIMESTAMP, AT_SEQUENCE_NUMBER, and AFTER_SEQUENCE_NUMBER request shapes. |  |  |
 
 ### Behaviour differences
 
-- Phase 4 Slice 1 scaffolds routing + AWS-JSON-1.1 parsing + EventHubs credential gating only; the operation returns HTTP 501 InternalFailure until its dedicated slice lands.
-- Kinesis shards map 1:1 to Event Hubs partitions. Partition keys are hashed (MD5) into the shard index on AWS; the proxy will assign EH partitions deterministically from the same partition key but cannot guarantee identical shard ids without explicit stream-to-partition-count parity.
-- Sequence numbers are not the same as EH offsets; the proxy will surface EH offsets (or an opaque equivalent) where AWS surfaces sequence numbers.
+- Iterators are proxy-issued opaque tokens rather than broker cursors; they remain valid for 5 minutes and require the proxy's configured shard-iterator signing key (or the process-local fallback key after restartless reuse).
+- AT_SEQUENCE_NUMBER and AFTER_SEQUENCE_NUMBER are best-effort only: the proxy interprets aws2azure's synthetic PutRecord sequence number as (unixMs << 20) | counter and derives an Event Hubs enqueue-time position from unixMs. If parsing fails the follow-up read falls back to the start of the shard.
+- AT_TIMESTAMP positions are stored as ISO-8601 UTC in the opaque token; Event Hubs receive-side selectors remain exclusive (>), so exact inclusive AWS semantics are approximated when records are fetched.
 
 ### References
 
