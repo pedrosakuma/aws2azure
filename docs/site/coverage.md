@@ -27,7 +27,7 @@
 | kinesis | [GetShardIterator](kinesis.md#getsharditerator) | ⚪ stub | `Azure Event Hubs (AMQP 1.0 data plane)` |
 | kinesis | [ListShards](kinesis.md#listshards) | 🟡 partial | `Azure Event Hubs Service Bus management REST API` |
 | kinesis | [PutRecord](kinesis.md#putrecord) | 🟡 partial | `Azure Event Hubs (AMQP 1.0 data plane)` |
-| kinesis | [PutRecords](kinesis.md#putrecords) | ⚪ stub | `Azure Event Hubs (AMQP 1.0 data plane)` |
+| kinesis | [PutRecords](kinesis.md#putrecords) | 🟡 partial | `Azure Event Hubs (AMQP 1.0 data plane)` |
 | s3 | [AbortMultipartUpload](s3.md#abortmultipartupload) | ✅ implemented | `(no-op; uncommitted blocks GC after 7 days)` |
 | s3 | [CompleteMultipartUpload](s3.md#completemultipartupload) | ✅ implemented | `Put Block List` |
 | s3 | [CopyObject](s3.md#copyobject) | ✅ implemented | `PUT https://{account}.blob.core.windows.net/{container}/{blob} with x-ms-copy-source` |

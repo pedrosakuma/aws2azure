@@ -20,6 +20,13 @@ public interface IEventHubsAmqpSender
         ReadOnlyMemory<byte> body,
         IReadOnlyDictionary<string, object>? annotations,
         CancellationToken cancellationToken);
+
+    Task SendBatchAsync(
+        EventHubsCredentials credentials,
+        string namespaceFqdn,
+        string entityPath,
+        IReadOnlyList<(ReadOnlyMemory<byte> body, IReadOnlyDictionary<string, object>? annotations)> messages,
+        CancellationToken cancellationToken);
 }
 
 internal enum EventHubsAmqpFailureKind
@@ -70,18 +77,37 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
         _connectionSettings = connectionSettings;
     }
 
-    public async Task SendAsync(
+    public Task SendAsync(
         EventHubsCredentials credentials,
         string namespaceFqdn,
         string entityPath,
         ReadOnlyMemory<byte> body,
         IReadOnlyDictionary<string, object>? annotations,
         CancellationToken cancellationToken)
+        => SendBatchAsync(
+            credentials,
+            namespaceFqdn,
+            entityPath,
+            [(body, annotations)],
+            cancellationToken);
+
+    public async Task SendBatchAsync(
+        EventHubsCredentials credentials,
+        string namespaceFqdn,
+        string entityPath,
+        IReadOnlyList<(ReadOnlyMemory<byte> body, IReadOnlyDictionary<string, object>? annotations)> messages,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(credentials);
         ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
         ArgumentException.ThrowIfNullOrWhiteSpace(entityPath);
+        ArgumentNullException.ThrowIfNull(messages);
         ThrowIfDisposed();
+
+        if (messages.Count == 0)
+        {
+            return;
+        }
 
         var endpoint = ResolveEndpoint(credentials, namespaceFqdn);
         var key = new ConnectionKey(endpoint, BuildCredentialMarker(credentials));
@@ -94,12 +120,6 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
                 cancellationToken)
             .ConfigureAwait(false);
 
-        var message = new AmqpMessage
-        {
-            Body = body,
-            MessageAnnotations = CreateAnnotations(annotations),
-        };
-
         try
         {
             await using var sender = await connection.OpenSenderAsync(
@@ -107,7 +127,20 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
                     BuildAudience(namespaceFqdn, entityPath),
                     cancellationToken)
                 .ConfigureAwait(false);
-            await sender.SendAsync(message, settled: false, cancellationToken).ConfigureAwait(false);
+
+            for (var i = 0; i < messages.Count; i++)
+            {
+                var message = messages[i];
+                await sender.SendAsync(
+                        new AmqpMessage
+                        {
+                            Body = message.body,
+                            MessageAnnotations = CreateAnnotations(message.annotations),
+                        },
+                        settled: false,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
         }
         catch (Exception ex) when (TryWrap(ex, out var wrapped))
         {
