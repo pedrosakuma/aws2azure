@@ -47,6 +47,13 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
     }
 
     /// <summary>
+    /// True when the underlying request/response link has detached
+    /// (peer-initiated or otherwise faulted). Pool slots check this
+    /// to evict a stale client before reuse.
+    /// </summary>
+    public bool IsClosed => _link.IsClosed;
+
+    /// <summary>
     /// Opens a paired sender/receiver against the <c>$management</c>
     /// node on <paramref name="session"/>. The caller must have
     /// CBS-authorised the entity audience already (the broker

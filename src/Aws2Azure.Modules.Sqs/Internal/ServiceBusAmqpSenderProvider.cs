@@ -17,7 +17,7 @@ namespace Aws2Azure.Modules.Sqs.Internal;
 internal sealed class ServiceBusAmqpSenderProvider : IAmqpSenderProvider
 {
     private readonly ServiceBusAmqpPool _pool;
-    private readonly string _namespaceFqdn;
+    private readonly ServiceBusAmqpEndpoint _endpoint;
     private readonly string _sasKeyName;
     private readonly string _sasKey;
 
@@ -26,16 +26,15 @@ internal sealed class ServiceBusAmqpSenderProvider : IAmqpSenderProvider
         ArgumentNullException.ThrowIfNull(pool);
         ArgumentNullException.ThrowIfNull(credentials);
 
-        var endpoint = ServiceBusClient.ResolveEndpoint(credentials.Namespace);
         _pool = pool;
-        _namespaceFqdn = endpoint.Host;
+        _endpoint = ServiceBusClient.ResolveAmqpEndpoint(credentials.Namespace);
         _sasKeyName = credentials.SasKeyName;
         _sasKey = credentials.SasKey;
     }
 
     public Task<ServiceBusAmqpSender> GetSenderAsync(string queueName, CancellationToken cancellationToken) =>
-        _pool.GetSenderAsync(_namespaceFqdn, _sasKeyName, _sasKey, queueName, cancellationToken);
+        _pool.GetSenderAsync(_endpoint, _sasKeyName, _sasKey, queueName, cancellationToken);
 
     public Task InvalidateSenderAsync(string queueName, bool closeConnection) =>
-        _pool.InvalidateSenderAsync(_namespaceFqdn, _sasKeyName, queueName, closeConnection);
+        _pool.InvalidateSenderAsync(_endpoint, _sasKeyName, queueName, closeConnection);
 }

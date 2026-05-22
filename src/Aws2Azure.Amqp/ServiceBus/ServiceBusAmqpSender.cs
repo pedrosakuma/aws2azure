@@ -45,6 +45,13 @@ internal sealed class ServiceBusAmqpSender : IAsyncDisposable
     internal AmqpLink Link => _link;
 
     /// <summary>
+    /// True when the underlying AMQP link is no longer attached
+    /// (detached locally / by the peer, or fully closed). Connection
+    /// pools use this to evict stale senders before handing them out.
+    /// </summary>
+    public bool IsClosed => _link.IsClosed;
+
+    /// <summary>
     /// Publishes <paramref name="message"/> to the queue. By default
     /// waits for the broker's disposition before returning; pass
     /// <paramref name="settled"/>=<c>true</c> for fire-and-forget

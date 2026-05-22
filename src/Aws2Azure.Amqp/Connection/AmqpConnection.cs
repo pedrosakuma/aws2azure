@@ -69,6 +69,15 @@ internal sealed class AmqpConnection : IAsyncDisposable
         Volatile.Read(ref _state) == StateFinal && _peerCloseReceived.Task.IsFaulted;
 
     /// <summary>
+    /// True when the connection is no longer in the <c>Opened</c> state
+    /// (closing locally, closing remotely, or final). Pool slots use
+    /// this to evict cached connections whose underlying transport
+    /// the peer has torn down, so that the next caller transparently
+    /// re-opens rather than reusing a dead handle.
+    /// </summary>
+    public bool IsClosed => Volatile.Read(ref _state) != StateOpened;
+
+    /// <summary>
     /// Performs the AMQP open handshake: send our <c>open</c>, read the
     /// peer's <c>open</c>, validate, then start the read loop and idle
     /// heartbeat. Throws <see cref="AmqpConnectionException"/> on any

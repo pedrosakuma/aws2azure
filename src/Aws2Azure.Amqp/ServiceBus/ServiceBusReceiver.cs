@@ -67,6 +67,12 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     internal AmqpLink Link => _link;
 
     /// <summary>
+    /// True when the underlying AMQP link is no longer attached.
+    /// Pool slots check this to evict and rebuild before reuse.
+    /// </summary>
+    public bool IsClosed => _link.IsClosed;
+
+    /// <summary>
     /// In-flight deliveries that have been handed to a caller but are not
     /// yet settled, keyed by the 16-byte delivery-tag (lock-token) GUID.
     /// Used by the lock-token-only settlement overloads so a stateless

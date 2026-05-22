@@ -9,14 +9,15 @@ namespace Aws2Azure.Amqp.ServiceBus;
 internal interface IServiceBusAmqpConnectionFactory
 {
     /// <summary>
-    /// Opens a new connection (TCP → TLS → SASL → AMQP open → CBS
-    /// session) and authorises the supplied namespace using the given
-    /// SAS credentials. The caller takes ownership and must dispose
-    /// the returned connection.
+    /// Opens a new connection (TCP → optional TLS → SASL → AMQP open →
+    /// CBS session) and authorises the supplied endpoint using the
+    /// given SAS credentials. The caller takes ownership and must
+    /// dispose the returned connection.
     /// </summary>
     Task<ServiceBusAmqpConnection> CreateAsync(
-        string namespaceFqdn,
+        ServiceBusAmqpEndpoint endpoint,
         string sasKeyName,
         string sasKey,
         CancellationToken cancellationToken);
 }
+
