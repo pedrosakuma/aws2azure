@@ -15,6 +15,7 @@ using Aws2Azure.Modules.Kinesis.EventHubsAmqp;
 using Aws2Azure.Modules.Kinesis.EventHubsRest;
 using Aws2Azure.Modules.Kinesis.Operations;
 using Aws2Azure.Modules.Kinesis.ShardIterators;
+using Aws2Azure.Modules.Sns.Management;
 using Aws2Azure.Proxy;
 using Microsoft.AspNetCore.Http;
 
@@ -72,6 +73,13 @@ builder.Services.AddSingleton<ListShardsCursorCodecFactory>(sp =>
     new ListShardsCursorCodecFactory(sp.GetRequiredService<ILogger<ListShardsCursorCodecFactory>>()));
 builder.Services.AddSingleton<ShardIteratorTokenCodecFactory>(sp =>
     new ShardIteratorTokenCodecFactory(sp.GetRequiredService<ILogger<ShardIteratorTokenCodecFactory>>()));
+builder.Services.AddSingleton<IServiceBusTopicsAuthenticator>(sp =>
+    new ServiceBusTopicsAuthenticator(sp.GetRequiredService<EntraIdTokenProvider>()));
+builder.Services.AddSingleton<IServiceBusTopicsManagementClient>(sp =>
+    new ServiceBusTopicsManagementClient(
+        azureHttpClient,
+        sp.GetRequiredService<IServiceBusTopicsAuthenticator>(),
+        sp.GetRequiredService<ILogger<ServiceBusTopicsManagementClient>>()));
 
 static AzureHttpClient BuildAzureHttpClient()
 {
@@ -154,7 +162,10 @@ builder.Services.AddSingleton<ServiceModuleRegistry>(sp =>
             sp.GetRequiredService<ListShardsCursorCodecFactory>(),
             sp.GetRequiredService<ShardIteratorTokenCodecFactory>(),
             CapabilityRegistry.Kinesis),
-        new SnsServiceModule(credentialResolver, CapabilityRegistry.Sns),
+        new SnsServiceModule(
+            credentialResolver,
+            sp.GetRequiredService<IServiceBusTopicsManagementClient>(),
+            CapabilityRegistry.Sns),
     ];
     return new ServiceModuleRegistry(modules, sigV4Validator);
 });

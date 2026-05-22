@@ -5,6 +5,7 @@ using Aws2Azure.Core;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Modules.Sns.Errors;
+using Aws2Azure.Modules.Sns.Management;
 using Aws2Azure.Modules.Sns.Operations;
 using Aws2Azure.Modules.Sns.WireProtocol;
 using Microsoft.AspNetCore.Http;
@@ -12,19 +13,25 @@ using Microsoft.AspNetCore.Http;
 namespace Aws2Azure.Modules.Sns;
 
 /// <summary>
-/// SNS → Azure Service Bus Topics / Event Grid module scaffold. Slice 1 wires
-/// routing, AWS Query parsing, SNS-shaped XML envelopes, credential gating,
-/// and stub dispatch for the Phase 5 operation set.
+/// SNS → Azure Service Bus Topics / Event Grid module. Slice 2 implements
+/// topic CRUD over the Service Bus Topics management REST API while the
+/// remaining Phase 5 operations still dispatch to structured stubs.
 /// </summary>
 public sealed class SnsServiceModule : IServiceModule
 {
     private readonly ICredentialResolver _credentials;
+    private readonly IServiceBusTopicsManagementClient _serviceBusTopicsManagementClient;
 
-    public SnsServiceModule(ICredentialResolver credentials, CapabilityMatrix capabilities)
+    public SnsServiceModule(
+        ICredentialResolver credentials,
+        IServiceBusTopicsManagementClient serviceBusTopicsManagementClient,
+        CapabilityMatrix capabilities)
     {
         ArgumentNullException.ThrowIfNull(credentials);
+        ArgumentNullException.ThrowIfNull(serviceBusTopicsManagementClient);
         ArgumentNullException.ThrowIfNull(capabilities);
         _credentials = credentials;
+        _serviceBusTopicsManagementClient = serviceBusTopicsManagementClient;
         Capabilities = capabilities;
     }
 
@@ -75,9 +82,9 @@ public sealed class SnsServiceModule : IServiceModule
             return;
         }
 
-        var hasServiceBusTopics = _credentials.GetAzureCredentialsFor(accessKey, AzureService.ServiceBusTopics) is ServiceBusTopicsCredentials;
+        var serviceBusTopicsCredentials = _credentials.GetAzureCredentialsFor(accessKey, AzureService.ServiceBusTopics) as ServiceBusTopicsCredentials;
         var hasEventGrid = _credentials.GetAzureCredentialsFor(accessKey, AzureService.EventGrid) is EventGridCredentials;
-        if (!hasServiceBusTopics && !hasEventGrid)
+        if (serviceBusTopicsCredentials is null && !hasEventGrid)
         {
             await SnsErrorResponse.WriteErrorAsync(
                 context,
@@ -91,8 +98,50 @@ public sealed class SnsServiceModule : IServiceModule
         switch (parsed.Operation)
         {
             case SnsOperation.CreateTopic:
+                if (serviceBusTopicsCredentials is null)
+                {
+                    await WriteServiceBusTopicsCredentialErrorAsync(context).ConfigureAwait(false);
+                    return;
+                }
+
+                await CreateTopicHandler.HandleAsync(
+                        context,
+                        parsed,
+                        serviceBusTopicsCredentials,
+                        _serviceBusTopicsManagementClient,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
+                return;
             case SnsOperation.DeleteTopic:
+                if (serviceBusTopicsCredentials is null)
+                {
+                    await WriteServiceBusTopicsCredentialErrorAsync(context).ConfigureAwait(false);
+                    return;
+                }
+
+                await DeleteTopicHandler.HandleAsync(
+                        context,
+                        parsed,
+                        serviceBusTopicsCredentials,
+                        _serviceBusTopicsManagementClient,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
+                return;
             case SnsOperation.ListTopics:
+                if (serviceBusTopicsCredentials is null)
+                {
+                    await WriteServiceBusTopicsCredentialErrorAsync(context).ConfigureAwait(false);
+                    return;
+                }
+
+                await ListTopicsHandler.HandleAsync(
+                        context,
+                        parsed,
+                        serviceBusTopicsCredentials,
+                        _serviceBusTopicsManagementClient,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
+                return;
             case SnsOperation.Publish:
             case SnsOperation.PublishBatch:
             case SnsOperation.Subscribe:
@@ -127,4 +176,12 @@ public sealed class SnsServiceModule : IServiceModule
             errorCode: error.Code,
             message: error.Message);
     }
+
+    private static Task WriteServiceBusTopicsCredentialErrorAsync(HttpContext context)
+        => SnsErrorResponse.WriteErrorAsync(
+            context,
+            StatusCodes.Status403Forbidden,
+            errorType: "Sender",
+            errorCode: "AuthorizationError",
+            message: "SNS topic CRUD operations require Azure Service Bus Topics credentials for the supplied AWS access key.");
 }

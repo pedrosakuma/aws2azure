@@ -100,12 +100,12 @@
 | s3 | [RestoreObject](s3.md#restoreobject) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
 | s3 | [UploadPart](s3.md#uploadpart) | ✅ implemented | `Put Block (?comp=block&blockid=…)` |
 | s3 | [UploadPartCopy](s3.md#uploadpartcopy) | ✅ implemented | `Put Block From URL (?comp=block&blockid=…)` |
-| sns | [CreateTopic](sns.md#createtopic) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
-| sns | [DeleteTopic](sns.md#deletetopic) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
+| sns | [CreateTopic](sns.md#createtopic) | 🟡 partial | `Azure Service Bus Topics management REST API` |
+| sns | [DeleteTopic](sns.md#deletetopic) | 🟡 partial | `Azure Service Bus Topics management REST API` |
 | sns | [GetTopicAttributes](sns.md#gettopicattributes) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
 | sns | [ListSubscriptions](sns.md#listsubscriptions) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
 | sns | [ListSubscriptionsByTopic](sns.md#listsubscriptionsbytopic) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
-| sns | [ListTopics](sns.md#listtopics) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
+| sns | [ListTopics](sns.md#listtopics) | 🟡 partial | `Azure Service Bus Topics management REST API` |
 | sns | [Publish](sns.md#publish) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
 | sns | [PublishBatch](sns.md#publishbatch) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
 | sns | [SetTopicAttributes](sns.md#settopicattributes) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
