@@ -40,4 +40,16 @@ internal static class ServiceBusEndpoint
         ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
         return queueName.Trim();
     }
+
+    /// <summary>
+    /// Returns the AMQP address used as the target terminus of a sender
+    /// link publishing to the given queue. Symmetric to
+    /// <see cref="BuildReceiverSourceAddress"/> — Service Bus accepts the
+    /// bare queue name on a session opened against the namespace.
+    /// </summary>
+    public static string BuildSenderTargetAddress(string queueName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
+        return queueName.Trim();
+    }
 }
