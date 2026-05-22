@@ -65,6 +65,11 @@ internal sealed class AmqpMessage
     public void Write(Span<byte> destination, out int written)
     {
         int w = 0;
+        if (MessageAnnotations is { } annotations && !annotations.IsEmptyForWrite)
+        {
+            annotations.Write(destination[w..], out var ml);
+            w += ml;
+        }
         var hasProps = Properties.MessageId is not null
                     || Properties.ReplyTo is not null
                     || Properties.CorrelationId is not null

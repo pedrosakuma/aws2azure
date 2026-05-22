@@ -143,6 +143,15 @@ public sealed class SqsServiceModule : IServiceModule
 
         if (parsed.Operation is SqsOperation.SendMessage or SqsOperation.SendMessageBatch)
         {
+            if (_amqpPool is not null
+                && parsed.Operation is SqsOperation.SendMessage
+                && TryRouteSendToAmqp(parsed, sbCreds, out var senders))
+            {
+                await Operations.AmqpSendMessageHandlers
+                    .HandleAsync(context, parsed, senders, context.RequestAborted)
+                    .ConfigureAwait(false);
+                return;
+            }
             await Operations.SendMessageHandlers
                 .HandleAsync(context, parsed, sbClient, context.RequestAborted)
                 .ConfigureAwait(false);
@@ -228,6 +237,25 @@ public sealed class SqsServiceModule : IServiceModule
             return false;
 
         receivers = new ServiceBusAmqpReceiverProvider(_amqpPool, sbCreds);
+        return true;
+    }
+
+    /// <summary>Sender-side twin of <see cref="TryRouteToAmqp"/>.</summary>
+    private bool TryRouteSendToAmqp(
+        SqsParseResult parsed, ServiceBusCredentials sbCreds, out IAmqpSenderProvider senders)
+    {
+        senders = null!;
+        if (_amqpPool is null) return false;
+
+        if (!parsed.Parameters.TryGetValue("QueueUrl", out var url) || string.IsNullOrEmpty(url))
+            return false;
+        var queueName = Internal.QueueUrlBuilder.ExtractQueueName(url);
+        if (string.IsNullOrEmpty(queueName)) return false;
+
+        if (SqsTransportResolver.Resolve(sbCreds, queueName) != SqsTransport.Amqp)
+            return false;
+
+        senders = new ServiceBusAmqpSenderProvider(_amqpPool, sbCreds);
         return true;
     }
 }

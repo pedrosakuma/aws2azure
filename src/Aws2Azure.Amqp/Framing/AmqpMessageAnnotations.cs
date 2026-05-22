@@ -62,6 +62,57 @@ internal sealed class AmqpMessageAnnotations
     public string? DeadLetterSource             { get; init; }
     public int? MessageState                    { get; init; }
 
+    /// <summary>
+    /// Writes an <c>x-opt-*</c> annotation map. Only the writer-side
+    /// keys SQS publishers need today are emitted:
+    /// <see cref="ScheduledEnqueueTime"/> (FIFO + standard
+    /// <c>DelaySeconds</c>) and <see cref="PartitionKey"/> (Service Bus
+    /// throughput-aware partitioning). The remaining annotations are
+    /// broker-authored on receive and intentionally not serialised
+    /// here.
+    /// </summary>
+    public void Write(Span<byte> destination, out int written)
+    {
+        Span<byte> body = stackalloc byte[Performatives.ScratchSize];
+        int o = 0;
+        int pairCount = 0;
+        int len;
+        if (ScheduledEnqueueTime is { } sched)
+        {
+            AmqpVariableWriter.WriteSymbol(body[o..], KeyScheduledEnqueueTime, out len); o += len;
+            AmqpPrimitiveWriter.WriteTimestamp(body[o..], sched.ToUnixTimeMilliseconds(), out len); o += len;
+            pairCount++;
+        }
+        if (PartitionKey is { } pk)
+        {
+            AmqpVariableWriter.WriteSymbol(body[o..], KeyPartitionKey, out len); o += len;
+            AmqpVariableWriter.WriteString(body[o..], pk, out len); o += len;
+            pairCount++;
+        }
+        if (ViaPartitionKey is { } vpk)
+        {
+            AmqpVariableWriter.WriteSymbol(body[o..], KeyViaPartitionKey, out len); o += len;
+            AmqpVariableWriter.WriteString(body[o..], vpk, out len); o += len;
+            pairCount++;
+        }
+
+        Span<byte> mapBytes = stackalloc byte[Performatives.ScratchSize];
+        AmqpCompoundWriter.WriteMap(mapBytes, body[..o], pairCount, out var mapLen);
+
+        int w = 0;
+        destination[w++] = AmqpFormatCode.Described;
+        AmqpPrimitiveWriter.WriteULong(destination[w..], Descriptor, out var descLen); w += descLen;
+        mapBytes[..mapLen].CopyTo(destination[w..]); w += mapLen;
+        written = w;
+    }
+
+    /// <summary>
+    /// True when the section is empty (no writable annotations set) and
+    /// can be skipped during message serialisation.
+    /// </summary>
+    public bool IsEmptyForWrite =>
+        ScheduledEnqueueTime is null && PartitionKey is null && ViaPartitionKey is null;
+
     public static AmqpMessageAnnotations Read(ReadOnlyMemory<byte> source, out int consumed)
     {
         var span = source.Span;
