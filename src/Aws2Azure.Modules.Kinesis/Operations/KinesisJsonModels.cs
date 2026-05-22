@@ -68,6 +68,23 @@ internal sealed class ShardFilterRequest
     public string? Type { get; set; }
 }
 
+internal sealed class PutRecordRequest
+{
+    public string? StreamName { get; set; }
+    public string? Data { get; set; }
+    public string? PartitionKey { get; set; }
+    public string? ExplicitHashKey { get; set; }
+    public string? SequenceNumberForOrdering { get; set; }
+    public string? StreamARN { get; set; }
+}
+
+internal sealed class PutRecordResponse
+{
+    public string ShardId { get; set; } = string.Empty;
+    public string SequenceNumber { get; set; } = string.Empty;
+    public string EncryptionType { get; set; } = string.Empty;
+}
+
 internal sealed class ListShardsResponse
 {
     public KinesisShardDescription[] Shards { get; set; } = [];
@@ -107,6 +124,8 @@ internal sealed class EnhancedMonitoringDescription
 [JsonSerializable(typeof(DescribeStreamResponse))]
 [JsonSerializable(typeof(DescribeStreamSummaryRequest))]
 [JsonSerializable(typeof(DescribeStreamSummaryResponse))]
+[JsonSerializable(typeof(PutRecordRequest))]
+[JsonSerializable(typeof(PutRecordResponse))]
 [JsonSerializable(typeof(ListShardsRequest))]
 [JsonSerializable(typeof(ListShardsResponse))]
 internal sealed partial class KinesisJsonSerializerContext : JsonSerializerContext

@@ -4,6 +4,7 @@ using Aws2Azure.Core;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Modules.Kinesis.Errors;
+using Aws2Azure.Modules.Kinesis.EventHubsAmqp;
 using Aws2Azure.Modules.Kinesis.EventHubsRest;
 using Aws2Azure.Modules.Kinesis.Operations;
 using Aws2Azure.Modules.Kinesis.WireProtocol;
@@ -22,20 +23,28 @@ public sealed class KinesisServiceModule : IServiceModule
 {
     private readonly ICredentialResolver _credentials;
     private readonly IEventHubsManagementClient _managementClient;
+    private readonly IEventHubMetadataCache _metadataCache;
+    private readonly IEventHubsAmqpSender _amqpSender;
     private readonly ListShardsCursorCodecFactory _listShardsCursorCodecFactory;
 
     public KinesisServiceModule(
         ICredentialResolver credentials,
         IEventHubsManagementClient managementClient,
+        IEventHubMetadataCache metadataCache,
+        IEventHubsAmqpSender amqpSender,
         ListShardsCursorCodecFactory listShardsCursorCodecFactory,
         CapabilityMatrix capabilities)
     {
         ArgumentNullException.ThrowIfNull(credentials);
         ArgumentNullException.ThrowIfNull(managementClient);
+        ArgumentNullException.ThrowIfNull(metadataCache);
+        ArgumentNullException.ThrowIfNull(amqpSender);
         ArgumentNullException.ThrowIfNull(listShardsCursorCodecFactory);
         ArgumentNullException.ThrowIfNull(capabilities);
         _credentials = credentials;
         _managementClient = managementClient;
+        _metadataCache = metadataCache;
+        _amqpSender = amqpSender;
         _listShardsCursorCodecFactory = listShardsCursorCodecFactory;
         Capabilities = capabilities;
     }
@@ -119,6 +128,16 @@ public sealed class KinesisServiceModule : IServiceModule
                         eventHubsCredentials,
                         _managementClient,
                         _listShardsCursorCodecFactory,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
+                break;
+            case KinesisOperation.PutRecord:
+                await PutRecordHandler.HandleAsync(
+                        context,
+                        parsed,
+                        eventHubsCredentials,
+                        _metadataCache,
+                        _amqpSender,
                         context.RequestAborted)
                     .ConfigureAwait(false);
                 break;

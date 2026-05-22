@@ -107,14 +107,15 @@
 
 ## PutRecord
 
-- **Status:** ⚪ stub
+- **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Event Hubs (AMQP 1.0 data plane)`
 
 ### Behaviour differences
 
-- Phase 4 Slice 1 scaffolds routing + AWS-JSON-1.1 parsing + EventHubs credential gating only; the operation returns HTTP 501 InternalFailure until its dedicated slice lands.
-- Kinesis shards map 1:1 to Event Hubs partitions. Partition keys are hashed (MD5) into the shard index on AWS; the proxy will assign EH partitions deterministically from the same partition key but cannot guarantee identical shard ids without explicit stream-to-partition-count parity.
-- Sequence numbers are not the same as EH offsets; the proxy will surface EH offsets (or an opaque equivalent) where AWS surfaces sequence numbers.
+- SequenceNumber is synthetic and proxy-generated from a per-process monotonic counter; it is not the Event Hubs broker-assigned sequence number or offset.
+- ShardId is derived client-side by hashing PartitionKey with MD5 and routing to {eventHub}/Partitions/{id}. This matches Event Hubs' historical partitioning algorithm, but the broker may diverge if Azure changes its internal hashing in the future.
+- ExplicitHashKey and SequenceNumberForOrdering are accepted for wire compatibility but ignored.
+- EncryptionType is always reported as NONE.
 
 ### References
 
