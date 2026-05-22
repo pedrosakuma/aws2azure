@@ -10,6 +10,8 @@ using Aws2Azure.Modules.S3;
 using Aws2Azure.Modules.Sqs;
 using Aws2Azure.Modules.DynamoDb;
 using Aws2Azure.Modules.Kinesis;
+using Aws2Azure.Modules.Kinesis.EventHubsRest;
+using Aws2Azure.Modules.Kinesis.Operations;
 using Aws2Azure.Proxy;
 using Microsoft.AspNetCore.Http;
 
@@ -52,6 +54,17 @@ builder.Services.AddSingleton(sigV4Validator);
 // logged at warning level so accidental enablement is obvious.
 var azureHttpClient = BuildAzureHttpClient();
 builder.Services.AddSingleton(azureHttpClient);
+
+builder.Services.AddSingleton(new EntraIdTokenProvider(azureHttpClient));
+builder.Services.AddSingleton<IEventHubsAuthenticator>(sp =>
+    new EventHubsAuthenticator(sp.GetRequiredService<EntraIdTokenProvider>()));
+builder.Services.AddSingleton<IEventHubsManagementClient>(sp =>
+    new EventHubsManagementClient(
+        azureHttpClient,
+        sp.GetRequiredService<IEventHubsAuthenticator>(),
+        sp.GetRequiredService<ILogger<EventHubsManagementClient>>()));
+builder.Services.AddSingleton<ListShardsCursorCodecFactory>(sp =>
+    new ListShardsCursorCodecFactory(sp.GetRequiredService<ILogger<ListShardsCursorCodecFactory>>()));
 
 static AzureHttpClient BuildAzureHttpClient()
 {
@@ -108,14 +121,20 @@ builder.Services.AddSingleton(amqpPool);
 // without us duplicating a separate factory.
 builder.Services.AddSingleton<ServiceModuleRegistry>(sp =>
 {
-    var loggerFactory = sp.GetService<ILoggerFactory>();
+    var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
+    var tokenProvider = sp.GetRequiredService<EntraIdTokenProvider>();
     IServiceModule[] modules =
     [
         new S3ServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.S3),
         new SqsServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.Sqs, amqpPool),
         new DynamoDbServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.Dynamodb,
-            loggerFactory: loggerFactory),
-        new KinesisServiceModule(credentialResolver, CapabilityRegistry.Kinesis),
+            loggerFactory: loggerFactory,
+            tokenProvider: tokenProvider),
+        new KinesisServiceModule(
+            credentialResolver,
+            sp.GetRequiredService<IEventHubsManagementClient>(),
+            sp.GetRequiredService<ListShardsCursorCodecFactory>(),
+            CapabilityRegistry.Kinesis),
         new StubServiceModule(CapabilityRegistry.Sns, AwsErrorFormat.Json, "sns."),
     ];
     return new ServiceModuleRegistry(modules, sigV4Validator);

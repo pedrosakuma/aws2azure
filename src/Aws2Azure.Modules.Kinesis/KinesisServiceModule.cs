@@ -4,6 +4,7 @@ using Aws2Azure.Core;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Modules.Kinesis.Errors;
+using Aws2Azure.Modules.Kinesis.EventHubsRest;
 using Aws2Azure.Modules.Kinesis.Operations;
 using Aws2Azure.Modules.Kinesis.WireProtocol;
 using Microsoft.AspNetCore.Http;
@@ -20,14 +21,22 @@ namespace Aws2Azure.Modules.Kinesis;
 public sealed class KinesisServiceModule : IServiceModule
 {
     private readonly ICredentialResolver _credentials;
+    private readonly IEventHubsManagementClient _managementClient;
+    private readonly ListShardsCursorCodecFactory _listShardsCursorCodecFactory;
 
     public KinesisServiceModule(
         ICredentialResolver credentials,
+        IEventHubsManagementClient managementClient,
+        ListShardsCursorCodecFactory listShardsCursorCodecFactory,
         CapabilityMatrix capabilities)
     {
         ArgumentNullException.ThrowIfNull(credentials);
+        ArgumentNullException.ThrowIfNull(managementClient);
+        ArgumentNullException.ThrowIfNull(listShardsCursorCodecFactory);
         ArgumentNullException.ThrowIfNull(capabilities);
         _credentials = credentials;
+        _managementClient = managementClient;
+        _listShardsCursorCodecFactory = listShardsCursorCodecFactory;
         Capabilities = capabilities;
     }
 
@@ -74,7 +83,7 @@ public sealed class KinesisServiceModule : IServiceModule
             return;
         }
 
-        if (_credentials.GetAzureCredentialsFor(accessKey, AzureService.EventHubs) is not EventHubsCredentials)
+        if (_credentials.GetAzureCredentialsFor(accessKey, AzureService.EventHubs) is not EventHubsCredentials eventHubsCredentials)
         {
             await KinesisErrorResponse.WriteAsync(context,
                 StatusCodes.Status403Forbidden,
@@ -83,8 +92,39 @@ public sealed class KinesisServiceModule : IServiceModule
             return;
         }
 
-        // Slice 1: every recognised op is a 501 stub. Slices 2-7 will
-        // replace the catch-all with per-op dispatch.
-        await StubHandlers.HandleNotImplementedAsync(context, parsed.Operation).ConfigureAwait(false);
+        switch (parsed.Operation)
+        {
+            case KinesisOperation.DescribeStream:
+                await DescribeStreamHandler.HandleAsync(
+                        context,
+                        parsed,
+                        eventHubsCredentials,
+                        _managementClient,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
+                break;
+            case KinesisOperation.DescribeStreamSummary:
+                await DescribeStreamSummaryHandler.HandleAsync(
+                        context,
+                        parsed,
+                        eventHubsCredentials,
+                        _managementClient,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
+                break;
+            case KinesisOperation.ListShards:
+                await ListShardsHandler.HandleAsync(
+                        context,
+                        parsed,
+                        eventHubsCredentials,
+                        _managementClient,
+                        _listShardsCursorCodecFactory,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
+                break;
+            default:
+                await StubHandlers.HandleNotImplementedAsync(context, parsed.Operation).ConfigureAwait(false);
+                break;
+        }
     }
 }
