@@ -1,11 +1,14 @@
-using System;
 using System.IO;
+using System.Net;
 using System.Text;
 using System.Threading.Tasks;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Modules.Kinesis;
+using Aws2Azure.Modules.Kinesis.EventHubsRest;
+using Aws2Azure.Modules.Kinesis.Operations;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Aws2Azure.UnitTests.Kinesis;
@@ -32,10 +35,7 @@ public class KinesisServiceModuleTests
     [InlineData("Kinesis_20131202.PutRecords")]
     [InlineData("Kinesis_20131202.GetRecords")]
     [InlineData("Kinesis_20131202.GetShardIterator")]
-    [InlineData("Kinesis_20131202.DescribeStream")]
-    [InlineData("Kinesis_20131202.DescribeStreamSummary")]
-    [InlineData("Kinesis_20131202.ListShards")]
-    public async Task HandleAsync_returns_501_for_every_recognised_op(string target)
+    public async Task HandleAsync_returns_501_for_remaining_stub_ops(string target)
     {
         var module = NewModule();
         var ctx = NewCtx(target, body: "{}");
@@ -47,9 +47,21 @@ public class KinesisServiceModuleTests
         var body = ReadBody(ctx);
         Assert.Contains("\"__type\"", body);
         Assert.Contains("InternalFailure", body);
-        // Operation short name is echoed in the message so callers can grep.
         Assert.Contains(target.Substring("Kinesis_20131202.".Length), body);
         Assert.Equal("application/x-amz-json-1.1", ctx.Response.ContentType);
+    }
+
+    [Fact]
+    public async Task HandleAsync_dispatches_describe_stream_to_real_handler()
+    {
+        var module = NewModule();
+        var ctx = NewCtx("Kinesis_20131202.DescribeStream", body: "{\"StreamName\":\"orders\"}");
+        ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+
+        await module.HandleAsync(ctx);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Contains("StreamDescription", ReadBody(ctx));
     }
 
     [Fact]
@@ -116,6 +128,7 @@ public class KinesisServiceModuleTests
                                   Namespace = "myns",
                                   SasKeyName = "RootManageSharedAccessKey",
                                   SasKey = "ZGVhZGJlZWZkZWFkYmVlZmRlYWRiZWVmZGVhZGJlZWY=",
+                                  ShardIteratorSigningKey = Convert.ToBase64String(Encoding.UTF8.GetBytes("0123456789abcdef0123456789abcdef")),
                               },
                           }
                         : new AzureCredentials(),
@@ -123,7 +136,11 @@ public class KinesisServiceModuleTests
             },
         };
         var resolver = new StaticCredentialResolver(config);
-        return new KinesisServiceModule(resolver, new CapabilityMatrix("kinesis", Array.Empty<OperationCapability>()));
+        return new KinesisServiceModule(
+            resolver,
+            new FakeManagementClient(),
+            new ListShardsCursorCodecFactory(NullLogger<ListShardsCursorCodecFactory>.Instance),
+            new CapabilityMatrix("kinesis", Array.Empty<OperationCapability>()));
     }
 
     private static DefaultHttpContext NewCtx(string target, string body)
@@ -143,5 +160,15 @@ public class KinesisServiceModuleTests
     {
         ctx.Response.Body.Position = 0;
         return new StreamReader(ctx.Response.Body, Encoding.UTF8).ReadToEnd();
+    }
+
+    private sealed class FakeManagementClient : IEventHubsManagementClient
+    {
+        public ValueTask<EventHubDescription> GetEventHubAsync(EventHubsCredentials credentials, string namespaceFqdn, string eventHubName, System.Threading.CancellationToken cancellationToken)
+            => ValueTask.FromResult(new EventHubDescription(
+                1,
+                ["0"],
+                1,
+                new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero)));
     }
 }

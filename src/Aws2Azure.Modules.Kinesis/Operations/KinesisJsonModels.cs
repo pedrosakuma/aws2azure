@@ -1,0 +1,114 @@
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
+
+namespace Aws2Azure.Modules.Kinesis.Operations;
+
+internal sealed class DescribeStreamRequest
+{
+    public string? StreamName { get; set; }
+    public string? ExclusiveStartShardId { get; set; }
+    public int? Limit { get; set; }
+    public string? StreamARN { get; set; }
+}
+
+internal sealed class DescribeStreamResponse
+{
+    public DescribeStreamResponseBody StreamDescription { get; set; } = new();
+}
+
+internal sealed class DescribeStreamResponseBody
+{
+    public string StreamName { get; set; } = string.Empty;
+    public string StreamARN { get; set; } = string.Empty;
+    public string StreamStatus { get; set; } = string.Empty;
+    public double StreamCreationTimestamp { get; set; }
+    public int RetentionPeriodHours { get; set; }
+    public string EncryptionType { get; set; } = string.Empty;
+    public EnhancedMonitoringDescription[] EnhancedMonitoring { get; set; } = [];
+    public KinesisShardDescription[] Shards { get; set; } = [];
+    public bool HasMoreShards { get; set; }
+}
+
+internal sealed class DescribeStreamSummaryRequest
+{
+    public string? StreamName { get; set; }
+    public string? StreamARN { get; set; }
+}
+
+internal sealed class DescribeStreamSummaryResponse
+{
+    public DescribeStreamSummaryResponseBody StreamDescriptionSummary { get; set; } = new();
+}
+
+internal sealed class DescribeStreamSummaryResponseBody
+{
+    public string StreamName { get; set; } = string.Empty;
+    public string StreamARN { get; set; } = string.Empty;
+    public string StreamStatus { get; set; } = string.Empty;
+    public double StreamCreationTimestamp { get; set; }
+    public int RetentionPeriodHours { get; set; }
+    public EnhancedMonitoringDescription[] EnhancedMonitoring { get; set; } = [];
+    public string EncryptionType { get; set; } = string.Empty;
+    public int OpenShardCount { get; set; }
+    public int ConsumerCount { get; set; }
+}
+
+internal sealed class ListShardsRequest
+{
+    public string? StreamName { get; set; }
+    public string? NextToken { get; set; }
+    public string? ExclusiveStartShardId { get; set; }
+    public int? MaxResults { get; set; }
+    public double? StreamCreationTimestamp { get; set; }
+    public ShardFilterRequest? ShardFilter { get; set; }
+}
+
+internal sealed class ShardFilterRequest
+{
+    public string? Type { get; set; }
+}
+
+internal sealed class ListShardsResponse
+{
+    public KinesisShardDescription[] Shards { get; set; } = [];
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? NextToken { get; set; }
+}
+
+internal sealed class KinesisShardDescription
+{
+    public string ShardId { get; set; } = string.Empty;
+    public HashKeyRangeDescription HashKeyRange { get; set; } = new();
+    public SequenceNumberRangeDescription SequenceNumberRange { get; set; } = new();
+}
+
+internal sealed class HashKeyRangeDescription
+{
+    public string StartingHashKey { get; set; } = string.Empty;
+    public string EndingHashKey { get; set; } = string.Empty;
+}
+
+internal sealed class SequenceNumberRangeDescription
+{
+    public string StartingSequenceNumber { get; set; } = string.Empty;
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? EndingSequenceNumber { get; set; }
+}
+
+internal sealed class EnhancedMonitoringDescription
+{
+    public string[] ShardLevelMetrics { get; set; } = [];
+}
+
+[JsonSourceGenerationOptions(DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+[JsonSerializable(typeof(DescribeStreamRequest))]
+[JsonSerializable(typeof(DescribeStreamResponse))]
+[JsonSerializable(typeof(DescribeStreamSummaryRequest))]
+[JsonSerializable(typeof(DescribeStreamSummaryResponse))]
+[JsonSerializable(typeof(ListShardsRequest))]
+[JsonSerializable(typeof(ListShardsResponse))]
+internal sealed partial class KinesisJsonSerializerContext : JsonSerializerContext
+{
+}
