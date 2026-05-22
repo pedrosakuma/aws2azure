@@ -29,6 +29,7 @@ internal sealed class AmqpRequestResponseLink : IAsyncDisposable
     private Task? _pumpTask;
     private int _disposed;
     private int _faulted;
+    private Exception? _faultException;
 
     public AmqpRequestResponseLink(AmqpSession session, AmqpRequestResponseLinkSettings settings)
     {
@@ -99,6 +100,11 @@ internal sealed class AmqpRequestResponseLink : IAsyncDisposable
         if (_sender is null || _receiver is null)
             throw new InvalidOperationException("OpenAsync must be called before SendRequestAsync.");
 
+        // Fail fast if the pump has already terminated. Otherwise the new
+        // pending TCS would be enqueued with no pump left to complete it,
+        // hanging until the caller's cancellation fires.
+        ThrowIfClosed();
+
         var messageId = $"req-{Interlocked.Increment(ref _nextMessageId):x16}";
         request.Properties = request.Properties with
         {
@@ -109,6 +115,18 @@ internal sealed class AmqpRequestResponseLink : IAsyncDisposable
         var tcs = new TaskCompletionSource<AmqpMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (!_pending.TryAdd(messageId, tcs))
             throw new InvalidOperationException($"Duplicate request id {messageId}.");
+
+        // Recheck under happens-after: the pump may have faulted between
+        // our ThrowIfClosed() above and TryAdd. FailAllPending only
+        // reaps entries it can observe in _pending; an entry added after
+        // the reap would otherwise leak. Order is important — _faulted
+        // is set before FailAllPending walks _pending, so reading
+        // _faulted after a successful TryAdd is sufficient.
+        if (Volatile.Read(ref _faulted) != 0 || Volatile.Read(ref _disposed) != 0)
+        {
+            _pending.TryRemove(messageId, out _);
+            ThrowIfClosed();
+        }
 
         try
         {
@@ -129,6 +147,15 @@ internal sealed class AmqpRequestResponseLink : IAsyncDisposable
         {
             return await tcs.Task.ConfigureAwait(false);
         }
+    }
+
+    private void ThrowIfClosed()
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            throw new ObjectDisposedException(nameof(AmqpRequestResponseLink));
+        if (Volatile.Read(ref _faulted) != 0)
+            throw _faultException
+                ?? new InvalidOperationException("Request/response link faulted.");
     }
 
     private async Task ReceivePumpAsync(CancellationToken ct)
@@ -182,6 +209,11 @@ internal sealed class AmqpRequestResponseLink : IAsyncDisposable
 
     private void FailAllPending(Exception ex)
     {
+        // Publish the terminal exception before flipping _faulted so any
+        // SendRequestAsync caller that observes _faulted via
+        // ThrowIfClosed sees the same root cause rather than the generic
+        // "Request/response link faulted." fallback.
+        Interlocked.CompareExchange(ref _faultException, ex, null);
         Interlocked.Exchange(ref _faulted, 1);
         foreach (var key in _pending.Keys.ToArray())
         {
