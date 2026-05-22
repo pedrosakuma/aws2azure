@@ -143,13 +143,20 @@ public sealed class SqsServiceModule : IServiceModule
 
         if (parsed.Operation is SqsOperation.SendMessage or SqsOperation.SendMessageBatch)
         {
-            if (_amqpPool is not null
-                && parsed.Operation is SqsOperation.SendMessage
-                && TryRouteSendToAmqp(parsed, sbCreds, out var senders))
+            if (_amqpPool is not null && TryRouteSendToAmqp(parsed, sbCreds, out var senders))
             {
-                await Operations.AmqpSendMessageHandlers
-                    .HandleAsync(context, parsed, senders, context.RequestAborted)
-                    .ConfigureAwait(false);
+                if (parsed.Operation is SqsOperation.SendMessage)
+                {
+                    await Operations.AmqpSendMessageHandlers
+                        .HandleAsync(context, parsed, senders, context.RequestAborted)
+                        .ConfigureAwait(false);
+                }
+                else
+                {
+                    await Operations.AmqpSendMessageBatchHandlers
+                        .HandleAsync(context, parsed, senders, context.RequestAborted)
+                        .ConfigureAwait(false);
+                }
                 return;
             }
             await Operations.SendMessageHandlers

@@ -348,12 +348,12 @@ internal static class SendMessageHandlers
 
     // --- Batch entry parsing -------------------------------------------
 
-    private sealed record BatchEntry(
+    internal sealed record BatchEntry(
         string Id, byte[] BodyBytes,
         string? GroupId, string? DeduplicationId, int DelaySeconds,
         Dictionary<string, SqsMessageAttribute> Attributes);
 
-    private static List<BatchEntry>? ParseBatchEntriesQuery(IReadOnlyDictionary<string, string> parameters)
+    internal static List<BatchEntry>? ParseBatchEntriesQuery(IReadOnlyDictionary<string, string> parameters)
     {
         // Keys look like SendMessageBatchRequestEntry.<i>.Id,
         // ...<i>.MessageBody, ...<i>.MessageGroupId,
@@ -420,7 +420,7 @@ internal static class SendMessageHandlers
         return entries;
     }
 
-    private static List<BatchEntry>? ParseBatchEntriesJson(string? jsonBody)
+    internal static List<BatchEntry>? ParseBatchEntriesJson(string? jsonBody)
     {
         if (string.IsNullOrEmpty(jsonBody)) return null;
         try
@@ -656,7 +656,7 @@ internal static class SendMessageHandlers
         return SqsMessageAttributeParser.FromQuery(parsed.Parameters, prefix);
     }
 
-    private static bool IsValidBatchEntryId(string id)
+    internal static bool IsValidBatchEntryId(string id)
     {
         if (string.IsNullOrEmpty(id) || id.Length > 80) return false;
         foreach (var c in id)
