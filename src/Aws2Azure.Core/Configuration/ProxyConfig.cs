@@ -191,8 +191,8 @@ public sealed class EventHubsCredentials
     /// Optional in the credential entry; falls back to a per-process
     /// derived secret when empty, but operators are strongly
     /// encouraged to set this in production so iterator tokens remain
-    /// valid across proxy restarts. UTF-8; minimum 32 bytes
-    /// recommended.
+    /// valid across proxy restarts. Base64-encoded; must decode to at
+    /// least 32 bytes.
     /// </summary>
     public string? ShardIteratorSigningKey { get; set; }
 
