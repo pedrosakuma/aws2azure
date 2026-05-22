@@ -240,5 +240,20 @@ public sealed class PutRecordHandlerTests
                 await handler(credentials, namespaceFqdn, entityPath, body, annotations, cancellationToken);
             }
         }
+
+        public Task SendBatchAsync(
+            EventHubsCredentials credentials,
+            string namespaceFqdn,
+            string entityPath,
+            IReadOnlyList<(ReadOnlyMemory<byte> body, IReadOnlyDictionary<string, object>? annotations)> messages,
+            CancellationToken cancellationToken)
+        {
+            if (messages.Count == 0)
+            {
+                return Task.CompletedTask;
+            }
+
+            return SendAsync(credentials, namespaceFqdn, entityPath, messages[0].body, messages[0].annotations, cancellationToken);
+        }
     }
 }

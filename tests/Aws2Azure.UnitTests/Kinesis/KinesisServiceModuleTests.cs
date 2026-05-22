@@ -32,7 +32,6 @@ public class KinesisServiceModuleTests
     }
 
     [Theory]
-    [InlineData("Kinesis_20131202.PutRecords")]
     [InlineData("Kinesis_20131202.GetRecords")]
     [InlineData("Kinesis_20131202.GetShardIterator")]
     public async Task HandleAsync_returns_501_for_remaining_stub_ops(string target)
@@ -75,6 +74,19 @@ public class KinesisServiceModuleTests
 
         Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
         Assert.Contains("ShardId", ReadBody(ctx));
+    }
+
+    [Fact]
+    public async Task HandleAsync_dispatches_put_records_to_real_handler()
+    {
+        var module = NewModule();
+        var ctx = NewCtx("Kinesis_20131202.PutRecords", body: "{\"StreamName\":\"orders\",\"Records\":[{\"Data\":\"aGVsbG8=\",\"PartitionKey\":\"pk-1\"}]}");
+        ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+
+        await module.HandleAsync(ctx);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Contains("FailedRecordCount", ReadBody(ctx));
     }
 
     [Fact]
@@ -200,6 +212,14 @@ public class KinesisServiceModuleTests
     private sealed class FakeAmqpSender : IEventHubsAmqpSender
     {
         public Task SendAsync(EventHubsCredentials credentials, string namespaceFqdn, string entityPath, ReadOnlyMemory<byte> body, IReadOnlyDictionary<string, object>? annotations, System.Threading.CancellationToken cancellationToken)
+            => Task.CompletedTask;
+
+        public Task SendBatchAsync(
+            EventHubsCredentials credentials,
+            string namespaceFqdn,
+            string entityPath,
+            IReadOnlyList<(ReadOnlyMemory<byte> body, IReadOnlyDictionary<string, object>? annotations)> messages,
+            System.Threading.CancellationToken cancellationToken)
             => Task.CompletedTask;
     }
 }

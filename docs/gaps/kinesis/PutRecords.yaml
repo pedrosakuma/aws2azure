@@ -1,11 +1,12 @@
 service: kinesis
 operation: PutRecords
 azure_equivalent: "Azure Event Hubs (AMQP 1.0 data plane)"
-status: stub
+status: partial
 sub_features: []
 behavior_differences:
-  - "Phase 4 Slice 1 scaffolds routing + AWS-JSON-1.1 parsing + EventHubs credential gating only; the operation returns HTTP 501 InternalFailure until its dedicated slice lands."
-  - "Kinesis shards map 1:1 to Event Hubs partitions. Partition keys are hashed (MD5) into the shard index on AWS; the proxy will assign EH partitions deterministically from the same partition key but cannot guarantee identical shard ids without explicit stream-to-partition-count parity."
-  - "Sequence numbers are not the same as EH offsets; the proxy will surface EH offsets (or an opaque equivalent) where AWS surfaces sequence numbers."
+  - "Sequence numbers are synthetic proxy-generated values, not Azure Event Hubs offsets."
+  - "ShardId values are derived client-side by hashing PartitionKey with MD5 and mapping the result modulo the Event Hubs partition count."
+  - "Batch sends are atomic per partition group: the proxy sends each partition group over one AMQP sender link, and a single broker-side reject in that group fails every record in the group because non-transactional AMQP sends do not expose per-message outcomes cleanly."
+  - "ExplicitHashKey is ignored; partition routing always follows the PartitionKey hash."
 references:
   - https://docs.aws.amazon.com/kinesis/latest/APIReference/API_PutRecords.html

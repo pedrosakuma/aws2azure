@@ -85,6 +85,42 @@ internal sealed class PutRecordResponse
     public string EncryptionType { get; set; } = string.Empty;
 }
 
+internal sealed class PutRecordsRequest
+{
+    public string? StreamName { get; set; }
+    public string? StreamARN { get; set; }
+    public List<PutRecordsRequestEntry>? Records { get; set; }
+}
+
+internal sealed class PutRecordsRequestEntry
+{
+    public string? Data { get; set; }
+    public string? PartitionKey { get; set; }
+    public string? ExplicitHashKey { get; set; }
+}
+
+internal sealed class PutRecordsResponse
+{
+    public int FailedRecordCount { get; set; }
+    public PutRecordsResultEntry[] Records { get; set; } = [];
+    public string EncryptionType { get; set; } = string.Empty;
+}
+
+internal sealed class PutRecordsResultEntry
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ShardId { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SequenceNumber { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ErrorCode { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ErrorMessage { get; set; }
+}
+
 internal sealed class ListShardsResponse
 {
     public KinesisShardDescription[] Shards { get; set; } = [];
@@ -126,6 +162,8 @@ internal sealed class EnhancedMonitoringDescription
 [JsonSerializable(typeof(DescribeStreamSummaryResponse))]
 [JsonSerializable(typeof(PutRecordRequest))]
 [JsonSerializable(typeof(PutRecordResponse))]
+[JsonSerializable(typeof(PutRecordsRequest))]
+[JsonSerializable(typeof(PutRecordsResponse))]
 [JsonSerializable(typeof(ListShardsRequest))]
 [JsonSerializable(typeof(ListShardsResponse))]
 internal sealed partial class KinesisJsonSerializerContext : JsonSerializerContext

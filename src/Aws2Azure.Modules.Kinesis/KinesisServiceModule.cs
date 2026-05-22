@@ -141,6 +141,16 @@ public sealed class KinesisServiceModule : IServiceModule
                         context.RequestAborted)
                     .ConfigureAwait(false);
                 break;
+            case KinesisOperation.PutRecords:
+                await PutRecordsHandler.HandleAsync(
+                        context,
+                        parsed,
+                        eventHubsCredentials,
+                        _metadataCache,
+                        _amqpSender,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
+                break;
             default:
                 await StubHandlers.HandleNotImplementedAsync(context, parsed.Operation).ConfigureAwait(false);
                 break;
