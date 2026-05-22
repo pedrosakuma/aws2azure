@@ -65,10 +65,12 @@ public class ProxyConfigValidatorTests
                     AwsSecretAccessKey = "",
                     Azure = new AzureCredentials
                     {
-                        Blob       = new BlobCredentials(),
+                        Blob = new BlobCredentials(),
                         ServiceBus = new ServiceBusCredentials(),
-                        Cosmos     = new CosmosCredentials(),
-                        EventHubs  = new EventHubsCredentials(),
+                        ServiceBusTopics = new ServiceBusTopicsCredentials(),
+                        Cosmos = new CosmosCredentials(),
+                        EventHubs = new EventHubsCredentials(),
+                        EventGrid = new EventGridCredentials(),
                     },
                 },
             },
@@ -82,11 +84,15 @@ public class ProxyConfigValidatorTests
         Assert.Contains("serviceBus.namespace: required", ex.Message);
         Assert.Contains("serviceBus.sasKeyName: required", ex.Message);
         Assert.Contains("serviceBus.sasKey: required", ex.Message);
+        Assert.Contains("serviceBusTopics.namespace: required", ex.Message);
+        Assert.Contains("serviceBusTopics: either (sasKeyName+sasKey) OR (tenantId+clientId+clientSecret)", ex.Message);
         Assert.Contains("cosmos.endpoint: required", ex.Message);
         Assert.Contains("cosmos.databaseName: required", ex.Message);
         Assert.Contains("either primaryKey OR (tenantId+clientId+clientSecret)", ex.Message);
         Assert.Contains("eventHubs.namespace: required", ex.Message);
         Assert.Contains("eventHubs: either (sasKeyName+sasKey) OR (tenantId+clientId+clientSecret)", ex.Message);
+        Assert.Contains("eventGrid.endpoint: required", ex.Message);
+        Assert.Contains("eventGrid: either accessKey OR (tenantId+clientId+clientSecret)", ex.Message);
     }
 
     [Fact]
@@ -180,7 +186,6 @@ public class ProxyConfigValidatorTests
                             DatabaseName = "main",
                             TenantId = "tenant",
                             ClientId = "client",
-                            // ClientSecret missing → partial AAD shape.
                         },
                     },
                 },
@@ -218,5 +223,180 @@ public class ProxyConfigValidatorTests
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
         Assert.Contains("mutually exclusive", ex.Message);
+    }
+
+    [Fact]
+    public void Throws_when_event_grid_mixes_access_key_and_aad()
+    {
+        var config = new ProxyConfig
+        {
+            Credentials =
+            {
+                new CredentialEntry
+                {
+                    AwsAccessKeyId = "AKIA1",
+                    AwsSecretAccessKey = "secret",
+                    Azure = new AzureCredentials
+                    {
+                        EventGrid = new EventGridCredentials
+                        {
+                            Endpoint = "https://example.westus2-1.eventgrid.azure.net/api/events",
+                            AccessKey = "key",
+                            TenantId = "tenant",
+                        },
+                    },
+                },
+            },
+        };
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+        Assert.Contains("eventGrid: AccessKey and AAD fields are mutually exclusive", ex.Message);
+    }
+
+    [Fact]
+    public void Throws_when_event_grid_endpoint_is_not_https()
+    {
+        var config = new ProxyConfig
+        {
+            Credentials =
+            {
+                new CredentialEntry
+                {
+                    AwsAccessKeyId = "AKIA1",
+                    AwsSecretAccessKey = "secret",
+                    Azure = new AzureCredentials
+                    {
+                        EventGrid = new EventGridCredentials
+                        {
+                            Endpoint = "http://example.westus2-1.eventgrid.azure.net/api/events",
+                            AccessKey = "key",
+                        },
+                    },
+                },
+            },
+        };
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+        Assert.Contains("eventGrid.endpoint: must use https scheme.", ex.Message);
+    }
+
+    [Fact]
+    public void Accepts_event_grid_with_access_key()
+    {
+        var config = new ProxyConfig
+        {
+            Credentials =
+            {
+                new CredentialEntry
+                {
+                    AwsAccessKeyId = "AKIA1",
+                    AwsSecretAccessKey = "secret",
+                    Azure = new AzureCredentials
+                    {
+                        EventGrid = new EventGridCredentials
+                        {
+                            Endpoint = "https://example.westus2-1.eventgrid.azure.net/api/events",
+                            AccessKey = "key",
+                        },
+                    },
+                },
+            },
+        };
+
+        var ex = Record.Exception(() => ProxyConfigValidator.Validate(config));
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void Throws_when_service_bus_topics_mixes_sas_and_aad()
+    {
+        var config = new ProxyConfig
+        {
+            Credentials =
+            {
+                new CredentialEntry
+                {
+                    AwsAccessKeyId = "AKIA1",
+                    AwsSecretAccessKey = "secret",
+                    Azure = new AzureCredentials
+                    {
+                        ServiceBusTopics = new ServiceBusTopicsCredentials
+                        {
+                            Namespace = "myns",
+                            SasKeyName = "Root",
+                            SasKey = "key",
+                            TenantId = "tenant",
+                        },
+                    },
+                },
+            },
+        };
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+        Assert.Contains("serviceBusTopics: SAS and AAD fields are mutually exclusive", ex.Message);
+    }
+
+    [Fact]
+    public void Throws_when_service_bus_topics_is_missing_required_fields()
+    {
+        var config = new ProxyConfig
+        {
+            Credentials =
+            {
+                new CredentialEntry
+                {
+                    AwsAccessKeyId = "AKIA1",
+                    AwsSecretAccessKey = "secret",
+                    Azure = new AzureCredentials
+                    {
+                        ServiceBusTopics = new ServiceBusTopicsCredentials
+                        {
+                            Namespace = "",
+                            SasKeyName = "Root",
+                        },
+                    },
+                },
+            },
+        };
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+        Assert.Contains("serviceBusTopics.namespace: required.", ex.Message);
+        Assert.Contains("serviceBusTopics: SAS auth requires both sasKeyName and sasKey.", ex.Message);
+    }
+
+    [Fact]
+    public void Accepts_service_bus_topics_with_complete_sas()
+    {
+        var config = new ProxyConfig
+        {
+            Credentials =
+            {
+                new CredentialEntry
+                {
+                    AwsAccessKeyId = "AKIA1",
+                    AwsSecretAccessKey = "secret",
+                    Azure = new AzureCredentials
+                    {
+                        ServiceBusTopics = new ServiceBusTopicsCredentials
+                        {
+                            Namespace = "myns",
+                            SasKeyName = "Root",
+                            SasKey = "key",
+                            Topics = new Dictionary<string, SnsTopicSettings>
+                            {
+                                ["orders"] = new()
+                                {
+                                    Backend = SnsTopicBackend.EventGrid,
+                                    EventGridTopicEndpoint = "https://override.westus2-1.eventgrid.azure.net/api/events",
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        };
+
+        var ex = Record.Exception(() => ProxyConfigValidator.Validate(config));
+        Assert.Null(ex);
     }
 }

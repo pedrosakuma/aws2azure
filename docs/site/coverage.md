@@ -100,11 +100,17 @@
 | s3 | [RestoreObject](s3.md#restoreobject) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
 | s3 | [UploadPart](s3.md#uploadpart) | ✅ implemented | `Put Block (?comp=block&blockid=…)` |
 | s3 | [UploadPartCopy](s3.md#uploadpartcopy) | ✅ implemented | `Put Block From URL (?comp=block&blockid=…)` |
-| sns | [CreateTopic](sns.md#createtopic) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
-| sns | [DeleteTopic](sns.md#deletetopic) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
-| sns | [Publish](sns.md#publish) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
-| sns | [Subscribe](sns.md#subscribe) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
-| sns | [Unsubscribe](sns.md#unsubscribe) | ⚪ stub | `Azure Service Bus topics / Event Grid (TBD per operation)` |
+| sns | [CreateTopic](sns.md#createtopic) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
+| sns | [DeleteTopic](sns.md#deletetopic) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
+| sns | [GetTopicAttributes](sns.md#gettopicattributes) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
+| sns | [ListSubscriptions](sns.md#listsubscriptions) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
+| sns | [ListSubscriptionsByTopic](sns.md#listsubscriptionsbytopic) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
+| sns | [ListTopics](sns.md#listtopics) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
+| sns | [Publish](sns.md#publish) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
+| sns | [PublishBatch](sns.md#publishbatch) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
+| sns | [SetTopicAttributes](sns.md#settopicattributes) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
+| sns | [Subscribe](sns.md#subscribe) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
+| sns | [Unsubscribe](sns.md#unsubscribe) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
 | sqs | [AddPermission](sqs.md#addpermission) | ⚪ stub | `No native Service Bus equivalent — validates queue existence and returns success.` |
 | sqs | [ChangeMessageVisibility](sqs.md#changemessagevisibility) | 🟡 partial | `Azure Service Bus queue runtime REST API — POST /{queue}/messages/{messageId}/{lockToken}?api-version=2021-05 (renew-lock); AMQP — `com.microsoft:renew-lock` over the queue's `$management` request-response link; visibility=0 maps to AMQP Abandon on the receiver link.` |
 | sqs | [ChangeMessageVisibilityBatch](sqs.md#changemessagevisibilitybatch) | 🟡 partial | `Azure Service Bus queue runtime REST API — N parallel POST /{queue}/messages/{messageId}/{lockToken}?action=renewlock&api-version=2021-05` |

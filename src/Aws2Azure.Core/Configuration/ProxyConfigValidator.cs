@@ -77,14 +77,7 @@ public static class ProxyConfigValidator
             }
             if (!string.IsNullOrWhiteSpace(blob.ServiceEndpoint))
             {
-                if (!Uri.TryCreate(blob.ServiceEndpoint, UriKind.Absolute, out var endpointUri))
-                {
-                    errors.Add($"{prefix}.blob.serviceEndpoint: must be an absolute URI when set.");
-                }
-                else if (endpointUri.Scheme != Uri.UriSchemeHttp && endpointUri.Scheme != Uri.UriSchemeHttps)
-                {
-                    errors.Add($"{prefix}.blob.serviceEndpoint: must use http or https scheme.");
-                }
+                ValidateAbsoluteUri(blob.ServiceEndpoint, $"{prefix}.blob.serviceEndpoint", errors, Uri.UriSchemeHttp, Uri.UriSchemeHttps);
             }
         }
 
@@ -128,6 +121,11 @@ public static class ProxyConfigValidator
             }
         }
 
+        if (azure.ServiceBusTopics is { } serviceBusTopics)
+        {
+            ValidateServiceBusTopics(serviceBusTopics, prefix + ".serviceBusTopics", errors);
+        }
+
         if (azure.Cosmos is { } cosmos)
         {
             if (string.IsNullOrWhiteSpace(cosmos.Endpoint))
@@ -139,28 +137,17 @@ public static class ProxyConfigValidator
                 errors.Add($"{prefix}.cosmos.databaseName: required.");
             }
 
-            var hasKey = !string.IsNullOrWhiteSpace(cosmos.PrimaryKey);
-            var hasTenant = !string.IsNullOrWhiteSpace(cosmos.TenantId);
-            var hasClientId = !string.IsNullOrWhiteSpace(cosmos.ClientId);
-            var hasClientSecret = !string.IsNullOrWhiteSpace(cosmos.ClientSecret);
-            var hasAnyAad = hasTenant || hasClientId || hasClientSecret;
-            var hasCompleteAad = hasTenant && hasClientId && hasClientSecret;
-
-            if (!hasKey && !hasCompleteAad)
-            {
-                if (hasAnyAad)
-                {
-                    errors.Add($"{prefix}.cosmos: AAD requires tenantId, clientId, and clientSecret together.");
-                }
-                else
-                {
-                    errors.Add($"{prefix}.cosmos: either primaryKey OR (tenantId+clientId+clientSecret) is required.");
-                }
-            }
-            if (hasKey && hasAnyAad)
-            {
-                errors.Add($"{prefix}.cosmos: primaryKey and AAD fields are mutually exclusive — supply one shape.");
-            }
+            ValidateDualAuth(
+                prefix + ".cosmos",
+                errors,
+                sasLabel: "primaryKey",
+                hasSasPart1: !string.IsNullOrWhiteSpace(cosmos.PrimaryKey),
+                hasSasPart2: !string.IsNullOrWhiteSpace(cosmos.PrimaryKey),
+                sasRequirementMessage: "either primaryKey OR (tenantId+clientId+clientSecret) is required.",
+                sasPairRequirementMessage: null,
+                hasTenant: !string.IsNullOrWhiteSpace(cosmos.TenantId),
+                hasClientId: !string.IsNullOrWhiteSpace(cosmos.ClientId),
+                hasClientSecret: !string.IsNullOrWhiteSpace(cosmos.ClientSecret));
         }
 
         if (azure.EventHubs is { } eh)
@@ -172,49 +159,21 @@ public static class ProxyConfigValidator
 
             if (!string.IsNullOrEmpty(eh.Endpoint))
             {
-                if (!Uri.TryCreate(eh.Endpoint, UriKind.Absolute, out var ehUri))
-                {
-                    errors.Add($"{prefix}.eventHubs.endpoint: must be an absolute URI when set.");
-                }
-                else if (ehUri.Scheme != Uri.UriSchemeHttp
-                    && ehUri.Scheme != Uri.UriSchemeHttps
-                    && !ehUri.Scheme.Equals("amqp", StringComparison.OrdinalIgnoreCase)
-                    && !ehUri.Scheme.Equals("amqps", StringComparison.OrdinalIgnoreCase))
-                {
-                    errors.Add($"{prefix}.eventHubs.endpoint: must use http(s) or amqp(s) scheme.");
-                }
+                ValidateAbsoluteUri(eh.Endpoint, $"{prefix}.eventHubs.endpoint", errors,
+                    Uri.UriSchemeHttp, Uri.UriSchemeHttps, "amqp", "amqps");
             }
 
-            var ehHasSasName = !string.IsNullOrWhiteSpace(eh.SasKeyName);
-            var ehHasSasKey = !string.IsNullOrWhiteSpace(eh.SasKey);
-            var ehHasAnySas = ehHasSasName || ehHasSasKey;
-            var ehHasCompleteSas = ehHasSasName && ehHasSasKey;
-
-            var ehHasTenant = !string.IsNullOrWhiteSpace(eh.TenantId);
-            var ehHasClientId = !string.IsNullOrWhiteSpace(eh.ClientId);
-            var ehHasClientSecret = !string.IsNullOrWhiteSpace(eh.ClientSecret);
-            var ehHasAnyAad = ehHasTenant || ehHasClientId || ehHasClientSecret;
-            var ehHasCompleteAad = ehHasTenant && ehHasClientId && ehHasClientSecret;
-
-            if (!ehHasCompleteSas && !ehHasCompleteAad)
-            {
-                if (ehHasAnySas && !ehHasCompleteSas)
-                {
-                    errors.Add($"{prefix}.eventHubs: SAS auth requires both sasKeyName and sasKey.");
-                }
-                else if (ehHasAnyAad && !ehHasCompleteAad)
-                {
-                    errors.Add($"{prefix}.eventHubs: AAD requires tenantId, clientId, and clientSecret together.");
-                }
-                else
-                {
-                    errors.Add($"{prefix}.eventHubs: either (sasKeyName+sasKey) OR (tenantId+clientId+clientSecret) is required.");
-                }
-            }
-            if (ehHasAnySas && ehHasAnyAad)
-            {
-                errors.Add($"{prefix}.eventHubs: SAS and AAD fields are mutually exclusive — supply one shape.");
-            }
+            ValidateDualAuth(
+                prefix + ".eventHubs",
+                errors,
+                sasLabel: "SAS",
+                hasSasPart1: !string.IsNullOrWhiteSpace(eh.SasKeyName),
+                hasSasPart2: !string.IsNullOrWhiteSpace(eh.SasKey),
+                sasRequirementMessage: "either (sasKeyName+sasKey) OR (tenantId+clientId+clientSecret) is required.",
+                sasPairRequirementMessage: "SAS auth requires both sasKeyName and sasKey.",
+                hasTenant: !string.IsNullOrWhiteSpace(eh.TenantId),
+                hasClientId: !string.IsNullOrWhiteSpace(eh.ClientId),
+                hasClientSecret: !string.IsNullOrWhiteSpace(eh.ClientSecret));
 
             if (eh.Streams is { } streams)
             {
@@ -237,6 +196,159 @@ public static class ProxyConfigValidator
                     }
                 }
             }
+        }
+
+        if (azure.EventGrid is { } eventGrid)
+        {
+            ValidateEventGrid(eventGrid, prefix + ".eventGrid", errors);
+        }
+    }
+
+    private static void ValidateServiceBusTopics(ServiceBusTopicsCredentials credentials, string prefix, List<string> errors)
+    {
+        if (string.IsNullOrWhiteSpace(credentials.Namespace))
+        {
+            errors.Add($"{prefix}.namespace: required.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(credentials.Endpoint))
+        {
+            ValidateAbsoluteUri(credentials.Endpoint, $"{prefix}.endpoint", errors,
+                Uri.UriSchemeHttp, Uri.UriSchemeHttps, "amqp", "amqps");
+        }
+
+        ValidateDualAuth(
+            prefix,
+            errors,
+            sasLabel: "SAS",
+            hasSasPart1: !string.IsNullOrWhiteSpace(credentials.SasKeyName),
+            hasSasPart2: !string.IsNullOrWhiteSpace(credentials.SasKey),
+            sasRequirementMessage: "either (sasKeyName+sasKey) OR (tenantId+clientId+clientSecret) is required.",
+            sasPairRequirementMessage: "SAS auth requires both sasKeyName and sasKey.",
+            hasTenant: !string.IsNullOrWhiteSpace(credentials.TenantId),
+            hasClientId: !string.IsNullOrWhiteSpace(credentials.ClientId),
+            hasClientSecret: !string.IsNullOrWhiteSpace(credentials.ClientSecret));
+
+        if (credentials.Topics is { } topics)
+        {
+            foreach (var (name, settings) in topics)
+            {
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    errors.Add($"{prefix}.topics: topic name must be non-empty.");
+                    continue;
+                }
+                if (settings is null)
+                {
+                    errors.Add($"{prefix}.topics.{name}: entry is null.");
+                    continue;
+                }
+                if (!Enum.IsDefined(typeof(SnsTopicBackend), settings.Backend))
+                {
+                    errors.Add($"{prefix}.topics.{name}.backend: unknown value '{(int)settings.Backend}'.");
+                }
+                if (settings.ServiceBusTopicName is not null && string.IsNullOrWhiteSpace(settings.ServiceBusTopicName))
+                {
+                    errors.Add($"{prefix}.topics.{name}.serviceBusTopicName: must be non-empty when set.");
+                }
+                if (!string.IsNullOrWhiteSpace(settings.EventGridTopicEndpoint))
+                {
+                    ValidateAbsoluteUri(settings.EventGridTopicEndpoint, $"{prefix}.topics.{name}.eventGridTopicEndpoint", errors, Uri.UriSchemeHttps);
+                }
+            }
+        }
+    }
+
+    private static void ValidateEventGrid(EventGridCredentials credentials, string prefix, List<string> errors)
+    {
+        if (string.IsNullOrWhiteSpace(credentials.Endpoint))
+        {
+            errors.Add($"{prefix}.endpoint: required.");
+        }
+        else
+        {
+            ValidateAbsoluteUri(credentials.Endpoint, $"{prefix}.endpoint", errors, Uri.UriSchemeHttps);
+        }
+
+        ValidateDualAuth(
+            prefix,
+            errors,
+            sasLabel: "AccessKey",
+            hasSasPart1: !string.IsNullOrWhiteSpace(credentials.AccessKey),
+            hasSasPart2: !string.IsNullOrWhiteSpace(credentials.AccessKey),
+            sasRequirementMessage: "either accessKey OR (tenantId+clientId+clientSecret) is required.",
+            sasPairRequirementMessage: null,
+            hasTenant: !string.IsNullOrWhiteSpace(credentials.TenantId),
+            hasClientId: !string.IsNullOrWhiteSpace(credentials.ClientId),
+            hasClientSecret: !string.IsNullOrWhiteSpace(credentials.ClientSecret));
+    }
+
+    private static void ValidateDualAuth(
+        string prefix,
+        List<string> errors,
+        string sasLabel,
+        bool hasSasPart1,
+        bool hasSasPart2,
+        string sasRequirementMessage,
+        string? sasPairRequirementMessage,
+        bool hasTenant,
+        bool hasClientId,
+        bool hasClientSecret)
+    {
+        var hasAnySas = hasSasPart1 || hasSasPart2;
+        var hasCompleteSas = hasSasPart1 && hasSasPart2;
+        var hasAnyAad = hasTenant || hasClientId || hasClientSecret;
+        var hasCompleteAad = hasTenant && hasClientId && hasClientSecret;
+
+        if (!hasCompleteSas && !hasCompleteAad)
+        {
+            if (hasAnySas && !hasCompleteSas && sasPairRequirementMessage is not null)
+            {
+                errors.Add($"{prefix}: {sasPairRequirementMessage}");
+            }
+            else if (hasAnyAad && !hasCompleteAad)
+            {
+                errors.Add($"{prefix}: AAD requires tenantId, clientId, and clientSecret together.");
+            }
+            else
+            {
+                errors.Add($"{prefix}: {sasRequirementMessage}");
+            }
+        }
+
+        if (hasAnySas && hasAnyAad)
+        {
+            errors.Add($"{prefix}: {sasLabel} and AAD fields are mutually exclusive — supply one shape.");
+        }
+    }
+
+    private static void ValidateAbsoluteUri(string value, string field, List<string> errors, params string[] allowedSchemes)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
+        {
+            errors.Add($"{field}: must be an absolute URI when set.");
+            return;
+        }
+
+        foreach (var scheme in allowedSchemes)
+        {
+            if (uri.Scheme.Equals(scheme, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        if (allowedSchemes.Length == 1)
+        {
+            errors.Add($"{field}: must use {allowedSchemes[0]} scheme.");
+        }
+        else if (allowedSchemes.Length == 2)
+        {
+            errors.Add($"{field}: must use {allowedSchemes[0]} or {allowedSchemes[1]} scheme.");
+        }
+        else
+        {
+            errors.Add($"{field}: must use {string.Join(", ", allowedSchemes[..^1])} or {allowedSchemes[^1]} scheme.");
         }
     }
 }

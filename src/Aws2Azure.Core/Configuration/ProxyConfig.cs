@@ -28,8 +28,10 @@ public sealed class AzureCredentials
 {
     public BlobCredentials? Blob { get; set; }
     public ServiceBusCredentials? ServiceBus { get; set; }
+    public ServiceBusTopicsCredentials? ServiceBusTopics { get; set; }
     public CosmosCredentials? Cosmos { get; set; }
     public EventHubsCredentials? EventHubs { get; set; }
+    public EventGridCredentials? EventGrid { get; set; }
 }
 
 public sealed class BlobCredentials
@@ -94,6 +96,46 @@ public sealed class SqsQueueSettings
     /// default from <see cref="ServiceBusCredentials.Transport"/> wins.
     /// </summary>
     public SqsTransport? Transport { get; set; }
+}
+
+/// <summary>
+/// Azure Service Bus Topics credentials used by the SNS module.
+/// Kept separate from <see cref="ServiceBusCredentials"/> so queue- and
+/// topic-specific settings can evolve independently.
+/// </summary>
+public sealed class ServiceBusTopicsCredentials
+{
+    public string Namespace { get; set; } = string.Empty;
+    public string? Endpoint { get; set; }
+    public string SasKeyName { get; set; } = string.Empty;
+    public string SasKey { get; set; } = string.Empty;
+    public string? TenantId { get; set; }
+    public string? ClientId { get; set; }
+    public string? ClientSecret { get; set; }
+    public Dictionary<string, SnsTopicSettings>? Topics { get; set; }
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter<SnsTopicBackend>))]
+public enum SnsTopicBackend
+{
+    ServiceBusTopics = 0,
+    EventGrid = 1,
+}
+
+public sealed class SnsTopicSettings
+{
+    public SnsTopicBackend Backend { get; set; } = SnsTopicBackend.ServiceBusTopics;
+    public string? ServiceBusTopicName { get; set; }
+    public string? EventGridTopicEndpoint { get; set; }
+}
+
+public sealed class EventGridCredentials
+{
+    public string Endpoint { get; set; } = string.Empty;
+    public string? AccessKey { get; set; }
+    public string? TenantId { get; set; }
+    public string? ClientId { get; set; }
+    public string? ClientSecret { get; set; }
 }
 
 public sealed class CosmosCredentials
