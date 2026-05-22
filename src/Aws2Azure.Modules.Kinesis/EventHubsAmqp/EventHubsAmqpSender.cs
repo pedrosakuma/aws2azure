@@ -158,6 +158,7 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
                 cancellationToken)
             .ConfigureAwait(false);
 
+        var outcomes = new EventHubsBatchSendOutcome[messages.Count];
         try
         {
             await using var sender = await connection.OpenSenderAsync(
@@ -166,7 +167,6 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            var outcomes = new EventHubsBatchSendOutcome[messages.Count];
             for (var i = 0; i < messages.Count; i++)
             {
                 var message = messages[i];
@@ -193,7 +193,7 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
                 catch (Exception ex) when (TryWrap(ex, out var wrapped))
                 {
                     await InvalidateConnectionAsync(key).ConfigureAwait(false);
-                    if (i == 0)
+                    if (wrapped.Kind == EventHubsAmqpFailureKind.Auth)
                     {
                         throw wrapped;
                     }
@@ -213,7 +213,18 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
         catch (Exception ex) when (TryWrap(ex, out var wrapped))
         {
             await InvalidateConnectionAsync(key).ConfigureAwait(false);
-            throw wrapped;
+            if (wrapped.Kind == EventHubsAmqpFailureKind.Auth)
+            {
+                throw wrapped;
+            }
+
+            var failureOutcome = CreateBatchOutcome(wrapped);
+            for (var i = 0; i < outcomes.Length; i++)
+            {
+                outcomes[i] = failureOutcome;
+            }
+
+            return new EventHubsBatchSendResult(outcomes);
         }
     }
 

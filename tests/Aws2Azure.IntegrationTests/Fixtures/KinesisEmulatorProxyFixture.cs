@@ -6,6 +6,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
 using Amazon.Kinesis;
+using Docker.DotNet;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
 using DotNet.Testcontainers.Images;
@@ -57,6 +58,18 @@ public sealed class KinesisEmulatorProxyFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
+        try
+        {
+            await EnsureDockerAvailableAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex) when (IsDockerUnavailable(ex))
+        {
+            SkipReason = ex.Message;
+            await DisposeAsync().ConfigureAwait(false);
+            DockerAvailable = false;
+            return;
+        }
+
         try
         {
             var emulatorDir = Path.Combine(AppContext.BaseDirectory, "Kinesis", "Emulator");
@@ -147,11 +160,10 @@ public sealed class KinesisEmulatorProxyFixture : IAsyncLifetime
             await WaitForKinesisAsync(TimeSpan.FromMinutes(1)).ConfigureAwait(false);
             DockerAvailable = true;
         }
-        catch (Exception ex)
+        catch
         {
-            SkipReason = ex.Message;
             await DisposeAsync().ConfigureAwait(false);
-            DockerAvailable = false;
+            throw;
         }
     }
 
@@ -195,6 +207,12 @@ public sealed class KinesisEmulatorProxyFixture : IAsyncLifetime
         }
     }
 
+    private static async Task EnsureDockerAvailableAsync()
+    {
+        using var client = new DockerClientConfiguration().CreateClient();
+        await client.System.PingAsync().ConfigureAwait(false);
+    }
+
     private static bool IsDockerUnavailable(Exception ex)
     {
         for (var current = ex; current is not null; current = current.InnerException)
@@ -206,18 +224,6 @@ public sealed class KinesisEmulatorProxyFixture : IAsyncLifetime
             if (message.Contains("docker daemon", StringComparison.OrdinalIgnoreCase)) return true;
             if (message.Contains("Cannot connect to the Docker daemon", StringComparison.OrdinalIgnoreCase)) return true;
             if (message.Contains("no such host", StringComparison.OrdinalIgnoreCase)) return true;
-        }
-
-        return false;
-    }
-
-    private static bool IsEmulatorUnavailable(Exception ex)
-    {
-        for (var current = ex; current is not null; current = current.InnerException)
-        {
-            var message = current.Message ?? string.Empty;
-            if (message.Contains("Timed out waiting for Kinesis emulator readiness", StringComparison.OrdinalIgnoreCase)) return true;
-            if (message.Contains("Connection refused", StringComparison.OrdinalIgnoreCase)) return true;
         }
 
         return false;
@@ -313,7 +319,7 @@ public sealed class KinesisEmulatorProxyFixture : IAsyncLifetime
     private Process StartProxyProcess(int port, string configFile)
     {
         var repoRoot = FindRepoRoot();
-        var startInfo = new ProcessStartInfo("dotnet", "run --project src/Aws2Azure.Proxy/Aws2Azure.Proxy.csproj --no-build --no-restore --no-launch-profile")
+        var startInfo = new ProcessStartInfo("dotnet", "run -c Release --project src/Aws2Azure.Proxy/Aws2Azure.Proxy.csproj --no-build --no-restore --no-launch-profile")
         {
             WorkingDirectory = repoRoot,
             RedirectStandardOutput = true,

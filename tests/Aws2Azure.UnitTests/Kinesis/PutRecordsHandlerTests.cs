@@ -258,6 +258,56 @@ public sealed class PutRecordsHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_marks_partition_records_failed_when_sender_throws_non_auth_connection_error()
+    {
+        var context = NewContext();
+        var sender = new FakeAmqpSender((_, _, entityPath, messages, _) =>
+        {
+            if (entityPath == "orders-eh/Partitions/1")
+            {
+                throw new EventHubsAmqpException(
+                    "link detached",
+                    new IOException("Connection reset by peer"),
+                    EventHubsAmqpFailureKind.Transient,
+                    description: "link detached");
+            }
+
+            return Task.FromResult(new EventHubsBatchSendResult(messages.Select(_ => new EventHubsBatchSendOutcome(true, null, null)).ToArray()));
+        });
+        var requestBody = JsonSerializer.Serialize(new
+        {
+            StreamName = "orders",
+            Records = new object[]
+            {
+                new { Data = "YQ==", PartitionKey = "o" },
+                new { Data = "Yg==", PartitionKey = "a" },
+                new { Data = "Yw==", PartitionKey = "e" },
+                new { Data = "ZA==", PartitionKey = "d" },
+            },
+        });
+
+        await PutRecordsHandler.HandleAsync(
+            context,
+            NewParseResult(requestBody),
+            NewCredentials(),
+            NewMetadataCache(),
+            sender,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(3, sender.BatchCalls.Count);
+
+        using var document = ReadJson(context);
+        Assert.Equal(2, document.RootElement.GetProperty("FailedRecordCount").GetInt32());
+        var records = document.RootElement.GetProperty("Records");
+        Assert.Equal(4, records.GetArrayLength());
+        AssertSuccess(records[0], PutRecordHandler.FormatShardId(0));
+        AssertFailure(records[1], "InternalFailure", "link detached");
+        AssertSuccess(records[2], PutRecordHandler.FormatShardId(2));
+        AssertFailure(records[3], "InternalFailure", "link detached");
+    }
+
+    [Fact]
     public async Task HandleAsync_maps_amqp_auth_failures_to_access_denied()
     {
         var context = NewContext();
