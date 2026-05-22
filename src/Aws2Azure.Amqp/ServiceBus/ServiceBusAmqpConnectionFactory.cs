@@ -37,8 +37,14 @@ internal sealed class ServiceBusAmqpConnectionFactory : IServiceBusAmqpConnectio
         try
         {
             var tokenProvider = new ServiceBusSasTokenProvider(sasKeyName, sasKey);
+            // Clone+override Hostname so the AMQP open frame's hostname
+            // field matches the broker's logical namespace identity
+            // rather than the docker bridge IP / loopback we happen to
+            // be dialling. Service Bus (and the emulator) authorise on
+            // this label, not on the TCP target.
+            var perEndpointSettings = _connectionSettings with { Hostname = endpoint.LogicalNamespace };
             return await ServiceBusAmqpConnection
-                .OpenAsync(transport, tokenProvider, _connectionSettings, cancellationToken)
+                .OpenAsync(transport, tokenProvider, perEndpointSettings, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch

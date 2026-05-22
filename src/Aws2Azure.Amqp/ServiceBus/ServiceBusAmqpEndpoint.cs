@@ -28,7 +28,18 @@ internal readonly record struct ServiceBusAmqpEndpoint
     /// </summary>
     public bool UseTls { get; }
 
-    public ServiceBusAmqpEndpoint(string host, int port, bool useTls)
+    /// <summary>
+    /// Namespace label the broker authorises against — populates the
+    /// AMQP <c>open.hostname</c> field and the CBS audience
+    /// (<c>amqps://{LogicalNamespace}/{queue}</c>). Decoupled from
+    /// <see cref="Host"/> because TCP-level connectivity (IP / docker
+    /// bridge) routinely differs from the broker's namespace identity.
+    /// Production: same as the FQDN host. Emulator: <c>localhost</c>
+    /// regardless of which loopback/bridge IP we dial.
+    /// </summary>
+    public string LogicalNamespace { get; }
+
+    public ServiceBusAmqpEndpoint(string host, int port, bool useTls, string? logicalNamespace = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(host);
         if (port is < 1 or > 65535)
@@ -39,23 +50,29 @@ internal readonly record struct ServiceBusAmqpEndpoint
         Host = host.Trim().ToLowerInvariant();
         Port = port;
         UseTls = useTls;
+        LogicalNamespace = string.IsNullOrWhiteSpace(logicalNamespace)
+            ? Host
+            : logicalNamespace.Trim().ToLowerInvariant();
     }
 
     /// <summary>
     /// Production shape: TLS on port 5671 against the given namespace
-    /// FQDN. Equivalent to <c>amqps://{host}:5671</c>.
+    /// FQDN. Equivalent to <c>amqps://{host}:5671</c>. Logical namespace
+    /// defaults to <paramref name="host"/>.
     /// </summary>
-    public static ServiceBusAmqpEndpoint Tls(string host, int port = ServiceBusEndpoint.AmqpsPort) =>
-        new(host, port, useTls: true);
+    public static ServiceBusAmqpEndpoint Tls(string host, int port = ServiceBusEndpoint.AmqpsPort, string? logicalNamespace = null) =>
+        new(host, port, useTls: true, logicalNamespace);
 
     /// <summary>
     /// Emulator/dev shape: plain TCP on port 5672. Equivalent to
     /// <c>amqp://{host}:5672</c>. The Service Bus emulator only listens
-    /// in this mode.
+    /// in this mode and authorises against the logical namespace
+    /// <c>localhost</c> regardless of which IP we dial — so the default
+    /// for <paramref name="logicalNamespace"/> is <c>"localhost"</c>.
     /// </summary>
-    public static ServiceBusAmqpEndpoint Plain(string host, int port = ServiceBusEndpoint.AmqpPort) =>
-        new(host, port, useTls: false);
+    public static ServiceBusAmqpEndpoint Plain(string host, int port = ServiceBusEndpoint.AmqpPort, string? logicalNamespace = null) =>
+        new(host, port, useTls: false, logicalNamespace ?? "localhost");
 
     public override string ToString() =>
-        (UseTls ? "amqps://" : "amqp://") + Host + ":" + Port;
+        (UseTls ? "amqps://" : "amqp://") + Host + ":" + Port + " (ns=" + LogicalNamespace + ")";
 }

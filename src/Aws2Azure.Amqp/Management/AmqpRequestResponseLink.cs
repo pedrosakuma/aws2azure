@@ -28,6 +28,7 @@ internal sealed class AmqpRequestResponseLink : IAsyncDisposable
     private AmqpLink? _receiver;
     private Task? _pumpTask;
     private int _disposed;
+    private int _faulted;
 
     public AmqpRequestResponseLink(AmqpSession session, AmqpRequestResponseLinkSettings settings)
     {
@@ -39,6 +40,20 @@ internal sealed class AmqpRequestResponseLink : IAsyncDisposable
 
     /// <summary>The reply-to address stamped on outgoing requests.</summary>
     public string ReplyToAddress => _replyToAddress;
+
+    /// <summary>
+    /// True once the receive pump has terminated (peer detached the
+    /// sender or receiver, connection closed, or any other faulted
+    /// path). Subsequent <see cref="SendRequestAsync"/> calls will
+    /// immediately fail with the same exception that broke the pump.
+    /// Pool slots use this to evict a dead client before handing it
+    /// back to the next caller.
+    /// </summary>
+    public bool IsClosed =>
+        Volatile.Read(ref _faulted) != 0
+        || Volatile.Read(ref _disposed) != 0
+        || (_sender?.IsClosed ?? false)
+        || (_receiver?.IsClosed ?? false);
 
     /// <summary>
     /// Opens the sender + receiver links and starts the receive pump.
@@ -167,6 +182,7 @@ internal sealed class AmqpRequestResponseLink : IAsyncDisposable
 
     private void FailAllPending(Exception ex)
     {
+        Interlocked.Exchange(ref _faulted, 1);
         foreach (var key in _pending.Keys.ToArray())
         {
             if (_pending.TryRemove(key, out var tcs))

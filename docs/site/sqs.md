@@ -41,6 +41,7 @@
 - VisibilityTimeout=0 is supported on the AMQP transport via Abandon (immediate release, redelivery counter incremented). It is NOT supported on the REST transport — the renew still extends the lock; clients needing immediate release on REST must DeleteMessage or wait for the lock to expire.
 - Verified against in-process fakes; emulator-backed end-to-end validation lands with the Service Bus emulator fixture work.
 - Header format: granted-seconds is derived from `lockedUntil - DateTimeOffset.UtcNow` (rounded to whole seconds). Clock skew between the proxy host and Service Bus can shift the value by 1-2 s; consumers should treat it as a diagnostic hint, not an SLA.
+- Emulator divergence: the Service Bus emulator's $management node detaches the request/response link on the first com.microsoft:renew-lock request (visible to the proxy as 'channel has been closed'). Validated against real Azure only; the integration test against the emulator is skipped with a SkipException pointing to the real-Azure smoke.
 
 ### References
 

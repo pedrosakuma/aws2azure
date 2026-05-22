@@ -14,8 +14,8 @@ internal readonly record struct ServiceBusAmqpConnectionKey
     public ServiceBusAmqpEndpoint Endpoint { get; }
     public string SasKeyName { get; }
 
-    /// <summary>Convenience accessor for the endpoint host (used as the CBS audience namespace).</summary>
-    public string NamespaceFqdn => Endpoint.Host;
+    /// <summary>Convenience accessor for the endpoint's logical namespace (used as the CBS audience namespace).</summary>
+    public string NamespaceFqdn => Endpoint.LogicalNamespace;
 
     public ServiceBusAmqpConnectionKey(ServiceBusAmqpEndpoint endpoint, string sasKeyName)
     {

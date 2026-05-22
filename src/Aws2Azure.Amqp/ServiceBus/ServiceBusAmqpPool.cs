@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq;
 
 namespace Aws2Azure.Amqp.ServiceBus;
 
@@ -508,7 +509,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             CancellationToken cancellationToken)
         {
             var existing = Volatile.Read(ref _connection);
-            if (existing is not null) return existing;
+            if (existing is not null && !existing.IsClosed) return existing;
             ThrowIfDisposed();
 
             await _connectionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -516,7 +517,22 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             {
                 ThrowIfDisposed();
                 existing = _connection;
-                if (existing is not null) return existing;
+                if (existing is not null && !existing.IsClosed) return existing;
+
+                // Stale connection (peer closed it / network reset /
+                // idle-time-out) — tear down every dependent slot before
+                // dialling a fresh connection. Receivers / senders /
+                // management / session links cached against the old
+                // connection are no longer usable; leaving them in place
+                // would surface as "Session is not open" / "Link is not
+                // attached" on the next call.
+                if (existing is not null)
+                {
+                    await EvictAllSlotsAsync().ConfigureAwait(false);
+                    try { await existing.DisposeAsync().ConfigureAwait(false); }
+                    catch { /* swallow during eviction */ }
+                    Volatile.Write(ref _connection, null);
+                }
 
                 var created = await factory
                     .CreateAsync(key.Endpoint, key.SasKeyName, sasKey, cancellationToken)
@@ -527,6 +543,42 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             finally
             {
                 _connectionLock.Release();
+            }
+        }
+
+        private async Task EvictAllSlotsAsync()
+        {
+            foreach (var key in _receivers.Keys.ToArray())
+            {
+                if (_receivers.TryRemove(key, out var slot))
+                {
+                    try { await slot.DisposeAsync().ConfigureAwait(false); }
+                    catch { /* swallow during eviction */ }
+                }
+            }
+            foreach (var key in _senders.Keys.ToArray())
+            {
+                if (_senders.TryRemove(key, out var slot))
+                {
+                    try { await slot.DisposeAsync().ConfigureAwait(false); }
+                    catch { /* swallow during eviction */ }
+                }
+            }
+            foreach (var key in _sessionReceivers.Keys.ToArray())
+            {
+                if (_sessionReceivers.TryRemove(key, out var slot))
+                {
+                    try { await slot.DisposeAsync().ConfigureAwait(false); }
+                    catch { /* swallow during eviction */ }
+                }
+            }
+            foreach (var key in _managementClients.Keys.ToArray())
+            {
+                if (_managementClients.TryRemove(key, out var slot))
+                {
+                    try { await slot.DisposeAsync().ConfigureAwait(false); }
+                    catch { /* swallow during eviction */ }
+                }
             }
         }
 
@@ -858,7 +910,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             CancellationToken cancellationToken)
         {
             var existing = Volatile.Read(ref _receiver);
-            if (existing is not null) return existing;
+            if (existing is not null && !existing.IsClosed) return existing;
             ThrowIfDisposed();
 
             await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -866,9 +918,16 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             {
                 ThrowIfDisposed();
                 existing = _receiver;
-                if (existing is not null) return existing;
+                if (existing is not null && !existing.IsClosed) return existing;
 
-                var audience = ServiceBusEndpoint.BuildQueueAudience(endpoint.Host, queueName);
+                if (existing is not null)
+                {
+                    try { await existing.DisposeAsync().ConfigureAwait(false); }
+                    catch { /* swallow during eviction */ }
+                    Volatile.Write(ref _receiver, null);
+                }
+
+                var audience = ServiceBusEndpoint.BuildQueueAudience(endpoint.LogicalNamespace, queueName);
                 var created = await connection
                     .OpenReceiverAsync(queueName, audience, prefetchCredit: 0, cancellationToken)
                     .ConfigureAwait(false);
@@ -925,7 +984,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             CancellationToken cancellationToken)
         {
             var existing = Volatile.Read(ref _sender);
-            if (existing is not null) return existing;
+            if (existing is not null && !existing.IsClosed) return existing;
             ThrowIfDisposed();
 
             await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -933,9 +992,19 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             {
                 ThrowIfDisposed();
                 existing = _sender;
-                if (existing is not null) return existing;
+                if (existing is not null && !existing.IsClosed) return existing;
 
-                var audience = ServiceBusEndpoint.BuildQueueAudience(endpoint.Host, queueName);
+                // Stale sender (link detached by broker / network / prior
+                // failure) — dispose it and re-open under the lock so
+                // concurrent callers don't race on the cached slot.
+                if (existing is not null)
+                {
+                    try { await existing.DisposeAsync().ConfigureAwait(false); }
+                    catch { /* swallow during eviction */ }
+                    Volatile.Write(ref _sender, null);
+                }
+
+                var audience = ServiceBusEndpoint.BuildQueueAudience(endpoint.LogicalNamespace, queueName);
                 var created = await connection
                     .OpenSenderAsync(queueName, audience, cancellationToken)
                     .ConfigureAwait(false);
@@ -986,7 +1055,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             CancellationToken cancellationToken)
         {
             var existing = Volatile.Read(ref _client);
-            if (existing is not null) return existing;
+            if (existing is not null && !existing.IsClosed) return existing;
             ThrowIfDisposed();
 
             await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -994,9 +1063,16 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             {
                 ThrowIfDisposed();
                 existing = _client;
-                if (existing is not null) return existing;
+                if (existing is not null && !existing.IsClosed) return existing;
 
-                var audience = ServiceBusEndpoint.BuildQueueAudience(endpoint.Host, queueName);
+                if (existing is not null)
+                {
+                    try { await existing.DisposeAsync().ConfigureAwait(false); }
+                    catch { /* swallow during eviction */ }
+                    Volatile.Write(ref _client, null);
+                }
+
+                var audience = ServiceBusEndpoint.BuildQueueAudience(endpoint.LogicalNamespace, queueName);
                 var created = await connection
                     .OpenManagementClientAsync(audience, cancellationToken)
                     .ConfigureAwait(false);
@@ -1086,7 +1162,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             CancellationToken cancellationToken)
         {
             var existing = Volatile.Read(ref _receiver);
-            if (existing is not null) return existing;
+            if (existing is not null && !existing.IsClosed) return existing;
             ThrowIfDisposed();
 
             await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -1094,9 +1170,16 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             {
                 ThrowIfDisposed();
                 existing = _receiver;
-                if (existing is not null) return existing;
+                if (existing is not null && !existing.IsClosed) return existing;
 
-                var audience = ServiceBusEndpoint.BuildQueueAudience(endpoint.Host, queueName);
+                if (existing is not null)
+                {
+                    try { await existing.DisposeAsync().ConfigureAwait(false); }
+                    catch { /* swallow during eviction */ }
+                    Volatile.Write(ref _receiver, null);
+                }
+
+                var audience = ServiceBusEndpoint.BuildQueueAudience(endpoint.LogicalNamespace, queueName);
                 var created = await connection
                     .OpenSessionReceiverAsync(queueName, audience, sessionId, prefetchCredit: 0, cancellationToken)
                     .ConfigureAwait(false);

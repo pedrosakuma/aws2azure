@@ -60,6 +60,14 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
     public AmqpConnection Connection => _connection;
 
     /// <summary>
+    /// True when the underlying AMQP connection is no longer in the
+    /// <c>Opened</c> state (closed by peer, closing locally, or final).
+    /// Pool slots check this to evict and rebuild before handing the
+    /// connection back to the next caller.
+    /// </summary>
+    public bool IsClosed => _connection.IsClosed;
+
+    /// <summary>
     /// Opens the AMQP connection, the CBS + data sessions, and the CBS
     /// link. The caller is responsible for handing in a transport that is
     /// already past TLS + SASL negotiation — see
