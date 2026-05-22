@@ -6,7 +6,8 @@ sub_features: []
 behavior_differences:
   - "Sequence numbers are synthetic proxy-generated values, not Azure Event Hubs offsets."
   - "ShardId values are derived client-side by hashing PartitionKey with MD5 and mapping the result modulo the Event Hubs partition count."
-  - "Batch sends are atomic per partition group: the proxy sends each partition group over one AMQP sender link, and a single broker-side reject in that group fails every record in the group because non-transactional AMQP sends do not expose per-message outcomes cleanly."
+  - "Batch sends are still grouped per partition, but broker dispositions are tracked per message; records accepted before a later reject remain successful in the PutRecords response so callers do not retry already-committed messages."
   - "ExplicitHashKey is ignored; partition routing always follows the PartitionKey hash."
+  - "Verified against Event Hubs emulator; not yet validated against production Azure Event Hubs."
 references:
   - https://docs.aws.amazon.com/kinesis/latest/APIReference/API_PutRecords.html

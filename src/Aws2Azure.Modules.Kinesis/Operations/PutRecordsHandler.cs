@@ -136,7 +136,7 @@ internal static class PutRecordsHandler
 
                 try
                 {
-                    await amqpSender.SendBatchAsync(
+                    var batchResult = await amqpSender.SendBatchAsync(
                             credentials,
                             namespaceFqdn,
                             eventHubName + "/Partitions/" + partitionRecords[0].PartitionId,
@@ -144,33 +144,17 @@ internal static class PutRecordsHandler
                             cancellationToken)
                         .ConfigureAwait(false);
 
-                    for (var i = 0; i < partitionRecords.Count; i++)
-                    {
-                        var record = partitionRecords[i];
-                        responseEntries[record.RequestIndex] = new PutRecordsResultEntry
-                        {
-                            ShardId = record.ShardId,
-                        };
-                    }
+                    ApplyBatchOutcomes(partitionRecords, batchResult.Outcomes, responseEntries, ref failedRecordCount);
                 }
-                catch (EventHubsAmqpException ex) when (ex.Kind == EventHubsAmqpFailureKind.Auth)
+                catch (EventHubsAmqpException ex) when (ex.Kind != EventHubsAmqpFailureKind.Auth)
                 {
-                    await PutRecordCommon.WriteSendErrorAsync(context, ex, "PutRecords").ConfigureAwait(false);
-                    return;
+                    var batchFailure = PutRecordCommon.ResolveBatchFailure(ex, "PutRecords");
+                    ApplyBatchFailure(partitionRecords, batchFailure.ErrorCode, batchFailure.ErrorMessage, responseEntries, ref failedRecordCount);
                 }
                 catch (EventHubsAmqpException ex)
                 {
-                    var failure = PutRecordCommon.ResolveBatchFailure(ex, "PutRecords");
-                    failedRecordCount += partitionRecords.Count;
-                    for (var i = 0; i < partitionRecords.Count; i++)
-                    {
-                        var record = partitionRecords[i];
-                        responseEntries[record.RequestIndex] = new PutRecordsResultEntry
-                        {
-                            ErrorCode = failure.ErrorCode,
-                            ErrorMessage = failure.ErrorMessage,
-                        };
-                    }
+                    await PutRecordCommon.WriteSendErrorAsync(context, ex, "PutRecords").ConfigureAwait(false);
+                    return;
                 }
             }
 
@@ -252,6 +236,54 @@ internal static class PutRecordsHandler
             rented,
             dataLength);
         return true;
+    }
+
+    private static void ApplyBatchOutcomes(
+        IReadOnlyList<ValidatedRecord> partitionRecords,
+        IReadOnlyList<EventHubsBatchSendOutcome> outcomes,
+        PutRecordsResultEntry[] responseEntries,
+        ref int failedRecordCount)
+    {
+        for (var i = 0; i < partitionRecords.Count; i++)
+        {
+            var record = partitionRecords[i];
+            var outcome = outcomes[i];
+            if (outcome.Succeeded)
+            {
+                responseEntries[record.RequestIndex] = new PutRecordsResultEntry
+                {
+                    ShardId = record.ShardId,
+                };
+            }
+            else
+            {
+                failedRecordCount++;
+                responseEntries[record.RequestIndex] = new PutRecordsResultEntry
+                {
+                    ErrorCode = outcome.ErrorCode,
+                    ErrorMessage = outcome.ErrorMessage,
+                };
+            }
+        }
+    }
+
+    private static void ApplyBatchFailure(
+        IReadOnlyList<ValidatedRecord> partitionRecords,
+        string errorCode,
+        string errorMessage,
+        PutRecordsResultEntry[] responseEntries,
+        ref int failedRecordCount)
+    {
+        for (var i = 0; i < partitionRecords.Count; i++)
+        {
+            var record = partitionRecords[i];
+            failedRecordCount++;
+            responseEntries[record.RequestIndex] = new PutRecordsResultEntry
+            {
+                ErrorCode = errorCode,
+                ErrorMessage = errorMessage,
+            };
+        }
     }
 
     private static PutRecordsResultEntry CreateValidationFailure(string message)

@@ -230,13 +230,13 @@ public class KinesisServiceModuleTests
         public Task SendAsync(EventHubsCredentials credentials, string namespaceFqdn, string entityPath, ReadOnlyMemory<byte> body, IReadOnlyDictionary<string, object>? annotations, System.Threading.CancellationToken cancellationToken)
             => Task.CompletedTask;
 
-        public Task SendBatchAsync(
+        public Task<EventHubsBatchSendResult> SendBatchAsync(
             EventHubsCredentials credentials,
             string namespaceFqdn,
             string entityPath,
             IReadOnlyList<(ReadOnlyMemory<byte> body, IReadOnlyDictionary<string, object>? annotations)> messages,
             System.Threading.CancellationToken cancellationToken)
-            => Task.CompletedTask;
+            => Task.FromResult(new EventHubsBatchSendResult(messages.Select(_ => new EventHubsBatchSendOutcome(true, null, null)).ToArray()));
     }
 
     private sealed class FakeAmqpReceiver : IEventHubsAmqpReceiver

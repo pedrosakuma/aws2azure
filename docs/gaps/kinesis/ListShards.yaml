@@ -17,7 +17,7 @@ behavior_differences:
   - "HashKeyRange values are a uniform even split of the 128-bit Kinesis hash space; Event Hubs does not expose AWS-compatible hash-key assignments."
   - "NextToken is an aws2azure-specific cursor, not an AWS-issued token; it encodes stream name + last shard id and expires after 5 minutes."
   - "Shard filter types other than AT_LATEST and FROM_TRIM_HORIZON currently return ValidationException."
-  - "This slice has only been verified with tests, not yet against a live Event Hubs namespace."
+  - "Verified against Event Hubs emulator only, not yet against a live Event Hubs namespace."
   - "Stream lifecycle (CreateStream / DeleteStream / IncreaseStreamRetentionPeriod) is out of scope — Event Hubs entities are provisioned out-of-band via ARM."
 references:
   - https://docs.aws.amazon.com/kinesis/latest/APIReference/API_ListShards.html

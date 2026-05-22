@@ -228,6 +228,14 @@ public sealed class KinesisStreamSettings
     /// stream should map to distinct consumer groups.
     /// </summary>
     public string? ConsumerGroup { get; set; }
+
+    /// <summary>
+    /// Optional static partition-count override used when the proxy
+    /// cannot query the Event Hubs management surface (for example,
+    /// local emulator-backed integration tests). When set, the Kinesis
+    /// module derives shard metadata directly from config.
+    /// </summary>
+    public int? PartitionCount { get; set; }
 }
 
 /// <summary>

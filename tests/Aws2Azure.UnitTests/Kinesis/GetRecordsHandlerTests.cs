@@ -211,7 +211,51 @@ public sealed class GetRecordsHandlerTests
             CancellationToken.None);
 
         var position = Assert.IsType<EventHubsReceivePosition.FromEnqueuedTime>(receiver.Position);
-        Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(1_735_689_600_123L), position.Value);
+        Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(1_735_689_600_123L).AddMilliseconds(-1), position.Value);
+    }
+
+    [Fact]
+    public async Task HandleAsync_returns_boundary_record_for_at_sequence_number_iterators()
+    {
+        var boundaryTime = DateTimeOffset.FromUnixTimeMilliseconds(1_735_689_600_123L);
+        var synthetic = ((boundaryTime.ToUnixTimeMilliseconds() << 20) | 7L).ToString();
+        var receiver = new BoundaryAwareReceiver(NewMessage("boundary", "pk-1", offset: "555", sequenceNumber: 42, enqueuedTime: boundaryTime));
+        var codecFactory = NewCodecFactory();
+        var context = NewContext();
+
+        await GetRecordsHandler.HandleAsync(
+            context,
+            NewParseResult(BuildRequestBody(NewEncodedToken(codecFactory, new ShardIteratorToken("orders", "shardId-000000000001", ShardIteratorType.AtSequenceNumber, synthetic, FixedNow.ToUnixTimeSeconds())))),
+            NewCredentials(),
+            NewMetadataCache(),
+            receiver,
+            codecFactory,
+            CancellationToken.None);
+
+        using var document = JsonDocument.Parse(ReadBody(context));
+        Assert.Equal(1, document.RootElement.GetProperty("Records").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task HandleAsync_skips_boundary_record_for_after_sequence_number_iterators()
+    {
+        var boundaryTime = DateTimeOffset.FromUnixTimeMilliseconds(1_735_689_600_123L);
+        var synthetic = ((boundaryTime.ToUnixTimeMilliseconds() << 20) | 7L).ToString();
+        var receiver = new BoundaryAwareReceiver(NewMessage("boundary", "pk-1", offset: "555", sequenceNumber: 42, enqueuedTime: boundaryTime));
+        var codecFactory = NewCodecFactory();
+        var context = NewContext();
+
+        await GetRecordsHandler.HandleAsync(
+            context,
+            NewParseResult(BuildRequestBody(NewEncodedToken(codecFactory, new ShardIteratorToken("orders", "shardId-000000000001", ShardIteratorType.AfterSequenceNumber, synthetic, FixedNow.ToUnixTimeSeconds())))),
+            NewCredentials(),
+            NewMetadataCache(),
+            receiver,
+            codecFactory,
+            CancellationToken.None);
+
+        using var document = JsonDocument.Parse(ReadBody(context));
+        Assert.Equal(0, document.RootElement.GetProperty("Records").GetArrayLength());
     }
 
     [Fact]
@@ -341,6 +385,31 @@ public sealed class GetRecordsHandlerTests
             Position = position;
             MaxMessages = maxMessages;
             return Task.FromResult(new EventHubsReceiveResult(Messages));
+        }
+    }
+
+    private sealed class BoundaryAwareReceiver(EventHubsReceivedMessage message) : IEventHubsAmqpReceiver
+    {
+        private readonly EventHubsReceivedMessage _message = message;
+
+        public Task<EventHubsReceiveResult> ReceiveAsync(
+            EventHubsCredentials credentials,
+            string namespaceFqdn,
+            string entityPath,
+            string consumerGroup,
+            int partitionId,
+            EventHubsReceivePosition position,
+            int maxMessages,
+            TimeSpan quiescentTimeout,
+            CancellationToken cancellationToken)
+        {
+            var messages = position switch
+            {
+                EventHubsReceivePosition.FromEnqueuedTime fromEnqueuedTime when _message.EnqueuedTime > fromEnqueuedTime.Value => [_message],
+                _ => Array.Empty<EventHubsReceivedMessage>(),
+            };
+
+            return Task.FromResult(new EventHubsReceiveResult(messages));
         }
     }
 

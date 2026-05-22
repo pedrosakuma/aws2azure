@@ -21,13 +21,17 @@ public interface IEventHubsAmqpSender
         IReadOnlyDictionary<string, object>? annotations,
         CancellationToken cancellationToken);
 
-    Task SendBatchAsync(
+    Task<EventHubsBatchSendResult> SendBatchAsync(
         EventHubsCredentials credentials,
         string namespaceFqdn,
         string entityPath,
         IReadOnlyList<(ReadOnlyMemory<byte> body, IReadOnlyDictionary<string, object>? annotations)> messages,
         CancellationToken cancellationToken);
 }
+
+public sealed record EventHubsBatchSendResult(IReadOnlyList<EventHubsBatchSendOutcome> Outcomes);
+
+public sealed record EventHubsBatchSendOutcome(bool Succeeded, string? ErrorCode, string? ErrorMessage);
 
 internal enum EventHubsAmqpFailureKind
 {
@@ -77,37 +81,18 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
         _connectionSettings = connectionSettings;
     }
 
-    public Task SendAsync(
+    public async Task SendAsync(
         EventHubsCredentials credentials,
         string namespaceFqdn,
         string entityPath,
         ReadOnlyMemory<byte> body,
         IReadOnlyDictionary<string, object>? annotations,
         CancellationToken cancellationToken)
-        => SendBatchAsync(
-            credentials,
-            namespaceFqdn,
-            entityPath,
-            [(body, annotations)],
-            cancellationToken);
-
-    public async Task SendBatchAsync(
-        EventHubsCredentials credentials,
-        string namespaceFqdn,
-        string entityPath,
-        IReadOnlyList<(ReadOnlyMemory<byte> body, IReadOnlyDictionary<string, object>? annotations)> messages,
-        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(credentials);
         ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
         ArgumentException.ThrowIfNullOrWhiteSpace(entityPath);
-        ArgumentNullException.ThrowIfNull(messages);
         ThrowIfDisposed();
-
-        if (messages.Count == 0)
-        {
-            return;
-        }
 
         var endpoint = ResolveEndpoint(credentials, namespaceFqdn);
         var key = new ConnectionKey(endpoint, BuildCredentialMarker(credentials));
@@ -127,25 +112,119 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
                     BuildAudience(namespaceFqdn, entityPath),
                     cancellationToken)
                 .ConfigureAwait(false);
-
-            for (var i = 0; i < messages.Count; i++)
-            {
-                var message = messages[i];
-                await sender.SendAsync(
-                        new AmqpMessage
-                        {
-                            Body = message.body,
-                            MessageAnnotations = CreateAnnotations(message.annotations),
-                        },
-                        settled: false,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-            }
+            await sender.SendAsync(
+                    new AmqpMessage
+                    {
+                        Body = body,
+                        MessageAnnotations = CreateAnnotations(annotations),
+                    },
+                    settled: false,
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
         catch (Exception ex) when (TryWrap(ex, out var wrapped))
         {
             await InvalidateConnectionAsync(key).ConfigureAwait(false);
             throw wrapped;
+        }
+    }
+
+    public async Task<EventHubsBatchSendResult> SendBatchAsync(
+        EventHubsCredentials credentials,
+        string namespaceFqdn,
+        string entityPath,
+        IReadOnlyList<(ReadOnlyMemory<byte> body, IReadOnlyDictionary<string, object>? annotations)> messages,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(credentials);
+        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
+        ArgumentException.ThrowIfNullOrWhiteSpace(entityPath);
+        ArgumentNullException.ThrowIfNull(messages);
+        ThrowIfDisposed();
+
+        if (messages.Count == 0)
+        {
+            return new EventHubsBatchSendResult([]);
+        }
+
+        var endpoint = ResolveEndpoint(credentials, namespaceFqdn);
+        var key = new ConnectionKey(endpoint, BuildCredentialMarker(credentials));
+        var slot = GetOrCreateSlot(key);
+        var connection = await slot.GetOrCreateConnectionAsync(
+                _tokenProvider,
+                _connectionSettings,
+                credentials,
+                endpoint,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        var outcomes = new EventHubsBatchSendOutcome[messages.Count];
+        try
+        {
+            await using var sender = await connection.OpenSenderAsync(
+                    entityPath,
+                    BuildAudience(namespaceFqdn, entityPath),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            for (var i = 0; i < messages.Count; i++)
+            {
+                var message = messages[i];
+                try
+                {
+                    await sender.SendAsync(
+                            new AmqpMessage
+                            {
+                                Body = message.body,
+                                MessageAnnotations = CreateAnnotations(message.annotations),
+                            },
+                            settled: false,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                    outcomes[i] = new EventHubsBatchSendOutcome(true, null, null);
+                }
+                catch (ServiceBusSendException sendException)
+                {
+                    outcomes[i] = CreateBatchOutcome(new EventHubsAmqpException(
+                        "Event Hubs rejected the AMQP transfer.",
+                        sendException,
+                        MapOutcome(sendException.Outcome)));
+                }
+                catch (Exception ex) when (TryWrap(ex, out var wrapped))
+                {
+                    await InvalidateConnectionAsync(key).ConfigureAwait(false);
+                    if (wrapped.Kind == EventHubsAmqpFailureKind.Auth)
+                    {
+                        throw wrapped;
+                    }
+
+                    var failureOutcome = CreateBatchOutcome(wrapped);
+                    for (var remaining = i; remaining < outcomes.Length; remaining++)
+                    {
+                        outcomes[remaining] = failureOutcome;
+                    }
+
+                    return new EventHubsBatchSendResult(outcomes);
+                }
+            }
+
+            return new EventHubsBatchSendResult(outcomes);
+        }
+        catch (Exception ex) when (TryWrap(ex, out var wrapped))
+        {
+            await InvalidateConnectionAsync(key).ConfigureAwait(false);
+            if (wrapped.Kind == EventHubsAmqpFailureKind.Auth)
+            {
+                throw wrapped;
+            }
+
+            var failureOutcome = CreateBatchOutcome(wrapped);
+            for (var i = 0; i < outcomes.Length; i++)
+            {
+                outcomes[i] = failureOutcome;
+            }
+
+            return new EventHubsBatchSendResult(outcomes);
         }
     }
 
@@ -246,6 +325,36 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
             ViaPartitionKey = viaPartitionKey as string,
             ScheduledEnqueueTime = scheduledEnqueueTime as DateTimeOffset?,
         };
+    }
+
+    private static EventHubsBatchSendOutcome CreateBatchOutcome(EventHubsAmqpException exception)
+    {
+        if (exception.Kind == EventHubsAmqpFailureKind.Throttled)
+        {
+            return new EventHubsBatchSendOutcome(
+                false,
+                "ProvisionedThroughputExceededException",
+                "Azure Event Hubs throttled the batch send.");
+        }
+
+        return new EventHubsBatchSendOutcome(
+            false,
+            "InternalFailure",
+            BuildFailureMessage(exception));
+    }
+
+    private static string BuildFailureMessage(EventHubsAmqpException exception)
+    {
+        var message = string.Equals(exception.Condition, AmqpErrorCondition.Timeout, StringComparison.Ordinal)
+            ? "Azure Event Hubs AMQP send timed out."
+            : "Azure Event Hubs AMQP send failed.";
+
+        if (!string.IsNullOrWhiteSpace(exception.Description))
+        {
+            message += " " + exception.Description;
+        }
+
+        return message;
     }
 
     private static bool TryWrap(Exception exception, out EventHubsAmqpException wrapped)

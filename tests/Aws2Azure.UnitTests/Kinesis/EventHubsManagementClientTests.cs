@@ -11,6 +11,36 @@ namespace Aws2Azure.UnitTests.Kinesis;
 public sealed class EventHubsManagementClientTests
 {
     [Fact]
+    public async Task GetEventHubAsync_uses_configured_partition_count_when_available()
+    {
+        using var httpClient = new AzureHttpClient(new ScriptedHandler(_ => throw new InvalidOperationException("HTTP should not be called.")), ownsHandler: false);
+        var client = new EventHubsManagementClient(
+            httpClient,
+            new TestAuthenticator(),
+            NullLogger<EventHubsManagementClient>.Instance);
+
+        var description = await client.GetEventHubAsync(
+            new EventHubsCredentials
+            {
+                Namespace = "myns",
+                SasKeyName = "Root",
+                SasKey = "secret",
+                Streams = new Dictionary<string, KinesisStreamSettings>
+                {
+                    ["orders"] = new() { EventHubName = "orders-eh", PartitionCount = 4 },
+                },
+            },
+            "myns.servicebus.windows.net",
+            "orders-eh",
+            CancellationToken.None);
+
+        Assert.Equal(4, description.PartitionCount);
+        Assert.Equal(["0", "1", "2", "3"], description.PartitionIds.ToArray());
+        Assert.Equal(1, description.MessageRetentionDays);
+        Assert.Equal(DateTimeOffset.UnixEpoch, description.CreatedAt);
+    }
+
+    [Fact]
     public async Task GetEventHubAsync_parses_atom_event_hub_description()
     {
         var handler = new ScriptedHandler(request =>
