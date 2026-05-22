@@ -263,6 +263,46 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
     }
 
     /// <summary>
+    /// Opens a sender link against <paramref name="queueName"/> after
+    /// CBS-authorising <paramref name="audience"/>. Symmetric to
+    /// <see cref="OpenReceiverAsync"/>.
+    /// </summary>
+    public async Task<ServiceBusAmqpSender> OpenSenderAsync(
+        string queueName,
+        string audience,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(audience);
+        ThrowIfDisposed();
+
+        await EnsureAuthorizedAsync(audience, cancellationToken).ConfigureAwait(false);
+        var dataSession = await EnsureDataSessionAsync(cancellationToken).ConfigureAwait(false);
+
+        var settings = new AmqpLinkSettings
+        {
+            Name = $"aws2azure-send-{queueName}-{Guid.NewGuid():N}",
+            Role = AmqpRole.Sender,
+            SourceAddress = null,
+            TargetAddress = ServiceBusEndpoint.BuildSenderTargetAddress(queueName),
+            SenderSettleMode = AmqpSenderSettleMode.Unsettled,
+            ReceiverSettleMode = AmqpReceiverSettleMode.First,
+            InitialDeliveryCount = 0,
+        };
+
+        var link = await dataSession.AttachLinkAsync(settings, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return new ServiceBusAmqpSender(link, queueName);
+        }
+        catch
+        {
+            await TryDetachAsync(link).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <summary>
     /// Re-runs CBS <c>put-token</c> for <paramref name="audience"/>
     /// regardless of cache state. Exposed so a future renewal task can
     /// push fresh tokens without tearing down existing links.

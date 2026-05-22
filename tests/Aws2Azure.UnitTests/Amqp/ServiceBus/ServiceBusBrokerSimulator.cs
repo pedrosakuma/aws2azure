@@ -99,6 +99,33 @@ internal sealed class ServiceBusBrokerSimulator
     /// <summary>Flow frames received per link name (recorded as the granted credit value).</summary>
     public Dictionary<string, List<uint>> FlowCreditsByLink { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Messages received via data-session <c>sender</c> attaches
+    /// (i.e. client-as-publisher), keyed by client link name. Populated
+    /// by <see cref="HandleTransferAsync"/> whenever an inbound transfer
+    /// arrives on a link the broker accepted as a Receiver.
+    /// </summary>
+    public Dictionary<string, List<AmqpMessage>> ReceivedTransfers { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Initial link-credit the broker grants to a client-sender attach
+    /// (slice-1 default 100). Tests can lower this to exercise the
+    /// send-side credit-wait path.
+    /// </summary>
+    public uint SenderInitialCredit { get; set; } = 100;
+
+    /// <summary>
+    /// If a link name appears here, the next transfer the broker
+    /// receives on that link is settled as <c>rejected</c> (with the
+    /// supplied error) instead of <c>accepted</c>. The mapping is
+    /// consumed on first use so subsequent transfers on the same link
+    /// succeed.
+    /// </summary>
+    public Dictionary<string, AmqpError> RejectNextTransferByLink { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Tracks the broker handle assigned to each client-sender link.</summary>
+    private readonly Dictionary<uint, string> _senderLinkByClientHandle = new();
+
     public Task BrokerLoopTask { get; private set; } = Task.CompletedTask;
 
     public void Start(CancellationToken cancellationToken = default)
@@ -213,6 +240,24 @@ internal sealed class ServiceBusBrokerSimulator
         _linkNameToClientChannel[a.Name] = f.Header.Channel;
         _linkNameToClientHandle[a.Name] = a.Handle;
 
+        if (a.Role == AmqpRole.Sender)
+        {
+            // Client is a publisher: respond as Receiver and grant
+            // initial credit so the client can start sending.
+            _senderLinkByClientHandle[a.Handle] = a.Name;
+            await AmqpTestBroker.SendPerfAsync(_server, brokerChannel, new AmqpAttach
+            {
+                Name = a.Name, Handle = brokerHandle, Role = AmqpRole.Receiver, InitialDeliveryCount = 0,
+            }, AmqpAttach.Write);
+            await AmqpTestBroker.SendPerfAsync(_server, brokerChannel, new AmqpFlow
+            {
+                NextIncomingId = 0, IncomingWindow = uint.MaxValue,
+                NextOutgoingId = 0, OutgoingWindow = uint.MaxValue,
+                Handle = brokerHandle, DeliveryCount = 0, LinkCredit = SenderInitialCredit,
+            }, AmqpFlow.Write);
+            return;
+        }
+
         // Detect a session-bound attach (slice 7b): if the client's source
         // carries a com.microsoft:session-filter, echo the bound session
         // back to the client via the response attach's source.filter.
@@ -293,10 +338,18 @@ internal sealed class ServiceBusBrokerSimulator
 
     private async Task HandleTransferAsync(RentedFrame f)
     {
-        // Only CBS sender transfers are inbound: parse the put-token,
-        // reply on the CBS receiver link.
         AmqpTransfer.Read(f.Body, out var transfer, out var perfLen);
         var payload = f.Body.Slice(perfLen).ToArray();
+        var role = _channelByPeer.TryGetValue(f.Header.Channel, out var r) ? r : ChannelRole.Cbs;
+
+        if (role == ChannelRole.Data)
+        {
+            await HandleDataTransferAsync(transfer, payload);
+            return;
+        }
+
+        // CBS sender transfers: parse the put-token, reply on the CBS
+        // receiver link with the configured status.
         var msg = AmqpMessage.Parse(payload);
         var audience = msg.ApplicationProperties is { } ap && ap.TryGetValue("name", out var raw) && raw is string s ? s : "";
         AuthorizedAudiences.Add(audience);
@@ -320,6 +373,80 @@ internal sealed class ServiceBusBrokerSimulator
             more: false);
         ArrayPool<byte>.Shared.Return(rented);
     }
+
+    private async Task HandleDataTransferAsync(AmqpTransfer transfer, byte[] payload)
+    {
+        if (!_senderLinkByClientHandle.TryGetValue(transfer.Handle, out var linkName))
+            return;
+        if (transfer.More == true)
+        {
+            // Multi-frame transfer: buffer until the terminal fragment.
+            if (!_pendingTransferPayloads.TryGetValue(transfer.Handle, out var buffer))
+            {
+                buffer = new List<byte>(payload.Length * 2);
+                _pendingTransferPayloads[transfer.Handle] = buffer;
+            }
+            buffer.AddRange(payload);
+            return;
+        }
+
+        byte[] full = payload;
+        if (_pendingTransferPayloads.TryGetValue(transfer.Handle, out var pending))
+        {
+            pending.AddRange(payload);
+            full = pending.ToArray();
+            _pendingTransferPayloads.Remove(transfer.Handle);
+        }
+
+        var msg = AmqpMessage.Parse(full);
+        if (!ReceivedTransfers.TryGetValue(linkName, out var bag))
+        {
+            bag = new List<AmqpMessage>();
+            ReceivedTransfers[linkName] = bag;
+        }
+        bag.Add(msg);
+
+        if (transfer.DeliveryId is not { } deliveryId)
+            return;
+
+        if (RejectNextTransferByLink.TryGetValue(linkName, out var error))
+        {
+            RejectNextTransferByLink.Remove(linkName);
+            Span<byte> errScratch = stackalloc byte[Performatives.ScratchSize];
+            AmqpError.Write(errScratch, in error, out var errLen);
+            var errCopy = new byte[errLen];
+            errScratch[..errLen].CopyTo(errCopy);
+            var rejected = new Rejected { Error = errCopy };
+            Span<byte> rejScratch = stackalloc byte[Performatives.ScratchSize];
+            Rejected.Write(rejScratch, in rejected, out var rejLen);
+            var stateCopy = new byte[rejLen];
+            rejScratch[..rejLen].CopyTo(stateCopy);
+            await AmqpTestBroker.SendPerfAsync(_server, DataSessionChannel, new AmqpDisposition
+            {
+                Role = AmqpRole.Receiver,
+                First = deliveryId,
+                Last = deliveryId,
+                Settled = true,
+                State = stateCopy,
+            }, AmqpDisposition.Write);
+            return;
+        }
+
+        Span<byte> accepted = stackalloc byte[16];
+        Accepted.Write(accepted, out var acceptedLen);
+        var acceptedCopy = new byte[acceptedLen];
+        accepted[..acceptedLen].CopyTo(acceptedCopy);
+        await AmqpTestBroker.SendPerfAsync(_server, DataSessionChannel, new AmqpDisposition
+        {
+            Role = AmqpRole.Receiver,
+            First = deliveryId,
+            Last = deliveryId,
+            Settled = true,
+            State = acceptedCopy,
+        }, AmqpDisposition.Write);
+    }
+
+    private readonly Dictionary<uint, List<byte>> _pendingTransferPayloads = new();
 
     private void HandleDisposition(RentedFrame f)
     {
