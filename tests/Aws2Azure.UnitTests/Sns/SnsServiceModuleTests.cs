@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Modules.Sns;
+using Aws2Azure.Modules.Sns.Management;
 using Microsoft.AspNetCore.Http;
 
 namespace Aws2Azure.UnitTests.Sns;
@@ -34,9 +35,6 @@ public class SnsServiceModuleTests
     }
 
     [Theory]
-    [InlineData("CreateTopic")]
-    [InlineData("DeleteTopic")]
-    [InlineData("ListTopics")]
     [InlineData("Publish")]
     [InlineData("PublishBatch")]
     [InlineData("Subscribe")]
@@ -45,7 +43,7 @@ public class SnsServiceModuleTests
     [InlineData("ListSubscriptionsByTopic")]
     [InlineData("GetTopicAttributes")]
     [InlineData("SetTopicAttributes")]
-    public async Task Recognised_operations_return_structured_501_stub(string action)
+    public async Task Stubbed_operations_return_structured_501_stub(string action)
     {
         var module = NewModule();
         var ctx = NewContext($"Action={action}&Version=2010-03-31");
@@ -90,6 +88,19 @@ public class SnsServiceModuleTests
     }
 
     [Fact]
+    public async Task EventGrid_only_credentials_do_not_enable_topic_crud()
+    {
+        var module = NewModule(includeTopicCreds: false, includeEventGridCreds: true);
+        var ctx = NewContext("Action=ListTopics&Version=2010-03-31");
+        ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+
+        await module.HandleAsync(ctx);
+
+        Assert.Equal(StatusCodes.Status403Forbidden, ctx.Response.StatusCode);
+        Assert.Contains("AuthorizationError", ReadBody(ctx));
+    }
+
+    [Fact]
     public async Task Missing_access_key_returns_MissingAuthenticationToken()
     {
         var module = NewModule();
@@ -102,7 +113,7 @@ public class SnsServiceModuleTests
     }
 
     private static SnsServiceModule NewModule(bool includeTopicCreds = true, bool includeEventGridCreds = false)
-        => new(GetResolver(includeTopicCreds, includeEventGridCreds), new CapabilityMatrix("sns", []));
+        => new(GetResolver(includeTopicCreds, includeEventGridCreds), new NoopManagementClient(), new CapabilityMatrix("sns", []));
 
     private static ICredentialResolver GetResolver(bool includeTopicCreds, bool includeEventGridCreds)
     {
@@ -156,5 +167,17 @@ public class SnsServiceModuleTests
     {
         context.Response.Body.Position = 0;
         return new StreamReader(context.Response.Body, Encoding.UTF8).ReadToEnd();
+    }
+
+    private sealed class NoopManagementClient : IServiceBusTopicsManagementClient
+    {
+        public ValueTask CreateTopicAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, CancellationToken cancellationToken)
+            => ValueTask.CompletedTask;
+
+        public ValueTask DeleteTopicAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, CancellationToken cancellationToken)
+            => ValueTask.CompletedTask;
+
+        public ValueTask<ServiceBusTopicPage> ListTopicsAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, int skip, int top, CancellationToken cancellationToken)
+            => ValueTask.FromResult(new ServiceBusTopicPage([]));
     }
 }

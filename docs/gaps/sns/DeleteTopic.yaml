@@ -1,11 +1,15 @@
 service: sns
 operation: DeleteTopic
-azure_equivalent: "Azure Service Bus Topics / Azure Event Grid"
-status: stub
+azure_equivalent: "Azure Service Bus Topics management REST API"
+status: partial
 sub_features:
-  - name: Slice 1 scaffold
+  - name: Idempotent topic delete over Service Bus Topics REST
     status: implemented
-    notes: "Parses the AWS Query envelope, validates credentials, and dispatches to a structured SNS-shaped 501 stub for now. Backend translation to Service Bus Topics / Event Grid lands in later slices."
-behavior_differences: []
+    notes: "Parses TopicArn, extracts the topic name, and issues DELETE https://{namespace}.servicebus.windows.net/{topic}?api-version=2021-05. Azure 404 is treated as success to preserve SNS idempotency."
+behavior_differences:
+  - "DeleteTopic accepts only proxy-shaped ARNs of the form arn:aws:sns:{region}:{accountId}:{topicName}. The proxy currently synthesises accountId as 000000000000, but delete only uses the topic-name suffix when translating to Azure."
+  - "The same FIFO gap as CreateTopic applies: .fifo ARNs are rejected because FIFO semantics are deferred to a later slice."
+  - "Azure deletes are asynchronous underneath Service Bus. A successful DeleteTopic response means the topic was accepted for deletion, not necessarily that every broker-side artifact is already gone."
 references:
   - https://docs.aws.amazon.com/sns/latest/api/API_DeleteTopic.html
+  - https://learn.microsoft.com/en-us/rest/api/servicebus/delete-topic

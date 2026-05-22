@@ -1,11 +1,16 @@
 service: sns
 operation: ListTopics
-azure_equivalent: "Azure Service Bus Topics / Azure Event Grid"
-status: stub
+azure_equivalent: "Azure Service Bus Topics management REST API"
+status: partial
 sub_features:
-  - name: Slice 1 scaffold
+  - name: Topic enumeration over Service Bus Topics REST
     status: implemented
-    notes: "Parses the AWS Query envelope, validates credentials, and dispatches to a structured SNS-shaped 501 stub for now. Backend translation to Service Bus Topics / Event Grid lands in later slices."
-behavior_differences: []
+    notes: "Maps ListTopics to GET https://{namespace}.servicebus.windows.net/$Resources/topics?api-version=2021-05&$skip={N}&$top=100, parses the Atom feed entry titles, and emits SNS XML members with synthetic TopicArns."
+behavior_differences:
+  - "TopicArn values are proxy-synthesised as arn:aws:sns:{sigv4-region}:000000000000:{topicName}. The account id is a stable placeholder, not an AWS account namespace."
+  - "NextToken is an opaque base64-encoded Service Bus skip counter, not an AWS-compatible cursor. Tokens only preserve the next $skip offset and do not encode any other AWS pagination semantics."
+  - "Pagination is fixed to Azure's $top=100 management page size for this slice. When Azure returns exactly 100 topics the proxy emits NextToken=base64(skip+100); otherwise NextToken is omitted."
+  - "FIFO topic distinction is deferred. Topics created out of band with .fifo suffixes are not specially modelled and the slice does not surface FIFO-only metadata."
 references:
   - https://docs.aws.amazon.com/sns/latest/api/API_ListTopics.html
+  - https://learn.microsoft.com/en-us/rest/api/servicebus/list-topics

@@ -1,11 +1,19 @@
 service: sns
 operation: CreateTopic
-azure_equivalent: "Azure Service Bus Topics / Azure Event Grid"
-status: stub
+azure_equivalent: "Azure Service Bus Topics management REST API"
+status: partial
 sub_features:
-  - name: Slice 1 scaffold
+  - name: Basic topic create over Service Bus Topics REST
     status: implemented
-    notes: "Parses the AWS Query envelope, validates credentials, and dispatches to a structured SNS-shaped 501 stub for now. Backend translation to Service Bus Topics / Event Grid lands in later slices."
-behavior_differences: []
+    notes: "Maps CreateTopic(Name) to PUT https://{namespace}.servicebus.windows.net/{topic}?api-version=2021-05 with an empty TopicDescription Atom entry. 200/201 both succeed so create remains idempotent from the SNS caller's perspective."
+  - name: Attribute translation
+    status: partial
+    notes: "CreateTopic attributes are parsed by AWS clients but ignored in this slice. Topic property translation lands with SetTopicAttributes / GetTopicAttributes."
+behavior_differences:
+  - "TopicArn is proxy-synthesised as arn:aws:sns:{sigv4-region}:000000000000:{topicName}. The account id is a stable placeholder because the proxy is not backed by an AWS account namespace."
+  - "Only the basic topic name is honoured on create. Topic attributes supplied in the CreateTopic request are ignored for now; Azure Service Bus topic properties stay at service defaults until a later slice implements attribute mapping."
+  - "FIFO topic semantics are deferred. This slice only accepts the non-FIFO name subset [A-Za-z0-9_-]{1,256}; .fifo names are rejected instead of creating a FIFO-equivalent Azure entity."
+  - "Service Bus topic names are further constrained by Azure. The proxy currently validates the AWS-side subset above and does not yet surface Azure's narrower length/character restrictions separately."
 references:
   - https://docs.aws.amazon.com/sns/latest/api/API_CreateTopic.html
+  - https://learn.microsoft.com/en-us/rest/api/servicebus/create-topic
