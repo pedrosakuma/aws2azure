@@ -145,10 +145,18 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
     /// <see cref="ServiceBusReceiver.ReceiveBatchAsync(int, TimeSpan, CancellationToken)"/>
     /// (which grants credit additively itself).
     /// </param>
-    public async Task<ServiceBusReceiver> OpenReceiverAsync(
+    public Task<ServiceBusReceiver> OpenReceiverAsync(
         string queueName,
         string audience,
         uint prefetchCredit,
+        CancellationToken cancellationToken = default)
+        => OpenReceiverAsync(queueName, audience, prefetchCredit, ReadOnlyMemory<byte>.Empty, cancellationToken);
+
+    internal async Task<ServiceBusReceiver> OpenReceiverAsync(
+        string queueName,
+        string audience,
+        uint prefetchCredit,
+        ReadOnlyMemory<byte> sourceFilter,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
@@ -163,6 +171,7 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
             Name = $"aws2azure-recv-{queueName}-{Guid.NewGuid():N}",
             Role = AmqpRole.Receiver,
             SourceAddress = ServiceBusEndpoint.BuildReceiverSourceAddress(queueName),
+            SourceFilter = sourceFilter,
             TargetAddress = null,
             SenderSettleMode = AmqpSenderSettleMode.Unsettled,
             ReceiverSettleMode = AmqpReceiverSettleMode.First,

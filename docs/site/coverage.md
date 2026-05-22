@@ -23,8 +23,8 @@
 | dynamodb | [UpdateTimeToLive](dynamodb.md#updatetimetolive) | ⛔ unsupported | `Azure Cosmos DB container `defaultTtl` / per-item `ttl`` |
 | kinesis | [DescribeStream](kinesis.md#describestream) | 🟡 partial | `Azure Event Hubs Service Bus management REST API` |
 | kinesis | [DescribeStreamSummary](kinesis.md#describestreamsummary) | 🟡 partial | `Azure Event Hubs Service Bus management REST API` |
-| kinesis | [GetRecords](kinesis.md#getrecords) | ⚪ stub | `Azure Event Hubs (AMQP 1.0 data plane)` |
-| kinesis | [GetShardIterator](kinesis.md#getsharditerator) | ⚪ stub | `Azure Event Hubs (AMQP 1.0 data plane)` |
+| kinesis | [GetRecords](kinesis.md#getrecords) | 🟡 partial | `Azure Event Hubs (AMQP 1.0 data plane)` |
+| kinesis | [GetShardIterator](kinesis.md#getsharditerator) | 🟡 partial | `Azure Event Hubs (AMQP 1.0 data plane)` |
 | kinesis | [ListShards](kinesis.md#listshards) | 🟡 partial | `Azure Event Hubs Service Bus management REST API` |
 | kinesis | [PutRecord](kinesis.md#putrecord) | 🟡 partial | `Azure Event Hubs (AMQP 1.0 data plane)` |
 | kinesis | [PutRecords](kinesis.md#putrecords) | 🟡 partial | `Azure Event Hubs (AMQP 1.0 data plane)` |

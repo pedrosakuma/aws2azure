@@ -8,6 +8,7 @@ using Aws2Azure.Modules.Kinesis;
 using Aws2Azure.Modules.Kinesis.EventHubsAmqp;
 using Aws2Azure.Modules.Kinesis.EventHubsRest;
 using Aws2Azure.Modules.Kinesis.Operations;
+using Aws2Azure.Modules.Kinesis.ShardIterators;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -31,23 +32,31 @@ public class KinesisServiceModuleTests
         Assert.Equal(expected, module.MatchesHost(host));
     }
 
-    [Theory]
-    [InlineData("Kinesis_20131202.GetRecords")]
-    [InlineData("Kinesis_20131202.GetShardIterator")]
-    public async Task HandleAsync_returns_501_for_remaining_stub_ops(string target)
+    [Fact]
+    public async Task HandleAsync_dispatches_get_shard_iterator_to_real_handler()
     {
         var module = NewModule();
-        var ctx = NewCtx(target, body: "{}");
+        var ctx = NewCtx("Kinesis_20131202.GetShardIterator", body: "{\"StreamName\":\"orders\",\"ShardId\":\"shardId-000000000000\",\"ShardIteratorType\":\"LATEST\"}");
         ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
 
         await module.HandleAsync(ctx);
 
-        Assert.Equal(StatusCodes.Status501NotImplemented, ctx.Response.StatusCode);
-        var body = ReadBody(ctx);
-        Assert.Contains("\"__type\"", body);
-        Assert.Contains("InternalFailure", body);
-        Assert.Contains(target.Substring("Kinesis_20131202.".Length), body);
-        Assert.Equal("application/x-amz-json-1.1", ctx.Response.ContentType);
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Contains("ShardIterator", ReadBody(ctx));
+    }
+
+    [Fact]
+    public async Task HandleAsync_dispatches_get_records_to_real_handler()
+    {
+        var module = NewModule();
+        var ctx = NewCtx("Kinesis_20131202.GetRecords", body: "{}");
+        ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+
+        await module.HandleAsync(ctx);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        Assert.Contains("ValidationException", ReadBody(ctx));
+        Assert.Contains("ShardIterator is required.", ReadBody(ctx));
     }
 
     [Fact]
@@ -138,6 +147,20 @@ public class KinesisServiceModuleTests
 
     private static KinesisServiceModule NewModule(bool includeEventHubs = true)
     {
+        var resolver = GetResolver(includeEventHubs);
+        return new KinesisServiceModule(
+            resolver,
+            new FakeManagementClient(),
+            new FakeMetadataCache(),
+            new FakeAmqpSender(),
+            new FakeAmqpReceiver(),
+            new ListShardsCursorCodecFactory(NullLogger<ListShardsCursorCodecFactory>.Instance),
+            new ShardIteratorTokenCodecFactory(NullLogger<ShardIteratorTokenCodecFactory>.Instance),
+            new CapabilityMatrix("kinesis", Array.Empty<OperationCapability>()));
+    }
+
+    private static ICredentialResolver GetResolver(bool includeEventHubs = true)
+    {
         var config = new ProxyConfig
         {
             Credentials = {
@@ -160,14 +183,7 @@ public class KinesisServiceModuleTests
                 },
             },
         };
-        var resolver = new StaticCredentialResolver(config);
-        return new KinesisServiceModule(
-            resolver,
-            new FakeManagementClient(),
-            new FakeMetadataCache(),
-            new FakeAmqpSender(),
-            new ListShardsCursorCodecFactory(NullLogger<ListShardsCursorCodecFactory>.Instance),
-            new CapabilityMatrix("kinesis", Array.Empty<OperationCapability>()));
+        return new StaticCredentialResolver(config);
     }
 
     private static DefaultHttpContext NewCtx(string target, string body)
@@ -222,4 +238,20 @@ public class KinesisServiceModuleTests
             System.Threading.CancellationToken cancellationToken)
             => Task.CompletedTask;
     }
+
+    private sealed class FakeAmqpReceiver : IEventHubsAmqpReceiver
+    {
+        public Task<EventHubsReceiveResult> ReceiveAsync(
+            EventHubsCredentials credentials,
+            string namespaceFqdn,
+            string entityPath,
+            string consumerGroup,
+            int partitionId,
+            EventHubsReceivePosition position,
+            int maxMessages,
+            TimeSpan quiescentTimeout,
+            System.Threading.CancellationToken cancellationToken)
+            => Task.FromResult(new EventHubsReceiveResult([]));
+    }
+
 }

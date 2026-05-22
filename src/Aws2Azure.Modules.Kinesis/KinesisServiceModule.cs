@@ -7,6 +7,7 @@ using Aws2Azure.Modules.Kinesis.Errors;
 using Aws2Azure.Modules.Kinesis.EventHubsAmqp;
 using Aws2Azure.Modules.Kinesis.EventHubsRest;
 using Aws2Azure.Modules.Kinesis.Operations;
+using Aws2Azure.Modules.Kinesis.ShardIterators;
 using Aws2Azure.Modules.Kinesis.WireProtocol;
 using Microsoft.AspNetCore.Http;
 
@@ -25,27 +26,35 @@ public sealed class KinesisServiceModule : IServiceModule
     private readonly IEventHubsManagementClient _managementClient;
     private readonly IEventHubMetadataCache _metadataCache;
     private readonly IEventHubsAmqpSender _amqpSender;
+    private readonly IEventHubsAmqpReceiver _amqpReceiver;
     private readonly ListShardsCursorCodecFactory _listShardsCursorCodecFactory;
+    private readonly ShardIteratorTokenCodecFactory _shardIteratorTokenCodecFactory;
 
     public KinesisServiceModule(
         ICredentialResolver credentials,
         IEventHubsManagementClient managementClient,
         IEventHubMetadataCache metadataCache,
         IEventHubsAmqpSender amqpSender,
+        IEventHubsAmqpReceiver amqpReceiver,
         ListShardsCursorCodecFactory listShardsCursorCodecFactory,
+        ShardIteratorTokenCodecFactory shardIteratorTokenCodecFactory,
         CapabilityMatrix capabilities)
     {
         ArgumentNullException.ThrowIfNull(credentials);
         ArgumentNullException.ThrowIfNull(managementClient);
         ArgumentNullException.ThrowIfNull(metadataCache);
         ArgumentNullException.ThrowIfNull(amqpSender);
+        ArgumentNullException.ThrowIfNull(amqpReceiver);
         ArgumentNullException.ThrowIfNull(listShardsCursorCodecFactory);
+        ArgumentNullException.ThrowIfNull(shardIteratorTokenCodecFactory);
         ArgumentNullException.ThrowIfNull(capabilities);
         _credentials = credentials;
         _managementClient = managementClient;
         _metadataCache = metadataCache;
         _amqpSender = amqpSender;
+        _amqpReceiver = amqpReceiver;
         _listShardsCursorCodecFactory = listShardsCursorCodecFactory;
+        _shardIteratorTokenCodecFactory = shardIteratorTokenCodecFactory;
         Capabilities = capabilities;
     }
 
@@ -148,6 +157,27 @@ public sealed class KinesisServiceModule : IServiceModule
                         eventHubsCredentials,
                         _metadataCache,
                         _amqpSender,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
+                break;
+            case KinesisOperation.GetShardIterator:
+                await GetShardIteratorHandler.HandleAsync(
+                        context,
+                        parsed,
+                        eventHubsCredentials,
+                        _metadataCache,
+                        _shardIteratorTokenCodecFactory,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
+                break;
+            case KinesisOperation.GetRecords:
+                await GetRecordsHandler.HandleAsync(
+                        context,
+                        parsed,
+                        eventHubsCredentials,
+                        _metadataCache,
+                        _amqpReceiver,
+                        _shardIteratorTokenCodecFactory,
                         context.RequestAborted)
                     .ConfigureAwait(false);
                 break;

@@ -45,6 +45,7 @@ internal sealed class AmqpMessageAnnotations
     // when generating diagnostic strings later). Kept as plain consts so
     // the AOT-trimmer can fold them at publish time.
     public const string KeySequenceNumber        = "x-opt-sequence-number";
+    public const string KeyOffset                = "x-opt-offset";
     public const string KeyLockedUntil           = "x-opt-locked-until";
     public const string KeyEnqueuedTime          = "x-opt-enqueued-time";
     public const string KeyScheduledEnqueueTime  = "x-opt-scheduled-enqueue-time";
@@ -54,6 +55,7 @@ internal sealed class AmqpMessageAnnotations
     public const string KeyMessageState          = "x-opt-message-state";
 
     public long? SequenceNumber       { get; init; }
+    public string? Offset                      { get; init; }
     public DateTimeOffset? LockedUntil          { get; init; }
     public DateTimeOffset? EnqueuedTime         { get; init; }
     public DateTimeOffset? ScheduledEnqueueTime { get; init; }
@@ -116,17 +118,18 @@ internal sealed class AmqpMessageAnnotations
     public static AmqpMessageAnnotations Read(ReadOnlyMemory<byte> source, out int consumed)
     {
         var span = source.Span;
-        var offset = AmqpCompoundReader.ReadDescribedHeader(span);
-        var descriptor = AmqpPrimitiveReader.ReadULong(span[offset..], out var descLen);
+        var descriptorOffset = AmqpCompoundReader.ReadDescribedHeader(span);
+        var descriptor = AmqpPrimitiveReader.ReadULong(span[descriptorOffset..], out var descLen);
         if (descriptor != Descriptor)
             throw new InvalidDataException(
                 $"Expected message-annotations descriptor 0x{Descriptor:X16}, got 0x{descriptor:X16}.");
-        offset += descLen;
+        descriptorOffset += descLen;
 
-        var view = AmqpCompoundReader.ReadMap(span[offset..], out var mapLen);
-        consumed = offset + mapLen;
+        var view = AmqpCompoundReader.ReadMap(span[descriptorOffset..], out var mapLen);
+        consumed = descriptorOffset + mapLen;
 
         long? sequenceNumber = null;
+        string? annotationOffset = null;
         DateTimeOffset? lockedUntil = null;
         DateTimeOffset? enqueuedTime = null;
         DateTimeOffset? scheduledEnqueueTime = null;
@@ -153,6 +156,9 @@ internal sealed class AmqpMessageAnnotations
             {
                 case KeySequenceNumber:
                     sequenceNumber = ReadLongOrSkip(els, ref o);
+                    break;
+                case KeyOffset:
+                    annotationOffset = ReadStringOrSkip(els, ref o);
                     break;
                 case KeyLockedUntil:
                     lockedUntil = ReadTimestampOrSkip(els, ref o);
@@ -184,6 +190,7 @@ internal sealed class AmqpMessageAnnotations
         return new AmqpMessageAnnotations
         {
             SequenceNumber = sequenceNumber,
+            Offset = annotationOffset,
             LockedUntil = lockedUntil,
             EnqueuedTime = enqueuedTime,
             ScheduledEnqueueTime = scheduledEnqueueTime,
