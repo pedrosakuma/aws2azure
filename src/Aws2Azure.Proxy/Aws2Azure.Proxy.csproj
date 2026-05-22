@@ -13,6 +13,7 @@
     <ProjectReference Include="..\Aws2Azure.Modules.Sqs\Aws2Azure.Modules.Sqs.csproj" />
     <ProjectReference Include="..\Aws2Azure.Modules.DynamoDb\Aws2Azure.Modules.DynamoDb.csproj" />
     <ProjectReference Include="..\Aws2Azure.Modules.Kinesis\Aws2Azure.Modules.Kinesis.csproj" />
+    <ProjectReference Include="..\Aws2Azure.Modules.Sns\Aws2Azure.Modules.Sns.csproj" />
   </ItemGroup>
-  
+
 </Project>

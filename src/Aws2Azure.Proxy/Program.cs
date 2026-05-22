@@ -10,6 +10,7 @@ using Aws2Azure.Modules.S3;
 using Aws2Azure.Modules.Sqs;
 using Aws2Azure.Modules.DynamoDb;
 using Aws2Azure.Modules.Kinesis;
+using Aws2Azure.Modules.Sns;
 using Aws2Azure.Modules.Kinesis.EventHubsAmqp;
 using Aws2Azure.Modules.Kinesis.EventHubsRest;
 using Aws2Azure.Modules.Kinesis.Operations;
@@ -153,7 +154,7 @@ builder.Services.AddSingleton<ServiceModuleRegistry>(sp =>
             sp.GetRequiredService<ListShardsCursorCodecFactory>(),
             sp.GetRequiredService<ShardIteratorTokenCodecFactory>(),
             CapabilityRegistry.Kinesis),
-        new StubServiceModule(CapabilityRegistry.Sns, AwsErrorFormat.Json, "sns."),
+        new SnsServiceModule(credentialResolver, CapabilityRegistry.Sns),
     ];
     return new ServiceModuleRegistry(modules, sigV4Validator);
 });

@@ -129,11 +129,17 @@ public static class CapabilityRegistry
         ServiceName: "sns",
         Operations: new OperationCapability[]
         {
-            new("CreateTopic", OperationStatus.Stub, new[] { "Azure: Azure Service Bus topics / Event Grid (TBD per operation)", "Diff: Subscription filter expressions differ; SQS-as-subscriber fan-out emulated" }),
-            new("DeleteTopic", OperationStatus.Stub, new[] { "Azure: Azure Service Bus topics / Event Grid (TBD per operation)", "Diff: Subscription filter expressions differ; SQS-as-subscriber fan-out emulated" }),
-            new("Publish", OperationStatus.Stub, new[] { "Azure: Azure Service Bus topics / Event Grid (TBD per operation)", "Diff: Subscription filter expressions differ; SQS-as-subscriber fan-out emulated" }),
-            new("Subscribe", OperationStatus.Stub, new[] { "Azure: Azure Service Bus topics / Event Grid (TBD per operation)", "Diff: Subscription filter expressions differ; SQS-as-subscriber fan-out emulated" }),
-            new("Unsubscribe", OperationStatus.Stub, new[] { "Azure: Azure Service Bus topics / Event Grid (TBD per operation)", "Diff: Subscription filter expressions differ; SQS-as-subscriber fan-out emulated" }),
+            new("CreateTopic", OperationStatus.Stub, new[] { "Azure: Azure Service Bus Topics / Azure Event Grid" }),
+            new("DeleteTopic", OperationStatus.Stub, new[] { "Azure: Azure Service Bus Topics / Azure Event Grid" }),
+            new("GetTopicAttributes", OperationStatus.Stub, new[] { "Azure: Azure Service Bus Topics / Azure Event Grid" }),
+            new("ListSubscriptions", OperationStatus.Stub, new[] { "Azure: Azure Service Bus Topics / Azure Event Grid" }),
+            new("ListSubscriptionsByTopic", OperationStatus.Stub, new[] { "Azure: Azure Service Bus Topics / Azure Event Grid" }),
+            new("ListTopics", OperationStatus.Stub, new[] { "Azure: Azure Service Bus Topics / Azure Event Grid" }),
+            new("Publish", OperationStatus.Stub, new[] { "Azure: Azure Service Bus Topics / Azure Event Grid" }),
+            new("PublishBatch", OperationStatus.Stub, new[] { "Azure: Azure Service Bus Topics / Azure Event Grid" }),
+            new("SetTopicAttributes", OperationStatus.Stub, new[] { "Azure: Azure Service Bus Topics / Azure Event Grid" }),
+            new("Subscribe", OperationStatus.Stub, new[] { "Azure: Azure Service Bus Topics / Azure Event Grid" }),
+            new("Unsubscribe", OperationStatus.Stub, new[] { "Azure: Azure Service Bus Topics / Azure Event Grid" }),
         });
 
     public static readonly CapabilityMatrix Sqs = new(

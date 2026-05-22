@@ -1,5 +1,5 @@
 service: sns
-operation: Subscribe
+operation: ListSubscriptions
 azure_equivalent: "Azure Service Bus Topics / Azure Event Grid"
 status: stub
 sub_features:
@@ -8,4 +8,4 @@ sub_features:
     notes: "Parses the AWS Query envelope, validates credentials, and dispatches to a structured SNS-shaped 501 stub for now. Backend translation to Service Bus Topics / Event Grid lands in later slices."
 behavior_differences: []
 references:
-  - https://docs.aws.amazon.com/sns/latest/api/API_Subscribe.html
+  - https://docs.aws.amazon.com/sns/latest/api/API_ListSubscriptions.html

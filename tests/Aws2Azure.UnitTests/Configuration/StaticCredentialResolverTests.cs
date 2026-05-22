@@ -14,8 +14,10 @@ public class StaticCredentialResolverTests
                 AwsSecretAccessKey = "secret1",
                 Azure = new AzureCredentials
                 {
-                    Blob       = new BlobCredentials { AccountName = "acc1", AccountKey = "key1" },
+                    Blob = new BlobCredentials { AccountName = "acc1", AccountKey = "key1" },
                     ServiceBus = new ServiceBusCredentials { Namespace = "ns1", SasKeyName = "n", SasKey = "k" },
+                    ServiceBusTopics = new ServiceBusTopicsCredentials { Namespace = "ns-topics", SasKeyName = "topic-rule", SasKey = "topic-key" },
+                    EventGrid = new EventGridCredentials { Endpoint = "https://example.westus2-1.eventgrid.azure.net/api/events", AccessKey = "eg-key" },
                 },
             },
             new CredentialEntry
@@ -69,6 +71,12 @@ public class StaticCredentialResolverTests
         var sb = Assert.IsType<ServiceBusCredentials>(resolver.GetAzureCredentialsFor("AKIA1", AzureService.ServiceBus));
         Assert.Equal("ns1", sb.Namespace);
 
+        var sbTopics = Assert.IsType<ServiceBusTopicsCredentials>(resolver.GetAzureCredentialsFor("AKIA1", AzureService.ServiceBusTopics));
+        Assert.Equal("ns-topics", sbTopics.Namespace);
+
+        var eventGrid = Assert.IsType<EventGridCredentials>(resolver.GetAzureCredentialsFor("AKIA1", AzureService.EventGrid));
+        Assert.Equal("https://example.westus2-1.eventgrid.azure.net/api/events", eventGrid.Endpoint);
+
         var cosmos = Assert.IsType<CosmosCredentials>(resolver.GetAzureCredentialsFor("AKIA2", AzureService.Cosmos));
         Assert.Equal("https://x", cosmos.Endpoint);
     }
@@ -79,6 +87,7 @@ public class StaticCredentialResolverTests
         var resolver = new StaticCredentialResolver(SampleConfig());
         Assert.Null(resolver.GetAzureCredentialsFor("AKIA1", AzureService.Cosmos));
         Assert.Null(resolver.GetAzureCredentialsFor("AKIA2", AzureService.Blob));
+        Assert.Null(resolver.GetAzureCredentialsFor("AKIA2", AzureService.EventGrid));
     }
 
     [Fact]

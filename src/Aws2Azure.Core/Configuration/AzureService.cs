@@ -8,6 +8,8 @@ public enum AzureService
 {
     Blob,
     ServiceBus,
+    ServiceBusTopics,
     Cosmos,
     EventHubs,
+    EventGrid,
 }
