@@ -166,10 +166,11 @@ internal static class AmqpReceiveMessageHandlers
         }
 
         var systemAttrFilter = ParseAttributeNames(parsed, "AttributeName");
+        var messageAttrFilter = ParseAttributeNames(parsed, "MessageAttributeName");
         var collected = new List<ReceivedSqsMessage>(batch.Count);
         foreach (var msg in batch)
         {
-            var built = BuildReceivedMessage(queueName, msg, receiver.SessionId, systemAttrFilter);
+            var built = BuildReceivedMessage(queueName, msg, receiver.SessionId, systemAttrFilter, messageAttrFilter);
             if (built is null)
             {
                 // No lock-token (sender-settled / non-16-byte tag) → we
@@ -751,8 +752,9 @@ internal static class AmqpReceiveMessageHandlers
 
     // --- SB AMQP message → SQS message translation ---------------------
 
-    private static ReceivedSqsMessage? BuildReceivedMessage(
-        string queueName, ServiceBusReceivedMessage msg, string? receiverSessionId, HashSet<string>? systemAttrFilter)
+    internal static ReceivedSqsMessage? BuildReceivedMessage(
+        string queueName, ServiceBusReceivedMessage msg, string? receiverSessionId, HashSet<string>? systemAttrFilter,
+        HashSet<string>? messageAttrFilter = null)
     {
         if (msg.LockToken is not { } lockToken)
         {
@@ -824,6 +826,15 @@ internal static class AmqpReceiveMessageHandlers
             enqueuedTimeMillis, deliveryCount, sequenceNumber, messageGroupId,
             deadLetterSource, deadLetterReason, deadLetterDescription, systemAttrFilter);
 
+        // Application-properties → SQS MessageAttributes round-trip.
+        // The sender (AmqpSendMessageHandlers / AmqpSendMessageBatchHandlers)
+        // serialises each SQS attribute as an ApplicationProperty[name] +
+        // a side-channel registry on ApplicationProperty[Aws2Azure-AttrTypes]
+        // that records "name=DataType,…" (Binary values are base64-encoded
+        // into the property value). Reconstruct here so the AMQP receive
+        // path matches the REST round-trip and emits MD5OfMessageAttributes.
+        var (messageAttrs, md5OfMessageAttrs) = BuildMessageAttributes(msg.Message.ApplicationProperties, messageAttrFilter);
+
         // FIFO receives stamp the bound session-id into the handle so
         // DeleteMessage / ChangeMessageVisibility can route back to the
         // same session receiver in the pool (slice 7c.3d). Non-FIFO
@@ -834,15 +845,85 @@ internal static class AmqpReceiveMessageHandlers
             ReceiptHandle: handle,
             MD5OfBody: md5OfBody,
             Body: bodyText,
-            MD5OfMessageAttributes: null,
+            MD5OfMessageAttributes: md5OfMessageAttrs,
             Attributes: systemAttrs,
-            // Application-properties → SQS message-attributes round-trip
-            // is deferred. SendMessage on the REST path emits an
-            // Aws2Azure-AttrTypes header to round-trip the SQS DataType
-            // tag; carrying that over AMQP needs a parallel mechanism
-            // (e.g. an x-aws2azure-* application-property). Tracked in
-            // the ReceiveMessage gap doc.
-            MessageAttributes: null);
+            MessageAttributes: messageAttrs);
+    }
+
+    /// <summary>
+    /// Mirrors <see cref="ReceiveMessageHandlers"/>' REST-path
+    /// reconstruction: walks the AttrTypes registry, rebuilds the
+    /// SQS-shaped <see cref="ReceivedSqsAttribute"/> map and computes
+    /// MD5OfMessageAttributes via the shared helper. Returns
+    /// <c>(null, null)</c> when no filter was supplied (clients that
+    /// don't ask for <c>MessageAttributeName</c> get nothing on the
+    /// REST path either).
+    /// </summary>
+    internal static (IReadOnlyDictionary<string, ReceivedSqsAttribute>?, string?) BuildMessageAttributes(
+        IReadOnlyDictionary<string, object?>? appProps, HashSet<string>? filter)
+    {
+        if (filter is null || filter.Count == 0) return (null, null);
+        if (appProps is null || appProps.Count == 0) return (null, null);
+        if (!appProps.TryGetValue(SendMessageHandlers.AttrTypesHeader, out var registryObj)
+            || registryObj is not string registryRaw
+            || string.IsNullOrEmpty(registryRaw))
+        {
+            return (null, null);
+        }
+
+        var typeRegistry = ParseAttrTypeRegistry(registryRaw);
+        if (typeRegistry.Count == 0) return (null, null);
+
+        var includeAll = filter.Contains("All", StringComparer.OrdinalIgnoreCase);
+        var attrs = new SortedDictionary<string, ReceivedSqsAttribute>(StringComparer.Ordinal);
+        var md5Source = new SortedDictionary<string, SqsMessageAttribute>(StringComparer.Ordinal);
+
+        foreach (var (name, dataType) in typeRegistry)
+        {
+            if (!includeAll && !filter.Contains(name, StringComparer.OrdinalIgnoreCase)) continue;
+            if (!appProps.TryGetValue(name, out var rawValue) || rawValue is not string raw) continue;
+
+            var baseType = dataType;
+            var dot = baseType.IndexOf('.', StringComparison.Ordinal);
+            var headBase = dot < 0 ? baseType : baseType[..dot];
+
+            ReceivedSqsAttribute received;
+            SqsMessageAttribute forMd5;
+            if (headBase == "Binary")
+            {
+                received = new ReceivedSqsAttribute(dataType, StringValue: null, BinaryValueBase64: raw);
+                byte[] bytes;
+                try { bytes = Convert.FromBase64String(raw); }
+                catch (FormatException) { bytes = Array.Empty<byte>(); }
+                forMd5 = new SqsMessageAttribute { DataType = dataType, BinaryValue = bytes };
+            }
+            else
+            {
+                received = new ReceivedSqsAttribute(dataType, StringValue: raw, BinaryValueBase64: null);
+                forMd5 = new SqsMessageAttribute { DataType = dataType, StringValue = raw };
+            }
+            attrs[name] = received;
+            md5Source[name] = forMd5;
+        }
+        if (attrs.Count == 0) return (null, null);
+        return (attrs, SqsMessageMd5.OfAttributes(md5Source));
+    }
+
+    private static Dictionary<string, string> ParseAttrTypeRegistry(string raw)
+    {
+        var dict = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var pair in raw.Split(',', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var eq = pair.IndexOf('=');
+            if (eq <= 0) continue;
+            var name = pair[..eq];
+            var type = pair[(eq + 1)..];
+            if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(type))
+            {
+                dict[name] = type;
+            }
+        }
+        return dict;
     }
 
     private static IReadOnlyDictionary<string, string>? BuildSystemAttributes(
