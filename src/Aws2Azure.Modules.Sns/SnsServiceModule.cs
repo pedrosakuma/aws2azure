@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Aws2Azure.Core;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
+using Aws2Azure.Modules.Sns.Amqp;
 using Aws2Azure.Modules.Sns.Errors;
 using Aws2Azure.Modules.Sns.Management;
 using Aws2Azure.Modules.Sns.Operations;
@@ -14,24 +15,29 @@ namespace Aws2Azure.Modules.Sns;
 
 /// <summary>
 /// SNS → Azure Service Bus Topics / Event Grid module. Slice 2 implements
-/// topic CRUD over the Service Bus Topics management REST API while the
-/// remaining Phase 5 operations still dispatch to structured stubs.
+/// topic CRUD over the Service Bus Topics management REST API and
+/// Publish / PublishBatch over AMQP 1.0 while the remaining Phase 5
+/// operations still dispatch to structured stubs.
 /// </summary>
 public sealed class SnsServiceModule : IServiceModule
 {
     private readonly ICredentialResolver _credentials;
     private readonly IServiceBusTopicsManagementClient _serviceBusTopicsManagementClient;
+    private readonly ISnsAmqpSender _amqpSender;
 
-    public SnsServiceModule(
+    internal SnsServiceModule(
         ICredentialResolver credentials,
         IServiceBusTopicsManagementClient serviceBusTopicsManagementClient,
+        ISnsAmqpSender amqpSender,
         CapabilityMatrix capabilities)
     {
         ArgumentNullException.ThrowIfNull(credentials);
         ArgumentNullException.ThrowIfNull(serviceBusTopicsManagementClient);
+        ArgumentNullException.ThrowIfNull(amqpSender);
         ArgumentNullException.ThrowIfNull(capabilities);
         _credentials = credentials;
         _serviceBusTopicsManagementClient = serviceBusTopicsManagementClient;
+        _amqpSender = amqpSender;
         Capabilities = capabilities;
     }
 
@@ -143,7 +149,35 @@ public sealed class SnsServiceModule : IServiceModule
                     .ConfigureAwait(false);
                 return;
             case SnsOperation.Publish:
+                if (serviceBusTopicsCredentials is null)
+                {
+                    await WriteServiceBusTopicsCredentialErrorAsync(context).ConfigureAwait(false);
+                    return;
+                }
+
+                await PublishHandler.HandleAsync(
+                        context,
+                        parsed,
+                        serviceBusTopicsCredentials,
+                        _amqpSender,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
+                return;
             case SnsOperation.PublishBatch:
+                if (serviceBusTopicsCredentials is null)
+                {
+                    await WriteServiceBusTopicsCredentialErrorAsync(context).ConfigureAwait(false);
+                    return;
+                }
+
+                await PublishBatchHandler.HandleAsync(
+                        context,
+                        parsed,
+                        serviceBusTopicsCredentials,
+                        _amqpSender,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
+                return;
             case SnsOperation.Subscribe:
             case SnsOperation.Unsubscribe:
             case SnsOperation.ListSubscriptions:
@@ -183,5 +217,5 @@ public sealed class SnsServiceModule : IServiceModule
             StatusCodes.Status403Forbidden,
             errorType: "Sender",
             errorCode: "AuthorizationError",
-            message: "SNS topic CRUD operations require Azure Service Bus Topics credentials for the supplied AWS access key.");
+            message: "SNS operations backed by Azure Service Bus Topics require Service Bus Topics credentials for the supplied AWS access key.");
 }

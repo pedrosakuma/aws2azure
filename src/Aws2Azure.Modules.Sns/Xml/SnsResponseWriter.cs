@@ -1,6 +1,7 @@
 using System.Text;
 using System.Threading.Tasks;
 using System.Xml;
+using Aws2Azure.Modules.Sns.Operations;
 using Microsoft.AspNetCore.Http;
 
 namespace Aws2Azure.Modules.Sns.Xml;
@@ -63,6 +64,64 @@ public static class SnsResponseWriter
             {
                 writer.WriteElementString("NextToken", XmlNamespace, nextToken);
             }
+
+            writer.WriteEndElement();
+            WriteResponseMetadata(writer, ResolveRequestId(context));
+            writer.WriteEndElement();
+        });
+    }
+
+    internal static Task WritePublishResponseAsync(HttpContext context, string messageId)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentException.ThrowIfNullOrEmpty(messageId);
+
+        return WriteResponseAsync(context, writer =>
+        {
+            writer.WriteStartElement("PublishResponse", XmlNamespace);
+            writer.WriteStartElement("PublishResult", XmlNamespace);
+            writer.WriteElementString("MessageId", XmlNamespace, messageId);
+            writer.WriteStartElement("SequenceNumber", XmlNamespace);
+            writer.WriteEndElement();
+            writer.WriteEndElement();
+            WriteResponseMetadata(writer, ResolveRequestId(context));
+            writer.WriteEndElement();
+        });
+    }
+
+    internal static Task WritePublishBatchResponseAsync(HttpContext context, PublishBatchResult result)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(result);
+
+        return WriteResponseAsync(context, writer =>
+        {
+            writer.WriteStartElement("PublishBatchResponse", XmlNamespace);
+            writer.WriteStartElement("PublishBatchResult", XmlNamespace);
+
+            writer.WriteStartElement("Successful", XmlNamespace);
+            for (var i = 0; i < result.Successful.Count; i++)
+            {
+                writer.WriteStartElement("member", XmlNamespace);
+                writer.WriteElementString("Id", XmlNamespace, result.Successful[i].Id);
+                writer.WriteElementString("MessageId", XmlNamespace, result.Successful[i].MessageId);
+                writer.WriteStartElement("SequenceNumber", XmlNamespace);
+                writer.WriteEndElement();
+                writer.WriteEndElement();
+            }
+            writer.WriteEndElement();
+
+            writer.WriteStartElement("Failed", XmlNamespace);
+            for (var i = 0; i < result.Failed.Count; i++)
+            {
+                writer.WriteStartElement("member", XmlNamespace);
+                writer.WriteElementString("Id", XmlNamespace, result.Failed[i].Id);
+                writer.WriteElementString("Code", XmlNamespace, result.Failed[i].Code);
+                writer.WriteElementString("Message", XmlNamespace, result.Failed[i].Message);
+                writer.WriteElementString("SenderFault", XmlNamespace, result.Failed[i].SenderFault ? "true" : "false");
+                writer.WriteEndElement();
+            }
+            writer.WriteEndElement();
 
             writer.WriteEndElement();
             WriteResponseMetadata(writer, ResolveRequestId(context));
