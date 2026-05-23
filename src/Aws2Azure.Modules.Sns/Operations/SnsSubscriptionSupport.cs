@@ -192,13 +192,19 @@ internal static class SnsSubscriptionSupport
     public static ListedSubscription ToListedSubscription(HttpContext context, string topicName, string subscriptionId, string? userMetadata)
     {
         var metadata = DeserializeMetadata(userMetadata);
+        var protocolForDiag = metadata?.Protocol
+            ?? (string.IsNullOrEmpty(userMetadata)
+                ? "unknown:<null-or-empty>"
+                : $"unknown:raw={Truncate(userMetadata!)}");
         return new ListedSubscription(
             BuildSubscriptionArn(context, topicName, subscriptionId),
             SnsTopicSupport.PlaceholderAccountId,
-            metadata?.Protocol ?? "unknown",
+            protocolForDiag,
             metadata?.Endpoint ?? string.Empty,
             SnsTopicSupport.BuildTopicArn(context, topicName));
     }
+
+    private static string Truncate(string s) => s.Length > 200 ? s[..200] + "..." : s;
 
     public static bool MetadataMatches(string? existingMetadataJson, SnsSubscriptionMetadata expected)
     {
