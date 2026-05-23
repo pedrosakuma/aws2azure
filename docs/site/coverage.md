@@ -100,17 +100,18 @@
 | s3 | [RestoreObject](s3.md#restoreobject) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
 | s3 | [UploadPart](s3.md#uploadpart) | ✅ implemented | `Put Block (?comp=block&blockid=…)` |
 | s3 | [UploadPartCopy](s3.md#uploadpartcopy) | ✅ implemented | `Put Block From URL (?comp=block&blockid=…)` |
+| sns | [ConfirmSubscription](sns.md#confirmsubscription) | 🟡 partial | `Azure Service Bus topic subscriptions` |
 | sns | [CreateTopic](sns.md#createtopic) | 🟡 partial | `Azure Service Bus Topics management REST API` |
 | sns | [DeleteTopic](sns.md#deletetopic) | 🟡 partial | `Azure Service Bus Topics management REST API` |
 | sns | [GetTopicAttributes](sns.md#gettopicattributes) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
-| sns | [ListSubscriptions](sns.md#listsubscriptions) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
-| sns | [ListSubscriptionsByTopic](sns.md#listsubscriptionsbytopic) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
+| sns | [ListSubscriptions](sns.md#listsubscriptions) | 🟡 partial | `Azure Service Bus topic subscriptions` |
+| sns | [ListSubscriptionsByTopic](sns.md#listsubscriptionsbytopic) | 🟡 partial | `Azure Service Bus topic subscriptions` |
 | sns | [ListTopics](sns.md#listtopics) | 🟡 partial | `Azure Service Bus Topics management REST API` |
 | sns | [Publish](sns.md#publish) | 🟡 partial | `Azure Service Bus Topics` |
 | sns | [PublishBatch](sns.md#publishbatch) | 🟡 partial | `Azure Service Bus Topics` |
 | sns | [SetTopicAttributes](sns.md#settopicattributes) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
-| sns | [Subscribe](sns.md#subscribe) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
-| sns | [Unsubscribe](sns.md#unsubscribe) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
+| sns | [Subscribe](sns.md#subscribe) | 🟡 partial | `Azure Service Bus topic subscriptions` |
+| sns | [Unsubscribe](sns.md#unsubscribe) | 🟡 partial | `Azure Service Bus topic subscriptions` |
 | sqs | [AddPermission](sqs.md#addpermission) | ⚪ stub | `No native Service Bus equivalent — validates queue existence and returns success.` |
 | sqs | [ChangeMessageVisibility](sqs.md#changemessagevisibility) | 🟡 partial | `Azure Service Bus queue runtime REST API — POST /{queue}/messages/{messageId}/{lockToken}?api-version=2021-05 (renew-lock); AMQP — `com.microsoft:renew-lock` over the queue's `$management` request-response link; visibility=0 maps to AMQP Abandon on the receiver link.` |
 | sqs | [ChangeMessageVisibilityBatch](sqs.md#changemessagevisibilitybatch) | 🟡 partial | `Azure Service Bus queue runtime REST API — N parallel POST /{queue}/messages/{messageId}/{lockToken}?action=renewlock&api-version=2021-05` |

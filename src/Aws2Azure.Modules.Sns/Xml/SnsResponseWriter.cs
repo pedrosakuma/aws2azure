@@ -71,6 +71,71 @@ public static class SnsResponseWriter
         });
     }
 
+    public static Task WriteSubscribeResponseAsync(HttpContext context, string subscriptionArn)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentException.ThrowIfNullOrEmpty(subscriptionArn);
+
+        return WriteResponseAsync(context, writer =>
+        {
+            writer.WriteStartElement("SubscribeResponse", XmlNamespace);
+            writer.WriteStartElement("SubscribeResult", XmlNamespace);
+            writer.WriteElementString("SubscriptionArn", XmlNamespace, subscriptionArn);
+            writer.WriteEndElement();
+            WriteResponseMetadata(writer, ResolveRequestId(context));
+            writer.WriteEndElement();
+        });
+    }
+
+    internal static Task WriteListSubscriptionsResponseAsync(HttpContext context, IReadOnlyList<ListedSubscription> subscriptions, string? nextToken, bool byTopic)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(subscriptions);
+
+        return WriteResponseAsync(context, writer =>
+        {
+            writer.WriteStartElement(byTopic ? "ListSubscriptionsByTopicResponse" : "ListSubscriptionsResponse", XmlNamespace);
+            writer.WriteStartElement(byTopic ? "ListSubscriptionsByTopicResult" : "ListSubscriptionsResult", XmlNamespace);
+            writer.WriteStartElement("Subscriptions", XmlNamespace);
+            for (var i = 0; i < subscriptions.Count; i++)
+            {
+                writer.WriteStartElement("member", XmlNamespace);
+                writer.WriteElementString("SubscriptionArn", XmlNamespace, subscriptions[i].SubscriptionArn);
+                writer.WriteElementString("Owner", XmlNamespace, subscriptions[i].Owner);
+                writer.WriteElementString("Protocol", XmlNamespace, subscriptions[i].Protocol);
+                writer.WriteElementString("Endpoint", XmlNamespace, subscriptions[i].Endpoint);
+                writer.WriteElementString("TopicArn", XmlNamespace, subscriptions[i].TopicArn);
+                writer.WriteEndElement();
+            }
+
+            writer.WriteEndElement();
+            if (!string.IsNullOrWhiteSpace(nextToken))
+            {
+                writer.WriteElementString("NextToken", XmlNamespace, nextToken);
+            }
+
+            writer.WriteEndElement();
+            WriteResponseMetadata(writer, ResolveRequestId(context));
+            writer.WriteEndElement();
+        });
+    }
+
+    public static Task WriteConfirmSubscriptionResponseAsync(HttpContext context, string subscriptionArn)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentException.ThrowIfNullOrEmpty(subscriptionArn);
+
+        return WriteResponseAsync(context, writer =>
+        {
+            writer.WriteStartElement("ConfirmSubscriptionResponse", XmlNamespace);
+            writer.WriteStartElement("ConfirmSubscriptionResult", XmlNamespace);
+            writer.WriteElementString("SubscriptionArn", XmlNamespace, subscriptionArn);
+            writer.WriteEndElement();
+            WriteResponseMetadata(writer, ResolveRequestId(context));
+            writer.WriteEndElement();
+        });
+    }
+
     internal static Task WritePublishResponseAsync(HttpContext context, string messageId)
     {
         ArgumentNullException.ThrowIfNull(context);

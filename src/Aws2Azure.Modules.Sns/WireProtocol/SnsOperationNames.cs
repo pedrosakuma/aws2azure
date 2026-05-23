@@ -15,6 +15,7 @@ internal static class SnsOperationNames
         ["Unsubscribe"] = SnsOperation.Unsubscribe,
         ["ListSubscriptions"] = SnsOperation.ListSubscriptions,
         ["ListSubscriptionsByTopic"] = SnsOperation.ListSubscriptionsByTopic,
+        ["ConfirmSubscription"] = SnsOperation.ConfirmSubscription,
         ["GetTopicAttributes"] = SnsOperation.GetTopicAttributes,
         ["SetTopicAttributes"] = SnsOperation.SetTopicAttributes,
     };

@@ -1,11 +1,13 @@
 service: sns
 operation: Unsubscribe
-azure_equivalent: "Azure Service Bus Topics / Azure Event Grid"
-status: stub
+azure_equivalent: "Azure Service Bus topic subscriptions"
+status: partial
 sub_features:
-  - name: Slice 1 scaffold
+  - name: Service Bus subscription deletion
     status: implemented
-    notes: "Parses the AWS Query envelope, validates credentials, and dispatches to a structured SNS-shaped 501 stub for now. Backend translation to Service Bus Topics / Event Grid lands in later slices."
-behavior_differences: []
+    notes: "Deletes the mapped Azure Service Bus topic subscription identified by the SNS SubscriptionArn suffix."
+behavior_differences:
+  - "Unsubscribe is idempotent: HTTP 200/204/404 from Service Bus all return SNS success."
 references:
   - https://docs.aws.amazon.com/sns/latest/api/API_Unsubscribe.html
+  - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest
