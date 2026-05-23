@@ -50,7 +50,8 @@ internal static class SnsQueryApiClient
             SnsServiceBusProxyFixture.AwsAccessKey,
             SnsServiceBusProxyFixture.AwsSecret,
             region: "us-east-1",
-            service: "sns");
+            service: "sns",
+            extraSignedHeaders: ["content-type"]);
 
         using var response = await client.SendAsync(request).ConfigureAwait(false);
         var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
