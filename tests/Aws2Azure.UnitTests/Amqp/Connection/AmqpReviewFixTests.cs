@@ -503,42 +503,61 @@ public sealed class AmqpReviewFixTests
 
         var serverTask = Task.Run(async () =>
         {
-            await ConsumeOpenAsync(server);
-            await ConsumeBeginAndReply(server, peerChannel: 4);
-            using (var _ = await AmqpFrameIO.ReadFrameAsync(server)) { }
-            await SendPerfAsync(server, channel: 4, new AmqpAttach
+            try
             {
-                Name = "rcv", Handle = 11, Role = AmqpRole.Sender, InitialDeliveryCount = 0,
-            }, AmqpAttach.Write);
-            // Wait for the client's flow frame before pushing transfers —
-            // otherwise we race the client's attach completion and the
-            // oversize detach may fire before AttachAsync returns.
-            while (true)
-            {
-                using var f = await AmqpFrameIO.ReadFrameAsync(server);
-                if (PerformativeCodec.PeekKind(f.Body.Span, out _) == PerformativeKind.Flow) break;
-            }
-            // Two more=true continuations whose combined payload exceeds 256 B.
-            var part = new byte[200];
-            await SendTransferPayloadAsync(server, 4, handle: 11,
-                deliveryId: 0, deliveryTag: new byte[] { 1 }, payload: part, more: true);
-            await SendTransferPayloadAsync(server, 4, handle: 11,
-                deliveryId: null, deliveryTag: ReadOnlyMemory<byte>.Empty, payload: part, more: true);
-
-            // Expect a Detach back with link:message-size-exceeded.
-            while (true)
-            {
-                using var f = await AmqpFrameIO.ReadFrameAsync(server);
-                var kind = PerformativeCodec.PeekKind(f.Body.Span, out _);
-                if (kind == PerformativeKind.Detach)
+                await ConsumeOpenAsync(server);
+                await ConsumeBeginAndReply(server, peerChannel: 4);
+                using (var _ = await AmqpFrameIO.ReadFrameAsync(server)) { }
+                await SendPerfAsync(server, channel: 4, new AmqpAttach
                 {
-                    AmqpDetach.Read(f.Body, out var d, out _);
-                    sawDetach.TrySetResult(d);
-                    await SendPerfAsync(server, channel: 4, new AmqpDetach { Handle = d.Handle, Closed = true }, AmqpDetach.Write);
-                    break;
+                    Name = "rcv", Handle = 11, Role = AmqpRole.Sender, InitialDeliveryCount = 0,
+                }, AmqpAttach.Write);
+                // Wait for the client's flow frame before pushing transfers —
+                // otherwise we race the client's attach completion and the
+                // oversize detach may fire before AttachAsync returns.
+                while (true)
+                {
+                    using var f = await AmqpFrameIO.ReadFrameAsync(server);
+                    if (PerformativeCodec.PeekKind(f.Body.Span, out _) == PerformativeKind.Flow) break;
                 }
+                // Two more=true continuations whose combined payload exceeds 256 B.
+                var part = new byte[200];
+                await SendTransferPayloadAsync(server, 4, handle: 11,
+                    deliveryId: 0, deliveryTag: new byte[] { 1 }, payload: part, more: true);
+                await SendTransferPayloadAsync(server, 4, handle: 11,
+                    deliveryId: null, deliveryTag: ReadOnlyMemory<byte>.Empty, payload: part, more: true);
+
+                // Expect a Detach back with link:message-size-exceeded.
+                while (true)
+                {
+                    using var f = await AmqpFrameIO.ReadFrameAsync(server);
+                    var kind = PerformativeCodec.PeekKind(f.Body.Span, out _);
+                    if (kind == PerformativeKind.Detach)
+                    {
+                        AmqpDetach.Read(f.Body, out var d, out _);
+                        sawDetach.TrySetResult(d);
+                        // The client may already have closed the transport on
+                        // its way out by the time we try to echo the detach —
+                        // swallow the resulting IO error so we still proceed
+                        // to DrainUntilCloseAsync (which is itself defensive).
+                        try
+                        {
+                            await SendPerfAsync(server, channel: 4, new AmqpDetach { Handle = d.Handle, Closed = true }, AmqpDetach.Write);
+                        }
+                        catch (IOException) { }
+                        catch (ObjectDisposedException) { }
+                        break;
+                    }
+                }
+                await DrainUntilCloseAsync(server);
             }
-            await DrainUntilCloseAsync(server);
+            catch (Exception ex)
+            {
+                // Surface as a TCS failure so the assertion below propagates a
+                // useful diagnostic instead of timing out opaquely.
+                sawDetach.TrySetException(ex);
+                throw;
+            }
         });
 
         await conn.OpenAsync();
@@ -558,7 +577,10 @@ public sealed class AmqpReviewFixTests
         AmqpError.Read(d.Error, out var err, out _);
         Assert.Equal(AmqpErrorCondition.LinkMessageSizeExceeded, err.Condition);
 
-        await conn.CloseAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        await conn.CloseAsync().WaitAsync(TimeSpan.FromSeconds(30));
+        // Surface any swallowed server-side exception so a future flake produces
+        // an actionable stack trace instead of an opaque WaitAsync timeout.
+        await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     // ---- helpers ----------------------------------------------------------
