@@ -58,7 +58,7 @@ public sealed class SnsServiceModule : IServiceModule
     public string ServiceName => "sns";
     public bool RequiresSigV4 => true;
     public bool BuffersRequestBodyForSigV4 => true;
-    public IReadOnlyList<string> RequiredSignedHeaders { get; } = Array.Empty<string>();
+    public IReadOnlyList<string> RequiredSignedHeaders { get; } = ["content-type"];
     public AwsErrorFormat ErrorFormat => AwsErrorFormat.Xml;
     public CapabilityMatrix Capabilities { get; }
 

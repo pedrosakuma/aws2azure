@@ -34,7 +34,9 @@ public class SnsServiceModuleTests
 
         Assert.True(module.RequiresSigV4);
         Assert.True(module.BuffersRequestBodyForSigV4);
-        Assert.Empty(module.RequiredSignedHeaders);
+        // content-type must be in the signed-headers set because the SNS wire-protocol parser
+        // dispatches on Content-Type (application/x-www-form-urlencoded vs application/json).
+        Assert.Equal(new[] { "content-type" }, module.RequiredSignedHeaders);
     }
 
     [Fact]

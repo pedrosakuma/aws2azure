@@ -151,10 +151,11 @@ internal sealed class EventGridPublisher : IEventGridPublisher
             Content = new ByteArrayContent(payload),
         };
         request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-        await AuthenticateAsync(request, destination, cancellationToken).ConfigureAwait(false);
 
         try
         {
+            await AuthenticateAsync(request, destination, cancellationToken).ConfigureAwait(false);
+
             using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken).ConfigureAwait(false);
             if (response.IsSuccessStatusCode)
             {
@@ -164,22 +165,41 @@ internal sealed class EventGridPublisher : IEventGridPublisher
             var body = response.Content is null
                 ? string.Empty
                 : await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            EventGridPublisherLog.PublishHttpFailed(_logger, destination.Endpoint, (int)response.StatusCode, body);
             return CreateFailure(response.StatusCode, body);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (TaskCanceledException)
+        {
+            EventGridPublisherLog.PublishTimedOut(_logger, destination.Endpoint);
+            return new EventGridPublishFailure(
+                StatusCodes.Status500InternalServerError,
+                "InternalFailure",
+                "Azure Event Grid publish timed out.",
+                SenderFault: false);
         }
         catch (HttpRequestException exception)
         {
+            EventGridPublisherLog.PublishTransportFailed(_logger, destination.Endpoint, exception);
             return new EventGridPublishFailure(
                 StatusCodes.Status500InternalServerError,
                 "InternalFailure",
-                "Azure Event Grid publish failed. " + exception.Message,
+                "Azure Event Grid publish failed.",
                 SenderFault: false);
         }
-        catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception exception)
         {
+            // Catches AAD token-provider failures and other auth-layer exceptions so a Batch publish
+            // surfaces per-entry Failed entries rather than a request-level 500. Azure response bodies
+            // are logged internally but never bubble up into client-visible SNS error messages.
+            EventGridPublisherLog.PublishAuthFailed(_logger, destination.Endpoint, exception);
             return new EventGridPublishFailure(
                 StatusCodes.Status500InternalServerError,
                 "InternalFailure",
-                "Azure Event Grid publish timed out. " + exception.Message,
+                "Azure Event Grid publish failed during authentication.",
                 SenderFault: false);
         }
     }
@@ -304,7 +324,10 @@ internal sealed class EventGridPublisher : IEventGridPublisher
 
     private static EventGridPublishFailure CreateFailure(HttpStatusCode statusCode, string body)
     {
-        var trimmedBody = string.IsNullOrWhiteSpace(body) ? null : body.Trim();
+        // Note: Azure response bodies are logged via EventGridPublisherLog.PublishHttpFailed but are
+        // intentionally NOT echoed into client-visible SNS error messages — they could leak internal
+        // Azure details (auth diagnostics, request IDs, account hints) to SNS callers.
+        _ = body;
         return statusCode switch
         {
             HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => new EventGridPublishFailure(
@@ -315,21 +338,18 @@ internal sealed class EventGridPublisher : IEventGridPublisher
             HttpStatusCode.BadRequest or HttpStatusCode.RequestEntityTooLarge => new EventGridPublishFailure(
                 StatusCodes.Status400BadRequest,
                 "InvalidParameter",
-                BuildFailureMessage("Azure Event Grid rejected the publish request.", trimmedBody),
+                "Azure Event Grid rejected the publish request.",
                 SenderFault: true),
             _ => new EventGridPublishFailure(
                 StatusCodes.Status500InternalServerError,
                 "InternalFailure",
-                BuildFailureMessage($"Azure Event Grid publish failed with HTTP {(int)statusCode}.", trimmedBody),
+                $"Azure Event Grid publish failed with HTTP {(int)statusCode}.",
                 SenderFault: false),
         };
     }
 
     private static SnsBatchSendOutcome ToBatchOutcome(EventGridPublishFailure failure)
         => new(false, failure.ErrorCode, failure.ErrorMessage, failure.SenderFault);
-
-    private static string BuildFailureMessage(string prefix, string? body)
-        => string.IsNullOrWhiteSpace(body) ? prefix : prefix + " " + body;
 }
 
 internal static partial class EventGridPublisherLog
@@ -337,4 +357,20 @@ internal static partial class EventGridPublisherLog
     [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
         Message = "SNS Event Grid backend ignored FIFO fields for topic '{TopicArn}' and generated message id '{MessageId}'.")]
     public static partial void IgnoringFifoFields(ILogger logger, string topicArn, Guid messageId);
+
+    [LoggerMessage(EventId = 2, Level = LogLevel.Warning,
+        Message = "Azure Event Grid publish to '{Endpoint}' failed with HTTP {StatusCode}. Body: {Body}")]
+    public static partial void PublishHttpFailed(ILogger logger, string endpoint, int statusCode, string body);
+
+    [LoggerMessage(EventId = 3, Level = LogLevel.Warning,
+        Message = "Azure Event Grid publish to '{Endpoint}' failed at transport layer.")]
+    public static partial void PublishTransportFailed(ILogger logger, string endpoint, Exception exception);
+
+    [LoggerMessage(EventId = 4, Level = LogLevel.Warning,
+        Message = "Azure Event Grid publish to '{Endpoint}' timed out.")]
+    public static partial void PublishTimedOut(ILogger logger, string endpoint);
+
+    [LoggerMessage(EventId = 5, Level = LogLevel.Warning,
+        Message = "Azure Event Grid publish to '{Endpoint}' failed during authentication.")]
+    public static partial void PublishAuthFailed(ILogger logger, string endpoint, Exception exception);
 }
