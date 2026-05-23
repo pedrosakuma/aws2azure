@@ -248,8 +248,64 @@ public sealed class SnsServiceModule : IServiceModule
                 await ConfirmSubscriptionHandler.HandleAsync(context, parsed).ConfigureAwait(false);
                 return;
             case SnsOperation.GetTopicAttributes:
+                if (serviceBusTopicsCredentials is null)
+                {
+                    await WriteServiceBusTopicsCredentialErrorAsync(context).ConfigureAwait(false);
+                    return;
+                }
+
+                await GetTopicAttributesHandler.HandleAsync(
+                        context,
+                        parsed,
+                        serviceBusTopicsCredentials,
+                        _serviceBusTopicsManagementClient,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
+                return;
             case SnsOperation.SetTopicAttributes:
-                await StubHandlers.HandleNotImplementedAsync(context, parsed.Operation).ConfigureAwait(false);
+                if (serviceBusTopicsCredentials is null)
+                {
+                    await WriteServiceBusTopicsCredentialErrorAsync(context).ConfigureAwait(false);
+                    return;
+                }
+
+                await SetTopicAttributesHandler.HandleAsync(
+                        context,
+                        parsed,
+                        serviceBusTopicsCredentials,
+                        _serviceBusTopicsManagementClient,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
+                return;
+            case SnsOperation.GetSubscriptionAttributes:
+                if (serviceBusTopicsCredentials is null)
+                {
+                    await WriteServiceBusTopicsCredentialErrorAsync(context).ConfigureAwait(false);
+                    return;
+                }
+
+                await GetSubscriptionAttributesHandler.HandleAsync(
+                        context,
+                        parsed,
+                        serviceBusTopicsCredentials,
+                        _serviceBusTopicsManagementClient,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
+                return;
+            case SnsOperation.SetSubscriptionAttributes:
+                if (serviceBusTopicsCredentials is null)
+                {
+                    await WriteServiceBusTopicsCredentialErrorAsync(context).ConfigureAwait(false);
+                    return;
+                }
+
+                await SetSubscriptionAttributesHandler.HandleAsync(
+                        context,
+                        parsed,
+                        serviceBusTopicsCredentials,
+                        _serviceBusTopicsManagementClient,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
                 return;
             default:
                 await SnsErrorResponse.WriteErrorAsync(

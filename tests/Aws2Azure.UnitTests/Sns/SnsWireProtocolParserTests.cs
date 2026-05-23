@@ -58,6 +58,8 @@ public class SnsWireProtocolParserTests
     [InlineData("ListSubscriptionsByTopic", SnsOperation.ListSubscriptionsByTopic)]
     [InlineData("GetTopicAttributes", SnsOperation.GetTopicAttributes)]
     [InlineData("SetTopicAttributes", SnsOperation.SetTopicAttributes)]
+    [InlineData("GetSubscriptionAttributes", SnsOperation.GetSubscriptionAttributes)]
+    [InlineData("SetSubscriptionAttributes", SnsOperation.SetSubscriptionAttributes)]
     public async Task Recognised_actions_parse_with_flat_parameters(string action, SnsOperation expected)
     {
         var ctx = NewContext(

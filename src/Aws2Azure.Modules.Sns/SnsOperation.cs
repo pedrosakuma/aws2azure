@@ -20,4 +20,6 @@ public enum SnsOperation
     ConfirmSubscription,
     GetTopicAttributes,
     SetTopicAttributes,
+    GetSubscriptionAttributes,
+    SetSubscriptionAttributes,
 }

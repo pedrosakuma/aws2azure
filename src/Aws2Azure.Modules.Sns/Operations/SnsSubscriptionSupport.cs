@@ -1,3 +1,4 @@
+using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -69,8 +70,15 @@ internal static class SnsSubscriptionSupport
             Protocol = protocol,
             Endpoint = endpoint,
             FilterPolicyJson = filterPolicyJson,
+            FilterPolicyScope = filterPolicyJson is null ? null : SnsSubscriptionMetadata.MessageAttributesScope,
             RawDeliveryEnabled = rawDeliveryEnabled,
         };
+
+        if (!TrySerializeMetadata(metadata, out var serializedMetadata))
+        {
+            error = $"Subscription metadata exceeds the Azure Service Bus UserMetadata limit of {UserMetadataMaxLength} characters.";
+            return false;
+        }
 
         request = new SubscribeRequest(
             topicArn,
@@ -78,7 +86,7 @@ internal static class SnsSubscriptionSupport
             protocol,
             endpoint,
             metadata,
-            SerializeMetadata(metadata));
+            serializedMetadata);
         error = null;
         return true;
     }
@@ -199,8 +207,36 @@ internal static class SnsSubscriptionSupport
             && string.Equals(existing.Protocol, expected.Protocol, StringComparison.Ordinal)
             && string.Equals(existing.Endpoint, expected.Endpoint, StringComparison.Ordinal)
             && string.Equals(existing.FilterPolicyJson, expected.FilterPolicyJson, StringComparison.Ordinal)
+            && string.Equals(existing.FilterPolicyScope, expected.FilterPolicyScope, StringComparison.Ordinal)
             && existing.RawDeliveryEnabled == expected.RawDeliveryEnabled;
     }
+
+    public static bool TrySerializeMetadata(SnsSubscriptionMetadata metadata, out string json)
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+
+        json = JsonSerializer.Serialize(metadata, SnsSubscriptionJsonContext.Default.SnsSubscriptionMetadata);
+        return json.Length <= UserMetadataMaxLength;
+    }
+
+    public static string SerializeMetadata(SnsSubscriptionMetadata metadata)
+    {
+        if (!TrySerializeMetadata(metadata, out var json))
+        {
+            throw new InvalidOperationException($"Subscription metadata exceeds the Azure Service Bus UserMetadata limit of {UserMetadataMaxLength} characters.");
+        }
+
+        return json;
+    }
+
+    public static SnsSubscriptionMetadata ParseMetadata(string? userMetadata)
+        => DeserializeMetadata(userMetadata) ?? new SnsSubscriptionMetadata();
+
+    public static string? NormalizeJsonAttribute(string rawJson, string attributeName, out string? error)
+        => NormalizeJson(rawJson, attributeName, out error);
+
+    public static bool TryParseBooleanAttribute(string value, out bool result)
+        => TryParseBoolean(value, out result);
 
     public static string ResolveConfirmSubscriptionArn(HttpContext context, string topicName, string token)
     {
@@ -253,14 +289,6 @@ internal static class SnsSubscriptionSupport
         return true;
     }
 
-    private static string SerializeMetadata(SnsSubscriptionMetadata metadata)
-    {
-        var json = JsonSerializer.Serialize(metadata, SnsSubscriptionJsonContext.Default.SnsSubscriptionMetadata);
-        return json.Length <= UserMetadataMaxLength
-            ? json
-            : json[..UserMetadataMaxLength];
-    }
-
     private static SnsSubscriptionMetadata? DeserializeMetadata(string? userMetadata)
     {
         if (string.IsNullOrWhiteSpace(userMetadata))
@@ -284,7 +312,13 @@ internal static class SnsSubscriptionSupport
         try
         {
             using var document = JsonDocument.Parse(rawJson);
-            return document.RootElement.GetRawText();
+            using var stream = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(stream))
+            {
+                document.RootElement.WriteTo(writer);
+            }
+
+            return Encoding.UTF8.GetString(stream.GetBuffer(), 0, checked((int)stream.Length));
         }
         catch (JsonException)
         {
@@ -429,9 +463,13 @@ internal sealed record ListedSubscription(
 
 internal sealed class SnsSubscriptionMetadata
 {
+    public const string MessageAttributesScope = "MessageAttributes";
+    public const string MessageBodyScope = "MessageBody";
+
     public string Protocol { get; set; } = string.Empty;
     public string Endpoint { get; set; } = string.Empty;
     public string? FilterPolicyJson { get; set; }
+    public string? FilterPolicyScope { get; set; }
     public bool RawDeliveryEnabled { get; set; }
 }
 

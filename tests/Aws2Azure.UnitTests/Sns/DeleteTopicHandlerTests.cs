@@ -58,7 +58,6 @@ public sealed class DeleteTopicHandlerTests
     [Theory]
     [InlineData("")]
     [InlineData("arn:aws:sns:us-west-2:000000000000")]
-    [InlineData("arn:aws:sns:us-west-2:000000000000:orders.fifo")]
     [InlineData("not-an-arn")]
     public async Task HandleAsync_rejects_invalid_topic_arn(string topicArn)
     {

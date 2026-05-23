@@ -34,6 +34,26 @@ internal static class SnsTopicSupport
         return false;
     }
 
+    public static bool TryGetParameter(
+        IReadOnlyDictionary<string, string> parameters,
+        string name,
+        out string value,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(parameters);
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+
+        if (parameters.TryGetValue(name, out value!))
+        {
+            error = null;
+            return true;
+        }
+
+        value = string.Empty;
+        error = $"Parameter '{name}' is required.";
+        return false;
+    }
+
     public static string ResolveNamespaceFqdn(ServiceBusTopicsCredentials credentials)
     {
         ArgumentNullException.ThrowIfNull(credentials);
@@ -98,9 +118,19 @@ internal static class SnsTopicSupport
             return false;
         }
 
-        for (var i = 0; i < topicName.Length; i++)
+        var baseName = topicName;
+        if (topicName.EndsWith(".fifo", StringComparison.Ordinal))
         {
-            var c = topicName[i];
+            baseName = topicName[..^5];
+            if (baseName.Length == 0)
+            {
+                return false;
+            }
+        }
+
+        for (var i = 0; i < baseName.Length; i++)
+        {
+            var c = baseName[i];
             if ((c >= 'A' && c <= 'Z')
                 || (c >= 'a' && c <= 'z')
                 || (c >= '0' && c <= '9')
@@ -183,6 +213,14 @@ internal static class SnsTopicSupport
             errorCode: "InvalidParameter",
             message);
 
+    public static Task WriteNotFoundAsync(HttpContext context, string message)
+        => SnsErrorResponse.WriteErrorAsync(
+            context,
+            StatusCodes.Status404NotFound,
+            errorType: "Sender",
+            errorCode: "NotFound",
+            message);
+
     public static Task WriteManagementErrorAsync(HttpContext context, ServiceBusTopicsManagementException ex)
     {
         return ex.StatusCode switch
@@ -193,6 +231,9 @@ internal static class SnsTopicSupport
                 errorType: "Sender",
                 errorCode: "AuthorizationError",
                 message: "Access denied when calling the Azure Service Bus Topics management API."),
+            System.Net.HttpStatusCode.NotFound => WriteNotFoundAsync(
+                context,
+                "The requested SNS resource was not found in Azure Service Bus."),
             _ => SnsErrorResponse.WriteErrorAsync(
                 context,
                 StatusCodes.Status502BadGateway,

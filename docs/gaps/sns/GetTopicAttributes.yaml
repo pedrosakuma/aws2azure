@@ -1,11 +1,18 @@
 service: sns
 operation: GetTopicAttributes
-azure_equivalent: "Azure Service Bus Topics / Azure Event Grid"
-status: stub
+azure_equivalent: "Azure Service Bus topic description"
+status: partial
 sub_features:
-  - name: Slice 1 scaffold
+  - name: Topic property projection
     status: implemented
-    notes: "Parses the AWS Query envelope, validates credentials, and dispatches to a structured SNS-shaped 501 stub for now. Backend translation to Service Bus Topics / Event Grid lands in later slices."
-behavior_differences: []
+    notes: "Fetches the Service Bus topic Atom entry, parses TopicDescription with XmlReader, and maps SubscriptionCount / RequiresDuplicateDetection into the closest SNS attribute surface."
+behavior_differences:
+  - "DisplayName is always returned as an empty string because Service Bus topics do not expose an SNS-style display name."
+  - "Policy is returned as '{}' and DeliveryPolicy / EffectiveDeliveryPolicy are omitted because this slice does not translate SNS policies onto Azure authorization or delivery settings."
+  - "SubscriptionsConfirmed is populated from Service Bus SubscriptionCount. Pending and deleted counts are always reported as 0 because aws2azure auto-confirms subscriptions and Service Bus does not expose the SNS lifecycle split."
+  - "KmsMasterKeyId is returned empty because Service Bus encryption is configured at the namespace level, not per topic."
+  - "FifoTopic is inferred from a '.fifo' suffix or RequiresDuplicateDetection=true, and ContentBasedDeduplication is mapped directly from RequiresDuplicateDetection. This is only an approximation of SNS FIFO semantics."
+  - "AWS-only attributes such as SignatureVersion and TracingConfig are omitted."
 references:
   - https://docs.aws.amazon.com/sns/latest/api/API_GetTopicAttributes.html
+  - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest

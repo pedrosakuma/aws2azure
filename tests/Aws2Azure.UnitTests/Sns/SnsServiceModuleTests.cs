@@ -36,25 +36,30 @@ public class SnsServiceModuleTests
         Assert.Empty(module.RequiredSignedHeaders);
     }
 
-    [Theory]
-    [InlineData("GetTopicAttributes")]
-    [InlineData("SetTopicAttributes")]
-    public async Task Stubbed_operations_return_structured_501_stub(string action)
+    [Fact]
+    public async Task GetTopicAttributes_is_no_longer_stubbed()
     {
         var module = NewModule();
-        var ctx = NewContext($"Action={action}&Version=2010-03-31");
+        var ctx = NewContext("Action=GetTopicAttributes&Version=2010-03-31&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aorders");
         ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
 
         await module.HandleAsync(ctx);
 
-        var body = ReadBody(ctx);
-        Assert.Equal(StatusCodes.Status501NotImplemented, ctx.Response.StatusCode);
-        Assert.Contains("text/xml", ctx.Response.ContentType);
-        Assert.Contains("<ErrorResponse", body);
-        Assert.Contains("Receiver", body);
-        Assert.Contains("InternalFailure", body);
-        Assert.Contains(action, body);
-        Assert.Contains("<RequestId", body);
+        Assert.Equal(StatusCodes.Status404NotFound, ctx.Response.StatusCode);
+        Assert.Contains("NotFound", ReadBody(ctx));
+    }
+
+    [Fact]
+    public async Task SetTopicAttributes_is_no_longer_stubbed()
+    {
+        var module = NewModule();
+        var ctx = NewContext("Action=SetTopicAttributes&Version=2010-03-31&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aorders&AttributeName=DisplayName&AttributeValue=test");
+        ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+
+        await module.HandleAsync(ctx);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Contains("<SetTopicAttributesResponse", ReadBody(ctx));
     }
 
     [Fact]
@@ -211,6 +216,9 @@ public class SnsServiceModuleTests
         public ValueTask<ServiceBusTopicPage> ListTopicsAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, int skip, int top, CancellationToken cancellationToken)
             => ValueTask.FromResult(new ServiceBusTopicPage([]));
 
+        public ValueTask<ServiceBusTopicDescription?> GetTopicAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, CancellationToken cancellationToken)
+            => ValueTask.FromResult<ServiceBusTopicDescription?>(null);
+
         public ValueTask CreateSubscriptionAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, string subscriptionName, string userMetadata, CancellationToken cancellationToken)
             => ValueTask.CompletedTask;
 
@@ -222,6 +230,9 @@ public class SnsServiceModuleTests
 
         public ValueTask<ServiceBusSubscriptionDescription?> GetSubscriptionAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, string subscriptionName, CancellationToken cancellationToken)
             => ValueTask.FromResult<ServiceBusSubscriptionDescription?>(null);
+
+        public ValueTask UpdateSubscriptionAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, ServiceBusSubscriptionDescription description, CancellationToken cancellationToken)
+            => ValueTask.CompletedTask;
     }
 
     private sealed class RecordingSender : ISnsAmqpSender
