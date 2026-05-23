@@ -33,7 +33,6 @@ public sealed class S3PerfTests(S3PerfFixture fixture)
             });
 
         PerfReport.Append(result, notes: "S3→Azurite (blob REST)");
-        Assert.True(result.Completed > 0,
-            $"No completions. Failures={result.Failures}. FirstFailure={result.FirstFailure}\nProxy stdout:\n{fixture.ProxyOutput}");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
     }
 }

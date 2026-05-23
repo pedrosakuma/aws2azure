@@ -20,6 +20,7 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
     public bool Ready { get; private set; }
     public string? SkipReason { get; private set; }
     public string ServiceUrl => _proxy.ServiceUrlForHost("dynamodb");
+    public string ProxyOutput => _proxy.Output;
     public string TableName { get; } = "perftbl" + Guid.NewGuid().ToString("N")[..8];
     public string AccessKeyId => "AKIA-PERF-DDB";
     public string Secret => "perf-ddb-secret";
@@ -157,6 +158,6 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
             });
 
         PerfReport.Append(result, notes: "DynamoDB→Cosmos (REST) emulator");
-        Assert.True(result.Completed > 0, $"No completions. Failures={result.Failures}");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
     }
 }

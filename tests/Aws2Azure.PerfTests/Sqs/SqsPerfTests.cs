@@ -29,7 +29,6 @@ public sealed class SqsPerfTests(SqsPerfFixture fixture)
             });
 
         PerfReport.Append(result, notes: "SQS→ServiceBus(AMQP) emulator");
-        Assert.True(result.Completed > 0,
-            $"No completions. Failures={result.Failures}. FirstFailure={result.FirstFailure}\nProxy output:\n{fixture.ProxyOutput}");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
     }
 }

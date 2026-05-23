@@ -62,6 +62,22 @@ each invocation that writes its first row). Commit that file to record
 the baseline for the current commit, or rename it (e.g.
 `baseline-2026-05-23.md`) to keep history.
 
+## Routing & DNS dependency
+
+AWS SDK requests carry the proxy URL's host in the `Host` header, and the
+proxy dispatches per-module via host prefix (`s3.`, `sqs.`, `sns.`,
+`dynamodb.`, `kinesis.`). To avoid editing `/etc/hosts` the fixtures
+target `<module>.127.0.0.1.nip.io:<port>`, relying on nip.io's wildcard
+DNS to resolve every subdomain to `127.0.0.1`.
+
+If you run the suite in a network-restricted environment that blocks
+nip.io, either:
+
+- pre-add the host names to `/etc/hosts` pointing at `127.0.0.1`, or
+- swap `PerfProxyProcess.ServiceUrlForHost` to return the raw loopback URL
+  and install a `DelegatingHandler` on each AWS SDK client that rewrites
+  the `Host` header to the expected prefix.
+
 ## Roadmap
 
 - Workload matrix per module (small / medium / large payload, 1 / 16 / 64

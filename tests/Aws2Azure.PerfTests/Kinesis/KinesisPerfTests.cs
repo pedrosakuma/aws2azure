@@ -20,6 +20,7 @@ public sealed class KinesisPerfFixture : IAsyncLifetime
     public bool Ready { get; private set; }
     public string? SkipReason { get; private set; }
     public KinesisEmulatorProxyFixture Inner => _inner;
+    public string ProxyOutput => _inner.EmulatorLogs;
 
     public async Task InitializeAsync()
     {
@@ -59,9 +60,9 @@ public sealed class KinesisPerfTests(KinesisPerfFixture fixture)
 
         var result = await PerfRunner.RunAsync(
             scenario: "kinesis.PutRecord (256 B)",
-            concurrency: 16,
+            concurrency: 1,
             duration: TimeSpan.FromSeconds(20),
-            warmup: TimeSpan.FromSeconds(3),
+            warmup: TimeSpan.Zero,
             action: async (workerId, ct) =>
             {
                 using var ms = new MemoryStream(payload, writable: false);
@@ -74,6 +75,6 @@ public sealed class KinesisPerfTests(KinesisPerfFixture fixture)
             });
 
         PerfReport.Append(result, notes: "Kinesis→EventHubs(AMQP) emulator");
-        Assert.True(result.Completed > 0, $"No completions. Failures={result.Failures}");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
     }
 }

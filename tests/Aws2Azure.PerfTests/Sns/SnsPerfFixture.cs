@@ -16,6 +16,7 @@ public sealed class SnsPerfFixture : IAsyncLifetime
     public bool Ready { get; private set; }
     public string? SkipReason { get; private set; }
     public string ServiceUrl => _proxy.ServiceUrlForHost("sns");
+    public string ProxyOutput => _proxy.Output;
     public string TopicArn { get; private set; } = string.Empty;
 
     public AmazonSimpleNotificationServiceClient CreateClient() => new(

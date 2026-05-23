@@ -24,14 +24,23 @@ internal static class PerfRunner
         int? maxOps = null,
         CancellationToken cancellationToken = default)
     {
-        // Warmup — single worker, results discarded.
+        // Warmup — closed-loop at concurrency 1 (enough to JIT hot paths and
+        // open the AMQP/HTTP connection pool, without flooding the backend
+        // before the measure window starts). Failures discarded.
         if (warmup is { } warmupSpan && warmupSpan > TimeSpan.Zero)
         {
             using var warmupCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             warmupCts.CancelAfter(warmupSpan);
-            try { await action(-1, warmupCts.Token).ConfigureAwait(false); }
+            try
+            {
+                while (!warmupCts.IsCancellationRequested)
+                {
+                    try { await action(-1, warmupCts.Token).ConfigureAwait(false); }
+                    catch (OperationCanceledException) when (warmupCts.IsCancellationRequested) { break; }
+                    catch { /* warmup failures swallowed */ }
+                }
+            }
             catch (OperationCanceledException) { }
-            catch { /* warmup failures swallowed */ }
         }
 
         var latenciesUs = new System.Collections.Concurrent.ConcurrentQueue<long>();
@@ -113,4 +122,22 @@ internal sealed record PerfResult(
     long P95Us,
     long P99Us,
     long MaxUs,
-    Exception? FirstFailure = null);
+    Exception? FirstFailure = null)
+{
+    public double FailureRate => Completed + Failures == 0 ? 0 : (double)Failures / (Completed + Failures);
+
+    public void AssertHealthy(double maxFailureRate = 0.10, string? proxyOutput = null)
+    {
+        if (Completed == 0)
+        {
+            throw new Xunit.Sdk.XunitException(
+                $"{Scenario}: no completions. Failures={Failures}. FirstFailure={FirstFailure}\nProxy stdout:\n{proxyOutput}");
+        }
+        if (FailureRate > maxFailureRate)
+        {
+            throw new Xunit.Sdk.XunitException(
+                $"{Scenario}: failure rate {FailureRate:P1} exceeds budget {maxFailureRate:P1}. " +
+                $"Completed={Completed} Failures={Failures}. FirstFailure={FirstFailure}\nProxy stdout:\n{proxyOutput}");
+        }
+    }
+}
