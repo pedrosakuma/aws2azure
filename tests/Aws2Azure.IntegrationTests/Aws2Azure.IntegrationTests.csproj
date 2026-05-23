@@ -7,6 +7,9 @@
     <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Aws2Azure.PerfTests" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="AWSSDK.Kinesis" Version="4.0.8.18" />
     <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.20.1" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.10.0" />
