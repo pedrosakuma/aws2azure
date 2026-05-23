@@ -175,6 +175,13 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         }
 
         var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        // SB emulator quirk: returns HTTP 400 with a "not found"-flavored body instead of 404 when
+        // deleting a non-existent topic. Treat as success for idempotency parity with real SB.
+        if (response.StatusCode == HttpStatusCode.BadRequest && IsNotFoundBody(errorBody))
+        {
+            return;
+        }
+
         ServiceBusTopicsManagementClientLog.TopicRequestFailed(_logger, nameof(DeleteTopicAsync), namespaceFqdn, topicName, (int)response.StatusCode);
         throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
     }
@@ -317,6 +324,13 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         }
 
         var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        // SB emulator quirk: returns HTTP 400 with a "not found"-flavored body instead of 404 when
+        // deleting a non-existent subscription. Treat as success for idempotency parity with real SB.
+        if (response.StatusCode == HttpStatusCode.BadRequest && IsNotFoundBody(errorBody))
+        {
+            return;
+        }
+
         ServiceBusTopicsManagementClientLog.TopicRequestFailed(_logger, nameof(DeleteSubscriptionAsync), namespaceFqdn, topicName + "/subscriptions/" + subscriptionName, (int)response.StatusCode);
         throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
     }
@@ -438,6 +452,21 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
     }
 
+    internal static bool IsNotFoundBody(string? body)
+    {
+        if (string.IsNullOrEmpty(body))
+        {
+            return false;
+        }
+
+        // SB emulator and real Service Bus phrase entity-not-found errors a few different ways
+        // depending on operation; match the common substrings case-insensitively.
+        return body.Contains("MessagingEntityNotFound", StringComparison.OrdinalIgnoreCase)
+            || body.Contains("does not exist", StringComparison.OrdinalIgnoreCase)
+            || body.Contains("could not be found", StringComparison.OrdinalIgnoreCase)
+            || body.Contains("not be found", StringComparison.OrdinalIgnoreCase);
+    }
+
     internal static string BuildTopicDescriptionEntry(bool? requiresDuplicateDetection = null)
     {
         var builder = new StringBuilder();
@@ -485,8 +514,11 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         writer.WriteAttributeString("xmlns", "i", null, XmlSchemaInstanceNamespace);
         writer.WriteElementString("LockDuration", ServiceBusNamespace, string.IsNullOrWhiteSpace(description.LockDuration) ? DefaultLockDurationIso8601 : description.LockDuration);
         writer.WriteElementString("MaxDeliveryCount", ServiceBusNamespace, description.MaxDeliveryCount <= 0 ? DefaultMaxDeliveryCount.ToString(CultureInfo.InvariantCulture) : description.MaxDeliveryCount.ToString(CultureInfo.InvariantCulture));
-        writer.WriteElementString("AutoDeleteOnIdle", ServiceBusNamespace, string.IsNullOrWhiteSpace(description.AutoDeleteOnIdle) ? LongIdleIso8601 : description.AutoDeleteOnIdle);
+        // UserMetadata must appear BEFORE AutoDeleteOnIdle in the canonical SubscriptionDescription
+        // schema order. Real Service Bus rejects out-of-order PUTs with HTTP 400; the SB emulator
+        // accepts them but silently drops fields that appear out of position. Keep this order stable.
         writer.WriteElementString("UserMetadata", ServiceBusNamespace, description.UserMetadata ?? string.Empty);
+        writer.WriteElementString("AutoDeleteOnIdle", ServiceBusNamespace, string.IsNullOrWhiteSpace(description.AutoDeleteOnIdle) ? LongIdleIso8601 : description.AutoDeleteOnIdle);
         writer.WriteEndElement();
         writer.WriteEndElement();
         writer.WriteEndElement();
