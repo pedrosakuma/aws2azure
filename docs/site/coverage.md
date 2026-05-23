@@ -108,8 +108,8 @@
 | sns | [ListSubscriptions](sns.md#listsubscriptions) | 🟡 partial | `Azure Service Bus topic subscriptions` |
 | sns | [ListSubscriptionsByTopic](sns.md#listsubscriptionsbytopic) | 🟡 partial | `Azure Service Bus topic subscriptions` |
 | sns | [ListTopics](sns.md#listtopics) | 🟡 partial | `Azure Service Bus Topics management REST API` |
-| sns | [Publish](sns.md#publish) | 🟡 partial | `Azure Service Bus Topics` |
-| sns | [PublishBatch](sns.md#publishbatch) | 🟡 partial | `Azure Service Bus Topics` |
+| sns | [Publish](sns.md#publish) | 🟡 partial | `Azure Service Bus Topics / Azure Event Grid` |
+| sns | [PublishBatch](sns.md#publishbatch) | 🟡 partial | `Azure Service Bus Topics / Azure Event Grid` |
 | sns | [SetSubscriptionAttributes](sns.md#setsubscriptionattributes) | 🟡 partial | `Azure Service Bus subscription description` |
 | sns | [SetTopicAttributes](sns.md#settopicattributes) | 🟡 partial | `Azure Service Bus topic description` |
 | sns | [Subscribe](sns.md#subscribe) | 🟡 partial | `Azure Service Bus topic subscriptions` |

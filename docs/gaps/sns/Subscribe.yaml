@@ -16,6 +16,8 @@ behavior_differences:
   - "HTTPS / HTTP subscriptions are auto-confirmed immediately. SNS token-based confirmation is not implemented in this slice."
   - "When a deterministic subscription already exists but its stored metadata differs from the new Subscribe request, aws2azure returns the existing ARN and logs a warning instead of replacing the subscription."
   - "Only sqs, https, and http protocols are accepted. email, email-json, sms, lambda, application, and firehose are rejected with InvalidParameter."
+  - "Subscriptions always live on Azure Service Bus in this slice, even for SNS topics whose Publish / PublishBatch backend is Event Grid."
+  - "Event Grid-backed SNS topics do not fan out to those Service Bus subscriptions yet. Until a later slice adds a forwarder, subscribers created on Event Grid-backed topics will not receive published messages."
 references:
   - https://docs.aws.amazon.com/sns/latest/api/API_Subscribe.html
   - https://docs.aws.amazon.com/sns/latest/dg/sns-send-message-to-sqs-cross-account.html

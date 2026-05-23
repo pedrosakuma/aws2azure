@@ -1,6 +1,7 @@
 using System.Text;
 using Aws2Azure.Amqp.Framing;
 using Aws2Azure.Modules.Sns.Amqp;
+using Aws2Azure.Modules.Sns.EventGrid;
 
 namespace Aws2Azure.Modules.Sns.Operations;
 
@@ -32,6 +33,7 @@ internal static class SnsPublishSupport
         parameters.TryGetValue("MessageDeduplicationId", out var messageDeduplicationId);
 
         request = new PublishRequest(
+            topicArn,
             topicName,
             message,
             subject,
@@ -44,16 +46,18 @@ internal static class SnsPublishSupport
 
     internal static bool TryParsePublishBatchRequest(
         IReadOnlyDictionary<string, string> parameters,
+        out string topicArn,
         out string topicName,
         out List<PublishBatchRequestEntry> entries,
         out string? error)
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
+        topicArn = string.Empty;
         topicName = string.Empty;
         entries = [];
 
-        if (!TryGetRequiredNonEmptyParameter(parameters, "TopicArn", out var topicArn, out error)
+        if (!TryGetRequiredNonEmptyParameter(parameters, "TopicArn", out topicArn, out error)
             || !TryParsePublishTopicArn(topicArn, out topicName, out error))
         {
             return false;
@@ -144,6 +148,28 @@ internal static class SnsPublishSupport
             request.MessageDeduplicationId,
             request.MessageAttributes,
             messageId);
+
+    internal static EventGridPublishMessage CreateEventGridMessage(PublishRequest request, Guid messageId)
+        => new(
+            messageId,
+            request.TopicArn,
+            request.Message,
+            request.Subject,
+            request.MessageStructure,
+            request.MessageGroupId,
+            request.MessageDeduplicationId,
+            request.MessageAttributes);
+
+    internal static EventGridPublishMessage CreateEventGridMessage(string topicArn, PublishBatchRequestEntry request, Guid messageId)
+        => new(
+            messageId,
+            topicArn,
+            request.Message,
+            request.Subject,
+            request.MessageStructure,
+            request.MessageGroupId,
+            request.MessageDeduplicationId,
+            request.MessageAttributes);
 
     internal static bool TryParsePublishTopicArn(string topicArn, out string topicName, out string? error)
     {
@@ -299,6 +325,7 @@ internal static class SnsPublishSupport
 }
 
 internal sealed record PublishRequest(
+    string TopicArn,
     string TopicName,
     string Message,
     string? Subject,

@@ -1,6 +1,7 @@
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.Sns.Amqp;
 using Aws2Azure.Modules.Sns.Errors;
+using Aws2Azure.Modules.Sns.EventGrid;
 using Aws2Azure.Modules.Sns.WireProtocol;
 using Aws2Azure.Modules.Sns.Xml;
 using Microsoft.AspNetCore.Http;
@@ -13,53 +14,74 @@ internal static class PublishBatchHandler
         HttpContext context,
         SnsParseResult parseResult,
         ServiceBusTopicsCredentials credentials,
+        EventGridCredentials? eventGridCredentials,
+        SnsSettings snsSettings,
         ISnsAmqpSender amqpSender,
+        IEventGridPublisher eventGridPublisher,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(parseResult);
         ArgumentNullException.ThrowIfNull(credentials);
+        ArgumentNullException.ThrowIfNull(snsSettings);
         ArgumentNullException.ThrowIfNull(amqpSender);
+        ArgumentNullException.ThrowIfNull(eventGridPublisher);
 
-        if (!SnsPublishSupport.TryParsePublishBatchRequest(parseResult.Parameters, out var topicName, out var entries, out var error))
+        if (!SnsPublishSupport.TryParsePublishBatchRequest(parseResult.Parameters, out var topicArn, out var topicName, out var entries, out var error))
         {
             await SnsTopicSupport.WriteInvalidParameterAsync(context, error!).ConfigureAwait(false);
             return;
         }
 
         var messageIds = new Guid[entries.Count];
-        var messages = new SnsAmqpSendMessage[entries.Count];
-        for (var i = 0; i < entries.Count; i++)
-        {
-            messageIds[i] = Guid.NewGuid();
-            messages[i] = SnsPublishSupport.CreateAmqpMessage(entries[i], messageIds[i]);
-        }
-
         SnsBatchSendResult sendResult;
-        try
+        var route = SnsTopicRouting.Resolve(credentials, snsSettings, topicName);
+        if (route.Backend == SnsTopicBackend.EventGrid)
         {
-            sendResult = await amqpSender.SendBatchAsync(
-                credentials,
-                SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                topicName,
-                messages,
-                cancellationToken).ConfigureAwait(false);
-        }
-        catch (SnsAmqpException exception)
-        {
-            var failure = SnsPublishErrorMapper.CreateBatchFailure(exception);
-            var failed = new PublishBatchFailure[entries.Count];
+            var messages = new EventGridPublishMessage[entries.Count];
             for (var i = 0; i < entries.Count; i++)
             {
-                failed[i] = new PublishBatchFailure(
-                    entries[i].Id,
-                    failure.ErrorCode ?? "InternalFailure",
-                    failure.ErrorMessage ?? "Azure Service Bus Topics AMQP send failed.",
-                    failure.SenderFault);
+                messageIds[i] = Guid.NewGuid();
+                messages[i] = SnsPublishSupport.CreateEventGridMessage(topicArn, entries[i], messageIds[i]);
             }
 
-            await SnsResponseWriter.WritePublishBatchResponseAsync(context, new PublishBatchResult([], failed)).ConfigureAwait(false);
-            return;
+            var destination = SnsTopicRouting.ResolveEventGridDestination(route, eventGridCredentials);
+            sendResult = await eventGridPublisher.PublishBatchAsync(destination, messages, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            var messages = new SnsAmqpSendMessage[entries.Count];
+            for (var i = 0; i < entries.Count; i++)
+            {
+                messageIds[i] = Guid.NewGuid();
+                messages[i] = SnsPublishSupport.CreateAmqpMessage(entries[i], messageIds[i]);
+            }
+
+            try
+            {
+                sendResult = await amqpSender.SendBatchAsync(
+                    credentials,
+                    SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                    route.ServiceBusTopicName,
+                    messages,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (SnsAmqpException exception)
+            {
+                var failure = SnsPublishErrorMapper.CreateBatchFailure(exception);
+                var failed = new PublishBatchFailure[entries.Count];
+                for (var i = 0; i < entries.Count; i++)
+                {
+                    failed[i] = new PublishBatchFailure(
+                        entries[i].Id,
+                        failure.ErrorCode ?? "InternalFailure",
+                        failure.ErrorMessage ?? "Azure Service Bus Topics AMQP send failed.",
+                        failure.SenderFault);
+                }
+
+                await SnsResponseWriter.WritePublishBatchResponseAsync(context, new PublishBatchResult([], failed)).ConfigureAwait(false);
+                return;
+            }
         }
 
         var successful = new List<PublishBatchSuccess>(entries.Count);
@@ -76,7 +98,7 @@ internal static class PublishBatchHandler
             failedEntries.Add(new PublishBatchFailure(
                 entries[i].Id,
                 outcome.ErrorCode ?? "InternalFailure",
-                outcome.ErrorMessage ?? "Azure Service Bus Topics AMQP send failed.",
+                outcome.ErrorMessage ?? "Azure publish failed.",
                 outcome.SenderFault));
         }
 

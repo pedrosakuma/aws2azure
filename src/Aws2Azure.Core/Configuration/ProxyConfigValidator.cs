@@ -20,6 +20,11 @@ public static class ProxyConfigValidator
             errors.Add("credentials: at least one entry is required.");
         }
 
+        if (!Enum.IsDefined(typeof(SnsTopicBackend), config.Sns.DefaultBackend))
+        {
+            errors.Add($"sns.defaultBackend: unknown value '{(int)config.Sns.DefaultBackend}'.");
+        }
+
         var seen = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 0; i < config.Credentials.Count; i++)
         {
@@ -40,7 +45,7 @@ public static class ProxyConfigValidator
                 errors.Add($"{prefix}.awsSecretAccessKey: required.");
             }
 
-            ValidateAzure(entry.Azure, prefix + ".azure", errors);
+            ValidateAzure(entry.Azure, config.Sns, prefix + ".azure", errors);
         }
 
         foreach (var (name, toggle) in config.Services)
@@ -63,7 +68,7 @@ public static class ProxyConfigValidator
         }
     }
 
-    private static void ValidateAzure(AzureCredentials azure, string prefix, List<string> errors)
+    private static void ValidateAzure(AzureCredentials azure, SnsSettings snsSettings, string prefix, List<string> errors)
     {
         if (azure.Blob is { } blob)
         {
@@ -123,7 +128,7 @@ public static class ProxyConfigValidator
 
         if (azure.ServiceBusTopics is { } serviceBusTopics)
         {
-            ValidateServiceBusTopics(serviceBusTopics, prefix + ".serviceBusTopics", errors);
+            ValidateServiceBusTopics(serviceBusTopics, azure.EventGrid, snsSettings, prefix + ".serviceBusTopics", errors);
         }
 
         if (azure.Cosmos is { } cosmos)
@@ -204,7 +209,12 @@ public static class ProxyConfigValidator
         }
     }
 
-    private static void ValidateServiceBusTopics(ServiceBusTopicsCredentials credentials, string prefix, List<string> errors)
+    private static void ValidateServiceBusTopics(
+        ServiceBusTopicsCredentials credentials,
+        EventGridCredentials? eventGrid,
+        SnsSettings snsSettings,
+        string prefix,
+        List<string> errors)
     {
         if (string.IsNullOrWhiteSpace(credentials.Namespace))
         {
@@ -228,6 +238,11 @@ public static class ProxyConfigValidator
             hasTenant: !string.IsNullOrWhiteSpace(credentials.TenantId),
             hasClientId: !string.IsNullOrWhiteSpace(credentials.ClientId),
             hasClientSecret: !string.IsNullOrWhiteSpace(credentials.ClientSecret));
+
+        if (snsSettings.DefaultBackend == SnsTopicBackend.EventGrid)
+        {
+            ValidateSnsEventGridRoute(prefix + ": sns.defaultBackend=EventGrid", eventGrid, endpointOverride: null, accessKeyOverride: null, errors);
+        }
 
         if (credentials.Topics is { } topics)
         {
@@ -255,19 +270,61 @@ public static class ProxyConfigValidator
                 {
                     ValidateAbsoluteUri(settings.EventGridTopicEndpoint, $"{prefix}.topics.{name}.eventGridTopicEndpoint", errors, Uri.UriSchemeHttps);
                 }
+                if (settings.EventGridAccessKey is not null && string.IsNullOrWhiteSpace(settings.EventGridAccessKey))
+                {
+                    errors.Add($"{prefix}.topics.{name}.eventGridAccessKey: must be non-empty when set.");
+                }
+                if (settings.Backend == SnsTopicBackend.EventGrid)
+                {
+                    ValidateSnsEventGridRoute($"{prefix}.topics.{name}", eventGrid, settings.EventGridTopicEndpoint, settings.EventGridAccessKey, errors);
+                }
             }
+        }
+    }
+
+    private static void ValidateSnsEventGridRoute(
+        string prefix,
+        EventGridCredentials? credentials,
+        string? endpointOverride,
+        string? accessKeyOverride,
+        List<string> errors)
+    {
+        var hasEndpoint = !string.IsNullOrWhiteSpace(endpointOverride)
+            || HasEventGridEndpoint(credentials);
+        if (!hasEndpoint)
+        {
+            errors.Add($"{prefix}: EventGrid backend requires either eventGridTopicEndpoint or azure.eventGrid endpoint/(namespace+topicName).");
+        }
+
+        var hasAccessKey = !string.IsNullOrWhiteSpace(accessKeyOverride)
+            || !string.IsNullOrWhiteSpace(credentials?.AccessKey);
+        var hasAad = !string.IsNullOrWhiteSpace(credentials?.TenantId)
+            && !string.IsNullOrWhiteSpace(credentials?.ClientId)
+            && !string.IsNullOrWhiteSpace(credentials?.ClientSecret);
+        if (!hasAccessKey && !hasAad)
+        {
+            errors.Add($"{prefix}: EventGrid backend requires either eventGridAccessKey or azure.eventGrid accessKey/(tenantId+clientId+clientSecret).");
         }
     }
 
     private static void ValidateEventGrid(EventGridCredentials credentials, string prefix, List<string> errors)
     {
-        if (string.IsNullOrWhiteSpace(credentials.Endpoint))
+        if (!HasEventGridEndpoint(credentials))
         {
-            errors.Add($"{prefix}.endpoint: required.");
+            errors.Add($"{prefix}: either endpoint OR (namespace+topicName) is required.");
         }
-        else
+        else if (!string.IsNullOrWhiteSpace(credentials.Endpoint))
         {
             ValidateAbsoluteUri(credentials.Endpoint, $"{prefix}.endpoint", errors, Uri.UriSchemeHttps);
+        }
+
+        if (credentials.Namespace is not null && string.IsNullOrWhiteSpace(credentials.Namespace))
+        {
+            errors.Add($"{prefix}.namespace: must be non-empty when set.");
+        }
+        if (credentials.TopicName is not null && string.IsNullOrWhiteSpace(credentials.TopicName))
+        {
+            errors.Add($"{prefix}.topicName: must be non-empty when set.");
         }
 
         ValidateDualAuth(
@@ -282,6 +339,12 @@ public static class ProxyConfigValidator
             hasClientId: !string.IsNullOrWhiteSpace(credentials.ClientId),
             hasClientSecret: !string.IsNullOrWhiteSpace(credentials.ClientSecret));
     }
+
+    private static bool HasEventGridEndpoint(EventGridCredentials? credentials)
+        => credentials is not null
+            && (!string.IsNullOrWhiteSpace(credentials.Endpoint)
+                || (!string.IsNullOrWhiteSpace(credentials.Namespace)
+                    && !string.IsNullOrWhiteSpace(credentials.TopicName)));
 
     private static void ValidateDualAuth(
         string prefix,

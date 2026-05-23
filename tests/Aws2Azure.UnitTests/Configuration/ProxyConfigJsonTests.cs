@@ -14,6 +14,7 @@ public class ProxyConfigJsonTests
             "s3":  { "enabled": true },
             "sqs": { "enabled": false }
           },
+          "sns": { "defaultBackend": "EventGrid" },
           "credentials": [
             {
               "awsAccessKeyId": "AKIA1",
@@ -33,6 +34,7 @@ public class ProxyConfigJsonTests
         Assert.NotNull(config);
         Assert.True(config!.Services["s3"].Enabled);
         Assert.False(config.Services["sqs"].Enabled);
+        Assert.Equal(SnsTopicBackend.EventGrid, config.Sns.DefaultBackend);
 
         var entry = Assert.Single(config.Credentials);
         Assert.Equal("AKIA1", entry.AwsAccessKeyId);
