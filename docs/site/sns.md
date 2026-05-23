@@ -67,20 +67,53 @@
 - <https://docs.aws.amazon.com/sns/latest/api/API_DeleteTopic.html>
 - <https://learn.microsoft.com/en-us/rest/api/servicebus/delete-topic>
 
-## GetTopicAttributes
+## GetSubscriptionAttributes
 
-- **Status:** ⚪ stub
-- **Azure equivalent:** `Azure Service Bus Topics / Azure Event Grid`
+- **Status:** 🟡 partial
+- **Azure equivalent:** `Azure Service Bus subscription description`
 
 ### Sub-features
 
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
-| Slice 1 scaffold | ✅ implemented | Parses the AWS Query envelope, validates credentials, and dispatches to a structured SNS-shaped 501 stub for now. Backend translation to Service Bus Topics / Event Grid lands in later slices. |  |  |
+| Subscription metadata projection | ✅ implemented | Fetches the Service Bus subscription Atom entry, parses SubscriptionDescription with XmlReader, and projects aws2azure's UserMetadata JSON back into SNS protocol, endpoint, filter, and raw-delivery attributes. |  |  |
+
+### Behaviour differences
+
+- Protocol and Endpoint come from aws2azure's UserMetadata blob rather than native Service Bus subscription fields. Missing or invalid UserMetadata falls back to empty strings and RawMessageDelivery=false.
+- ConfirmationWasAuthenticated is always true and PendingConfirmation is always false because this slice auto-confirms subscriptions.
+- FilterPolicy is returned from stored UserMetadata only. FilterPolicyScope defaults to MessageAttributes when a stored filter policy has no explicit scope.
+- DeliveryPolicy, EffectiveDeliveryPolicy, and RedrivePolicy are omitted because Service Bus delivery and dead-letter settings do not match the SNS attribute shapes exposed by this API.
+
+### References
+
+- <https://docs.aws.amazon.com/sns/latest/api/API_GetSubscriptionAttributes.html>
+- <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest>
+
+## GetTopicAttributes
+
+- **Status:** 🟡 partial
+- **Azure equivalent:** `Azure Service Bus topic description`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| Topic property projection | ✅ implemented | Fetches the Service Bus topic Atom entry, parses TopicDescription with XmlReader, and maps SubscriptionCount / RequiresDuplicateDetection into the closest SNS attribute surface. |  |  |
+
+### Behaviour differences
+
+- DisplayName is always returned as an empty string because Service Bus topics do not expose an SNS-style display name.
+- Policy is returned as '{}' and DeliveryPolicy / EffectiveDeliveryPolicy are omitted because this slice does not translate SNS policies onto Azure authorization or delivery settings.
+- SubscriptionsConfirmed is populated from Service Bus SubscriptionCount. Pending and deleted counts are always reported as 0 because aws2azure auto-confirms subscriptions and Service Bus does not expose the SNS lifecycle split.
+- KmsMasterKeyId is returned empty because Service Bus encryption is configured at the namespace level, not per topic.
+- FifoTopic is inferred from a '.fifo' suffix or RequiresDuplicateDetection=true, and ContentBasedDeduplication is mapped directly from RequiresDuplicateDetection. This is only an approximation of SNS FIFO semantics.
+- AWS-only attributes such as SignatureVersion and TracingConfig are omitted.
 
 ### References
 
 - <https://docs.aws.amazon.com/sns/latest/api/API_GetTopicAttributes.html>
+- <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest>
 
 ## ListSubscriptions
 
@@ -199,20 +232,54 @@
 - <https://docs.aws.amazon.com/sns/latest/api/API_PublishBatch.html>
 - <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-amqp-protocol-guide>
 
-## SetTopicAttributes
+## SetSubscriptionAttributes
 
-- **Status:** ⚪ stub
-- **Azure equivalent:** `Azure Service Bus Topics / Azure Event Grid`
+- **Status:** 🟡 partial
+- **Azure equivalent:** `Azure Service Bus subscription description`
 
 ### Sub-features
 
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
-| Slice 1 scaffold | ✅ implemented | Parses the AWS Query envelope, validates credentials, and dispatches to a structured SNS-shaped 501 stub for now. Backend translation to Service Bus Topics / Event Grid lands in later slices. |  |  |
+| UserMetadata attribute updates | ✅ implemented | Performs a GET → modify → PUT cycle against the Service Bus subscription description and persists FilterPolicy, FilterPolicyScope, and RawMessageDelivery inside UserMetadata as compact JSON. |  |  |
+| Compatibility no-ops | ✅ implemented | Treats DeliveryPolicy, RedrivePolicy, and SubscriptionRoleArn as successful no-ops because this slice does not translate those SNS attributes onto Azure primitives. |  |  |
+
+### Behaviour differences
+
+- FilterPolicy is stored only in UserMetadata in this slice. Service Bus rule-based filtering is not programmed yet, so enforcement is deferred to a later forwarding slice.
+- FilterPolicyScope accepts MessageAttributes and MessageBody, but MessageBody scope is only persisted; it is not enforced yet.
+- DeliveryPolicy, RedrivePolicy, and SubscriptionRoleArn are accepted as no-ops because Service Bus does not expose a matching SNS attribute contract here.
+- UserMetadata updates use a simple GET → modify → PUT flow without ETag / If-Match protection, so concurrent writers can lose updates. Future work should use the Atom ETag returned by Service Bus management responses.
+- Updates that would push the serialized UserMetadata payload beyond Service Bus's 1024-character limit are rejected with InvalidParameter.
+- Unknown AWS attribute names return InvalidParameter.
+
+### References
+
+- <https://docs.aws.amazon.com/sns/latest/api/API_SetSubscriptionAttributes.html>
+- <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest>
+
+## SetTopicAttributes
+
+- **Status:** 🟡 partial
+- **Azure equivalent:** `Azure Service Bus topic description`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| Attribute no-op compatibility | ✅ implemented | Accepts DisplayName, Policy, DeliveryPolicy, EffectiveDeliveryPolicy, KmsMasterKeyId, SignatureVersion, and TracingConfig as successful no-ops so common SDK flows continue. |  |  |
+| Content-based deduplication validation | ✅ implemented | Reads the current Service Bus topic description and rejects attempts to change RequiresDuplicateDetection after topic creation. Re-applying the existing value returns success. |  |  |
+
+### Behaviour differences
+
+- DisplayName, Policy, DeliveryPolicy, EffectiveDeliveryPolicy, KmsMasterKeyId, SignatureVersion, and TracingConfig do not have a direct Service Bus topic equivalent in this slice and are treated as no-ops.
+- ContentBasedDeduplication is backed by RequiresDuplicateDetection, but Service Bus does not allow changing that property after topic creation. aws2azure returns InvalidParameter instead of attempting an in-place update.
+- Unknown AWS attribute names return InvalidParameter.
 
 ### References
 
 - <https://docs.aws.amazon.com/sns/latest/api/API_SetTopicAttributes.html>
+- <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest>
 
 ## Subscribe
 
@@ -224,7 +291,7 @@
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
 | Service Bus subscription provisioning | ✅ implemented | Creates an Azure Service Bus topic subscription with deterministic subscription IDs derived from TopicArn + Protocol + Endpoint so repeat Subscribe calls return the same ARN. Supported protocols in this slice: sqs, https, http. |  |  |
-| Subscription metadata projection | ✅ implemented | Stores protocol, endpoint, compact filter policy JSON, and RawMessageDelivery in SubscriptionDescription.UserMetadata. Metadata longer than 1024 chars is truncated to fit the Service Bus limit. |  |  |
+| Subscription metadata projection | ✅ implemented | Stores protocol, endpoint, compact filter policy JSON, and RawMessageDelivery in SubscriptionDescription.UserMetadata. Requests that would exceed the 1024-character Service Bus UserMetadata limit are rejected with InvalidParameter. |  |  |
 | Subscriber delivery forwarder | ⛔ unsupported | This slice only manages subscription metadata. Messages accumulate in the Service Bus subscription until a later slice wires forwarding to HTTPS endpoints or SQS-backed queues. |  |  |
 
 ### Behaviour differences

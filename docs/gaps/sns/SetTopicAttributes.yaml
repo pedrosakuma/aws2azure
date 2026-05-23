@@ -1,11 +1,18 @@
 service: sns
 operation: SetTopicAttributes
-azure_equivalent: "Azure Service Bus Topics / Azure Event Grid"
-status: stub
+azure_equivalent: "Azure Service Bus topic description"
+status: partial
 sub_features:
-  - name: Slice 1 scaffold
+  - name: Attribute no-op compatibility
     status: implemented
-    notes: "Parses the AWS Query envelope, validates credentials, and dispatches to a structured SNS-shaped 501 stub for now. Backend translation to Service Bus Topics / Event Grid lands in later slices."
-behavior_differences: []
+    notes: "Accepts DisplayName, Policy, DeliveryPolicy, EffectiveDeliveryPolicy, KmsMasterKeyId, SignatureVersion, and TracingConfig as successful no-ops so common SDK flows continue."
+  - name: Content-based deduplication validation
+    status: implemented
+    notes: "Reads the current Service Bus topic description and rejects attempts to change RequiresDuplicateDetection after topic creation. Re-applying the existing value returns success."
+behavior_differences:
+  - "DisplayName, Policy, DeliveryPolicy, EffectiveDeliveryPolicy, KmsMasterKeyId, SignatureVersion, and TracingConfig do not have a direct Service Bus topic equivalent in this slice and are treated as no-ops."
+  - "ContentBasedDeduplication is backed by RequiresDuplicateDetection, but Service Bus does not allow changing that property after topic creation. aws2azure returns InvalidParameter instead of attempting an in-place update."
+  - "Unknown AWS attribute names return InvalidParameter."
 references:
   - https://docs.aws.amazon.com/sns/latest/api/API_SetTopicAttributes.html
+  - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest

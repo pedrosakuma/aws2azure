@@ -8,7 +8,7 @@ sub_features:
     notes: "Creates an Azure Service Bus topic subscription with deterministic subscription IDs derived from TopicArn + Protocol + Endpoint so repeat Subscribe calls return the same ARN. Supported protocols in this slice: sqs, https, http."
   - name: Subscription metadata projection
     status: implemented
-    notes: "Stores protocol, endpoint, compact filter policy JSON, and RawMessageDelivery in SubscriptionDescription.UserMetadata. Metadata longer than 1024 chars is truncated to fit the Service Bus limit."
+    notes: "Stores protocol, endpoint, compact filter policy JSON, and RawMessageDelivery in SubscriptionDescription.UserMetadata. Requests that would exceed the 1024-character Service Bus UserMetadata limit are rejected with InvalidParameter."
   - name: Subscriber delivery forwarder
     status: unsupported
     notes: "This slice only manages subscription metadata. Messages accumulate in the Service Bus subscription until a later slice wires forwarding to HTTPS endpoints or SQS-backed queues."

@@ -1,7 +1,9 @@
+using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Xml;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.Sns.Management;
@@ -46,6 +48,69 @@ internal static class SnsManagementClientTestSupport
         return WebUtility.HtmlDecode(xml[(start + startTag.Length)..end]);
     }
 
+    public static Dictionary<string, string> ReadAttributes(string xml)
+    {
+        var attributes = new Dictionary<string, string>(StringComparer.Ordinal);
+        using var stringReader = new StringReader(xml);
+        using var reader = XmlReader.Create(stringReader, new XmlReaderSettings { IgnoreComments = true, IgnoreWhitespace = true });
+
+        while (reader.Read())
+        {
+            if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "entry")
+            {
+                continue;
+            }
+
+            using var entryReader = reader.ReadSubtree();
+            string? key = null;
+            string? value = null;
+            if (!entryReader.Read())
+            {
+                continue;
+            }
+
+            while (true)
+            {
+                if (entryReader.NodeType == XmlNodeType.Element)
+                {
+                    if (entryReader.LocalName == "key")
+                    {
+                        key = entryReader.ReadElementContentAsString();
+                        if (entryReader.EOF)
+                        {
+                            break;
+                        }
+
+                        continue;
+                    }
+
+                    if (entryReader.LocalName == "value")
+                    {
+                        value = entryReader.ReadElementContentAsString();
+                        if (entryReader.EOF)
+                        {
+                            break;
+                        }
+
+                        continue;
+                    }
+                }
+
+                if (!entryReader.Read())
+                {
+                    break;
+                }
+            }
+
+            if (key is not null)
+            {
+                attributes[key] = value ?? string.Empty;
+            }
+        }
+
+        return attributes;
+    }
+
     public static string BuildTopicsFeed(params string[] topicNames)
     {
         var builder = new StringBuilder();
@@ -54,15 +119,15 @@ internal static class SnsManagementClientTestSupport
         builder.Append("<title type=\"text\">Topics</title>");
         foreach (var topicName in topicNames)
         {
-            builder.Append("<entry>");
-            builder.Append("<title type=\"text\">").Append(topicName).Append("</title>");
-            builder.Append("<content type=\"application/xml\"><TopicDescription xmlns=\"http://schemas.microsoft.com/netservices/2010/10/servicebus/connect\" /></content>");
-            builder.Append("</entry>");
+            builder.Append(BuildTopicEntryCore(topicName, 0, false, includeDeclaration: false));
         }
 
         builder.Append("</feed>");
         return builder.ToString();
     }
+
+    public static string BuildTopicEntry(string topicName, int subscriptionCount = 0, bool requiresDuplicateDetection = false)
+        => BuildTopicEntryCore(topicName, subscriptionCount, requiresDuplicateDetection, includeDeclaration: true);
 
     public static string BuildSubscriptionsFeed(params (string SubscriptionName, string UserMetadata)[] subscriptions)
     {
@@ -72,28 +137,85 @@ internal static class SnsManagementClientTestSupport
         builder.Append("<title type=\"text\">Subscriptions</title>");
         foreach (var subscription in subscriptions)
         {
-            builder.Append("<entry>");
-            builder.Append("<title type=\"text\">").Append(subscription.SubscriptionName).Append("</title>");
-            builder.Append("<content type=\"application/xml\"><SubscriptionDescription xmlns=\"http://schemas.microsoft.com/netservices/2010/10/servicebus/connect\">");
-            if (!string.IsNullOrEmpty(subscription.UserMetadata))
-            {
-                builder.Append("<UserMetadata>").Append(WebUtility.HtmlEncode(subscription.UserMetadata)).Append("</UserMetadata>");
-            }
-            builder.Append("</SubscriptionDescription></content>");
-            builder.Append("</entry>");
+            builder.Append(BuildSubscriptionEntryCore(
+                subscription.SubscriptionName,
+                subscription.UserMetadata,
+                ServiceBusTopicsManagementClient.DefaultLockDurationIso8601,
+                ServiceBusTopicsManagementClient.DefaultMaxDeliveryCount,
+                ServiceBusTopicsManagementClient.LongIdleIso8601,
+                includeDeclaration: false));
         }
 
         builder.Append("</feed>");
         return builder.ToString();
     }
 
-    public static string SerializeMetadata(string protocol, string endpoint, string? filterPolicyJson = null, bool rawDeliveryEnabled = false)
+    public static string BuildSubscriptionEntry(
+        string subscriptionName,
+        string? userMetadata,
+        string lockDuration = ServiceBusTopicsManagementClient.DefaultLockDurationIso8601,
+        int maxDeliveryCount = ServiceBusTopicsManagementClient.DefaultMaxDeliveryCount,
+        string autoDeleteOnIdle = ServiceBusTopicsManagementClient.LongIdleIso8601)
+        => BuildSubscriptionEntryCore(subscriptionName, userMetadata, lockDuration, maxDeliveryCount, autoDeleteOnIdle, includeDeclaration: true);
+
+    private static string BuildTopicEntryCore(string topicName, int subscriptionCount, bool requiresDuplicateDetection, bool includeDeclaration)
+    {
+        var builder = new StringBuilder();
+        if (includeDeclaration)
+        {
+            builder.Append("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
+        }
+
+        builder.Append("<entry xmlns=\"http://www.w3.org/2005/Atom\">");
+        builder.Append("<title type=\"text\">").Append(topicName).Append("</title>");
+        builder.Append("<content type=\"application/xml\"><TopicDescription xmlns=\"http://schemas.microsoft.com/netservices/2010/10/servicebus/connect\">");
+        builder.Append("<SubscriptionCount>").Append(subscriptionCount).Append("</SubscriptionCount>");
+        builder.Append("<RequiresDuplicateDetection>").Append(requiresDuplicateDetection ? "true" : "false").Append("</RequiresDuplicateDetection>");
+        builder.Append("</TopicDescription></content></entry>");
+        return builder.ToString();
+    }
+
+    private static string BuildSubscriptionEntryCore(
+        string subscriptionName,
+        string? userMetadata,
+        string lockDuration,
+        int maxDeliveryCount,
+        string autoDeleteOnIdle,
+        bool includeDeclaration)
+    {
+        var builder = new StringBuilder();
+        if (includeDeclaration)
+        {
+            builder.Append("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
+        }
+
+        builder.Append("<entry xmlns=\"http://www.w3.org/2005/Atom\">");
+        builder.Append("<title type=\"text\">").Append(subscriptionName).Append("</title>");
+        builder.Append("<content type=\"application/xml\"><SubscriptionDescription xmlns=\"http://schemas.microsoft.com/netservices/2010/10/servicebus/connect\">");
+        builder.Append("<LockDuration>").Append(lockDuration).Append("</LockDuration>");
+        builder.Append("<MaxDeliveryCount>").Append(maxDeliveryCount).Append("</MaxDeliveryCount>");
+        builder.Append("<AutoDeleteOnIdle>").Append(autoDeleteOnIdle).Append("</AutoDeleteOnIdle>");
+        if (userMetadata is not null)
+        {
+            builder.Append("<UserMetadata>").Append(WebUtility.HtmlEncode(userMetadata)).Append("</UserMetadata>");
+        }
+        builder.Append("</SubscriptionDescription></content></entry>");
+        return builder.ToString();
+    }
+
+    public static string SerializeMetadata(
+        string protocol,
+        string endpoint,
+        string? filterPolicyJson = null,
+        bool rawDeliveryEnabled = false,
+        string? filterPolicyScope = null)
         => JsonSerializer.Serialize(
             new SnsSubscriptionMetadata
             {
                 Protocol = protocol,
                 Endpoint = endpoint,
                 FilterPolicyJson = filterPolicyJson,
+                FilterPolicyScope = filterPolicyScope,
                 RawDeliveryEnabled = rawDeliveryEnabled,
             },
             SnsSubscriptionJsonContext.Default.SnsSubscriptionMetadata);

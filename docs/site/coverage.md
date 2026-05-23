@@ -103,13 +103,15 @@
 | sns | [ConfirmSubscription](sns.md#confirmsubscription) | 🟡 partial | `Azure Service Bus topic subscriptions` |
 | sns | [CreateTopic](sns.md#createtopic) | 🟡 partial | `Azure Service Bus Topics management REST API` |
 | sns | [DeleteTopic](sns.md#deletetopic) | 🟡 partial | `Azure Service Bus Topics management REST API` |
-| sns | [GetTopicAttributes](sns.md#gettopicattributes) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
+| sns | [GetSubscriptionAttributes](sns.md#getsubscriptionattributes) | 🟡 partial | `Azure Service Bus subscription description` |
+| sns | [GetTopicAttributes](sns.md#gettopicattributes) | 🟡 partial | `Azure Service Bus topic description` |
 | sns | [ListSubscriptions](sns.md#listsubscriptions) | 🟡 partial | `Azure Service Bus topic subscriptions` |
 | sns | [ListSubscriptionsByTopic](sns.md#listsubscriptionsbytopic) | 🟡 partial | `Azure Service Bus topic subscriptions` |
 | sns | [ListTopics](sns.md#listtopics) | 🟡 partial | `Azure Service Bus Topics management REST API` |
 | sns | [Publish](sns.md#publish) | 🟡 partial | `Azure Service Bus Topics` |
 | sns | [PublishBatch](sns.md#publishbatch) | 🟡 partial | `Azure Service Bus Topics` |
-| sns | [SetTopicAttributes](sns.md#settopicattributes) | ⚪ stub | `Azure Service Bus Topics / Azure Event Grid` |
+| sns | [SetSubscriptionAttributes](sns.md#setsubscriptionattributes) | 🟡 partial | `Azure Service Bus subscription description` |
+| sns | [SetTopicAttributes](sns.md#settopicattributes) | 🟡 partial | `Azure Service Bus topic description` |
 | sns | [Subscribe](sns.md#subscribe) | 🟡 partial | `Azure Service Bus topic subscriptions` |
 | sns | [Unsubscribe](sns.md#unsubscribe) | 🟡 partial | `Azure Service Bus topic subscriptions` |
 | sqs | [AddPermission](sqs.md#addpermission) | ⚪ stub | `No native Service Bus equivalent — validates queue existence and returns success.` |

@@ -18,6 +18,8 @@ internal static class SnsOperationNames
         ["ConfirmSubscription"] = SnsOperation.ConfirmSubscription,
         ["GetTopicAttributes"] = SnsOperation.GetTopicAttributes,
         ["SetTopicAttributes"] = SnsOperation.SetTopicAttributes,
+        ["GetSubscriptionAttributes"] = SnsOperation.GetSubscriptionAttributes,
+        ["SetSubscriptionAttributes"] = SnsOperation.SetSubscriptionAttributes,
     };
 
     public static SnsOperation Resolve(string? action)

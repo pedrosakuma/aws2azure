@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text;
 using System.Threading.Tasks;
 using System.Xml;
@@ -131,6 +132,45 @@ public static class SnsResponseWriter
             writer.WriteStartElement("ConfirmSubscriptionResult", XmlNamespace);
             writer.WriteElementString("SubscriptionArn", XmlNamespace, subscriptionArn);
             writer.WriteEndElement();
+            WriteResponseMetadata(writer, ResolveRequestId(context));
+            writer.WriteEndElement();
+        });
+    }
+
+    internal static Task WriteAttributesResponseAsync(HttpContext context, string operationName, IReadOnlyList<KeyValuePair<string, string>> attributes)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentException.ThrowIfNullOrEmpty(operationName);
+        ArgumentNullException.ThrowIfNull(attributes);
+
+        return WriteResponseAsync(context, writer =>
+        {
+            writer.WriteStartElement(operationName + "Response", XmlNamespace);
+            writer.WriteStartElement(operationName + "Result", XmlNamespace);
+            writer.WriteStartElement("Attributes", XmlNamespace);
+            for (var i = 0; i < attributes.Count; i++)
+            {
+                writer.WriteStartElement("entry", XmlNamespace);
+                writer.WriteElementString("key", XmlNamespace, attributes[i].Key);
+                writer.WriteElementString("value", XmlNamespace, attributes[i].Value);
+                writer.WriteEndElement();
+            }
+
+            writer.WriteEndElement();
+            writer.WriteEndElement();
+            WriteResponseMetadata(writer, ResolveRequestId(context));
+            writer.WriteEndElement();
+        });
+    }
+
+    internal static Task WriteMetadataOnlyResponseAsync(HttpContext context, string operationName)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentException.ThrowIfNullOrEmpty(operationName);
+
+        return WriteResponseAsync(context, writer =>
+        {
+            writer.WriteStartElement(operationName + "Response", XmlNamespace);
             WriteResponseMetadata(writer, ResolveRequestId(context));
             writer.WriteEndElement();
         });

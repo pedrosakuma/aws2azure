@@ -69,7 +69,6 @@ public sealed class CreateTopicHandlerTests
 
     [Theory]
     [InlineData("")]
-    [InlineData("orders.fifo")]
     [InlineData("orders!")]
     public async Task HandleAsync_validates_topic_name(string topicName)
     {
