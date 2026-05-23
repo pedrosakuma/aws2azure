@@ -1,5 +1,6 @@
 using Aws2Azure.Amqp.Framing;
 using Aws2Azure.Modules.Sns.Amqp;
+using Aws2Azure.Modules.Sns.EventGrid;
 using Microsoft.AspNetCore.Http;
 
 namespace Aws2Azure.Modules.Sns.Errors;
@@ -25,6 +26,14 @@ internal static class SnsPublishErrorMapper
             errorCode: "InternalFailure",
             message: BuildFailureMessage(exception));
     }
+
+    public static Task WriteSendErrorAsync(HttpContext context, EventGridPublishException exception)
+        => SnsErrorResponse.WriteErrorAsync(
+            context,
+            exception.Failure.SnsStatusCode,
+            errorType: exception.Failure.SenderFault ? "Sender" : "Receiver",
+            errorCode: exception.Failure.ErrorCode,
+            message: exception.Failure.ErrorMessage);
 
     public static SnsBatchSendOutcome CreateBatchFailure(SnsAmqpException exception)
         => exception.Kind == SnsAmqpFailureKind.Auth

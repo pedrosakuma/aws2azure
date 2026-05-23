@@ -91,7 +91,7 @@ public class ProxyConfigValidatorTests
         Assert.Contains("either primaryKey OR (tenantId+clientId+clientSecret)", ex.Message);
         Assert.Contains("eventHubs.namespace: required", ex.Message);
         Assert.Contains("eventHubs: either (sasKeyName+sasKey) OR (tenantId+clientId+clientSecret)", ex.Message);
-        Assert.Contains("eventGrid.endpoint: required", ex.Message);
+        Assert.Contains("eventGrid: either endpoint OR (namespace+topicName) is required", ex.Message);
         Assert.Contains("eventGrid: either accessKey OR (tenantId+clientId+clientSecret)", ex.Message);
     }
 
@@ -308,6 +308,99 @@ public class ProxyConfigValidatorTests
     }
 
     [Fact]
+    public void Accepts_event_grid_with_namespace_and_topic_name()
+    {
+        var config = new ProxyConfig
+        {
+            Credentials =
+            {
+                new CredentialEntry
+                {
+                    AwsAccessKeyId = "AKIA1",
+                    AwsSecretAccessKey = "secret",
+                    Azure = new AzureCredentials
+                    {
+                        EventGrid = new EventGridCredentials
+                        {
+                            Namespace = "eastus-1.eventgrid.azure.net",
+                            TopicName = "orders",
+                            AccessKey = "key",
+                        },
+                    },
+                },
+            },
+        };
+
+        var ex = Record.Exception(() => ProxyConfigValidator.Validate(config));
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void Throws_when_event_grid_topic_backend_has_no_destination_or_auth()
+    {
+        var config = new ProxyConfig
+        {
+            Credentials =
+            {
+                new CredentialEntry
+                {
+                    AwsAccessKeyId = "AKIA1",
+                    AwsSecretAccessKey = "secret",
+                    Azure = new AzureCredentials
+                    {
+                        ServiceBusTopics = new ServiceBusTopicsCredentials
+                        {
+                            Namespace = "myns",
+                            SasKeyName = "Root",
+                            SasKey = "key",
+                            Topics = new Dictionary<string, SnsTopicSettings>
+                            {
+                                ["orders"] = new()
+                                {
+                                    Backend = SnsTopicBackend.EventGrid,
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        };
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+        Assert.Contains("topics.orders: EventGrid backend requires either eventGridTopicEndpoint or azure.eventGrid endpoint/(namespace+topicName)", ex.Message);
+        Assert.Contains("topics.orders: EventGrid backend requires either eventGridAccessKey or azure.eventGrid accessKey/(tenantId+clientId+clientSecret)", ex.Message);
+    }
+
+    [Fact]
+    public void Throws_when_default_backend_event_grid_has_no_global_destination()
+    {
+        var config = new ProxyConfig
+        {
+            Sns = new SnsSettings { DefaultBackend = SnsTopicBackend.EventGrid },
+            Credentials =
+            {
+                new CredentialEntry
+                {
+                    AwsAccessKeyId = "AKIA1",
+                    AwsSecretAccessKey = "secret",
+                    Azure = new AzureCredentials
+                    {
+                        ServiceBusTopics = new ServiceBusTopicsCredentials
+                        {
+                            Namespace = "myns",
+                            SasKeyName = "Root",
+                            SasKey = "key",
+                        },
+                    },
+                },
+            },
+        };
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+        Assert.Contains("serviceBusTopics: sns.defaultBackend=EventGrid: EventGrid backend requires either eventGridTopicEndpoint or azure.eventGrid endpoint/(namespace+topicName)", ex.Message);
+    }
+
+    [Fact]
     public void Throws_when_service_bus_topics_mixes_sas_and_aad()
     {
         var config = new ProxyConfig
@@ -388,6 +481,7 @@ public class ProxyConfigValidatorTests
                                 {
                                     Backend = SnsTopicBackend.EventGrid,
                                     EventGridTopicEndpoint = "https://override.westus2-1.eventgrid.azure.net/api/events",
+                                    EventGridAccessKey = "per-topic-key",
                                 },
                             },
                         },

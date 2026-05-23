@@ -12,6 +12,7 @@ sub_features:
 behavior_differences:
   - "TopicArn is proxy-synthesised as arn:aws:sns:{sigv4-region}:000000000000:{topicName}. The account id is a stable placeholder because the proxy is not backed by an AWS account namespace."
   - "Only the basic topic name is honoured on create. Topic attributes supplied in the CreateTopic request are ignored for now; Azure Service Bus topic properties stay at service defaults until a later slice implements attribute mapping."
+  - "When an SNS topic is configured with backend=EventGrid, aws2azure still creates the backing Azure Service Bus topic in this slice because subscription metadata continues to live on Service Bus. Event Grid only handles Publish / PublishBatch."
   - "FIFO topic semantics are deferred. This slice only accepts the non-FIFO name subset [A-Za-z0-9_-]{1,256}; .fifo names are rejected instead of creating a FIFO-equivalent Azure entity."
   - "Service Bus topic names are further constrained by Azure. The proxy currently validates the AWS-side subset above and does not yet surface Azure's narrower length/character restrictions separately."
 references:

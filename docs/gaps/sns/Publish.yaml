@@ -1,19 +1,28 @@
 service: sns
 operation: Publish
-azure_equivalent: Azure Service Bus Topics
+azure_equivalent: Azure Service Bus Topics / Azure Event Grid
 status: partial
 sub_features:
   - name: AMQP publish path
     status: implemented
     notes: Sends SNS Publish requests to Azure Service Bus Topics over AMQP 1.0 using SAS or Entra ID CBS authentication.
+  - name: Event Grid publish path
+    status: implemented
+    notes: Sends SNS Publish requests to Azure Event Grid custom topics over the classic Event Grid schema using a per-topic backend switch.
 behavior_differences:
   - "MessageId is a proxy-generated GUID, not an AWS-generated SNS identifier."
-  - "SequenceNumber is returned empty because Azure Service Bus assigns it broker-side and the proxy does not read it after send."
+  - "SequenceNumber is returned empty because neither Azure Service Bus nor Azure Event Grid exposes an SNS-compatible sequence number on publish."
   - "MessageStructure=json is passed through as-is; the proxy does not filter per-protocol payloads yet."
-  - "MessageAttributes encode DataType in a parallel application property named '{Name}.DataType' so AWS-style attributes can be reconstructed by downstream consumers."
-  - "Subject is exposed both as the AMQP subject property and as the 'aws.sns.Subject' application property."
-  - "MessageDeduplicationId is forwarded as the 'x-opt-deduplication-id' application property rather than a broker-native send-side field."
-  - "Azure Service Bus message size limits differ from SNS: 256 KB on Standard and up to 100 MB on Premium."
+  - "On the Service Bus Topics backend, MessageAttributes encode DataType in a parallel application property named '{Name}.DataType' so AWS-style attributes can be reconstructed by downstream consumers."
+  - "On the Event Grid backend, the proxy emits the classic Event Grid schema with eventType=aws.sns.Message; CloudEvents-formatted Event Grid topics are not supported in this slice."
+  - "On the Event Grid backend, MessageAttributes are emitted inside data.MessageAttributes as { Type, Value } objects."
+  - "On the Event Grid backend, the Event Grid envelope subject is always the SNS TopicArn; the AWS Subject parameter is copied into data.Subject."
+  - "On the Event Grid backend, HTTP-level publish failures are mapped to SNS per-message failure semantics by the proxy; Publish returns an SNS error while PublishBatch marks each affected entry failed."
+  - "Subject is exposed both as the AMQP subject property and as the 'aws.sns.Subject' application property on the Service Bus Topics backend."
+  - "MessageDeduplicationId is forwarded as the 'x-opt-deduplication-id' application property on the Service Bus Topics backend rather than a broker-native send-side field."
+  - "MessageGroupId / MessageDeduplicationId FIFO semantics are not honoured on the Event Grid backend; the proxy drops them, logs a warning, and continues."
+  - "Azure Service Bus and Event Grid message size limits differ from SNS; Event Grid classic schema also enforces 1 MB per event and 1 MB per HTTP batch."
 references:
   - https://docs.aws.amazon.com/sns/latest/api/API_Publish.html
   - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-amqp-protocol-guide
+  - https://learn.microsoft.com/azure/event-grid/post-to-custom-topic

@@ -9,12 +9,18 @@ namespace Aws2Azure.Core.Configuration;
 public sealed class ProxyConfig
 {
     public Dictionary<string, ServiceToggle> Services { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public SnsSettings Sns { get; set; } = new();
     public List<CredentialEntry> Credentials { get; set; } = new();
 }
 
 public sealed class ServiceToggle
 {
     public bool Enabled { get; set; }
+}
+
+public sealed class SnsSettings
+{
+    public SnsTopicBackend DefaultBackend { get; set; } = SnsTopicBackend.ServiceBusTopics;
 }
 
 public sealed class CredentialEntry
@@ -126,12 +132,42 @@ public sealed class SnsTopicSettings
 {
     public SnsTopicBackend Backend { get; set; } = SnsTopicBackend.ServiceBusTopics;
     public string? ServiceBusTopicName { get; set; }
+
+    /// <summary>
+    /// Optional absolute Event Grid publish endpoint override for this SNS topic
+    /// pattern (for example <c>https://orders.eastus-1.eventgrid.azure.net/api/events</c>).
+    /// </summary>
     public string? EventGridTopicEndpoint { get; set; }
+
+    /// <summary>
+    /// Optional per-topic Event Grid access key override. When omitted, the
+    /// credential-level <see cref="EventGridCredentials.AccessKey"/> or AAD
+    /// settings are used.
+    /// </summary>
+    public string? EventGridAccessKey { get; set; }
 }
 
 public sealed class EventGridCredentials
 {
+    /// <summary>
+    /// Optional absolute Event Grid publish endpoint. When empty, the proxy
+    /// derives <c>https://{TopicName}.{Namespace}/api/events</c> from
+    /// <see cref="Namespace"/> and <see cref="TopicName"/>.
+    /// </summary>
     public string Endpoint { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Event Grid hostname suffix used to derive the endpoint when
+    /// <see cref="Endpoint"/> is empty (for example <c>eastus-1.eventgrid.azure.net</c>).
+    /// </summary>
+    public string? Namespace { get; set; }
+
+    /// <summary>
+    /// Event Grid topic host prefix used alongside <see cref="Namespace"/> when
+    /// <see cref="Endpoint"/> is empty.
+    /// </summary>
+    public string? TopicName { get; set; }
+
     public string? AccessKey { get; set; }
     public string? TenantId { get; set; }
     public string? ClientId { get; set; }

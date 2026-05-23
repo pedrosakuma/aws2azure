@@ -2,6 +2,7 @@ using System.Text;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.Sns;
 using Aws2Azure.Modules.Sns.Amqp;
+using Aws2Azure.Modules.Sns.EventGrid;
 using Aws2Azure.Modules.Sns.Operations;
 using Aws2Azure.Modules.Sns.WireProtocol;
 using Microsoft.AspNetCore.Http;
@@ -25,7 +26,10 @@ public sealed class PublishBatchHandlerTests
                 ("PublishBatchRequestEntries.member.2.Id", "b"),
                 ("PublishBatchRequestEntries.member.2.Message", "two")),
             NewCredentials(),
+            eventGridCredentials: null,
+            new SnsSettings(),
             sender,
+            new FakeEventGridPublisher(),
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
@@ -35,6 +39,41 @@ public sealed class PublishBatchHandlerTests
         Assert.Contains("<Id>a</Id>", body);
         Assert.Contains("<Id>b</Id>", body);
         Assert.DoesNotContain("<Failed><member>", body);
+    }
+
+    [Fact]
+    public async Task HandleAsync_routes_to_event_grid_when_topic_backend_matches()
+    {
+        var context = NewContext();
+        var eventGridPublisher = new FakeEventGridPublisher();
+        var credentials = NewCredentials();
+        credentials.Topics = new Dictionary<string, SnsTopicSettings>
+        {
+            ["orders"] = new()
+            {
+                Backend = SnsTopicBackend.EventGrid,
+                EventGridTopicEndpoint = "https://orders.eastus-1.eventgrid.azure.net/api/events",
+                EventGridAccessKey = "per-topic-key",
+            },
+        };
+
+        await PublishBatchHandler.HandleAsync(
+            context,
+            NewParseResult(
+                ("TopicArn", "arn:aws:sns:us-west-2:000000000000:orders"),
+                ("PublishBatchRequestEntries.member.1.Id", "a"),
+                ("PublishBatchRequestEntries.member.1.Message", "one")),
+            credentials,
+            eventGridCredentials: null,
+            new SnsSettings(),
+            new FakeSnsAmqpSender(),
+            eventGridPublisher,
+            CancellationToken.None);
+
+        Assert.NotNull(eventGridPublisher.BatchCall);
+        Assert.Equal("https://orders.eastus-1.eventgrid.azure.net/api/events", eventGridPublisher.BatchCall!.Value.Destination.Endpoint);
+        Assert.Equal("per-topic-key", eventGridPublisher.BatchCall.Value.Destination.AccessKey);
+        Assert.Single(eventGridPublisher.BatchCall.Value.Messages);
     }
 
     [Fact]
@@ -56,7 +95,10 @@ public sealed class PublishBatchHandlerTests
                 ("PublishBatchRequestEntries.member.2.Id", "b"),
                 ("PublishBatchRequestEntries.member.2.Message", "two")),
             NewCredentials(),
+            eventGridCredentials: null,
+            new SnsSettings(),
             sender,
+            new FakeEventGridPublisher(),
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
@@ -82,7 +124,10 @@ public sealed class PublishBatchHandlerTests
                 ("PublishBatchRequestEntries.member.2.Id", "dup"),
                 ("PublishBatchRequestEntries.member.2.Message", "two")),
             NewCredentials(),
+            eventGridCredentials: null,
+            new SnsSettings(),
             new FakeSnsAmqpSender(),
+            new FakeEventGridPublisher(),
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
@@ -107,7 +152,10 @@ public sealed class PublishBatchHandlerTests
             context,
             NewParseResult(pairs.ToArray()),
             NewCredentials(),
+            eventGridCredentials: null,
+            new SnsSettings(),
             new FakeSnsAmqpSender(),
+            new FakeEventGridPublisher(),
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
@@ -133,7 +181,10 @@ public sealed class PublishBatchHandlerTests
                 ("PublishBatchRequestEntries.member.2.Id", "b"),
                 ("PublishBatchRequestEntries.member.2.Message", "two")),
             NewCredentials(),
+            eventGridCredentials: null,
+            new SnsSettings(),
             sender,
+            new FakeEventGridPublisher(),
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
@@ -190,6 +241,23 @@ public sealed class PublishBatchHandlerTests
         {
             BatchCall = (namespaceFqdn, topicName, messages);
             return batchHandler?.Invoke(credentials, namespaceFqdn, topicName, messages, cancellationToken)
+                ?? Task.FromResult(new SnsBatchSendResult(messages.Select(_ => new SnsBatchSendOutcome(true, null, null, false)).ToArray()));
+        }
+    }
+
+    private sealed class FakeEventGridPublisher(
+        Func<EventGridPublishDestination, IReadOnlyList<EventGridPublishMessage>, CancellationToken, Task<SnsBatchSendResult>>? batchHandler = null)
+        : IEventGridPublisher
+    {
+        public (EventGridPublishDestination Destination, IReadOnlyList<EventGridPublishMessage> Messages)? BatchCall { get; private set; }
+
+        public Task PublishAsync(EventGridPublishDestination destination, EventGridPublishMessage message, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<SnsBatchSendResult> PublishBatchAsync(EventGridPublishDestination destination, IReadOnlyList<EventGridPublishMessage> messages, CancellationToken cancellationToken)
+        {
+            BatchCall = (destination, messages);
+            return batchHandler?.Invoke(destination, messages, cancellationToken)
                 ?? Task.FromResult(new SnsBatchSendResult(messages.Select(_ => new SnsBatchSendOutcome(true, null, null, false)).ToArray()));
         }
     }

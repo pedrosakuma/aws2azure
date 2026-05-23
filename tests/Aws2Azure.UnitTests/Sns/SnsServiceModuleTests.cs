@@ -5,6 +5,7 @@ using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Modules.Sns;
 using Aws2Azure.Modules.Sns.Amqp;
+using Aws2Azure.Modules.Sns.EventGrid;
 using Aws2Azure.Modules.Sns.Management;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -78,6 +79,37 @@ public class SnsServiceModuleTests
     }
 
     [Fact]
+    public async Task Publish_routes_to_event_grid_publisher_when_configured()
+    {
+        var sender = new RecordingSender();
+        var eventGridPublisher = new RecordingEventGridPublisher();
+        var module = NewModule(
+            sender: sender,
+            eventGridPublisher: eventGridPublisher,
+            configureServiceBusTopics: credentials =>
+            {
+                credentials.Topics = new Dictionary<string, SnsTopicSettings>
+                {
+                    ["orders"] = new()
+                    {
+                        Backend = SnsTopicBackend.EventGrid,
+                        EventGridTopicEndpoint = "https://orders.eastus-1.eventgrid.azure.net/api/events",
+                        EventGridAccessKey = "per-topic-key",
+                    },
+                };
+            });
+        var ctx = NewContext("Action=Publish&Version=2010-03-31&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aorders&Message=hello");
+        ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+
+        await module.HandleAsync(ctx);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Null(sender.SingleCall);
+        Assert.NotNull(eventGridPublisher.SingleCall);
+        Assert.Equal("https://orders.eastus-1.eventgrid.azure.net/api/events", eventGridPublisher.SingleCall!.Value.Destination.Endpoint);
+    }
+
+    [Fact]
     public async Task PublishBatch_routes_to_amqp_sender()
     {
         var sender = new RecordingSender();
@@ -106,23 +138,10 @@ public class SnsServiceModuleTests
     }
 
     [Fact]
-    public async Task Missing_azure_credentials_returns_AuthorizationError()
-    {
-        var module = NewModule(includeTopicCreds: false, includeEventGridCreds: false);
-        var ctx = NewContext("Action=ListTopics&Version=2010-03-31");
-        ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
-
-        await module.HandleAsync(ctx);
-
-        Assert.Equal(StatusCodes.Status403Forbidden, ctx.Response.StatusCode);
-        Assert.Contains("AuthorizationError", ReadBody(ctx));
-    }
-
-    [Fact]
-    public async Task EventGrid_only_credentials_do_not_enable_topic_crud_or_publish()
+    public async Task Missing_service_bus_topics_credentials_returns_AuthorizationError()
     {
         var module = NewModule(includeTopicCreds: false, includeEventGridCreds: true);
-        var ctx = NewContext("Action=Publish&Version=2010-03-31&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aorders&Message=hello");
+        var ctx = NewContext("Action=ListTopics&Version=2010-03-31");
         ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
 
         await module.HandleAsync(ctx);
@@ -143,15 +162,23 @@ public class SnsServiceModuleTests
         Assert.Contains("MissingAuthenticationToken", ReadBody(ctx));
     }
 
-    private static SnsServiceModule NewModule(bool includeTopicCreds = true, bool includeEventGridCreds = false, ISnsAmqpSender? sender = null)
+    private static SnsServiceModule NewModule(
+        bool includeTopicCreds = true,
+        bool includeEventGridCreds = false,
+        ISnsAmqpSender? sender = null,
+        IEventGridPublisher? eventGridPublisher = null,
+        Action<ServiceBusTopicsCredentials>? configureServiceBusTopics = null,
+        SnsSettings? settings = null)
         => new(
-            GetResolver(includeTopicCreds, includeEventGridCreds),
+            GetResolver(includeTopicCreds, includeEventGridCreds, configureServiceBusTopics),
+            settings ?? new SnsSettings(),
             new NoopManagementClient(),
             sender ?? new RecordingSender(),
+            eventGridPublisher ?? new RecordingEventGridPublisher(),
             NullLogger<SnsServiceModule>.Instance,
             new CapabilityMatrix("sns", []));
 
-    private static ICredentialResolver GetResolver(bool includeTopicCreds, bool includeEventGridCreds)
+    private static ICredentialResolver GetResolver(bool includeTopicCreds, bool includeEventGridCreds, Action<ServiceBusTopicsCredentials>? configureServiceBusTopics)
     {
         var azure = new AzureCredentials();
         if (includeTopicCreds)
@@ -162,6 +189,7 @@ public class SnsServiceModuleTests
                 SasKeyName = "RootManageSharedAccessKey",
                 SasKey = "ZGVhZGJlZWY=",
             };
+            configureServiceBusTopics?.Invoke(azure.ServiceBusTopics);
         }
 
         if (includeEventGridCreds)
@@ -251,5 +279,19 @@ public class SnsServiceModuleTests
             BatchCall = (namespaceFqdn, topicName, messages);
             return Task.FromResult(new SnsBatchSendResult(messages.Select(_ => new SnsBatchSendOutcome(true, null, null, false)).ToArray()));
         }
+    }
+
+    private sealed class RecordingEventGridPublisher : IEventGridPublisher
+    {
+        public (EventGridPublishDestination Destination, EventGridPublishMessage Message)? SingleCall { get; private set; }
+
+        public Task PublishAsync(EventGridPublishDestination destination, EventGridPublishMessage message, CancellationToken cancellationToken)
+        {
+            SingleCall = (destination, message);
+            return Task.CompletedTask;
+        }
+
+        public Task<SnsBatchSendResult> PublishBatchAsync(EventGridPublishDestination destination, IReadOnlyList<EventGridPublishMessage> messages, CancellationToken cancellationToken)
+            => Task.FromResult(new SnsBatchSendResult(messages.Select(_ => new SnsBatchSendOutcome(true, null, null, false)).ToArray()));
     }
 }
