@@ -239,9 +239,7 @@ internal static class SnsTopicSupport
                 StatusCodes.Status502BadGateway,
                 errorType: "Receiver",
                 errorCode: "InternalFailure",
-                message: $"Azure Service Bus Topics management API returned HTTP {(int)ex.StatusCode}. Body={Truncate(ex.ResponseBody)}")
+                message: $"Azure Service Bus Topics management API returned HTTP {(int)ex.StatusCode}.")
         };
     }
-
-    private static string Truncate(string? s) => string.IsNullOrEmpty(s) ? "<empty>" : (s!.Length > 800 ? s[..800] + "..." : s);
 }

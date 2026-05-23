@@ -19,10 +19,17 @@ public sealed class DeleteTopicHandlerTests
     {
         var managementClient = NewManagementClient((request, _) =>
         {
-            Assert.Equal(HttpMethod.Delete, request.Method);
             Assert.Equal("https://myns.servicebus.windows.net/orders?api-version=2021-05", request.RequestUri!.ToString());
             Assert.True(request.Headers.TryGetValues("Authorization", out var authorization));
             Assert.Equal("TestAuth", Assert.Single(authorization));
+            if (request.Method == HttpMethod.Get)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry("orders"), Encoding.UTF8, "application/atom+xml"),
+                });
+            }
+            Assert.Equal(HttpMethod.Delete, request.Method);
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
         });
 
@@ -41,7 +48,12 @@ public sealed class DeleteTopicHandlerTests
     [Fact]
     public async Task HandleAsync_treats_not_found_as_success()
     {
-        var managementClient = NewManagementClient((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)));
+        var managementClient = NewManagementClient((request, _) =>
+        {
+            // Probe-before-delete: a 404 on the GET probe is sufficient; DELETE must not fire.
+            Assert.Equal(HttpMethod.Get, request.Method);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        });
         var context = NewContext();
 
         await DeleteTopicHandler.HandleAsync(

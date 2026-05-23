@@ -161,9 +161,18 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
         ArgumentException.ThrowIfNullOrWhiteSpace(topicName);
 
-        var requestUri = BuildTopicUri(credentials, namespaceFqdn, topicName);
         ServiceBusTopicsManagementClientLog.DeletingTopic(_logger, namespaceFqdn, topicName);
 
+        // Probe-before-delete: the SB emulator returns HTTP 400 (not 404) for DELETE on a missing
+        // entity with no distinguishing body, so we cannot rely on the DELETE status code alone for
+        // idempotency. A preceding GET disambiguates cleanly against both real SB and the emulator.
+        var existing = await GetTopicAsync(credentials, namespaceFqdn, topicName, cancellationToken).ConfigureAwait(false);
+        if (existing is null)
+        {
+            return;
+        }
+
+        var requestUri = BuildTopicUri(credentials, namespaceFqdn, topicName);
         using var request = new HttpRequestMessage(HttpMethod.Delete, requestUri);
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
 
@@ -175,15 +184,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         }
 
         var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        // SB emulator quirk: returns HTTP 400 with a "not found"-flavored body instead of 404 when
-        // deleting a non-existent topic. Treat as success for idempotency parity with real SB.
-        if (response.StatusCode == HttpStatusCode.BadRequest && IsNotFoundBody(errorBody))
-        {
-            return;
-        }
-
         ServiceBusTopicsManagementClientLog.TopicRequestFailed(_logger, nameof(DeleteTopicAsync), namespaceFqdn, topicName, (int)response.StatusCode);
-        _logger.LogWarning("[diag][DeleteTopicAsync] SB returned {StatusCode}. Body: {Body}", (int)response.StatusCode, errorBody);
         throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
     }
 
@@ -284,7 +285,6 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         using var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
         var requestBody = BuildSubscriptionDescriptionEntry(userMetadata);
-        _logger.LogWarning("[diag][CreateSubscriptionAsync] PUT body for {Topic}/{Sub}: {Body}", topicName, subscriptionName, requestBody);
         request.Content = new StringContent(requestBody, Encoding.UTF8, "application/atom+xml");
         request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
@@ -292,7 +292,6 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
             .ConfigureAwait(false);
         var respBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        _logger.LogWarning("[diag][CreateSubscriptionAsync] PUT response {Status} for {Topic}/{Sub}: {Body}", (int)response.StatusCode, topicName, subscriptionName, respBody);
         if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created)
         {
             return;
@@ -314,9 +313,16 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         ArgumentException.ThrowIfNullOrWhiteSpace(topicName);
         ArgumentException.ThrowIfNullOrWhiteSpace(subscriptionName);
 
-        var requestUri = BuildSubscriptionUri(credentials, namespaceFqdn, topicName, subscriptionName);
         ServiceBusTopicsManagementClientLog.DeletingSubscription(_logger, namespaceFqdn, topicName, subscriptionName);
 
+        // Probe-before-delete: same emulator quirk as DeleteTopicAsync (400 on missing entity).
+        var existing = await GetSubscriptionAsync(credentials, namespaceFqdn, topicName, subscriptionName, cancellationToken).ConfigureAwait(false);
+        if (existing is null)
+        {
+            return;
+        }
+
+        var requestUri = BuildSubscriptionUri(credentials, namespaceFqdn, topicName, subscriptionName);
         using var request = new HttpRequestMessage(HttpMethod.Delete, requestUri);
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
 
@@ -328,13 +334,6 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         }
 
         var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        // SB emulator quirk: returns HTTP 400 with a "not found"-flavored body instead of 404 when
-        // deleting a non-existent subscription. Treat as success for idempotency parity with real SB.
-        if (response.StatusCode == HttpStatusCode.BadRequest && IsNotFoundBody(errorBody))
-        {
-            return;
-        }
-
         ServiceBusTopicsManagementClientLog.TopicRequestFailed(_logger, nameof(DeleteSubscriptionAsync), namespaceFqdn, topicName + "/subscriptions/" + subscriptionName, (int)response.StatusCode);
         throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
     }
@@ -408,7 +407,6 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         }
 
         var content = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        _logger.LogWarning("[diag][GetSubscriptionAsync] raw SB response for {Topic}/{Sub}: {Content}", topicName, subscriptionName, content);
         var entry = await ParseFirstEntryAsync(content, cancellationToken).ConfigureAwait(false);
         if (entry is null)
         {
@@ -455,21 +453,6 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         ServiceBusTopicsManagementClientLog.TopicRequestFailed(_logger, nameof(UpdateSubscriptionAsync), namespaceFqdn, topicName + "/subscriptions/" + description.SubscriptionName, (int)response.StatusCode);
         throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
-    }
-
-    internal static bool IsNotFoundBody(string? body)
-    {
-        if (string.IsNullOrEmpty(body))
-        {
-            return false;
-        }
-
-        // SB emulator and real Service Bus phrase entity-not-found errors a few different ways
-        // depending on operation; match the common substrings case-insensitively.
-        return body.Contains("MessagingEntityNotFound", StringComparison.OrdinalIgnoreCase)
-            || body.Contains("does not exist", StringComparison.OrdinalIgnoreCase)
-            || body.Contains("could not be found", StringComparison.OrdinalIgnoreCase)
-            || body.Contains("not be found", StringComparison.OrdinalIgnoreCase);
     }
 
     internal static string BuildTopicDescriptionEntry(bool? requiresDuplicateDetection = null)

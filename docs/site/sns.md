@@ -55,7 +55,7 @@
 
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
-| Idempotent topic delete over Service Bus Topics REST | ✅ implemented | Parses TopicArn, extracts the topic name, and issues DELETE https://{namespace}.servicebus.windows.net/{topic}?api-version=2021-05. Azure 404 is treated as success to preserve SNS idempotency. |  |  |
+| Idempotent topic delete over Service Bus Topics REST | ✅ implemented | Parses TopicArn, extracts the topic name, and issues DELETE https://{namespace}.servicebus.windows.net/{topic}?api-version=2021-05. The delete is preceded by a GET probe so that a missing-entity 404 short-circuits cleanly without depending on the DELETE status code (the SB emulator returns HTTP 400 with no distinguishing body for DELETE on a missing entity; real Azure returns 404 for both). |  |  |
 
 ### Behaviour differences
 
@@ -314,6 +314,7 @@
 - Only sqs, https, and http protocols are accepted. email, email-json, sms, lambda, application, and firehose are rejected with InvalidParameter.
 - Subscriptions always live on Azure Service Bus in this slice, even for SNS topics whose Publish / PublishBatch backend is Event Grid.
 - Event Grid-backed SNS topics do not fan out to those Service Bus subscriptions yet. Until a later slice adds a forwarder, subscribers created on Event Grid-backed topics will not receive published messages.
+- The Microsoft Service Bus emulator does not persist or echo subscription UserMetadata, where this proxy stores Protocol/Endpoint/FilterPolicy/RawMessageDelivery. Emulator-backed integration tests therefore skip the subscription lifecycle assertions; correctness is validated against real Azure Service Bus.
 
 ### References
 

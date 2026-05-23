@@ -18,6 +18,7 @@ behavior_differences:
   - "Only sqs, https, and http protocols are accepted. email, email-json, sms, lambda, application, and firehose are rejected with InvalidParameter."
   - "Subscriptions always live on Azure Service Bus in this slice, even for SNS topics whose Publish / PublishBatch backend is Event Grid."
   - "Event Grid-backed SNS topics do not fan out to those Service Bus subscriptions yet. Until a later slice adds a forwarder, subscribers created on Event Grid-backed topics will not receive published messages."
+  - "The Microsoft Service Bus emulator does not persist or echo subscription UserMetadata, where this proxy stores Protocol/Endpoint/FilterPolicy/RawMessageDelivery. Emulator-backed integration tests therefore skip the subscription lifecycle assertions; correctness is validated against real Azure Service Bus."
 references:
   - https://docs.aws.amazon.com/sns/latest/api/API_Subscribe.html
   - https://docs.aws.amazon.com/sns/latest/dg/sns-send-message-to-sqs-cross-account.html
