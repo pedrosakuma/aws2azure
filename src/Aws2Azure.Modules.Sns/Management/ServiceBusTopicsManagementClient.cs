@@ -141,7 +141,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
 
         using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
             .ConfigureAwait(false);
-        if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created)
+        if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created or HttpStatusCode.Conflict)
         {
             return;
         }
@@ -161,9 +161,18 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
         ArgumentException.ThrowIfNullOrWhiteSpace(topicName);
 
-        var requestUri = BuildTopicUri(credentials, namespaceFqdn, topicName);
         ServiceBusTopicsManagementClientLog.DeletingTopic(_logger, namespaceFqdn, topicName);
 
+        // Probe-before-delete: the SB emulator returns HTTP 400 (not 404) for DELETE on a missing
+        // entity with no distinguishing body, so we cannot rely on the DELETE status code alone for
+        // idempotency. A preceding GET disambiguates cleanly against both real SB and the emulator.
+        var existing = await GetTopicAsync(credentials, namespaceFqdn, topicName, cancellationToken).ConfigureAwait(false);
+        if (existing is null)
+        {
+            return;
+        }
+
+        var requestUri = BuildTopicUri(credentials, namespaceFqdn, topicName);
         using var request = new HttpRequestMessage(HttpMethod.Delete, requestUri);
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
 
@@ -275,20 +284,21 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
 
         using var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
-        request.Content = new StringContent(BuildSubscriptionDescriptionEntry(userMetadata), Encoding.UTF8, "application/atom+xml");
+        var requestBody = BuildSubscriptionDescriptionEntry(userMetadata);
+        request.Content = new StringContent(requestBody, Encoding.UTF8, "application/atom+xml");
         request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
 
         using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
             .ConfigureAwait(false);
+        var respBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created)
         {
             return;
         }
 
-        var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         ServiceBusTopicsManagementClientLog.TopicRequestFailed(_logger, nameof(CreateSubscriptionAsync), namespaceFqdn, topicName + "/subscriptions/" + subscriptionName, (int)response.StatusCode);
-        throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
+        throw new ServiceBusTopicsManagementException(response.StatusCode, respBody);
     }
 
     public async ValueTask DeleteSubscriptionAsync(
@@ -303,9 +313,16 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         ArgumentException.ThrowIfNullOrWhiteSpace(topicName);
         ArgumentException.ThrowIfNullOrWhiteSpace(subscriptionName);
 
-        var requestUri = BuildSubscriptionUri(credentials, namespaceFqdn, topicName, subscriptionName);
         ServiceBusTopicsManagementClientLog.DeletingSubscription(_logger, namespaceFqdn, topicName, subscriptionName);
 
+        // Probe-before-delete: same emulator quirk as DeleteTopicAsync (400 on missing entity).
+        var existing = await GetSubscriptionAsync(credentials, namespaceFqdn, topicName, subscriptionName, cancellationToken).ConfigureAwait(false);
+        if (existing is null)
+        {
+            return;
+        }
+
+        var requestUri = BuildSubscriptionUri(credentials, namespaceFqdn, topicName, subscriptionName);
         using var request = new HttpRequestMessage(HttpMethod.Delete, requestUri);
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
 
@@ -485,8 +502,11 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         writer.WriteAttributeString("xmlns", "i", null, XmlSchemaInstanceNamespace);
         writer.WriteElementString("LockDuration", ServiceBusNamespace, string.IsNullOrWhiteSpace(description.LockDuration) ? DefaultLockDurationIso8601 : description.LockDuration);
         writer.WriteElementString("MaxDeliveryCount", ServiceBusNamespace, description.MaxDeliveryCount <= 0 ? DefaultMaxDeliveryCount.ToString(CultureInfo.InvariantCulture) : description.MaxDeliveryCount.ToString(CultureInfo.InvariantCulture));
-        writer.WriteElementString("AutoDeleteOnIdle", ServiceBusNamespace, string.IsNullOrWhiteSpace(description.AutoDeleteOnIdle) ? LongIdleIso8601 : description.AutoDeleteOnIdle);
+        // UserMetadata must appear BEFORE AutoDeleteOnIdle in the canonical SubscriptionDescription
+        // schema order. Real Service Bus rejects out-of-order PUTs with HTTP 400; the SB emulator
+        // accepts them but silently drops fields that appear out of position. Keep this order stable.
         writer.WriteElementString("UserMetadata", ServiceBusNamespace, description.UserMetadata ?? string.Empty);
+        writer.WriteElementString("AutoDeleteOnIdle", ServiceBusNamespace, string.IsNullOrWhiteSpace(description.AutoDeleteOnIdle) ? LongIdleIso8601 : description.AutoDeleteOnIdle);
         writer.WriteEndElement();
         writer.WriteEndElement();
         writer.WriteEndElement();
@@ -690,38 +710,45 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
 
     private static Uri BuildTopicUri(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName)
     {
-        var scheme = ResolveManagementScheme(credentials);
-        return new Uri($"{scheme}://{namespaceFqdn.TrimEnd('/')}/{Uri.EscapeDataString(topicName)}?api-version={ApiVersion}", UriKind.Absolute);
+        var root = ResolveManagementRoot(credentials, namespaceFqdn);
+        return new Uri($"{root}/{Uri.EscapeDataString(topicName)}?api-version={ApiVersion}", UriKind.Absolute);
     }
 
     private static Uri BuildListTopicsUri(ServiceBusTopicsCredentials credentials, string namespaceFqdn, int skip, int top)
     {
-        var scheme = ResolveManagementScheme(credentials);
-        return new Uri($"{scheme}://{namespaceFqdn.TrimEnd('/')}/$Resources/topics?api-version={ApiVersion}&$skip={skip}&$top={top}", UriKind.Absolute);
+        var root = ResolveManagementRoot(credentials, namespaceFqdn);
+        return new Uri($"{root}/$Resources/topics?api-version={ApiVersion}&$skip={skip}&$top={top}", UriKind.Absolute);
     }
 
     private static Uri BuildSubscriptionUri(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, string subscriptionName)
     {
-        var scheme = ResolveManagementScheme(credentials);
-        return new Uri($"{scheme}://{namespaceFqdn.TrimEnd('/')}/{Uri.EscapeDataString(topicName)}/subscriptions/{Uri.EscapeDataString(subscriptionName)}?api-version={ApiVersion}", UriKind.Absolute);
+        var root = ResolveManagementRoot(credentials, namespaceFqdn);
+        return new Uri($"{root}/{Uri.EscapeDataString(topicName)}/subscriptions/{Uri.EscapeDataString(subscriptionName)}?api-version={ApiVersion}", UriKind.Absolute);
     }
 
     private static Uri BuildListSubscriptionsUri(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, int skip, int top)
     {
-        var scheme = ResolveManagementScheme(credentials);
-        return new Uri($"{scheme}://{namespaceFqdn.TrimEnd('/')}/{Uri.EscapeDataString(topicName)}/subscriptions?api-version={ApiVersion}&$skip={skip}&$top={top}", UriKind.Absolute);
+        var root = ResolveManagementRoot(credentials, namespaceFqdn);
+        return new Uri($"{root}/{Uri.EscapeDataString(topicName)}/subscriptions?api-version={ApiVersion}&$skip={skip}&$top={top}", UriKind.Absolute);
     }
 
-    private static string ResolveManagementScheme(ServiceBusTopicsCredentials credentials)
+    private static string ResolveManagementRoot(ServiceBusTopicsCredentials credentials, string namespaceFqdn)
     {
-        if (!string.IsNullOrWhiteSpace(credentials.Endpoint)
-            && Uri.TryCreate(credentials.Endpoint, UriKind.Absolute, out var endpointUri)
-            && string.Equals(endpointUri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(credentials.ManagementEndpoint)
+            && Uri.TryCreate(credentials.ManagementEndpoint, UriKind.Absolute, out var managementUri))
         {
-            return Uri.UriSchemeHttp;
+            return managementUri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
         }
 
-        return Uri.UriSchemeHttps;
+        if (!string.IsNullOrWhiteSpace(credentials.Endpoint)
+            && Uri.TryCreate(credentials.Endpoint, UriKind.Absolute, out var endpointUri)
+            && (string.Equals(endpointUri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(endpointUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
+        {
+            return endpointUri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
+        }
+
+        return $"https://{namespaceFqdn.TrimEnd('/')}";
     }
 
     private sealed class Utf8StringWriter(StringBuilder builder) : StringWriter(builder)

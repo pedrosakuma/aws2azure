@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http;
+using System.Text;
 using Aws2Azure.Modules.Sns;
 using Aws2Azure.Modules.Sns.Operations;
 using Aws2Azure.Modules.Sns.WireProtocol;
@@ -14,8 +15,15 @@ public sealed class UnsubscribeHandlerTests
     {
         var managementClient = SnsManagementClientTestSupport.NewManagementClient((request, _) =>
         {
-            Assert.Equal(HttpMethod.Delete, request.Method);
             Assert.Equal("https://myns.servicebus.windows.net/orders/subscriptions/sub123?api-version=2021-05", request.RequestUri!.ToString());
+            if (request.Method == HttpMethod.Get)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(SnsManagementClientTestSupport.BuildSubscriptionEntry("sub123", userMetadata: null), Encoding.UTF8, "application/atom+xml"),
+                });
+            }
+            Assert.Equal(HttpMethod.Delete, request.Method);
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
         });
 
@@ -39,7 +47,12 @@ public sealed class UnsubscribeHandlerTests
             context,
             NewParseResult("arn:aws:sns:us-west-2:000000000000:orders:sub123"),
             SnsManagementClientTestSupport.NewCredentials(),
-            SnsManagementClientTestSupport.NewManagementClient((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound))),
+            SnsManagementClientTestSupport.NewManagementClient((request, _) =>
+            {
+                // Probe-before-delete: a 404 on the GET probe is sufficient; DELETE must not fire.
+                Assert.Equal(HttpMethod.Get, request.Method);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            }),
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);

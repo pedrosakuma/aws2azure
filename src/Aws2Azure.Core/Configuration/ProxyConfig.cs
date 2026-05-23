@@ -112,7 +112,20 @@ public sealed class SqsQueueSettings
 public sealed class ServiceBusTopicsCredentials
 {
     public string Namespace { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Optional AMQP endpoint override. Use <c>http://host:5672/</c> for the
+    /// Service Bus emulator's plain-TCP listener or a sovereign-cloud custom host.
+    /// </summary>
     public string? Endpoint { get; set; }
+
+    /// <summary>
+    /// Optional management REST endpoint override. When empty, the proxy reuses
+    /// <see cref="Endpoint"/> (if it is HTTP/S) or derives the canonical cloud
+    /// namespace host from <see cref="Namespace"/>.
+    /// </summary>
+    public string? ManagementEndpoint { get; set; }
+
     public string SasKeyName { get; set; } = string.Empty;
     public string SasKey { get; set; } = string.Empty;
     public string? TenantId { get; set; }
