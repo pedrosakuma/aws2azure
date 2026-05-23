@@ -62,7 +62,27 @@ internal static class ListSubscriptionsByTopicHandler
         for (var i = 0; i < page.Subscriptions.Count; i++)
         {
             var item = page.Subscriptions[i];
-            subscriptions[i] = SnsSubscriptionSupport.ToListedSubscription(context, topicName, item.SubscriptionName, item.UserMetadata);
+            var userMetadata = item.UserMetadata;
+            if (string.IsNullOrWhiteSpace(userMetadata))
+            {
+                try
+                {
+                    userMetadata = (await managementClient.GetSubscriptionAsync(
+                            credentials,
+                            SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                            topicName,
+                            item.SubscriptionName,
+                            cancellationToken)
+                        .ConfigureAwait(false))?.UserMetadata;
+                }
+                catch (ServiceBusTopicsManagementException ex)
+                {
+                    await SnsTopicSupport.WriteManagementErrorAsync(context, ex).ConfigureAwait(false);
+                    return;
+                }
+            }
+
+            subscriptions[i] = SnsSubscriptionSupport.ToListedSubscription(context, topicName, item.SubscriptionName, userMetadata);
         }
 
         var responseNextToken = page.Subscriptions.Count == SnsSubscriptionSupport.ListSubscriptionsPageSize

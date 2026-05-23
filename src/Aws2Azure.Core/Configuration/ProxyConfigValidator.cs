@@ -227,6 +227,12 @@ public static class ProxyConfigValidator
                 Uri.UriSchemeHttp, Uri.UriSchemeHttps, "amqp", "amqps");
         }
 
+        if (!string.IsNullOrWhiteSpace(credentials.ManagementEndpoint))
+        {
+            ValidateAbsoluteUri(credentials.ManagementEndpoint, $"{prefix}.managementEndpoint", errors,
+                Uri.UriSchemeHttp, Uri.UriSchemeHttps);
+        }
+
         ValidateDualAuth(
             prefix,
             errors,

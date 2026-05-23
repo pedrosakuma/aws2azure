@@ -29,7 +29,9 @@ services:
       - "1433:1433"
 
   servicebus-emulator:
-    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+    build:
+      context: ./emulators/servicebus
+    image: aws2azure/servicebus-emulator:local
     container_name: aws2azure-sb
     depends_on:
       - mssql
@@ -37,10 +39,9 @@ services:
       ACCEPT_EULA: "Y"
       SQL_SERVER: mssql
       MSSQL_SA_PASSWORD: "Aws2AzureLocalDev!"
-    volumes:
-      - ./servicebus-config.json:/ServiceBus_Emulator/ConfigFiles/Config.json:ro
     ports:
       - "5672:5672"
+      - "5300:5300"
 
   cosmos-emulator:
     image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:latest

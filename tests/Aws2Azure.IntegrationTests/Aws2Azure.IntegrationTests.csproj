@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="AWSSDK.Kinesis" Version="4.0.8.18" />
+    <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.20.1" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.10.0" />
     <PackageReference Include="xunit" Version="2.9.0" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
@@ -23,10 +24,10 @@
     <Using Include="Aws2Azure.IntegrationTests.Fixtures" />
   </ItemGroup>
   <ItemGroup>
-    <None Update="Fixtures\ServiceBusEmulatorConfig.json">
+    <None Include="..\..\deploy\emulators\servicebus\Config.json" Link="deploy\emulators\servicebus\Config.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="Fixtures\ServiceBusEmulator.Dockerfile">
+    <None Include="..\..\deploy\emulators\servicebus\Dockerfile" Link="deploy\emulators\servicebus\Dockerfile">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="Kinesis\Emulator\Config.json">

@@ -141,7 +141,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
 
         using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
             .ConfigureAwait(false);
-        if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created)
+        if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created or HttpStatusCode.Conflict)
         {
             return;
         }
@@ -690,38 +690,45 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
 
     private static Uri BuildTopicUri(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName)
     {
-        var scheme = ResolveManagementScheme(credentials);
-        return new Uri($"{scheme}://{namespaceFqdn.TrimEnd('/')}/{Uri.EscapeDataString(topicName)}?api-version={ApiVersion}", UriKind.Absolute);
+        var root = ResolveManagementRoot(credentials, namespaceFqdn);
+        return new Uri($"{root}/{Uri.EscapeDataString(topicName)}?api-version={ApiVersion}", UriKind.Absolute);
     }
 
     private static Uri BuildListTopicsUri(ServiceBusTopicsCredentials credentials, string namespaceFqdn, int skip, int top)
     {
-        var scheme = ResolveManagementScheme(credentials);
-        return new Uri($"{scheme}://{namespaceFqdn.TrimEnd('/')}/$Resources/topics?api-version={ApiVersion}&$skip={skip}&$top={top}", UriKind.Absolute);
+        var root = ResolveManagementRoot(credentials, namespaceFqdn);
+        return new Uri($"{root}/$Resources/topics?api-version={ApiVersion}&$skip={skip}&$top={top}", UriKind.Absolute);
     }
 
     private static Uri BuildSubscriptionUri(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, string subscriptionName)
     {
-        var scheme = ResolveManagementScheme(credentials);
-        return new Uri($"{scheme}://{namespaceFqdn.TrimEnd('/')}/{Uri.EscapeDataString(topicName)}/subscriptions/{Uri.EscapeDataString(subscriptionName)}?api-version={ApiVersion}", UriKind.Absolute);
+        var root = ResolveManagementRoot(credentials, namespaceFqdn);
+        return new Uri($"{root}/{Uri.EscapeDataString(topicName)}/subscriptions/{Uri.EscapeDataString(subscriptionName)}?api-version={ApiVersion}", UriKind.Absolute);
     }
 
     private static Uri BuildListSubscriptionsUri(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, int skip, int top)
     {
-        var scheme = ResolveManagementScheme(credentials);
-        return new Uri($"{scheme}://{namespaceFqdn.TrimEnd('/')}/{Uri.EscapeDataString(topicName)}/subscriptions?api-version={ApiVersion}&$skip={skip}&$top={top}", UriKind.Absolute);
+        var root = ResolveManagementRoot(credentials, namespaceFqdn);
+        return new Uri($"{root}/{Uri.EscapeDataString(topicName)}/subscriptions?api-version={ApiVersion}&$skip={skip}&$top={top}", UriKind.Absolute);
     }
 
-    private static string ResolveManagementScheme(ServiceBusTopicsCredentials credentials)
+    private static string ResolveManagementRoot(ServiceBusTopicsCredentials credentials, string namespaceFqdn)
     {
-        if (!string.IsNullOrWhiteSpace(credentials.Endpoint)
-            && Uri.TryCreate(credentials.Endpoint, UriKind.Absolute, out var endpointUri)
-            && string.Equals(endpointUri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(credentials.ManagementEndpoint)
+            && Uri.TryCreate(credentials.ManagementEndpoint, UriKind.Absolute, out var managementUri))
         {
-            return Uri.UriSchemeHttp;
+            return managementUri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
         }
 
-        return Uri.UriSchemeHttps;
+        if (!string.IsNullOrWhiteSpace(credentials.Endpoint)
+            && Uri.TryCreate(credentials.Endpoint, UriKind.Absolute, out var endpointUri)
+            && (string.Equals(endpointUri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(endpointUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
+        {
+            return endpointUri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
+        }
+
+        return $"https://{namespaceFqdn.TrimEnd('/')}";
     }
 
     private sealed class Utf8StringWriter(StringBuilder builder) : StringWriter(builder)

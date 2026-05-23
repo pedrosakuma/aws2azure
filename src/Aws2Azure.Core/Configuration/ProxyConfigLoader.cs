@@ -169,6 +169,17 @@ public static class ProxyConfigLoader
                     }
                 }
                 return;
+            case "SERVICEBUSTOPICS":
+                azure.ServiceBusTopics ??= new ServiceBusTopicsCredentials();
+                if (fieldSegment == "NAMESPACE") azure.ServiceBusTopics.Namespace = value ?? string.Empty;
+                else if (fieldSegment == "ENDPOINT") azure.ServiceBusTopics.Endpoint = value;
+                else if (fieldSegment == "MANAGEMENTENDPOINT") azure.ServiceBusTopics.ManagementEndpoint = value;
+                else if (fieldSegment == "SASKEYNAME") azure.ServiceBusTopics.SasKeyName = value ?? string.Empty;
+                else if (fieldSegment == "SASKEY") azure.ServiceBusTopics.SasKey = value ?? string.Empty;
+                else if (fieldSegment == "TENANTID") azure.ServiceBusTopics.TenantId = value;
+                else if (fieldSegment == "CLIENTID") azure.ServiceBusTopics.ClientId = value;
+                else if (fieldSegment == "CLIENTSECRET") azure.ServiceBusTopics.ClientSecret = value;
+                return;
             case "COSMOS":
                 azure.Cosmos ??= new CosmosCredentials();
                 if (fieldSegment == "ENDPOINT") azure.Cosmos.Endpoint = value ?? string.Empty;
