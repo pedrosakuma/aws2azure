@@ -394,6 +394,114 @@ public sealed class AmqpReviewFixTests
         await conn.CloseAsync().WaitAsync(TimeSpan.FromSeconds(2));
     }
 
+    // ---------- Finding 1b: tight credit must gate concurrent senders ------
+
+    [Fact]
+    public async Task Concurrent_senders_do_not_overshoot_a_tight_credit_window()
+    {
+        // Regression for #51: AcquireCreditAsync used to release N permits
+        // proportional to peer credit and let each sender decrement a
+        // semaphore. With the TCS-pulse refactor, the credit gate became
+        // an atomic check-and-increment of _deliveryCount under
+        // _deliveryLock. This test pins the invariant: when peer grants
+        // exactly 5 credit and the client fires 20 concurrent sends, the
+        // wire must show *exactly* 5 transfers before the next flow.
+        var (clientTransport, serverTransport) = PipePairTransport.CreatePair();
+        await using var server = serverTransport;
+        var conn = new AmqpConnection(clientTransport, DefaultConnSettings());
+
+        var firstBatchSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var transferCount = 0;
+
+        var serverTask = Task.Run(async () =>
+        {
+            try
+            {
+                await ConsumeOpenAsync(server);
+                await ConsumeBeginAndReply(server, peerChannel: 4);
+                using (var _ = await AmqpFrameIO.ReadFrameAsync(server)) { }
+                await SendPerfAsync(server, channel: 4, new AmqpAttach
+                {
+                    Name = "snd", Handle = 7, Role = AmqpRole.Receiver, InitialDeliveryCount = 0,
+                }, AmqpAttach.Write);
+                await SendPerfAsync(server, channel: 4, new AmqpFlow
+                {
+                    NextIncomingId = 0, IncomingWindow = uint.MaxValue,
+                    NextOutgoingId = 0, OutgoingWindow = uint.MaxValue,
+                    Handle = 7, DeliveryCount = 0, LinkCredit = 5,
+                }, AmqpFlow.Write);
+
+                // Read transfers; after seeing 5 we deliberately do not
+                // issue another flow for ~150ms so any overshoot would
+                // surface as transferCount > 5.
+                while (true)
+                {
+                    using var f = await AmqpFrameIO.ReadFrameAsync(server);
+                    var kind = PerformativeCodec.PeekKind(f.Body.Span, out _);
+                    if (kind == PerformativeKind.Transfer)
+                    {
+                        var n = Interlocked.Increment(ref transferCount);
+                        if (n == 5) firstBatchSeen.TrySetResult();
+                        if (n == 20) { allDone.TrySetResult(); break; }
+                    }
+                    else if (kind == PerformativeKind.End || kind == PerformativeKind.Close)
+                    {
+                        break;
+                    }
+                }
+                await DrainUntilCloseAsync(server);
+            }
+            catch (Exception ex)
+            {
+                firstBatchSeen.TrySetException(ex);
+                allDone.TrySetException(ex);
+                throw;
+            }
+        });
+
+        await conn.OpenAsync();
+        var session = await conn.BeginSessionAsync();
+        var link = await session.AttachLinkAsync(new AmqpLinkSettings
+        {
+            Name = "snd", Role = AmqpRole.Sender, TargetAddress = "q",
+            SenderSettleMode = AmqpSenderSettleMode.Settled,
+        });
+
+        // Fire 20 concurrent sends.
+        var pending = new Task[20];
+        for (int i = 0; i < 20; i++)
+        {
+            var body = new byte[] { (byte)i };
+            pending[i] = link.SendMessageAsync(new AmqpMessage
+            {
+                Properties = new AmqpProperties { MessageId = "m" + i },
+                Body = body,
+            }, settled: true);
+        }
+
+        // Server should observe exactly 5 transfers, then we pause.
+        await firstBatchSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // Hold off the next flow long enough to surface any overshoot.
+        await Task.Delay(150);
+        Assert.Equal(5, Volatile.Read(ref transferCount));
+
+        // Grant the remaining 15 credits and verify all 20 complete.
+        await SendPerfAsync(serverTransport, channel: 4, new AmqpFlow
+        {
+            NextIncomingId = 0, IncomingWindow = uint.MaxValue,
+            NextOutgoingId = 0, OutgoingWindow = uint.MaxValue,
+            Handle = 7, DeliveryCount = 5, LinkCredit = 15,
+        }, AmqpFlow.Write);
+
+        await allDone.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(20, Volatile.Read(ref transferCount));
+
+        await conn.CloseAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     // ---------- Finding 2: outbound transfers must fragment across frames ----
 
     [Fact]

@@ -56,12 +56,22 @@ internal sealed class AmqpLink
 
     // Sender-side credit tracking. The receiver grants us a window via
     // flow: sender_credit = receiver.delivery_count + receiver.link_credit
-    // - sender.delivery_count (§2.6.7). We wait on _creditAvailable until
-    // credit > 0 before transferring.
-    private readonly SemaphoreSlim _creditAvailable = new(0, int.MaxValue);
+    // - sender.delivery_count (§2.6.7). Credit is computed under
+    // _deliveryLock from the peer-observed counters as a `long` (which
+    // can absorb the full uint.MaxValue ceiling §2.7.4 allows for
+    // link-credit). AcquireCreditAsync is the credit gate: it checks
+    // available > 0 and increments _deliveryCount in the SAME critical
+    // section, so concurrent senders cannot overshoot. When credit is
+    // exhausted, waiters park on _creditPulse — a fresh TCS swapped in
+    // on every successful peer flow. This intentionally decouples
+    // accounting from a SemaphoreSlim permit count: the prior design
+    // capped releases at int.MaxValue and would deadlock once a sender
+    // drained that many permits without an intervening flow (peer would
+    // not re-flow because logical credit remained, refs #51).
     private uint _peerReceiverDeliveryCount;
     private uint _peerReceiverLinkCredit;
     private bool _peerFlowSeen;
+    private TaskCompletionSource _creditPulse = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     // Multi-frame receive reassembly buffer (§2.6.14). Keyed by
     // delivery-id; first transfer carries the id, continuation transfers
@@ -114,11 +124,12 @@ internal sealed class AmqpLink
         // peer has never sent a flow we treat that as no credit and
         // block here until one arrives — matches strict broker behaviour
         // (Service Bus, ActiveMQ Artemis) that detach a link whose
-        // sender pushes transfers without granted credit.
+        // sender pushes transfers without granted credit. AcquireCredit
+        // atomically increments _deliveryCount under _deliveryLock so
+        // concurrent senders can't overshoot a tight credit window.
         await AcquireCreditAsync(cancellationToken).ConfigureAwait(false);
 
         var deliveryId = _session.AllocateDeliveryId();
-        Interlocked.Increment(ref _deliveryCount);
 
         TaskCompletionSource<AmqpDispositionOutcome>? tcs = null;
         if (!settled)
@@ -745,21 +756,26 @@ internal sealed class AmqpLink
         //                       - sender.delivery_count.
         var receiverDeliveryCount = flow.DeliveryCount ?? 0u;
         var receiverLinkCredit = flow.LinkCredit ?? 0u;
-        int releaseCount;
+        TaskCompletionSource? toPulse = null;
         lock (_deliveryLock)
         {
+            var hadFlow = _peerFlowSeen;
             _peerReceiverDeliveryCount = receiverDeliveryCount;
             _peerReceiverLinkCredit = receiverLinkCredit;
             _peerFlowSeen = true;
             var available = (long)receiverDeliveryCount + receiverLinkCredit - _deliveryCount;
-            // §2.6.7: link-credit is uint, so `available` may exceed int.MaxValue
-            // (e.g. peer grants uint.MaxValue). Clamp to semaphore capacity so the
-            // sender can drain permits up to int.MaxValue without being starved.
-            releaseCount = available <= 0 ? 0 : (int)Math.Min(available, int.MaxValue);
-            // Drain any stale permits so the semaphore reflects the new window.
-            while (_creditAvailable.CurrentCount > 0 && _creditAvailable.Wait(0)) { }
+            // Wake parked senders only when (a) this is the first flow
+            // (callers waiting on the initial credit grant) or
+            // (b) the credit window grew. Spurious wakes are harmless —
+            // AcquireCreditAsync re-checks `available > 0` under the lock
+            // before returning — but unnecessary.
+            if (!hadFlow || available > 0)
+            {
+                toPulse = _creditPulse;
+                _creditPulse = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
         }
-        if (releaseCount > 0) _creditAvailable.Release(releaseCount);
+        toPulse?.TrySetResult();
     }
 
     internal void OnRemoteHandleLearned(uint remoteHandle) => RemoteHandle = remoteHandle;
@@ -943,6 +959,7 @@ internal sealed class AmqpLink
         {
             if (Volatile.Read(ref _state) != StateAttached)
                 throw new InvalidOperationException("Link is no longer attached.");
+            Task pulse;
             lock (_deliveryLock)
             {
                 if (_peerFlowSeen)
@@ -950,18 +967,17 @@ internal sealed class AmqpLink
                     var available = (long)_peerReceiverDeliveryCount + _peerReceiverLinkCredit - _deliveryCount;
                     if (available > 0)
                     {
-                        if (_creditAvailable.Wait(0)) return;
+                        // Atomic credit consumption: increment under the same
+                        // lock that observed available > 0 so concurrent senders
+                        // cannot all pass through the same 1-permit window.
+                        // The caller no longer increments _deliveryCount itself.
+                        _deliveryCount++;
+                        return;
                     }
                 }
+                pulse = _creditPulse.Task;
             }
-            await _creditAvailable.WaitAsync(ct).ConfigureAwait(false);
-            if (Volatile.Read(ref _state) != StateAttached)
-                throw new InvalidOperationException("Link is no longer attached.");
-            lock (_deliveryLock)
-            {
-                var available = (long)_peerReceiverDeliveryCount + _peerReceiverLinkCredit - _deliveryCount;
-                if (available > 0) return;
-            }
+            await pulse.WaitAsync(ct).ConfigureAwait(false);
         }
     }
 
@@ -1087,9 +1103,16 @@ internal sealed class AmqpLink
                 "Link detached before disposition was received.",
                 Volatile.Read(ref _pendingFault)?.Error));
         }
-        // Wake any sender waiting on credit so it observes the terminal state.
-        try { _creditAvailable.Release(int.MaxValue / 2); }
-        catch (SemaphoreFullException) { /* already at max */ }
+        // Wake any sender parked on credit so it observes the terminal
+        // state (the StateAttached check at the top of AcquireCreditAsync
+        // throws InvalidOperationException after the pulse fires).
+        TaskCompletionSource toPulse;
+        lock (_deliveryLock)
+        {
+            toPulse = _creditPulse;
+            _creditPulse = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+        toPulse.TrySetResult();
     }
 
     private async ValueTask SendDetachAsync(bool closed, AmqpError? error, CancellationToken ct)
