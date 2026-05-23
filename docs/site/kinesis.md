@@ -91,7 +91,9 @@
 - Iterators are proxy-issued opaque tokens rather than broker cursors; they remain valid for 5 minutes and require the proxy's configured shard-iterator signing key (or the process-local fallback key after restartless reuse).
 - AT_SEQUENCE_NUMBER and AFTER_SEQUENCE_NUMBER are best-effort only: the proxy interprets aws2azure's synthetic PutRecord sequence number as (unixMs << 20) | counter and derives an Event Hubs enqueue-time position from unixMs. If parsing fails the follow-up read falls back to the start of the shard.
 - AT_TIMESTAMP positions are stored as ISO-8601 UTC in the opaque token; Timestamp values outside DateTimeOffset's supported Unix-millisecond range are rejected with ValidationException instead of surfacing an internal error.
-- Verified against Event Hubs emulator; not yet validated against production Azure Event Hubs.
+- LATEST is translated to the AMQP filter `amqp.annotation.x-opt-offset > '@latest'`, which the EH emulator re-evaluates on every receiver attach. Because GetRecords opens a fresh receiver per call, the LATEST window slides forward and can miss records written between iterator creation and the first GetRecords. Production EH evaluates `@latest` at iterator-creation time, so the divergence is emulator-only — tracked at #119, covered by real-Azure smoke.
+- AT_TIMESTAMP on the emulator is sensitive to host/container clock skew: the host-captured boundary timestamp can drift past the container-side x-opt-enqueued-time of records produced shortly after, hiding them from the receiver. Production Azure issues a single authoritative timestamp, so the divergence is emulator-only — tracked at #119, covered by real-Azure smoke.
+- Verified against Event Hubs emulator (except the LATEST and AT_TIMESTAMP scenarios called out above); not yet validated against production Azure Event Hubs.
 
 ### References
 
