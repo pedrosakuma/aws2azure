@@ -1,5 +1,26 @@
 # sns
 
+## ConfirmSubscription
+
+- **Status:** 🟡 partial
+- **Azure equivalent:** `Azure Service Bus topic subscriptions`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| Auto-confirmed no-op | ✅ implemented | Subscriptions are treated as immediately confirmed when created. ConfirmSubscription returns success and a derived SubscriptionArn without mutating Azure resources. |  |  |
+
+### Behaviour differences
+
+- SNS confirmation tokens are not validated against an out-of-band challenge flow.
+- If the token cannot be mapped back to a known subscription identifier, aws2azure returns a synthetic auto-confirmed subscription ARN for the topic.
+
+### References
+
+- <https://docs.aws.amazon.com/sns/latest/api/API_ConfirmSubscription.html>
+- <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest>
+
 ## CreateTopic
 
 - **Status:** 🟡 partial
@@ -63,33 +84,44 @@
 
 ## ListSubscriptions
 
-- **Status:** ⚪ stub
-- **Azure equivalent:** `Azure Service Bus Topics / Azure Event Grid`
+- **Status:** 🟡 partial
+- **Azure equivalent:** `Azure Service Bus topic subscriptions`
 
 ### Sub-features
 
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
-| Slice 1 scaffold | ✅ implemented | Parses the AWS Query envelope, validates credentials, and dispatches to a structured SNS-shaped 501 stub for now. Backend translation to Service Bus Topics / Event Grid lands in later slices. |  |  |
+| Cross-topic subscription enumeration | ✅ implemented | Enumerates Service Bus topics first, then pages each topic's subscriptions and flattens the results into SNS member entries. |  |  |
+
+### Behaviour differences
+
+- NextToken is an opaque base64-encoded JSON cursor containing the current topic offset and subscription offset within that topic.
+- Listing all subscriptions requires cross-topic enumeration over the Service Bus management plane and can be more expensive than native SNS ListSubscriptions.
 
 ### References
 
 - <https://docs.aws.amazon.com/sns/latest/api/API_ListSubscriptions.html>
+- <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest>
 
 ## ListSubscriptionsByTopic
 
-- **Status:** ⚪ stub
-- **Azure equivalent:** `Azure Service Bus Topics / Azure Event Grid`
+- **Status:** 🟡 partial
+- **Azure equivalent:** `Azure Service Bus topic subscriptions`
 
 ### Sub-features
 
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
-| Slice 1 scaffold | ✅ implemented | Parses the AWS Query envelope, validates credentials, and dispatches to a structured SNS-shaped 501 stub for now. Backend translation to Service Bus Topics / Event Grid lands in later slices. |  |  |
+| Per-topic subscription enumeration | ✅ implemented | Lists Azure Service Bus subscriptions for a single topic and projects stored UserMetadata back into SNS protocol/endpoint fields. |  |  |
+
+### Behaviour differences
+
+- NextToken is an opaque base64-encoded JSON cursor containing the subscription offset within the topic.
 
 ### References
 
 - <https://docs.aws.amazon.com/sns/latest/api/API_ListSubscriptionsByTopic.html>
+- <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest>
 
 ## ListTopics
 
@@ -184,31 +216,46 @@
 
 ## Subscribe
 
-- **Status:** ⚪ stub
-- **Azure equivalent:** `Azure Service Bus Topics / Azure Event Grid`
+- **Status:** 🟡 partial
+- **Azure equivalent:** `Azure Service Bus topic subscriptions`
 
 ### Sub-features
 
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
-| Slice 1 scaffold | ✅ implemented | Parses the AWS Query envelope, validates credentials, and dispatches to a structured SNS-shaped 501 stub for now. Backend translation to Service Bus Topics / Event Grid lands in later slices. |  |  |
+| Service Bus subscription provisioning | ✅ implemented | Creates an Azure Service Bus topic subscription with deterministic subscription IDs derived from TopicArn + Protocol + Endpoint so repeat Subscribe calls return the same ARN. Supported protocols in this slice: sqs, https, http. |  |  |
+| Subscription metadata projection | ✅ implemented | Stores protocol, endpoint, compact filter policy JSON, and RawMessageDelivery in SubscriptionDescription.UserMetadata. Metadata longer than 1024 chars is truncated to fit the Service Bus limit. |  |  |
+| Subscriber delivery forwarder | ⛔ unsupported | This slice only manages subscription metadata. Messages accumulate in the Service Bus subscription until a later slice wires forwarding to HTTPS endpoints or SQS-backed queues. |  |  |
+
+### Behaviour differences
+
+- HTTPS / HTTP subscriptions are auto-confirmed immediately. SNS token-based confirmation is not implemented in this slice.
+- When a deterministic subscription already exists but its stored metadata differs from the new Subscribe request, aws2azure returns the existing ARN and logs a warning instead of replacing the subscription.
+- Only sqs, https, and http protocols are accepted. email, email-json, sms, lambda, application, and firehose are rejected with InvalidParameter.
 
 ### References
 
 - <https://docs.aws.amazon.com/sns/latest/api/API_Subscribe.html>
+- <https://docs.aws.amazon.com/sns/latest/dg/sns-send-message-to-sqs-cross-account.html>
+- <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest>
 
 ## Unsubscribe
 
-- **Status:** ⚪ stub
-- **Azure equivalent:** `Azure Service Bus Topics / Azure Event Grid`
+- **Status:** 🟡 partial
+- **Azure equivalent:** `Azure Service Bus topic subscriptions`
 
 ### Sub-features
 
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
-| Slice 1 scaffold | ✅ implemented | Parses the AWS Query envelope, validates credentials, and dispatches to a structured SNS-shaped 501 stub for now. Backend translation to Service Bus Topics / Event Grid lands in later slices. |  |  |
+| Service Bus subscription deletion | ✅ implemented | Deletes the mapped Azure Service Bus topic subscription identified by the SNS SubscriptionArn suffix. |  |  |
+
+### Behaviour differences
+
+- Unsubscribe is idempotent: HTTP 200/204/404 from Service Bus all return SNS success.
 
 ### References
 
 - <https://docs.aws.amazon.com/sns/latest/api/API_Unsubscribe.html>
+- <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest>
 

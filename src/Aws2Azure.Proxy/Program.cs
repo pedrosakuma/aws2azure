@@ -171,6 +171,7 @@ builder.Services.AddSingleton<ServiceModuleRegistry>(sp =>
             credentialResolver,
             sp.GetRequiredService<IServiceBusTopicsManagementClient>(),
             sp.GetRequiredService<ISnsAmqpSender>(),
+            sp.GetRequiredService<ILogger<SnsServiceModule>>(),
             CapabilityRegistry.Sns),
     ];
     return new ServiceModuleRegistry(modules, sigV4Validator);

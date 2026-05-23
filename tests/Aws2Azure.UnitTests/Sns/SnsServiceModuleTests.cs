@@ -7,6 +7,7 @@ using Aws2Azure.Modules.Sns;
 using Aws2Azure.Modules.Sns.Amqp;
 using Aws2Azure.Modules.Sns.Management;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Aws2Azure.UnitTests.Sns;
 
@@ -36,10 +37,6 @@ public class SnsServiceModuleTests
     }
 
     [Theory]
-    [InlineData("Subscribe")]
-    [InlineData("Unsubscribe")]
-    [InlineData("ListSubscriptions")]
-    [InlineData("ListSubscriptionsByTopic")]
     [InlineData("GetTopicAttributes")]
     [InlineData("SetTopicAttributes")]
     public async Task Stubbed_operations_return_structured_501_stub(string action)
@@ -142,7 +139,12 @@ public class SnsServiceModuleTests
     }
 
     private static SnsServiceModule NewModule(bool includeTopicCreds = true, bool includeEventGridCreds = false, ISnsAmqpSender? sender = null)
-        => new(GetResolver(includeTopicCreds, includeEventGridCreds), new NoopManagementClient(), sender ?? new RecordingSender(), new CapabilityMatrix("sns", []));
+        => new(
+            GetResolver(includeTopicCreds, includeEventGridCreds),
+            new NoopManagementClient(),
+            sender ?? new RecordingSender(),
+            NullLogger<SnsServiceModule>.Instance,
+            new CapabilityMatrix("sns", []));
 
     private static ICredentialResolver GetResolver(bool includeTopicCreds, bool includeEventGridCreds)
     {
@@ -208,6 +210,18 @@ public class SnsServiceModuleTests
 
         public ValueTask<ServiceBusTopicPage> ListTopicsAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, int skip, int top, CancellationToken cancellationToken)
             => ValueTask.FromResult(new ServiceBusTopicPage([]));
+
+        public ValueTask CreateSubscriptionAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, string subscriptionName, string userMetadata, CancellationToken cancellationToken)
+            => ValueTask.CompletedTask;
+
+        public ValueTask DeleteSubscriptionAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, string subscriptionName, CancellationToken cancellationToken)
+            => ValueTask.CompletedTask;
+
+        public ValueTask<ServiceBusSubscriptionPage> ListSubscriptionsAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, int skip, int top, CancellationToken cancellationToken)
+            => ValueTask.FromResult(new ServiceBusSubscriptionPage([]));
+
+        public ValueTask<ServiceBusSubscriptionDescription?> GetSubscriptionAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, string subscriptionName, CancellationToken cancellationToken)
+            => ValueTask.FromResult<ServiceBusSubscriptionDescription?>(null);
     }
 
     private sealed class RecordingSender : ISnsAmqpSender

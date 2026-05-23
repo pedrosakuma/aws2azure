@@ -10,6 +10,7 @@ using Aws2Azure.Modules.Sns.Management;
 using Aws2Azure.Modules.Sns.Operations;
 using Aws2Azure.Modules.Sns.WireProtocol;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 
 namespace Aws2Azure.Modules.Sns;
 
@@ -24,20 +25,24 @@ public sealed class SnsServiceModule : IServiceModule
     private readonly ICredentialResolver _credentials;
     private readonly IServiceBusTopicsManagementClient _serviceBusTopicsManagementClient;
     private readonly ISnsAmqpSender _amqpSender;
+    private readonly ILogger<SnsServiceModule> _logger;
 
     internal SnsServiceModule(
         ICredentialResolver credentials,
         IServiceBusTopicsManagementClient serviceBusTopicsManagementClient,
         ISnsAmqpSender amqpSender,
+        ILogger<SnsServiceModule> logger,
         CapabilityMatrix capabilities)
     {
         ArgumentNullException.ThrowIfNull(credentials);
         ArgumentNullException.ThrowIfNull(serviceBusTopicsManagementClient);
         ArgumentNullException.ThrowIfNull(amqpSender);
+        ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(capabilities);
         _credentials = credentials;
         _serviceBusTopicsManagementClient = serviceBusTopicsManagementClient;
         _amqpSender = amqpSender;
+        _logger = logger;
         Capabilities = capabilities;
     }
 
@@ -179,9 +184,69 @@ public sealed class SnsServiceModule : IServiceModule
                     .ConfigureAwait(false);
                 return;
             case SnsOperation.Subscribe:
+                if (serviceBusTopicsCredentials is null)
+                {
+                    await WriteServiceBusTopicsCredentialErrorAsync(context).ConfigureAwait(false);
+                    return;
+                }
+
+                await SubscribeHandler.HandleAsync(
+                        context,
+                        parsed,
+                        serviceBusTopicsCredentials,
+                        _serviceBusTopicsManagementClient,
+                        _logger,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
+                return;
             case SnsOperation.Unsubscribe:
+                if (serviceBusTopicsCredentials is null)
+                {
+                    await WriteServiceBusTopicsCredentialErrorAsync(context).ConfigureAwait(false);
+                    return;
+                }
+
+                await UnsubscribeHandler.HandleAsync(
+                        context,
+                        parsed,
+                        serviceBusTopicsCredentials,
+                        _serviceBusTopicsManagementClient,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
+                return;
             case SnsOperation.ListSubscriptions:
+                if (serviceBusTopicsCredentials is null)
+                {
+                    await WriteServiceBusTopicsCredentialErrorAsync(context).ConfigureAwait(false);
+                    return;
+                }
+
+                await ListSubscriptionsHandler.HandleAsync(
+                        context,
+                        parsed,
+                        serviceBusTopicsCredentials,
+                        _serviceBusTopicsManagementClient,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
+                return;
             case SnsOperation.ListSubscriptionsByTopic:
+                if (serviceBusTopicsCredentials is null)
+                {
+                    await WriteServiceBusTopicsCredentialErrorAsync(context).ConfigureAwait(false);
+                    return;
+                }
+
+                await ListSubscriptionsByTopicHandler.HandleAsync(
+                        context,
+                        parsed,
+                        serviceBusTopicsCredentials,
+                        _serviceBusTopicsManagementClient,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
+                return;
+            case SnsOperation.ConfirmSubscription:
+                await ConfirmSubscriptionHandler.HandleAsync(context, parsed).ConfigureAwait(false);
+                return;
             case SnsOperation.GetTopicAttributes:
             case SnsOperation.SetTopicAttributes:
                 await StubHandlers.HandleNotImplementedAsync(context, parsed.Operation).ConfigureAwait(false);

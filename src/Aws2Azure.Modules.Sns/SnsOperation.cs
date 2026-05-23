@@ -17,6 +17,7 @@ public enum SnsOperation
     Unsubscribe,
     ListSubscriptions,
     ListSubscriptionsByTopic,
+    ConfirmSubscription,
     GetTopicAttributes,
     SetTopicAttributes,
 }
