@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Modules.Sns;
+using Aws2Azure.Modules.Sns.Amqp;
 using Aws2Azure.Modules.Sns.Management;
 using Microsoft.AspNetCore.Http;
 
@@ -35,8 +36,6 @@ public class SnsServiceModuleTests
     }
 
     [Theory]
-    [InlineData("Publish")]
-    [InlineData("PublishBatch")]
     [InlineData("Subscribe")]
     [InlineData("Unsubscribe")]
     [InlineData("ListSubscriptions")]
@@ -59,6 +58,36 @@ public class SnsServiceModuleTests
         Assert.Contains("InternalFailure", body);
         Assert.Contains(action, body);
         Assert.Contains("<RequestId", body);
+    }
+
+    [Fact]
+    public async Task Publish_routes_to_amqp_sender()
+    {
+        var sender = new RecordingSender();
+        var module = NewModule(sender: sender);
+        var ctx = NewContext("Action=Publish&Version=2010-03-31&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aorders&Message=hello");
+        ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+
+        await module.HandleAsync(ctx);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.NotNull(sender.SingleCall);
+        Assert.Equal("orders", sender.SingleCall!.Value.TopicName);
+    }
+
+    [Fact]
+    public async Task PublishBatch_routes_to_amqp_sender()
+    {
+        var sender = new RecordingSender();
+        var module = NewModule(sender: sender);
+        var ctx = NewContext("Action=PublishBatch&Version=2010-03-31&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aorders&PublishBatchRequestEntries.member.1.Id=a&PublishBatchRequestEntries.member.1.Message=hello");
+        ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+
+        await module.HandleAsync(ctx);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.NotNull(sender.BatchCall);
+        Assert.Single(sender.BatchCall!.Value.Messages);
     }
 
     [Fact]
@@ -88,10 +117,10 @@ public class SnsServiceModuleTests
     }
 
     [Fact]
-    public async Task EventGrid_only_credentials_do_not_enable_topic_crud()
+    public async Task EventGrid_only_credentials_do_not_enable_topic_crud_or_publish()
     {
         var module = NewModule(includeTopicCreds: false, includeEventGridCreds: true);
-        var ctx = NewContext("Action=ListTopics&Version=2010-03-31");
+        var ctx = NewContext("Action=Publish&Version=2010-03-31&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aorders&Message=hello");
         ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
 
         await module.HandleAsync(ctx);
@@ -112,8 +141,8 @@ public class SnsServiceModuleTests
         Assert.Contains("MissingAuthenticationToken", ReadBody(ctx));
     }
 
-    private static SnsServiceModule NewModule(bool includeTopicCreds = true, bool includeEventGridCreds = false)
-        => new(GetResolver(includeTopicCreds, includeEventGridCreds), new NoopManagementClient(), new CapabilityMatrix("sns", []));
+    private static SnsServiceModule NewModule(bool includeTopicCreds = true, bool includeEventGridCreds = false, ISnsAmqpSender? sender = null)
+        => new(GetResolver(includeTopicCreds, includeEventGridCreds), new NoopManagementClient(), sender ?? new RecordingSender(), new CapabilityMatrix("sns", []));
 
     private static ICredentialResolver GetResolver(bool includeTopicCreds, bool includeEventGridCreds)
     {
@@ -179,5 +208,23 @@ public class SnsServiceModuleTests
 
         public ValueTask<ServiceBusTopicPage> ListTopicsAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, int skip, int top, CancellationToken cancellationToken)
             => ValueTask.FromResult(new ServiceBusTopicPage([]));
+    }
+
+    private sealed class RecordingSender : ISnsAmqpSender
+    {
+        public (string NamespaceFqdn, string TopicName, SnsAmqpSendMessage Message)? SingleCall { get; private set; }
+        public (string NamespaceFqdn, string TopicName, IReadOnlyList<SnsAmqpSendMessage> Messages)? BatchCall { get; private set; }
+
+        public Task SendAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, SnsAmqpSendMessage message, CancellationToken cancellationToken)
+        {
+            SingleCall = (namespaceFqdn, topicName, message);
+            return Task.CompletedTask;
+        }
+
+        public Task<SnsBatchSendResult> SendBatchAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, IReadOnlyList<SnsAmqpSendMessage> messages, CancellationToken cancellationToken)
+        {
+            BatchCall = (namespaceFqdn, topicName, messages);
+            return Task.FromResult(new SnsBatchSendResult(messages.Select(_ => new SnsBatchSendOutcome(true, null, null, false)).ToArray()));
+        }
     }
 }

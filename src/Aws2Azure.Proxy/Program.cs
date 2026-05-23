@@ -15,6 +15,7 @@ using Aws2Azure.Modules.Kinesis.EventHubsAmqp;
 using Aws2Azure.Modules.Kinesis.EventHubsRest;
 using Aws2Azure.Modules.Kinesis.Operations;
 using Aws2Azure.Modules.Kinesis.ShardIterators;
+using Aws2Azure.Modules.Sns.Amqp;
 using Aws2Azure.Modules.Sns.Management;
 using Aws2Azure.Proxy;
 using Microsoft.AspNetCore.Http;
@@ -133,6 +134,10 @@ builder.Services.AddSingleton<IEventHubsAmqpReceiver>(sp =>
     new EventHubsAmqpReceiver(
         sp.GetRequiredService<EntraIdTokenProvider>(),
         amqpConnectionSettings));
+builder.Services.AddSingleton<ISnsAmqpSender>(sp =>
+    new SnsAmqpSender(
+        sp.GetRequiredService<EntraIdTokenProvider>(),
+        amqpConnectionSettings));
 
 // Manual, reflection-free module registration. Capability matrices come from
 // the generated registry (single source of truth: docs/gaps/**/*.yaml). The
@@ -165,6 +170,7 @@ builder.Services.AddSingleton<ServiceModuleRegistry>(sp =>
         new SnsServiceModule(
             credentialResolver,
             sp.GetRequiredService<IServiceBusTopicsManagementClient>(),
+            sp.GetRequiredService<ISnsAmqpSender>(),
             CapabilityRegistry.Sns),
     ];
     return new ServiceModuleRegistry(modules, sigV4Validator);

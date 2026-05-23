@@ -48,6 +48,7 @@ internal readonly record struct AmqpProperties
     public const ulong Descriptor = MessageSectionDescriptor.Properties;
 
     public string? MessageId { get; init; }
+    public string? Subject { get; init; }
     public string? ReplyTo { get; init; }
     public string? CorrelationId { get; init; }
     public string? GroupId { get; init; }
@@ -68,7 +69,7 @@ internal readonly record struct AmqpProperties
         // 2 to
         offsets[2] = o; PerformativeCodec.WriteNullField(scratch[o..], out len); o += len;
         // 3 subject
-        offsets[3] = o; PerformativeCodec.WriteNullField(scratch[o..], out len); o += len;
+        offsets[3] = o; PerformativeCodec.WriteStringOrNull(scratch[o..], value.Subject, out len); o += len;
         // 4 reply-to
         offsets[4] = o;
         PerformativeCodec.WriteStringOrNull(scratch[o..], value.ReplyTo, out len); o += len;
@@ -112,7 +113,8 @@ internal readonly record struct AmqpProperties
         if (view.Count >= 1) messageId = ReadStringOrSkip(els, ref o, out len);
         if (view.Count >= 2) SkipField(els, ref o);                                  // user-id
         if (view.Count >= 3) SkipField(els, ref o);                                  // to
-        if (view.Count >= 4) SkipField(els, ref o);                                  // subject
+        string? subject = null;
+        if (view.Count >= 4) subject = ReadStringOrSkip(els, ref o, out len);
 
         string? replyTo = null;
         if (view.Count >= 5) replyTo = ReadStringOrSkip(els, ref o, out len);
@@ -136,6 +138,7 @@ internal readonly record struct AmqpProperties
         value = new AmqpProperties
         {
             MessageId = messageId,
+            Subject = subject,
             ReplyTo = replyTo,
             CorrelationId = correlationId,
             GroupId = groupId,

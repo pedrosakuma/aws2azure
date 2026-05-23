@@ -71,6 +71,7 @@ internal sealed class AmqpMessage
             w += ml;
         }
         var hasProps = Properties.MessageId is not null
+                    || Properties.Subject is not null
                     || Properties.ReplyTo is not null
                     || Properties.CorrelationId is not null
                     || Properties.GroupId is not null

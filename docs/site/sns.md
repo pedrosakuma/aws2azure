@@ -116,33 +116,56 @@
 
 ## Publish
 
-- **Status:** ⚪ stub
-- **Azure equivalent:** `Azure Service Bus Topics / Azure Event Grid`
+- **Status:** 🟡 partial
+- **Azure equivalent:** `Azure Service Bus Topics`
 
 ### Sub-features
 
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
-| Slice 1 scaffold | ✅ implemented | Parses the AWS Query envelope, validates credentials, and dispatches to a structured SNS-shaped 501 stub for now. Backend translation to Service Bus Topics / Event Grid lands in later slices. |  |  |
+| AMQP publish path | ✅ implemented | Sends SNS Publish requests to Azure Service Bus Topics over AMQP 1.0 using SAS or Entra ID CBS authentication. |  |  |
+
+### Behaviour differences
+
+- MessageId is a proxy-generated GUID, not an AWS-generated SNS identifier.
+- SequenceNumber is returned empty because Azure Service Bus assigns it broker-side and the proxy does not read it after send.
+- MessageStructure=json is passed through as-is; the proxy does not filter per-protocol payloads yet.
+- MessageAttributes encode DataType in a parallel application property named '{Name}.DataType' so AWS-style attributes can be reconstructed by downstream consumers.
+- Subject is exposed both as the AMQP subject property and as the 'aws.sns.Subject' application property.
+- MessageDeduplicationId is forwarded as the 'x-opt-deduplication-id' application property rather than a broker-native send-side field.
+- Azure Service Bus message size limits differ from SNS: 256 KB on Standard and up to 100 MB on Premium.
 
 ### References
 
 - <https://docs.aws.amazon.com/sns/latest/api/API_Publish.html>
+- <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-amqp-protocol-guide>
 
 ## PublishBatch
 
-- **Status:** ⚪ stub
-- **Azure equivalent:** `Azure Service Bus Topics / Azure Event Grid`
+- **Status:** 🟡 partial
+- **Azure equivalent:** `Azure Service Bus Topics`
 
 ### Sub-features
 
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
-| Slice 1 scaffold | ✅ implemented | Parses the AWS Query envelope, validates credentials, and dispatches to a structured SNS-shaped 501 stub for now. Backend translation to Service Bus Topics / Event Grid lands in later slices. |  |  |
+| AMQP batch publish path | ✅ implemented | Sends PublishBatch entries to Azure Service Bus Topics over AMQP 1.0 and reports per-entry success or failure. |  |  |
+
+### Behaviour differences
+
+- MessageId values are proxy-generated GUIDs, not AWS-generated SNS identifiers.
+- SequenceNumber is returned empty because Azure Service Bus assigns it broker-side and the proxy does not read it after send.
+- MessageStructure=json is passed through as-is; the proxy does not filter per-protocol payloads yet.
+- MessageAttributes encode DataType in a parallel application property named '{Name}.DataType' so AWS-style attributes can be reconstructed by downstream consumers.
+- Subject is exposed both as the AMQP subject property and as the 'aws.sns.Subject' application property.
+- MessageDeduplicationId is forwarded as the 'x-opt-deduplication-id' application property rather than a broker-native send-side field.
+- PublishBatch uses best-effort per-entry outcomes over AMQP; partial-failure behavior can differ from AWS SNS semantics.
+- Azure Service Bus message size limits differ from SNS: 256 KB on Standard and up to 100 MB on Premium.
 
 ### References
 
 - <https://docs.aws.amazon.com/sns/latest/api/API_PublishBatch.html>
+- <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-amqp-protocol-guide>
 
 ## SetTopicAttributes
 
