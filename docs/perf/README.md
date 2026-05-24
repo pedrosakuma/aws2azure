@@ -96,7 +96,6 @@ p50`. Always read the two columns together.
 
 - Workload matrix per module (small / medium / large payload, 1 / 16 / 64
   concurrency) — currently MVP is a single point per module.
-- Receive-side scenarios (SQS `ReceiveMessage`, Kinesis `GetRecords`).
 - Real-Azure pass behind a manual workflow (see issue #119 for the
   real-Azure smoke pattern).
 - Allocation / CPU profile via `dotnet-counters` collect during the run.
