@@ -107,7 +107,8 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
 
         try
         {
-            await using var sender = await connection.OpenSenderAsync(
+            var sender = await slot.GetOrCreateSenderAsync(
+                    connection,
                     entityPath,
                     BuildAudience(namespaceFqdn, entityPath),
                     cancellationToken)
@@ -124,7 +125,7 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
         }
         catch (Exception ex) when (TryWrap(ex, out var wrapped))
         {
-            await InvalidateConnectionAsync(key).ConfigureAwait(false);
+            await InvalidateOnFailureAsync(key, entityPath, wrapped).ConfigureAwait(false);
             throw wrapped;
         }
     }
@@ -161,7 +162,8 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
         var outcomes = new EventHubsBatchSendOutcome[messages.Count];
         try
         {
-            await using var sender = await connection.OpenSenderAsync(
+            var sender = await slot.GetOrCreateSenderAsync(
+                    connection,
                     entityPath,
                     BuildAudience(namespaceFqdn, entityPath),
                     cancellationToken)
@@ -192,7 +194,7 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
                 }
                 catch (Exception ex) when (TryWrap(ex, out var wrapped))
                 {
-                    await InvalidateConnectionAsync(key).ConfigureAwait(false);
+                    await InvalidateOnFailureAsync(key, entityPath, wrapped).ConfigureAwait(false);
                     if (wrapped.Kind == EventHubsAmqpFailureKind.Auth)
                     {
                         throw wrapped;
@@ -212,7 +214,7 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
         }
         catch (Exception ex) when (TryWrap(ex, out var wrapped))
         {
-            await InvalidateConnectionAsync(key).ConfigureAwait(false);
+            await InvalidateOnFailureAsync(key, entityPath, wrapped).ConfigureAwait(false);
             if (wrapped.Kind == EventHubsAmqpFailureKind.Auth)
             {
                 throw wrapped;
@@ -255,6 +257,31 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
         if (_connections.TryRemove(key, out var slot))
         {
             await slot.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    // Decides at the failure-kind granularity what to tear down. Auth /
+    // ServerFatal / Redirect signals that the entire connection is
+    // unusable (token expired, broker moved, peer state corrupted) so we
+    // drop the whole slot. Throttled / Transient / ClientFatal only
+    // implicates the specific sender link, so we evict just that sender
+    // and let the next call re-attach a fresh link on the same connection
+    // — preserving the cached CBS handshake and connection-level state.
+    private async Task InvalidateOnFailureAsync(ConnectionKey key, string entityPath, EventHubsAmqpException failure)
+    {
+        switch (failure.Kind)
+        {
+            case EventHubsAmqpFailureKind.Auth:
+            case EventHubsAmqpFailureKind.ServerFatal:
+            case EventHubsAmqpFailureKind.Redirect:
+                await InvalidateConnectionAsync(key).ConfigureAwait(false);
+                return;
+            default:
+                if (_connections.TryGetValue(key, out var slot))
+                {
+                    await slot.InvalidateSenderAsync(entityPath).ConfigureAwait(false);
+                }
+                return;
         }
     }
 
@@ -436,8 +463,28 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
     private sealed class ConnectionSlot : IAsyncDisposable
     {
         private readonly SemaphoreSlim _gate = new(1, 1);
+        private readonly ConcurrentDictionary<string, SenderSlot> _senders = new(StringComparer.Ordinal);
         private ServiceBusAmqpConnection? _connection;
         private int _disposed;
+
+        public async Task<ServiceBusAmqpSender> GetOrCreateSenderAsync(
+            ServiceBusAmqpConnection connection,
+            string entityPath,
+            string audience,
+            CancellationToken cancellationToken)
+        {
+            ThrowIfDisposed();
+            var slot = _senders.GetOrAdd(entityPath, static _ => new SenderSlot());
+            return await slot.GetOrCreateAsync(connection, entityPath, audience, cancellationToken).ConfigureAwait(false);
+        }
+
+        public async Task InvalidateSenderAsync(string entityPath)
+        {
+            if (_senders.TryRemove(entityPath, out var slot))
+            {
+                await slot.DisposeAsync().ConfigureAwait(false);
+            }
+        }
 
         public async Task<ServiceBusAmqpConnection> GetOrCreateConnectionAsync(
             EntraIdTokenProvider tokenProvider,
@@ -512,6 +559,20 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
             await _gate.WaitAsync().ConfigureAwait(false);
             try
             {
+                foreach (var entityPath in _senders.Keys.ToArray())
+                {
+                    if (_senders.TryRemove(entityPath, out var senderSlot))
+                    {
+                        try
+                        {
+                            await senderSlot.DisposeAsync().ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                        }
+                    }
+                }
+
                 if (_connection is not null)
                 {
                     await _connection.DisposeAsync().ConfigureAwait(false);
@@ -541,6 +602,73 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
             if (Volatile.Read(ref _disposed) != 0)
             {
                 throw new ObjectDisposedException(nameof(ConnectionSlot));
+            }
+        }
+
+        private sealed class SenderSlot : IAsyncDisposable
+        {
+            private readonly SemaphoreSlim _lock = new(1, 1);
+            private ServiceBusAmqpSender? _sender;
+            private int _disposed;
+
+            public async Task<ServiceBusAmqpSender> GetOrCreateAsync(
+                ServiceBusAmqpConnection connection,
+                string entityPath,
+                string audience,
+                CancellationToken cancellationToken)
+            {
+                var existing = Volatile.Read(ref _sender);
+                if (existing is not null && !existing.IsClosed) return existing;
+                ThrowIfDisposed();
+
+                await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    ThrowIfDisposed();
+                    existing = _sender;
+                    if (existing is not null && !existing.IsClosed) return existing;
+
+                    if (existing is not null)
+                    {
+                        try { await existing.DisposeAsync().ConfigureAwait(false); }
+                        catch { /* swallow during eviction */ }
+                        Volatile.Write(ref _sender, null);
+                    }
+
+                    var created = await connection
+                        .OpenSenderAsync(entityPath, audience, cancellationToken)
+                        .ConfigureAwait(false);
+                    Volatile.Write(ref _sender, created);
+                    return created;
+                }
+                finally
+                {
+                    _lock.Release();
+                }
+            }
+
+            private void ThrowIfDisposed()
+            {
+                if (Volatile.Read(ref _disposed) != 0)
+                    throw new ObjectDisposedException(nameof(SenderSlot));
+            }
+
+            public async ValueTask DisposeAsync()
+            {
+                if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+                try { await _lock.WaitAsync().ConfigureAwait(false); }
+                catch (ObjectDisposedException) { return; }
+                try
+                {
+                    var sender = Interlocked.Exchange(ref _sender, null);
+                    if (sender is not null)
+                        await sender.DisposeAsync().ConfigureAwait(false);
+                }
+                finally
+                {
+                    _lock.Release();
+                    _lock.Dispose();
+                }
             }
         }
     }
