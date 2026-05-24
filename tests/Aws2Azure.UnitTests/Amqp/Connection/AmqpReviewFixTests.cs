@@ -8,9 +8,22 @@ using static Aws2Azure.UnitTests.Amqp.Connection.AmqpTestBroker;
 namespace Aws2Azure.UnitTests.Amqp.Connection;
 
 /// <summary>
+/// Serialises tests that rely on tight 30 s <c>WaitAsync</c> timeouts on
+/// in-memory AMQP pipes. Under heavy parallel suite load (issue #101) the
+/// thread-pool can starve those waits past 30 s even though the test
+/// itself does almost no real work.
+/// </summary>
+[CollectionDefinition(AmqpReviewFixCollection.Name, DisableParallelization = true)]
+public sealed class AmqpReviewFixCollection
+{
+    public const string Name = "AmqpReviewFix-NonParallel";
+}
+
+/// <summary>
 /// Regression tests for the five Major findings of the Phase 2.5
 /// phase-exit code review.
 /// </summary>
+[Collection(AmqpReviewFixCollection.Name)]
 public sealed class AmqpReviewFixTests
 {
     private static AmqpConnectionSettings DefaultConnSettings() => new()
