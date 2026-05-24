@@ -78,6 +78,16 @@ nip.io, either:
   and install a `DelegatingHandler` on each AWS SDK client that rewrites
   the `Host` header to the expected prefix.
 
+## Reading throughput vs latency
+
+For most modules the per-call latency (p50/p95/p99) and the per-second
+throughput tell a consistent story: at concurrency N, `throughput ≈ N /
+p50`. Kinesis is a notable exception — the Event Hubs emulator hard-caps
+the producer at ~1.7 ops/s irrespective of concurrency, duration, or
+partition fan-out, so the throughput number is an emulator ceiling while
+the latency percentiles reflect the steady-state per-call cost. Always
+read the two columns together.
+
 ## Roadmap
 
 - Workload matrix per module (small / medium / large payload, 1 / 16 / 64
