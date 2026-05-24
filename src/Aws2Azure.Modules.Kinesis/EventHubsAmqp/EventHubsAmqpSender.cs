@@ -426,6 +426,19 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
                     AmqpErrorCondition.Timeout,
                     timeoutException.Message);
                 return true;
+            case ObjectDisposedException disposedException:
+                // A pooled sender link can be disposed by InvalidateSenderAsync
+                // while a concurrent SendAsync is still holding the reference;
+                // ServiceBusAmqpSender then surfaces the disposal as a raw
+                // ObjectDisposedException on its internal gate. Translate it
+                // into a transient EH failure so the caller (and the granular
+                // invalidate path in this sender) handle it like any other
+                // recoverable AMQP error.
+                wrapped = new EventHubsAmqpException(
+                    "Event Hubs AMQP sender link was closed during send.",
+                    disposedException,
+                    EventHubsAmqpFailureKind.Transient);
+                return true;
             default:
                 wrapped = default!;
                 return false;
@@ -474,8 +487,44 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
             CancellationToken cancellationToken)
         {
             ThrowIfDisposed();
-            var slot = _senders.GetOrAdd(entityPath, static _ => new SenderSlot());
-            return await slot.GetOrCreateAsync(connection, entityPath, audience, cancellationToken).ConfigureAwait(false);
+            // Two races to defend against:
+            //   (a) GetOrCreateSenderAsync vs ConnectionSlot.DisposeAsync:
+            //       caller passes ThrowIfDisposed, then DisposeAsync sets
+            //       _disposed=1 and snapshots _senders.Keys; caller then
+            //       publishes a fresh slot that survives the drain.
+            //   (b) GetOrCreateSenderAsync vs InvalidateSenderAsync: an
+            //       existing slot is removed + disposed between
+            //       _senders.GetOrAdd and slot.GetOrCreateAsync, so the
+            //       latter throws ObjectDisposedException on its disposed
+            //       gate. We retry with a fresh slot.
+            while (true)
+            {
+                var fresh = new SenderSlot();
+                var slot = _senders.GetOrAdd(entityPath, fresh);
+
+                if (Volatile.Read(ref _disposed) != 0)
+                {
+                    if (ReferenceEquals(slot, fresh))
+                    {
+                        _senders.TryRemove(new KeyValuePair<string, SenderSlot>(entityPath, slot));
+                        try { await slot.DisposeAsync().ConfigureAwait(false); }
+                        catch { /* drain race */ }
+                    }
+                    throw new ObjectDisposedException(nameof(ConnectionSlot));
+                }
+
+                try
+                {
+                    return await slot.GetOrCreateAsync(connection, entityPath, audience, cancellationToken).ConfigureAwait(false);
+                }
+                catch (ObjectDisposedException) when (Volatile.Read(ref _disposed) == 0)
+                {
+                    // Slot was invalidated mid-flight. Drop the stale
+                    // reference and retry with a fresh slot.
+                    _senders.TryRemove(new KeyValuePair<string, SenderSlot>(entityPath, slot));
+                    continue;
+                }
+            }
         }
 
         public async Task InvalidateSenderAsync(string entityPath)
