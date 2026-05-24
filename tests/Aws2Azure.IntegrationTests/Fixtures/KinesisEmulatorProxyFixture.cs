@@ -43,18 +43,53 @@ public sealed class KinesisEmulatorProxyFixture : IAsyncLifetime
     public bool DockerAvailable { get; private set; }
     public string? SkipReason { get; private set; }
     public string ProxyServiceUrl { get; private set; } = string.Empty;
+    public string AmqpHost { get; private set; } = string.Empty;
+    public int AmqpPort { get; private set; }
     public string EmulatorLogs => _proxyOutput.ToString();
 
-    public AmazonKinesisClient CreateClient(string? accessKey = null, string? secret = null)
-        => new(
+    /// <summary>
+    /// Azure SDK connection string for the in-process Event Hubs emulator.
+    /// Exposed for baseline perf comparisons (e.g. Azure.Messaging.EventHubs
+    /// vs the proxy path) — NOT for production use.
+    /// </summary>
+    public string EventHubsConnectionString
+        => string.IsNullOrEmpty(AmqpHost)
+            ? string.Empty
+            : $"Endpoint=sb://{AmqpHost}:{AmqpPort};SharedAccessKeyName={SasKeyName};SharedAccessKey={SasKey};UseDevelopmentEmulator=true";
+
+    public AmazonKinesisClient CreateClient(string? accessKey = null, string? secret = null, HttpMessageHandler? httpCounter = null)
+    {
+        var config = new AmazonKinesisConfig
+        {
+            ServiceURL = ProxyServiceUrl,
+            UseHttp = true,
+            AuthenticationRegion = "us-east-1",
+        };
+        if (httpCounter is not null)
+        {
+            config.HttpClientFactory = new DiagnosticHandlerHttpClientFactory(httpCounter);
+        }
+        return new AmazonKinesisClient(
             accessKey ?? AwsAccessKey,
             secret ?? AwsSecret,
-            new AmazonKinesisConfig
+            config);
+    }
+
+    private sealed class DiagnosticHandlerHttpClientFactory : Amazon.Runtime.HttpClientFactory
+    {
+        private readonly HttpMessageHandler _outerHandler;
+        public DiagnosticHandlerHttpClientFactory(HttpMessageHandler outerHandler) => _outerHandler = outerHandler;
+        public override HttpClient CreateHttpClient(Amazon.Runtime.IClientConfig clientConfig)
+        {
+            if (_outerHandler is DelegatingHandler dh && dh.InnerHandler is null)
             {
-                ServiceURL = ProxyServiceUrl,
-                UseHttp = true,
-                AuthenticationRegion = "us-east-1",
-            });
+                dh.InnerHandler = new HttpClientHandler();
+            }
+            return new HttpClient(_outerHandler, disposeHandler: false);
+        }
+        public override bool UseSDKHttpClientCaching(Amazon.Runtime.IClientConfig clientConfig) => true;
+        public override bool DisposeHttpClientsAfterUse(Amazon.Runtime.IClientConfig clientConfig) => false;
+    }
 
     public async Task InitializeAsync()
     {
@@ -116,6 +151,8 @@ public sealed class KinesisEmulatorProxyFixture : IAsyncLifetime
 
             var amqpHost = _emulator.Hostname;
             var amqpPort = _emulator.GetMappedPublicPort(EmulatorAmqpPort);
+            AmqpHost = amqpHost;
+            AmqpPort = amqpPort;
             await WaitForPortAsync(amqpHost, amqpPort, TimeSpan.FromMinutes(2)).ConfigureAwait(false);
             await Task.Delay(TimeSpan.FromSeconds(15)).ConfigureAwait(false);
 
@@ -329,6 +366,14 @@ public sealed class KinesisEmulatorProxyFixture : IAsyncLifetime
         startInfo.Environment["AWS2AZURE_CONFIG_FILE"] = configFile;
         startInfo.Environment["ASPNETCORE_URLS"] = $"http://127.0.0.1:{port}";
         startInfo.Environment["DOTNET_ENVIRONMENT"] = "Testing";
+
+        // Propagate optional diagnostics opt-ins so perf experiments can turn
+        // on AMQP timing breadcrumbs in the proxy process from a test host.
+        var amqpTiming = Environment.GetEnvironmentVariable("AWS2AZURE_AMQP_TIMING");
+        if (!string.IsNullOrEmpty(amqpTiming))
+        {
+            startInfo.Environment["AWS2AZURE_AMQP_TIMING"] = amqpTiming;
+        }
 
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         process.OutputDataReceived += (_, args) => AppendOutput(args.Data);

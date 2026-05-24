@@ -1,4 +1,6 @@
 using System.Buffers;
+using System.Diagnostics;
+using Aws2Azure.Amqp.Diagnostics;
 using Aws2Azure.Amqp.Framing;
 
 namespace Aws2Azure.Amqp.Connection;
@@ -120,6 +122,9 @@ internal sealed class AmqpLink
         if (Volatile.Read(ref _state) != StateAttached)
             throw new InvalidOperationException($"Link is not attached (state={_state}).");
 
+        var timingEnabled = AmqpTimingDiagnostics.Enabled;
+        var tsStart = timingEnabled ? Stopwatch.GetTimestamp() : 0L;
+
         // §2.6.7: wait for receiver credit before transferring. If the
         // peer has never sent a flow we treat that as no credit and
         // block here until one arrives — matches strict broker behaviour
@@ -128,6 +133,7 @@ internal sealed class AmqpLink
         // atomically increments _deliveryCount under _deliveryLock so
         // concurrent senders can't overshoot a tight credit window.
         await AcquireCreditAsync(cancellationToken).ConfigureAwait(false);
+        var tsAfterCredit = timingEnabled ? Stopwatch.GetTimestamp() : 0L;
 
         var deliveryId = _session.AllocateDeliveryId();
 
@@ -145,6 +151,7 @@ internal sealed class AmqpLink
 
         // Encode bare message into pooled buffer.
         using var payload = message.EncodePooled();
+        var payloadBytes = payload.Memory.Length;
 
         try
         {
@@ -161,15 +168,45 @@ internal sealed class AmqpLink
             throw;
         }
 
+        var tsAfterWrite = timingEnabled ? Stopwatch.GetTimestamp() : 0L;
+
         if (settled)
+        {
+            if (timingEnabled)
+            {
+                AmqpTimingDiagnostics.LogSend(
+                    link: _settings.Name,
+                    totalUs: AmqpTimingDiagnostics.ElapsedMicros(tsStart),
+                    creditUs: (tsAfterCredit - tsStart) * 1_000_000L / Stopwatch.Frequency,
+                    writeUs: (tsAfterWrite - tsAfterCredit) * 1_000_000L / Stopwatch.Frequency,
+                    dispositionUs: 0L,
+                    settled: true,
+                    payloadBytes: payloadBytes);
+            }
             return AmqpDispositionOutcome.Accepted;
+        }
 
         using (cancellationToken.Register(() =>
         {
             lock (_deliveryLock) _pendingSends.Remove(deliveryId);
             tcs!.TrySetCanceled(cancellationToken);
         }))
-            return await tcs!.Task.ConfigureAwait(false);
+        {
+            var outcome = await tcs!.Task.ConfigureAwait(false);
+            if (timingEnabled)
+            {
+                var tsAfterDisp = Stopwatch.GetTimestamp();
+                AmqpTimingDiagnostics.LogSend(
+                    link: _settings.Name,
+                    totalUs: AmqpTimingDiagnostics.ElapsedMicros(tsStart),
+                    creditUs: (tsAfterCredit - tsStart) * 1_000_000L / Stopwatch.Frequency,
+                    writeUs: (tsAfterWrite - tsAfterCredit) * 1_000_000L / Stopwatch.Frequency,
+                    dispositionUs: (tsAfterDisp - tsAfterWrite) * 1_000_000L / Stopwatch.Frequency,
+                    settled: false,
+                    payloadBytes: payloadBytes);
+            }
+            return outcome;
+        }
     }
 
     /// <summary>
