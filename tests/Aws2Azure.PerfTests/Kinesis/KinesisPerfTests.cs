@@ -55,14 +55,26 @@ public sealed class KinesisPerfTests(KinesisPerfFixture fixture)
     {
         Skip.IfNot(fixture.Ready, fixture.SkipReason);
 
-        using var client = fixture.Inner.CreateClient();
+        // Optional diagnostics (opt-in, off by default — see issue #129):
+        //   AWS2AZURE_PERF_CUSTOM_HTTP=1   wires a counting DelegatingHandler
+        //                                  into the AWS SDK HttpClientFactory
+        //                                  so we can compare HTTP calls vs
+        //                                  AMQP sends (proves whether the SDK
+        //                                  is retrying transparently).
+        //   AWS2AZURE_AMQP_TIMING=1        flips per-send breadcrumbs in the
+        //                                  proxy process (see AmqpTimingDiagnostics).
+        //   AWS2AZURE_PROXY_LOG_DUMP=path  dumps the captured proxy stderr to a
+        //                                  file for offline analysis.
+        var useCustomHandler = string.Equals(
+            Environment.GetEnvironmentVariable("AWS2AZURE_PERF_CUSTOM_HTTP"), "1", StringComparison.Ordinal);
+        var httpCallCounter = useCustomHandler ? new HttpCallCounter() : null;
+        using var client = fixture.Inner.CreateClient(httpCounter: httpCallCounter);
         var payload = Encoding.UTF8.GetBytes(new string('x', 256));
 
-        // Event Hubs emulator caps PutRecord throughput at ~1.7 ops/s
-        // regardless of concurrency or duration (likely per-link/producer
-        // throughput unit emulation). p50/p95/p99 reflect the steady-state
-        // per-call latency; the per-second throughput is an emulator-imposed
-        // ceiling, not a measure of the proxy.
+        // Closed-loop, single producer against one partition. Empirically
+        // tracks the Azure SDK baseline (~80-100 ops/s against the EH
+        // emulator on this hardware) so any future drop signals a real
+        // proxy regression.
         var result = await PerfRunner.RunAsync(
             scenario: "kinesis.PutRecord (256 B)",
             concurrency: 1,
@@ -79,7 +91,31 @@ public sealed class KinesisPerfTests(KinesisPerfFixture fixture)
                 }, ct).ConfigureAwait(false);
             });
 
-        PerfReport.Append(result, notes: "Kinesis→EventHubs(AMQP) emulator — emulator-capped ~1.7/s; latency = steady-state");
+        var httpNote = httpCallCounter is null ? "n/a" : httpCallCounter.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        PerfReport.Append(result, notes: $"Kinesis→EventHubs(AMQP) emulator — customHttp={useCustomHandler} HTTP={httpNote}");
+        var dumpPath = Environment.GetEnvironmentVariable("AWS2AZURE_PROXY_LOG_DUMP");
+        if (!string.IsNullOrEmpty(dumpPath))
+        {
+            await File.WriteAllTextAsync(dumpPath, fixture.ProxyOutput).ConfigureAwait(false);
+        }
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+    }
+}
+
+/// <summary>
+/// Diagnostics-only <see cref="System.Net.Http.DelegatingHandler"/> that
+/// counts every outgoing HTTP request. Used to discriminate between an
+/// AWS-SDK-side retry storm and a proxy-side amplification when a perf
+/// number looks off (issue #129).
+/// </summary>
+internal sealed class HttpCallCounter : System.Net.Http.DelegatingHandler
+{
+    private long _count;
+    public long Count => Interlocked.Read(ref _count);
+    protected override async Task<System.Net.Http.HttpResponseMessage> SendAsync(
+        System.Net.Http.HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref _count);
+        return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
     }
 }
