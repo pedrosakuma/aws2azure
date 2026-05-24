@@ -58,10 +58,15 @@ public sealed class KinesisPerfTests(KinesisPerfFixture fixture)
         using var client = fixture.Inner.CreateClient();
         var payload = Encoding.UTF8.GetBytes(new string('x', 256));
 
+        // Event Hubs emulator caps PutRecord throughput at ~1.7 ops/s
+        // regardless of concurrency or duration (likely per-link/producer
+        // throughput unit emulation). p50/p95/p99 reflect the steady-state
+        // per-call latency; the per-second throughput is an emulator-imposed
+        // ceiling, not a measure of the proxy.
         var result = await PerfRunner.RunAsync(
             scenario: "kinesis.PutRecord (256 B)",
             concurrency: 1,
-            duration: TimeSpan.FromSeconds(20),
+            duration: TimeSpan.FromSeconds(60),
             warmup: TimeSpan.Zero,
             action: async (workerId, ct) =>
             {
@@ -74,7 +79,7 @@ public sealed class KinesisPerfTests(KinesisPerfFixture fixture)
                 }, ct).ConfigureAwait(false);
             });
 
-        PerfReport.Append(result, notes: "Kinesis→EventHubs(AMQP) emulator");
+        PerfReport.Append(result, notes: "Kinesis→EventHubs(AMQP) emulator — emulator-capped ~1.7/s; latency = steady-state");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
     }
 }
