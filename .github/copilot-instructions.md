@@ -174,6 +174,57 @@ consistency, throttling, auth edge cases, and feature surface. Therefore:
 - Keep PRs scoped to one phase task. Update / add gap-doc YAML in the same PR
   as the code that implements the operation.
 
+## Agent workflow conventions
+
+Repo-wide meta-workflows that have paid off here. Declarative on purpose —
+the goal is to bias decisions, not to script every turn. Skip them when the
+task is genuinely trivial (typo fix, one-line config, doc-only).
+
+- **Mandatory `gpt-5.5` code review before merging a non-trivial PR.** Use
+  the `task` tool with `agent_type: "code-review"` and `model: "gpt-5.5"`
+  against the branch diff (base = `main`). Address every real finding before
+  `gh pr merge --squash --admin --delete-branch`. Has caught real bugs on
+  most non-trivial PRs in this repo — concurrency races (credit rollback,
+  delivery-id ordering, SyncBlock leaks), throttle-mapping regressions,
+  AOT trim warnings the author missed. Skip only for docs-only or
+  one-line config PRs.
+- **Decompose-then-parallelise.** Phases here tend to land as several
+  small, independent PRs (Phase 2.7 shipped as 6 stacked PRs). When work
+  decomposes into ≥2 independent trails (different modules, different test
+  surfaces, no shared schema migration), prefer dispatching one background
+  sub-agent per trail (`task` with `mode: "background"`) over serialising
+  them in the main loop. Main loop keeps coordination + code review; the
+  sub-agents own implementation.
+- **Pre-scope fuzzy work with a `research` or `explore` agent.** For
+  multi-day items (new service module, new wire-protocol variant, perf
+  investigation across modules), dispatch a sub-agent for survey +
+  feasibility before drafting the plan. Saves the main context for actual
+  design + execution.
+- **Don't reach for a sub-agent when a single tool call would do.** Simple
+  lookups (one grep, one file read), pointed edits, and any interactive
+  debugging stay in the main loop — sub-agent fidelity loss is not worth
+  it.
+- **Stacked-PR merge etiquette.** When a chain of dependent PRs lands
+  together, retarget each PR's base to `main` BEFORE merging (or merge in
+  reverse via rebase). Naively `gh pr merge --admin` in author order
+  orphans commits into intermediate bases and forces cherry-pick recovery
+  (this has bitten this repo — see PR #94..#100 retrospective).
+- **Worktree etiquette for parallel work.** Create the branch on the
+  remote first (`git worktree add -b <branch> /tmp/<dir> origin/main`) so
+  the sub-agent operates on an isolated checkout. After merge,
+  `git worktree remove --force <path>` BEFORE `gh pr merge
+  --delete-branch` (the latter cannot delete a local branch held by a
+  worktree).
+- **Perf claims must cite the harness.** Any throughput / latency number
+  in a PR description, gap doc, or commit message must reference the
+  scenario in `tests/Aws2Azure.PerfTests` that produced it and note that
+  numbers are emulator-bound unless explicitly validated against real
+  Azure (see emulator caveat above).
+
+User- or task-scoped preferences ("for this PR skip the review", "I
+prefer option X") belong in the prompt, not here. Conventions in this
+section apply to every contributor and every agent on this repo.
+
 ## Non-goals (refuse scope creep)
 
 - Not feature-complete with AWS. Gaps are **documented**, not hidden.
