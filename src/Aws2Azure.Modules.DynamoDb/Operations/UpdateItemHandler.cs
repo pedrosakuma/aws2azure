@@ -237,8 +237,21 @@ internal static class UpdateItemHandler
                 return;
             }
 
-            // Build the Cosmos doc envelope from the mutated item map.
+            // Validate the mutated item against the same shape + reserved-
+            // name rules a PutItem would face — an UpdateExpression can
+            // SET an attribute whose name collides with a reserved Cosmos
+            // root prop (e.g. `_a2aFoo`) or whose payload kind is
+            // malformed via :v parameters; we must surface those as
+            // client ValidationException rather than let them throw out
+            // of the encoder.
             var newItemJson = SerialiseItemMap(execResult.NewItem);
+            if (!ItemHandlers.ValidateItemShape(newItemJson, out var shapeError))
+            {
+                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", shapeError).ConfigureAwait(false);
+                return;
+            }
+
+            // Build the Cosmos doc envelope from the mutated item map.
             var docJson = ItemHandlers.BuildItemDocument(id, pk, newItemJson);
 
             HttpResponseMessage writeResp;

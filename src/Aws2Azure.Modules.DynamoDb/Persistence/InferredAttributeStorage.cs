@@ -336,12 +336,31 @@ internal static class InferredAttributeStorage
 
     // -- Number encoding -----------------------------------------------
 
+    // Bounds:
+    // - DDB: up to 38 significant digits, magnitude in [1e-130, 9.99...e+125].
+    // - Cosmos SQL: bare JSON numbers go through int64 or IEEE 754 double,
+    //   so reliably preserves only what round-trips through a double.
+    // We write bare when the normalised form is exactly representable in
+    // IEEE 754 double AND parses+formats back to itself (so Cosmos won't
+    // renormalise it to scientific notation on read). Everything else
+    // — large magnitudes, high precision — goes through the
+    // `{"_a2a:N":"<normalised>"}` envelope (Cosmos preserves strings
+    // byte-identical). Values outside DDB's 38-digit / 1e±125 range raise
+    // ValidationException — match real DDB.
+    internal const int MaxDdbNumberSignificantDigits = 38;
+    internal const int MaxDdbNumberDecimalExponent = 125;
+    internal const int MinDdbNumberDecimalExponent = -130;
+
     /// <summary>
-    /// Encodes a DDB Number attribute. Writes a bare JSON number when
-    /// the value round-trips through <see cref="decimal"/> losslessly
-    /// (covers ~28-29 significant decimal digits); otherwise emits the
-    /// envelope <c>{"_a2a:N":"&lt;original&gt;"}</c> so the high-precision
-    /// string survives the Cosmos round-trip.
+    /// Encodes a DDB Number attribute. Normalises the input to canonical
+    /// DDB decimal form (no leading zeros, no trailing zeros, no
+    /// exponent, no <c>-0</c>) — matching real DynamoDB's documented
+    /// normalisation, so callers get back the same digits real DDB would
+    /// return. Writes bare iff ≤15 significant digits (Cosmos
+    /// double-precision safe range); otherwise wraps in the
+    /// <c>{"_a2a:N":"&lt;normalised&gt;"}</c> envelope so 16-38 digit
+    /// values survive the Cosmos round-trip as a string. Throws
+    /// <see cref="ArgumentException"/> on inputs outside DDB's range.
     /// </summary>
     private static void EncodeNumber(Utf8JsonWriter writer, JsonElement numberAttrValue)
     {
@@ -351,49 +370,256 @@ internal static class InferredAttributeStorage
                 nameof(numberAttrValue));
 
         var raw = numberAttrValue.GetString() ?? string.Empty;
-        if (TryWriteBareNumber(writer, raw))
-            return;
+        if (!TryNormalizeDdbNumber(raw, out var normalised, out var significantDigits, out var error))
+            throw new ArgumentException(error, nameof(numberAttrValue));
 
-        // Fallback: high-precision or otherwise non-round-tripping value
-        // (scientific notation we can't normalise, trailing zeros that
-        // decimal.ToString() would strip, etc.). Preserve verbatim.
+        if (CanRoundTripAsBareJsonNumber(normalised))
+        {
+            // Bare: normalised form survives Cosmos's JSON-number
+            // double conversion byte-identical.
+            writer.WriteRawValue(normalised, skipInputValidation: false);
+            return;
+        }
+
+        // Envelope: high precision or magnitude — Cosmos would silently
+        // truncate / renormalise via double on bare storage. String
+        // preserves digits.
         writer.WriteStartObject();
-        writer.WriteString(EnvelopeNEncoded, raw);
+        writer.WriteString(EnvelopeNEncoded, normalised);
         writer.WriteEndObject();
     }
 
     /// <summary>
-    /// Returns true and writes a bare JSON Number iff the input string
-    /// is a decimal-safe form that round-trips through
-    /// <see cref="decimal.TryParse(ReadOnlySpan{char}, NumberStyles, IFormatProvider?, out decimal)"/>
-    /// and <see cref="decimal.TryFormat(Span{char}, out int, ReadOnlySpan{char}, IFormatProvider?)"/>
-    /// to a byte-identical representation.
+    /// Returns true iff <paramref name="canonical"/> parses to an IEEE 754
+    /// double whose canonical re-print (via <c>R</c>) matches the input
+    /// byte-for-byte. This is the strongest portable guarantee that
+    /// Cosmos, after reading the value back into a JSON number, will emit
+    /// the same lexical form (no scientific renormalisation, no
+    /// precision loss). Inputs whose magnitude or precision exceed
+    /// double's safe range fail this check and route to the envelope.
     /// </summary>
-    internal static bool TryWriteBareNumber(Utf8JsonWriter writer, string raw)
+    internal static bool CanRoundTripAsBareJsonNumber(string canonical)
     {
-        if (string.IsNullOrEmpty(raw)) return false;
-
-        if (!decimal.TryParse(
-                raw.AsSpan(),
-                NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint,
-                CultureInfo.InvariantCulture,
-                out var d))
+        if (!double.TryParse(canonical, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var value))
         {
             return false;
         }
+        if (double.IsNaN(value) || double.IsInfinity(value)) return false;
+        var roundTrip = value.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+        return string.Equals(roundTrip, canonical, StringComparison.Ordinal);
+    }
 
-        Span<char> buf = stackalloc char[32];
-        if (!d.TryFormat(buf, out var written, default, CultureInfo.InvariantCulture))
+    /// <summary>
+    /// Normalises a raw DDB Number string to its canonical decimal form
+    /// (matching DynamoDB's documented behaviour: strip leading zeros,
+    /// strip trailing zeros from the fraction, expand exponent notation
+    /// to plain decimal, collapse <c>-0</c> to <c>0</c>) AND validates
+    /// it against DDB's published bounds (≤38 significant digits,
+    /// magnitude in <c>[1e-130, 9.99...e+125]</c>). Returns false with
+    /// <paramref name="error"/> populated on any malformed input or
+    /// out-of-range value. The normalised string is what
+    /// <c>GetItem</c> echoes back to the client.
+    /// </summary>
+    internal static bool TryNormalizeDdbNumber(
+        string raw, out string normalised, out int significantDigits, out string error)
+    {
+        normalised = string.Empty;
+        significantDigits = 0;
+        error = string.Empty;
+
+        if (string.IsNullOrEmpty(raw))
+        {
+            error = "Number AttributeValue must not be empty.";
             return false;
+        }
 
-        if (!buf[..written].SequenceEqual(raw.AsSpan()))
+        var span = raw.AsSpan();
+        int i = 0;
+        bool negative = false;
+
+        if (span[i] == '+' || span[i] == '-')
+        {
+            negative = span[i] == '-';
+            i++;
+        }
+
+        int intStart = i;
+        while (i < span.Length && span[i] >= '0' && span[i] <= '9') i++;
+        int intEnd = i;
+
+        int fracStart = -1, fracEnd = -1;
+        if (i < span.Length && span[i] == '.')
+        {
+            i++;
+            fracStart = i;
+            while (i < span.Length && span[i] >= '0' && span[i] <= '9') i++;
+            fracEnd = i;
+        }
+
+        int expValue = 0;
+        if (i < span.Length && (span[i] == 'e' || span[i] == 'E'))
+        {
+            i++;
+            bool expNeg = false;
+            if (i < span.Length && (span[i] == '+' || span[i] == '-'))
+            {
+                expNeg = span[i] == '-';
+                i++;
+            }
+            int expDigits = 0;
+            while (i < span.Length && span[i] >= '0' && span[i] <= '9')
+            {
+                if (expDigits < 5)               // bound below int overflow
+                    expValue = expValue * 10 + (span[i] - '0');
+                else
+                    expValue = int.MaxValue / 2; // saturate; out-of-range below
+                expDigits++;
+                i++;
+            }
+            if (expDigits == 0)
+            {
+                error = "Number has malformed exponent.";
+                return false;
+            }
+            if (expNeg) expValue = -expValue;
+        }
+
+        if (i != span.Length)
+        {
+            error = "Number contains unexpected characters.";
             return false;
+        }
 
-        // Utf8JsonWriter.WriteRawValue is the cheapest way to embed a
-        // known-valid JSON number literal. The string we just compared
-        // against decimal.TryFormat output is JSON-spec-conforming.
-        writer.WriteRawValue(raw, skipInputValidation: false);
+        int intDigits = intEnd - intStart;
+        int fracDigits = fracEnd >= 0 ? fracEnd - fracStart : 0;
+        if (intDigits == 0)
+        {
+            // Real DDB requires at least one digit before the decimal
+            // point: ".5" is rejected as malformed.
+            error = "Number must have at least one digit before the decimal point.";
+            return false;
+        }
+        if (fracEnd >= 0 && fracDigits == 0)
+        {
+            // "1." with no fraction digits is also rejected.
+            error = "Number has a decimal point with no following digits.";
+            return false;
+        }
+
+        // Locate the first non-zero digit across (int, fraction).
+        int firstNonZero = -1;
+        for (int k = 0; k < intDigits; k++)
+        {
+            if (span[intStart + k] != '0') { firstNonZero = k; break; }
+        }
+        if (firstNonZero == -1)
+        {
+            for (int k = 0; k < fracDigits; k++)
+            {
+                if (span[fracStart + k] != '0')
+                {
+                    firstNonZero = intDigits + k;
+                    break;
+                }
+            }
+        }
+        if (firstNonZero == -1)
+        {
+            normalised = "0";
+            significantDigits = 1;
+            return true;
+        }
+
+        // Locate last non-zero (across concatenated int + fraction).
+        int totalDigits = intDigits + fracDigits;
+        int lastNonZero = totalDigits - 1;
+        for (; lastNonZero >= 0; lastNonZero--)
+        {
+            char d = lastNonZero < intDigits
+                ? span[intStart + lastNonZero]
+                : span[fracStart + (lastNonZero - intDigits)];
+            if (d != '0') break;
+        }
+
+        significantDigits = lastNonZero - firstNonZero + 1;
+        if (significantDigits > MaxDdbNumberSignificantDigits)
+        {
+            error = $"Number exceeds DynamoDB's {MaxDdbNumberSignificantDigits}-digit precision limit.";
+            return false;
+        }
+
+        // Decimal exponent of the most-significant digit, with the
+        // explicit exponent folded in.
+        int msdExponent = (intDigits - 1 - firstNonZero) + expValue;
+        int lsdExponent = msdExponent - (significantDigits - 1);
+
+        if (msdExponent > MaxDdbNumberDecimalExponent)
+        {
+            error = $"Number magnitude exceeds DynamoDB's 1e+{MaxDdbNumberDecimalExponent} upper bound.";
+            return false;
+        }
+        if (lsdExponent < MinDdbNumberDecimalExponent)
+        {
+            error = $"Number magnitude is below DynamoDB's 1e{MinDdbNumberDecimalExponent} lower bound.";
+            return false;
+        }
+
+        // Emit canonical layout. Two cases:
+        //   msdExp >= 0  → [-]<intPart>[.<fracPart>]  (e.g. 1500, 1.5, 1.005)
+        //   msdExp <  0  → [-]0.<leadingZeros><sigDigits>  (e.g. 0.001, 0.5)
+        var sb = new System.Text.StringBuilder();
+        if (negative) sb.Append('-');
+
+        if (msdExponent >= 0)
+        {
+            int intLen = msdExponent + 1;
+            for (int k = 0; k < intLen; k++)
+            {
+                sb.Append(k < significantDigits ? GetSignificantDigit(span, intStart, fracStart, intDigits, firstNonZero, k) : '0');
+            }
+            if (lsdExponent < 0)
+            {
+                sb.Append('.');
+                int fracLen = -lsdExponent;
+                for (int k = 0; k < fracLen; k++)
+                {
+                    int sigIdx = intLen + k;
+                    // Trailing zeros were already stripped from
+                    // significantDigits, so sigIdx is always in range.
+                    sb.Append(GetSignificantDigit(span, intStart, fracStart, intDigits, firstNonZero, sigIdx));
+                }
+            }
+        }
+        else
+        {
+            sb.Append('0');
+            sb.Append('.');
+            int leadingZeros = -msdExponent - 1;
+            for (int k = 0; k < leadingZeros; k++) sb.Append('0');
+            for (int k = 0; k < significantDigits; k++)
+            {
+                sb.Append(GetSignificantDigit(span, intStart, fracStart, intDigits, firstNonZero, k));
+            }
+        }
+
+        normalised = sb.ToString();
         return true;
+    }
+
+    /// <summary>
+    /// Returns the k-th significant digit (0 = MSD) from the original
+    /// raw input span, given the int/fraction segment offsets resolved
+    /// by <see cref="TryNormalizeDdbNumber"/>.
+    /// </summary>
+    private static char GetSignificantDigit(
+        ReadOnlySpan<char> span, int intStart, int fracStart,
+        int intDigits, int firstNonZero, int k)
+    {
+        int srcIdx = firstNonZero + k;
+        return srcIdx < intDigits
+            ? span[intStart + srcIdx]
+            : span[fracStart + (srcIdx - intDigits)];
     }
 
     // ---------------- READ PATH (Cosmos → DDB) -----------------------

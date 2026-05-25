@@ -148,43 +148,93 @@ public class InferredAttributeStorageTests
     }
 
     [Theory]
-    [InlineData("42")]
-    [InlineData("-42")]
-    [InlineData("0")]
-    [InlineData("3.14")]
-    [InlineData("-0.001")]
-    [InlineData("999999999999999999")]
-    [InlineData("12345678901234567890123456789")]
-    public void Number_small_roundtrips_as_bare_value(string n)
+    // Already-canonical inputs round-trip byte-identical.
+    [InlineData("42", "42")]
+    [InlineData("-42", "-42")]
+    [InlineData("0", "0")]
+    [InlineData("3.14", "3.14")]
+    [InlineData("-0.001", "-0.001")]
+    [InlineData("999999999999999", "999999999999999")]  // 15 sig digits — bare boundary
+    // DDB-normalised: trailing zeros stripped, exponent expanded,
+    // leading zeros / +0 / -0 collapsed (matches real DDB behaviour).
+    [InlineData("42.0", "42")]
+    [InlineData("42.00", "42")]
+    [InlineData("0.10", "0.1")]
+    [InlineData("01", "1")]
+    [InlineData("00", "0")]
+    [InlineData("-0", "0")]
+    [InlineData("-0.0", "0")]
+    [InlineData("+42", "42")]
+    [InlineData("1e3", "1000")]
+    [InlineData("1.5e2", "150")]
+    [InlineData("5e-3", "0.005")]
+    [InlineData("-1.23e2", "-123")]
+    public void Number_small_normalises_and_roundtrips_bare(string input, string canonical)
     {
-        RoundTrip($"{{\"x\":{{\"N\":\"{n}\"}}}}", $"{{\"x\":{{\"N\":\"{n}\"}}}}");
-        var doc = EncodeDoc("i", "p", $"{{\"x\":{{\"N\":\"{n}\"}}}}");
-        Assert.Contains($"\"x\":{n}", doc);
+        // Encoder writes the canonical form bare in the Cosmos doc.
+        var doc = EncodeDoc("i", "p", $"{{\"x\":{{\"N\":\"{input}\"}}}}");
+        Assert.Contains($"\"x\":{canonical}", doc);
+        Assert.DoesNotContain("_a2a:N", doc);
+        // Decoder echoes whatever Cosmos stored — i.e. the canonical form.
+        RoundTrip($"{{\"x\":{{\"N\":\"{input}\"}}}}", $"{{\"x\":{{\"N\":\"{canonical}\"}}}}");
     }
 
     [Theory]
-    [InlineData("9999999999999999999999999999999999")] // 34 digits — exceeds decimal precision
-    [InlineData("1.7976931348623157E+308")]            // scientific notation — TryFormat emits plain decimal
-    [InlineData("1.0E-130")]                            // tiny exponent
-    [InlineData("+42")]                                 // leading + — strictly stripped by decimal.ToString
-    [InlineData("1e10")]                                // lowercase scientific
-    public void Number_big_or_format_sensitive_uses_envelope(string n)
+    // 16+ significant digits — bare path would lose precision through
+    // Cosmos's double-precision JSON number storage, so envelope as string.
+    [InlineData("9999999999999999", "9999999999999999")]                       // 16 sig digits
+    [InlineData("12345678901234567890123456789", "12345678901234567890123456789")] // 29 sig digits
+    [InlineData("1.234567890123456789", "1.234567890123456789")]                // 19 sig digits, fraction
+    [InlineData("1e30", "1000000000000000000000000000000")]                     // expanded then envelope (only 1 sig digit, but magnitude 30)
+    [InlineData("1.5e20", "150000000000000000000")]                             // 2 sig digits + huge magnitude
+    public void Number_high_precision_or_magnitude_envelopes(string input, string canonical)
     {
-        var doc = EncodeDoc("i", "p", $"{{\"x\":{{\"N\":\"{n}\"}}}}");
-        Assert.Contains($"\"x\":{{\"_a2a:N\":\"{n}\"}}", doc);
-        RoundTrip($"{{\"x\":{{\"N\":\"{n}\"}}}}", $"{{\"x\":{{\"N\":\"{n}\"}}}}");
+        var doc = EncodeDoc("i", "p", $"{{\"x\":{{\"N\":\"{input}\"}}}}");
+        Assert.Contains($"\"x\":{{\"_a2a:N\":\"{canonical}\"}}", doc);
+        RoundTrip($"{{\"x\":{{\"N\":\"{input}\"}}}}", $"{{\"x\":{{\"N\":\"{canonical}\"}}}}");
     }
 
     [Theory]
-    [InlineData("42.0")]   // decimal scale preserved
-    [InlineData("42.00")]  // multiple trailing zeros preserved
-    [InlineData("0.10")]   // leading 0 + trailing 0 preserved
-    public void Number_with_decimal_trailing_zeros_roundtrips_bare(string n)
+    // DDB's published bounds: ≤38 significant digits, magnitude in
+    // [1e-130, 9.99...e+125]. Outside that → ValidationException.
+    [InlineData("999999999999999999999999999999999999999")]   // 39 sig digits
+    [InlineData("1e126")]                                       // magnitude over 1e125
+    [InlineData("1e-131")]                                      // magnitude below 1e-130
+    [InlineData("")]
+    [InlineData("-")]
+    [InlineData(".")]
+    [InlineData("1.")]
+    [InlineData(".5")]
+    [InlineData("1e")]
+    [InlineData("abc")]
+    [InlineData("1.2.3")]
+    public void Number_outside_ddb_range_throws(string input)
     {
-        // decimal preserves scale, so these formats survive the bare path.
-        var doc = EncodeDoc("i", "p", $"{{\"x\":{{\"N\":\"{n}\"}}}}");
-        Assert.Contains($"\"x\":{n}", doc);
-        RoundTrip($"{{\"x\":{{\"N\":\"{n}\"}}}}", $"{{\"x\":{{\"N\":\"{n}\"}}}}");
+        Assert.Throws<ArgumentException>(() =>
+            EncodeDoc("i", "p", $"{{\"x\":{{\"N\":\"{input}\"}}}}"));
+    }
+
+    [Theory]
+    [InlineData("0", "0", 1)]
+    [InlineData("42", "42", 2)]
+    [InlineData("-42", "-42", 2)]
+    [InlineData("42.0", "42", 2)]
+    [InlineData("0.10", "0.1", 1)]
+    [InlineData("01", "1", 1)]
+    [InlineData("-0", "0", 1)]
+    [InlineData("1e3", "1000", 1)]
+    [InlineData("1.5e2", "150", 2)]
+    [InlineData("5e-3", "0.005", 1)]
+    [InlineData("-1.23e2", "-123", 3)]
+    [InlineData("1000", "1000", 1)]
+    [InlineData("0.5", "0.5", 1)]
+    public void Normaliser_emits_canonical_form_and_significant_digit_count(
+        string input, string expected, int expectedSig)
+    {
+        Assert.True(InferredAttributeStorage.TryNormalizeDdbNumber(
+            input, out var actual, out var sig, out _));
+        Assert.Equal(expected, actual);
+        Assert.Equal(expectedSig, sig);
     }
 
     [Fact]
@@ -286,9 +336,26 @@ public class InferredAttributeStorageTests
             "\"blob\":{\"B\":\"AQID\"}," +
             "\"profile\":{\"M\":{\"city\":{\"S\":\"SP\"}}}," +
             "\"scores\":{\"L\":[{\"N\":\"1\"},{\"N\":\"2\"}]}," +
-            "\"big\":{\"N\":\"1.7976931348623157E+308\"}" +
+            // 1.7976931348623157E+308 is outside DynamoDB's published
+            // numeric range (|exp| <= 125). Use a value inside the
+            // band that still exceeds the bare ≤15 sig-digit budget
+            // and therefore exercises the envelope path.
+            "\"big\":{\"N\":\"1.23456789012345678901234567890123456E+120\"}" +
             "}";
-        RoundTrip(item, item);
+        string expected =
+            "{" +
+            "\"name\":{\"S\":\"Alice\"}," +
+            "\"age\":{\"N\":\"30\"}," +
+            "\"active\":{\"BOOL\":true}," +
+            "\"deleted\":{\"NULL\":true}," +
+            "\"tags\":{\"SS\":[\"x\",\"y\"]}," +
+            "\"blob\":{\"B\":\"AQID\"}," +
+            "\"profile\":{\"M\":{\"city\":{\"S\":\"SP\"}}}," +
+            "\"scores\":{\"L\":[{\"N\":\"1\"},{\"N\":\"2\"}]}," +
+            "\"big\":{\"N\":\"123456789012345678901234567890123456" +
+            new string('0', 120 - 35) + "\"}" +
+            "}";
+        RoundTrip(item, expected);
     }
 
     // ---------- doc shape ----------
@@ -316,12 +383,13 @@ public class InferredAttributeStorageTests
     // ---------- decimal boundary ----------
 
     [Theory]
+    // 29 sig digits exceeds the ≤15 bare budget → envelope.
     [InlineData("79228162514264337593543950335")]
     [InlineData("-79228162514264337593543950335")]
-    public void Number_at_decimal_max_fits_bare(string n)
+    public void Number_at_decimal_max_uses_envelope(string n)
     {
         var doc = EncodeDoc("i", "p", $"{{\"x\":{{\"N\":\"{n}\"}}}}");
-        Assert.Contains($"\"x\":{n}", doc);
+        Assert.Contains($"\"x\":{{\"_a2a:N\":\"{n}\"}}", doc);
     }
 
     [Fact]
