@@ -76,7 +76,6 @@ public sealed class FilterPushdownVisitorTests
 
     [Theory]
     [InlineData("age = :v", "=")]
-    [InlineData("age <> :v", "!=")]
     [InlineData("age < :v", "<")]
     [InlineData("age <= :v", "<=")]
     [InlineData("age > :v", ">")]
@@ -92,7 +91,52 @@ public sealed class FilterPushdownVisitorTests
         Assert.Single(r.Parameters);
         Assert.Equal(JsonValueKind.Number, r.Parameters[0].Value.ValueKind);
         Assert.Equal(42, r.Parameters[0].Value.GetInt32());
-        Assert.Null(r.Residual);
+        // Hybrid SQL is a prefilter — StringToNumber rounds through a
+        // double; residual is preserved so the client-side evaluator
+        // re-checks the exact canonical string.
+        Assert.NotNull(r.Residual);
+    }
+
+    [Fact]
+    public void Numeric_not_equal_is_residual_to_cover_cross_type_rows()
+    {
+        // DDB `<>` is true when the attribute exists with a different
+        // type than the operand. The hybrid number SQL only matches
+        // numeric / envelope-numeric storage shapes, so it would drop
+        // rows whose `age` is e.g. a string. Pushing it is unsafe.
+        var values = new Dictionary<string, JsonElement> { [":v"] = V("{\"N\":\"42\"}") };
+        var r = Translate("age <> :v", values: values);
+        Assert.Null(r.Sql);
+        Assert.Empty(r.Parameters);
+        Assert.NotNull(r.Residual);
+    }
+
+    [Fact]
+    public void Binary_not_equal_is_residual_to_cover_cross_type_rows()
+    {
+        // Same reasoning as numeric: envelope-targeted SQL drops rows
+        // whose attribute is a different type, but DDB keeps them.
+        var values = new Dictionary<string, JsonElement> { [":v"] = V("{\"B\":\"AQID\"}") };
+        var r = Translate("blob <> :v", values: values);
+        Assert.Null(r.Sql);
+        Assert.Empty(r.Parameters);
+        Assert.NotNull(r.Residual);
+    }
+
+    [Theory]
+    [InlineData("blob < :v")]
+    [InlineData("blob <= :v")]
+    [InlineData("blob > :v")]
+    [InlineData("blob >= :v")]
+    public void Binary_ordered_compare_is_residual(string expression)
+    {
+        // base64 lexical ordering != underlying byte ordering, so
+        // ordered comparisons on B must not push.
+        var values = new Dictionary<string, JsonElement> { [":v"] = V("{\"B\":\"AQID\"}") };
+        var r = Translate(expression, values: values);
+        Assert.Null(r.Sql);
+        Assert.Empty(r.Parameters);
+        Assert.NotNull(r.Residual);
     }
 
     [Fact]
@@ -147,6 +191,25 @@ public sealed class FilterPushdownVisitorTests
             " OR (IS_DEFINED(c[\"age\"][\"_a2a:N\"]) AND StringToNumber(c[\"age\"][\"_a2a:N\"]) >= @fp0" +
             " AND StringToNumber(c[\"age\"][\"_a2a:N\"]) <= @fp1))";
         Assert.Equal(expected, r.Sql);
+        // Hybrid SQL is a prefilter — keep residual to re-check exact
+        // canonical string for envelope-stored values.
+        Assert.NotNull(r.Residual);
+    }
+
+    [Fact]
+    public void Between_binary_is_residual()
+    {
+        // BETWEEN on B would order by base64 string, which is not
+        // equivalent to ordering by the underlying byte sequence.
+        var values = new Dictionary<string, JsonElement>
+        {
+            [":lo"] = V("{\"B\":\"AAA=\"}"),
+            [":hi"] = V("{\"B\":\"AQID\"}"),
+        };
+        var r = Translate("blob BETWEEN :lo AND :hi", values: values);
+        Assert.Null(r.Sql);
+        Assert.Empty(r.Parameters);
+        Assert.NotNull(r.Residual);
     }
 
     [Fact]
@@ -257,38 +320,46 @@ public sealed class FilterPushdownVisitorTests
     }
 
     [Fact]
-    public void Contains_string_emits_string_or_set_branches()
+    public void Contains_string_emits_string_or_set_or_list_branches()
     {
         var values = new Dictionary<string, JsonElement> { [":v"] = V("{\"S\":\"hello\"}") };
         var r = Translate("contains(field, :v)", values: values);
         var expected =
             "((IS_STRING(c[\"field\"]) AND CONTAINS(c[\"field\"], @fp0, false))" +
-            " OR (IS_ARRAY(c[\"field\"][\"_a2a:SS\"]) AND ARRAY_CONTAINS(c[\"field\"][\"_a2a:SS\"], @fp0)))";
+            " OR (IS_ARRAY(c[\"field\"][\"_a2a:SS\"]) AND ARRAY_CONTAINS(c[\"field\"][\"_a2a:SS\"], @fp0))" +
+            " OR IS_ARRAY(c[\"field\"]))";
         Assert.Equal(expected, r.Sql);
         Assert.Single(r.Parameters);
+        // List members may be envelope-encoded; residual evaluator
+        // performs the precise typed comparison.
+        Assert.NotNull(r.Residual);
     }
 
     [Fact]
-    public void Contains_number_targets_number_set_envelope()
+    public void Contains_number_targets_number_set_envelope_or_list()
     {
         // NS members live as strings inside the envelope.
         var values = new Dictionary<string, JsonElement> { [":v"] = V("{\"N\":\"42\"}") };
         var r = Translate("contains(ids, :v)", values: values);
         Assert.Equal(
-            "(IS_ARRAY(c[\"ids\"][\"_a2a:NS\"]) AND ARRAY_CONTAINS(c[\"ids\"][\"_a2a:NS\"], @fp0))",
+            "((IS_ARRAY(c[\"ids\"][\"_a2a:NS\"]) AND ARRAY_CONTAINS(c[\"ids\"][\"_a2a:NS\"], @fp0))" +
+            " OR IS_ARRAY(c[\"ids\"]))",
             r.Sql);
         Assert.Equal(JsonValueKind.String, r.Parameters[0].Value.ValueKind);
         Assert.Equal("42", r.Parameters[0].Value.GetString());
+        Assert.NotNull(r.Residual);
     }
 
     [Fact]
-    public void Contains_binary_targets_binary_set_envelope()
+    public void Contains_binary_targets_binary_set_envelope_or_list()
     {
         var values = new Dictionary<string, JsonElement> { [":v"] = V("{\"B\":\"AQID\"}") };
         var r = Translate("contains(blobs, :v)", values: values);
         Assert.Equal(
-            "(IS_ARRAY(c[\"blobs\"][\"_a2a:BS\"]) AND ARRAY_CONTAINS(c[\"blobs\"][\"_a2a:BS\"], @fp0))",
+            "((IS_ARRAY(c[\"blobs\"][\"_a2a:BS\"]) AND ARRAY_CONTAINS(c[\"blobs\"][\"_a2a:BS\"], @fp0))" +
+            " OR IS_ARRAY(c[\"blobs\"]))",
             r.Sql);
+        Assert.NotNull(r.Residual);
     }
 
     [Fact]
@@ -315,7 +386,12 @@ public sealed class FilterPushdownVisitorTests
         Assert.NotNull(r.Sql);
         Assert.StartsWith("(", r.Sql);
         Assert.Contains(" AND ", r.Sql);
-        Assert.Null(r.Residual);
+        // The numeric branch is a prefilter (StringToNumber rounds
+        // through a double on envelope-stored values) so its residual
+        // bubbles up through the AND. The string branch contributes
+        // no residual.
+        Assert.NotNull(r.Residual);
+        Assert.IsType<CompareCondition>(r.Residual);
         Assert.Equal(2, r.Parameters.Count);
     }
 
@@ -421,5 +497,44 @@ public sealed class FilterPushdownVisitorTests
         var values = new Dictionary<string, JsonElement> { [":v"] = V("{\"S\":\"SP\"}") };
         var r = Translate("profile.city = :v", values: values);
         Assert.Equal("c[\"profile\"][\"city\"] = @fp0", r.Sql);
+    }
+
+    // ---------------- envelope path-leak guard ----------------------
+
+    [Fact]
+    public void Reserved_envelope_segment_via_name_alias_is_not_pushed()
+    {
+        // A user-controlled #tag aliased to "_a2a:N" would, without
+        // this guard, let the caller filter on storage internals via
+        // pushed SQL. The visitor must refuse to translate such paths.
+        var names = new Dictionary<string, string> { ["#tag"] = "_a2a:N" };
+        var values = new Dictionary<string, JsonElement> { [":v"] = V("{\"S\":\"x\"}") };
+        var r = Translate("#tag = :v", names: names, values: values);
+        Assert.Null(r.Sql);
+        Assert.Empty(r.Parameters);
+        Assert.NotNull(r.Residual);
+    }
+
+    [Fact]
+    public void Reserved_envelope_segment_in_nested_path_is_not_pushed()
+    {
+        // Even an inner segment matching the reserved prefix must
+        // refuse pushdown — translator would happily render the path
+        // and let the caller probe an envelope.
+        var names = new Dictionary<string, string> { ["#tag"] = "_a2a:B" };
+        var values = new Dictionary<string, JsonElement> { [":v"] = V("{\"S\":\"x\"}") };
+        var r = Translate("profile.#tag = :v", names: names, values: values);
+        Assert.Null(r.Sql);
+        Assert.Empty(r.Parameters);
+        Assert.NotNull(r.Residual);
+    }
+
+    [Fact]
+    public void Reserved_envelope_segment_blocks_attribute_exists_pushdown()
+    {
+        var names = new Dictionary<string, string> { ["#tag"] = "_a2a:SS" };
+        var r = Translate("attribute_exists(#tag)", names: names);
+        Assert.Null(r.Sql);
+        Assert.NotNull(r.Residual);
     }
 }

@@ -233,9 +233,22 @@ internal static class FilterPushdownVisitor
     {
         if (!ParsedAttributeValue.TryParse(value.Value, out var parsed))
             return new VisitResult(null, original);
+        if (HasReservedSegment(path))
+            return new VisitResult(null, original);
+
+        // DDB `<>` is true when the attribute exists but has a different
+        // type than the operand. The shape-specific SQL we emit per type
+        // can't model that cross-type semantics safely (envelope-targeted
+        // SQL on a row whose attribute is a different type returns
+        // Undefined / false, dropping rows DDB would keep). Hand it back
+        // to the client-side evaluator.
+        if (op == CompareOp.NotEqual)
+            return new VisitResult(null, original);
 
         var sqlOp = SqlForOp[op];
         var pathSql = CosmosPathTranslator.Translate(path, c.RootAlias);
+        bool isOrdered = op is CompareOp.Less or CompareOp.LessEqual
+            or CompareOp.Greater or CompareOp.GreaterEqual;
 
         switch (parsed.TypeTag)
         {
@@ -254,6 +267,11 @@ internal static class FilterPushdownVisitor
 
             case AttributeValueTypes.Binary:
                 // Binary stored as `{ "_a2a:B": "<b64>" }` envelope.
+                // Equality on canonical base64 is safe; ordered
+                // comparisons would order by base64 lexical bytes
+                // rather than by underlying binary bytes — defer to
+                // residual evaluation.
+                if (isOrdered) return new VisitResult(null, original);
                 var envBPath = pathSql + "[\"" + InferredAttributeStorage.EnvelopeTagB + "\"]";
                 return new VisitResult($"{envBPath} {sqlOp} {c.Bind(parsed.Value)}", null);
 
@@ -273,6 +291,12 @@ internal static class FilterPushdownVisitor
     /// parsed value exceeds IEEE 754 double round-trip safety —
     /// pushing it would compare via doubles and silently misclassify
     /// boundary items.
+    ///
+    /// <para>The SQL acts as a prefilter only — <c>StringToNumber</c>
+    /// rounds the envelope payload to a double, so high-precision
+    /// envelope-stored values can be falsely matched. The original
+    /// node is preserved as residual so <see cref="ConditionEvaluator"/>
+    /// re-evaluates the comparison against the exact canonical string.</para>
     /// </summary>
     private static VisitResult BuildNumberCompare(
         string pathSql, string sqlOp, string nText, Context c, ConditionNode original)
@@ -285,7 +309,7 @@ internal static class FilterPushdownVisitor
         var sql =
             $"((IS_NUMBER({pathSql}) AND {pathSql} {sqlOp} {p})" +
             $" OR (IS_DEFINED({envPath}) AND StringToNumber({envPath}) {sqlOp} {p}))";
-        return new VisitResult(sql, null);
+        return new VisitResult(sql, original);
     }
 
     private static VisitResult VisitBetween(BetweenCondition bt, Context c)
@@ -297,6 +321,7 @@ internal static class FilterPushdownVisitor
             || !ParsedAttributeValue.TryParse(hiv.Value.Value, out var hi))
             return new VisitResult(null, bt);
         if (lo.TypeTag != hi.TypeTag) return new VisitResult(null, bt);
+        if (HasReservedSegment(pv.Path)) return new VisitResult(null, bt);
 
         var pathSql = CosmosPathTranslator.Translate(pv.Path, c.RootAlias);
 
@@ -318,14 +343,17 @@ internal static class FilterPushdownVisitor
                     $"((IS_NUMBER({pathSql}) AND {pathSql} >= {lp} AND {pathSql} <= {hp})" +
                     $" OR (IS_DEFINED({envPath}) AND StringToNumber({envPath}) >= {lp}" +
                     $" AND StringToNumber({envPath}) <= {hp}))";
-                return new VisitResult(sql, null);
+                // Hybrid number SQL is a prefilter only: StringToNumber
+                // rounds envelope payloads through a double, so the
+                // residual evaluator must re-check the exact canonical
+                // string. See BuildNumberCompare.
+                return new VisitResult(sql, bt);
 
             case AttributeValueTypes.Binary:
-                var lb = c.Bind(lo.Value);
-                var hb = c.Bind(hi.Value);
-                var envBPath = pathSql + "[\"" + InferredAttributeStorage.EnvelopeTagB + "\"]";
-                return new VisitResult(
-                    $"({envBPath} >= {lb} AND {envBPath} <= {hb})", null);
+                // BETWEEN on B would compare base64 strings lexically,
+                // which is not equivalent to comparing the underlying
+                // byte sequences. Leave it residual.
+                return new VisitResult(null, bt);
 
             default:
                 return new VisitResult(null, bt);
@@ -336,6 +364,7 @@ internal static class FilterPushdownVisitor
     {
         if (inn.Value is not ConditionPathOperand pv) return new VisitResult(null, inn);
         if (inn.Set.Count == 0) return new VisitResult(null, inn);
+        if (HasReservedSegment(pv.Path)) return new VisitResult(null, inn);
 
         // All set members must be values and share one type tag.
         var parsedSet = new List<ParsedAttributeValue>(inn.Set.Count);
@@ -371,10 +400,13 @@ internal static class FilterPushdownVisitor
                     }
                     var joined = string.Join(", ", names);
                     var envPath = pathSql + "[\"" + InferredAttributeStorage.EnvelopeTagN + "\"]";
+                    // Prefilter only: hybrid envelope comparison rounds
+                    // through a double via StringToNumber. Residual
+                    // re-evaluates against the exact canonical string.
                     return new VisitResult(
                         $"((IS_NUMBER({pathSql}) AND {pathSql} IN ({joined}))" +
                         $" OR (IS_DEFINED({envPath}) AND StringToNumber({envPath}) IN ({joined})))",
-                        null);
+                        inn);
                 }
             default:
                 return new VisitResult(null, inn);
@@ -385,12 +417,14 @@ internal static class FilterPushdownVisitor
 
     private static VisitResult VisitAttributeExists(AttributeExistsCondition node, Context c)
     {
+        if (HasReservedSegment(node.Path)) return new VisitResult(null, node);
         var pathSql = CosmosPathTranslator.Translate(node.Path, c.RootAlias);
         return new VisitResult($"IS_DEFINED({pathSql})", null);
     }
 
     private static VisitResult VisitAttributeNotExists(AttributeNotExistsCondition node, Context c)
     {
+        if (HasReservedSegment(node.Path)) return new VisitResult(null, node);
         var pathSql = CosmosPathTranslator.Translate(node.Path, c.RootAlias);
         return new VisitResult($"NOT IS_DEFINED({pathSql})", null);
     }
@@ -400,6 +434,7 @@ internal static class FilterPushdownVisitor
         if (!ParsedAttributeValue.TryParse(node.TypeTag.Value, out var tagVal)
             || tagVal.TypeTag != AttributeValueTypes.String)
             return new VisitResult(null, node);
+        if (HasReservedSegment(node.Path)) return new VisitResult(null, node);
 
         var requested = tagVal.Value.GetString();
         var pathSql = CosmosPathTranslator.Translate(node.Path, c.RootAlias);
@@ -436,6 +471,7 @@ internal static class FilterPushdownVisitor
         if (node.Path is not ConditionPathOperand pv) return new VisitResult(null, node);
         if (node.Prefix is not ConditionValueOperand pref) return new VisitResult(null, node);
         if (!ParsedAttributeValue.TryParse(pref.Value.Value, out var parsed)) return new VisitResult(null, node);
+        if (HasReservedSegment(pv.Path)) return new VisitResult(null, node);
 
         var pathSql = CosmosPathTranslator.Translate(pv.Path, c.RootAlias);
 
@@ -462,31 +498,39 @@ internal static class FilterPushdownVisitor
         if (node.Container is not ConditionPathOperand pv) return new VisitResult(null, node);
         if (node.Item is not ConditionValueOperand item) return new VisitResult(null, node);
         if (!ParsedAttributeValue.TryParse(item.Value.Value, out var parsed)) return new VisitResult(null, node);
+        if (HasReservedSegment(pv.Path)) return new VisitResult(null, node);
 
         var pathSql = CosmosPathTranslator.Translate(pv.Path, c.RootAlias);
 
+        // DDB `contains(container, :v)` also matches lists (type L)
+        // whose members equal :v. Lists are stored in flat Cosmos as
+        // bare JSON arrays whose elements are recursively encoded
+        // (envelope-wrapped for N/B/sets, bare for S). To preserve
+        // candidate rows whose container is a list we widen the SQL
+        // with an IS_ARRAY(path) prefilter branch and fall back to
+        // residual evaluation, which understands the typed element
+        // semantics.
         switch (parsed.TypeTag)
         {
             case AttributeValueTypes.String:
                 {
                     // String argument: contains can match an S
-                    // attribute (substring) or an SS attribute
-                    // (membership). Emit both branches.
+                    // attribute (substring), an SS attribute
+                    // (membership) or an L containing the string.
                     var pName = c.Bind(parsed.Value);
                     var ssPath = pathSql + "[\"" + InferredAttributeStorage.EnvelopeTagSS + "\"]";
                     var sql =
                         $"((IS_STRING({pathSql}) AND CONTAINS({pathSql}, {pName}, false))" +
-                        $" OR (IS_ARRAY({ssPath}) AND ARRAY_CONTAINS({ssPath}, {pName})))";
-                    return new VisitResult(sql, null);
+                        $" OR (IS_ARRAY({ssPath}) AND ARRAY_CONTAINS({ssPath}, {pName}))" +
+                        $" OR IS_ARRAY({pathSql}))";
+                    return new VisitResult(sql, node);
                 }
             case AttributeValueTypes.Number:
                 {
-                    // Numeric argument: only meaningful against an NS
-                    // attribute. NS members are stored as strings in
-                    // the envelope, so compare against the canonical
-                    // string form via ARRAY_CONTAINS over the string
-                    // representation. Falls back to residual if the
-                    // numeric input is malformed.
+                    // Numeric argument: matches an NS attribute
+                    // (members stored as canonical strings) or an L
+                    // containing the same number. Falls back to
+                    // residual if the numeric input is malformed.
                     var nsPath = pathSql + "[\"" + InferredAttributeStorage.EnvelopeTagNS + "\"]";
                     if (!InferredAttributeStorage.TryNormalizeDdbNumber(
                         parsed.Value.GetString() ?? string.Empty,
@@ -496,16 +540,19 @@ internal static class FilterPushdownVisitor
                     }
                     var pName = c.Bind(JsonString(canonical));
                     return new VisitResult(
-                        $"(IS_ARRAY({nsPath}) AND ARRAY_CONTAINS({nsPath}, {pName}))", null);
+                        $"((IS_ARRAY({nsPath}) AND ARRAY_CONTAINS({nsPath}, {pName}))" +
+                        $" OR IS_ARRAY({pathSql}))", node);
                 }
             case AttributeValueTypes.Binary:
                 {
-                    // Binary argument: only against BS, members stored
-                    // as base64 strings.
+                    // Binary argument: matches a BS attribute (members
+                    // stored as base64 strings) or an L containing the
+                    // same binary value.
                     var bsPath = pathSql + "[\"" + InferredAttributeStorage.EnvelopeTagBS + "\"]";
                     var pName = c.Bind(parsed.Value);
                     return new VisitResult(
-                        $"(IS_ARRAY({bsPath}) AND ARRAY_CONTAINS({bsPath}, {pName}))", null);
+                        $"((IS_ARRAY({bsPath}) AND ARRAY_CONTAINS({bsPath}, {pName}))" +
+                        $" OR IS_ARRAY({pathSql}))", node);
                 }
             default:
                 return new VisitResult(null, node);
@@ -513,6 +560,30 @@ internal static class FilterPushdownVisitor
     }
 
     // ---------------- value helpers ---------------------------------
+
+    /// <summary>
+    /// Rejects paths that address any reserved <c>_a2a:</c> envelope
+    /// key (e.g. a user-supplied <c>#tag</c> aliased to
+    /// <c>"_a2a:N"</c>). The flat-Cosmos rewrite reserves the prefix
+    /// for storage internals; routing user-controlled paths into
+    /// envelope keys would let callers query metadata that DDB never
+    /// exposes. This must be checked at the visitor — pushing such a
+    /// path would emit SQL that addresses storage internals; without
+    /// this guard, the only protection is the encoder rejecting the
+    /// name on write, which doesn't help on reads.
+    /// </summary>
+    private static bool HasReservedSegment(DocumentPath path)
+    {
+        foreach (var seg in path.Segments)
+        {
+            if (seg is AttributePathSegment a
+                && a.Name.StartsWith(InferredAttributeStorage.EnvelopeTagPrefix, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
 
     /// <summary>
     /// Tries to bind a DDB N-string to a Cosmos JSON-number parameter.
