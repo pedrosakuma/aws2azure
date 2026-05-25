@@ -1,6 +1,7 @@
 using System.Text;
 using Azure.Messaging.EventHubs;
 using Azure.Messaging.EventHubs.Consumer;
+using Azure.Messaging.EventHubs.Primitives;
 using Azure.Messaging.EventHubs.Producer;
 using Aws2Azure.IntegrationTests.Fixtures;
 using Xunit;
@@ -14,10 +15,12 @@ namespace Aws2Azure.PerfTests.Kinesis;
 /// (c=1, 30s, 256 B records) so the rows in baseline-latest.md are
 /// directly comparable and surface the "proxy tax" (issue #132).
 ///
-/// Each "operation" is one <c>ReadEventsFromPartitionAsync</c> batch
-/// (capped at 100 events or MaximumWaitTime), matching how
-/// <c>kinesis.GetRecords</c> is measured: calls/s metric, not
-/// records/s. Empty windows (post-drain) count as completed calls.
+/// Each "operation" is one <c>PartitionReceiver.ReceiveBatchAsync</c>
+/// call (capped at 100 events or MaximumWaitTime). The receiver keeps
+/// the cursor across batches — exactly mirroring how the proxy carries
+/// <c>NextShardIterator</c> across <c>GetRecords</c> RPCs (gpt-5.5
+/// review of PR #135). Empty windows (post-drain) count as completed
+/// calls, matching the proxy-side metric.
 /// </summary>
 [Collection(KinesisPerfCollection.Name)]
 public sealed class AzureEventHubsReceiveSdkBaselinePerfTests(KinesisPerfFixture fixture)
@@ -25,7 +28,7 @@ public sealed class AzureEventHubsReceiveSdkBaselinePerfTests(KinesisPerfFixture
     private const int PrefillCount = 5_000;
 
     [SkippableFact]
-    public async Task ReadEventsFromPartition_throughput_AzureSdk()
+    public async Task ReceiveBatchAsync_throughput_AzureSdk()
     {
         Skip.IfNot(fixture.Ready, fixture.SkipReason);
 
@@ -48,47 +51,41 @@ public sealed class AzureEventHubsReceiveSdkBaselinePerfTests(KinesisPerfFixture
             await producer.SendAsync(batch).ConfigureAwait(false);
         }
 
-        await using var consumer = new EventHubConsumerClient(
+        // PartitionReceiver holds cursor state across ReceiveBatchAsync
+        // calls — mirrors NextShardIterator chasing on the proxy side.
+        await using var receiver = new PartitionReceiver(
             EventHubConsumerClient.DefaultConsumerGroupName,
+            partitionId,
+            EventPosition.Earliest,
             connStr,
             KinesisEmulatorProxyFixture.EventHubName);
 
         var records = 0L;
         var dataCalls = 0L;
         var emptyCalls = 0L;
-        var readOptions = new ReadEventOptions
-        {
-            MaximumWaitTime = TimeSpan.FromMilliseconds(500),
-        };
+        var waitTime = TimeSpan.FromMilliseconds(500);
 
         var result = await PerfRunner.RunAsync(
-            scenario: "azure-sdk.EventHubs.ReadEventsFromPartition (256 B records)",
+            scenario: "azure-sdk.EventHubs.ReceiveBatchAsync (256 B records)",
             concurrency: 1,
             duration: TimeSpan.FromSeconds(30),
             warmup: TimeSpan.Zero,
-            action: async (_, ct) =>
+            action: async (workerId, ct) =>
             {
-                // One "operation" = one batch read (up to 100 events or 500ms wait),
-                // mirroring how kinesis.GetRecords is measured.
-                var batchRecords = 0;
-                using var batchCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                await foreach (var ev in consumer.ReadEventsFromPartitionAsync(
-                    partitionId, EventPosition.Earliest, readOptions, batchCts.Token).ConfigureAwait(false))
+                _ = workerId;
+                var batch = await receiver.ReceiveBatchAsync(
+                    maximumEventCount: 100,
+                    maximumWaitTime: waitTime,
+                    cancellationToken: ct).ConfigureAwait(false);
+
+                var batchCount = 0;
+                foreach (var ev in batch)
                 {
-                    if (ev.Data is null)
-                    {
-                        // MaximumWaitTime elapsed without an event — surface as
-                        // an empty call so the metric matches the proxy side.
-                        break;
-                    }
-                    batchRecords++;
-                    if (batchRecords >= 100)
-                    {
-                        break;
-                    }
+                    _ = ev;
+                    batchCount++;
                 }
-                Interlocked.Add(ref records, batchRecords);
-                if (batchRecords > 0)
+                Interlocked.Add(ref records, batchCount);
+                if (batchCount > 0)
                 {
                     Interlocked.Increment(ref dataCalls);
                 }
@@ -99,7 +96,7 @@ public sealed class AzureEventHubsReceiveSdkBaselinePerfTests(KinesisPerfFixture
             });
 
         var notes =
-            $"Azure SDK baseline — direct EventHubConsumerClient.ReadEventsFromPartitionAsync against EH emulator (no proxy); "
+            $"Azure SDK baseline — direct PartitionReceiver.ReceiveBatchAsync against EH emulator (no proxy); "
             + $"records={records}, dataCalls={dataCalls}, emptyCalls={emptyCalls}; calls/s metric";
         PerfReport.Append(result, notes: notes);
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
