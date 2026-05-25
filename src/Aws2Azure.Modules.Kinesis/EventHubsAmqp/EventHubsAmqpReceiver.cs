@@ -55,6 +55,7 @@ internal sealed class EventHubsAmqpReceiver : IEventHubsAmqpReceiver, IAsyncDisp
     private readonly EntraIdTokenProvider _tokenProvider;
     private readonly AmqpConnectionSettings _connectionSettings;
     private readonly ConcurrentDictionary<ConnectionKey, ConnectionSlot> _connections = new();
+    private readonly ConcurrentDictionary<ReceiverKey, ReceiverSlot> _receivers = new();
     private int _disposed;
 
     public EventHubsAmqpReceiver(
@@ -66,6 +67,14 @@ internal sealed class EventHubsAmqpReceiver : IEventHubsAmqpReceiver, IAsyncDisp
         _tokenProvider = tokenProvider;
         _connectionSettings = connectionSettings;
     }
+
+    // EH partition consumers want "drain the burst, don't block waiting
+    // to fill the full batch ceiling once data is flowing" — the same
+    // semantic Azure SDK's PartitionReceiver.ReceiveBatchAsync exposes.
+    // 25 ms gives the broker plenty of time to pipeline the rest of a
+    // credit window of transfers without holding the caller for the
+    // full 500 ms quiescent timeout once the first messages arrive.
+    private static readonly TimeSpan EventHubsTailWait = TimeSpan.FromMilliseconds(25);
 
     public async Task<EventHubsReceiveResult> ReceiveAsync(
         EventHubsCredentials credentials,
@@ -102,32 +111,48 @@ internal sealed class EventHubsAmqpReceiver : IEventHubsAmqpReceiver, IAsyncDisp
         try
         {
             var audience = BuildAudience(namespaceFqdn, receiverAddress);
-            var sourceFilter = EventHubsSelectorFilter.Encode(BuildSelectorExpression(position));
-            await using var receiver = await connection.OpenReceiverAsync(
-                    receiverAddress,
-                    audience,
-                    prefetchCredit: 0,
-                    sourceFilter,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var receiverKey = new ReceiverKey(key, receiverAddress);
+            var receiverSlot = GetOrCreateReceiverSlot(receiverKey);
 
             var messages = new List<EventHubsReceivedMessage>(Math.Min(maxMessages, 256));
-            while (messages.Count < maxMessages)
+            try
             {
-                var batch = await receiver.ReceiveBatchAsync(
-                        maxMessages - messages.Count,
-                        quiescentTimeout,
+                // Serialise concurrent receives on the same (connection,
+                // partition consumer-group) slot via the slot's receive
+                // gate: a single AMQP link has a single broker cursor, so
+                // racing receives would steal each other's records.
+                // Single ReceiveBatchAsync call: the link now honours
+                // tailWait so it returns promptly once a burst lands,
+                // and a partial batch is an explicit "broker paused"
+                // signal — looping here just re-waits the full
+                // quiescentTimeout for a second burst the caller will
+                // pick up on the NEXT GetRecords RPC anyway.
+                var batch = await receiverSlot.ExecuteReceiveAsync(
+                        connection,
+                        receiverAddress,
+                        audience,
+                        () => EventHubsSelectorFilter.Encode(BuildSelectorExpression(position)),
+                        (receiver, ct) => receiver.ReceiveBatchAsync(
+                            maxMessages,
+                            quiescentTimeout,
+                            EventHubsTailWait,
+                            ct),
                         cancellationToken)
                     .ConfigureAwait(false);
-                if (batch.Count == 0)
-                {
-                    break;
-                }
 
-                for (var i = 0; i < batch.Count; i++)
+                if (batch.Count > 0)
                 {
-                    messages.Add(Map(batch[i]));
+                    messages.Capacity = Math.Max(messages.Capacity, batch.Count);
+                    for (var i = 0; i < batch.Count; i++)
+                    {
+                        messages.Add(Map(batch[i]));
+                    }
                 }
+            }
+            catch
+            {
+                await InvalidateReceiverAsync(receiverKey, receiverSlot).ConfigureAwait(false);
+                throw;
             }
 
             return new EventHubsReceiveResult(messages);
@@ -146,6 +171,14 @@ internal sealed class EventHubsAmqpReceiver : IEventHubsAmqpReceiver, IAsyncDisp
             return;
         }
 
+        foreach (var entry in _receivers.ToArray())
+        {
+            if (_receivers.TryRemove(entry))
+            {
+                await entry.Value.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+
         foreach (var entry in _connections.ToArray())
         {
             if (_connections.TryRemove(entry))
@@ -161,8 +194,47 @@ internal sealed class EventHubsAmqpReceiver : IEventHubsAmqpReceiver, IAsyncDisp
         return _connections.GetOrAdd(key, static _ => new ConnectionSlot());
     }
 
+    private ReceiverSlot GetOrCreateReceiverSlot(ReceiverKey key)
+    {
+        ThrowIfDisposed();
+        return _receivers.GetOrAdd(key, static _ => new ReceiverSlot());
+    }
+
+    private async Task InvalidateReceiverAsync(ReceiverKey key, ReceiverSlot? expected = null)
+    {
+        if (expected is null)
+        {
+            if (_receivers.TryRemove(key, out var slot))
+            {
+                await slot.DisposeAsync().ConfigureAwait(false);
+            }
+
+            return;
+        }
+
+        // Slot-identity-aware removal: only drop the slot if it is still
+        // the one the failing caller observed. A concurrent caller that
+        // already replaced the slot keeps its fresh receiver.
+        var kvp = new KeyValuePair<ReceiverKey, ReceiverSlot>(key, expected);
+        if (((ICollection<KeyValuePair<ReceiverKey, ReceiverSlot>>)_receivers).Remove(kvp))
+        {
+            await expected.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
     private async Task InvalidateConnectionAsync(ConnectionKey key)
     {
+        // Drop every receiver dependent on this connection first so we
+        // don't surface a stale ServiceBusReceiver wrapping a closed link
+        // on the next call.
+        foreach (var entry in _receivers.ToArray())
+        {
+            if (entry.Key.Connection.Equals(key) && _receivers.TryRemove(entry))
+            {
+                await entry.Value.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+
         if (_connections.TryRemove(key, out var slot))
         {
             await slot.DisposeAsync().ConfigureAwait(false);
@@ -339,6 +411,162 @@ internal sealed class EventHubsAmqpReceiver : IEventHubsAmqpReceiver, IAsyncDisp
     }
 
     private readonly record struct ConnectionKey(ServiceBusAmqpEndpoint Endpoint, string CredentialMarker);
+
+    // Pooled per (connection, receiverAddress). The receiverAddress
+    // already encodes (entityPath, consumerGroup, partitionId), so a
+    // single slot serves all calls against the same partition. The
+    // EH broker advances the cursor on the link, so we open with the
+    // caller's filter ONCE and treat all subsequent ReceiveAsync calls
+    // as continuations — the caller's position parameter is honoured
+    // only on attach.
+    private readonly record struct ReceiverKey(ConnectionKey Connection, string ReceiverAddress)
+    {
+        public bool Equals(ReceiverKey other)
+            => Connection.Equals(other.Connection)
+                && string.Equals(ReceiverAddress, other.ReceiverAddress, StringComparison.OrdinalIgnoreCase);
+
+        public override int GetHashCode()
+            => HashCode.Combine(Connection, StringComparer.OrdinalIgnoreCase.GetHashCode(ReceiverAddress));
+    }
+
+    private sealed class ReceiverSlot : IAsyncDisposable
+    {
+        private readonly SemaphoreSlim _gate = new(1, 1);
+        private readonly SemaphoreSlim _receiveGate = new(1, 1);
+        private ServiceBusReceiver? _receiver;
+        private int _disposed;
+
+        public async Task<T> ExecuteReceiveAsync<T>(
+            ServiceBusAmqpConnection connection,
+            string receiverAddress,
+            string audience,
+            Func<ReadOnlyMemory<byte>> sourceFilterFactory,
+            Func<ServiceBusReceiver, CancellationToken, Task<T>> receive,
+            CancellationToken cancellationToken)
+        {
+            await _receiveGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                ThrowIfDisposed();
+                var receiver = await GetOrCreateReceiverAsync(
+                        connection,
+                        receiverAddress,
+                        audience,
+                        sourceFilterFactory,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                return await receive(receiver, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                _receiveGate.Release();
+            }
+        }
+
+        private async Task<ServiceBusReceiver> GetOrCreateReceiverAsync(
+            ServiceBusAmqpConnection connection,
+            string receiverAddress,
+            string audience,
+            Func<ReadOnlyMemory<byte>> sourceFilterFactory,
+            CancellationToken cancellationToken)
+        {
+            var existing = Volatile.Read(ref _receiver);
+            if (existing is not null
+                && !existing.IsClosed
+                && Volatile.Read(ref _disposed) == 0)
+            {
+                return existing;
+            }
+
+            ThrowIfDisposed();
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                ThrowIfDisposed();
+                existing = _receiver;
+                if (existing is not null && !existing.IsClosed)
+                {
+                    return existing;
+                }
+
+                if (existing is not null)
+                {
+                    try
+                    {
+                        await existing.DisposeAsync().ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                    }
+
+                    Volatile.Write(ref _receiver, null);
+                }
+
+                var sourceFilter = sourceFilterFactory();
+                var created = await connection.OpenReceiverAsync(
+                        receiverAddress,
+                        audience,
+                        prefetchCredit: 0,
+                        sourceFilter,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                Volatile.Write(ref _receiver, created);
+                return created;
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            {
+                return;
+            }
+
+            // Wait out any in-flight receive before disposing the link.
+            await _receiveGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                await _gate.WaitAsync().ConfigureAwait(false);
+                try
+                {
+                    if (_receiver is not null)
+                    {
+                        try
+                        {
+                            await _receiver.DisposeAsync().ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                        }
+
+                        Volatile.Write(ref _receiver, null);
+                    }
+                }
+                finally
+                {
+                    _gate.Release();
+                    _gate.Dispose();
+                }
+            }
+            finally
+            {
+                _receiveGate.Release();
+                _receiveGate.Dispose();
+            }
+        }
+
+        private void ThrowIfDisposed()
+        {
+            if (Volatile.Read(ref _disposed) != 0)
+            {
+                throw new ObjectDisposedException(nameof(ReceiverSlot));
+            }
+        }
+    }
 
     private sealed class ConnectionSlot : IAsyncDisposable
     {

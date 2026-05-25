@@ -143,7 +143,7 @@ internal static class AmqpReceiveMessageHandlers
         try
         {
             var timeout = waitSeconds > 0 ? TimeSpan.FromSeconds(waitSeconds) : DefaultReceiveTimeout;
-            batch = await receiver.ReceiveBatchAsync(maxMessages, timeout, ct).ConfigureAwait(false);
+            batch = await receiver.ReceiveBatchAsync(maxMessages, timeout, cancellationToken: ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
