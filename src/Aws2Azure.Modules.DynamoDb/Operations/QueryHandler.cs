@@ -25,10 +25,13 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 ///   <item>The optional sort-key predicate becomes a SQL predicate on
 ///   <c>c.id</c> (the Cosmos document id), which we set to the
 ///   formatted RANGE value at write time.</item>
-///   <item><c>FilterExpression</c> is evaluated in-process against the
-///   un-projected item maps after Cosmos returns the page, so
-///   <c>ScannedCount</c> reflects pre-filter rows and <c>Count</c>
-///   reflects post-filter rows — matching DynamoDB.</item>
+///   <item><c>FilterExpression</c> is split by
+///   <see cref="FilterPushdownVisitor"/>: the pushable fragment is
+///   appended to the Cosmos WHERE clause; any residual is evaluated
+///   in-process via <see cref="ConditionEvaluator"/>. Either way
+///   <c>ScannedCount</c> reflects pre-filter rows (those returned by
+///   Cosmos) and <c>Count</c> reflects post-filter rows — matching
+///   DynamoDB.</item>
 ///   <item><c>ProjectionExpression</c> is applied in-process. Each
 ///   path may be a top-level attribute or a <c>#alias</c>; nested
 ///   path projection is deferred.</item>
@@ -183,9 +186,15 @@ internal static class QueryHandler
         bool forward = req.ScanIndexForward ?? true;
         bool countOnly = string.Equals(req.Select, "COUNT", StringComparison.OrdinalIgnoreCase);
 
-        var (sql, sqlParams) = BuildSql(keyCond, forward, FindKey(meta, "RANGE") is not null);
+        var pushdown = FilterPushdownVisitor.Translate(filter);
+        var (sql, sqlParams) = BuildSql(
+            keyCond, forward, FindKey(meta, "RANGE") is not null, pushdown);
+        // Replace the parsed filter with the residual; the pushable
+        // half is already enforced by Cosmos, so we only need to
+        // evaluate what could not be translated.
+        filter = pushdown.Residual;
 
-        var queryBody = BuildQueryBody(sql, sqlParams);
+        var queryBody = CosmosQueryBody.Build(sql, sqlParams);
         var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + req.TableName;
         var collUri = "/" + collLink + "/docs";
         var pkHeader = CosmosOpsShared.BuildPartitionKeyHeader(keyCond.HashValue);
@@ -296,61 +305,41 @@ internal static class QueryHandler
 
     // -------- helpers ------------------------------------------------
 
-    private static (string sql, List<KeyValuePair<string, string>> parameters) BuildSql(
-        KeyConditionAnalyser.AnalysedKeyCondition keyCond, bool forward, bool composite)
+    internal static (string sql, List<CosmosSqlParameter> parameters) BuildSql(
+        KeyConditionAnalyser.AnalysedKeyCondition keyCond, bool forward, bool composite,
+        FilterPushdownResult pushdown)
     {
         var sb = new StringBuilder("SELECT * FROM c WHERE c._a2a = 'item'");
-        var parameters = new List<KeyValuePair<string, string>>();
+        var parameters = new List<CosmosSqlParameter>();
         if (keyCond.Sk is { } sk)
         {
             switch (sk)
             {
                 case KeyConditionAnalyser.SkCompare cmp:
                     sb.Append(" AND c.id ").Append(cmp.Op).Append(" @sk0");
-                    parameters.Add(new("@sk0", cmp.Value));
+                    parameters.Add(new("@sk0", CosmosQueryBody.StringValue(cmp.Value)));
                     break;
                 case KeyConditionAnalyser.SkBetween bt:
                     sb.Append(" AND c.id >= @skLo AND c.id <= @skHi");
-                    parameters.Add(new("@skLo", bt.Lo));
-                    parameters.Add(new("@skHi", bt.Hi));
+                    parameters.Add(new("@skLo", CosmosQueryBody.StringValue(bt.Lo)));
+                    parameters.Add(new("@skHi", CosmosQueryBody.StringValue(bt.Hi)));
                     break;
                 case KeyConditionAnalyser.SkBeginsWith bw:
                     sb.Append(" AND STARTSWITH(c.id, @sk0)");
-                    parameters.Add(new("@sk0", bw.Prefix));
+                    parameters.Add(new("@sk0", CosmosQueryBody.StringValue(bw.Prefix)));
                     break;
             }
+        }
+        if (pushdown.Sql is { } fSql)
+        {
+            sb.Append(" AND ").Append(fSql);
+            foreach (var fp in pushdown.Parameters) parameters.Add(fp);
         }
         if (composite)
         {
             sb.Append(" ORDER BY c.id ").Append(forward ? "ASC" : "DESC");
         }
         return (sb.ToString(), parameters);
-    }
-
-    private static string BuildQueryBody(string sql, List<KeyValuePair<string, string>> parameters)
-    {
-        using var ms = new MemoryStream();
-        var options = new JsonWriterOptions
-        {
-            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        };
-        using (var writer = new Utf8JsonWriter(ms, options))
-        {
-            writer.WriteStartObject();
-            writer.WriteString("query", sql);
-            writer.WritePropertyName("parameters");
-            writer.WriteStartArray();
-            foreach (var p in parameters)
-            {
-                writer.WriteStartObject();
-                writer.WriteString("name", p.Key);
-                writer.WriteString("value", p.Value);
-                writer.WriteEndObject();
-            }
-            writer.WriteEndArray();
-            writer.WriteEndObject();
-        }
-        return Encoding.UTF8.GetString(ms.ToArray());
     }
 
     private static Dictionary<string, JsonElement>? ExtractItemEnvelope(JsonElement docEl)
