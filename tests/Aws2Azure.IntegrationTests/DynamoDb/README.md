@@ -13,6 +13,7 @@ end-to-end.
 | 2 / 3 | `DynamoDbItemOpsTests`          | PutItem, GetItem, UpdateItem (SET + REMOVE), DeleteItem |
 | 5     | `DynamoDbQueryTests`            | Query (KeyConditionExpression incl. BETWEEN, FilterExpression) |
 | 6     | `DynamoDbScanTests`             | Scan (with and without FilterExpression)              |
+| 2.x   | `DynamoDbFilterPushdownTests`   | FilterPushdownVisitor end-to-end: pushable string equality, hybrid number with `_a2a:N` envelope row, polymorphic attribute (S vs N), Limit-under-pushdown safety |
 
 Batch (Slice 8) and transactional (Slice 9) operations are intentionally out
 of scope here — those will be covered in the Phase-3 retro before declaring
