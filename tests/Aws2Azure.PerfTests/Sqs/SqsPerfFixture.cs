@@ -18,6 +18,15 @@ public sealed class SqsPerfFixture : IAsyncLifetime
     public string QueueName => ServiceBusEmulatorFixture.StandardQueue;
     public string QueueUrl => $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}";
 
+    /// <summary>
+    /// Service Bus emulator connection string exposed for the SDK
+    /// direct-baseline scenarios — the proxy is left idle for those.
+    /// </summary>
+    public string ServiceBusConnectionString
+        => _emulator.DockerAvailable
+            ? $"Endpoint=sb://{_emulator.AmqpHost}:{_emulator.AmqpPort};SharedAccessKeyName={ServiceBusEmulatorFixture.SasKeyName};SharedAccessKey={ServiceBusEmulatorFixture.WellKnownSasKey};UseDevelopmentEmulator=true;"
+            : string.Empty;
+
     public string ProxyOutput => _proxy.Output;
 
     public AmazonSQSClient CreateClient() => new(
