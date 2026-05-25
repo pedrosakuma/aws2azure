@@ -33,11 +33,6 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
 
     private readonly AmqpLink _link;
     private readonly ConcurrentDictionary<Guid, ServiceBusReceivedMessage> _inFlight = new();
-    // Serialises concurrent ReceiveBatchAsync callers so the credit
-    // top-up computation in AmqpLink (read of _linkCredit followed by
-    // GrantCreditAsync) is not raced when several SQS callers hit the
-    // same pooled receiver simultaneously.
-    private readonly SemaphoreSlim _receiveGate = new(1, 1);
     private int _disposed;
 
     internal ServiceBusReceiver(AmqpLink link, string queueName)
@@ -97,6 +92,23 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     /// at most <paramref name="maxWait"/>. Returns whatever has been
     /// delivered when either cap fires; an empty result means the
     /// wait elapsed.
+    /// <para>
+    /// Safe for concurrent callers on the same receiver: the underlying
+    /// <see cref="AmqpLink.ReceiveBatchAsync"/> serialises the
+    /// credit-accounting critical section under <c>_deliveryLock</c>
+    /// (the read-then-grant computation is atomic) and the buffered
+    /// <c>Channel&lt;T&gt;</c> drain is MPMC-safe — concurrent callers
+    /// may each compute an independent <c>toGrant</c>, leading to
+    /// harmless credit overshoot (the broker may send a few extra
+    /// messages, drained by whichever caller wins the <c>TryRead</c>),
+    /// but no message is lost, duplicated or double-settled — the
+    /// in-flight cache below is a <see cref="ConcurrentDictionary{TKey, TValue}"/>
+    /// keyed by lock-token which is unique per delivery. The serialising
+    /// <c>SemaphoreSlim</c> that used to wrap this method was removed
+    /// in #136 because it serialised c=16 SQS receivers down to a
+    /// single in-flight call, capping receive-side throughput at ~92 cps
+    /// against a SDK baseline of ~340 cps on the same emulator.
+    /// </para>
     /// </summary>
     public async Task<IReadOnlyList<ServiceBusReceivedMessage>> ReceiveBatchAsync(
         int maxMessages,
@@ -104,29 +116,21 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        await _receiveGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        var deliveries = await _link.ReceiveBatchAsync(maxMessages, maxWait, cancellationToken).ConfigureAwait(false);
+        if (deliveries.Count == 0) return Array.Empty<ServiceBusReceivedMessage>();
+        var result = new ServiceBusReceivedMessage[deliveries.Count];
+        for (var i = 0; i < deliveries.Count; i++)
         {
-            var deliveries = await _link.ReceiveBatchAsync(maxMessages, maxWait, cancellationToken).ConfigureAwait(false);
-            if (deliveries.Count == 0) return Array.Empty<ServiceBusReceivedMessage>();
-            var result = new ServiceBusReceivedMessage[deliveries.Count];
-            for (var i = 0; i < deliveries.Count; i++)
-            {
-                var msg = new ServiceBusReceivedMessage(deliveries[i]);
-                result[i] = msg;
-                // Register only deliveries whose tag matches the SB
-                // lock-token convention (16 bytes ↔ GUID). Sender-settled
-                // deliveries or peers that use a non-GUID tag are still
-                // returned to the caller but cannot be looked up later.
-                if (msg.LockToken is { } token)
-                    _inFlight[token] = msg;
-            }
-            return result;
+            var msg = new ServiceBusReceivedMessage(deliveries[i]);
+            result[i] = msg;
+            // Register only deliveries whose tag matches the SB
+            // lock-token convention (16 bytes ↔ GUID). Sender-settled
+            // deliveries or peers that use a non-GUID tag are still
+            // returned to the caller but cannot be looked up later.
+            if (msg.LockToken is { } token)
+                _inFlight[token] = msg;
         }
-        finally
-        {
-            _receiveGate.Release();
-        }
+        return result;
     }
 
     /// <summary>
@@ -258,7 +262,6 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
         _inFlight.Clear();
         try { await _link.DetachAsync(closed: true).ConfigureAwait(false); }
         catch { /* best-effort cleanup */ }
-        _receiveGate.Dispose();
     }
 
     private void ThrowIfDisposed()
