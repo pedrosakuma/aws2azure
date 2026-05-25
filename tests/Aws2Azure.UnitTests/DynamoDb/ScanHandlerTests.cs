@@ -38,7 +38,7 @@ public class ScanHandlerTests
     private const string Table = "orders";
 
     private static readonly string Metadata =
-        "{\"id\":\"__aws2azure_table_meta__\",\"pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
         + "\"tableName\":\"orders\","
         + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"}],"
         + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}],"
@@ -83,7 +83,10 @@ public class ScanHandlerTests
     }
 
     private static string DocWithItem(string pk, string id, string itemJson)
-        => $"{{\"id\":\"{id}\",\"pk\":\"{pk}\",\"_a2a\":\"item\",\"item\":{itemJson}}}";
+    {
+        using var d = JsonDocument.Parse(itemJson);
+        return Aws2Azure.Modules.DynamoDb.Persistence.InferredAttributeStorage.BuildCosmosDocument(id, pk, d.RootElement);
+    }
 
     private static string QueryEnvelope(params string[] docs)
     {

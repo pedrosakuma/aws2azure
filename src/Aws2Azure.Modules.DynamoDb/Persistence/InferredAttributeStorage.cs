@@ -1,0 +1,631 @@
+using System;
+using System.Buffers;
+using System.Buffers.Text;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
+using Aws2Azure.Modules.DynamoDb.Operations;
+
+namespace Aws2Azure.Modules.DynamoDb.Persistence;
+
+/// <summary>
+/// DynamoDB ↔ Cosmos document persistence using <b>type inference</b>
+/// driven by <see cref="JsonValueKind"/>, replacing the v1 byte-for-byte
+/// item-envelope.
+///
+/// <para><b>Cosmos doc shape</b> (flat):</para>
+/// <code>
+/// {
+///   "id":   "&lt;formatted sort-key&gt;",
+///   "pk":   "&lt;formatted partition-key&gt;",
+///   "_a2a": "item",
+///   "&lt;attrName&gt;": &lt;inferred-or-envelope value&gt;,
+///   ...
+/// }
+/// </code>
+///
+/// <para><b>Encoding rules</b> (DDB AttributeValue → Cosmos JSON):</para>
+/// <list type="bullet">
+///   <item><c>{S:v}</c> → bare string <c>"v"</c>.</item>
+///   <item><c>{N:v}</c> → bare JSON number <c>v</c> if it round-trips
+///     through <see cref="decimal"/> losslessly; otherwise envelope
+///     <c>{"_a2a:N":"v"}</c> (preserves DDB 38-digit precision).</item>
+///   <item><c>{BOOL:v}</c> → bare <c>true</c>/<c>false</c>.</item>
+///   <item><c>{NULL:true}</c> → bare <c>null</c>.</item>
+///   <item><c>{M:{...}}</c> → bare JSON object (recurse).</item>
+///   <item><c>{L:[...]}</c> → bare JSON array (recurse).</item>
+///   <item><c>{B:"&lt;b64&gt;"}</c> → envelope <c>{"_a2a:B":"&lt;b64&gt;"}</c>
+///     (disambiguates from S).</item>
+///   <item><c>{SS:[...]}</c> → envelope <c>{"_a2a:SS":[...]}</c>.</item>
+///   <item><c>{NS:[...]}</c> → envelope <c>{"_a2a:NS":[...]}</c>.</item>
+///   <item><c>{BS:[...]}</c> → envelope <c>{"_a2a:BS":[...]}</c>.</item>
+/// </list>
+///
+/// <para><b>Decoding rules</b> (Cosmos JSON → DDB AttributeValue):</para>
+/// <list type="bullet">
+///   <item><see cref="JsonValueKind.String"/> → <c>{S:v}</c>.</item>
+///   <item><see cref="JsonValueKind.Number"/> → <c>{N:rawText}</c>.</item>
+///   <item><see cref="JsonValueKind.True"/>/<see cref="JsonValueKind.False"/>
+///     → <c>{BOOL:v}</c>.</item>
+///   <item><see cref="JsonValueKind.Null"/> → <c>{NULL:true}</c>.</item>
+///   <item><see cref="JsonValueKind.Object"/>: if single property named
+///     <c>_a2a:N</c>/<c>_a2a:B</c>/<c>_a2a:SS</c>/<c>_a2a:NS</c>/<c>_a2a:BS</c>
+///     unwrap to corresponding typed attribute value; else <c>{M:...}</c>.</item>
+///   <item><see cref="JsonValueKind.Array"/> → <c>{L:[...]}</c> (each
+///     element recursively decoded).</item>
+/// </list>
+///
+/// <para><b>Reserved top-level attribute names</b> in <c>PutItem</c>/
+/// <c>UpdateItem</c> input: <c>id</c>, <c>pk</c>, <c>_a2a</c>, and any
+/// name starting with <c>_a2a:</c>. <see cref="IsReservedTopLevelName"/>
+/// returns true for these.</para>
+/// </summary>
+internal static class InferredAttributeStorage
+{
+    // Reserved Cosmos doc top-level property names. These collide with
+    // routing/discriminator metadata or with envelope-tag syntax and must
+    // be rejected at write time, never round-tripped.
+    //
+    // <para>Design note on naming: Cosmos requires the document
+    // identifier field to be named exactly <c>id</c>. The partition-key
+    // path is configurable per-collection — we use <c>/_a2a_pk</c> so
+    // the much more common DDB attribute name <c>pk</c> stays available
+    // for user data. <c>id</c> is the only DDB attr name that collides
+    // with a Cosmos hard requirement; PutItem / UpdateItem shadow-encode
+    // such an attribute under the <see cref="ShadowPrefix"/> namespace
+    // ("_a2a$id") so the user's <c>id</c> attribute round-trips losslessly
+    // without clobbering the routing field.</para>
+    public const string IdProperty = "id";
+    public const string PkProperty = "_a2a_pk";
+    public const string DiscriminatorProperty = "_a2a";
+    public const string DiscriminatorValueItem = "item";
+
+    // Shadow-encoding namespace for DDB attribute names that collide
+    // with reserved Cosmos doc property names (currently only "id").
+    // Distinct from the envelope-tag prefix ("_a2a:") so encoder/decoder
+    // can disambiguate purely by character.
+    public const string ShadowPrefix = "_a2a$";
+    public const string ShadowEncodedIdName = "_a2a$id";
+
+    // Envelope tag prefix. All five ambiguous-type tags live under this
+    // namespace so detection is a single substring check.
+    public const string EnvelopeTagPrefix = "_a2a:";
+    public const string EnvelopeTagN = "_a2a:N";
+    public const string EnvelopeTagB = "_a2a:B";
+    public const string EnvelopeTagSS = "_a2a:SS";
+    public const string EnvelopeTagNS = "_a2a:NS";
+    public const string EnvelopeTagBS = "_a2a:BS";
+
+    // Pre-encoded property names — avoids JS-escape work and per-call
+    // allocations on the hot path.
+    private static readonly JsonEncodedText IdPropEncoded = JsonEncodedText.Encode(IdProperty);
+    private static readonly JsonEncodedText PkPropEncoded = JsonEncodedText.Encode(PkProperty);
+    private static readonly JsonEncodedText DiscPropEncoded = JsonEncodedText.Encode(DiscriminatorProperty);
+    private static readonly JsonEncodedText DiscValueItemEncoded = JsonEncodedText.Encode(DiscriminatorValueItem);
+    private static readonly JsonEncodedText ShadowIdPropEncoded = JsonEncodedText.Encode(ShadowEncodedIdName);
+    private static readonly JsonEncodedText TagS = JsonEncodedText.Encode(AttributeValueTypes.String);
+    private static readonly JsonEncodedText TagN = JsonEncodedText.Encode(AttributeValueTypes.Number);
+    private static readonly JsonEncodedText TagBool = JsonEncodedText.Encode(AttributeValueTypes.Bool);
+    private static readonly JsonEncodedText TagNull = JsonEncodedText.Encode(AttributeValueTypes.Null);
+    private static readonly JsonEncodedText TagM = JsonEncodedText.Encode(AttributeValueTypes.Map);
+    private static readonly JsonEncodedText TagL = JsonEncodedText.Encode(AttributeValueTypes.List);
+    private static readonly JsonEncodedText TagB = JsonEncodedText.Encode(AttributeValueTypes.Binary);
+    private static readonly JsonEncodedText TagSS = JsonEncodedText.Encode(AttributeValueTypes.StringSet);
+    private static readonly JsonEncodedText TagNS = JsonEncodedText.Encode(AttributeValueTypes.NumberSet);
+    private static readonly JsonEncodedText TagBS = JsonEncodedText.Encode(AttributeValueTypes.BinarySet);
+    private static readonly JsonEncodedText EnvelopeNEncoded = JsonEncodedText.Encode(EnvelopeTagN);
+    private static readonly JsonEncodedText EnvelopeBEncoded = JsonEncodedText.Encode(EnvelopeTagB);
+    private static readonly JsonEncodedText EnvelopeSSEncoded = JsonEncodedText.Encode(EnvelopeTagSS);
+    private static readonly JsonEncodedText EnvelopeNSEncoded = JsonEncodedText.Encode(EnvelopeTagNS);
+    private static readonly JsonEncodedText EnvelopeBSEncoded = JsonEncodedText.Encode(EnvelopeTagBS);
+
+    private static readonly JsonWriterOptions WriterOptions = new()
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        SkipValidation = false,
+    };
+
+    /// <summary>
+    /// True if <paramref name="name"/> is a reserved Cosmos doc top-level
+    /// property name — i.e. it collides with routing (<see cref="IdProperty"/>,
+    /// <see cref="PkProperty"/>), the discriminator (<see cref="DiscriminatorProperty"/>),
+    /// any envelope tag (<see cref="EnvelopeTagPrefix"/>...), or any
+    /// shadow-encoded name (<see cref="ShadowPrefix"/>...). PutItem /
+    /// UpdateItem must reject attributes that target these names so the
+    /// read path can safely skip them. The only DDB attribute name a
+    /// caller would naturally pick that lands here is <c>id</c>; for
+    /// that case the encoder transparently shadow-encodes the attribute
+    /// rather than rejecting the write.
+    /// </summary>
+    public static bool IsReservedTopLevelName(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return false;
+        if (name == IdProperty || name == PkProperty || name == DiscriminatorProperty)
+            return true;
+        // Any name in the _a2a namespace (envelope tags, shadow names,
+        // future reserved props) — keep the user out of it entirely so
+        // we have freedom to extend the schema without breaking writes.
+        return name.StartsWith(DiscriminatorProperty, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// True if the attribute name can be written directly at the root
+    /// without shadow-encoding. The only collision the encoder rewrites
+    /// transparently is <c>id</c>; every other reserved name is a hard
+    /// validation failure (those would be names the user actively chose
+    /// to put under the <c>_a2a</c> namespace).
+    /// </summary>
+    public static bool IsShadowEncodableName(string name)
+        => string.Equals(name, IdProperty, StringComparison.Ordinal);
+
+    // ---------------- WRITE PATH (DDB → Cosmos) ----------------------
+
+    /// <summary>
+    /// Builds the Cosmos document JSON for a PutItem-style write,
+    /// flattening every DDB attribute at the root using the inference
+    /// rules above. The caller is responsible for having already
+    /// validated key-attribute presence/type and reserved-name conflicts
+    /// (via <see cref="IsReservedTopLevelName"/>).
+    /// </summary>
+    public static string BuildCosmosDocument(string id, string pk, JsonElement item)
+    {
+        if (item.ValueKind != JsonValueKind.Object)
+            throw new ArgumentException("Item must be a JSON object.", nameof(item));
+
+        var bw = new ArrayBufferWriter<byte>(1024);
+        using (var writer = new Utf8JsonWriter(bw, WriterOptions))
+        {
+            writer.WriteStartObject();
+            writer.WriteString(IdPropEncoded, id);
+            writer.WriteString(PkPropEncoded, pk);
+            writer.WriteString(DiscPropEncoded, DiscValueItemEncoded);
+
+            foreach (var prop in item.EnumerateObject())
+            {
+                if (IsShadowEncodableName(prop.Name))
+                {
+                    // Shadow-encode the rare DDB attr that collides with
+                    // Cosmos's required "id" field; decoder unmangles.
+                    writer.WritePropertyName(ShadowIdPropEncoded);
+                }
+                else if (IsReservedTopLevelName(prop.Name))
+                {
+                    // Names inside the _a2a namespace (other than the
+                    // shadow-encodable ones) are reserved for proxy use
+                    // and must be rejected — encoder can't disambiguate
+                    // a user "_a2a:foo" from an envelope tag.
+                    throw new ArgumentException(
+                        $"Attribute '{prop.Name}' uses a reserved name and would collide with proxy metadata.",
+                        nameof(item));
+                }
+                else
+                {
+                    writer.WritePropertyName(prop.Name);
+                }
+                EncodeAttributeValue(writer, prop.Value);
+            }
+
+            writer.WriteEndObject();
+        }
+        return Encoding.UTF8.GetString(bw.WrittenSpan);
+    }
+
+    /// <summary>
+    /// Encodes a single DDB AttributeValue (e.g. <c>{"S":"foo"}</c>)
+    /// into the inferred Cosmos representation. Public so the
+    /// UpdateItem read-modify-write path can re-encode attributes
+    /// produced by the update executor without round-tripping through
+    /// the full doc builder.
+    /// </summary>
+    public static void EncodeAttributeValue(Utf8JsonWriter writer, JsonElement ddbAttr)
+    {
+        if (!ParsedAttributeValue.TryParse(ddbAttr, out var parsed))
+            throw new ArgumentException(
+                "AttributeValue must be a single-property typed value (e.g. {\"S\":\"x\"}).",
+                nameof(ddbAttr));
+
+        switch (parsed.TypeTag)
+        {
+            case AttributeValueTypes.String:
+                writer.WriteStringValue(parsed.Value.GetString());
+                break;
+
+            case AttributeValueTypes.Number:
+                EncodeNumber(writer, parsed.Value);
+                break;
+
+            case AttributeValueTypes.Bool:
+                writer.WriteBooleanValue(parsed.Value.GetBoolean());
+                break;
+
+            case AttributeValueTypes.Null:
+                writer.WriteNullValue();
+                break;
+
+            case AttributeValueTypes.Map:
+                EncodeMap(writer, parsed.Value);
+                break;
+
+            case AttributeValueTypes.List:
+                EncodeList(writer, parsed.Value);
+                break;
+
+            case AttributeValueTypes.Binary:
+                writer.WriteStartObject();
+                writer.WriteString(EnvelopeBEncoded, parsed.Value.GetString());
+                writer.WriteEndObject();
+                break;
+
+            case AttributeValueTypes.StringSet:
+                WriteSetEnvelope(writer, EnvelopeSSEncoded, parsed.Value);
+                break;
+
+            case AttributeValueTypes.NumberSet:
+                WriteSetEnvelope(writer, EnvelopeNSEncoded, parsed.Value);
+                break;
+
+            case AttributeValueTypes.BinarySet:
+                WriteSetEnvelope(writer, EnvelopeBSEncoded, parsed.Value);
+                break;
+
+            default:
+                throw new ArgumentException(
+                    $"Unknown DDB type tag '{parsed.TypeTag}'.", nameof(ddbAttr));
+        }
+    }
+
+    private static void EncodeMap(Utf8JsonWriter writer, JsonElement mapEl)
+    {
+        if (mapEl.ValueKind != JsonValueKind.Object)
+            throw new ArgumentException("M must be a JSON object.", nameof(mapEl));
+
+        writer.WriteStartObject();
+        foreach (var prop in mapEl.EnumerateObject())
+        {
+            // Nested attributes do NOT collide with top-level routing
+            // names, but they could collide with the envelope tag prefix
+            // (e.g. "_a2a:N") and confuse the decoder's single-prop
+            // detection. Reject defensively — caller should also surface
+            // this at validation time so the error is actionable.
+            if (prop.Name.StartsWith(EnvelopeTagPrefix, StringComparison.Ordinal))
+                throw new ArgumentException(
+                    $"Nested attribute name '{prop.Name}' uses the reserved '_a2a:' prefix.",
+                    nameof(mapEl));
+
+            writer.WritePropertyName(prop.Name);
+            EncodeAttributeValue(writer, prop.Value);
+        }
+        writer.WriteEndObject();
+    }
+
+    private static void EncodeList(Utf8JsonWriter writer, JsonElement listEl)
+    {
+        if (listEl.ValueKind != JsonValueKind.Array)
+            throw new ArgumentException("L must be a JSON array.", nameof(listEl));
+
+        writer.WriteStartArray();
+        foreach (var item in listEl.EnumerateArray())
+        {
+            EncodeAttributeValue(writer, item);
+        }
+        writer.WriteEndArray();
+    }
+
+    private static void WriteSetEnvelope(Utf8JsonWriter writer, JsonEncodedText tag, JsonElement setEl)
+    {
+        if (setEl.ValueKind != JsonValueKind.Array)
+            throw new ArgumentException("Set value must be a JSON array.", nameof(setEl));
+
+        writer.WriteStartObject();
+        writer.WritePropertyName(tag);
+        writer.WriteStartArray();
+        foreach (var member in setEl.EnumerateArray())
+        {
+            if (member.ValueKind != JsonValueKind.String)
+                throw new ArgumentException(
+                    "Set members must be JSON strings per DynamoDB wire format.",
+                    nameof(setEl));
+            writer.WriteStringValue(member.GetString());
+        }
+        writer.WriteEndArray();
+        writer.WriteEndObject();
+    }
+
+    // -- Number encoding -----------------------------------------------
+
+    /// <summary>
+    /// Encodes a DDB Number attribute. Writes a bare JSON number when
+    /// the value round-trips through <see cref="decimal"/> losslessly
+    /// (covers ~28-29 significant decimal digits); otherwise emits the
+    /// envelope <c>{"_a2a:N":"&lt;original&gt;"}</c> so the high-precision
+    /// string survives the Cosmos round-trip.
+    /// </summary>
+    private static void EncodeNumber(Utf8JsonWriter writer, JsonElement numberAttrValue)
+    {
+        if (numberAttrValue.ValueKind != JsonValueKind.String)
+            throw new ArgumentException(
+                "Number AttributeValue payload must be a JSON string per DDB wire format.",
+                nameof(numberAttrValue));
+
+        var raw = numberAttrValue.GetString() ?? string.Empty;
+        if (TryWriteBareNumber(writer, raw))
+            return;
+
+        // Fallback: high-precision or otherwise non-round-tripping value
+        // (scientific notation we can't normalise, trailing zeros that
+        // decimal.ToString() would strip, etc.). Preserve verbatim.
+        writer.WriteStartObject();
+        writer.WriteString(EnvelopeNEncoded, raw);
+        writer.WriteEndObject();
+    }
+
+    /// <summary>
+    /// Returns true and writes a bare JSON Number iff the input string
+    /// is a decimal-safe form that round-trips through
+    /// <see cref="decimal.TryParse(ReadOnlySpan{char}, NumberStyles, IFormatProvider?, out decimal)"/>
+    /// and <see cref="decimal.TryFormat(Span{char}, out int, ReadOnlySpan{char}, IFormatProvider?)"/>
+    /// to a byte-identical representation.
+    /// </summary>
+    internal static bool TryWriteBareNumber(Utf8JsonWriter writer, string raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return false;
+
+        if (!decimal.TryParse(
+                raw.AsSpan(),
+                NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint,
+                CultureInfo.InvariantCulture,
+                out var d))
+        {
+            return false;
+        }
+
+        Span<char> buf = stackalloc char[32];
+        if (!d.TryFormat(buf, out var written, default, CultureInfo.InvariantCulture))
+            return false;
+
+        if (!buf[..written].SequenceEqual(raw.AsSpan()))
+            return false;
+
+        // Utf8JsonWriter.WriteRawValue is the cheapest way to embed a
+        // known-valid JSON number literal. The string we just compared
+        // against decimal.TryFormat output is JSON-spec-conforming.
+        writer.WriteRawValue(raw, skipInputValidation: false);
+        return true;
+    }
+
+    // ---------------- READ PATH (Cosmos → DDB) -----------------------
+
+    /// <summary>
+    /// Extracts the DDB item map from a Cosmos document body. Iterates
+    /// the root properties, skips routing/discriminator metadata, and
+    /// decodes every remaining property back to its typed DDB
+    /// representation. Returns <c>null</c> when the body is not a JSON
+    /// object (defensive — should never happen for a real Cosmos doc).
+    /// </summary>
+    public static Dictionary<string, JsonElement>? ExtractItem(Stream cosmosDocBody)
+    {
+        using var doc = JsonDocument.Parse(cosmosDocBody);
+        return ExtractItem(doc.RootElement);
+    }
+
+    /// <summary>
+    /// Same as <see cref="ExtractItem(Stream)"/> but takes an already-
+    /// parsed <see cref="JsonElement"/> rooted at the Cosmos doc.
+    /// </summary>
+    public static Dictionary<string, JsonElement>? ExtractItem(JsonElement docRoot)
+    {
+        if (docRoot.ValueKind != JsonValueKind.Object) return null;
+
+        // Batch decode: encode every attribute into a single buffer
+        // wrapped as one JSON object, parse once, then clone children.
+        // This avoids N separate JsonDocument.Parse / Clone pairs that
+        // dominate per-attribute cost at small item sizes.
+        var bw = new ArrayBufferWriter<byte>(1024);
+        using (var writer = new Utf8JsonWriter(bw, WriterOptions))
+        {
+            writer.WriteStartObject();
+            foreach (var prop in docRoot.EnumerateObject())
+            {
+                string targetName;
+                if (prop.Name.Equals(ShadowEncodedIdName, StringComparison.Ordinal))
+                {
+                    // Unmangle the shadow-encoded "id" attribute.
+                    targetName = IdProperty;
+                }
+                else if (IsReservedTopLevelName(prop.Name))
+                {
+                    // Routing fields, discriminator, other reserved
+                    // _a2a-namespace props — never user data.
+                    continue;
+                }
+                else
+                {
+                    targetName = prop.Name;
+                }
+
+                writer.WritePropertyName(targetName);
+                WriteAttributeValue(writer, prop.Value);
+            }
+            writer.WriteEndObject();
+        }
+
+        var result = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        using var batch = JsonDocument.Parse(bw.WrittenMemory);
+        foreach (var prop in batch.RootElement.EnumerateObject())
+        {
+            result[prop.Name] = prop.Value.Clone();
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Decodes a single Cosmos JSON value back to the corresponding DDB
+    /// AttributeValue (e.g. <c>{"S":"foo"}</c>), applying the inference
+    /// rules in reverse. The returned <see cref="JsonElement"/> is
+    /// detached from any parent <see cref="JsonDocument"/>.
+    /// </summary>
+    public static JsonElement DecodeToAttributeValue(JsonElement value)
+    {
+        var bw = new ArrayBufferWriter<byte>(64);
+        using (var writer = new Utf8JsonWriter(bw, WriterOptions))
+        {
+            WriteAttributeValue(writer, value);
+        }
+        // Parse-and-clone so the returned element owns its buffer.
+        using var doc = JsonDocument.Parse(bw.WrittenMemory);
+        return doc.RootElement.Clone();
+    }
+
+    /// <summary>
+    /// Writes the typed DDB AttributeValue for <paramref name="value"/>
+    /// into <paramref name="writer"/>. Used by both the per-attribute
+    /// decoder above and any caller that wants to stream a whole map
+    /// without intermediate allocations.
+    /// </summary>
+    public static void WriteAttributeValue(Utf8JsonWriter writer, JsonElement value)
+    {
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.String:
+                writer.WriteStartObject();
+                writer.WriteString(TagS, value.GetString());
+                writer.WriteEndObject();
+                break;
+
+            case JsonValueKind.Number:
+                writer.WriteStartObject();
+                writer.WritePropertyName(TagN);
+                writer.WriteStringValue(value.GetRawText());
+                writer.WriteEndObject();
+                break;
+
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+                writer.WriteStartObject();
+                writer.WriteBoolean(TagBool, value.GetBoolean());
+                writer.WriteEndObject();
+                break;
+
+            case JsonValueKind.Null:
+                writer.WriteStartObject();
+                writer.WriteBoolean(TagNull, true);
+                writer.WriteEndObject();
+                break;
+
+            case JsonValueKind.Array:
+                writer.WriteStartObject();
+                writer.WritePropertyName(TagL);
+                writer.WriteStartArray();
+                foreach (var item in value.EnumerateArray())
+                {
+                    WriteAttributeValue(writer, item);
+                }
+                writer.WriteEndArray();
+                writer.WriteEndObject();
+                break;
+
+            case JsonValueKind.Object:
+                WriteObjectAsAttributeValue(writer, value);
+                break;
+
+            case JsonValueKind.Undefined:
+            default:
+                throw new InvalidOperationException(
+                    $"Cannot decode Cosmos value with kind {value.ValueKind}.");
+        }
+    }
+
+    /// <summary>
+    /// Object disambiguation: peek the first (and only) property name;
+    /// if it matches a known envelope tag, unwrap; else decode as M
+    /// (recurse).
+    /// </summary>
+    private static void WriteObjectAsAttributeValue(Utf8JsonWriter writer, JsonElement obj)
+    {
+        // Try the envelope short-circuit first. We require exactly one
+        // property because the encoder never emits multi-prop envelopes.
+        if (TryGetSingleProperty(obj, out var only) && only.Name.StartsWith(EnvelopeTagPrefix, StringComparison.Ordinal))
+        {
+            switch (only.Name)
+            {
+                case EnvelopeTagN:
+                    writer.WriteStartObject();
+                    writer.WritePropertyName(TagN);
+                    if (only.Value.ValueKind != JsonValueKind.String)
+                        throw new InvalidOperationException("'_a2a:N' envelope payload must be a string.");
+                    writer.WriteStringValue(only.Value.GetString());
+                    writer.WriteEndObject();
+                    return;
+
+                case EnvelopeTagB:
+                    writer.WriteStartObject();
+                    writer.WriteString(TagB, only.Value.GetString());
+                    writer.WriteEndObject();
+                    return;
+
+                case EnvelopeTagSS:
+                    WriteUnwrappedSet(writer, TagSS, only.Value);
+                    return;
+
+                case EnvelopeTagNS:
+                    WriteUnwrappedSet(writer, TagNS, only.Value);
+                    return;
+
+                case EnvelopeTagBS:
+                    WriteUnwrappedSet(writer, TagBS, only.Value);
+                    return;
+
+                default:
+                    throw new InvalidOperationException(
+                        $"Unknown envelope tag '{only.Name}' in Cosmos document.");
+            }
+        }
+
+        // Plain map.
+        writer.WriteStartObject();
+        writer.WritePropertyName(TagM);
+        writer.WriteStartObject();
+        foreach (var prop in obj.EnumerateObject())
+        {
+            writer.WritePropertyName(prop.Name);
+            WriteAttributeValue(writer, prop.Value);
+        }
+        writer.WriteEndObject();
+        writer.WriteEndObject();
+    }
+
+    private static void WriteUnwrappedSet(Utf8JsonWriter writer, JsonEncodedText tag, JsonElement arr)
+    {
+        if (arr.ValueKind != JsonValueKind.Array)
+            throw new InvalidOperationException(
+                $"Envelope {tag} payload must be a JSON array.");
+
+        writer.WriteStartObject();
+        writer.WritePropertyName(tag);
+        writer.WriteStartArray();
+        foreach (var member in arr.EnumerateArray())
+        {
+            if (member.ValueKind != JsonValueKind.String)
+                throw new InvalidOperationException("Set members must be JSON strings.");
+            writer.WriteStringValue(member.GetString());
+        }
+        writer.WriteEndArray();
+        writer.WriteEndObject();
+    }
+
+    private static bool TryGetSingleProperty(JsonElement obj, out JsonProperty only)
+    {
+        only = default;
+        int count = 0;
+        foreach (var p in obj.EnumerateObject())
+        {
+            count++;
+            if (count > 1) return false;
+            only = p;
+        }
+        return count == 1;
+    }
+}

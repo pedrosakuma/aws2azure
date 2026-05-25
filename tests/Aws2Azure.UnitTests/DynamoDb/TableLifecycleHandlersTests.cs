@@ -134,7 +134,7 @@ public class TableLifecycleHandlersTests
         Assert.Equal(HttpMethod.Post, create.Method);
         Assert.EndsWith("/dbs/main/colls", create.Uri.AbsolutePath);
         Assert.Contains("\"id\":\"orders\"", create.Body!);
-        Assert.Contains("\"paths\":[\"/pk\"]", create.Body!);
+        Assert.Contains("\"paths\":[\"/_a2a_pk\"]", create.Body!);
 
         var meta = handler.Requests[1];
         Assert.Equal(HttpMethod.Post, meta.Method);
@@ -232,7 +232,7 @@ public class TableLifecycleHandlersTests
         var (ctx, body) = NewCtx();
         var req = Encoding.UTF8.GetBytes("{\"TableName\":\"orders\"}");
 
-        var metaJson = "{\"id\":\"__aws2azure_table_meta__\",\"pk\":\"__aws2azure_table_meta__\","
+        var metaJson = "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\","
             + "\"tableName\":\"orders\",\"creationDateTime\":1700000000,"
             + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"}],"
             + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}]}";
@@ -261,7 +261,7 @@ public class TableLifecycleHandlersTests
         var (ctx, body) = NewCtx();
         var req = Encoding.UTF8.GetBytes("{\"TableName\":\"orders\"}");
 
-        var metaJson = "{\"id\":\"__aws2azure_table_meta__\",\"pk\":\"__aws2azure_table_meta__\","
+        var metaJson = "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\","
             + "\"tableName\":\"orders\",\"creationDateTime\":1700000000,"
             + "\"billingMode\":\"PAY_PER_REQUEST\","
             + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"sk\",\"type\":\"N\"}],"

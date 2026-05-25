@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
+using Aws2Azure.Modules.DynamoDb.Persistence;
 using Microsoft.AspNetCore.Http;
 
 namespace Aws2Azure.Modules.DynamoDb.Operations;
@@ -36,12 +37,9 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 /// </summary>
 internal static class ItemHandlers
 {
-    // Sentinel property names inside the Cosmos doc. Item attributes
-    // live under "item" to keep them separate from the routing fields
-    // (id / pk) and the future indexing fields (_a2a / _meta).
-    internal const string ItemEnvelopeProperty = "item";
-    internal const string DiscriminatorProperty = "_a2a";
-    internal const string DiscriminatorValueItem = "item";
+    // The Cosmos doc shape used by every item write is owned by
+    // InferredAttributeStorage. See that class for the on-disk layout
+    // and the inference rules for the read path.
 
     public static Task HandlePutItemAsync(HttpContext ctx, byte[] body, CosmosClient cosmos, CancellationToken ct)
     {
@@ -643,6 +641,12 @@ internal static class ItemHandlers
     {
         foreach (var prop in item.EnumerateObject())
         {
+            if (InferredAttributeStorage.IsReservedTopLevelName(prop.Name)
+                && !InferredAttributeStorage.IsShadowEncodableName(prop.Name))
+            {
+                error = $"Attribute '{prop.Name}' uses a reserved name and would collide with proxy metadata.";
+                return false;
+            }
             if (!ParsedAttributeValue.TryParse(prop.Value, out _))
             {
                 error = $"Attribute '{prop.Name}' must be a single-property typed attribute value.";
@@ -697,50 +701,20 @@ internal static class ItemHandlers
     }
 
     /// <summary>
-    /// Composes the Cosmos doc shape:
-    /// <c>{"id":"&lt;id&gt;","pk":"&lt;pk&gt;","_a2a":"item","item":&lt;raw map&gt;}</c>.
-    /// The raw item is written via <see cref="JsonElement.GetRawText"/>
-    /// so the on-wire bytes are preserved (number precision intact).
+    /// Composes the Cosmos doc shape used for item writes. Thin wrapper
+    /// over <see cref="InferredAttributeStorage.BuildCosmosDocument"/>;
+    /// kept for call-site stability across the DynamoDb module.
     /// </summary>
     internal static string BuildItemDocument(string id, string pk, JsonElement item)
-    {
-        using var ms = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(ms))
-        {
-            writer.WriteStartObject();
-            writer.WriteString("id", id);
-            writer.WriteString("pk", pk);
-            writer.WriteString(DiscriminatorProperty, DiscriminatorValueItem);
-            writer.WritePropertyName(ItemEnvelopeProperty);
-            item.WriteTo(writer);
-            writer.WriteEndObject();
-        }
-        return Encoding.UTF8.GetString(ms.ToArray());
-    }
+        => InferredAttributeStorage.BuildCosmosDocument(id, pk, item);
 
     /// <summary>
-    /// Extracts the <c>item</c> envelope from a Cosmos doc, projecting
-    /// each attribute as a <see cref="JsonElement"/> clone so the
-    /// returned dictionary outlives the source document.
+    /// Extracts the DDB attribute map from a Cosmos doc, projecting
+    /// every non-reserved root property back into AttributeValue form
+    /// via <see cref="InferredAttributeStorage.ExtractItem(Stream)"/>.
     /// </summary>
     internal static Dictionary<string, JsonElement>? ExtractItemFromCosmosDoc(Stream cosmosDocBody)
-    {
-        using var doc = JsonDocument.Parse(cosmosDocBody);
-        if (!doc.RootElement.TryGetProperty(ItemEnvelopeProperty, out var envelope)
-            || envelope.ValueKind != JsonValueKind.Object)
-        {
-            return null;
-        }
-
-        var result = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-        foreach (var prop in envelope.EnumerateObject())
-        {
-            // Clone so the returned element is detached from the
-            // JsonDocument we're about to dispose.
-            result[prop.Name] = prop.Value.Clone();
-        }
-        return result;
-    }
+        => InferredAttributeStorage.ExtractItem(cosmosDocBody);
 
     private static bool HasContent(string? s) => !string.IsNullOrEmpty(s);
     private static bool HasContent(JsonElement? el)
