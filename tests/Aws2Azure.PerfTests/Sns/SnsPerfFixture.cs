@@ -18,6 +18,16 @@ public sealed class SnsPerfFixture : IAsyncLifetime
     public string ServiceUrl => _proxy.ServiceUrlForHost("sns");
     public string ProxyOutput => _proxy.Output;
     public string TopicArn { get; private set; } = string.Empty;
+    public string TopicName { get; private set; } = string.Empty;
+
+    /// <summary>
+    /// Service Bus emulator connection string exposed for the SDK
+    /// direct-baseline scenarios — the proxy is left idle for those.
+    /// </summary>
+    public string ServiceBusConnectionString
+        => _emulator.DockerAvailable
+            ? $"Endpoint=sb://{_emulator.AmqpHost}:{_emulator.AmqpPort};SharedAccessKeyName={ServiceBusEmulatorFixture.SasKeyName};SharedAccessKey={ServiceBusEmulatorFixture.WellKnownSasKey};UseDevelopmentEmulator=true;"
+            : string.Empty;
 
     public AmazonSimpleNotificationServiceClient CreateClient() => new(
         AwsAccessKey,
@@ -79,6 +89,7 @@ public sealed class SnsPerfFixture : IAsyncLifetime
             var topicName = "perftopic" + Guid.NewGuid().ToString("N")[..8];
             var create = await sns.CreateTopicAsync(topicName).ConfigureAwait(false);
             TopicArn = create.TopicArn;
+            TopicName = topicName;
             Ready = true;
         }
         catch (Exception ex)

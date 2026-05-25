@@ -26,6 +26,11 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
     public string Secret => "perf-ddb-secret";
     public string DatabaseName => "aws2azure-perf";
 
+    /// <summary>Cosmos DB emulator endpoint exposed for SDK-baseline scenarios.</summary>
+    public string CosmosEndpoint { get; private set; } = string.Empty;
+    /// <summary>Well-known Cosmos DB emulator master key (public).</summary>
+    public string CosmosMasterKey => EmulatorMasterKey;
+
     public AmazonDynamoDBClient CreateClient() => new(
         AccessKeyId,
         Secret,
@@ -56,6 +61,7 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
             await _container.StartAsync().ConfigureAwait(false);
             var port = _container.GetMappedPublicPort(8081);
             var cosmosEndpoint = $"http://{_container.Hostname}:{port}/";
+            CosmosEndpoint = cosmosEndpoint;
 
             using (var bootstrap = new HttpClient())
             {

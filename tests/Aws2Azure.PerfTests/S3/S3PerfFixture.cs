@@ -20,6 +20,12 @@ public sealed class S3PerfFixture : IAsyncLifetime
     public string ProxyOutput => _proxy.Output;
     public string Bucket { get; } = "perf-bkt-" + Guid.NewGuid().ToString("N")[..8];
 
+    /// <summary>
+    /// Azurite blob endpoint exposed for the Azure SDK direct-baseline
+    /// scenarios — the proxy is left idle for those measurements.
+    /// </summary>
+    public string BlobEndpoint { get; private set; } = string.Empty;
+
     public AmazonS3Client CreateClient() => new(
         AccessKeyId,
         Secret,
@@ -51,6 +57,7 @@ public sealed class S3PerfFixture : IAsyncLifetime
             await _container.StartAsync().ConfigureAwait(false);
             var blobPort = _container.GetMappedPublicPort(10000);
             var blobEndpoint = $"http://{_container.Hostname}:{blobPort}/{AzuriteFixture.AccountName}";
+            BlobEndpoint = blobEndpoint;
 
             var config = $$"""
                 {
