@@ -5,7 +5,7 @@ status: partial
 sub_features:
   - name: PutRequest fan-out
     status: implemented
-    notes: "Each PutRequest issues a Cosmos POST with `x-ms-documentdb-is-upsert: true`, matching the existing PutItem fast-path. Item is stored verbatim under the `item` envelope for round-trip fidelity."
+    notes: "Each PutRequest issues a Cosmos POST with `x-ms-documentdb-is-upsert: true`, matching the existing PutItem fast-path. Item attributes are stored flat on the Cosmos document (same shape as PutItem) for round-trip fidelity."
   - name: DeleteRequest fan-out
     status: implemented
     notes: "Each DeleteRequest routes to a Cosmos DELETE on the (pk, id) derived from the key. Deletes of missing items are successful no-ops — matches DynamoDB idempotency."

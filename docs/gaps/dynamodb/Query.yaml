@@ -10,7 +10,7 @@ sub_features:
     notes: "Translated to a partition-scoped Cosmos SQL query against `c.pk = <hash>` with a predicate on `c.id` (which holds the formatted RANGE value)."
   - name: FilterExpression
     status: implemented
-    notes: "Evaluated in-process after the Cosmos page returns, so ScannedCount reflects pre-filter rows and Count reflects post-filter rows — matching DynamoDB semantics."
+    notes: "Pushed into the Cosmos SQL WHERE clause where safe; the remainder is evaluated in-process after the Cosmos page returns. ScannedCount reflects pre-filter rows and Count reflects post-filter rows, matching DynamoDB. Predicates supported: comparison (=, <, <=, >, >=), BETWEEN, IN, attribute_exists/not_exists/type, begins_with, contains, AND/OR/NOT. Pushdown carve-outs (these stay residual): `<>` on any path (DDB cross-type semantics), ordered comparisons / BETWEEN on B (base64 lexical order ≠ underlying byte order), begins_with on B, size(), nested paths whose first segment matches the reserved `_a2a:` envelope prefix. Numeric comparisons (=, BETWEEN, IN, ordered) push a hybrid IS_NUMBER / `_a2a:N` envelope branch as a *prefilter only* — the envelope branch routes through Cosmos's `StringToNumber` which rounds through a double; the client-side evaluator then re-checks the exact canonical string so high-precision values are not misclassified."
   - name: ProjectionExpression
     status: partial
     notes: "Top-level attributes and `#alias` references are honoured. Nested paths (`a.b`, `a[0]`) are not yet supported and are rejected with ValidationException."
@@ -42,6 +42,7 @@ sub_features:
 behavior_differences:
   - "Sort-key ordering is the lexical order of the Cosmos document id (which is the formatted RANGE scalar string). Numeric sort keys are therefore not numerically ordered — zero-pad them or use a string sort key if order matters."
   - "Every Query is partition-scoped — there is no cross-partition fan-out — matching DynamoDB's single-partition guarantee."
+  - "When a FilterExpression is pushed (fully or partially) into the Cosmos SQL, Limit's pre-filter semantics cannot be reproduced exactly — Cosmos pre-filters at the storage layer, so `scanned` becomes post-prefilter. The proxy preserves the Cosmos page boundary in that case: it returns after the first non-empty page and surfaces the Cosmos continuation as LastEvaluatedKey, rather than topping up matches across pages with a drifted page boundary."
   - "Cosmos 429 (throttled) is surfaced as DynamoDB ProvisionedThroughputExceededException."
   - "Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB."
 references:
