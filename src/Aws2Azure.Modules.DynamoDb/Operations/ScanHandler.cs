@@ -269,6 +269,17 @@ internal static class ScanHandler
 
             if (scanned >= wantedScanned) break;
             if (string.IsNullOrEmpty(continuationOut)) break;
+            // When the filter was pushed (fully or partially) into the
+            // Cosmos SQL, our `scanned` counter is post-prefilter and
+            // doesn't model DDB's "evaluated items" cap. Topping up
+            // across continuation pages here silently moves the page
+            // boundary forward and yields a different LastEvaluatedKey
+            // than DDB would. Preserve the Cosmos page boundary: stop
+            // after the first non-empty page that produced a
+            // continuation. Empty pages still iterate so we don't
+            // return a zero-row page when Cosmos has more rows
+            // waiting.
+            if (pushdown.Sql is not null && matched > 0) break;
         }
 
         var response = new ScanResponse

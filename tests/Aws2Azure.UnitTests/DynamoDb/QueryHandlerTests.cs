@@ -569,6 +569,44 @@ public class QueryHandlerTests
         Assert.True(resp.RootElement.TryGetProperty("LastEvaluatedKey", out _));
     }
 
+    [Fact]
+    public async Task Query_with_pushdown_and_limit_stops_after_first_non_empty_page()
+    {
+        // When the filter is pushed into the Cosmos SQL, our `scanned`
+        // counter is post-prefilter and cannot model DDB's evaluated-
+        // items cap. Continuing across continuation pages to top up
+        // matches would silently move the page boundary forward. So
+        // we stop after the first non-empty page and surface its
+        // continuation as LastEvaluatedKey. Limit=5 + page1 returns
+        // 1 row + has continuation → exactly one Cosmos call, 1 item
+        // returned, LastEvaluatedKey present.
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataHashOnly),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"10\"}}")),
+                    continuation: "P2"),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"FilterExpression\":\"v > :min\","
+                  + "\"Limit\":5,"
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":min\":{\"N\":\"2\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(2, handler.Requests.Count);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
+        Assert.True(resp.RootElement.TryGetProperty("LastEvaluatedKey", out _));
+    }
+
     // ---- harness ----
 
     private sealed class ScriptedHandler : HttpMessageHandler
