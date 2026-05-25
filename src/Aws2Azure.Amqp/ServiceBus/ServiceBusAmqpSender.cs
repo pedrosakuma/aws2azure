@@ -24,13 +24,6 @@ namespace Aws2Azure.Amqp.ServiceBus;
 internal sealed class ServiceBusAmqpSender : IAsyncDisposable
 {
     private readonly AmqpLink _link;
-    // Serialises concurrent SendAsync callers so the delivery-id
-    // allocation + the transfer write are atomic from the perspective of
-    // the wire: two sends on the same sender link must not interleave
-    // their multi-frame transfer fragments. AmqpLink already takes the
-    // connection write-lock per frame, but the delivery-id sequence is
-    // per-link so the gate guarantees disposition cookies match outcomes.
-    private readonly SemaphoreSlim _sendGate = new(1, 1);
     private int _disposed;
 
     internal ServiceBusAmqpSender(AmqpLink link, string queueName)
@@ -72,22 +65,19 @@ internal sealed class ServiceBusAmqpSender : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(message);
         ThrowIfDisposed();
-        await _sendGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        var result = await _link
+            .SendMessageAsync(message, settled, cancellationToken)
+            .ConfigureAwait(false);
+        if (result.Outcome != AmqpDispositionOutcome.Accepted)
         {
-            var outcome = await _link
-                .SendMessageAsync(message, settled, cancellationToken)
-                .ConfigureAwait(false);
-            if (outcome != AmqpDispositionOutcome.Accepted)
-            {
-                throw new ServiceBusSendException(
-                    $"Service Bus rejected the message on queue '{QueueName}' with outcome '{outcome}'.",
-                    outcome);
-            }
-        }
-        finally
-        {
-            _sendGate.Release();
+            var conditionSuffix = result.Condition is not null
+                ? $" (condition='{result.Condition}')"
+                : string.Empty;
+            throw new ServiceBusSendException(
+                $"Service Bus rejected the message on queue '{QueueName}' with outcome '{result.Outcome}'{conditionSuffix}.",
+                result.Outcome,
+                result.Condition,
+                result.Description);
         }
     }
 
@@ -96,7 +86,6 @@ internal sealed class ServiceBusAmqpSender : IAsyncDisposable
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         try { await _link.DetachAsync(closed: true).ConfigureAwait(false); }
         catch { /* best-effort cleanup */ }
-        _sendGate.Dispose();
     }
 
     private void ThrowIfDisposed()
@@ -115,10 +104,36 @@ internal sealed class ServiceBusAmqpSender : IAsyncDisposable
 internal sealed class ServiceBusSendException : Exception
 {
     public ServiceBusSendException(string message, AmqpDispositionOutcome outcome)
+        : this(message, outcome, condition: null, description: null) { }
+
+    public ServiceBusSendException(
+        string message,
+        AmqpDispositionOutcome outcome,
+        string? condition,
+        string? description)
         : base(message)
     {
         Outcome = outcome;
+        ErrorCondition = condition;
+        ErrorDescription = description;
     }
 
     public AmqpDispositionOutcome Outcome { get; }
+
+    /// <summary>
+    /// AMQP <c>error.condition</c> symbol the broker attached to a
+    /// Rejected disposition (e.g. <c>com.microsoft:server-busy</c>),
+    /// when present. Higher layers classify this via
+    /// <see cref="Framing.AmqpErrorClassifier"/> to decide whether the
+    /// failure is throttled / transient / fatal.
+    /// </summary>
+    public string? ErrorCondition { get; }
+
+    /// <summary>
+    /// AMQP <c>error.description</c> the broker attached to a Rejected
+    /// disposition, when present. Logged for diagnostics; intentionally
+    /// not leaked into client-visible error bodies because it can carry
+    /// broker-internal details.
+    /// </summary>
+    public string? ErrorDescription { get; }
 }

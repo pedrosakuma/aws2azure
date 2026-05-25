@@ -55,4 +55,33 @@ internal static class AmqpDispositionOutcomeExtractor
             _ => AmqpDispositionOutcome.Unknown,
         };
     }
+
+    /// <summary>
+    /// Parses a delivery state into its outcome and, when the outcome is
+    /// <see cref="AmqpDispositionOutcome.Rejected"/> and the broker
+    /// included an <c>error</c>, the AMQP condition + description
+    /// strings. Other outcomes return null condition/description.
+    /// Defensive against malformed payloads — parse failures degrade to
+    /// (outcome, null, null) rather than propagating exceptions out of
+    /// the disposition dispatch path.
+    /// </summary>
+    public static (AmqpDispositionOutcome Outcome, string? Condition, string? Description) FromWithError(
+        ReadOnlyMemory<byte> state)
+    {
+        var outcome = From(state);
+        if (outcome != AmqpDispositionOutcome.Rejected || state.IsEmpty)
+            return (outcome, null, null);
+
+        try
+        {
+            Rejected.Read(state, out var rej, out _);
+            if (rej.Error.IsEmpty) return (outcome, null, null);
+            AmqpError.Read(rej.Error, out var err, out _);
+            return (outcome, err.Condition, err.Description);
+        }
+        catch
+        {
+            return (outcome, null, null);
+        }
+    }
 }

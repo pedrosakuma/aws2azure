@@ -112,7 +112,7 @@ public sealed class AmqpTransferTests
             Body = new byte[] { 0xAA, 0xBB },
         }, settled: true);
 
-        Assert.Equal(AmqpDispositionOutcome.Accepted, outcome);
+        Assert.Equal(AmqpDispositionOutcome.Accepted, outcome.Outcome);
 
         var (observedTransfer, observedPayload) = await transferRead.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(0u, observedTransfer.Handle);
@@ -194,7 +194,7 @@ public sealed class AmqpTransferTests
         {
             Body = new byte[] { 1 },
         }, settled: false);
-        Assert.Equal(AmqpDispositionOutcome.Accepted, outcome);
+        Assert.Equal(AmqpDispositionOutcome.Accepted, outcome.Outcome);
 
         await link.DetachAsync();
         await session.CloseAsync();
