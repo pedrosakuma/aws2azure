@@ -119,6 +119,106 @@ public sealed class AmqpReceiverTests
     }
 
     [Fact]
+    public async Task ReceiveBatchAsync_with_tail_wait_returns_after_first_burst()
+    {
+        var (clientTransport, serverTransport) = PipePairTransport.CreatePair();
+        await using var server = serverTransport;
+        var conn = new AmqpConnection(clientTransport, DefaultConnSettings());
+
+        var serverTask = Task.Run(async () =>
+        {
+            await ConsumeOpenAsync(server);
+            await ConsumeBeginAndReply(server, peerChannel: 4);
+            using (var _ = await AmqpFrameIO.ReadFrameAsync(server)) { }
+            await SendPerfAsync(server, channel: 4, new AmqpAttach
+            {
+                Name = "rcv", Handle = 8, Role = AmqpRole.Sender, InitialDeliveryCount = 0,
+            }, AmqpAttach.Write);
+            using (var _ = await AmqpFrameIO.ReadFrameAsync(server)) { }
+
+            // Two deliveries land immediately; caller asked for 100.
+            // With tailWait shrunk to 50 ms, the call must return after
+            // the burst settles instead of waiting the full 5 s.
+            for (uint i = 0; i < 2; i++)
+            {
+                await SendTransferPayloadAsync(server, channel: 4, handle: 8,
+                    deliveryId: i, deliveryTag: new byte[] { (byte)i },
+                    payload: new byte[] { (byte)(0xB0 + i) }, more: false);
+            }
+
+            await DrainUntilCloseAsync(server);
+        });
+
+        await conn.OpenAsync();
+        var session = await conn.BeginSessionAsync();
+        var link = await session.AttachLinkAsync(new AmqpLinkSettings
+        {
+            Name = "rcv", Role = AmqpRole.Receiver, SourceAddress = "q",
+        });
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var batch = await link.ReceiveBatchAsync(
+                maxMessages: 100,
+                maxWait: TimeSpan.FromSeconds(5),
+                tailWait: TimeSpan.FromMilliseconds(50))
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        sw.Stop();
+
+        Assert.Equal(2, batch.Count);
+        Assert.True(sw.ElapsedMilliseconds < 1500,
+            $"ReceiveBatchAsync with tailWait took too long ({sw.ElapsedMilliseconds} ms); should have returned soon after burst");
+
+        await conn.CloseAsync();
+        await serverTask.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public async Task ReceiveBatchAsync_with_tail_wait_still_honours_max_wait_when_empty()
+    {
+        var (clientTransport, serverTransport) = PipePairTransport.CreatePair();
+        await using var server = serverTransport;
+        var conn = new AmqpConnection(clientTransport, DefaultConnSettings());
+
+        var serverTask = Task.Run(async () =>
+        {
+            await ConsumeOpenAsync(server);
+            await ConsumeBeginAndReply(server, peerChannel: 4);
+            using (var _ = await AmqpFrameIO.ReadFrameAsync(server)) { }
+            await SendPerfAsync(server, channel: 4, new AmqpAttach
+            {
+                Name = "rcv", Handle = 8, Role = AmqpRole.Sender, InitialDeliveryCount = 0,
+            }, AmqpAttach.Write);
+            using (var _ = await AmqpFrameIO.ReadFrameAsync(server)) { }
+
+            // Broker sends nothing. tailWait must not short-circuit the
+            // maxWait deadline before any delivery lands.
+            await DrainUntilCloseAsync(server);
+        });
+
+        await conn.OpenAsync();
+        var session = await conn.BeginSessionAsync();
+        var link = await session.AttachLinkAsync(new AmqpLinkSettings
+        {
+            Name = "rcv", Role = AmqpRole.Receiver, SourceAddress = "q",
+        });
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var batch = await link.ReceiveBatchAsync(
+                maxMessages: 100,
+                maxWait: TimeSpan.FromMilliseconds(400),
+                tailWait: TimeSpan.FromMilliseconds(25))
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        sw.Stop();
+
+        Assert.Empty(batch);
+        Assert.True(sw.ElapsedMilliseconds >= 300,
+            $"Empty receive returned too quickly ({sw.ElapsedMilliseconds} ms); tailWait must not collapse maxWait when no deliveries arrive");
+
+        await conn.CloseAsync();
+        await serverTask.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
     public async Task ReceiveBatchAsync_returns_empty_when_no_messages_within_deadline()
     {
         var (clientTransport, serverTransport) = PipePairTransport.CreatePair();

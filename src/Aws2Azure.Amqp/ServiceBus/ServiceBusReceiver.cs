@@ -113,10 +113,11 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     public async Task<IReadOnlyList<ServiceBusReceivedMessage>> ReceiveBatchAsync(
         int maxMessages,
         TimeSpan maxWait,
+        TimeSpan? tailWait = null,
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        var deliveries = await _link.ReceiveBatchAsync(maxMessages, maxWait, cancellationToken).ConfigureAwait(false);
+        var deliveries = await _link.ReceiveBatchAsync(maxMessages, maxWait, tailWait, cancellationToken).ConfigureAwait(false);
         if (deliveries.Count == 0) return Array.Empty<ServiceBusReceivedMessage>();
         var result = new ServiceBusReceivedMessage[deliveries.Count];
         for (var i = 0; i < deliveries.Count; i++)

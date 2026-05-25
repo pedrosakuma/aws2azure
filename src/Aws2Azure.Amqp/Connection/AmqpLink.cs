@@ -536,10 +536,24 @@ internal sealed class AmqpLink
     /// should still serialise concurrent calls to this method to
     /// avoid races between the read of <c>_linkCredit</c> and the
     /// subsequent grant.
+    /// <para>
+    /// <paramref name="tailWait"/> controls "burst-coalesce" semantics
+    /// once at least one delivery has been collected. By default the
+    /// method waits the full <paramref name="maxWait"/> trying to fill
+    /// <paramref name="maxMessages"/>. When a shorter <c>tailWait</c>
+    /// is supplied, the deadline is shrunk to <c>now + tailWait</c>
+    /// the first time the local buffer is non-empty, so the call
+    /// returns promptly once the peer's first burst lands — matching
+    /// the "drain what's there, don't block waiting for an arbitrary
+    /// batch ceiling" semantic of <c>PartitionReceiver.ReceiveBatchAsync</c>
+    /// and similar SDK consumers. The shrunk deadline is bounded above
+    /// by the original <paramref name="maxWait"/>.
+    /// </para>
     /// </remarks>
     public async Task<IReadOnlyList<AmqpIncomingDelivery>> ReceiveBatchAsync(
         int maxMessages,
         TimeSpan maxWait,
+        TimeSpan? tailWait = null,
         CancellationToken cancellationToken = default)
     {
         if (Role != AmqpRole.Receiver)
@@ -569,6 +583,19 @@ internal sealed class AmqpLink
 
         using var deadlineCts = new CancellationTokenSource(maxWait);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadlineCts.Token);
+        var tailShrunk = false;
+
+        // If the pre-loop drain already collected at least one delivery
+        // AND a shorter tailWait was supplied, shrink the deadline right
+        // away — most calls against a long-lived receiver land in this
+        // branch (the broker pipelines transfers into the local buffer
+        // between calls), so it's the hot path we must keep fast.
+        if (batch.Count > 0 && tailWait is { } twImmediate && twImmediate < maxWait)
+        {
+            deadlineCts.CancelAfter(twImmediate);
+            tailShrunk = true;
+        }
+
         try
         {
             while (batch.Count < maxMessages
@@ -576,6 +603,18 @@ internal sealed class AmqpLink
             {
                 while (batch.Count < maxMessages && _incoming.Reader.TryRead(out var item))
                     batch.Add(item);
+
+                if (!tailShrunk
+                    && batch.Count > 0
+                    && tailWait is { } tw
+                    && tw < maxWait)
+                {
+                    // First burst landed mid-wait: same shrink semantic
+                    // as the pre-loop branch above. Bounded above by the
+                    // original maxWait via the CTS we already armed.
+                    deadlineCts.CancelAfter(tw);
+                    tailShrunk = true;
+                }
             }
 
             // If the channel was completed (link is terminal) before the
