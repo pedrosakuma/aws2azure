@@ -300,17 +300,7 @@ internal static class ScanHandler
     }
 
     private static Dictionary<string, JsonElement>? ExtractItemEnvelope(JsonElement docEl)
-    {
-        if (docEl.ValueKind != JsonValueKind.Object) return null;
-        if (!docEl.TryGetProperty("item", out var envelope)
-            || envelope.ValueKind != JsonValueKind.Object) return null;
-        var result = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-        foreach (var prop in envelope.EnumerateObject())
-        {
-            result[prop.Name] = prop.Value.Clone();
-        }
-        return result;
-    }
+        => Persistence.InferredAttributeStorage.ExtractItem(docEl);
 
     private static Dictionary<string, JsonElement> Project(
         Dictionary<string, JsonElement> item, IReadOnlyList<string> paths)

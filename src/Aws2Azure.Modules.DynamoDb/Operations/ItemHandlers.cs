@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
+using Aws2Azure.Modules.DynamoDb.Persistence;
 using Microsoft.AspNetCore.Http;
 
 namespace Aws2Azure.Modules.DynamoDb.Operations;
@@ -36,12 +37,9 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 /// </summary>
 internal static class ItemHandlers
 {
-    // Sentinel property names inside the Cosmos doc. Item attributes
-    // live under "item" to keep them separate from the routing fields
-    // (id / pk) and the future indexing fields (_a2a / _meta).
-    internal const string ItemEnvelopeProperty = "item";
-    internal const string DiscriminatorProperty = "_a2a";
-    internal const string DiscriminatorValueItem = "item";
+    // The Cosmos doc shape used by every item write is owned by
+    // InferredAttributeStorage. See that class for the on-disk layout
+    // and the inference rules for the read path.
 
     public static Task HandlePutItemAsync(HttpContext ctx, byte[] body, CosmosClient cosmos, CancellationToken ct)
     {
@@ -635,20 +633,123 @@ internal static class ItemHandlers
 
     /// <summary>
     /// Validates every attribute in the Item is a single-property typed
-    /// value (per the DynamoDB JSON wire format). Catches malformed
-    /// inputs early so a write can't poison the partition with a doc
-    /// that GetItem cannot parse.
+    /// value (per the DynamoDB JSON wire format) AND that each payload's
+    /// shape matches its declared type tag (S/N/B → string, BOOL →
+    /// boolean, NULL → true, M → object, L → array, SS/NS/BS → array
+    /// of strings). Catches malformed inputs early so a write can't
+    /// poison the partition with a doc that GetItem cannot parse and so
+    /// the encoder's invariants always hold by the time we call it.
     /// </summary>
     internal static bool ValidateItemShape(JsonElement item, out string error)
     {
         foreach (var prop in item.EnumerateObject())
         {
-            if (!ParsedAttributeValue.TryParse(prop.Value, out _))
+            if (InferredAttributeStorage.IsReservedTopLevelName(prop.Name)
+                && !InferredAttributeStorage.IsShadowEncodableName(prop.Name))
             {
-                error = $"Attribute '{prop.Name}' must be a single-property typed attribute value.";
+                error = $"Attribute '{prop.Name}' uses a reserved name and would collide with proxy metadata.";
+                return false;
+            }
+            if (!ValidateAttributePayload(prop.Name, prop.Value, out error))
+            {
                 return false;
             }
         }
+        error = string.Empty;
+        return true;
+    }
+
+    /// <summary>
+    /// Recursive shape validator for a single DDB AttributeValue. Mirrors
+    /// the type discipline the inferred encoder relies on, so any
+    /// rejection here surfaces as a client <c>ValidationException</c>
+    /// instead of an encoder <c>ArgumentException</c> deeper down the
+    /// stack. Number / Binary / Set payloads must be strings; sets are
+    /// arrays of strings; maps recurse; lists recurse.
+    /// </summary>
+    private static bool ValidateAttributePayload(string attrName, JsonElement attr, out string error)
+    {
+        if (!ParsedAttributeValue.TryParse(attr, out var parsed))
+        {
+            error = $"Attribute '{attrName}' must be a single-property typed attribute value.";
+            return false;
+        }
+
+        switch (parsed.TypeTag)
+        {
+            case AttributeValueTypes.String:
+            case AttributeValueTypes.Number:
+            case AttributeValueTypes.Binary:
+                if (parsed.Value.ValueKind != JsonValueKind.String)
+                {
+                    error = $"Attribute '{attrName}' payload for type {parsed.TypeTag} must be a JSON string.";
+                    return false;
+                }
+                break;
+
+            case AttributeValueTypes.Bool:
+                if (parsed.Value.ValueKind != JsonValueKind.True && parsed.Value.ValueKind != JsonValueKind.False)
+                {
+                    error = $"Attribute '{attrName}' payload for type BOOL must be a JSON boolean.";
+                    return false;
+                }
+                break;
+
+            case AttributeValueTypes.Null:
+                if (parsed.Value.ValueKind != JsonValueKind.True)
+                {
+                    error = $"Attribute '{attrName}' payload for type NULL must be the literal true.";
+                    return false;
+                }
+                break;
+
+            case AttributeValueTypes.Map:
+                if (parsed.Value.ValueKind != JsonValueKind.Object)
+                {
+                    error = $"Attribute '{attrName}' payload for type M must be a JSON object.";
+                    return false;
+                }
+                foreach (var entry in parsed.Value.EnumerateObject())
+                {
+                    if (!ValidateAttributePayload($"{attrName}.{entry.Name}", entry.Value, out error))
+                        return false;
+                }
+                break;
+
+            case AttributeValueTypes.List:
+                if (parsed.Value.ValueKind != JsonValueKind.Array)
+                {
+                    error = $"Attribute '{attrName}' payload for type L must be a JSON array.";
+                    return false;
+                }
+                int li = 0;
+                foreach (var entry in parsed.Value.EnumerateArray())
+                {
+                    if (!ValidateAttributePayload($"{attrName}[{li}]", entry, out error))
+                        return false;
+                    li++;
+                }
+                break;
+
+            case AttributeValueTypes.StringSet:
+            case AttributeValueTypes.NumberSet:
+            case AttributeValueTypes.BinarySet:
+                if (parsed.Value.ValueKind != JsonValueKind.Array)
+                {
+                    error = $"Attribute '{attrName}' payload for type {parsed.TypeTag} must be a JSON array.";
+                    return false;
+                }
+                foreach (var member in parsed.Value.EnumerateArray())
+                {
+                    if (member.ValueKind != JsonValueKind.String)
+                    {
+                        error = $"Attribute '{attrName}' members of {parsed.TypeTag} must be JSON strings.";
+                        return false;
+                    }
+                }
+                break;
+        }
+
         error = string.Empty;
         return true;
     }
@@ -697,50 +798,20 @@ internal static class ItemHandlers
     }
 
     /// <summary>
-    /// Composes the Cosmos doc shape:
-    /// <c>{"id":"&lt;id&gt;","pk":"&lt;pk&gt;","_a2a":"item","item":&lt;raw map&gt;}</c>.
-    /// The raw item is written via <see cref="JsonElement.GetRawText"/>
-    /// so the on-wire bytes are preserved (number precision intact).
+    /// Composes the Cosmos doc shape used for item writes. Thin wrapper
+    /// over <see cref="InferredAttributeStorage.BuildCosmosDocument"/>;
+    /// kept for call-site stability across the DynamoDb module.
     /// </summary>
     internal static string BuildItemDocument(string id, string pk, JsonElement item)
-    {
-        using var ms = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(ms))
-        {
-            writer.WriteStartObject();
-            writer.WriteString("id", id);
-            writer.WriteString("pk", pk);
-            writer.WriteString(DiscriminatorProperty, DiscriminatorValueItem);
-            writer.WritePropertyName(ItemEnvelopeProperty);
-            item.WriteTo(writer);
-            writer.WriteEndObject();
-        }
-        return Encoding.UTF8.GetString(ms.ToArray());
-    }
+        => InferredAttributeStorage.BuildCosmosDocument(id, pk, item);
 
     /// <summary>
-    /// Extracts the <c>item</c> envelope from a Cosmos doc, projecting
-    /// each attribute as a <see cref="JsonElement"/> clone so the
-    /// returned dictionary outlives the source document.
+    /// Extracts the DDB attribute map from a Cosmos doc, projecting
+    /// every non-reserved root property back into AttributeValue form
+    /// via <see cref="InferredAttributeStorage.ExtractItem(Stream)"/>.
     /// </summary>
     internal static Dictionary<string, JsonElement>? ExtractItemFromCosmosDoc(Stream cosmosDocBody)
-    {
-        using var doc = JsonDocument.Parse(cosmosDocBody);
-        if (!doc.RootElement.TryGetProperty(ItemEnvelopeProperty, out var envelope)
-            || envelope.ValueKind != JsonValueKind.Object)
-        {
-            return null;
-        }
-
-        var result = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-        foreach (var prop in envelope.EnumerateObject())
-        {
-            // Clone so the returned element is detached from the
-            // JsonDocument we're about to dispose.
-            result[prop.Name] = prop.Value.Clone();
-        }
-        return result;
-    }
+        => InferredAttributeStorage.ExtractItem(cosmosDocBody);
 
     private static bool HasContent(string? s) => !string.IsNullOrEmpty(s);
     private static bool HasContent(JsonElement? el)

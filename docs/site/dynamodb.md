@@ -274,7 +274,7 @@
 |---|---|---|---|---|
 | HASH-only key tables | ✅ implemented |  |  |  |
 | HASH+RANGE composite key tables | ✅ implemented |  |  |  |
-| Full DynamoDB wire-form round-trip (S/N/B/BOOL/NULL/M/L/SS/NS/BS) | ✅ implemented | Item stored verbatim under Cosmos doc `item` envelope; numeric precision (N) preserved via raw JSON pass-through. |  |  |
+| Full DynamoDB wire-form round-trip (S/N/B/BOOL/NULL/M/L/SS/NS/BS) | ✅ implemented | Attributes stored as inferred Cosmos JSON (no `{S}`/`{N}` wrapping); number values are normalised to DynamoDB's canonical decimal form (no trailing zeros, no exponent, no `-0`) — matching real DDB's documented behaviour. Numbers whose canonical form exceeds IEEE 754 double round-trip safety are stored via the `{"_a2a:N":"<canonical>"}` envelope so 16–38 digit precision survives Cosmos storage byte-identical. |  |  |
 | ConditionExpression / Expected / ConditionalOperator | ✅ implemented | Conditional path performs GET → evaluate → PUT(If-Match) or POST(If-None-Match: *) with up to 4 retries on Cosmos 412/409. Failure returns HTTP 400 ConditionalCheckFailedException with optional Item when ReturnValuesOnConditionCheckFailure=ALL_OLD. attribute_not_exists(pk) is the standard idiom for first-time create. |  |  |
 | ExpressionAttributeNames / ExpressionAttributeValues | ⛔ unsupported |  |  |  |
 | ReturnValues | 🟡 partial | Only NONE accepted; ALL_OLD/UPDATED_* rejected with ValidationException. |  |  |
@@ -282,7 +282,8 @@
 
 ### Behaviour differences
 
-- Item is persisted under a Cosmos envelope `{id, pk, _a2a:"item", item:{...}}`; the raw DynamoDB wire form lives under `item`.
+- Attributes are stored under a Cosmos envelope `{id, _a2a_pk, _a2a:"item", ...inferred attributes...}` — attribute values are stored without `{S}`/`{N}`/`{B}` type wrappers; the type is inferred on read from the JSON value kind. Maps/lists nest as Cosmos JSON. Number values are normalised to DDB canonical form (matching real DDB) — e.g. `42.0`→`42`, `1e10`→`10000000000`.
+- Numbers outside DynamoDB's published range (38 significant digits, |exp|≤125) are rejected with ValidationException — match real DDB.
 - Sentinel id `__aws2azure_table_meta__` is reserved for the table-metadata sidecar and rejected at the API surface.
 - Key values containing `/`, `\`, `?`, `#`, empty strings, or values longer than 255 chars are rejected with ValidationException pending an encoding scheme.
 - Cosmos 429 (throttled) is surfaced to clients as DynamoDB ProvisionedThroughputExceededException — including 429 on the sidecar metadata read.

@@ -30,7 +30,7 @@ namespace Aws2Azure.UnitTests.DynamoDb;
 public class TransactGetItemsHandlerTests
 {
     private static readonly string MetaHashOnly =
-        "{\"id\":\"__aws2azure_table_meta__\",\"pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
         + "\"tableName\":\"orders\","
         + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"}],"
         + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}],"
@@ -70,7 +70,10 @@ public class TransactGetItemsHandlerTests
         => new(code) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
     private static string ItemDoc(string id, string pk, string itemJson)
-        => $"{{\"id\":\"{id}\",\"pk\":\"{pk}\",\"_a2a\":\"item\",\"item\":{itemJson}}}";
+    {
+        using var d = JsonDocument.Parse(itemJson);
+        return Aws2Azure.Modules.DynamoDb.Persistence.InferredAttributeStorage.BuildCosmosDocument(id, pk, d.RootElement);
+    }
 
     [Fact]
     public async Task TransactGet_returns_aligned_responses()
