@@ -35,7 +35,7 @@ namespace Aws2Azure.UnitTests.DynamoDb;
 public class BatchWriteItemHandlerTests
 {
     private static readonly string MetaHashOnly =
-        "{\"id\":\"__aws2azure_table_meta__\",\"pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
         + "\"tableName\":\"orders\","
         + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"}],"
         + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}],"

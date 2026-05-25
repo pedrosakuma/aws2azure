@@ -29,14 +29,14 @@ public class ItemHandlersTests
     private const string TableName = "orders";
 
     private static readonly string MetadataDoc =
-        "{\"id\":\"__aws2azure_table_meta__\",\"pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
         + "\"tableName\":\"orders\",\"creationDateTime\":0,"
         + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"sk\",\"type\":\"S\"}],"
         + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
         + "\"billingMode\":\"PAY_PER_REQUEST\"}";
 
     private static readonly string MetadataDocHashOnly =
-        "{\"id\":\"__aws2azure_table_meta__\",\"pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
         + "\"tableName\":\"orders\",\"creationDateTime\":0,"
         + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"}],"
         + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}],"
@@ -84,7 +84,10 @@ public class ItemHandlersTests
     }
 
     private static string DocWithItem(string pk, string id, string itemJson)
-        => $"{{\"id\":\"{id}\",\"pk\":\"{pk}\",\"_a2a\":\"item\",\"item\":{itemJson}}}";
+    {
+        using var d = JsonDocument.Parse(itemJson);
+        return Aws2Azure.Modules.DynamoDb.Persistence.InferredAttributeStorage.BuildCosmosDocument(id, pk, d.RootElement);
+    }
 
     [Fact]
     public async Task PutItem_writes_doc_with_routing_fields_and_envelope()
@@ -118,15 +121,15 @@ public class ItemHandlersTests
         Assert.Equal("[\"customer-1\"]", upsert.Headers["x-ms-documentdb-partitionkey"]);
         Assert.Equal("true", upsert.Headers["x-ms-documentdb-is-upsert"]);
 
-        // The doc carries id, pk, _a2a, item; the item envelope preserves
-        // the exact wire form of every attribute (including numeric precision).
+        // The doc carries id, _a2a_pk, _a2a, and the inferred attrs flat
+        // at the root. Numbers safe for IEEE754 round-trip ride as bare
+        // JSON numbers; the string-set rides under an "_a2a:SS" envelope.
         using var doc = JsonDocument.Parse(upsert.Body!);
         Assert.Equal("order-42", doc.RootElement.GetProperty("id").GetString());
-        Assert.Equal("customer-1", doc.RootElement.GetProperty("pk").GetString());
+        Assert.Equal("customer-1", doc.RootElement.GetProperty("_a2a_pk").GetString());
         Assert.Equal("item", doc.RootElement.GetProperty("_a2a").GetString());
-        var item = doc.RootElement.GetProperty("item");
-        Assert.Equal("99.95", item.GetProperty("total").GetProperty("N").GetString());
-        Assert.Equal("vip", item.GetProperty("tags").GetProperty("SS")[0].GetString());
+        Assert.Equal("99.95", doc.RootElement.GetProperty("total").GetRawText());
+        Assert.Equal("vip", doc.RootElement.GetProperty("tags").GetProperty("_a2a:SS")[0].GetString());
     }
 
     [Fact]
@@ -300,9 +303,9 @@ public class ItemHandlersTests
     public async Task GetItem_returns_item_envelope_verbatim()
     {
         var (ctx, body) = NewCtx();
-        var docJson = "{\"id\":\"order-42\",\"pk\":\"customer-1\",\"_a2a\":\"item\","
-                      + "\"item\":{\"pk\":{\"S\":\"customer-1\"},\"sk\":{\"S\":\"order-42\"},"
-                      + "\"total\":{\"N\":\"99.95\"},\"flag\":{\"BOOL\":true}}}";
+        var docJson = DocWithItem("customer-1", "order-42",
+            "{\"pk\":{\"S\":\"customer-1\"},\"sk\":{\"S\":\"order-42\"},"
+            + "\"total\":{\"N\":\"99.95\"},\"flag\":{\"BOOL\":true}}");
         var handler = new ScriptedHandler
         {
             Responses = { CosmosOk(MetadataDoc), CosmosOk(docJson) },
@@ -329,7 +332,7 @@ public class ItemHandlersTests
     public async Task GetItem_consistent_read_adds_strong_consistency_header()
     {
         var (ctx, _) = NewCtx();
-        var docJson = "{\"id\":\"a\",\"pk\":\"a\",\"_a2a\":\"item\",\"item\":{\"pk\":{\"S\":\"a\"}}}";
+        var docJson = DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"}}");
         var handler = new ScriptedHandler { Responses = { CosmosOk(MetadataDocHashOnly), CosmosOk(docJson) } };
         var cosmos = BuildClient(handler);
 
@@ -526,14 +529,26 @@ public class ItemHandlersTests
     {
         using var src = JsonDocument.Parse("{\"v\":{\"N\":\"3.141592653589793238462643383279\"}}");
         var doc = ItemHandlers.BuildItemDocument("k", "k", src.RootElement);
+        // High-precision N rides under the "_a2a:N" envelope; the raw
+        // digits must still be present verbatim.
         Assert.Contains("3.141592653589793238462643383279", doc);
+        Assert.Contains("_a2a:N", doc);
     }
 
     [Fact]
-    public void ExtractItemFromCosmosDoc_returns_null_when_envelope_missing()
+    public void ExtractItemFromCosmosDoc_returns_null_when_root_not_object()
     {
-        using var ms = new MemoryStream(Encoding.UTF8.GetBytes("{\"id\":\"x\",\"pk\":\"x\"}"));
+        using var ms = new MemoryStream(Encoding.UTF8.GetBytes("[]"));
         Assert.Null(ItemHandlers.ExtractItemFromCosmosDoc(ms));
+    }
+
+    [Fact]
+    public void ExtractItemFromCosmosDoc_skips_reserved_root_properties()
+    {
+        using var ms = new MemoryStream(Encoding.UTF8.GetBytes("{\"id\":\"x\",\"_a2a_pk\":\"x\",\"_a2a\":\"item\"}"));
+        var item = ItemHandlers.ExtractItemFromCosmosDoc(ms);
+        Assert.NotNull(item);
+        Assert.Empty(item!);
     }
 
     [Fact]

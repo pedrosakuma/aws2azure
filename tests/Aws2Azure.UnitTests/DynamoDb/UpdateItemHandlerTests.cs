@@ -28,7 +28,7 @@ public class UpdateItemHandlerTests
     private const string Table = "orders";
 
     private static readonly string MetadataDocHashOnly =
-        "{\"id\":\"__aws2azure_table_meta__\",\"pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
         + "\"tableName\":\"orders\",\"creationDateTime\":0,"
         + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"}],"
         + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}],"
@@ -72,7 +72,10 @@ public class UpdateItemHandlerTests
     }
 
     private static string DocWithItem(string pk, string id, string itemJson)
-        => $"{{\"id\":\"{id}\",\"pk\":\"{pk}\",\"_a2a\":\"item\",\"item\":{itemJson}}}";
+    {
+        using var d = JsonDocument.Parse(itemJson);
+        return Aws2Azure.Modules.DynamoDb.Persistence.InferredAttributeStorage.BuildCosmosDocument(id, pk, d.RootElement);
+    }
 
     [Fact]
     public async Task UpdateItem_set_against_existing_doc_does_etag_put()
@@ -103,7 +106,7 @@ public class UpdateItemHandlerTests
 
         using var doc = JsonDocument.Parse(put.Body!);
         Assert.Equal("42",
-            doc.RootElement.GetProperty("item").GetProperty("v").GetProperty("N").GetString());
+            doc.RootElement.GetProperty("v").GetRawText());
     }
 
     [Fact]
@@ -168,7 +171,7 @@ public class UpdateItemHandlerTests
         Assert.Equal(5, handler.Requests.Count);
         using var doc = JsonDocument.Parse(handler.Requests[4].Body!);
         Assert.Equal("2",
-            doc.RootElement.GetProperty("item").GetProperty("counter").GetProperty("N").GetString());
+            doc.RootElement.GetProperty("counter").GetRawText());
     }
 
     [Fact]
@@ -435,7 +438,7 @@ public class UpdateItemHandlerTests
         Assert.Equal(200, ctx.Response.StatusCode);
         using var doc = JsonDocument.Parse(handler.Requests[2].Body!);
         Assert.Equal("hello",
-            doc.RootElement.GetProperty("item").GetProperty("name").GetProperty("S").GetString());
+            doc.RootElement.GetProperty("name").GetString());
     }
 
     [Fact]
