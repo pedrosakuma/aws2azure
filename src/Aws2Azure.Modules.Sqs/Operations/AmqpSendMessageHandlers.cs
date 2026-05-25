@@ -143,13 +143,16 @@ internal static class AmqpSendMessageHandlers
             }
             catch (ServiceBusSendException ex)
             {
-                // Broker rejected the message — surface as a Sender-fault
-                // InternalError with the broker's outcome name in the
-                // message; future slices can map well-known SB error
-                // conditions to specific SQS codes.
-                await SendMessageHandlers.WriteErrorAsync(context, parsed.Protocol,
-                    SqsErrorMapping.InvalidParameterValue("MessageBody",
-                        $"Service Bus rejected the message ({ex.Outcome}).")).ConfigureAwait(false);
+                // Translate the broker's AMQP error condition into an
+                // SQS-shaped error. Throttling (com.microsoft:server-busy)
+                // and transient failures become 503 ServiceUnavailable
+                // which the AWS SDK retries with exponential backoff;
+                // fatal conditions surface as the appropriate 4xx codes.
+                // The link itself is still healthy after a per-delivery
+                // Rejected, so we keep the cached sender (no Invalidate).
+                var kind = AmqpErrorClassifier.Classify(ex.ErrorCondition);
+                var mapping = SqsErrorMapping.FromAmqp(kind, ex.ErrorCondition, "SendMessage");
+                await SendMessageHandlers.WriteErrorAsync(context, parsed.Protocol, mapping).ConfigureAwait(false);
                 return;
             }
             catch (Exception)

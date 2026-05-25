@@ -183,7 +183,7 @@ public sealed class AmqpReviewFixTests
         // Grant credit — send should now complete.
         grantCredit.SetResult();
         var outcome = await send.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(AmqpDispositionOutcome.Accepted, outcome);
+        Assert.Equal(AmqpDispositionOutcome.Accepted, outcome.Outcome);
 
         await conn.CloseAsync();
     }
@@ -402,7 +402,7 @@ public sealed class AmqpReviewFixTests
             Properties = new AmqpProperties { MessageId = "m1" },
             Body = new byte[] { 1 },
         }, settled: true).WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(AmqpDispositionOutcome.Accepted, outcome);
+        Assert.Equal(AmqpDispositionOutcome.Accepted, outcome.Outcome);
 
         await conn.CloseAsync().WaitAsync(TimeSpan.FromSeconds(2));
     }
@@ -601,7 +601,7 @@ public sealed class AmqpReviewFixTests
             Properties = new AmqpProperties { MessageId = "big" },
             Body = body,
         }, settled: true).WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(AmqpDispositionOutcome.Accepted, outcome);
+        Assert.Equal(AmqpDispositionOutcome.Accepted, outcome.Outcome);
 
         var n = await fragmentCount.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.True(n >= 3, $"expected ≥3 transfer frames for 12 KiB body over 4 KiB max-frame-size, got {n}");
@@ -701,6 +701,152 @@ public sealed class AmqpReviewFixTests
         await conn.CloseAsync().WaitAsync(TimeSpan.FromSeconds(30));
         // Surface any swallowed server-side exception so a future flake produces
         // an actionable stack trace instead of an opaque WaitAsync timeout.
+        await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // ---- Finding: TransferWriteGate cancellation must roll back credit ----
+
+    [Fact]
+    public async Task Send_cancelled_at_TransferWriteGate_rolls_back_credit()
+    {
+        // Regression for gpt-5.5 review of the §2.6.12 wire-order gate:
+        // AcquireCreditAsync increments _deliveryCount BEFORE awaiting
+        // session.TransferWriteGate; if the caller's token is cancelled
+        // while parked on that gate the transfer never reaches the wire
+        // and the consumed credit slot must be returned, otherwise local
+        // credit drifts below what the peer believes and future sends
+        // stall indefinitely.
+        var (clientTransport, serverTransport) = PipePairTransport.CreatePair();
+        await using var server = serverTransport;
+        var conn = new AmqpConnection(clientTransport, DefaultConnSettings());
+
+        var firstTransferSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var grantSecondCredit = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondTransferSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var serverTask = Task.Run(async () =>
+        {
+            try
+            {
+                await ConsumeOpenAsync(server);
+                await ConsumeBeginAndReply(server, peerChannel: 4);
+                using (var _ = await AmqpFrameIO.ReadFrameAsync(server)) { }
+                await SendPerfAsync(server, channel: 4, new AmqpAttach
+                {
+                    Name = "snd", Handle = 7, Role = AmqpRole.Receiver, InitialDeliveryCount = 0,
+                }, AmqpAttach.Write);
+                // Grant exactly 1 credit upfront — barely enough for the
+                // first send to proceed.
+                await SendPerfAsync(server, channel: 4, new AmqpFlow
+                {
+                    NextIncomingId = 0, IncomingWindow = uint.MaxValue,
+                    NextOutgoingId = 0, OutgoingWindow = uint.MaxValue,
+                    Handle = 7, DeliveryCount = 0, LinkCredit = 1,
+                }, AmqpFlow.Write);
+
+                // Expect the unblocked first send.
+                while (true)
+                {
+                    using var f = await AmqpFrameIO.ReadFrameAsync(server);
+                    var kind = PerformativeCodec.PeekKind(f.Body.Span, out _);
+                    if (kind == PerformativeKind.Transfer) { firstTransferSeen.TrySetResult(); break; }
+                }
+
+                // Wait for the test to ask for the second credit grant
+                // and expect to observe a second transfer — which proves
+                // credit was rolled back (otherwise the client thinks
+                // it consumed 1+1 credits but the broker only granted 2,
+                // so it would wait forever for a 3rd credit).
+                await grantSecondCredit.Task;
+                await SendPerfAsync(server, channel: 4, new AmqpFlow
+                {
+                    NextIncomingId = 0, IncomingWindow = uint.MaxValue,
+                    NextOutgoingId = 0, OutgoingWindow = uint.MaxValue,
+                    Handle = 7, DeliveryCount = 1, LinkCredit = 1,
+                }, AmqpFlow.Write);
+
+                while (true)
+                {
+                    using var f = await AmqpFrameIO.ReadFrameAsync(server);
+                    var kind = PerformativeCodec.PeekKind(f.Body.Span, out _);
+                    if (kind == PerformativeKind.Transfer) { secondTransferSeen.TrySetResult(); break; }
+                    if (kind == PerformativeKind.End || kind == PerformativeKind.Close) break;
+                }
+                await DrainUntilCloseAsync(server);
+            }
+            catch (Exception ex)
+            {
+                firstTransferSeen.TrySetException(ex);
+                secondTransferSeen.TrySetException(ex);
+                throw;
+            }
+        });
+
+        await conn.OpenAsync();
+        var session = await conn.BeginSessionAsync();
+        var link = await session.AttachLinkAsync(new AmqpLinkSettings
+        {
+            Name = "snd", Role = AmqpRole.Sender, TargetAddress = "q",
+            SenderSettleMode = AmqpSenderSettleMode.Settled,
+        });
+
+        // 1) First send drains the only credit.
+        await link.SendMessageAsync(new AmqpMessage
+        {
+            Properties = new AmqpProperties { MessageId = "m1" },
+            Body = new byte[] { 1 },
+        }, settled: true).WaitAsync(TimeSpan.FromSeconds(5));
+        await firstTransferSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // 2) Manually hold the session's TransferWriteGate so the next
+        //    send parks on it AFTER credit has been consumed. Then grant
+        //    a second credit so AcquireCreditAsync passes, cancel the
+        //    token, release the gate, and verify the credit is back in
+        //    the pool (a third send must succeed without any further
+        //    flow from the peer).
+        await session.TransferWriteGate.WaitAsync();
+        var cts = new CancellationTokenSource();
+        // Grant a second credit so the cancelled send gets past AcquireCredit.
+        await SendPerfAsync(clientTransport, channel: 4, new AmqpFlow
+        {
+            NextIncomingId = 0, IncomingWindow = uint.MaxValue,
+            NextOutgoingId = 0, OutgoingWindow = uint.MaxValue,
+            Handle = 7, DeliveryCount = 0, LinkCredit = 2,
+        }, AmqpFlow.Write);
+        // Wait briefly for the flow to be processed and the sender to
+        // park on the gate.
+        await Task.Delay(50);
+
+        var cancelledSend = link.SendMessageAsync(new AmqpMessage
+        {
+            Properties = new AmqpProperties { MessageId = "m2" },
+            Body = new byte[] { 2 },
+        }, settled: true, cts.Token);
+
+        // Give the send a moment to consume the credit and park on the gate.
+        await Task.Delay(100);
+        Assert.False(cancelledSend.IsCompleted, "cancellable send completed before gate was released");
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await cancelledSend.WaitAsync(TimeSpan.FromSeconds(2)));
+        session.TransferWriteGate.Release();
+
+        // 3) Issue a follow-up send. The peer has granted 1 (initial) +
+        //    2 (above) = 3 credits total. The client has issued 2 sends
+        //    (one accepted, one cancelled at the gate). If the cancelled
+        //    send DID NOT roll back its credit slot, the client would
+        //    believe it has consumed 3 of 3 credits and this send would
+        //    park forever in AcquireCreditAsync. With the rollback in
+        //    place credit=1 remains available and this send completes.
+        grantSecondCredit.TrySetResult();
+        await link.SendMessageAsync(new AmqpMessage
+        {
+            Properties = new AmqpProperties { MessageId = "m3" },
+            Body = new byte[] { 3 },
+        }, settled: true).WaitAsync(TimeSpan.FromSeconds(5));
+        await secondTransferSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await conn.CloseAsync().WaitAsync(TimeSpan.FromSeconds(5));
         await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
     }
 

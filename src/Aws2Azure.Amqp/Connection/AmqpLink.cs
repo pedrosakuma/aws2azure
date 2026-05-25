@@ -43,7 +43,7 @@ internal sealed class AmqpLink
 
     // Sender-side delivery tracking.
     private readonly object _deliveryLock = new();
-    private readonly Dictionary<uint, TaskCompletionSource<AmqpDispositionOutcome>> _pendingSends = new();
+    private readonly Dictionary<uint, TaskCompletionSource<AmqpSendOutcome>> _pendingSends = new();
     private uint _deliveryCount;
 
     // Receiver-side message queue + credit tracking.
@@ -113,7 +113,7 @@ internal sealed class AmqpLink
     /// <see cref="AmqpDispositionOutcome.Accepted"/> once the wire write
     /// finishes.
     /// </summary>
-    public async Task<AmqpDispositionOutcome> SendMessageAsync(
+    public async Task<AmqpSendOutcome> SendMessageAsync(
         AmqpMessage message, bool settled = true, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(message);
@@ -135,40 +135,80 @@ internal sealed class AmqpLink
         await AcquireCreditAsync(cancellationToken).ConfigureAwait(false);
         var tsAfterCredit = timingEnabled ? Stopwatch.GetTimestamp() : 0L;
 
-        var deliveryId = _session.AllocateDeliveryId();
-
-        TaskCompletionSource<AmqpDispositionOutcome>? tcs = null;
-        if (!settled)
-        {
-            tcs = new TaskCompletionSource<AmqpDispositionOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
-            lock (_deliveryLock) _pendingSends[deliveryId] = tcs;
-        }
-
-        // delivery-tag: 4 bytes of delivery-id (big-endian) — uniqueness only matters per-link-per-unsettled.
-        Span<byte> tag = stackalloc byte[4];
-        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(tag, deliveryId);
-        var tagArr = tag.ToArray();
-
-        // Encode bare message into pooled buffer.
+        // Encode bare message into pooled buffer (outside the session
+        // write gate — body encoding does not depend on delivery-id and
+        // is safe to run concurrently with other senders on the same
+        // session).
         using var payload = message.EncodePooled();
         var payloadBytes = payload.Memory.Length;
 
+        TaskCompletionSource<AmqpSendOutcome>? tcs = null;
+        uint deliveryId;
+        long tsAfterWrite;
+
+        // Atomic (allocate-delivery-id + register-pending + wire-write)
+        // under the session-scoped TransferWriteGate. AMQP §2.6.12
+        // requires sequential delivery-ids on the wire; without this
+        // serialisation two concurrent senders on the same session can
+        // race so the higher id is transferred first, which strict
+        // brokers (Service Bus) reject with a per-delivery Rejected
+        // outcome. The gate is released BEFORE awaiting the broker
+        // disposition so callers pipeline their round-trips — the cost
+        // of the gate is bounded by the wire-write itself, not by the
+        // far-side latency.
+        //
+        // Credit-rollback: AcquireCreditAsync has already incremented
+        // _deliveryCount. If the gate-wait or the wire-write fails
+        // before the transfer is on the wire we MUST give the credit
+        // back, otherwise local credit drifts below what the peer
+        // believes and future sends stall.
         try
         {
-            await WriteTransferFragmentedAsync(
-                deliveryId, tagArr, payload.Memory, settled, cancellationToken).ConfigureAwait(false);
+            await _session.TransferWriteGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
         catch
         {
-            // Wire write failed — drop any pending entry so it doesn't leak.
-            if (!settled)
-            {
-                lock (_deliveryLock) _pendingSends.Remove(deliveryId);
-            }
+            RollbackUnusedCredit();
             throw;
         }
+        try
+        {
+            deliveryId = _session.AllocateDeliveryId();
 
-        var tsAfterWrite = timingEnabled ? Stopwatch.GetTimestamp() : 0L;
+            if (!settled)
+            {
+                tcs = new TaskCompletionSource<AmqpSendOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+                lock (_deliveryLock) _pendingSends[deliveryId] = tcs;
+            }
+
+            // delivery-tag: 4 bytes of delivery-id (big-endian) — uniqueness only matters per-link-per-unsettled.
+            Span<byte> tag = stackalloc byte[4];
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(tag, deliveryId);
+            var tagArr = tag.ToArray();
+
+            try
+            {
+                await WriteTransferFragmentedAsync(
+                    deliveryId, tagArr, payload.Memory, settled, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                // Wire write failed — drop any pending entry so it doesn't leak,
+                // and give back the credit the transfer never actually consumed.
+                if (!settled)
+                {
+                    lock (_deliveryLock) _pendingSends.Remove(deliveryId);
+                }
+                RollbackUnusedCredit();
+                throw;
+            }
+
+            tsAfterWrite = timingEnabled ? Stopwatch.GetTimestamp() : 0L;
+        }
+        finally
+        {
+            _session.TransferWriteGate.Release();
+        }
 
         if (settled)
         {
@@ -183,7 +223,7 @@ internal sealed class AmqpLink
                     settled: true,
                     payloadBytes: payloadBytes);
             }
-            return AmqpDispositionOutcome.Accepted;
+            return AmqpSendOutcome.Accepted;
         }
 
         using (cancellationToken.Register(() =>
@@ -969,16 +1009,18 @@ internal sealed class AmqpLink
         if (disposition.Role != AmqpRole.Receiver) return; // we only track sender-side here
         var first = disposition.First;
         var last = disposition.Last ?? first;
-        var outcome = AmqpDispositionOutcomeExtractor.From(disposition.State);
+        var (outcome, condition, description) =
+            AmqpDispositionOutcomeExtractor.FromWithError(disposition.State);
+        var result = new AmqpSendOutcome(outcome, condition, description);
 
         for (uint id = first; id <= last; id++)
         {
-            TaskCompletionSource<AmqpDispositionOutcome>? tcs;
+            TaskCompletionSource<AmqpSendOutcome>? tcs;
             lock (_deliveryLock)
             {
                 if (!_pendingSends.Remove(id, out tcs)) continue;
             }
-            tcs.TrySetResult(outcome);
+            tcs.TrySetResult(result);
         }
     }
 
@@ -1016,6 +1058,31 @@ internal sealed class AmqpLink
             }
             await pulse.WaitAsync(ct).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Returns credit that <see cref="AcquireCreditAsync"/> consumed when
+    /// the corresponding transfer never actually reached the wire
+    /// (caller cancelled while waiting for the session
+    /// <see cref="AmqpSession.TransferWriteGate"/>, or
+    /// <c>WriteTransferFragmentedAsync</c> threw before the bytes left
+    /// the socket). Pulses <c>_creditPulse</c> so any other sender
+    /// parked on credit observes the rollback.
+    /// </summary>
+    private void RollbackUnusedCredit()
+    {
+        TaskCompletionSource toPulse;
+        lock (_deliveryLock)
+        {
+            // _deliveryCount is the count of OUTGOING transfers we have
+            // consumed credit for; we only roll back if there is
+            // something to roll back (defensive against double-rollback).
+            if (_deliveryCount == 0) return;
+            _deliveryCount--;
+            toPulse = _creditPulse;
+            _creditPulse = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+        toPulse.TrySetResult();
     }
 
     private async ValueTask SendFlowAsync(CancellationToken ct)
@@ -1127,7 +1194,7 @@ internal sealed class AmqpLink
     private void CompleteWaitersTerminal(bool cancelled)
     {
         _incoming.Writer.TryComplete();
-        TaskCompletionSource<AmqpDispositionOutcome>[] snapshot;
+        TaskCompletionSource<AmqpSendOutcome>[] snapshot;
         lock (_deliveryLock)
         {
             snapshot = _pendingSends.Values.ToArray();

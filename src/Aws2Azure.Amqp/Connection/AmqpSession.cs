@@ -53,6 +53,17 @@ internal sealed class AmqpSession
     /// <summary>Allocates the next delivery-id for an outgoing transfer.</summary>
     internal uint AllocateDeliveryId() => Interlocked.Increment(ref _nextOutgoingId) - 1;
 
+    /// <summary>
+    /// Session-scoped serialiser for the (allocate-delivery-id + write-frame)
+    /// critical section on the sender side. AMQP §2.6.12 requires that
+    /// delivery-ids appear on the wire in strictly sequential order; we
+    /// therefore allocate the id and write the transfer frame atomically
+    /// under this gate. Held only across the synchronous wire-write — the
+    /// settled=false disposition wait happens outside, allowing concurrent
+    /// senders to pipeline their broker round-trips.
+    /// </summary>
+    internal SemaphoreSlim TransferWriteGate { get; } = new(1, 1);
+
     /// <summary>Parent connection, exposed so links can use its write hook.</summary>
     internal AmqpConnection Connection => _connection;
 

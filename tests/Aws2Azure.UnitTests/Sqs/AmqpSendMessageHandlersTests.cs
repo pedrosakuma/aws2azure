@@ -229,8 +229,65 @@ public sealed class AmqpSendMessageHandlersTests
         await AmqpSendMessageHandlers.HandleAsync(ctx, parsed, harness.Provider, CancellationToken.None)
             .WaitAsync(TimeSpan.FromSeconds(10));
 
+        // amqp:internal-error is a Transient AMQP condition; the AWS SDK
+        // retries 503 ServiceUnavailable with exponential back-off, so
+        // we surface it as such instead of a non-retryable 400.
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, ctx.Response.StatusCode);
+        var body = ReadBody(ctx);
+        Assert.Contains("ServiceUnavailable", body);
+        // Broker description must NOT leak into the client-visible body.
+        Assert.DoesNotContain("test reject", body);
+    }
+
+    [Fact]
+    public async Task SendMessage_maps_server_busy_to_503_so_aws_sdk_retries()
+    {
+        await using var harness = await SenderHarness.OpenAsync(QueueName);
+        var linkName = harness.Sender.Link.Name;
+        harness.Broker.RejectNextTransferByLink[linkName] = new AmqpError
+        {
+            // Service Bus throttle signal (real broker + emulator); the
+            // AWS SDK must retry the request, so we MUST map this to a
+            // retryable SQS error code, not a 4xx.
+            Condition = "com.microsoft:server-busy",
+            Description = "namespace throttled",
+        };
+
+        var ctx = NewCtx();
+        var parsed = QueryParsed(SqsOperation.SendMessage,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"),
+            ("MessageBody", "x"));
+
+        await AmqpSendMessageHandlers.HandleAsync(ctx, parsed, harness.Provider, CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, ctx.Response.StatusCode);
+        var body = ReadBody(ctx);
+        Assert.Contains("ServiceUnavailable", body);
+        Assert.Contains("throttled", body);
+    }
+
+    [Fact]
+    public async Task SendMessage_maps_client_fatal_condition_to_400()
+    {
+        await using var harness = await SenderHarness.OpenAsync(QueueName);
+        var linkName = harness.Sender.Link.Name;
+        harness.Broker.RejectNextTransferByLink[linkName] = new AmqpError
+        {
+            Condition = "amqp:decode-error",
+            Description = "malformed",
+        };
+
+        var ctx = NewCtx();
+        var parsed = QueryParsed(SqsOperation.SendMessage,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"),
+            ("MessageBody", "x"));
+
+        await AmqpSendMessageHandlers.HandleAsync(ctx, parsed, harness.Provider, CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
         Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
-        Assert.Contains("Service Bus rejected", ReadBody(ctx));
+        Assert.Contains("InvalidParameterValue", ReadBody(ctx));
     }
 
     // --- harness + fakes ---------------------------------------------------
