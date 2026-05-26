@@ -180,6 +180,8 @@ internal static class UpdateItemHandler
                 keyAttrsJson,
                 condition,
                 ast,
+                returnValues,
+                returnValuesOnConditionCheckFailure,
                 ct).ConfigureAwait(false);
 
             if (sprocResult.Attempted)

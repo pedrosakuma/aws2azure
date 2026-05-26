@@ -114,6 +114,8 @@ internal static class SprocDispatcher
         string keyAttributesJson,
         ConditionNode? condition,
         UpdateExpressionAst? updateAst,
+        string returnValues,
+        string returnValuesOnConditionCheckFailure,
         CancellationToken ct)
     {
         if (!ctx.IsSprocEnabled || ctx.Manager is null)
@@ -148,16 +150,26 @@ internal static class SprocDispatcher
 
         if (result.Success)
         {
-            // Parse oldItem/newItem from response for ReturnValues support
-            var (oldItem, newItem) = ParseSprocResponse(result.ResponseBody);
-            return SprocWriteResult.Succeeded(result.ResponseBody, oldItem, newItem);
+            // Only parse oldItem/newItem when ReturnValues needs them (avoid hot-path allocations)
+            var needOld = returnValues is "ALL_OLD" or "UPDATED_OLD";
+            var needNew = returnValues is "ALL_NEW" or "UPDATED_NEW";
+            if (needOld || needNew)
+            {
+                var (oldItem, newItem) = ParseSprocResponse(result.ResponseBody);
+                return SprocWriteResult.Succeeded(result.ResponseBody, needOld ? oldItem : null, needNew ? newItem : null);
+            }
+            return SprocWriteResult.Succeeded(result.ResponseBody, null, null);
         }
 
         if (result.ConditionFailed)
         {
-            // Parse oldItem for ReturnValuesOnConditionCheckFailure=ALL_OLD
-            var (oldItem, _) = ParseSprocResponse(result.ResponseBody);
-            return SprocWriteResult.ConditionNotMet(oldItem);
+            // Only parse oldItem when ReturnValuesOnConditionCheckFailure=ALL_OLD
+            if (returnValuesOnConditionCheckFailure == "ALL_OLD")
+            {
+                var (oldItem, _) = ParseSprocResponse(result.ResponseBody);
+                return SprocWriteResult.ConditionNotMet(oldItem);
+            }
+            return SprocWriteResult.ConditionNotMet(null);
         }
 
         // Sproc execution failed
