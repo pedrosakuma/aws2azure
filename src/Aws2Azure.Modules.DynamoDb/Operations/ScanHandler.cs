@@ -26,9 +26,13 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 ///
 /// <para>Translation strategy:</para>
 /// <list type="bullet">
-///   <item><c>FilterExpression</c> is evaluated in-process so
-///   <c>ScannedCount</c> reflects pre-filter rows and <c>Count</c>
-///   reflects post-filter rows — matching DynamoDB semantics.</item>
+///   <item><c>FilterExpression</c> is split by
+///   <see cref="FilterPushdownVisitor"/>: the pushable fragment is
+///   appended to the Cosmos WHERE clause; any residual is evaluated
+///   in-process via <see cref="ConditionEvaluator"/>. Either way
+///   <c>ScannedCount</c> reflects pre-filter rows (those returned by
+///   Cosmos) and <c>Count</c> reflects post-filter rows — matching
+///   DynamoDB semantics.</item>
 ///   <item><c>ProjectionExpression</c> is applied in-process. Same
 ///   subset as Query: top-level attributes / <c>#alias</c>.</item>
 ///   <item><c>Limit</c> caps the pre-filter (scanned) count, just
@@ -170,7 +174,12 @@ internal static class ScanHandler
     {
         bool countOnly = string.Equals(req.Select, "COUNT", StringComparison.OrdinalIgnoreCase);
 
-        var queryBody = BuildScanQueryBody();
+        var pushdown = FilterPushdownVisitor.Translate(filter);
+        // The residual replaces the parsed filter: the pushable half
+        // is already enforced by Cosmos so only the leftover needs
+        // client-side evaluation.
+        filter = pushdown.Residual;
+        var queryBody = BuildScanQueryBody(pushdown);
         var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + req.TableName;
         var collUri = "/" + collLink + "/docs";
 
@@ -260,6 +269,17 @@ internal static class ScanHandler
 
             if (scanned >= wantedScanned) break;
             if (string.IsNullOrEmpty(continuationOut)) break;
+            // When the filter was pushed (fully or partially) into the
+            // Cosmos SQL, our `scanned` counter is post-prefilter and
+            // doesn't model DDB's "evaluated items" cap. Topping up
+            // across continuation pages here silently moves the page
+            // boundary forward and yields a different LastEvaluatedKey
+            // than DDB would. Preserve the Cosmos page boundary: stop
+            // after the first non-empty page that produced a
+            // continuation. Empty pages still iterate so we don't
+            // return a zero-row page when Cosmos has more rows
+            // waiting.
+            if (pushdown.Sql is not null && matched > 0) break;
         }
 
         var response = new ScanResponse
@@ -276,27 +296,17 @@ internal static class ScanHandler
     // ----- helpers (mirror QueryHandler) ------------------------------
 
     /// <summary>
-    /// Scan's Cosmos SQL is a constant — the only filter clause is
-    /// <c>c._a2a = 'item'</c> to skip the table-metadata sidecar doc.
-    /// All other filtering is in-process.
+    /// Scan's Cosmos SQL starts at <c>SELECT * FROM c WHERE c._a2a =
+    /// 'item'</c> (skip the table-metadata sidecar) and appends any
+    /// fragment pushed down by <see cref="FilterPushdownVisitor"/>.
+    /// Everything else is evaluated in-process.
     /// </summary>
-    private static string BuildScanQueryBody()
+    internal static string BuildScanQueryBody(FilterPushdownResult pushdown)
     {
-        using var ms = new MemoryStream();
-        var options = new JsonWriterOptions
-        {
-            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        };
-        using (var writer = new Utf8JsonWriter(ms, options))
-        {
-            writer.WriteStartObject();
-            writer.WriteString("query", "SELECT * FROM c WHERE c._a2a = 'item'");
-            writer.WritePropertyName("parameters");
-            writer.WriteStartArray();
-            writer.WriteEndArray();
-            writer.WriteEndObject();
-        }
-        return Encoding.UTF8.GetString(ms.ToArray());
+        var sql = pushdown.Sql is { } f
+            ? "SELECT * FROM c WHERE c._a2a = 'item' AND " + f
+            : "SELECT * FROM c WHERE c._a2a = 'item'";
+        return CosmosQueryBody.Build(sql, pushdown.Parameters);
     }
 
     private static Dictionary<string, JsonElement>? ExtractItemEnvelope(JsonElement docEl)

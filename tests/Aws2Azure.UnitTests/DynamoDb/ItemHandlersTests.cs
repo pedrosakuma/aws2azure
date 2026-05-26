@@ -504,6 +504,48 @@ public class ItemHandlersTests
     }
 
     [Fact]
+    public async Task PutItem_rejects_nested_a2a_prefixed_map_key()
+    {
+        // gpt-5.5 review (medium): nested `_a2a:` map keys must be
+        // rejected at the API surface with ValidationException, not
+        // bubble up as an encoder ArgumentException deeper down.
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler { Responses = { CosmosOk(MetadataDocHashOnly) } };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Item\":{"
+                  + "\"pk\":{\"S\":\"x\"},"
+                  + "\"meta\":{\"M\":{\"_a2a:N\":{\"S\":\"sneaky\"}}}"
+                  + "}}";
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        var resp = ReadResponse(body);
+        Assert.Contains("ValidationException", resp);
+        Assert.Contains("_a2a:", resp);
+    }
+
+    [Fact]
+    public async Task PutItem_rejects_deeply_nested_a2a_prefixed_map_key()
+    {
+        // Map-within-map: the recursive validator must catch the
+        // reserved prefix at any depth.
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler { Responses = { CosmosOk(MetadataDocHashOnly) } };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Item\":{"
+                  + "\"pk\":{\"S\":\"x\"},"
+                  + "\"outer\":{\"M\":{\"inner\":{\"M\":{\"_a2a:B\":{\"N\":\"1\"}}}}}"
+                  + "}}";
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        var resp = ReadResponse(body);
+        Assert.Contains("ValidationException", resp);
+    }
+
+    [Fact]
     public async Task PutItem_cosmos_429_maps_to_provisioned_throughput_exceeded()
     {
         var (ctx, body) = NewCtx();

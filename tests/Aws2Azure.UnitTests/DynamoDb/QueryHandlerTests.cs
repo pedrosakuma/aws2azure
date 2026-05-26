@@ -207,6 +207,9 @@ public class QueryHandlerTests
     [Fact]
     public async Task Query_filter_expression_applies_in_process()
     {
+        // Uses a non-pushable predicate (size() always stays residual)
+        // so the in-process evaluator is exercised against the docs
+        // the stub Cosmos returns verbatim.
         var (ctx, body) = NewCtx();
         var handler = new ScriptedHandler
         {
@@ -214,8 +217,38 @@ public class QueryHandlerTests
             {
                 CosmosOk(MetadataHashOnly),
                 CosmosOk(QueryEnvelope(
-                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"1\"}}"),
-                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"5\"}}"))),
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"S\":\"x\"}}"),
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"S\":\"longer\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"FilterExpression\":\"size(v) > :min\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":min\":{\"N\":\"3\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
+        Assert.Equal(2, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+    }
+
+    [Fact]
+    public async Task Query_filter_expression_pushdown_appends_clause_to_cosmos_sql()
+    {
+        // A pushable predicate (v > :min over a number) must arrive at
+        // Cosmos as a hybrid IS_NUMBER / _a2a:N branch in the WHERE
+        // clause, not as in-process post-filtering.
+        var (ctx, _) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataHashOnly),
+                CosmosOk(QueryEnvelope()),
             },
         };
         var cosmos = BuildClient(handler);
@@ -228,9 +261,11 @@ public class QueryHandlerTests
         await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
-        using var resp = JsonDocument.Parse(ReadResponse(body));
-        Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
-        Assert.Equal(2, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+        var queryReq = handler.Requests[1];
+        // Body is JSON-encoded so `"` is escaped as `\"`.
+        Assert.Contains("IS_NUMBER(c[\\\"v\\\"])", queryReq.Body);
+        Assert.Contains("_a2a:N", queryReq.Body);
+        Assert.Contains("@fp0", queryReq.Body);
     }
 
     [Fact]
@@ -501,7 +536,9 @@ public class QueryHandlerTests
         // Limit=2 and a page that returns 2 items where the filter
         // keeps only 1, we stop after page 1 (scanned == Limit) and
         // return whatever continuation the page came with — we do NOT
-        // fetch a second page to top up matches.
+        // fetch a second page to top up matches. Uses a residual (size)
+        // predicate so the filter executes in-process against both
+        // returned docs (stub Cosmos ignores SQL).
         var (ctx, body) = NewCtx();
         var handler = new ScriptedHandler
         {
@@ -509,7 +546,47 @@ public class QueryHandlerTests
             {
                 CosmosOk(MetadataHashOnly),
                 CosmosOk(QueryEnvelope(
-                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"1\"}}"),
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"S\":\"x\"}}"),
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"S\":\"longer\"}}")),
+                    continuation: "P2"),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"FilterExpression\":\"size(v) > :min\","
+                  + "\"Limit\":2,"
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":min\":{\"N\":\"3\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        // Exactly one Cosmos query call (no second-page fetch).
+        Assert.Equal(2, handler.Requests.Count);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
+        Assert.Equal(2, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+        Assert.True(resp.RootElement.TryGetProperty("LastEvaluatedKey", out _));
+    }
+
+    [Fact]
+    public async Task Query_with_pushdown_and_limit_stops_after_first_non_empty_page()
+    {
+        // When the filter is pushed into the Cosmos SQL, our `scanned`
+        // counter is post-prefilter and cannot model DDB's evaluated-
+        // items cap. Continuing across continuation pages to top up
+        // matches would silently move the page boundary forward. So
+        // we stop after the first non-empty page and surface its
+        // continuation as LastEvaluatedKey. Limit=5 + page1 returns
+        // 1 row + has continuation → exactly one Cosmos call, 1 item
+        // returned, LastEvaluatedKey present.
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataHashOnly),
+                CosmosOk(QueryEnvelope(
                     DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"10\"}}")),
                     continuation: "P2"),
             },
@@ -519,16 +596,14 @@ public class QueryHandlerTests
         var req = "{\"TableName\":\"orders\","
                   + "\"KeyConditionExpression\":\"pk = :p\","
                   + "\"FilterExpression\":\"v > :min\","
-                  + "\"Limit\":2,"
-                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":min\":{\"N\":\"5\"}}}";
+                  + "\"Limit\":5,"
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":min\":{\"N\":\"2\"}}}";
 
         await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
 
-        // Exactly one Cosmos query call (no second-page fetch).
         Assert.Equal(2, handler.Requests.Count);
         using var resp = JsonDocument.Parse(ReadResponse(body));
         Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
-        Assert.Equal(2, resp.RootElement.GetProperty("ScannedCount").GetInt32());
         Assert.True(resp.RootElement.TryGetProperty("LastEvaluatedKey", out _));
     }
 

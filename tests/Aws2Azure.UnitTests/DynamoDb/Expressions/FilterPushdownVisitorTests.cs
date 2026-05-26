@@ -74,26 +74,47 @@ public sealed class FilterPushdownVisitorTests
         Assert.Equal("AQID", r.Parameters[0].Value.GetString());
     }
 
+    [Fact]
+    public void Numeric_equality_emits_hybrid_with_stringtonumber()
+    {
+        // Equality is safe on the StringToNumber envelope branch:
+        // envelope storage is only used for values that DON'T round-trip
+        // as bare JSON numbers, so an envelope-stored value can never
+        // exactly equal a round-trippable parameter — there are no
+        // false negatives, only (residual-recoverable) false positives.
+        var values = new Dictionary<string, JsonElement> { [":v"] = V("{\"N\":\"42\"}") };
+        var r = Translate("age = :v", values: values);
+        var expected =
+            "((IS_NUMBER(c[\"age\"]) AND c[\"age\"] = @fp0)" +
+            " OR (IS_DEFINED(c[\"age\"][\"_a2a:N\"]) AND StringToNumber(c[\"age\"][\"_a2a:N\"]) = @fp0))";
+        Assert.Equal(expected, r.Sql);
+        Assert.Single(r.Parameters);
+        Assert.Equal(42, r.Parameters[0].Value.GetInt32());
+        Assert.NotNull(r.Residual);
+    }
+
     [Theory]
-    [InlineData("age = :v", "=")]
     [InlineData("age < :v", "<")]
     [InlineData("age <= :v", "<=")]
     [InlineData("age > :v", ">")]
     [InlineData("age >= :v", ">=")]
-    public void Numeric_compare_emits_hybrid_branches(string expression, string sqlOp)
+    public void Numeric_ordered_envelope_branch_uses_is_defined_only(string expression, string sqlOp)
     {
+        // gpt-5.5 review (high): ordered numeric comparisons on the
+        // envelope branch MUST NOT use StringToNumber. StringToNumber
+        // rounds through an IEEE 754 double — e.g. stored
+        // 9007199254740995 vs param 9007199254740996 with `<` rounds
+        // both to 9007199254740996 and yields false, dropping a row
+        // DDB would keep. The envelope branch is widened to
+        // IS_DEFINED(envPath) so every envelope-stored row reaches the
+        // residual evaluator for exact canonical-string comparison.
         var values = new Dictionary<string, JsonElement> { [":v"] = V("{\"N\":\"42\"}") };
         var r = Translate(expression, values: values);
         var expected =
             $"((IS_NUMBER(c[\"age\"]) AND c[\"age\"] {sqlOp} @fp0)" +
-            $" OR (IS_DEFINED(c[\"age\"][\"_a2a:N\"]) AND StringToNumber(c[\"age\"][\"_a2a:N\"]) {sqlOp} @fp0))";
+            $" OR IS_DEFINED(c[\"age\"][\"_a2a:N\"]))";
         Assert.Equal(expected, r.Sql);
-        Assert.Single(r.Parameters);
-        Assert.Equal(JsonValueKind.Number, r.Parameters[0].Value.ValueKind);
-        Assert.Equal(42, r.Parameters[0].Value.GetInt32());
-        // Hybrid SQL is a prefilter — StringToNumber rounds through a
-        // double; residual is preserved so the client-side evaluator
-        // re-checks the exact canonical string.
+        Assert.DoesNotContain("StringToNumber", r.Sql);
         Assert.NotNull(r.Residual);
     }
 
@@ -178,8 +199,11 @@ public sealed class FilterPushdownVisitorTests
     }
 
     [Fact]
-    public void Between_numeric_emits_hybrid_branches()
+    public void Between_numeric_envelope_branch_uses_is_defined_only()
     {
+        // gpt-5.5 review (high): BETWEEN is inherently ordered. The
+        // envelope branch must NOT use StringToNumber for the same
+        // false-negative reason as ordered compares.
         var values = new Dictionary<string, JsonElement>
         {
             [":lo"] = V("{\"N\":\"1\"}"),
@@ -188,9 +212,9 @@ public sealed class FilterPushdownVisitorTests
         var r = Translate("age BETWEEN :lo AND :hi", values: values);
         var expected =
             "((IS_NUMBER(c[\"age\"]) AND c[\"age\"] >= @fp0 AND c[\"age\"] <= @fp1)" +
-            " OR (IS_DEFINED(c[\"age\"][\"_a2a:N\"]) AND StringToNumber(c[\"age\"][\"_a2a:N\"]) >= @fp0" +
-            " AND StringToNumber(c[\"age\"][\"_a2a:N\"]) <= @fp1))";
+            " OR IS_DEFINED(c[\"age\"][\"_a2a:N\"]))";
         Assert.Equal(expected, r.Sql);
+        Assert.DoesNotContain("StringToNumber", r.Sql);
         // Hybrid SQL is a prefilter — keep residual to re-check exact
         // canonical string for envelope-stored values.
         Assert.NotNull(r.Residual);

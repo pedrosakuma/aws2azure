@@ -40,7 +40,7 @@
 
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
-| PutRequest fan-out | ✅ implemented | Each PutRequest issues a Cosmos POST with `x-ms-documentdb-is-upsert: true`, matching the existing PutItem fast-path. Item is stored verbatim under the `item` envelope for round-trip fidelity. |  |  |
+| PutRequest fan-out | ✅ implemented | Each PutRequest issues a Cosmos POST with `x-ms-documentdb-is-upsert: true`, matching the existing PutItem fast-path. Item attributes are stored flat on the Cosmos document (same shape as PutItem) for round-trip fidelity. |  |  |
 | DeleteRequest fan-out | ✅ implemented | Each DeleteRequest routes to a Cosmos DELETE on the (pk, id) derived from the key. Deletes of missing items are successful no-ops — matches DynamoDB idempotency. |  |  |
 | Bounded parallelism | ✅ implemented | Up to 10 concurrent Cosmos writes per batch (SemaphoreSlim-gated). |  |  |
 | 25-item-per-call cap | ✅ implemented | Requests over 25 writes (across all tables) rejected with ValidationException, matching the DynamoDB hard limit. |  |  |
@@ -282,7 +282,8 @@
 
 ### Behaviour differences
 
-- Attributes are stored under a Cosmos envelope `{id, _a2a_pk, _a2a:"item", ...inferred attributes...}` — attribute values are stored without `{S}`/`{N}`/`{B}` type wrappers; the type is inferred on read from the JSON value kind. Maps/lists nest as Cosmos JSON. Number values are normalised to DDB canonical form (matching real DDB) — e.g. `42.0`→`42`, `1e10`→`10000000000`.
+- Attributes are stored *flat* on the Cosmos document — `{id, _a2a_pk, ...inferred attributes...}` — with no per-item type wrapper. Scalar values are stored without `{S}`/`{N}`/`{B}` tags; the type is inferred on read from the JSON value kind. Maps/lists nest as Cosmos JSON. Number values are normalised to DDB canonical form (matching real DDB) — e.g. `42.0`→`42`, `1e10`→`10000000000`. Values that cannot survive an IEEE 754 round-trip (high-precision numbers, binary, sets) are stored under a typed envelope (`_a2a:N`, `_a2a:B`, `_a2a:SS`, `_a2a:NS`, `_a2a:BS`).
+- Attribute names with the reserved `_a2a:` prefix are rejected with ValidationException at the API surface, both at top level and inside nested maps. The prefix is reserved for the typed-envelope encoding above; allowing user attributes to collide would let callers shadow / probe storage internals.
 - Numbers outside DynamoDB's published range (38 significant digits, |exp|≤125) are rejected with ValidationException — match real DDB.
 - Sentinel id `__aws2azure_table_meta__` is reserved for the table-metadata sidecar and rejected at the API surface.
 - Key values containing `/`, `\`, `?`, `#`, empty strings, or values longer than 255 chars are rejected with ValidationException pending an encoding scheme.
@@ -304,7 +305,7 @@
 |---|---|---|---|---|
 | KeyConditionExpression on HASH-only tables | ✅ implemented |  |  |  |
 | KeyConditionExpression on HASH+RANGE tables (= / < / <= / > / >= / BETWEEN / begins_with) | ✅ implemented | Translated to a partition-scoped Cosmos SQL query against `c.pk = <hash>` with a predicate on `c.id` (which holds the formatted RANGE value). |  |  |
-| FilterExpression | ✅ implemented | Evaluated in-process after the Cosmos page returns, so ScannedCount reflects pre-filter rows and Count reflects post-filter rows — matching DynamoDB semantics. |  |  |
+| FilterExpression | ✅ implemented | Pushed into the Cosmos SQL WHERE clause where safe; the remainder is evaluated in-process after the Cosmos page returns. ScannedCount reflects pre-filter rows and Count reflects post-filter rows, matching DynamoDB. Predicates supported: comparison (=, <, <=, >, >=), BETWEEN, IN, attribute_exists/not_exists/type, begins_with, contains, AND/OR/NOT. Pushdown carve-outs (these stay residual): `<>` on any path (DDB cross-type semantics), ordered comparisons / BETWEEN on B (base64 lexical order ≠ underlying byte order), begins_with on B, size(), nested paths whose first segment matches the reserved `_a2a:` envelope prefix. Numeric equality (=) and IN push a hybrid IS_NUMBER / `StringToNumber(_a2a:N)` branch as a *prefilter only* — false negatives are impossible by construction (envelope values cannot exactly equal a round-trippable parameter) and the client-side evaluator re-checks the exact canonical string anyway. Numeric ordered comparisons (<, <=, >, >=) and BETWEEN widen the envelope branch to `IS_DEFINED(_a2a:N)` so every envelope-stored row reaches the residual evaluator — otherwise `StringToNumber` rounding could false-negative boundary values. |  |  |
 | ProjectionExpression | 🟡 partial | Top-level attributes and `#alias` references are honoured. Nested paths (`a.b`, `a[0]`) are not yet supported and are rejected with ValidationException. |  |  |
 | ExpressionAttributeNames / ExpressionAttributeValues | ✅ implemented |  |  |  |
 | Limit | ✅ implemented |  |  |  |
@@ -320,6 +321,7 @@
 
 - Sort-key ordering is the lexical order of the Cosmos document id (which is the formatted RANGE scalar string). Numeric sort keys are therefore not numerically ordered — zero-pad them or use a string sort key if order matters.
 - Every Query is partition-scoped — there is no cross-partition fan-out — matching DynamoDB's single-partition guarantee.
+- When a FilterExpression is pushed (fully or partially) into the Cosmos SQL, Limit's pre-filter semantics cannot be reproduced exactly — Cosmos pre-filters at the storage layer, so `scanned` becomes post-prefilter. The proxy preserves the Cosmos page boundary in that case: it returns after the first non-empty page and surfaces the Cosmos continuation as LastEvaluatedKey, rather than topping up matches across pages with a drifted page boundary.
 - Cosmos 429 (throttled) is surfaced as DynamoDB ProvisionedThroughputExceededException.
 - Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB.
 
@@ -337,10 +339,10 @@
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
 | Full-table scan | ✅ implemented | Translated to a cross-partition Cosmos SQL query (`x-ms-documentdb-query-enablecrosspartition: true`). Every Scan is an O(N) walk of the container — expensive in RU. |  |  |
-| FilterExpression | ✅ implemented | Evaluated in-process after each Cosmos page returns, so ScannedCount reflects pre-filter rows and Count reflects post-filter rows — matching DynamoDB. |  |  |
+| FilterExpression | ✅ implemented | Pushed into the Cosmos SQL WHERE clause where safe; the remainder is evaluated in-process after each Cosmos page returns. ScannedCount reflects pre-filter rows and Count reflects post-filter rows, matching DynamoDB. Same pushdown carve-outs as Query: `<>`, ordered comparisons / BETWEEN / begins_with on B, size(), and paths whose first segment matches the reserved `_a2a:` envelope prefix stay residual. Numeric equality (=) and IN push a hybrid IS_NUMBER / `StringToNumber(_a2a:N)` branch as a *prefilter only* (false negatives impossible by construction; client-side evaluator re-checks the exact canonical string anyway). Numeric ordered comparisons (<, <=, >, >=) and BETWEEN widen the envelope branch to `IS_DEFINED(_a2a:N)` so every envelope-stored row reaches the residual evaluator — otherwise `StringToNumber` rounding could false-negative boundary values. |  |  |
 | ProjectionExpression | 🟡 partial | Top-level attributes and `#alias` references are honoured. Nested paths (`a.b`, `a[0]`) are not yet supported and are rejected with ValidationException. |  |  |
 | ExpressionAttributeNames / ExpressionAttributeValues | ✅ implemented |  |  |  |
-| Limit | ✅ implemented | Caps the *scanned* (pre-filter) row count, matching DynamoDB. pageSize is sized to the remaining evaluation budget so the per-page continuation never skips rows. |  |  |
+| Limit | ✅ implemented | Caps the *scanned* (pre-filter) row count when the filter is residual-only; pageSize is sized to the remaining evaluation budget so the per-page continuation never skips rows. When a FilterExpression is pushed (fully or partially) into the Cosmos SQL, Cosmos pre-filters at the storage layer and `scanned` becomes post-prefilter — see behavior_differences for the page-boundary trade-off. |  |  |
 | ExclusiveStartKey / LastEvaluatedKey | ✅ implemented | Pagination round-trips the Cosmos `x-ms-continuation` token inside a sentinel attribute `__a2a_continuation` (typed-string `S`). Most AWS SDKs treat LastEvaluatedKey as opaque and pass it back verbatim. |  |  |
 | ConsistentRead | ✅ implemented | Forwards `x-ms-consistency-level: Strong` for the Cosmos query when true; account-level consistency cap still applies. |  |  |
 | Select | 🟡 partial | ALL_ATTRIBUTES (default), SPECIFIC_ATTRIBUTES, and COUNT supported. ALL_PROJECTED_ATTRIBUTES requires IndexName and is rejected. |  |  |
@@ -352,6 +354,7 @@
 ### Behaviour differences
 
 - Scan order is **not** stable. Cosmos cross-partition query does not guarantee a deterministic walk across partitions; DynamoDB Scan is also unordered, but specific item ordering across pages may differ.
+- When a FilterExpression is pushed (fully or partially) into the Cosmos SQL, Limit's pre-filter semantics cannot be reproduced exactly — Cosmos pre-filters at the storage layer, so `scanned` becomes post-prefilter. The proxy preserves the Cosmos page boundary in that case: it returns after the first non-empty page and surfaces the Cosmos continuation as LastEvaluatedKey, rather than topping up matches across pages with a drifted page boundary.
 - Cosmos 429 (throttled) is surfaced as DynamoDB ProvisionedThroughputExceededException — expect this often on large scans.
 - RU cost is significant for cross-partition scans; the proxy does no rate-limiting beyond what Cosmos imposes.
 - Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB.

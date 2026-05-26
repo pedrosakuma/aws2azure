@@ -22,7 +22,8 @@ sub_features:
     status: unsupported
     notes: "Silently ignored; response omits ConsumedCapacity / ItemCollectionMetrics."
 behavior_differences:
-  - "Attributes are stored under a Cosmos envelope `{id, _a2a_pk, _a2a:\"item\", ...inferred attributes...}` — attribute values are stored without `{S}`/`{N}`/`{B}` type wrappers; the type is inferred on read from the JSON value kind. Maps/lists nest as Cosmos JSON. Number values are normalised to DDB canonical form (matching real DDB) — e.g. `42.0`→`42`, `1e10`→`10000000000`."
+  - "Attributes are stored *flat* on the Cosmos document — `{id, _a2a_pk, ...inferred attributes...}` — with no per-item type wrapper. Scalar values are stored without `{S}`/`{N}`/`{B}` tags; the type is inferred on read from the JSON value kind. Maps/lists nest as Cosmos JSON. Number values are normalised to DDB canonical form (matching real DDB) — e.g. `42.0`→`42`, `1e10`→`10000000000`. Values that cannot survive an IEEE 754 round-trip (high-precision numbers, binary, sets) are stored under a typed envelope (`_a2a:N`, `_a2a:B`, `_a2a:SS`, `_a2a:NS`, `_a2a:BS`)."
+  - "Attribute names with the reserved `_a2a:` prefix are rejected with ValidationException at the API surface, both at top level and inside nested maps. The prefix is reserved for the typed-envelope encoding above; allowing user attributes to collide would let callers shadow / probe storage internals."
   - "Numbers outside DynamoDB's published range (38 significant digits, |exp|≤125) are rejected with ValidationException — match real DDB."
   - "Sentinel id `__aws2azure_table_meta__` is reserved for the table-metadata sidecar and rejected at the API surface."
   - "Key values containing `/`, `\\`, `?`, `#`, empty strings, or values longer than 255 chars are rejected with ValidationException pending an encoding scheme."

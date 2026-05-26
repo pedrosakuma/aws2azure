@@ -135,6 +135,9 @@ public class ScanHandlerTests
     [Fact]
     public async Task Scan_filter_expression_diverges_count_and_scanned()
     {
+        // Uses a non-pushable predicate (size() is always residual)
+        // so the in-process evaluator runs against the docs the stub
+        // Cosmos returns.
         var (ctx, body) = NewCtx();
         var handler = new ScriptedHandler
         {
@@ -142,21 +145,50 @@ public class ScanHandlerTests
             {
                 CosmosOk(Metadata),
                 CosmosOk(QueryEnvelope(
-                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"1\"}}"),
-                    DocWithItem("b", "b", "{\"pk\":{\"S\":\"b\"},\"v\":{\"N\":\"5\"}}"))),
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"S\":\"x\"}}"),
+                    DocWithItem("b", "b", "{\"pk\":{\"S\":\"b\"},\"v\":{\"S\":\"longer\"}}"))),
             },
         };
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\","
-                  + "\"FilterExpression\":\"v > :min\","
-                  + "\"ExpressionAttributeValues\":{\":min\":{\"N\":\"2\"}}}";
+                  + "\"FilterExpression\":\"size(v) > :min\","
+                  + "\"ExpressionAttributeValues\":{\":min\":{\"N\":\"3\"}}}";
 
         await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
 
         using var resp = JsonDocument.Parse(ReadResponse(body));
         Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
         Assert.Equal(2, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+    }
+
+    [Fact]
+    public async Task Scan_filter_expression_pushdown_appends_clause_to_cosmos_sql()
+    {
+        // A pushable predicate (v = :v over a string) must arrive at
+        // Cosmos as part of the WHERE clause, not as in-process
+        // filtering. ScannedCount/Count then converge to whatever
+        // Cosmos returned (the stub returns all docs verbatim).
+        var (ctx, _) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(Metadata),
+                CosmosOk(QueryEnvelope()),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"FilterExpression\":\"v = :v\","
+                  + "\"ExpressionAttributeValues\":{\":v\":{\"S\":\"x\"}}}";
+
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+
+        var queryReq = handler.Requests[1];
+        // Body is JSON-encoded so `"` is escaped as `\"`.
+        Assert.Contains("c[\\\"v\\\"] = @fp0", queryReq.Body);
     }
 
     [Fact]
