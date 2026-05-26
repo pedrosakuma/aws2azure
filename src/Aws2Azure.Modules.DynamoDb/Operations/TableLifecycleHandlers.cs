@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Aws2Azure.Modules.DynamoDb.Errors;
 using Aws2Azure.Modules.DynamoDb.Internal;
+using Aws2Azure.Modules.DynamoDb.Persistence;
 using Microsoft.AspNetCore.Http;
 
 namespace Aws2Azure.Modules.DynamoDb.Operations;
@@ -492,11 +493,13 @@ internal static class TableLifecycleHandlers
 
     private static string BuildContainerBody(string tableName)
     {
-        // Fixed /pk partition path per Phase 3 architectural decision A.
+        // Fixed /_a2a_pk partition path: see InferredAttributeStorage
+        // for why the routing field is namespaced under "_a2a" — it
+        // frees the bare attribute names "pk" / "sk" for user data.
         // tableName is already validated to be ASCII [a-zA-Z0-9_.-]{3,255}
         // so no JSON-escape is required for it specifically.
         return "{\"id\":\"" + tableName
-            + "\",\"partitionKey\":{\"paths\":[\"/pk\"],\"kind\":\"Hash\"}}";
+            + "\",\"partitionKey\":{\"paths\":[\"/" + InferredAttributeStorage.PkProperty + "\"],\"kind\":\"Hash\"}}";
     }
 
     private static List<TableAttributeDefinition> MapAttributeDefinitions(List<AttributeDefinitionDto>? src)

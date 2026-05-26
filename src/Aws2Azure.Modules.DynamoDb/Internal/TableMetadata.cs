@@ -24,7 +24,7 @@ internal sealed class TableMetadata
     [JsonPropertyName("id")]
     public string Id { get; set; } = DocId;
 
-    [JsonPropertyName("pk")]
+    [JsonPropertyName("_a2a_pk")]
     public string PartitionKey { get; set; } = DocId;
 
     /// <summary>Discriminator so item-scan code can skip sidecar docs.</summary>
