@@ -47,4 +47,37 @@ public class S3ObjectKeyTests
         // 'é' is U+00E9 → UTF-8 0xC3 0xA9 → %C3%A9
         Assert.Equal("caf%C3%A9.txt", S3ObjectKey.EncodeForBlobUrl("café.txt"));
     }
+
+    [Theory]
+    [InlineData("simple.txt")]
+    [InlineData("a/b/c/d/e.txt")]
+    [InlineData("UUID-123e4567-e89b-12d3-a456-426614174000")]
+    [InlineData("file_name-with.dots_and~tilde")]
+    [InlineData("A.B.C/D.E.F/G_H-I.JKL")]
+    public void Encode_fast_path_returns_input_reference_when_already_safe(string key)
+    {
+        // The encoder's fast-path must return the same string instance for
+        // already-URL-safe inputs so callers don't pay an allocation per
+        // blob request (S3 GetObject hot path).
+        var encoded = S3ObjectKey.EncodeForBlobUrl(key);
+        Assert.Same(key, encoded);
+    }
+
+    [Theory]
+    [InlineData("name with spaces.txt")]
+    [InlineData("a+b.txt")]
+    [InlineData("café.txt")]
+    [InlineData("ascii-but-with-#-hash")]
+    public void Encode_slow_path_allocates_new_string_when_encoding_needed(string key)
+    {
+        var encoded = S3ObjectKey.EncodeForBlobUrl(key);
+        Assert.NotSame(key, encoded);
+        Assert.NotEqual(key, encoded);
+    }
+
+    [Fact]
+    public void Encode_empty_returns_empty()
+    {
+        Assert.Equal(string.Empty, S3ObjectKey.EncodeForBlobUrl(string.Empty));
+    }
 }

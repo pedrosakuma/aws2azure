@@ -21,6 +21,7 @@ internal sealed partial class BlobClient
     private readonly AzureHttpClient _http;
     private readonly SharedKeyAuthenticator _auth;
     private readonly Uri _serviceEndpoint;
+    private readonly string _endpointWithSlash;
     private readonly string _accountName;
     private readonly byte[] _accountKeyBytes;
 
@@ -36,6 +37,12 @@ internal sealed partial class BlobClient
         _http = http;
         _auth = new SharedKeyAuthenticator(credentials.AccountName, credentials.AccountKey);
         _serviceEndpoint = ResolveEndpoint(credentials);
+        // _serviceEndpoint is always normalised to end with '/' by
+        // ResolveEndpoint (either via TrimEnd('/') + "/" for an override
+        // or directly in the cloud format). Cache the rendered string so
+        // BuildBlobUri / BuildContainerUri can compose paths without
+        // re-checking the trailing slash on every call.
+        _endpointWithSlash = _serviceEndpoint.AbsoluteUri;
         _accountName = credentials.AccountName;
         _accountKeyBytes = Convert.FromBase64String(credentials.AccountKey);
     }
@@ -194,12 +201,24 @@ internal sealed partial class BlobClient
     /// </summary>
     public Uri BuildBlobUri(string container, string key)
     {
-        var endpoint = _serviceEndpoint.AbsoluteUri;
-        if (endpoint.Length == 0 || endpoint[^1] != '/')
-        {
-            endpoint += "/";
-        }
-        return new Uri(endpoint + container + "/" + S3ObjectKey.EncodeForBlobUrl(key), UriKind.Absolute);
+        var encoded = S3ObjectKey.EncodeForBlobUrl(key);
+        // Compose "<endpointWithSlash><container>/<encodedKey>" in one
+        // allocation; the prior implementation did three string concats
+        // (`endpoint += "/"`, then two `+`) plus a fresh Uri parse on
+        // the result — 17% of GetObject CPU and ~10 MB / 30s of String
+        // allocations on the GetObject perf scenario.
+        var path = string.Create(
+            _endpointWithSlash.Length + container.Length + 1 + encoded.Length,
+            (_endpointWithSlash, container, encoded),
+            static (span, state) =>
+            {
+                var (endpoint, container, encoded) = state;
+                endpoint.AsSpan().CopyTo(span);
+                container.AsSpan().CopyTo(span[endpoint.Length..]);
+                span[endpoint.Length + container.Length] = '/';
+                encoded.AsSpan().CopyTo(span[(endpoint.Length + container.Length + 1)..]);
+            });
+        return new Uri(path, UriKind.Absolute);
     }
 
     /// <summary>
@@ -238,12 +257,7 @@ internal sealed partial class BlobClient
     /// </summary>
     public Uri BuildContainerUri(string container)
     {
-        var endpoint = _serviceEndpoint.AbsoluteUri;
-        if (endpoint.Length == 0 || endpoint[^1] != '/')
-        {
-            endpoint += "/";
-        }
-        return new Uri(endpoint + container, UriKind.Absolute);
+        return new Uri(_endpointWithSlash + container, UriKind.Absolute);
     }
 
     /// <summary>

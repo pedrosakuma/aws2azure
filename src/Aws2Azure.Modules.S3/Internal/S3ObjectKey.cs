@@ -75,14 +75,47 @@ internal static class S3ObjectKey
     /// Encoding follows RFC 3986 unreserved + sub-delims that Azure accepts;
     /// everything else is %HH-escaped from UTF-8 bytes.
     /// </summary>
+    /// <remarks>
+    /// Fast-path: when every character is already URL-safe (RFC 3986
+    /// unreserved or '/') the input string is returned unchanged with no
+    /// allocation. Profiling showed this method on the hot path of every
+    /// blob operation, allocating a StringBuilder + a UTF-8 byte buffer
+    /// per call; the typical S3 key (UUID, virtual-folder path) is
+    /// ASCII-clean and now skips both allocations.
+    /// </remarks>
     public static string EncodeForBlobUrl(string key)
     {
         if (string.IsNullOrEmpty(key))
         {
             return string.Empty;
         }
-        var buf = new System.Text.StringBuilder(key.Length + 8);
+        if (!NeedsEncoding(key))
+        {
+            return key;
+        }
+        return EncodeSlow(key);
+    }
+
+    private static bool NeedsEncoding(string key)
+    {
+        for (var i = 0; i < key.Length; i++)
+        {
+            var c = key[i];
+            // Anything outside ASCII unreserved + '/' must go through the
+            // percent-encoding path. Non-ASCII (>= 0x80) also triggers the
+            // slow path so it can be UTF-8 expanded byte-by-byte.
+            if (c >= 0x80 || (!IsUnreserved(c) && c != '/'))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static string EncodeSlow(string key)
+    {
         var utf8 = System.Text.Encoding.UTF8.GetBytes(key);
+        var buf = new System.Text.StringBuilder(utf8.Length + 8);
         for (var i = 0; i < utf8.Length; i++)
         {
             var b = utf8[i];

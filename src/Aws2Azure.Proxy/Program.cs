@@ -21,6 +21,14 @@ using Aws2Azure.Modules.Sns.Management;
 using Aws2Azure.Proxy;
 using Microsoft.AspNetCore.Http;
 
+// Disable HttpClient's DiagnosticsHandler activity propagation: the proxy
+// does not subscribe to System.Net.Http ActivitySource/DiagnosticListener
+// events anywhere, so the Activity allocation + traceparent injection on
+// every outbound request is pure overhead. Profiling showed ~18% of S3
+// GetObject CPU and ~12 MB / 30s of allocations attributable to this path.
+// Must run before any HttpClient / SocketsHttpHandler is constructed.
+AppContext.SetSwitch("System.Net.Http.EnableActivityPropagation", false);
+
 var builder = WebApplication.CreateSlimBuilder(args);
 
 builder.Services.ConfigureHttpJsonOptions(options =>
