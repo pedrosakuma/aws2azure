@@ -205,22 +205,22 @@ function atomicWrite(op, docId, payload, conditionAst, updateAst) {
         switch (op) {
             case 'PUT':
                 if (payload === null) throw { code: 400, body: 'Payload required for PUT' };
-                var putDoc = JSON.parse(payload);
-                coll.upsertDocument(selfLink, putDoc, function(e) { if (e) throw e; });
-                resp.setBody({ success: true, operation: 'PUT' });
+                // payload is already an object (not JSON string)
+                coll.upsertDocument(selfLink, payload, function(e) { if (e) throw e; });
+                resp.setBody({ success: true, operation: 'PUT', oldItem: existing });
                 break;
                 
             case 'UPDATE':
                 if (updateAst === null) throw { code: 400, body: 'UpdateAst required for UPDATE' };
                 var baseDoc = existing || {};
                 if (payload) {
-                    // payload contains the key attributes to ensure they're set
-                    var keyAttrs = JSON.parse(payload);
-                    for (var k in keyAttrs) baseDoc[k] = keyAttrs[k];
+                    // payload contains the key attributes to ensure they're set (already an object)
+                    for (var k in payload) baseDoc[k] = payload[k];
                 }
-                var updatedDoc = applyUpdate(baseDoc, JSON.parse(updateAst));
+                // updateAst is already an object (not JSON string)
+                var updatedDoc = applyUpdate(baseDoc, updateAst);
                 coll.upsertDocument(selfLink, updatedDoc, function(e) { if (e) throw e; });
-                resp.setBody({ success: true, operation: 'UPDATE', oldItem: existing });
+                resp.setBody({ success: true, operation: 'UPDATE', oldItem: existing, newItem: updatedDoc });
                 break;
                 
             case 'DELETE':
@@ -244,42 +244,44 @@ function atomicWrite(op, docId, payload, conditionAst, updateAst) {
             case 'AND':
                 return evaluateCondition(ast.left, doc) && evaluateCondition(ast.right, doc);
             case 'OR':
-                return evaluateCondition(ast.left, doc) && evaluateCondition(ast.right, doc);
+                return evaluateCondition(ast.left, doc) || evaluateCondition(ast.right, doc);
             case 'NOT':
                 return !evaluateCondition(ast.operand, doc);
             case 'COMPARE':
                 return evaluateCompare(ast, doc);
             case 'BETWEEN':
-                var val = getAttrValue(doc, ast.attr);
-                return val >= ast.low && val <= ast.high;
+                var val = getAttrValue(doc, extractPath(ast.value));
+                return val >= extractValue(ast.low) && val <= extractValue(ast.high);
             case 'IN':
-                var v = getAttrValue(doc, ast.attr);
-                return ast.values.indexOf(v) >= 0;
+                var v = getAttrValue(doc, extractPath(ast.attr));
+                var inVals = ast.values.map(function(x) { return extractValue(x); });
+                return inVals.indexOf(v) >= 0;
             case 'ATTR_EXISTS':
-                return hasAttr(doc, ast.attr);
+                return hasAttr(doc, extractPath(ast.attr));
             case 'ATTR_NOT_EXISTS':
-                return !hasAttr(doc, ast.attr);
+                return !hasAttr(doc, extractPath(ast.attr));
             case 'ATTR_TYPE':
-                return checkAttrType(doc, ast.attr, ast.attrType);
+                return checkAttrType(doc, extractPath(ast.attr), ast.attrType);
             case 'BEGINS_WITH':
-                var str = getAttrValue(doc, ast.attr);
-                return typeof str === 'string' && str.indexOf(ast.prefix) === 0;
+                var str = getAttrValue(doc, extractPath(ast.attr));
+                return typeof str === 'string' && str.indexOf(extractValue(ast.prefix)) === 0;
             case 'CONTAINS':
-                var container = getAttrValue(doc, ast.attr);
-                if (typeof container === 'string') return container.indexOf(ast.value) >= 0;
-                if (Array.isArray(container)) return container.indexOf(ast.value) >= 0;
+                var container = getAttrValue(doc, extractPath(ast.attr));
+                var containsVal = extractValue(ast.value);
+                if (typeof container === 'string') return container.indexOf(containsVal) >= 0;
+                if (Array.isArray(container)) return container.indexOf(containsVal) >= 0;
                 return false;
             case 'SIZE':
-                var size = getSize(doc, ast.attr);
-                return evaluateCompareValue(size, ast.op, ast.value);
+                var size = getSize(doc, extractPath(ast.attr));
+                return evaluateCompareValue(size, ast.op, extractValue(ast.sizeValue));
             default:
                 return true; // Unknown node type - pass through
         }
     }
     
     function evaluateCompare(ast, doc) {
-        var left = getAttrValue(doc, ast.attr);
-        var right = ast.value;
+        var left = extractOperandValue(doc, ast.attr);
+        var right = extractOperandValue(doc, ast.value);
         switch (ast.op) {
             case '=': case 'EQ': return left === right;
             case '<>': case 'NE': return left !== right;
@@ -289,6 +291,31 @@ function atomicWrite(op, docId, payload, conditionAst, updateAst) {
             case '>=': case 'GE': return left >= right;
             default: return false;
         }
+    }
+    
+    // Extract path string from {path:"..."} operand object
+    function extractPath(operand) {
+        if (operand && typeof operand === 'object' && operand.path) return operand.path;
+        return operand; // fallback
+    }
+    
+    // Extract value from operand (literal or path)
+    function extractValue(operand) {
+        if (operand && typeof operand === 'object') {
+            if ('path' in operand) return undefined; // path operand - should use extractOperandValue
+            // literal value
+            return operand;
+        }
+        return operand;
+    }
+    
+    // Extract value from operand: if path, look it up in doc; if literal, return the value
+    function extractOperandValue(doc, operand) {
+        if (operand && typeof operand === 'object' && operand.path) {
+            return getAttrValue(doc, operand.path);
+        }
+        // literal value
+        return operand;
     }
     
     function evaluateCompareValue(left, op, right) {

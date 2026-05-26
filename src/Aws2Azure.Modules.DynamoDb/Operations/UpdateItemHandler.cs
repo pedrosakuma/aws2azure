@@ -166,7 +166,8 @@ internal static class UpdateItemHandler
         var docLink = collLink + "/docs/" + id;
 
         // Sproc path: single atomic call if enabled
-        if (sprocCtx is { IsSprocEnabled: true })
+        // Skip sproc path if ReturnValues requested (sproc doesn't support item decoding yet)
+        if (sprocCtx is { IsSprocEnabled: true } && returnValues == "NONE")
         {
             // For UpdateItem upsert case, pass the key attributes so sproc can build a new item
             // Build JSON manually to avoid AOT issues
@@ -186,7 +187,6 @@ internal static class UpdateItemHandler
             {
                 if (sprocResult.Success)
                 {
-                    // TODO: Support ReturnValues (requires sproc to return old/new item)
                     await CosmosOpsShared.WriteJsonAsync(ctx, 200, new UpdateItemResponse(),
                         ItemJsonContext.Default.UpdateItemResponse).ConfigureAwait(false);
                     return;
@@ -552,16 +552,17 @@ internal static class UpdateItemHandler
     }
 
     /// <summary>
-    /// Builds a JSON object with id and pk fields for sproc upsert case.
+    /// Builds a JSON object with Cosmos envelope fields for sproc upsert case.
+    /// Must match InferredAttributeStorage document structure: id, _a2a_pk, _a2a.
     /// </summary>
     private static string BuildKeyAttributesJson(string id, string pk)
     {
-        var sb = new StringBuilder(64);
+        var sb = new StringBuilder(128);
         sb.Append("{\"id\":\"");
         EscapeJsonStringTo(sb, id);
-        sb.Append("\",\"pk\":\"");
+        sb.Append("\",\"_a2a_pk\":\"");
         EscapeJsonStringTo(sb, pk);
-        sb.Append("\"}");
+        sb.Append("\",\"_a2a\":\"item\"}");
         return sb.ToString();
     }
 
