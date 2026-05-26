@@ -182,13 +182,16 @@ internal static class ObjectListHandlers
             azureMarker = page.NextMarker;
         }
 
-        string body;
+        context.Response.StatusCode = StatusCodes.Status200OK;
+        context.Response.ContentType = "application/xml; charset=utf-8";
+
         if (isV2)
         {
             var nextToken = truncated && !string.IsNullOrEmpty(truncatedAzureMarker)
                 ? ContinuationTokenCodec.Encode(truncatedAzureMarker!)
                 : null;
-            body = S3XmlWriter.ListObjectsV2Result(
+            await S3XmlWriter.WriteListObjectsV2ResultAsync(
+                context.Response.Body,
                 bucket, prefix, delimiter, maxKeys,
                 keyCount: contents.Count + commonPrefixes.Count,
                 isTruncated: truncated && nextToken is not null,
@@ -197,7 +200,7 @@ internal static class ObjectListHandlers
                 startAfter: startAfter,
                 encodeUrl: encodeUrl,
                 contents: contents,
-                commonPrefixes: commonPrefixes);
+                commonPrefixes: commonPrefixes).ConfigureAwait(false);
         }
         else
         {
@@ -211,19 +214,16 @@ internal static class ObjectListHandlers
             {
                 nextMarker = truncatedAzureMarker;
             }
-            body = S3XmlWriter.ListBucketResult(
+            await S3XmlWriter.WriteListBucketResultAsync(
+                context.Response.Body,
                 bucket, prefix, delimiter, maxKeys,
                 isTruncated: truncated,
                 marker: requestMarker,
                 nextMarker: nextMarker,
                 encodeUrl: encodeUrl,
                 contents: contents,
-                commonPrefixes: commonPrefixes);
+                commonPrefixes: commonPrefixes).ConfigureAwait(false);
         }
-
-        context.Response.StatusCode = StatusCodes.Status200OK;
-        context.Response.ContentType = "application/xml; charset=utf-8";
-        await context.Response.WriteAsync(body, cancellationToken).ConfigureAwait(false);
     }
 
     private static bool TryParseMaxKeys(IQueryCollection query, out int maxKeys, out string? error)
