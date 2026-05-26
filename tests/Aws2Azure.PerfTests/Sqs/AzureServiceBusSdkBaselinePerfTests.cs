@@ -35,6 +35,7 @@ public sealed class AzureServiceBusSdkBaselinePerfTests(SqsPerfFixture fixture)
 
         PerfReport.Append(result, notes: "Azure SDK baseline — direct ServiceBusSender against SB emulator queue (no proxy)");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
     }
 
     [SkippableFact]
@@ -82,6 +83,7 @@ public sealed class AzureServiceBusSdkBaselinePerfTests(SqsPerfFixture fixture)
 
         PerfReport.Append(result, notes: "Azure SDK baseline — direct ServiceBusReceiver receive+complete against SB emulator queue (no proxy); empty receives count as no-op calls");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
     }
 
     private static async Task DrainAsync(ServiceBusReceiver receiver)

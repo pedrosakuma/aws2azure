@@ -220,6 +220,21 @@ task is genuinely trivial (typo fix, one-line config, doc-only).
   scenario in `tests/Aws2Azure.PerfTests` that produced it and note that
   numbers are emulator-bound unless explicitly validated against real
   Azure (see emulator caveat above).
+- **Perf regression gate.** `PerfResult.AssertNoRegression()` reads
+  `docs/perf/baseline-reference.json` (per-scenario `minThroughputPerSec`
+  / `maxP99Ms` floors and ceilings) and fails the run on degradation.
+  Every perf test must call `AssertNoRegression()` right after
+  `AssertHealthy()`. New scenarios pass through silently until an
+  operator adds an entry to the reference JSON — bump the values
+  deliberately, never by accident, when a code change is *expected* to
+  raise or lower expected throughput. `docs/perf/baseline-latest.md` is
+  the live snapshot (rows merged in place by scenario name) and
+  `docs/perf/history.csv` is the cumulative append-only trend.
+- **Perf CI cadence.** `.github/workflows/perf.yml` runs the harness on
+  nightly cron (05:30 UTC), `workflow_dispatch`, and PRs that carry the
+  `run-perf` label. Apply the label when touching transport hot paths
+  (Kestrel routing, SigV4 hot loop, any module's per-call code) so
+  regressions surface before merge.
 
 User- or task-scoped preferences ("for this PR skip the review", "I
 prefer option X") belong in the prompt, not here. Conventions in this

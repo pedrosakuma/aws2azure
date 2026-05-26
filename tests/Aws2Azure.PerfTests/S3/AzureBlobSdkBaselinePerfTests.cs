@@ -45,5 +45,6 @@ public sealed class AzureBlobSdkBaselinePerfTests(S3PerfFixture fixture)
 
         PerfReport.Append(result, notes: "Azure SDK baseline — direct BlobClient.UploadAsync against Azurite (no proxy)");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
     }
 }

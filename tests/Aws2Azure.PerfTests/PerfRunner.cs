@@ -140,4 +140,37 @@ internal sealed record PerfResult(
                 $"Completed={Completed} Failures={Failures}. FirstFailure={FirstFailure}\nProxy stdout:\n{proxyOutput}");
         }
     }
+
+    /// <summary>
+    /// Compares throughput and p99 against the committed reference in
+    /// <c>docs/perf/baseline-reference.json</c>. No-op when the scenario is
+    /// not listed there (newly added scenarios stay non-gated until an
+    /// operator records a reference number).
+    /// </summary>
+    public void AssertNoRegression()
+    {
+        var entry = PerfReferenceBaseline.TryGet(Scenario);
+        if (entry is null) return;
+
+        var p99Ms = P99Us / 1000.0;
+        var problems = new System.Collections.Generic.List<string>();
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        if (entry.MinThroughputPerSec > 0 && ThroughputPerSec < entry.MinThroughputPerSec)
+        {
+            problems.Add(string.Format(inv,
+                "throughput {0:0.0} ops/s < floor {1:0.0} ops/s",
+                ThroughputPerSec, entry.MinThroughputPerSec));
+        }
+        if (entry.MaxP99Ms > 0 && p99Ms > entry.MaxP99Ms)
+        {
+            problems.Add(string.Format(inv,
+                "p99 {0:0.0} ms > ceiling {1:0.0} ms",
+                p99Ms, entry.MaxP99Ms));
+        }
+        if (problems.Count > 0)
+        {
+            throw new Xunit.Sdk.XunitException(
+                $"{Scenario}: regression — " + string.Join("; ", problems));
+        }
+    }
 }

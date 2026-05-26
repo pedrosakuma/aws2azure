@@ -1,0 +1,11 @@
+{
+  "$schema": "./perf-reference.schema.json",
+  "comment": "Per-scenario regression thresholds. Run via AWS2AZURE_PERF=1; values reflect emulator-bound baselines captured on the project's reference dev hardware. See docs/perf/baseline-latest.md for the live observed numbers. Operators bump these values manually when a deliberate change to the proxy raises or lowers expected throughput. minThroughputPerSec floors observed ops/s; maxP99Ms ceilings observed p99. Either can be 0 to opt out of that half of the gate.",
+  "scenarios": {
+    "kinesis.PutRecord (256 B)":                                   { "minThroughputPerSec":  60.0, "maxP99Ms":   50.0 },
+    "kinesis.GetRecords (256 B records)":                          { "minThroughputPerSec":   2.0, "maxP99Ms":  800.0 },
+    "azure-sdk.EventHubs.ReceiveBatchAsync (256 B records)":       { "minThroughputPerSec":   2.0, "maxP99Ms":  800.0 },
+    "azure-sdk.EventHubs.SendAsync (256 B, c=1)":                  { "minThroughputPerSec":  50.0, "maxP99Ms":   40.0 },
+    "dynamodb.PutItem (small)":                                    { "minThroughputPerSec":  80.0, "maxP99Ms":  400.0 }
+  }
+}

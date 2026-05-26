@@ -54,5 +54,6 @@ public sealed class AzureEventHubsSdkBaselinePerfTests(KinesisPerfFixture fixtur
 
         PerfReport.Append(result, notes: "Azure SDK baseline — direct EventHubProducerClient against EH emulator (no proxy)");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
     }
 }
