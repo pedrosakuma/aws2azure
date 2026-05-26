@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
 using Aws2Azure.Modules.DynamoDb.Persistence;
@@ -41,7 +42,7 @@ internal static class ItemHandlers
     // InferredAttributeStorage. See that class for the on-disk layout
     // and the inference rules for the read path.
 
-    public static Task HandlePutItemAsync(HttpContext ctx, byte[] body, CosmosClient cosmos, CancellationToken ct)
+    public static Task HandlePutItemAsync(HttpContext ctx, byte[] body, CosmosClient cosmos, SprocContext? sprocCtx, CancellationToken ct)
     {
         PutItemRequest? req;
         try
@@ -106,12 +107,12 @@ internal static class ItemHandlers
             return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", rvccfErr);
         }
 
-        return PutItemCoreAsync(ctx, req, condition, rvccf, cosmos, ct);
+        return PutItemCoreAsync(ctx, req, condition, rvccf, cosmos, sprocCtx, ct);
     }
 
     private static async Task PutItemCoreAsync(
         HttpContext ctx, PutItemRequest req, ConditionNode? condition, string rvccf,
-        CosmosClient cosmos, CancellationToken ct)
+        CosmosClient cosmos, SprocContext? sprocCtx, CancellationToken ct)
     {
         using var metaResult = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, req.TableName!, ct).ConfigureAwait(false);
         if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.CosmosError)
@@ -183,7 +184,56 @@ internal static class ItemHandlers
             return;
         }
 
-        // Conditional path: GET → evaluate → PUT(If-Match) or POST(If-None-Match: *),
+        // Conditional path: try sproc (atomic) first, then fall back to GET → evaluate → PUT(If-Match)
+        // with bounded retry on 412/409 so concurrent writers replay.
+
+        // Sproc path: single atomic call if enabled
+        if (sprocCtx is { IsSprocEnabled: true })
+        {
+            var sprocResult = await SprocDispatcher.TryPutItemAsync(
+                sprocCtx,
+                cosmos,
+                req.TableName!,
+                pk,
+                id,
+                docJson,
+                condition,
+                ct).ConfigureAwait(false);
+
+            if (sprocResult.Attempted)
+            {
+                if (sprocResult.Success)
+                {
+                    await CosmosOpsShared.WriteJsonAsync(ctx, 200, new PutItemResponse(),
+                        ItemJsonContext.Default.PutItemResponse).ConfigureAwait(false);
+                    return;
+                }
+                if (sprocResult.ConditionFailed)
+                {
+                    // Condition failed - return ConditionalCheckFailedException
+                    // TODO: For ReturnValuesOnConditionCheckFailure, we'd need the old item from sproc
+                    await ConditionFailureResponder.WriteAsync(ctx, null, rvccf).ConfigureAwait(false);
+                    return;
+                }
+                // Sproc failed with an error but mode is Preferred - fall through to retry loop
+                if (sprocCtx.Mode == Core.Configuration.StoredProcedureMode.Required)
+                {
+                    await CosmosOpsShared.WriteErrorAsync(ctx, 500, "InternalServerError",
+                        $"Sproc execution failed: {sprocResult.Error}").ConfigureAwait(false);
+                    return;
+                }
+                // mode is Preferred: fall through to optimistic concurrency path
+            }
+            // Sproc not attempted (not available) - fall through if Preferred
+            else if (sprocCtx.Mode == Core.Configuration.StoredProcedureMode.Required)
+            {
+                await CosmosOpsShared.WriteErrorAsync(ctx, 500, "InternalServerError",
+                    "Stored procedure not available and mode is Required").ConfigureAwait(false);
+                return;
+            }
+        }
+
+        // Fallback: GET → evaluate → PUT(If-Match) or POST(If-None-Match: *),
         // with bounded retry on 412/409 so concurrent writers replay.
         const int MaxRetries = 4;
         for (int attempt = 0; attempt < MaxRetries; attempt++)
@@ -397,7 +447,7 @@ internal static class ItemHandlers
             ItemJsonContext.Default.GetItemResponse).ConfigureAwait(false);
     }
 
-    public static Task HandleDeleteItemAsync(HttpContext ctx, byte[] body, CosmosClient cosmos, CancellationToken ct)
+    public static Task HandleDeleteItemAsync(HttpContext ctx, byte[] body, CosmosClient cosmos, SprocContext? sprocCtx, CancellationToken ct)
     {
         DeleteItemRequest? req;
         try
@@ -456,12 +506,12 @@ internal static class ItemHandlers
             return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", rvccfErr);
         }
 
-        return DeleteItemCoreAsync(ctx, req, condition, rvccf, cosmos, ct);
+        return DeleteItemCoreAsync(ctx, req, condition, rvccf, cosmos, sprocCtx, ct);
     }
 
     private static async Task DeleteItemCoreAsync(
         HttpContext ctx, DeleteItemRequest req, ConditionNode? condition, string rvccf,
-        CosmosClient cosmos, CancellationToken ct)
+        CosmosClient cosmos, SprocContext? sprocCtx, CancellationToken ct)
     {
         using var metaResult = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, req.TableName!, ct).ConfigureAwait(false);
         if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.CosmosError)
@@ -527,7 +577,56 @@ internal static class ItemHandlers
             return;
         }
 
-        // Conditional path: GET → evaluate → DELETE(If-Match), with
+        var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + req.TableName;
+
+        // Conditional path: try sproc (atomic) first, then fall back to GET → evaluate → DELETE(If-Match)
+        // with bounded retry on 412 so concurrent writers replay.
+
+        // Sproc path: single atomic call if enabled
+        if (sprocCtx is { IsSprocEnabled: true })
+        {
+            var sprocResult = await SprocDispatcher.TryDeleteItemAsync(
+                sprocCtx,
+                cosmos,
+                req.TableName!,
+                pk,
+                id,
+                condition,
+                ct).ConfigureAwait(false);
+
+            if (sprocResult.Attempted)
+            {
+                if (sprocResult.Success)
+                {
+                    await CosmosOpsShared.WriteJsonAsync(ctx, 200, new DeleteItemResponse(),
+                        ItemJsonContext.Default.DeleteItemResponse).ConfigureAwait(false);
+                    return;
+                }
+                if (sprocResult.ConditionFailed)
+                {
+                    // Condition failed - return ConditionalCheckFailedException
+                    await ConditionFailureResponder.WriteAsync(ctx, null, rvccf).ConfigureAwait(false);
+                    return;
+                }
+                // Sproc failed with an error but mode is Preferred - fall through to retry loop
+                if (sprocCtx.Mode == StoredProcedureMode.Required)
+                {
+                    await CosmosOpsShared.WriteErrorAsync(ctx, 500, "InternalServerError",
+                        $"Sproc execution failed: {sprocResult.Error}").ConfigureAwait(false);
+                    return;
+                }
+                // mode is Preferred: fall through to optimistic concurrency path
+            }
+            // Sproc not attempted (not available) - fall through if Preferred
+            else if (sprocCtx.Mode == StoredProcedureMode.Required)
+            {
+                await CosmosOpsShared.WriteErrorAsync(ctx, 500, "InternalServerError",
+                    "Stored procedure not available and mode is Required").ConfigureAwait(false);
+                return;
+            }
+        }
+
+        // Fallback: GET → evaluate → DELETE(If-Match), with
         // bounded retry on 412 so concurrent writers replay.
         const int MaxRetries = 4;
         for (int attempt = 0; attempt < MaxRetries; attempt++)

@@ -100,6 +100,17 @@ public static class ProxyConfigLoader
             return;
         }
 
+        // AWS2AZURE__DYNAMODB__USESTOREDPROCEDURES=preferred
+        if (head == "DYNAMODB" && path.Length == 2)
+        {
+            var field = path[1].ToUpperInvariant();
+            if (field == "USESTOREDPROCEDURES" && TryParseSprocMode(value, out var mode))
+            {
+                config.DynamoDb.UseStoredProcedures = mode;
+            }
+            return;
+        }
+
         if (head == "CREDENTIALS" && path.Length >= 3 && int.TryParse(path[1], out var index))
         {
             while (config.Credentials.Count <= index)
@@ -201,6 +212,18 @@ public static class ProxyConfigLoader
             return true;
         }
         transport = default;
+        return false;
+    }
+
+    private static bool TryParseSprocMode(string? value, out StoredProcedureMode mode)
+    {
+        if (!string.IsNullOrWhiteSpace(value)
+            && Enum.TryParse<StoredProcedureMode>(value, ignoreCase: true, out mode)
+            && Enum.IsDefined(typeof(StoredProcedureMode), mode))
+        {
+            return true;
+        }
+        mode = default;
         return false;
     }
 }

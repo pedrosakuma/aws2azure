@@ -109,7 +109,7 @@ public class ItemHandlersTests
                   + "\"total\":{\"N\":\"99.95\"},"
                   + "\"tags\":{\"SS\":[\"vip\",\"new\"]}}}";
 
-        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         Assert.Equal("{}", ReadResponse(body));
@@ -147,7 +147,7 @@ public class ItemHandlersTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"only-key\"},\"v\":{\"N\":\"1\"}}}";
-        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var doc = JsonDocument.Parse(handler.Requests[1].Body!);
@@ -163,7 +163,7 @@ public class ItemHandlersTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"x\"},\"data\":{\"S\":\"y\"}}}";
-        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         var resp = ReadResponse(body);
@@ -181,7 +181,7 @@ public class ItemHandlersTests
         var req = "{\"TableName\":\"orders\",\"Item\":{"
                   + "\"pk\":{\"N\":\"123\"},"
                   + "\"sk\":{\"S\":\"x\"}}}";
-        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         var resp = ReadResponse(body);
@@ -200,7 +200,7 @@ public class ItemHandlersTests
         var req = "{\"TableName\":\"orders\",\"Item\":{"
                   + "\"pk\":{\"S\":\"x\"},\"sk\":{\"S\":\"y\"},"
                   + "\"data\":{\"S\":\"v\",\"N\":\"1\"}}}";
-        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("data", ReadResponse(body));
@@ -216,7 +216,7 @@ public class ItemHandlersTests
         var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"x\"}},"
                   + "\"Expected\":{\"v\":{\"Value\":{\"N\":\"1\"}}},"
                   + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"1\"}}}";
-        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("no ConditionExpression", ReadResponse(body));
@@ -239,7 +239,7 @@ public class ItemHandlersTests
 
         var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"x\"}},"
                   + "\"ConditionExpression\":\"attribute_not_exists(pk)\"}";
-        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         Assert.Equal("*", handler.Requests[2].Headers["If-None-Match"]);
@@ -261,7 +261,7 @@ public class ItemHandlersTests
 
         var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"x\"}},"
                   + "\"ConditionExpression\":\"attribute_not_exists(pk)\"}";
-        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("ConditionalCheckFailedException", ReadResponse(body));
@@ -276,7 +276,7 @@ public class ItemHandlersTests
 
         var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"x\"},\"sk\":{\"S\":\"y\"}},"
                   + "\"ReturnValues\":\"ALL_OLD\"}";
-        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("ReturnValues", ReadResponse(body));
@@ -293,7 +293,7 @@ public class ItemHandlersTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"missing\",\"Item\":{\"pk\":{\"S\":\"x\"},\"sk\":{\"S\":\"y\"}}}";
-        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("ResourceNotFoundException", ReadResponse(body));
@@ -400,7 +400,7 @@ public class ItemHandlersTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"x\"},\"sk\":{\"S\":\"y\"}}}";
-        await ItemHandlers.HandleDeleteItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandleDeleteItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         Assert.Equal("{}", ReadResponse(body));
@@ -417,7 +417,7 @@ public class ItemHandlersTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"customer-1\"},\"sk\":{\"S\":\"order-42\"}}}";
-        await ItemHandlers.HandleDeleteItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandleDeleteItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         var delReq = handler.Requests[1];
@@ -436,7 +436,7 @@ public class ItemHandlersTests
         var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"x\"}},"
                   + "\"Expected\":{\"v\":{\"Value\":{\"N\":\"1\"}}},"
                   + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"1\"}}}";
-        await ItemHandlers.HandleDeleteItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandleDeleteItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("no ConditionExpression", ReadResponse(body));
@@ -459,7 +459,7 @@ public class ItemHandlersTests
 
         var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"x\"}},"
                   + "\"ConditionExpression\":\"attribute_exists(pk)\"}";
-        await ItemHandlers.HandleDeleteItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandleDeleteItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         Assert.Equal(HttpMethod.Delete, handler.Requests[2].Method);
@@ -483,7 +483,7 @@ public class ItemHandlersTests
         var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"x\"}},"
                   + "\"ConditionExpression\":\"v = :v\","
                   + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"1\"}}}";
-        await ItemHandlers.HandleDeleteItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandleDeleteItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("ConditionalCheckFailedException", ReadResponse(body));
@@ -497,7 +497,7 @@ public class ItemHandlersTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"__aws2azure_table_meta__\"}}}";
-        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("reserved", ReadResponse(body));
@@ -517,7 +517,7 @@ public class ItemHandlersTests
                   + "\"pk\":{\"S\":\"x\"},"
                   + "\"meta\":{\"M\":{\"_a2a:N\":{\"S\":\"sneaky\"}}}"
                   + "}}";
-        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         var resp = ReadResponse(body);
@@ -538,7 +538,7 @@ public class ItemHandlersTests
                   + "\"pk\":{\"S\":\"x\"},"
                   + "\"outer\":{\"M\":{\"inner\":{\"M\":{\"_a2a:B\":{\"N\":\"1\"}}}}}"
                   + "}}";
-        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         var resp = ReadResponse(body);
@@ -560,7 +560,7 @@ public class ItemHandlersTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"x\"},\"sk\":{\"S\":\"y\"}}}";
-        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("ProvisionedThroughputExceededException", ReadResponse(body));
@@ -628,7 +628,7 @@ public class ItemHandlersTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"x\"},\"sk\":{\"S\":\"y\"}}}";
-        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         var text = ReadResponse(body);
@@ -676,7 +676,7 @@ public class ItemHandlersTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"b\"}}}";
-        await ItemHandlers.HandleDeleteItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandleDeleteItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("ResourceNotFoundException", ReadResponse(body));
@@ -694,7 +694,7 @@ public class ItemHandlersTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"abc" + jsonEscaped + "def\"}}}";
-        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         var text = ReadResponse(body);
@@ -710,7 +710,7 @@ public class ItemHandlersTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"\"}}}";
-        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("ValidationException", ReadResponse(body));
@@ -731,7 +731,7 @@ public class ItemHandlersTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"k\"}},\"ReturnConsumedCapacity\":\"TOTAL\",\"ReturnItemCollectionMetrics\":\"SIZE\"}";
-        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+        await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
         Assert.Equal(200, ctx.Response.StatusCode);
     }

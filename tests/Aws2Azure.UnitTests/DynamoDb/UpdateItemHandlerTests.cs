@@ -96,7 +96,7 @@ public class UpdateItemHandlerTests
                   + "\"UpdateExpression\":\"SET v = :v\","
                   + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"42\"}}}";
 
-        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         Assert.Equal(3, handler.Requests.Count);
@@ -128,7 +128,7 @@ public class UpdateItemHandlerTests
                   + "\"UpdateExpression\":\"SET name = :n\","
                   + "\"ExpressionAttributeValues\":{\":n\":{\"S\":\"new\"}}}";
 
-        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         var post = handler.Requests[2];
@@ -165,7 +165,7 @@ public class UpdateItemHandlerTests
                   + "\"UpdateExpression\":\"ADD counter :one\","
                   + "\"ExpressionAttributeValues\":{\":one\":{\"N\":\"1\"}}}";
 
-        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         Assert.Equal(5, handler.Requests.Count);
@@ -195,7 +195,7 @@ public class UpdateItemHandlerTests
                   + "\"UpdateExpression\":\"SET v = :v\","
                   + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"99\"}}}";
 
-        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         // Two GETs + two PUTs after the metadata read = 5 requests.
@@ -223,7 +223,7 @@ public class UpdateItemHandlerTests
                   + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"5\"}},"
                   + "\"ReturnValues\":\"ALL_NEW\"}";
 
-        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var doc = JsonDocument.Parse(ReadResponse(body));
@@ -252,7 +252,7 @@ public class UpdateItemHandlerTests
                   + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"7\"}},"
                   + "\"ReturnValues\":\"UPDATED_NEW\"}";
 
-        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, default);
 
         using var doc = JsonDocument.Parse(ReadResponse(body));
         var attrs = doc.RootElement.GetProperty("Attributes");
@@ -280,7 +280,7 @@ public class UpdateItemHandlerTests
                   + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"9\"}},"
                   + "\"ReturnValues\":\"ALL_OLD\"}";
 
-        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, default);
         using var doc = JsonDocument.Parse(ReadResponse(body));
         Assert.Equal("1", doc.RootElement.GetProperty("Attributes").GetProperty("v").GetProperty("N").GetString());
     }
@@ -304,7 +304,7 @@ public class UpdateItemHandlerTests
                   + "\"UpdateExpression\":\"SET v = :n\","
                   + "\"ConditionExpression\":\"v = :v\","
                   + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"1\"},\":n\":{\"N\":\"2\"}}}";
-        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
     }
@@ -327,7 +327,7 @@ public class UpdateItemHandlerTests
                   + "\"UpdateExpression\":\"SET v = :n\","
                   + "\"ConditionExpression\":\"v = :v\","
                   + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"1\"},\":n\":{\"N\":\"2\"}}}";
-        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("ConditionalCheckFailedException", ReadResponse(body));
@@ -352,7 +352,7 @@ public class UpdateItemHandlerTests
                   + "\"ConditionExpression\":\"v = :v\","
                   + "\"ReturnValuesOnConditionCheckFailure\":\"ALL_OLD\","
                   + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"1\"},\":n\":{\"N\":\"2\"}}}";
-        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         using var doc = JsonDocument.Parse(ReadResponse(body));
@@ -378,7 +378,7 @@ public class UpdateItemHandlerTests
                   + "\"AttributeUpdates\":{\"v\":{\"Action\":\"PUT\",\"Value\":{\"N\":\"2\"}}},"
                   + "\"ConditionExpression\":\"v = :v\","
                   + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"1\"}}}";
-        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
     }
@@ -393,7 +393,7 @@ public class UpdateItemHandlerTests
         var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}},"
                   + "\"AttributeUpdates\":{\"v\":{\"Action\":\"PUT\",\"Value\":{\"N\":\"2\"}}},"
                   + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"1\"}}}";
-        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("UpdateExpression or ConditionExpression", ReadResponse(body));
@@ -410,7 +410,7 @@ public class UpdateItemHandlerTests
                   + "\"UpdateExpression\":\"SET v = :v\","
                   + "\"AttributeUpdates\":{\"v\":{\"Action\":\"PUT\",\"Value\":{\"N\":\"1\"}}},"
                   + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"1\"}}}";
-        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("Exactly one", ReadResponse(body));
@@ -433,7 +433,7 @@ public class UpdateItemHandlerTests
 
         var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}},"
                   + "\"AttributeUpdates\":{\"name\":{\"Action\":\"PUT\",\"Value\":{\"S\":\"hello\"}}}}";
-        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var doc = JsonDocument.Parse(handler.Requests[2].Body!);
@@ -457,7 +457,7 @@ public class UpdateItemHandlerTests
         var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}},"
                   + "\"UpdateExpression\":\"SET v = :v\","
                   + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"1\"}}}";
-        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("ResourceNotFoundException", ReadResponse(body));
@@ -477,7 +477,7 @@ public class UpdateItemHandlerTests
         var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}},"
                   + "\"UpdateExpression\":\"SET v = :v\","
                   + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"1\"}}}";
-        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("ProvisionedThroughputExceededException", ReadResponse(body));

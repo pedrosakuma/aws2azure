@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
 using Microsoft.AspNetCore.Http;
@@ -38,7 +39,7 @@ internal static class UpdateItemHandler
     private const int MaxOptimisticRetries = 4;
 
     public static Task HandleUpdateItemAsync(
-        HttpContext ctx, byte[] body, CosmosClient cosmos, CancellationToken ct)
+        HttpContext ctx, byte[] body, CosmosClient cosmos, SprocContext? sprocCtx, CancellationToken ct)
     {
         UpdateItemRequest? req;
         try
@@ -126,13 +127,13 @@ internal static class UpdateItemHandler
             return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", ex.Message);
         }
 
-        return UpdateItemCoreAsync(ctx, req, ast, condition, rvCanonical, rvccfCanonical, cosmos, ct);
+        return UpdateItemCoreAsync(ctx, req, ast, condition, rvCanonical, rvccfCanonical, cosmos, sprocCtx, ct);
     }
 
     private static async Task UpdateItemCoreAsync(
         HttpContext ctx, UpdateItemRequest req, UpdateExpressionAst ast, ConditionNode? condition,
         string returnValues, string returnValuesOnConditionCheckFailure,
-        CosmosClient cosmos, CancellationToken ct)
+        CosmosClient cosmos, SprocContext? sprocCtx, CancellationToken ct)
     {
         using var metaResult = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, req.TableName!, ct).ConfigureAwait(false);
         if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.CosmosError)
@@ -164,6 +165,58 @@ internal static class UpdateItemHandler
         var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + req.TableName;
         var docLink = collLink + "/docs/" + id;
 
+        // Sproc path: single atomic call if enabled
+        if (sprocCtx is { IsSprocEnabled: true })
+        {
+            // For UpdateItem upsert case, pass the key attributes so sproc can build a new item
+            // Build JSON manually to avoid AOT issues
+            var keyAttrsJson = BuildKeyAttributesJson(id, pk);
+            var sprocResult = await SprocDispatcher.TryUpdateItemAsync(
+                sprocCtx,
+                cosmos,
+                req.TableName!,
+                pk,
+                id,
+                keyAttrsJson,
+                condition,
+                ast,
+                ct).ConfigureAwait(false);
+
+            if (sprocResult.Attempted)
+            {
+                if (sprocResult.Success)
+                {
+                    // TODO: Support ReturnValues (requires sproc to return old/new item)
+                    await CosmosOpsShared.WriteJsonAsync(ctx, 200, new UpdateItemResponse(),
+                        ItemJsonContext.Default.UpdateItemResponse).ConfigureAwait(false);
+                    return;
+                }
+                if (sprocResult.ConditionFailed)
+                {
+                    // Condition failed - return ConditionalCheckFailedException
+                    await ConditionFailureResponder.WriteAsync(ctx, null, returnValuesOnConditionCheckFailure).ConfigureAwait(false);
+                    return;
+                }
+                // Sproc failed with an error but mode is Preferred - fall through to retry loop
+                if (sprocCtx.Mode == StoredProcedureMode.Required)
+                {
+                    await CosmosOpsShared.WriteErrorAsync(ctx, 500, "InternalServerError",
+                        $"Sproc execution failed: {sprocResult.Error}").ConfigureAwait(false);
+                    return;
+                }
+                // mode is Preferred: fall through to optimistic concurrency path
+            }
+            // Sproc not attempted (not available) - fall through if Preferred
+            else if (sprocCtx.Mode == StoredProcedureMode.Required)
+            {
+                await CosmosOpsShared.WriteErrorAsync(ctx, 500, "InternalServerError",
+                    "Stored procedure not available and mode is Required").ConfigureAwait(false);
+                return;
+            }
+        }
+
+        // Fallback: GET → evaluate → PUT(If-Match) or POST(upsert),
+        // with bounded retry on 412 so concurrent writers replay.
         for (int attempt = 0; attempt < MaxOptimisticRetries; attempt++)
         {
             // GET current item (if any) to capture old image + etag.
@@ -496,5 +549,40 @@ internal static class UpdateItemHandler
             JsonValueKind.Null or JsonValueKind.Undefined => false,
             _ => true,
         };
+    }
+
+    /// <summary>
+    /// Builds a JSON object with id and pk fields for sproc upsert case.
+    /// </summary>
+    private static string BuildKeyAttributesJson(string id, string pk)
+    {
+        var sb = new StringBuilder(64);
+        sb.Append("{\"id\":\"");
+        EscapeJsonStringTo(sb, id);
+        sb.Append("\",\"pk\":\"");
+        EscapeJsonStringTo(sb, pk);
+        sb.Append("\"}");
+        return sb.ToString();
+    }
+
+    private static void EscapeJsonStringTo(StringBuilder sb, string s)
+    {
+        foreach (char c in s)
+        {
+            switch (c)
+            {
+                case '"': sb.Append("\\\""); break;
+                case '\\': sb.Append("\\\\"); break;
+                case '\n': sb.Append("\\n"); break;
+                case '\r': sb.Append("\\r"); break;
+                case '\t': sb.Append("\\t"); break;
+                default:
+                    if (c < 0x20)
+                        sb.Append($"\\u{(int)c:X4}");
+                    else
+                        sb.Append(c);
+                    break;
+            }
+        }
     }
 }
