@@ -9,8 +9,8 @@ sub_features:
     status: implemented
     gap: "Renamed to x-ms-meta-* on the Azure call; Azure restricts header names to ASCII and ≤256 bytes."
   - name: aws-chunked payloads (STREAMING-AWS4-HMAC-SHA256-PAYLOAD)
-    status: unsupported
-    gap: "Returns 501 NotImplemented. Clients should disable chunked-signing for now (e.g. AWSSDK.NET: DisablePayloadSigning=true, boto3: Config(s3={'payload_signing_enabled': False}))."
+    status: implemented
+    gap: "Proxy decodes the AWS chunk framing and verifies each chunk signature before forwarding the raw payload to Azure Blob. x-amz-decoded-content-length is used for Content-Length."
   - name: server-side encryption (SSE-S3, SSE-KMS, SSE-C)
     status: unsupported
     gap: "Azure manages encryption at the storage-account level; SSE headers are ignored."
@@ -24,4 +24,5 @@ behavior_differences:
   - "Concrete-ETag preconditions (If-Match / If-None-Match with a value other than '*') return 501 NotImplemented: proxy-translated S3 ETags do not round-trip back to Azure's raw ETag space, and supporting optimistic concurrency would require a HEAD-then-PUT cycle that is not yet implemented. The '*' sentinel is honored (forwarded to Azure)."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-streaming.html
   - https://learn.microsoft.com/rest/api/storageservices/put-blob

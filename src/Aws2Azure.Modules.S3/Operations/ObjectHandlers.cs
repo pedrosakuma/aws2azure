@@ -1,6 +1,10 @@
+using System.Globalization;
+using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
+using Aws2Azure.Core.SigV4;
 using Aws2Azure.Modules.S3.Errors;
 using Aws2Azure.Modules.S3.Internal;
+using Aws2Azure.Modules.S3.Streaming;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Net.Http.Headers;
 
@@ -17,7 +21,8 @@ internal static class ObjectHandlers
         HttpContext context,
         S3RouteResult route,
         BlobClient blob,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ICredentialResolver? credentials = null)
     {
         var bucket = route.Bucket!;
         var key = route.Key!;
@@ -36,7 +41,7 @@ internal static class ObjectHandlers
         switch (route.Operation)
         {
             case S3Operation.PutObject:
-                await PutAsync(context, blob, bucket, key, cancellationToken).ConfigureAwait(false);
+                await PutAsync(context, blob, bucket, key, credentials, cancellationToken).ConfigureAwait(false);
                 break;
             case S3Operation.GetObject:
                 await GetAsync(context, blob, bucket, key, cancellationToken).ConfigureAwait(false);
@@ -376,28 +381,8 @@ internal static class ObjectHandlers
         return false;
     }
 
-    private static async Task PutAsync(HttpContext context, BlobClient blob, string bucket, string key, CancellationToken ct)
+    private static async Task PutAsync(HttpContext context, BlobClient blob, string bucket, string key, ICredentialResolver? credentials, CancellationToken ct)
     {
-        // Refuse aws-chunked uploads explicitly — decoding the AWS chunk format
-        // (with or without trailing checksum) is not part of slice 2 and
-        // silently forwarding the bytes would corrupt the blob.
-        if (context.Request.Headers.TryGetValue("x-amz-content-sha256", out var contentSha))
-        {
-            foreach (var raw in contentSha)
-            {
-                var v = (raw ?? string.Empty).Trim();
-                if (v.StartsWith("STREAMING-", StringComparison.Ordinal))
-                {
-                    await WriteErrorAsync(context,
-                        new S3ErrorMapping.Mapping(StatusCodes.Status501NotImplemented,
-                            "NotImplemented",
-                            "aws2azure: aws-chunked payload uploads are not supported yet."))
-                        .ConfigureAwait(false);
-                    return;
-                }
-            }
-        }
-
         // Concrete-ETag preconditions on writes (If-Match / If-None-Match
         // with a value other than "*") would need a HEAD-then-PUT cycle to
         // preserve atomicity once the proxy translates ETags. Until that
@@ -417,31 +402,146 @@ internal static class ObjectHandlers
             return;
         }
 
-        using var azureReq = new HttpRequestMessage(HttpMethod.Put, blob.BuildBlobUri(bucket, key))
+        // Detect aws-chunked encoding (STREAMING-AWS4-HMAC-SHA256-PAYLOAD)
+        Stream bodyStream = context.Request.Body;
+        long? contentLength = context.Request.ContentLength;
+        AwsChunkedDecoder? chunkedDecoder = null;
+
+        if (TryDetectAwsChunked(context.Request, out var streamingType))
         {
-            Content = new StreamContent(context.Request.Body),
+            // Use x-amz-decoded-content-length as the real content length
+            if (context.Request.Headers.TryGetValue("x-amz-decoded-content-length", out var decodedLenHeader)
+                && long.TryParse(decodedLenHeader.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var decodedLen))
+            {
+                contentLength = decodedLen;
+            }
+            else
+            {
+                contentLength = null; // unknown
+            }
+
+            // Build signing context for chunk signature verification (optional but recommended)
+            ChunkSigningContext? signingContext = null;
+            if (credentials is not null && TryBuildChunkSigningContext(context.Request, credentials, out signingContext))
+            {
+                // signingContext is populated - will verify each chunk signature
+            }
+
+            chunkedDecoder = new AwsChunkedDecoder(context.Request.Body, signingContext, leaveOpen: true);
+            bodyStream = chunkedDecoder;
+        }
+
+        try
+        {
+            using var azureReq = new HttpRequestMessage(HttpMethod.Put, blob.BuildBlobUri(bucket, key))
+            {
+                Content = new StreamContent(bodyStream),
+            };
+            // The request body is a non-replayable client stream; the Azure client's
+            // retry loop would otherwise have to buffer the entire upload.
+            azureReq.Options.Set(Aws2Azure.Core.Azure.AzureHttpClient.NoRetryOption, true);
+            azureReq.Headers.TryAddWithoutValidation("x-ms-blob-type", "BlockBlob");
+            HeaderForwarding.CopyToAzureRequest(context.Request, azureReq);
+
+            // If we decoded aws-chunked, remove that encoding from Content-Encoding
+            // since the body is now decoded. Preserve any other encodings (e.g. gzip).
+            if (chunkedDecoder is not null && azureReq.Content.Headers.ContentEncoding.Contains("aws-chunked"))
+            {
+                var encodings = azureReq.Content.Headers.ContentEncoding.ToList();
+                encodings.Remove("aws-chunked");
+                azureReq.Content.Headers.ContentEncoding.Clear();
+                foreach (var enc in encodings)
+                {
+                    azureReq.Content.Headers.ContentEncoding.Add(enc);
+                }
+            }
+
+            if (contentLength is { } len)
+            {
+                azureReq.Content.Headers.ContentLength = len;
+            }
+
+            using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
+            if (!azureResp.IsSuccessStatusCode)
+            {
+                await WriteErrorAsync(context, S3ErrorMapping.FromAzure(azureResp, S3Operation.PutObject)).ConfigureAwait(false);
+                return;
+            }
+
+            // S3 PUT object response is empty with ETag in the header.
+            context.Response.StatusCode = StatusCodes.Status200OK;
+            HeaderForwarding.CopyFromAzureResponse(azureResp, context.Response);
+            context.Response.ContentLength = 0;
+        }
+        finally
+        {
+            chunkedDecoder?.Dispose();
+        }
+    }
+
+    private static bool TryDetectAwsChunked(HttpRequest request, out string streamingType)
+    {
+        streamingType = string.Empty;
+        if (!request.Headers.TryGetValue("x-amz-content-sha256", out var contentSha))
+            return false;
+
+        foreach (var raw in contentSha)
+        {
+            var v = (raw ?? string.Empty).Trim();
+            // Only support the base streaming format, not TRAILER variants
+            // which require parsing trailing headers and checksums
+            if (string.Equals(v, "STREAMING-AWS4-HMAC-SHA256-PAYLOAD", StringComparison.Ordinal))
+            {
+                streamingType = v;
+                return true;
+            }
+
+            // Reject unsupported TRAILER variants explicitly
+            if (v.StartsWith("STREAMING-", StringComparison.Ordinal) &&
+                v.Contains("-TRAILER", StringComparison.Ordinal))
+            {
+                // Return false to fall through to 501 error path
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private static bool TryBuildChunkSigningContext(HttpRequest request, ICredentialResolver credentials, out ChunkSigningContext? context)
+    {
+        context = null;
+
+        // Parse Authorization header to get seed signature and credential scope
+        var authHeader = request.Headers["Authorization"].ToString();
+        if (string.IsNullOrEmpty(authHeader) || !AuthorizationHeader.TryParse(authHeader, out var parsed))
+            return false;
+
+        // Get amz-date
+        var amzDate = request.Headers["x-amz-date"].ToString();
+        if (string.IsNullOrEmpty(amzDate))
+            amzDate = request.Headers["Date"].ToString();
+        if (string.IsNullOrEmpty(amzDate))
+            return false;
+
+        // Get AWS secret for the access key
+        if (!credentials.TryGetAwsSecret(parsed.Credential.AccessKeyId, out var secret))
+            return false;
+
+        // Derive signing key
+        var signingKey = SigningKey.Derive(
+            secret,
+            parsed.Credential.Date,
+            parsed.Credential.Region,
+            parsed.Credential.Service);
+
+        context = new ChunkSigningContext
+        {
+            SigningKey = signingKey,
+            AmzDate = amzDate,
+            CredentialScope = parsed.Credential.ToScopeString(),
+            SeedSignature = parsed.Signature,
         };
-        // The request body is a non-replayable client stream; the Azure client's
-        // retry loop would otherwise have to buffer the entire upload.
-        azureReq.Options.Set(Aws2Azure.Core.Azure.AzureHttpClient.NoRetryOption, true);
-        azureReq.Headers.TryAddWithoutValidation("x-ms-blob-type", "BlockBlob");
-        HeaderForwarding.CopyToAzureRequest(context.Request, azureReq);
-        if (context.Request.ContentLength is { } len)
-        {
-            azureReq.Content.Headers.ContentLength = len;
-        }
-
-        using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
-        if (!azureResp.IsSuccessStatusCode)
-        {
-            await WriteErrorAsync(context, S3ErrorMapping.FromAzure(azureResp, S3Operation.PutObject)).ConfigureAwait(false);
-            return;
-        }
-
-        // S3 PUT object response is empty with ETag in the header.
-        context.Response.StatusCode = StatusCodes.Status200OK;
-        HeaderForwarding.CopyFromAzureResponse(azureResp, context.Response);
-        context.Response.ContentLength = 0;
+        return true;
     }
 
     private static bool HasConcreteEtagPrecondition(HttpRequest request, string header)

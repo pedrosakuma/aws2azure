@@ -90,7 +90,7 @@ public sealed class S3ServiceModule : IServiceModule
             or S3Operation.DeleteObject
             or S3Operation.CopyObject)
         {
-            await ObjectHandlers.HandleAsync(context, route, blob, context.RequestAborted).ConfigureAwait(false);
+            await ObjectHandlers.HandleAsync(context, route, blob, context.RequestAborted, _credentials).ConfigureAwait(false);
         }
         else if (route.Operation is S3Operation.ListObjects or S3Operation.ListObjectsV2)
         {
