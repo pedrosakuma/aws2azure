@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.DynamoDb.Expressions;
+using Aws2Azure.Modules.DynamoDb.Persistence;
 using Microsoft.Extensions.Logging;
 
 namespace Aws2Azure.Modules.DynamoDb.Internal;
@@ -113,6 +114,8 @@ internal static class SprocDispatcher
         string keyAttributesJson,
         ConditionNode? condition,
         UpdateExpressionAst? updateAst,
+        string returnValues,
+        string returnValuesOnConditionCheckFailure,
         CancellationToken ct)
     {
         if (!ctx.IsSprocEnabled || ctx.Manager is null)
@@ -147,13 +150,26 @@ internal static class SprocDispatcher
 
         if (result.Success)
         {
-            // Parse old item from response if needed
-            return SprocWriteResult.Succeeded(result.ResponseBody);
+            // Only parse oldItem/newItem when ReturnValues needs them (avoid hot-path allocations)
+            var needOld = returnValues is "ALL_OLD" or "UPDATED_OLD";
+            var needNew = returnValues is "ALL_NEW" or "UPDATED_NEW";
+            if (needOld || needNew)
+            {
+                var (oldItem, newItem) = ParseSprocResponse(result.ResponseBody);
+                return SprocWriteResult.Succeeded(result.ResponseBody, needOld ? oldItem : null, needNew ? newItem : null);
+            }
+            return SprocWriteResult.Succeeded(result.ResponseBody, null, null);
         }
 
         if (result.ConditionFailed)
         {
-            return SprocWriteResult.ConditionNotMet();
+            // Only parse oldItem when ReturnValuesOnConditionCheckFailure=ALL_OLD
+            if (returnValuesOnConditionCheckFailure == "ALL_OLD")
+            {
+                var (oldItem, _) = ParseSprocResponse(result.ResponseBody);
+                return SprocWriteResult.ConditionNotMet(oldItem);
+            }
+            return SprocWriteResult.ConditionNotMet(null);
         }
 
         // Sproc execution failed
@@ -219,6 +235,46 @@ internal static class SprocDispatcher
             ? SprocWriteResult.Failed($"Sproc execution failed: {result.ErrorBody}")
             : SprocWriteResult.NotAttempted;
     }
+
+    /// <summary>
+    /// Parses the sproc response body to extract oldItem and newItem.
+    /// Returns decoded DDB AttributeValue format items.
+    /// </summary>
+    private static (Dictionary<string, JsonElement>? OldItem, Dictionary<string, JsonElement>? NewItem) 
+        ParseSprocResponse(string? responseBody)
+    {
+        if (string.IsNullOrEmpty(responseBody))
+        {
+            return (null, null);
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(responseBody);
+            var root = doc.RootElement;
+
+            Dictionary<string, JsonElement>? oldItem = null;
+            Dictionary<string, JsonElement>? newItem = null;
+
+            if (root.TryGetProperty("oldItem", out var oldItemProp) && 
+                oldItemProp.ValueKind == JsonValueKind.Object)
+            {
+                oldItem = InferredAttributeStorage.ExtractItem(oldItemProp);
+            }
+
+            if (root.TryGetProperty("newItem", out var newItemProp) && 
+                newItemProp.ValueKind == JsonValueKind.Object)
+            {
+                newItem = InferredAttributeStorage.ExtractItem(newItemProp);
+            }
+
+            return (oldItem, newItem);
+        }
+        catch (JsonException)
+        {
+            return (null, null);
+        }
+    }
 }
 
 /// <summary>
@@ -231,9 +287,40 @@ internal readonly struct SprocWriteResult
     public bool ConditionFailed { get; init; }
     public string? Error { get; init; }
     public string? ResponseBody { get; init; }
+    
+    /// <summary>
+    /// The item as it existed before the operation (for ReturnValues=ALL_OLD/UPDATED_OLD).
+    /// Already decoded from Cosmos format to DDB AttributeValue format.
+    /// </summary>
+    public Dictionary<string, JsonElement>? OldItem { get; init; }
+    
+    /// <summary>
+    /// The item after the operation (for ReturnValues=ALL_NEW/UPDATED_NEW).
+    /// Already decoded from Cosmos format to DDB AttributeValue format.
+    /// </summary>
+    public Dictionary<string, JsonElement>? NewItem { get; init; }
 
     public static SprocWriteResult NotAttempted => new() { Attempted = false };
-    public static SprocWriteResult Succeeded(string? responseBody = null) => new() { Attempted = true, Success = true, ResponseBody = responseBody };
-    public static SprocWriteResult ConditionNotMet() => new() { Attempted = true, Success = false, ConditionFailed = true };
+    
+    public static SprocWriteResult Succeeded(
+        string? responseBody = null,
+        Dictionary<string, JsonElement>? oldItem = null,
+        Dictionary<string, JsonElement>? newItem = null) => new()
+    {
+        Attempted = true,
+        Success = true,
+        ResponseBody = responseBody,
+        OldItem = oldItem,
+        NewItem = newItem
+    };
+    
+    public static SprocWriteResult ConditionNotMet(Dictionary<string, JsonElement>? oldItem = null) => new()
+    {
+        Attempted = true,
+        Success = false,
+        ConditionFailed = true,
+        OldItem = oldItem
+    };
+    
     public static SprocWriteResult Failed(string error) => new() { Attempted = true, Success = false, Error = error };
 }

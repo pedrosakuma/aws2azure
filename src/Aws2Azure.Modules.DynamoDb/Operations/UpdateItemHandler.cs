@@ -166,8 +166,7 @@ internal static class UpdateItemHandler
         var docLink = collLink + "/docs/" + id;
 
         // Sproc path: single atomic call if enabled
-        // Skip sproc path if ReturnValues requested (sproc doesn't support item decoding yet)
-        if (sprocCtx is { IsSprocEnabled: true } && returnValues == "NONE")
+        if (sprocCtx is { IsSprocEnabled: true })
         {
             // For UpdateItem upsert case, pass the key attributes so sproc can build a new item
             // Build JSON manually to avoid AOT issues
@@ -181,20 +180,28 @@ internal static class UpdateItemHandler
                 keyAttrsJson,
                 condition,
                 ast,
+                returnValues,
+                returnValuesOnConditionCheckFailure,
                 ct).ConfigureAwait(false);
 
             if (sprocResult.Attempted)
             {
                 if (sprocResult.Success)
                 {
-                    await CosmosOpsShared.WriteJsonAsync(ctx, 200, new UpdateItemResponse(),
-                        ItemJsonContext.Default.UpdateItemResponse).ConfigureAwait(false);
+                    // Build response with ReturnValues from sproc result
+                    var sprocExecResult = new UpdateExecutor.ExecutionResult
+                    {
+                        ItemExistedBefore = sprocResult.OldItem is not null,
+                        OldItem = sprocResult.OldItem,
+                        NewItem = sprocResult.NewItem ?? new Dictionary<string, JsonElement>()
+                    };
+                    await WriteSuccessAsync(ctx, returnValues, sprocExecResult, ast).ConfigureAwait(false);
                     return;
                 }
                 if (sprocResult.ConditionFailed)
                 {
                     // Condition failed - return ConditionalCheckFailedException
-                    await ConditionFailureResponder.WriteAsync(ctx, null, returnValuesOnConditionCheckFailure).ConfigureAwait(false);
+                    await ConditionFailureResponder.WriteAsync(ctx, sprocResult.OldItem, returnValuesOnConditionCheckFailure).ConfigureAwait(false);
                     return;
                 }
                 // Sproc failed with an error but mode is Preferred - fall through to retry loop
@@ -379,19 +386,65 @@ internal static class UpdateItemHandler
     // ----- response composition -------------------------------------
 
     private static Task WriteSuccessAsync(
-        HttpContext ctx, string returnValues, UpdateExecutor.ExecutionResult result)
+        HttpContext ctx, string returnValues, UpdateExecutor.ExecutionResult result,
+        UpdateExpressionAst? ast = null)
     {
+        // Use UpdatedAttributes from result if available, otherwise extract from AST
+        var updatedAttrs = result.UpdatedAttributes.Count > 0 
+            ? result.UpdatedAttributes 
+            : ExtractUpdatedAttributes(ast);
+        
         Dictionary<string, JsonElement>? attrs = returnValues switch
         {
             "NONE" => null,
             "ALL_OLD" => result.ItemExistedBefore ? result.OldItem : null,
             "ALL_NEW" => result.NewItem,
-            "UPDATED_OLD" => ProjectAttributes(result.OldItem, result.UpdatedAttributes),
-            "UPDATED_NEW" => ProjectAttributes(result.NewItem, result.UpdatedAttributes),
+            "UPDATED_OLD" => ProjectAttributes(result.OldItem, updatedAttrs),
+            "UPDATED_NEW" => ProjectAttributes(result.NewItem, updatedAttrs),
             _ => null,
         };
         var response = new UpdateItemResponse { Attributes = attrs };
         return CosmosOpsShared.WriteJsonAsync(ctx, 200, response, ItemJsonContext.Default.UpdateItemResponse);
+    }
+
+    /// <summary>
+    /// Extracts top-level attribute names from the UpdateExpression AST.
+    /// Used when UpdatedAttributes aren't tracked by the executor (sproc path).
+    /// </summary>
+    private static HashSet<string> ExtractUpdatedAttributes(UpdateExpressionAst? ast)
+    {
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        if (ast is null) return result;
+        
+        if (ast.Set is not null)
+        {
+            foreach (var action in ast.Set.Actions)
+            {
+                result.Add(action.Path.Root);
+            }
+        }
+        if (ast.Remove is not null)
+        {
+            foreach (var path in ast.Remove.Paths)
+            {
+                result.Add(path.Root);
+            }
+        }
+        if (ast.Add is not null)
+        {
+            foreach (var action in ast.Add.Actions)
+            {
+                result.Add(action.Path.Root);
+            }
+        }
+        if (ast.Delete is not null)
+        {
+            foreach (var action in ast.Delete.Actions)
+            {
+                result.Add(action.Path.Root);
+            }
+        }
+        return result;
     }
 
     private static Dictionary<string, JsonElement>? ProjectAttributes(

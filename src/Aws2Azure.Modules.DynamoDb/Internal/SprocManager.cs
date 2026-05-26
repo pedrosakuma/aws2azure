@@ -129,10 +129,15 @@ internal sealed partial class SprocManager
 
         if (response.IsSuccessStatusCode)
         {
+            // Check if body contains conditionFailed: true (sproc returns 200 for condition failures now)
+            if (body.Contains("\"conditionFailed\":true") || body.Contains("\"conditionFailed\": true"))
+            {
+                return new SprocExecuteResult { Success = false, ConditionFailed = true, ResponseBody = body };
+            }
             return new SprocExecuteResult { Success = true, ResponseBody = body };
         }
 
-        // Check for our custom condition-failed response
+        // Legacy check for thrown condition-failed response (backwards compatibility)
         if (response.StatusCode == HttpStatusCode.BadRequest && body.Contains("ConditionalCheckFailedException"))
         {
             return new SprocExecuteResult { Success = false, ConditionFailed = true };
@@ -194,10 +199,14 @@ function atomicWrite(op, docId, payload, conditionAst, updateAst) {
             throw err;
         }
         
+        // Clone existing before any mutation (for ReturnValues=ALL_OLD)
+        var oldItemClone = existing ? JSON.parse(JSON.stringify(existing)) : null;
+        
         // Evaluate condition if present
         if (conditionAst !== null) {
             if (!evaluateCondition(conditionAst, existing)) {
-                throw { code: 400, body: 'ConditionalCheckFailedException' };
+                resp.setBody({ success: false, conditionFailed: true, oldItem: oldItemClone });
+                return;
             }
         }
         
@@ -207,7 +216,7 @@ function atomicWrite(op, docId, payload, conditionAst, updateAst) {
                 if (payload === null) throw { code: 400, body: 'Payload required for PUT' };
                 // payload is already an object (not JSON string)
                 coll.upsertDocument(selfLink, payload, function(e) { if (e) throw e; });
-                resp.setBody({ success: true, operation: 'PUT', oldItem: existing });
+                resp.setBody({ success: true, operation: 'PUT', oldItem: oldItemClone });
                 break;
                 
             case 'UPDATE':
@@ -220,14 +229,14 @@ function atomicWrite(op, docId, payload, conditionAst, updateAst) {
                 // updateAst is already an object (not JSON string)
                 var updatedDoc = applyUpdate(baseDoc, updateAst);
                 coll.upsertDocument(selfLink, updatedDoc, function(e) { if (e) throw e; });
-                resp.setBody({ success: true, operation: 'UPDATE', oldItem: existing, newItem: updatedDoc });
+                resp.setBody({ success: true, operation: 'UPDATE', oldItem: oldItemClone, newItem: updatedDoc });
                 break;
                 
             case 'DELETE':
                 if (existing) {
                     coll.deleteDocument(docLink, function(e) { if (e) throw e; });
                 }
-                resp.setBody({ success: true, operation: 'DELETE', oldItem: existing });
+                resp.setBody({ success: true, operation: 'DELETE', oldItem: oldItemClone });
                 break;
                 
             default:
