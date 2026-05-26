@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Primitives;
 using Microsoft.Net.Http.Headers;
 
 namespace Aws2Azure.Modules.S3.Internal;
@@ -154,9 +155,9 @@ internal static class HeaderForwarding
             {
                 continue;
             }
-            if (TryGetHeader(source, header, out var values))
+            if (source.Headers.TryGetValues(header, out var values))
             {
-                target.Headers[header] = values;
+                CopyHeaderTo(values, target.Headers, header);
             }
         }
 
@@ -183,7 +184,7 @@ internal static class HeaderForwarding
                 }
                 if (content.Headers.TryGetValues(header, out var values))
                 {
-                    target.Headers[header] = string.Join(",", values);
+                    CopyHeaderTo(values, target.Headers, header);
                 }
             }
             if (content.Headers.TryGetValues(HeaderNames.ContentMD5, out var md5))
@@ -214,6 +215,36 @@ internal static class HeaderForwarding
                 break;
             }
         }
+    }
+
+    /// <summary>
+    /// Drains an Azure header value enumerator onto the outgoing S3
+    /// response without going through LINQ or <see cref="string.Join(string, System.Collections.Generic.IEnumerable{string})"/>.
+    /// For the single-value case (every header on every Get/Head/Put we've
+    /// observed in the perf scenarios) the assignment is a direct
+    /// <see cref="StringValues"/> wrap with no array allocation.
+    /// </summary>
+    private static void CopyHeaderTo(IEnumerable<string> values, IHeaderDictionary target, string name)
+    {
+        using var enumerator = values.GetEnumerator();
+        if (!enumerator.MoveNext())
+        {
+            return;
+        }
+        var first = enumerator.Current;
+        if (!enumerator.MoveNext())
+        {
+            target[name] = first;
+            return;
+        }
+        // 2+ values: materialise into an array. Header collections at this
+        // layer are tiny (typically <= 4), so a list grow is acceptable.
+        var list = new List<string>(4) { first, enumerator.Current };
+        while (enumerator.MoveNext())
+        {
+            list.Add(enumerator.Current);
+        }
+        target[name] = new StringValues(list.ToArray());
     }
 
     private static bool TryGetEtag(HttpResponseMessage source, out string value)
@@ -384,15 +415,4 @@ internal static class HeaderForwarding
         || name.Equals(HeaderNames.ContentDisposition, StringComparison.OrdinalIgnoreCase)
         || name.Equals(HeaderNames.ContentMD5, StringComparison.OrdinalIgnoreCase)
         || name.Equals(HeaderNames.CacheControl, StringComparison.OrdinalIgnoreCase);
-
-    private static bool TryGetHeader(HttpResponseMessage message, string header, out string[] values)
-    {
-        if (message.Headers.TryGetValues(header, out var hdr))
-        {
-            values = System.Linq.Enumerable.ToArray(hdr);
-            return values.Length > 0;
-        }
-        values = Array.Empty<string>();
-        return false;
-    }
 }
