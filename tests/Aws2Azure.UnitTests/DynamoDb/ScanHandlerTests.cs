@@ -33,8 +33,15 @@ namespace Aws2Azure.UnitTests.DynamoDb;
 ///   and legacy ScanFilter / AttributesToGet.</item>
 /// </list>
 /// </summary>
+[Collection(DynamoDbTestCollection.Name)]
 public class ScanHandlerTests
 {
+    public ScanHandlerTests()
+    {
+        // Clear metadata cache at test start to ensure isolation
+        CosmosOpsShared.MetadataCache.Clear();
+    }
+
     private const string Table = "orders";
 
     private static readonly string Metadata =

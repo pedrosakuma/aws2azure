@@ -28,6 +28,11 @@ internal sealed class CosmosClient
     public const string ApiVersion = "2018-12-31";
 
     public string DatabaseName { get; }
+    
+    /// <summary>
+    /// Returns the Cosmos account endpoint URL (for cache keying).
+    /// </summary>
+    public string AccountEndpoint => _endpoint;
 
     public CosmosClient(AzureHttpClient http, CosmosCredentials credentials, ICosmosAuthenticator authenticator)
     {

@@ -32,8 +32,15 @@ namespace Aws2Azure.UnitTests.DynamoDb;
 ///   QueryFilter.</item>
 /// </list>
 /// </summary>
+[Collection(DynamoDbTestCollection.Name)]
 public class QueryHandlerTests
 {
+    public QueryHandlerTests()
+    {
+        // Clear metadata cache at test start to ensure isolation
+        CosmosOpsShared.MetadataCache.Clear();
+    }
+
     private const string Table = "orders";
 
     private static readonly string MetadataHashOnly =

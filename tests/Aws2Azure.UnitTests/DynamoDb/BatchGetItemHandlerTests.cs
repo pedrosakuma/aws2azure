@@ -32,8 +32,15 @@ namespace Aws2Azure.UnitTests.DynamoDb;
 ///   table, key-attr type mismatch) is rejected before any Cosmos call.</item>
 /// </list>
 /// </summary>
+[Collection(DynamoDbTestCollection.Name)]
 public class BatchGetItemHandlerTests
 {
+    public BatchGetItemHandlerTests()
+    {
+        // Clear metadata cache at test start to ensure isolation
+        CosmosOpsShared.MetadataCache.Clear();
+    }
+
     private static readonly string MetaHashOnly =
         "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
         + "\"tableName\":\"orders\","

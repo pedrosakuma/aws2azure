@@ -52,6 +52,12 @@ internal static class CosmosOpsShared
     internal enum TableMetadataReadStatus { Found, NotFound, CosmosError }
 
     /// <summary>
+    /// Global cache for table metadata. Shared across all requests.
+    /// TTL is 5 minutes by default. Invalidated on table lifecycle operations.
+    /// </summary>
+    internal static readonly TableMetadataCache MetadataCache = new();
+
+    /// <summary>
     /// Reads the sidecar metadata doc for <paramref name="tableName"/>.
     /// Returns a tri-state result so callers can distinguish a true
     /// missing-table (Cosmos 404) from a Cosmos error response (which
@@ -60,10 +66,24 @@ internal static class CosmosOpsShared
     /// as AccessDeniedException). A malformed sidecar (valid 200 body
     /// that fails to deserialize) is also reported as NotFound since the
     /// table is effectively unusable.
+    /// 
+    /// Results are cached in-memory with a 5-minute TTL to avoid
+    /// per-request Cosmos roundtrips. Cache is invalidated on
+    /// CreateTable/DeleteTable/UpdateTable.
     /// </summary>
     public static async Task<TableMetadataReadResult> TryReadTableMetadataAsync(
         CosmosClient cosmos, string tableName, CancellationToken ct)
     {
+        // Check cache first (includes DatabaseName in key to handle multi-database setups)
+        var cached = MetadataCache.TryGet(cosmos.AccountEndpoint, cosmos.DatabaseName, tableName);
+        if (cached is not null)
+        {
+            return new TableMetadataReadResult { Status = TableMetadataReadStatus.Found, Metadata = cached };
+        }
+
+        // Capture generation before read to prevent stale writes after invalidation
+        var generation = MetadataCache.GetGeneration();
+
         var docLink = "dbs/" + cosmos.DatabaseName + "/colls/" + tableName + "/docs/" + TableMetadata.DocId;
         var pkHeader = BuildPartitionKeyHeader(TableMetadata.DocId);
         var headers = new[]
@@ -88,6 +108,10 @@ internal static class CosmosOpsShared
             var meta = JsonSerializer.Deserialize(stream, TableMetadataJsonContext.Default.TableMetadata);
             resp.Dispose();
             if (meta is null) return new TableMetadataReadResult { Status = TableMetadataReadStatus.NotFound };
+            
+            // Cache the result (only if generation hasn't changed due to invalidation)
+            MetadataCache.Set(cosmos.AccountEndpoint, cosmos.DatabaseName, tableName, meta, generation);
+            
             return new TableMetadataReadResult { Status = TableMetadataReadStatus.Found, Metadata = meta };
         }
         catch (JsonException)

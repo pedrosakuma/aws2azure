@@ -22,8 +22,15 @@ namespace Aws2Azure.UnitTests.DynamoDb;
 /// validation, Cosmos request shape, and DynamoDB-shaped response
 /// rendering, so the assertions cover all four boundaries.
 /// </summary>
+[Collection(DynamoDbTestCollection.Name)]
 public class TableLifecycleHandlersTests
 {
+    public TableLifecycleHandlersTests()
+    {
+        // Clear metadata cache at test start to ensure isolation
+        CosmosOpsShared.MetadataCache.Clear();
+    }
+
     private static CosmosClient BuildClient(ScriptedHandler handler, string db = "main")
     {
         var http = new AzureHttpClient(handler, ownsHandler: false,
