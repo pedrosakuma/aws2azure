@@ -175,6 +175,12 @@ internal static class ObjectHandlers
         }
 
         var lastModified = azureResp.Content.Headers.LastModified ?? DateTimeOffset.UtcNow;
+        // Capture the raw Azure ETag of the version we just wrote — used
+        // below as the If-Match guard on the destination HEAD so a racing
+        // overwrite cannot make us return another writer's ETag, and as
+        // a synthetic-fallback source if the HEAD itself fails.
+        var rawAzureEtag = azureResp.Headers.ETag?.Tag;
+
         // Azure's Copy Blob does not honour x-ms-blob-* property overrides
         // on the copy itself. For REPLACE we always issue a follow-up
         // Set Blob Properties call — even when no system headers are
@@ -185,7 +191,7 @@ internal static class ObjectHandlers
         // keep the CopyObjectResult coherent with the destination blob.
         if (replace)
         {
-            var (err, propsLastModified) =
+            var (err, propsETag, propsLastModified) =
                 await SetDestinationPropertiesAsync(context.Request, blob, destBucket, destKey, ct).ConfigureAwait(false);
             if (err is { } mapping)
             {
@@ -193,15 +199,23 @@ internal static class ObjectHandlers
                 return;
             }
             if (propsLastModified is not null) lastModified = propsLastModified.Value;
+            if (!string.IsNullOrEmpty(propsETag)) rawAzureEtag = propsETag;
         }
 
         // Issue a HEAD against the destination to obtain the authoritative
         // ETag + Content-MD5 pair that future GET/HEAD calls will surface.
         // CopyBlob and SetBlobProperties responses don't carry Content-MD5,
-        // so translating their raw ETag would diverge from HEAD's result
-        // (synthetic-from-etag vs real-MD5-hex). One extra round trip on a
-        // non-hot path is the right trade-off for a stable, consistent ETag.
-        var etag = await GetDestinationS3EtagAsync(blob, destBucket, destKey, ct).ConfigureAwait(false);
+        // so translating their raw ETag directly would diverge from HEAD's
+        // result (synthetic-from-etag vs real-MD5-hex). Guard the HEAD with
+        // If-Match against the raw ETag we just wrote so a concurrent
+        // overwrite/delete cannot make us return another writer's ETag —
+        // on 412/404/transient failure, fall back to translating the known
+        // raw ETag (deterministic synthetic) rather than returning null or
+        // a wrong-version ETag.
+        var etag = await GetDestinationS3EtagAsync(blob, destBucket, destKey, rawAzureEtag, ct).ConfigureAwait(false)
+                   ?? (rawAzureEtag is not null
+                       ? "\"" + HeaderForwarding.TranslateAzureEtagToS3(rawAzureEtag, contentMd5Base64: null) + "\""
+                       : null);
 
         var body = Xml.S3XmlWriter.CopyObjectResult(lastModified, etag);
 
@@ -275,7 +289,7 @@ internal static class ObjectHandlers
     /// CopyObjectResult coherent with the final destination state, or an
     /// error mapping if Azure rejects the call.
     /// </summary>
-    private static async Task<(S3ErrorMapping.Mapping? Error, DateTimeOffset? LastModified)>
+    private static async Task<(S3ErrorMapping.Mapping? Error, string? ETag, DateTimeOffset? LastModified)>
         SetDestinationPropertiesAsync(
             HttpRequest source, BlobClient blob, string destBucket, string destKey, CancellationToken ct)
     {
@@ -293,21 +307,28 @@ internal static class ObjectHandlers
         using var resp = await blob.SendBlobRequestAsync(req, ct).ConfigureAwait(false);
         if (!resp.IsSuccessStatusCode)
         {
-            return (S3ErrorMapping.FromAzure(resp, S3Operation.CopyObject), null);
+            return (S3ErrorMapping.FromAzure(resp, S3Operation.CopyObject), null, null);
         }
-        return (null, resp.Content.Headers.LastModified);
+        return (null, resp.Headers.ETag?.Tag, resp.Content.Headers.LastModified);
     }
 
     /// <summary>
-    /// HEADs the destination blob to obtain the authoritative pair of raw
-    /// Azure ETag + Content-MD5 and returns the same S3-shaped, quoted ETag
-    /// HEAD/GET would emit. Used after CopyObject so the CopyObjectResult
-    /// ETag matches subsequent reads byte-for-byte.
+    /// HEADs the destination blob — optionally guarded by <c>If-Match</c>
+    /// against the raw Azure ETag we just wrote — to obtain the
+    /// authoritative pair of ETag + Content-MD5 and return the same
+    /// S3-shaped, quoted ETag HEAD/GET would emit. Returns <c>null</c>
+    /// when the HEAD fails for any reason (404, 412 race against a
+    /// concurrent overwrite, or transient error); callers are expected to
+    /// fall back to translating the raw ETag they already have.
     /// </summary>
     private static async Task<string?> GetDestinationS3EtagAsync(
-        BlobClient blob, string destBucket, string destKey, CancellationToken ct)
+        BlobClient blob, string destBucket, string destKey, string? ifMatchRawEtag, CancellationToken ct)
     {
         using var req = new HttpRequestMessage(HttpMethod.Head, blob.BuildBlobUri(destBucket, destKey));
+        if (!string.IsNullOrEmpty(ifMatchRawEtag))
+        {
+            req.Headers.TryAddWithoutValidation("If-Match", ifMatchRawEtag);
+        }
         using var resp = await blob.SendBlobRequestAsync(req, ct).ConfigureAwait(false);
         if (!resp.IsSuccessStatusCode)
         {
