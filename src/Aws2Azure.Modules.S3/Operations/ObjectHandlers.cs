@@ -315,6 +315,25 @@ internal static class ObjectHandlers
             }
         }
 
+        // Concrete-ETag preconditions on writes (If-Match / If-None-Match
+        // with a value other than "*") would need a HEAD-then-PUT cycle to
+        // preserve atomicity once the proxy translates ETags. Until that
+        // is implemented, fail loudly instead of silently dropping the
+        // precondition and risking a stale-overwrite (optimistic-
+        // concurrency violation). The "*" sentinel is forwarded by
+        // HeaderForwarding.CopyToAzureRequest and honored by Azure with
+        // identical semantics to S3.
+        if (HasConcreteEtagPrecondition(context.Request, Microsoft.Net.Http.Headers.HeaderNames.IfMatch) ||
+            HasConcreteEtagPrecondition(context.Request, Microsoft.Net.Http.Headers.HeaderNames.IfNoneMatch))
+        {
+            await WriteErrorAsync(context,
+                new S3ErrorMapping.Mapping(StatusCodes.Status501NotImplemented,
+                    "NotImplemented",
+                    "aws2azure: PutObject with a concrete-ETag If-Match / If-None-Match precondition is not supported (only '*' is honored). Optimistic-concurrency support against Azure Blob requires a proxy-side HEAD-then-PUT cycle that is not yet implemented; rejecting to avoid silent stale-overwrites."))
+                .ConfigureAwait(false);
+            return;
+        }
+
         using var azureReq = new HttpRequestMessage(HttpMethod.Put, blob.BuildBlobUri(bucket, key))
         {
             Content = new StreamContent(context.Request.Body),
@@ -340,6 +359,24 @@ internal static class ObjectHandlers
         context.Response.StatusCode = StatusCodes.Status200OK;
         HeaderForwarding.CopyFromAzureResponse(azureResp, context.Response);
         context.Response.ContentLength = 0;
+    }
+
+    private static bool HasConcreteEtagPrecondition(HttpRequest request, string header)
+    {
+        if (!request.Headers.TryGetValue(header, out var values))
+        {
+            return false;
+        }
+        foreach (var raw in values)
+        {
+            var v = (raw ?? string.Empty).Trim();
+            if (v.Length == 0 || v == "*")
+            {
+                continue;
+            }
+            return true;
+        }
+        return false;
     }
 
     private static async Task GetAsync(HttpContext context, BlobClient blob, string bucket, string key, CancellationToken ct)
@@ -388,9 +425,20 @@ internal static class ObjectHandlers
         HeaderForwarding.CopyToAzureRequest(context.Request, azureReq);
 
         using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
-        if (!azureResp.IsSuccessStatusCode)
+        if (!azureResp.IsSuccessStatusCode && azureResp.StatusCode != System.Net.HttpStatusCode.NotModified)
         {
             await EmitHeadErrorAsync(context, S3ErrorMapping.FromAzure(azureResp, S3Operation.HeadObject)).ConfigureAwait(false);
+            return;
+        }
+
+        if (azureResp.StatusCode == System.Net.HttpStatusCode.NotModified)
+        {
+            // Azure honored a forwarded If-None-Match: * (or any other
+            // conditional that mapped directly) and returned 304. Pass it
+            // through cleanly — do NOT route through the error path which
+            // would stamp an x-amz-error-code header.
+            context.Response.StatusCode = StatusCodes.Status304NotModified;
+            HeaderForwarding.CopyFromAzureResponse(azureResp, context.Response);
             return;
         }
 
