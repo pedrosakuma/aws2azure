@@ -239,6 +239,21 @@ internal static class MultipartHandlers
             azureReq.Headers.TryAddWithoutValidation("x-ms-source-range", range);
         }
 
+        // Concrete-ETag copy-source preconditions: proxy-translated S3
+        // ETags do not round-trip back to Azure's raw ETag space, so a
+        // valid CAS would incorrectly 412. Reject with 501 — "*" is still
+        // forwarded below with identical semantics to S3.
+        if (HeaderForwarding.HasConcreteEtagPrecondition(ctx.Request, "x-amz-copy-source-if-match") ||
+            HeaderForwarding.HasConcreteEtagPrecondition(ctx.Request, "x-amz-copy-source-if-none-match"))
+        {
+            await WriteErrorAsync(ctx,
+                new S3ErrorMapping.Mapping(StatusCodes.Status501NotImplemented,
+                    "NotImplemented",
+                    "aws2azure: UploadPartCopy with a concrete-ETag x-amz-copy-source-if-match / x-amz-copy-source-if-none-match precondition is not supported (only '*' is honored). Proxy-translated S3 ETags do not round-trip back to Azure's raw ETag space."))
+                .ConfigureAwait(false);
+            return;
+        }
+
         // Source-conditional headers (S3 → Azure rename). Evaluated by
         // Azure on the source fetch and surfaced via 412 PreconditionFailed.
         ForwardSourceConditional(ctx.Request, azureReq, "x-amz-copy-source-if-match",            "x-ms-source-if-match");

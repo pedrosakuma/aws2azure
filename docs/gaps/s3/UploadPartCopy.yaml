@@ -13,8 +13,8 @@ sub_features:
     status: unsupported
     note: "The proxy only models a single Azure storage account per S3 access key. Cross-account UploadPartCopy would require a source SAS minted with a different account's key or a federated identity story."
   - name: source-conditional-headers
-    status: implemented
-    note: "x-amz-copy-source-if-{match,none-match,modified-since,unmodified-since} forward to x-ms-source-if-*; their evaluation is performed by Azure on the source fetch and surfaced via 412 PreconditionFailed."
+    status: partial
+    note: "x-amz-copy-source-if-modified-since / x-amz-copy-source-if-unmodified-since forward to x-ms-source-if-*; Azure evaluates them on the source fetch and surfaces 412 PreconditionFailed. Concrete-ETag x-amz-copy-source-if-match / x-amz-copy-source-if-none-match return 501 NotImplemented (proxy-translated S3 ETags do not round-trip back to Azure's raw ETag space); the '*' sentinel is honored."
   - name: versionId
     status: unsupported
     note: "x-amz-copy-source with ?versionId=… is rejected; the proxy has no versioning story."

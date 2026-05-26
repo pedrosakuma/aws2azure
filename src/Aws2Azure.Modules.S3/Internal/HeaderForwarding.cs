@@ -237,6 +237,34 @@ internal static class HeaderForwarding
     }
 
     /// <summary>
+    /// True when <paramref name="request"/> carries an <see cref="HeaderNames.IfMatch"/>
+    /// or <see cref="HeaderNames.IfNoneMatch"/>-shaped header (or one of S3's
+    /// <c>x-amz-copy-source-if-*-match</c> variants) whose value is anything
+    /// other than the empty string or the <c>*</c> sentinel. Used by write
+    /// paths and copy-source paths to reject concrete-ETag preconditions
+    /// that the proxy cannot honor — once the proxy translates Azure ETags
+    /// the client's round-tripped value no longer matches Azure's raw ETag,
+    /// so forwarding verbatim would silently violate optimistic concurrency.
+    /// </summary>
+    internal static bool HasConcreteEtagPrecondition(HttpRequest request, string header)
+    {
+        if (!request.Headers.TryGetValue(header, out var values))
+        {
+            return false;
+        }
+        foreach (var raw in values)
+        {
+            var v = (raw ?? string.Empty).Trim();
+            if (v.Length == 0 || v == "*")
+            {
+                continue;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Converts an Azure-style ETag (opaque, often <c>"0x..."</c>) into an
     /// S3-shaped 32-char lowercase hex string. Prefers the real MD5 when
     /// Azure surfaces <c>Content-MD5</c>; falls back to a deterministic

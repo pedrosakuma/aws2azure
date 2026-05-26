@@ -7,7 +7,8 @@ sub_features:
     status: implemented
     gap: "URL-decoded before issuing to Azure."
   - name: source conditional headers (if-match / if-none-match / if-modified-since / if-unmodified-since)
-    status: implemented
+    status: partial
+    gap: "if-modified-since / if-unmodified-since forward verbatim. Concrete-ETag x-amz-copy-source-if-match / x-amz-copy-source-if-none-match return 501 NotImplemented (proxy-translated S3 ETags do not round-trip back to Azure's raw ETag space); the '*' sentinel is honored."
   - name: x-amz-metadata-directive=COPY (default)
     status: implemented
     gap: "Azure preserves source metadata when no x-ms-meta-* is sent, matching S3 COPY semantics."
@@ -24,7 +25,7 @@ sub_features:
     status: unsupported
 behavior_differences:
   - "Intra-account copies are synchronous on Azure; the proxy verifies x-ms-copy-status=success before responding 200."
-  - "ETag in CopyObjectResult is normalised to S3-quoted form."
+  - "ETag in CopyObjectResult is normalised to the same S3-shaped, proxy-translated value HEAD/GET emit for the destination blob (synthetic MD5 of Azure's raw ETag when Content-MD5 is absent), so clients can reuse it across operations without seeing two different ETags for the same object."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html
   - https://learn.microsoft.com/rest/api/storageservices/copy-blob
