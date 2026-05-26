@@ -1,6 +1,6 @@
 # aws2azure — perf baseline
 
-Generated: 2026-05-26T01:07:25.1896358Z
+Generated: 2026-05-26T15:56:10.8859114Z
 
 Closed-loop concurrent driver — AWS SDK clients pointing at the proxy
 (`Aws2Azure.Proxy`) which fronts local emulators (Azurite, Service Bus,
@@ -19,3 +19,4 @@ overhead, not real-Azure throughput.**
 | dynamodb.Query (pushable filter) |   8 |   20.0 |     7223 |       0 |        361.1 |      21.6 |      26.1 |      30.3 |      61.6 | DynamoDB→Cosmos Query — FilterPushdownVisitor (pushable eq on bucket) |
 | s3.GetObject (64 KiB)            |  16 |   20.0 |     9326 |       0 |        466.0 |      32.4 |      49.9 |      78.2 |     273.7 | S3→Azurite GetObject — 64 KiB random reads |
 | kinesis.PutRecords (25×256 B)    |   1 |   30.0 |      192 |       0 |          6.4 |     148.8 |     209.1 |     231.6 |     436.2 | Kinesis→EventHubs(AMQP) emulator — PutRecords (25 records/call) |
+| s3.ListObjectsV2 (500 keys)      |  16 |   20.0 |      484 |       0 |         24.2 |     496.8 |    1046.8 |    2877.5 |    4625.8 | S3→Azurite ListObjectsV2 — 500 keys under a prefix |

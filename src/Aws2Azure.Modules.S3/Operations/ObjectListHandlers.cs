@@ -128,7 +128,7 @@ internal static class ObjectListHandlers
             }
 
             var xml = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            var page = AzureBlobXmlReader.ParseBlobListPage(xml);
+            var page = AzureBlobXmlReader.ParseBlobListPage(xml, azureMax);
 
             // Merge entries up to the remaining budget. CommonPrefixes are
             // de-duplicated across Azure pages (Azure can re-emit the same
