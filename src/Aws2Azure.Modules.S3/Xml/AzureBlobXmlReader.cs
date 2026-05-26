@@ -113,11 +113,13 @@ internal static class AzureBlobXmlReader
     /// Parses an EnumerationResults document returned by
     /// <c>GET https://{account}.blob.core.windows.net/{container}?restype=container&amp;comp=list</c>.
     /// Extracts blob entries (Name, Last-Modified, Content-Length, ETag),
-    /// BlobPrefix entries (when delimiter was set), and NextMarker.
+    /// BlobPrefix entries (when delimiter was set), and NextMarker. Pre-sizes
+    /// the blob list to <paramref name="expectedCount"/> to avoid repeated
+    /// List resizes for large listings.
     /// </summary>
-    public static BlobListPage ParseBlobListPage(string xml)
+    public static BlobListPage ParseBlobListPage(string xml, int expectedCount = 64)
     {
-        var blobs = new List<BlobEntry>();
+        var blobs = new List<BlobEntry>(expectedCount);
         var prefixes = new List<string>();
         string? nextMarker = null;
 
@@ -129,117 +131,99 @@ internal static class AzureBlobXmlReader
             IgnoreComments = true,
         });
 
-        // Top-level walk. For each <Blob> / <BlobPrefix> we hand the inner
-        // tree to a dedicated parser so leaf reads don't desync the outer
-        // reader (XmlReader.ReadElementContentAsString positions on the
-        // *next* node after the end-tag, and a subsequent outer Read()
-        // would skip whatever sibling came next).
-        while (reader.Read())
+        // Single-pass walk without ReadSubtree() allocations. Track whether
+        // we're inside a <Blob> or <BlobPrefix> element and collect leaf
+        // values accordingly. ReadElementContentAsString positions the reader
+        // on the next node after the end-tag, so we use shouldAdvance=false
+        // to avoid double-advancing.
+        var inBlob = false;
+        var inBlobPrefix = false;
+        string? name = null;
+        DateTimeOffset? lastModified = null;
+        long contentLength = 0;
+        string? etag = null;
+
+        if (!reader.Read()) return new BlobListPage(blobs, prefixes, nextMarker);
+
+        while (!reader.EOF)
         {
-            if (reader.NodeType != XmlNodeType.Element)
-            {
-                continue;
-            }
-            switch (reader.LocalName)
-            {
-                case "Blob":
-                    blobs.Add(ParseBlob(reader.ReadSubtree()));
-                    break;
-                case "BlobPrefix":
-                    var p = ParseBlobPrefix(reader.ReadSubtree());
-                    if (!string.IsNullOrEmpty(p))
-                    {
-                        prefixes.Add(p);
-                    }
-                    break;
-                case "NextMarker":
-                    var marker = reader.ReadElementContentAsString();
-                    if (!string.IsNullOrEmpty(marker))
-                    {
-                        nextMarker = marker;
-                    }
-                    break;
-            }
-        }
+            var shouldAdvance = true;
 
-        return new BlobListPage(blobs, prefixes, nextMarker);
-    }
-
-    private static BlobEntry ParseBlob(XmlReader subtree)
-    {
-        using (subtree)
-        {
-            string? name = null;
-            DateTimeOffset? lastModified = null;
-            long contentLength = 0;
-            string? etag = null;
-
-            // Step the reader manually: ReadElementContentAsString already
-            // positions on the *next* node, so we must NOT call Read() again
-            // when we just consumed a leaf — otherwise we skip its sibling.
-            if (!subtree.Read())
+            if (reader.NodeType == XmlNodeType.Element)
             {
-                return new BlobEntry(string.Empty, DateTimeOffset.UnixEpoch, 0, null);
-            }
-            while (!subtree.EOF)
-            {
-                if (subtree.NodeType != XmlNodeType.Element)
+                switch (reader.LocalName)
                 {
-                    subtree.Read();
-                    continue;
-                }
-                var consumed = true;
-                switch (subtree.LocalName)
-                {
-                    case "Name":
-                        name = subtree.ReadElementContentAsString();
+                    case "Blob":
+                        inBlob = true;
+                        name = null;
+                        lastModified = null;
+                        contentLength = 0;
+                        etag = null;
                         break;
-                    case "Last-Modified":
-                        var rawLm = subtree.ReadElementContentAsString();
+                    case "BlobPrefix":
+                        inBlobPrefix = true;
+                        name = null;
+                        break;
+                    case "Name" when inBlob || inBlobPrefix:
+                        name = reader.ReadElementContentAsString();
+                        shouldAdvance = false;
+                        break;
+                    case "Last-Modified" when inBlob:
+                        var rawLm = reader.ReadElementContentAsString();
                         if (DateTimeOffset.TryParse(rawLm, CultureInfo.InvariantCulture,
                                 DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsedLm))
                         {
                             lastModified = parsedLm;
                         }
+                        shouldAdvance = false;
                         break;
-                    case "Content-Length":
-                        var rawCl = subtree.ReadElementContentAsString();
+                    case "Content-Length" when inBlob:
+                        var rawCl = reader.ReadElementContentAsString();
                         long.TryParse(rawCl, NumberStyles.Integer, CultureInfo.InvariantCulture, out contentLength);
+                        shouldAdvance = false;
                         break;
-                    case "Etag":
-                        etag = subtree.ReadElementContentAsString();
+                    case "Etag" when inBlob:
+                        etag = reader.ReadElementContentAsString();
+                        shouldAdvance = false;
                         break;
-                    default:
-                        consumed = false;
+                    case "NextMarker" when !inBlob && !inBlobPrefix:
+                        var marker = reader.ReadElementContentAsString();
+                        if (!string.IsNullOrEmpty(marker))
+                        {
+                            nextMarker = marker;
+                        }
+                        shouldAdvance = false;
                         break;
-                }
-                if (!consumed)
-                {
-                    subtree.Read();
                 }
             }
-
-            return new BlobEntry(
-                name ?? string.Empty,
-                lastModified ?? DateTimeOffset.UnixEpoch,
-                contentLength,
-                etag);
-        }
-    }
-
-    private static string? ParseBlobPrefix(XmlReader subtree)
-    {
-        using (subtree)
-        {
-            while (subtree.Read())
+            else if (reader.NodeType == XmlNodeType.EndElement)
             {
-                if (subtree.NodeType == XmlNodeType.Element && subtree.LocalName == "Name")
+                if (reader.LocalName == "Blob" && inBlob)
                 {
-                    return subtree.ReadElementContentAsString();
+                    blobs.Add(new BlobEntry(
+                        name ?? string.Empty,
+                        lastModified ?? DateTimeOffset.UnixEpoch,
+                        contentLength,
+                        etag));
+                    inBlob = false;
+                }
+                else if (reader.LocalName == "BlobPrefix" && inBlobPrefix)
+                {
+                    if (!string.IsNullOrEmpty(name))
+                    {
+                        prefixes.Add(name!);
+                    }
+                    inBlobPrefix = false;
                 }
             }
+
+            if (shouldAdvance)
+            {
+                reader.Read();
+            }
         }
-        return null;
+
+        return new BlobListPage(blobs, prefixes, nextMarker);
     }
 
     /// <summary>
