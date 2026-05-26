@@ -363,6 +363,21 @@ internal static class ObjectHandlers
             return;
         }
 
+        // Proxy-side If-Match / If-None-Match evaluation against the
+        // translated ETag — Azure can't recognize the S3-shaped value the
+        // client received on a prior request (see HeaderForwarding).
+        var translatedEtag = context.Response.Headers[Microsoft.Net.Http.Headers.HeaderNames.ETag].ToString();
+        if (!string.IsNullOrEmpty(translatedEtag))
+        {
+            var shortCircuit = HeaderForwarding.EvaluateEtagConditionals(context.Request, translatedEtag, isReadOperation: true);
+            if (shortCircuit is { } status)
+            {
+                context.Response.StatusCode = status;
+                context.Response.ContentLength = null;
+                return;
+            }
+        }
+
         await using var azureStream = await azureResp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         await azureStream.CopyToAsync(context.Response.Body, ct).ConfigureAwait(false);
     }
@@ -381,6 +396,16 @@ internal static class ObjectHandlers
 
         context.Response.StatusCode = StatusCodes.Status200OK;
         HeaderForwarding.CopyFromAzureResponse(azureResp, context.Response);
+
+        var translatedEtag = context.Response.Headers[Microsoft.Net.Http.Headers.HeaderNames.ETag].ToString();
+        if (!string.IsNullOrEmpty(translatedEtag))
+        {
+            var shortCircuit = HeaderForwarding.EvaluateEtagConditionals(context.Request, translatedEtag, isReadOperation: true);
+            if (shortCircuit is { } status)
+            {
+                context.Response.StatusCode = status;
+            }
+        }
         // HEAD must not emit a body even though Content-Length was set above.
     }
 

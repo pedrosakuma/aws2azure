@@ -54,4 +54,88 @@ public class HeaderForwardingTests
         var expected = HeaderForwarding.TranslateAzureEtagToS3("\"0xFFFF\"", null);
         Assert.Equal(expected, s3Etag);
     }
+
+    // --- EvaluateEtagConditionals ---
+
+    private static Microsoft.AspNetCore.Http.HttpRequest MakeRequest(params (string, string)[] headers)
+    {
+        var ctx = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        foreach (var (k, v) in headers)
+        {
+            ctx.Request.Headers[k] = v;
+        }
+        return ctx.Request;
+    }
+
+    [Fact]
+    public void EvaluateEtagConditionals_returns_304_when_if_none_match_matches_get()
+    {
+        var req = MakeRequest(("If-None-Match", "\"d41d8cd98f00b204e9800998ecf8427e\""));
+        var result = HeaderForwarding.EvaluateEtagConditionals(req, "\"d41d8cd98f00b204e9800998ecf8427e\"", isReadOperation: true);
+        Assert.Equal(304, result);
+    }
+
+    [Fact]
+    public void EvaluateEtagConditionals_returns_412_when_if_none_match_matches_write()
+    {
+        var req = MakeRequest(("If-None-Match", "\"d41d8cd98f00b204e9800998ecf8427e\""));
+        var result = HeaderForwarding.EvaluateEtagConditionals(req, "\"d41d8cd98f00b204e9800998ecf8427e\"", isReadOperation: false);
+        Assert.Equal(412, result);
+    }
+
+    [Fact]
+    public void EvaluateEtagConditionals_returns_null_when_if_none_match_does_not_match()
+    {
+        var req = MakeRequest(("If-None-Match", "\"deadbeef\""));
+        var result = HeaderForwarding.EvaluateEtagConditionals(req, "\"d41d8cd98f00b204e9800998ecf8427e\"", isReadOperation: true);
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void EvaluateEtagConditionals_returns_412_when_if_match_does_not_match()
+    {
+        var req = MakeRequest(("If-Match", "\"deadbeef\""));
+        var result = HeaderForwarding.EvaluateEtagConditionals(req, "\"d41d8cd98f00b204e9800998ecf8427e\"", isReadOperation: true);
+        Assert.Equal(412, result);
+    }
+
+    [Fact]
+    public void EvaluateEtagConditionals_passes_when_if_match_matches()
+    {
+        var req = MakeRequest(("If-Match", "\"d41d8cd98f00b204e9800998ecf8427e\""));
+        var result = HeaderForwarding.EvaluateEtagConditionals(req, "\"d41d8cd98f00b204e9800998ecf8427e\"", isReadOperation: true);
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void EvaluateEtagConditionals_passes_when_if_match_star_matches_any()
+    {
+        var req = MakeRequest(("If-Match", "*"));
+        var result = HeaderForwarding.EvaluateEtagConditionals(req, "\"d41d8cd98f00b204e9800998ecf8427e\"", isReadOperation: true);
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void EvaluateEtagConditionals_handles_comma_separated_list()
+    {
+        var req = MakeRequest(("If-None-Match", "\"deadbeef\", \"d41d8cd98f00b204e9800998ecf8427e\", \"feedface\""));
+        var result = HeaderForwarding.EvaluateEtagConditionals(req, "\"d41d8cd98f00b204e9800998ecf8427e\"", isReadOperation: true);
+        Assert.Equal(304, result);
+    }
+
+    [Fact]
+    public void EvaluateEtagConditionals_treats_weak_validator_as_strong()
+    {
+        var req = MakeRequest(("If-None-Match", "W/\"d41d8cd98f00b204e9800998ecf8427e\""));
+        var result = HeaderForwarding.EvaluateEtagConditionals(req, "\"d41d8cd98f00b204e9800998ecf8427e\"", isReadOperation: true);
+        Assert.Equal(304, result);
+    }
+
+    [Fact]
+    public void EvaluateEtagConditionals_returns_null_when_no_conditionals_present()
+    {
+        var req = MakeRequest();
+        var result = HeaderForwarding.EvaluateEtagConditionals(req, "\"d41d8cd98f00b204e9800998ecf8427e\"", isReadOperation: true);
+        Assert.Null(result);
+    }
 }
