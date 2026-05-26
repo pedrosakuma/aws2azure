@@ -25,11 +25,14 @@ public sealed class DynamoDbServiceModule : IServiceModule
     private readonly ICredentialResolver _credentials;
     private readonly EntraIdTokenProvider _tokenProvider;
     private readonly ILogger? _scanLogger;
+    private readonly DynamoDbSettings _settings;
+    private readonly SprocManager? _sprocManager;
 
     public DynamoDbServiceModule(
         AzureHttpClient http,
         ICredentialResolver credentials,
         CapabilityMatrix capabilities,
+        DynamoDbSettings? settings = null,
         EntraIdTokenProvider? tokenProvider = null,
         ILoggerFactory? loggerFactory = null)
     {
@@ -38,6 +41,7 @@ public sealed class DynamoDbServiceModule : IServiceModule
         ArgumentNullException.ThrowIfNull(capabilities);
         _http = http;
         _credentials = credentials;
+        _settings = settings ?? new DynamoDbSettings();
         // Token provider is only required for AAD-credentialled tenants;
         // master-key callers never touch it. Default to a self-contained
         // instance so callers that don't share Entra caches still work.
@@ -46,7 +50,18 @@ public sealed class DynamoDbServiceModule : IServiceModule
         // tests construct the module without a factory.
         _scanLogger = loggerFactory?.CreateLogger("Aws2Azure.Modules.DynamoDb.Scan");
         Capabilities = capabilities;
+
+        // Create SprocManager if sprocs are enabled
+        if (_settings.UseStoredProcedures != StoredProcedureMode.Disabled)
+        {
+            var sprocLogger = loggerFactory?.CreateLogger<SprocManager>();
+            _sprocManager = sprocLogger is not null ? new SprocManager(sprocLogger) : null;
+        }
+        _sprocContext = new SprocContext(_settings.UseStoredProcedures, _sprocManager);
     }
+
+    // Sproc context for atomic conditional writes
+    private readonly SprocContext _sprocContext;
 
     public string ServiceName => "dynamodb";
     public bool RequiresSigV4 => true;
@@ -118,16 +133,16 @@ public sealed class DynamoDbServiceModule : IServiceModule
                 await TableLifecycleHandlers.HandleListTablesAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
                 return;
             case DynamoDbOperation.PutItem:
-                await ItemHandlers.HandlePutItemAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                await ItemHandlers.HandlePutItemAsync(context, parsed.Body, cosmos, _sprocContext, context.RequestAborted).ConfigureAwait(false);
                 return;
             case DynamoDbOperation.GetItem:
                 await ItemHandlers.HandleGetItemAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
                 return;
             case DynamoDbOperation.DeleteItem:
-                await ItemHandlers.HandleDeleteItemAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                await ItemHandlers.HandleDeleteItemAsync(context, parsed.Body, cosmos, _sprocContext, context.RequestAborted).ConfigureAwait(false);
                 return;
             case DynamoDbOperation.UpdateItem:
-                await UpdateItemHandler.HandleUpdateItemAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                await UpdateItemHandler.HandleUpdateItemAsync(context, parsed.Body, cosmos, _sprocContext, context.RequestAborted).ConfigureAwait(false);
                 return;
             case DynamoDbOperation.Query:
                 await QueryHandler.HandleQueryAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);

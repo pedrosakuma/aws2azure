@@ -10,6 +10,7 @@ public sealed class ProxyConfig
 {
     public Dictionary<string, ServiceToggle> Services { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public SnsSettings Sns { get; set; } = new();
+    public DynamoDbSettings DynamoDb { get; set; } = new();
     public List<CredentialEntry> Credentials { get; set; } = new();
 }
 
@@ -21,6 +22,38 @@ public sealed class ServiceToggle
 public sealed class SnsSettings
 {
     public SnsTopicBackend DefaultBackend { get; set; } = SnsTopicBackend.ServiceBusTopics;
+}
+
+/// <summary>
+/// DynamoDB module-level settings.
+/// </summary>
+public sealed class DynamoDbSettings
+{
+    /// <summary>
+    /// Controls whether stored procedures are used for atomic conditional writes.
+    /// <list type="bullet">
+    ///   <item><c>Disabled</c> (default) — GET→PUT with ETag/If-Match (current behavior)</item>
+    ///   <item><c>Preferred</c> — use sprocs when available, fallback to GET→PUT if sproc missing</item>
+    ///   <item><c>Required</c> — sprocs must exist; fail startup if missing and cannot create</item>
+    /// </list>
+    /// </summary>
+    public StoredProcedureMode UseStoredProcedures { get; set; } = StoredProcedureMode.Disabled;
+}
+
+/// <summary>
+/// Stored procedure usage mode for DynamoDB conditional writes.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<StoredProcedureMode>))]
+public enum StoredProcedureMode
+{
+    /// <summary>Do not use stored procedures; use GET→PUT with optimistic concurrency.</summary>
+    Disabled = 0,
+
+    /// <summary>Use stored procedures when available; fallback to GET→PUT if sproc missing.</summary>
+    Preferred = 1,
+
+    /// <summary>Require stored procedures; fail startup/operation if sproc cannot be created.</summary>
+    Required = 2,
 }
 
 public sealed class CredentialEntry

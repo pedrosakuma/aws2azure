@@ -170,6 +170,7 @@ builder.Services.AddSingleton<ServiceModuleRegistry>(sp =>
         new S3ServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.S3),
         new SqsServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.Sqs, amqpPool),
         new DynamoDbServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.Dynamodb,
+            settings: proxyConfig.DynamoDb,
             loggerFactory: loggerFactory,
             tokenProvider: tokenProvider),
         new KinesisServiceModule(
