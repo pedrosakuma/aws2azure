@@ -263,7 +263,7 @@ internal static class FilterPushdownVisitor
                 return new VisitResult($"{pathSql} {sqlOp} {c.Bind(JsonNull())}", null);
 
             case AttributeValueTypes.Number:
-                return BuildNumberCompare(pathSql, sqlOp, parsed.Value.GetString()!, c, original);
+                return BuildNumberCompare(pathSql, sqlOp, parsed.Value.GetString()!, c, original, isOrdered);
 
             case AttributeValueTypes.Binary:
                 // Binary stored as `{ "_a2a:B": "<b64>" }` envelope.
@@ -297,18 +297,36 @@ internal static class FilterPushdownVisitor
     /// envelope-stored values can be falsely matched. The original
     /// node is preserved as residual so <see cref="ConditionEvaluator"/>
     /// re-evaluates the comparison against the exact canonical string.</para>
+    ///
+    /// <para>Ordered comparisons (<c>&lt;</c>, <c>&lt;=</c>, <c>&gt;</c>,
+    /// <c>&gt;=</c>) on the envelope branch must NOT use
+    /// <c>StringToNumber</c>: it can produce *false negatives* — e.g.
+    /// stored <c>9007199254740995</c> compared with param
+    /// <c>9007199254740996</c> using <c>&lt;</c> rounds both to the
+    /// same double and yields false, dropping a row DDB would keep.
+    /// For ordered ops we widen the envelope branch to
+    /// <c>IS_DEFINED(envPath)</c> so every envelope-stored row reaches
+    /// the residual evaluator. Equality is safe to push through
+    /// <c>StringToNumber</c> because envelope storage by construction
+    /// only holds values that do not round-trip as bare JSON numbers,
+    /// so an envelope-stored value can never exactly equal a
+    /// round-trippable parameter.</para>
     /// </summary>
     private static VisitResult BuildNumberCompare(
-        string pathSql, string sqlOp, string nText, Context c, ConditionNode original)
+        string pathSql, string sqlOp, string nText, Context c, ConditionNode original,
+        bool isOrdered)
     {
         if (!TryParameterizeNumber(nText, out var paramElem))
             return new VisitResult(null, original);
 
         var p = c.Bind(paramElem);
         var envPath = pathSql + "[\"" + InferredAttributeStorage.EnvelopeTagN + "\"]";
+        string envBranch = isOrdered
+            ? $"IS_DEFINED({envPath})"
+            : $"(IS_DEFINED({envPath}) AND StringToNumber({envPath}) {sqlOp} {p})";
         var sql =
             $"((IS_NUMBER({pathSql}) AND {pathSql} {sqlOp} {p})" +
-            $" OR (IS_DEFINED({envPath}) AND StringToNumber({envPath}) {sqlOp} {p}))";
+            $" OR {envBranch})";
         return new VisitResult(sql, original);
     }
 
@@ -339,14 +357,16 @@ internal static class FilterPushdownVisitor
                 var lp = c.Bind(loElem);
                 var hp = c.Bind(hiElem);
                 var envPath = pathSql + "[\"" + InferredAttributeStorage.EnvelopeTagN + "\"]";
+                // BETWEEN is inherently ordered. The envelope branch
+                // must be a broad prefilter — StringToNumber rounds
+                // through a double and can drop envelope rows that DDB
+                // would keep (e.g. stored 9007199254740995 vs bound
+                // 9007199254740996). Let every envelope row through;
+                // the residual evaluator (preserved below) does the
+                // exact canonical-string comparison.
                 var sql =
                     $"((IS_NUMBER({pathSql}) AND {pathSql} >= {lp} AND {pathSql} <= {hp})" +
-                    $" OR (IS_DEFINED({envPath}) AND StringToNumber({envPath}) >= {lp}" +
-                    $" AND StringToNumber({envPath}) <= {hp}))";
-                // Hybrid number SQL is a prefilter only: StringToNumber
-                // rounds envelope payloads through a double, so the
-                // residual evaluator must re-check the exact canonical
-                // string. See BuildNumberCompare.
+                    $" OR IS_DEFINED({envPath}))";
                 return new VisitResult(sql, bt);
 
             case AttributeValueTypes.Binary:

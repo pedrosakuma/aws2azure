@@ -81,20 +81,28 @@ public class DynamoDbFilterPushdownTests
         var table = "it" + Guid.NewGuid().ToString("N")[..12];
         await CreateHashTableAsync(table);
 
-        // Three items: two flat-stored small N, one envelope-stored 38-digit N
-        // whose value (1.0e37) lies inside the [1e30, 1e38] range.
+        // Three items: two flat-stored small N, one envelope-stored
+        // 38-digit N. The huge value cannot survive an IEEE 754
+        // round-trip and is therefore stored under the `_a2a:N`
+        // envelope.
         await PutAsync(table, $$$"""{ "pk": { "S": "small" },  "v": { "N": "100" } }""");
         await PutAsync(table, $$$"""{ "pk": { "S": "medium" }, "v": { "N": "5000" } }""");
-        await PutAsync(table, $$$"""{ "pk": { "S": "huge" },   "v": { "N": "10000000000000000000000000000000000000" } }""");
+        await PutAsync(table, $$$"""{ "pk": { "S": "huge" },   "v": { "N": "12345678901234567890123456789012345678" } }""");
 
-        // BETWEEN that includes the envelope row but excludes the small/medium ones.
+        // BETWEEN bounds MUST be double-roundtrippable (else the visitor
+        // refuses to push the predicate via TryParameterizeNumber and we
+        // would not be exercising the hybrid SQL path at all). The bounds
+        // here are exact doubles. The envelope branch of the pushed SQL
+        // is broadened to `IS_DEFINED(envPath)` for BETWEEN, so the huge
+        // row reaches the residual evaluator which then does the precise
+        // canonical-string comparison.
         var body = $$"""
         {
           "TableName": "{{table}}",
           "FilterExpression": "v BETWEEN :lo AND :hi",
           "ExpressionAttributeValues": {
-            ":lo": { "N": "1000000000000000000000000000000" },
-            ":hi": { "N": "100000000000000000000000000000000000000" }
+            ":lo": { "N": "1000" },
+            ":hi": { "N": "20000" }
           },
           "ConsistentRead": true
         }
@@ -105,10 +113,62 @@ public class DynamoDbFilterPushdownTests
         Assert.True(resp.IsSuccessStatusCode, $"Scan → {(int)resp.StatusCode} {text}");
         using var doc = JsonDocument.Parse(text);
 
-        // Exactly the envelope-stored row matches.
+        // Exactly the "medium" row (5000) is inside [1000, 20000]. The
+        // envelope-stored "huge" row reaches the residual evaluator via
+        // the IS_DEFINED prefilter and is correctly rejected there (its
+        // canonical value is far outside the range). The "small" row
+        // (100) is below the lower bound.
         var items = doc.RootElement.GetProperty("Items");
         Assert.Equal(1, items.GetArrayLength());
-        Assert.Equal("huge", items[0].GetProperty("pk").GetProperty("S").GetString());
+        Assert.Equal("medium", items[0].GetProperty("pk").GetProperty("S").GetString());
+
+        await DeleteTableAsync(table);
+    }
+
+    [SkippableFact]
+    public async Task Scan_ordered_number_envelope_row_not_dropped()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping DynamoDB integration test.");
+
+        // Regression for the High-severity gpt-5.5 review finding: ordered
+        // numeric comparisons on the envelope branch must NOT use
+        // StringToNumber (which rounds through a double). Stored
+        // 9007199254740995 vs param 9007199254740996 with `<` would
+        // false-negative because both round to 9007199254740996 as
+        // doubles. The visitor widens the envelope branch to
+        // IS_DEFINED(envPath) for ordered ops so the row reaches the
+        // residual evaluator, which then does the exact comparison.
+
+        var table = "it" + Guid.NewGuid().ToString("N")[..12];
+        await CreateHashTableAsync(table);
+
+        // 9007199254740995 = 2^53 - 1. It cannot round-trip as a JSON
+        // double, so the encoder stores it via the `_a2a:N` envelope.
+        await PutAsync(table, $$$"""{ "pk": { "S": "boundary" }, "v": { "N": "9007199254740995" } }""");
+        // A flat-stored small value far below the threshold, to verify
+        // we don't accidentally exclude bare-number rows either.
+        await PutAsync(table, $$$"""{ "pk": { "S": "low" }, "v": { "N": "1" } }""");
+
+        // :n = 9007199254740996. Both rows are < :n by DDB semantics.
+        var body = $$"""
+        {
+          "TableName": "{{table}}",
+          "FilterExpression": "v < :n",
+          "ExpressionAttributeValues": { ":n": { "N": "9007199254740996" } },
+          "ConsistentRead": true
+        }
+        """;
+        using var req = DynamoDbRequestBuilder.Build("Scan", body, _fx.AccessKeyId, _fx.Secret, _fx.Client.BaseAddress!);
+        using var resp = await _fx.Client.SendAsync(req);
+        var text = await resp.Content.ReadAsStringAsync();
+        Assert.True(resp.IsSuccessStatusCode, $"Scan → {(int)resp.StatusCode} {text}");
+        using var doc = JsonDocument.Parse(text);
+
+        // Both items must be returned. If the envelope branch had been
+        // emitted as `StringToNumber(envPath) < :n` the "boundary" row
+        // would have been silently dropped.
+        var items = doc.RootElement.GetProperty("Items");
+        Assert.Equal(2, items.GetArrayLength());
 
         await DeleteTableAsync(table);
     }

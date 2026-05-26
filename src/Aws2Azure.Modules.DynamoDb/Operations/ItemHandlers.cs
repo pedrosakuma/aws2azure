@@ -711,6 +711,18 @@ internal static class ItemHandlers
                 }
                 foreach (var entry in parsed.Value.EnumerateObject())
                 {
+                    if (entry.Name.StartsWith(
+                            InferredAttributeStorage.EnvelopeTagPrefix, StringComparison.Ordinal))
+                    {
+                        // Encoder enforces this too (InferredAttributeStorage.cs:293)
+                        // but raising here keeps the error surface as
+                        // ValidationException at the API boundary instead of
+                        // an encoder ArgumentException deeper in the stack.
+                        error = $"Attribute '{attrName}.{entry.Name}' uses the reserved '"
+                            + InferredAttributeStorage.EnvelopeTagPrefix
+                            + "' prefix.";
+                        return false;
+                    }
                     if (!ValidateAttributePayload($"{attrName}.{entry.Name}", entry.Value, out error))
                         return false;
                 }
