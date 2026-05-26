@@ -327,9 +327,13 @@ internal sealed class EventHubsAmqpReceiver : IEventHubsAmqpReceiver, IAsyncDisp
 
         if (Uri.TryCreate("amqps://" + namespaceFqdn.Trim(), UriKind.Absolute, out var namespaceUri))
         {
+            // Uri.Port returns -1 when no explicit port is specified in the URI.
+            // Uri.IsDefaultPort returns false because amqps: registers 443, not 5671.
+            // Always default to the AMQP-TLS port (5671) when no port is present.
+            var port = namespaceUri.Port > 0 ? namespaceUri.Port : ServiceBusEndpoint.AmqpsPort;
             return ServiceBusAmqpEndpoint.Tls(
                 namespaceUri.Host,
-                namespaceUri.Port,
+                port,
                 namespaceFqdn.Trim().ToLowerInvariant());
         }
 
