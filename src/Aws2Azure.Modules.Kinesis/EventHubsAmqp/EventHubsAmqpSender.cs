@@ -308,9 +308,11 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
 
         if (Uri.TryCreate("amqps://" + namespaceFqdn.Trim(), UriKind.Absolute, out var namespaceUri))
         {
+            // namespaceUri.Port is -1 when no explicit port is in the URI
+            var port = namespaceUri.Port > 0 ? namespaceUri.Port : ServiceBusEndpoint.AmqpsPort;
             return ServiceBusAmqpEndpoint.Tls(
                 namespaceUri.Host,
-                namespaceUri.Port,
+                port,
                 namespaceFqdn.Trim().ToLowerInvariant());
         }
 
