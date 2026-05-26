@@ -101,6 +101,47 @@ public sealed class KinesisPerfTests(KinesisPerfFixture fixture)
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
         result.AssertNoRegression();
     }
+
+    [SkippableFact]
+    public async Task PutRecords_batch_throughput()
+    {
+        Skip.IfNot(fixture.Ready, fixture.SkipReason);
+
+        using var client = fixture.Inner.CreateClient();
+        var payload = Encoding.UTF8.GetBytes(new string('y', 256));
+        const int recordsPerCall = 25;
+
+        var result = await PerfRunner.RunAsync(
+            scenario: "kinesis.PutRecords (25×256 B)",
+            concurrency: 1,
+            duration: TimeSpan.FromSeconds(30),
+            warmup: TimeSpan.FromSeconds(2),
+            action: async (workerId, ct) =>
+            {
+                var entries = new List<PutRecordsRequestEntry>(recordsPerCall);
+                for (var i = 0; i < recordsPerCall; i++)
+                {
+                    entries.Add(new PutRecordsRequestEntry
+                    {
+                        Data = new MemoryStream(payload, writable: false),
+                        PartitionKey = $"perf-w{workerId}-r{i}",
+                    });
+                }
+                var resp = await client.PutRecordsAsync(new PutRecordsRequest
+                {
+                    StreamName = KinesisEmulatorProxyFixture.StreamName,
+                    Records = entries,
+                }, ct).ConfigureAwait(false);
+                if (resp.FailedRecordCount > 0)
+                {
+                    throw new InvalidOperationException($"PutRecords: {resp.FailedRecordCount} failed.");
+                }
+            });
+
+        PerfReport.Append(result, notes: $"Kinesis→EventHubs(AMQP) emulator — PutRecords ({recordsPerCall} records/call)");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
+    }
 }
 
 /// <summary>

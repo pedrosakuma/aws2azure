@@ -22,6 +22,10 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
     public string ServiceUrl => _proxy.ServiceUrlForHost("dynamodb");
     public string ProxyOutput => _proxy.Output;
     public string TableName { get; } = "perftbl" + Guid.NewGuid().ToString("N")[..8];
+    public string QueryTableName { get; } = "perfqry" + Guid.NewGuid().ToString("N")[..8];
+    public int SeededPartitions => 10;
+    public int SeededItemsPerPartition => 50;
+    public IReadOnlyList<string> SeededBuckets { get; } = new[] { "A", "B", "C" };
     public string AccessKeyId => "AKIA-PERF-DDB";
     public string Secret => "perf-ddb-secret";
     public string DatabaseName => "aws2azure-perf";
@@ -102,14 +106,36 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
                 BillingMode = BillingMode.PAY_PER_REQUEST,
             }).ConfigureAwait(false);
 
-            // Wait until table is ACTIVE.
-            var deadline = DateTime.UtcNow + TimeSpan.FromMinutes(1);
-            while (DateTime.UtcNow < deadline)
+            await ddb.CreateTableAsync(new CreateTableRequest
             {
-                var d = await ddb.DescribeTableAsync(TableName).ConfigureAwait(false);
-                if (d.Table.TableStatus == TableStatus.ACTIVE) break;
-                await Task.Delay(500).ConfigureAwait(false);
+                TableName = QueryTableName,
+                AttributeDefinitions =
+                [
+                    new AttributeDefinition("pk", ScalarAttributeType.S),
+                    new AttributeDefinition("sk", ScalarAttributeType.S),
+                ],
+                KeySchema =
+                [
+                    new KeySchemaElement("pk", KeyType.HASH),
+                    new KeySchemaElement("sk", KeyType.RANGE),
+                ],
+                BillingMode = BillingMode.PAY_PER_REQUEST,
+            }).ConfigureAwait(false);
+
+            // Wait until both tables are ACTIVE.
+            var deadline = DateTime.UtcNow + TimeSpan.FromMinutes(1);
+            foreach (var name in new[] { TableName, QueryTableName })
+            {
+                while (DateTime.UtcNow < deadline)
+                {
+                    var d = await ddb.DescribeTableAsync(name).ConfigureAwait(false);
+                    if (d.Table.TableStatus == TableStatus.ACTIVE) break;
+                    await Task.Delay(500).ConfigureAwait(false);
+                }
             }
+
+            // Seed QueryTableName: SeededPartitions × SeededItemsPerPartition items.
+            await SeedQueryTableAsync(ddb).ConfigureAwait(false);
             Ready = true;
         }
         catch (Exception ex)
@@ -124,6 +150,67 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
         if (_container is not null)
         {
             await _container.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private async Task SeedQueryTableAsync(AmazonDynamoDBClient ddb)
+    {
+        // Spread N items over SeededPartitions partition keys; each item has
+        // bucket ∈ {A,B,C} (cycled so each bucket is roughly 1/3 of rows) and
+        // a numeric score in [0,100). Query/Scan perf scenarios filter on
+        // these attributes via FilterExpression so the FilterPushdownVisitor
+        // path is exercised.
+        var rand = new Random(20260526);
+        for (var pi = 0; pi < SeededPartitions; pi++)
+        {
+            var pk = $"p{pi:D2}";
+            // BatchWriteItem holds at most 25 items per call.
+            var pending = new List<WriteRequest>(25);
+            for (var si = 0; si < SeededItemsPerPartition; si++)
+            {
+                var bucket = SeededBuckets[(pi * SeededItemsPerPartition + si) % SeededBuckets.Count];
+                pending.Add(new WriteRequest(new PutRequest(new Dictionary<string, AttributeValue>
+                {
+                    ["pk"] = new() { S = pk },
+                    ["sk"] = new() { S = $"s{si:D4}" },
+                    ["bucket"] = new() { S = bucket },
+                    ["score"] = new() { N = rand.Next(0, 100).ToString(System.Globalization.CultureInfo.InvariantCulture) },
+                    ["payload"] = new() { S = "seed-256-bytes-of-padding-" + new string('x', 200) },
+                })));
+                if (pending.Count == 25)
+                {
+                    await FlushBatchAsync(ddb, pending).ConfigureAwait(false);
+                    pending.Clear();
+                }
+            }
+            if (pending.Count > 0)
+            {
+                await FlushBatchAsync(ddb, pending).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async Task FlushBatchAsync(AmazonDynamoDBClient ddb, List<WriteRequest> batch)
+    {
+        var resp = await ddb.BatchWriteItemAsync(new BatchWriteItemRequest
+        {
+            RequestItems = new Dictionary<string, List<WriteRequest>>
+            {
+                [QueryTableName] = batch,
+            },
+        }).ConfigureAwait(false);
+        // Retry unprocessed once (emulator can throttle); fail loudly otherwise.
+        if (resp.UnprocessedItems is { Count: > 0 } unp && unp.TryGetValue(QueryTableName, out var leftovers) && leftovers.Count > 0)
+        {
+            await Task.Delay(100).ConfigureAwait(false);
+            var retry = await ddb.BatchWriteItemAsync(new BatchWriteItemRequest
+            {
+                RequestItems = new Dictionary<string, List<WriteRequest>> { [QueryTableName] = leftovers },
+            }).ConfigureAwait(false);
+            if (retry.UnprocessedItems is { Count: > 0 } left2 && left2.TryGetValue(QueryTableName, out var still) && still.Count > 0)
+            {
+                throw new InvalidOperationException($"Seed: {still.Count} items still unprocessed after retry.");
+            }
         }
     }
 }
@@ -164,6 +251,121 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
             });
 
         PerfReport.Append(result, notes: "DynamoDB→Cosmos (REST) emulator");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
+    }
+
+    [SkippableFact]
+    public async Task Query_with_pushable_filter_throughput()
+    {
+        Skip.IfNot(fixture.Ready, fixture.SkipReason);
+
+        using var client = fixture.CreateClient();
+
+        var result = await PerfRunner.RunAsync(
+            scenario: "dynamodb.Query (pushable filter)",
+            concurrency: 8,
+            duration: TimeSpan.FromSeconds(20),
+            warmup: TimeSpan.FromSeconds(3),
+            action: async (workerId, ct) =>
+            {
+                var pk = $"p{workerId % fixture.SeededPartitions:D2}";
+                // bucket = "A" pushes down to SQL via FilterPushdownVisitor.
+                var resp = await client.QueryAsync(new QueryRequest
+                {
+                    TableName = fixture.QueryTableName,
+                    KeyConditionExpression = "pk = :pk",
+                    FilterExpression = "bucket = :b",
+                    ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                    {
+                        [":pk"] = new() { S = pk },
+                        [":b"] = new() { S = "A" },
+                    },
+                }, ct).ConfigureAwait(false);
+                if (resp.Items.Count == 0)
+                {
+                    throw new InvalidOperationException("Query returned no items — seed data missing.");
+                }
+            });
+
+        PerfReport.Append(result, notes: "DynamoDB→Cosmos Query — FilterPushdownVisitor (pushable eq on bucket)");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
+    }
+
+    [SkippableFact]
+    public async Task Scan_with_pushable_filter_throughput()
+    {
+        Skip.IfNot(fixture.Ready, fixture.SkipReason);
+
+        using var client = fixture.CreateClient();
+
+        var result = await PerfRunner.RunAsync(
+            scenario: "dynamodb.Scan (pushable filter)",
+            concurrency: 4,
+            duration: TimeSpan.FromSeconds(20),
+            warmup: TimeSpan.FromSeconds(3),
+            action: async (workerId, ct) =>
+            {
+                // Ordered numeric BETWEEN — pushable; envelope branch uses IS_DEFINED.
+                var resp = await client.ScanAsync(new ScanRequest
+                {
+                    TableName = fixture.QueryTableName,
+                    FilterExpression = "score BETWEEN :lo AND :hi",
+                    ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                    {
+                        [":lo"] = new() { N = "20" },
+                        [":hi"] = new() { N = "60" },
+                    },
+                    Limit = 100,
+                }, ct).ConfigureAwait(false);
+                _ = resp.ScannedCount;
+            });
+
+        PerfReport.Append(result, notes: "DynamoDB→Cosmos Scan — FilterPushdownVisitor (BETWEEN on score, Limit=100)");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
+    }
+
+    [SkippableFact]
+    public async Task BatchWriteItem_25_throughput()
+    {
+        Skip.IfNot(fixture.Ready, fixture.SkipReason);
+
+        using var client = fixture.CreateClient();
+
+        var result = await PerfRunner.RunAsync(
+            scenario: "dynamodb.BatchWriteItem (25 items)",
+            concurrency: 8,
+            duration: TimeSpan.FromSeconds(20),
+            warmup: TimeSpan.FromSeconds(3),
+            action: async (workerId, ct) =>
+            {
+                var batch = new List<WriteRequest>(25);
+                for (var i = 0; i < 25; i++)
+                {
+                    batch.Add(new WriteRequest(new PutRequest(new Dictionary<string, AttributeValue>
+                    {
+                        ["pk"] = new() { S = $"bwi-w{workerId:D2}-{Guid.NewGuid():N}" },
+                        ["payload"] = new() { S = "bwi-256B" },
+                    })));
+                }
+                var resp = await client.BatchWriteItemAsync(new BatchWriteItemRequest
+                {
+                    RequestItems = new Dictionary<string, List<WriteRequest>>
+                    {
+                        [fixture.TableName] = batch,
+                    },
+                }, ct).ConfigureAwait(false);
+                if (resp.UnprocessedItems is { Count: > 0 } unp
+                    && unp.TryGetValue(fixture.TableName, out var left) && left.Count > 0)
+                {
+                    // Emulator throttling — treat as a soft failure surfaced via failure count.
+                    throw new InvalidOperationException($"BatchWriteItem: {left.Count} unprocessed.");
+                }
+            });
+
+        PerfReport.Append(result, notes: "DynamoDB→Cosmos BatchWriteItem — 25 PutRequest/call");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
         result.AssertNoRegression();
     }

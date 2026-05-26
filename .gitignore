@@ -29,3 +29,6 @@ Thumbs.db
 *.log
 .tools/
 TestResults/
+
+# Perf — locally-generated cumulative history (artifact uploaded by perf workflow; not committed)
+docs/perf/history.csv

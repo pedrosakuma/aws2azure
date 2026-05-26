@@ -100,10 +100,29 @@ internal static class HeaderForwarding
     /// <c>x-amz-meta-*</c>. The Azure request id is exposed as the AWS
     /// extended request id for diagnostic continuity.
     /// </summary>
+    /// <remarks>
+    /// ETag translation: Azure returns ETags in opaque <c>"0x8DC..."</c>
+    /// form, which the AWS SDK then tries to hex-parse as an MD5 (because
+    /// classic S3 ETags ARE the object's lowercase hex MD5). That parse
+    /// throws <see cref="ArgumentOutOfRangeException"/> on every GET, so
+    /// we replace the ETag with an S3-shaped 32-char lowercase hex string:
+    /// either the hex form of the Azure <c>Content-MD5</c> (when present —
+    /// matches the real object MD5 byte-for-byte) or a deterministic MD5
+    /// derived from the Azure ETag bytes (stable across reads, but NOT
+    /// equal to the object MD5; matches the pattern already used by
+    /// multipart synthetic part ETags). Clients using strong-ETag
+    /// conditional requests (<c>If-Match</c> / <c>If-None-Match</c>) will
+    /// still round-trip through the proxy because both sides see the
+    /// translated value.
+    /// </remarks>
     public static void CopyFromAzureResponse(HttpResponseMessage source, HttpResponse target)
     {
         foreach (var header in StandardResponseHeaders)
         {
+            if (header == HeaderNames.ETag)
+            {
+                continue;
+            }
             if (TryGetHeader(source, header, out var values))
             {
                 target.Headers[header] = values;
@@ -122,13 +141,25 @@ internal static class HeaderForwarding
             }
         }
 
+        string? contentMd5Base64 = null;
         if (source.Content is { } content)
         {
             foreach (var header in StandardResponseHeaders)
             {
+                if (header == HeaderNames.ETag)
+                {
+                    continue;
+                }
                 if (content.Headers.TryGetValues(header, out var values))
                 {
                     target.Headers[header] = string.Join(",", values);
+                }
+            }
+            if (content.Headers.TryGetValues(HeaderNames.ContentMD5, out var md5))
+            {
+                foreach (var v in md5)
+                {
+                    if (!string.IsNullOrEmpty(v)) { contentMd5Base64 = v; break; }
                 }
             }
             // Content-Length lives on HttpContent.Headers only; preserve it so
@@ -139,6 +170,11 @@ internal static class HeaderForwarding
             }
         }
 
+        if (TryGetEtag(source, out var azureEtag))
+        {
+            target.Headers[HeaderNames.ETag] = "\"" + TranslateAzureEtagToS3(azureEtag, contentMd5Base64) + "\"";
+        }
+
         if (source.Headers.TryGetValues("x-ms-request-id", out var azureReqId))
         {
             foreach (var v in azureReqId)
@@ -147,6 +183,53 @@ internal static class HeaderForwarding
                 break;
             }
         }
+    }
+
+    private static bool TryGetEtag(HttpResponseMessage source, out string value)
+    {
+        if (source.Headers.TryGetValues(HeaderNames.ETag, out var hdr))
+        {
+            foreach (var v in hdr)
+            {
+                if (!string.IsNullOrEmpty(v)) { value = v; return true; }
+            }
+        }
+        if (source.Content is { } c && c.Headers.TryGetValues(HeaderNames.ETag, out var chdr))
+        {
+            foreach (var v in chdr)
+            {
+                if (!string.IsNullOrEmpty(v)) { value = v; return true; }
+            }
+        }
+        value = string.Empty;
+        return false;
+    }
+
+    /// <summary>
+    /// Converts an Azure-style ETag (opaque, often <c>"0x..."</c>) into an
+    /// S3-shaped 32-char lowercase hex string. Prefers the real MD5 when
+    /// Azure surfaces <c>Content-MD5</c>; falls back to a deterministic
+    /// MD5 of the ETag bytes so the value is stable across reads.
+    /// </summary>
+    internal static string TranslateAzureEtagToS3(string azureEtag, string? contentMd5Base64)
+    {
+        if (!string.IsNullOrEmpty(contentMd5Base64))
+        {
+            try
+            {
+                var bytes = Convert.FromBase64String(contentMd5Base64);
+                if (bytes.Length == 16)
+                {
+                    return Convert.ToHexString(bytes).ToLowerInvariant();
+                }
+            }
+            catch (FormatException) { /* fall through to synthetic path */ }
+        }
+        // Strip surrounding quotes so the synthetic value is stable across
+        // whichever HttpClient layer happened to surface the header.
+        var trimmed = azureEtag.AsSpan().Trim().Trim('"');
+        var hash = System.Security.Cryptography.MD5.HashData(System.Text.Encoding.ASCII.GetBytes(trimmed.ToString()));
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
     private static bool IsContentHeader(string name) =>
