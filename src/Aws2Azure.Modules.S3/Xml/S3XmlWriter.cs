@@ -381,42 +381,56 @@ internal static class S3XmlWriter
         IReadOnlyList<ListedObject> contents,
         IReadOnlyList<string> commonPrefixes)
     {
-        await using var writer = XmlWriter.Create(output, Settings);
-        writer.WriteStartDocument();
-        writer.WriteStartElement("ListBucketResult", S3Namespace);
+        // Write to a memory buffer first to avoid synchronous writes to Response.Body
+        // (Kestrel rejects sync IO by default). Then copy asynchronously.
+        using var buffer = new MemoryStream(EstimateXmlSize(contents.Count, commonPrefixes.Count));
+        using (var writer = XmlWriter.Create(buffer, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("ListBucketResult", S3Namespace);
 
-        writer.WriteElementString("Name", bucket);
-        writer.WriteElementString("Prefix", Encode(prefix, encodeUrl));
-        if (!string.IsNullOrEmpty(startAfter))
-        {
-            writer.WriteElementString("StartAfter", Encode(startAfter, encodeUrl));
-        }
-        if (!string.IsNullOrEmpty(continuationToken))
-        {
-            writer.WriteElementString("ContinuationToken", continuationToken);
-        }
-        if (!string.IsNullOrEmpty(nextContinuationToken))
-        {
-            writer.WriteElementString("NextContinuationToken", nextContinuationToken);
-        }
-        WriteIntElement(writer, "KeyCount", keyCount);
-        WriteIntElement(writer, "MaxKeys", maxKeys);
-        if (!string.IsNullOrEmpty(delimiter))
-        {
-            writer.WriteElementString("Delimiter", Encode(delimiter, encodeUrl));
-        }
-        writer.WriteElementString("IsTruncated", isTruncated ? "true" : "false");
-        if (encodeUrl)
-        {
-            writer.WriteElementString("EncodingType", "url");
-        }
-        WriteContentsOptimized(writer, contents, encodeUrl);
-        WriteCommonPrefixes(writer, commonPrefixes, encodeUrl);
+            writer.WriteElementString("Name", bucket);
+            writer.WriteElementString("Prefix", Encode(prefix, encodeUrl));
+            if (!string.IsNullOrEmpty(startAfter))
+            {
+                writer.WriteElementString("StartAfter", Encode(startAfter, encodeUrl));
+            }
+            if (!string.IsNullOrEmpty(continuationToken))
+            {
+                writer.WriteElementString("ContinuationToken", continuationToken);
+            }
+            if (!string.IsNullOrEmpty(nextContinuationToken))
+            {
+                writer.WriteElementString("NextContinuationToken", nextContinuationToken);
+            }
+            WriteIntElement(writer, "KeyCount", keyCount);
+            WriteIntElement(writer, "MaxKeys", maxKeys);
+            if (!string.IsNullOrEmpty(delimiter))
+            {
+                writer.WriteElementString("Delimiter", Encode(delimiter, encodeUrl));
+            }
+            writer.WriteElementString("IsTruncated", isTruncated ? "true" : "false");
+            if (encodeUrl)
+            {
+                writer.WriteElementString("EncodingType", "url");
+            }
+            WriteContentsOptimized(writer, contents, encodeUrl);
+            WriteCommonPrefixes(writer, commonPrefixes, encodeUrl);
 
-        writer.WriteEndElement();
-        writer.WriteEndDocument();
-        await writer.FlushAsync().ConfigureAwait(false);
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        
+        buffer.Position = 0;
+        await buffer.CopyToAsync(output).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Estimates XML buffer size based on content count to minimize reallocations.
+    /// ~200 bytes per object (key + metadata elements).
+    /// </summary>
+    private static int EstimateXmlSize(int objectCount, int prefixCount)
+        => 512 + (objectCount * 200) + (prefixCount * 100);
 
     /// <summary>
     /// S3 ListObjectsV2 response body. Same as WriteListObjectsV2ResultAsync but
@@ -498,33 +512,40 @@ internal static class S3XmlWriter
         IReadOnlyList<ListedObject> contents,
         IReadOnlyList<string> commonPrefixes)
     {
-        await using var writer = XmlWriter.Create(output, Settings);
-        writer.WriteStartDocument();
-        writer.WriteStartElement("ListBucketResult", S3Namespace);
+        // Write to a memory buffer first to avoid synchronous writes to Response.Body
+        // (Kestrel rejects sync IO by default). Then copy asynchronously.
+        using var buffer = new MemoryStream(EstimateXmlSize(contents.Count, commonPrefixes.Count));
+        using (var writer = XmlWriter.Create(buffer, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("ListBucketResult", S3Namespace);
 
-        writer.WriteElementString("Name", bucket);
-        writer.WriteElementString("Prefix", Encode(prefix, encodeUrl));
-        writer.WriteElementString("Marker", Encode(marker, encodeUrl));
-        if (!string.IsNullOrEmpty(nextMarker))
-        {
-            writer.WriteElementString("NextMarker", Encode(nextMarker, encodeUrl));
-        }
-        WriteIntElement(writer, "MaxKeys", maxKeys);
-        if (!string.IsNullOrEmpty(delimiter))
-        {
-            writer.WriteElementString("Delimiter", Encode(delimiter, encodeUrl));
-        }
-        writer.WriteElementString("IsTruncated", isTruncated ? "true" : "false");
-        if (encodeUrl)
-        {
-            writer.WriteElementString("EncodingType", "url");
-        }
-        WriteContentsOptimized(writer, contents, encodeUrl);
-        WriteCommonPrefixes(writer, commonPrefixes, encodeUrl);
+            writer.WriteElementString("Name", bucket);
+            writer.WriteElementString("Prefix", Encode(prefix, encodeUrl));
+            writer.WriteElementString("Marker", Encode(marker, encodeUrl));
+            if (!string.IsNullOrEmpty(nextMarker))
+            {
+                writer.WriteElementString("NextMarker", Encode(nextMarker, encodeUrl));
+            }
+            WriteIntElement(writer, "MaxKeys", maxKeys);
+            if (!string.IsNullOrEmpty(delimiter))
+            {
+                writer.WriteElementString("Delimiter", Encode(delimiter, encodeUrl));
+            }
+            writer.WriteElementString("IsTruncated", isTruncated ? "true" : "false");
+            if (encodeUrl)
+            {
+                writer.WriteElementString("EncodingType", "url");
+            }
+            WriteContentsOptimized(writer, contents, encodeUrl);
+            WriteCommonPrefixes(writer, commonPrefixes, encodeUrl);
 
-        writer.WriteEndElement();
-        writer.WriteEndDocument();
-        await writer.FlushAsync().ConfigureAwait(false);
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        
+        buffer.Position = 0;
+        await buffer.CopyToAsync(output).ConfigureAwait(false);
     }
 
     /// <summary>
