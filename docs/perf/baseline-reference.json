@@ -2,6 +2,7 @@
   "comment": "Per-scenario regression thresholds for tests/Aws2Azure.PerfTests. Numbers reflect emulator-bound baselines captured on the project's reference dev hardware; see docs/perf/baseline-latest.md for the live observed snapshot. Operators bump these values manually when a deliberate change to the proxy raises or lowers expected throughput. minThroughputPerSec floors observed ops/s; maxP99Ms ceilings observed p99. Either field can be 0 to opt out of that half of the gate, but EVERY scenario must have an entry — KnownPerfScenariosTests asserts coverage so newly added scenarios force the operator to think about a threshold (use {0,0} to defer if needed).",
   "scenarios": {
     "s3.PutObject (4 KiB)":                                        { "minThroughputPerSec":  50.0, "maxP99Ms":  500.0 },
+    "s3.GetObject (64 KiB)":                                       { "minThroughputPerSec": 100.0, "maxP99Ms":  500.0 },
     "azure-sdk.Blob.UploadAsync (4 KiB)":                          { "minThroughputPerSec":  50.0, "maxP99Ms":  500.0 },
 
     "sqs.SendMessage (256 B)":                                     { "minThroughputPerSec":  50.0, "maxP99Ms":  500.0 },
@@ -13,9 +14,13 @@
     "azure-sdk.ServiceBusTopics.SendMessage (256 B)":              { "minThroughputPerSec":  30.0, "maxP99Ms":  800.0 },
 
     "dynamodb.PutItem (small)":                                    { "minThroughputPerSec":  80.0, "maxP99Ms":  400.0 },
+    "dynamodb.Query (pushable filter)":                            { "minThroughputPerSec": 200.0, "maxP99Ms":  150.0 },
+    "dynamodb.Scan (pushable filter)":                             { "minThroughputPerSec": 120.0, "maxP99Ms":  200.0 },
+    "dynamodb.BatchWriteItem (25 items)":                          { "minThroughputPerSec":   4.0, "maxP99Ms": 2500.0 },
     "azure-sdk.Cosmos.UpsertItem (small)":                         { "minThroughputPerSec":  80.0, "maxP99Ms":  400.0 },
 
     "kinesis.PutRecord (256 B)":                                   { "minThroughputPerSec":  60.0, "maxP99Ms":   50.0 },
+    "kinesis.PutRecords (25×256 B)":                               { "minThroughputPerSec":   5.0, "maxP99Ms":  500.0 },
     "azure-sdk.EventHubs.SendAsync (256 B, c=1)":                  { "minThroughputPerSec":  50.0, "maxP99Ms":   40.0 },
     "kinesis.GetRecords (256 B records)":                          { "minThroughputPerSec":   2.0, "maxP99Ms":  800.0 },
     "azure-sdk.EventHubs.ReceiveBatchAsync (256 B records)":       { "minThroughputPerSec":   2.0, "maxP99Ms":  800.0 }

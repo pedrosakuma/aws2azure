@@ -116,6 +116,23 @@ internal static class ObjectHandlers
         azureReq.Content.Headers.ContentLength = 0;
         azureReq.Headers.TryAddWithoutValidation("x-ms-copy-source", sourceUri.AbsoluteUri);
 
+        // Concrete-ETag copy-source preconditions: once the proxy
+        // translates Azure ETags on read responses, the client round-trips
+        // the translated value here and Azure cannot reverse it, so a valid
+        // CAS would incorrectly 412. Fail loud rather than risk wrong-side
+        // copies. The "*" sentinel is still forwarded below — Azure honors
+        // it with identical semantics to S3.
+        if (HasConcreteEtagPrecondition(context.Request, "x-amz-copy-source-if-match") ||
+            HasConcreteEtagPrecondition(context.Request, "x-amz-copy-source-if-none-match"))
+        {
+            await WriteErrorAsync(context,
+                new S3ErrorMapping.Mapping(StatusCodes.Status501NotImplemented,
+                    "NotImplemented",
+                    "aws2azure: CopyObject with a concrete-ETag x-amz-copy-source-if-match / x-amz-copy-source-if-none-match precondition is not supported (only '*' is honored). Proxy-translated S3 ETags do not round-trip back to Azure's raw ETag space."))
+                .ConfigureAwait(false);
+            return;
+        }
+
         // Source-conditional headers (S3 → Azure rename).
         ForwardSourceConditional(context.Request, azureReq, "x-amz-copy-source-if-match",            "x-ms-source-if-match");
         ForwardSourceConditional(context.Request, azureReq, "x-amz-copy-source-if-none-match",       "x-ms-source-if-none-match");
@@ -158,7 +175,11 @@ internal static class ObjectHandlers
         }
 
         var lastModified = azureResp.Content.Headers.LastModified ?? DateTimeOffset.UtcNow;
-        var etag = azureResp.Headers.ETag?.Tag;
+        // Capture the raw Azure ETag of the version we just wrote — used
+        // below as the If-Match guard on the destination HEAD so a racing
+        // overwrite cannot make us return another writer's ETag, and as
+        // a synthetic-fallback source if the HEAD itself fails.
+        var rawAzureEtag = azureResp.Headers.ETag?.Tag;
 
         // Azure's Copy Blob does not honour x-ms-blob-* property overrides
         // on the copy itself. For REPLACE we always issue a follow-up
@@ -177,9 +198,24 @@ internal static class ObjectHandlers
                 await WriteErrorAsync(context, mapping).ConfigureAwait(false);
                 return;
             }
-            if (propsETag is not null) etag = propsETag;
             if (propsLastModified is not null) lastModified = propsLastModified.Value;
+            if (!string.IsNullOrEmpty(propsETag)) rawAzureEtag = propsETag;
         }
+
+        // Issue a HEAD against the destination to obtain the authoritative
+        // ETag + Content-MD5 pair that future GET/HEAD calls will surface.
+        // CopyBlob and SetBlobProperties responses don't carry Content-MD5,
+        // so translating their raw ETag directly would diverge from HEAD's
+        // result (synthetic-from-etag vs real-MD5-hex). Guard the HEAD with
+        // If-Match against the raw ETag we just wrote so a concurrent
+        // overwrite/delete cannot make us return another writer's ETag —
+        // on 412/404/transient failure, fall back to translating the known
+        // raw ETag (deterministic synthetic) rather than returning null or
+        // a wrong-version ETag.
+        var etag = await GetDestinationS3EtagAsync(blob, destBucket, destKey, rawAzureEtag, ct).ConfigureAwait(false)
+                   ?? (rawAzureEtag is not null
+                       ? "\"" + HeaderForwarding.TranslateAzureEtagToS3(rawAzureEtag, contentMd5Base64: null) + "\""
+                       : null);
 
         var body = Xml.S3XmlWriter.CopyObjectResult(lastModified, etag);
 
@@ -276,6 +312,53 @@ internal static class ObjectHandlers
         return (null, resp.Headers.ETag?.Tag, resp.Content.Headers.LastModified);
     }
 
+    /// <summary>
+    /// HEADs the destination blob — optionally guarded by <c>If-Match</c>
+    /// against the raw Azure ETag we just wrote — to obtain the
+    /// authoritative pair of ETag + Content-MD5 and return the same
+    /// S3-shaped, quoted ETag HEAD/GET would emit. Returns <c>null</c>
+    /// when the HEAD fails for any reason (404, 412 race against a
+    /// concurrent overwrite, or transient error); callers are expected to
+    /// fall back to translating the raw ETag they already have.
+    /// </summary>
+    private static async Task<string?> GetDestinationS3EtagAsync(
+        BlobClient blob, string destBucket, string destKey, string? ifMatchRawEtag, CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Head, blob.BuildBlobUri(destBucket, destKey));
+        if (!string.IsNullOrEmpty(ifMatchRawEtag))
+        {
+            req.Headers.TryAddWithoutValidation("If-Match", ifMatchRawEtag);
+        }
+        using var resp = await blob.SendBlobRequestAsync(req, ct).ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode)
+        {
+            return null;
+        }
+        return TranslateResponseEtagForS3(resp);
+    }
+
+    /// <summary>
+    /// Returns a quoted, S3-shaped ETag for an Azure response — pairs the
+    /// raw Azure ETag with any Content-MD5 hint and delegates to
+    /// <see cref="HeaderForwarding.TranslateAzureEtagToS3"/>. Returns
+    /// <c>null</c> when the response has no ETag at all (caller decides
+    /// whether to fall back to a different value).
+    /// </summary>
+    private static string? TranslateResponseEtagForS3(HttpResponseMessage resp)
+    {
+        var raw = resp.Headers.ETag?.Tag;
+        if (string.IsNullOrEmpty(raw))
+        {
+            return null;
+        }
+        string? md5Base64 = null;
+        if (resp.Content?.Headers.ContentMD5 is { Length: 16 } md5Bytes)
+        {
+            md5Base64 = Convert.ToBase64String(md5Bytes);
+        }
+        return "\"" + HeaderForwarding.TranslateAzureEtagToS3(raw, md5Base64) + "\"";
+    }
+
     private static bool ForwardBlobProperty(HttpRequest source, HttpRequestMessage target, string s3Header, string azureHeader)
     {
         if (!source.Headers.TryGetValue(s3Header, out var values))
@@ -315,6 +398,25 @@ internal static class ObjectHandlers
             }
         }
 
+        // Concrete-ETag preconditions on writes (If-Match / If-None-Match
+        // with a value other than "*") would need a HEAD-then-PUT cycle to
+        // preserve atomicity once the proxy translates ETags. Until that
+        // is implemented, fail loudly instead of silently dropping the
+        // precondition and risking a stale-overwrite (optimistic-
+        // concurrency violation). The "*" sentinel is forwarded by
+        // HeaderForwarding.CopyToAzureRequest and honored by Azure with
+        // identical semantics to S3.
+        if (HasConcreteEtagPrecondition(context.Request, Microsoft.Net.Http.Headers.HeaderNames.IfMatch) ||
+            HasConcreteEtagPrecondition(context.Request, Microsoft.Net.Http.Headers.HeaderNames.IfNoneMatch))
+        {
+            await WriteErrorAsync(context,
+                new S3ErrorMapping.Mapping(StatusCodes.Status501NotImplemented,
+                    "NotImplemented",
+                    "aws2azure: PutObject with a concrete-ETag If-Match / If-None-Match precondition is not supported (only '*' is honored). Optimistic-concurrency support against Azure Blob requires a proxy-side HEAD-then-PUT cycle that is not yet implemented; rejecting to avoid silent stale-overwrites."))
+                .ConfigureAwait(false);
+            return;
+        }
+
         using var azureReq = new HttpRequestMessage(HttpMethod.Put, blob.BuildBlobUri(bucket, key))
         {
             Content = new StreamContent(context.Request.Body),
@@ -342,6 +444,9 @@ internal static class ObjectHandlers
         context.Response.ContentLength = 0;
     }
 
+    private static bool HasConcreteEtagPrecondition(HttpRequest request, string header)
+        => HeaderForwarding.HasConcreteEtagPrecondition(request, header);
+
     private static async Task GetAsync(HttpContext context, BlobClient blob, string bucket, string key, CancellationToken ct)
     {
         using var azureReq = new HttpRequestMessage(HttpMethod.Get, blob.BuildBlobUri(bucket, key));
@@ -363,6 +468,21 @@ internal static class ObjectHandlers
             return;
         }
 
+        // Proxy-side If-Match / If-None-Match evaluation against the
+        // translated ETag — Azure can't recognize the S3-shaped value the
+        // client received on a prior request (see HeaderForwarding).
+        var translatedEtag = context.Response.Headers[Microsoft.Net.Http.Headers.HeaderNames.ETag].ToString();
+        if (!string.IsNullOrEmpty(translatedEtag))
+        {
+            var shortCircuit = HeaderForwarding.EvaluateEtagConditionals(context.Request, translatedEtag, isReadOperation: true);
+            if (shortCircuit is { } status)
+            {
+                context.Response.StatusCode = status;
+                context.Response.ContentLength = null;
+                return;
+            }
+        }
+
         await using var azureStream = await azureResp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         await azureStream.CopyToAsync(context.Response.Body, ct).ConfigureAwait(false);
     }
@@ -373,14 +493,35 @@ internal static class ObjectHandlers
         HeaderForwarding.CopyToAzureRequest(context.Request, azureReq);
 
         using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
-        if (!azureResp.IsSuccessStatusCode)
+        if (!azureResp.IsSuccessStatusCode && azureResp.StatusCode != System.Net.HttpStatusCode.NotModified)
         {
             await EmitHeadErrorAsync(context, S3ErrorMapping.FromAzure(azureResp, S3Operation.HeadObject)).ConfigureAwait(false);
             return;
         }
 
+        if (azureResp.StatusCode == System.Net.HttpStatusCode.NotModified)
+        {
+            // Azure honored a forwarded If-None-Match: * (or any other
+            // conditional that mapped directly) and returned 304. Pass it
+            // through cleanly — do NOT route through the error path which
+            // would stamp an x-amz-error-code header.
+            context.Response.StatusCode = StatusCodes.Status304NotModified;
+            HeaderForwarding.CopyFromAzureResponse(azureResp, context.Response);
+            return;
+        }
+
         context.Response.StatusCode = StatusCodes.Status200OK;
         HeaderForwarding.CopyFromAzureResponse(azureResp, context.Response);
+
+        var translatedEtag = context.Response.Headers[Microsoft.Net.Http.Headers.HeaderNames.ETag].ToString();
+        if (!string.IsNullOrEmpty(translatedEtag))
+        {
+            var shortCircuit = HeaderForwarding.EvaluateEtagConditionals(context.Request, translatedEtag, isReadOperation: true);
+            if (shortCircuit is { } status)
+            {
+                context.Response.StatusCode = status;
+            }
+        }
         // HEAD must not emit a body even though Content-Length was set above.
     }
 

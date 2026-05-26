@@ -173,6 +173,46 @@ public class S3CopyObjectTests
             "REPLACE directive should evict the source metadata.");
     }
 
+    [SkippableFact]
+    public async Task CopyObject_with_concrete_copy_source_if_match_returns_501()
+    {
+        var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
+        await PutBucket(bucket);
+        await PutObject(bucket, "src.txt", Encoding.UTF8.GetBytes("hello"));
+
+        using var resp = await Copy(bucket, "src.txt", bucket, "dst.txt",
+            extraHeaders: new[] { ("x-amz-copy-source-if-match", "\"deadbeefdeadbeefdeadbeefdeadbeef\"") });
+        Assert.Equal(HttpStatusCode.NotImplemented, resp.StatusCode);
+        var xml = await resp.Content.ReadAsStringAsync();
+        Assert.Contains("NotImplemented", xml);
+
+        // The '*' sentinel must still work (Azure honors it).
+        using var ok = await Copy(bucket, "src.txt", bucket, "dst2.txt",
+            extraHeaders: new[] { ("x-amz-copy-source-if-match", "*") });
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+    }
+
+    [SkippableFact]
+    public async Task CopyObject_result_etag_matches_destination_head_etag()
+    {
+        var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
+        await PutBucket(bucket);
+        await PutObject(bucket, "src.txt", Encoding.UTF8.GetBytes("payload"));
+
+        string copyEtag;
+        using (var resp = await Copy(bucket, "src.txt", bucket, "dst.txt"))
+        {
+            Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+            var doc = XDocument.Parse(await resp.Content.ReadAsStringAsync());
+            copyEtag = doc.Root!.Element(S3Ns + "ETag")!.Value;
+        }
+
+        using var head = await SendAsync(HttpMethod.Head, $"/{bucket}/dst.txt", Array.Empty<byte>());
+        Assert.Equal(HttpStatusCode.OK, head.StatusCode);
+        var headEtag = head.Headers.ETag?.Tag ?? string.Empty;
+        Assert.Equal(copyEtag, headEtag);
+    }
+
     // ---- helpers ----
 
     private async Task PutBucket(string bucket)

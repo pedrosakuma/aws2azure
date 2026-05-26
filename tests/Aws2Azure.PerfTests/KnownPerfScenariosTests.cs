@@ -24,6 +24,7 @@ public sealed class KnownPerfScenariosTests
     {
         // S3
         "s3.PutObject (4 KiB)",
+        "s3.GetObject (64 KiB)",
         "azure-sdk.Blob.UploadAsync (4 KiB)",
 
         // SQS
@@ -38,10 +39,14 @@ public sealed class KnownPerfScenariosTests
 
         // DynamoDB
         "dynamodb.PutItem (small)",
+        "dynamodb.Query (pushable filter)",
+        "dynamodb.Scan (pushable filter)",
+        "dynamodb.BatchWriteItem (25 items)",
         "azure-sdk.Cosmos.UpsertItem (small)",
 
         // Kinesis
         "kinesis.PutRecord (256 B)",
+        "kinesis.PutRecords (25×256 B)",
         "azure-sdk.EventHubs.SendAsync (256 B, c=1)",
         "kinesis.GetRecords (256 B records)",
         "azure-sdk.EventHubs.ReceiveBatchAsync (256 B records)",

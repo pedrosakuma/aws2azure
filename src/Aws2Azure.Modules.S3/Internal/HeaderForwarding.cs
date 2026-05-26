@@ -17,6 +17,15 @@ namespace Aws2Azure.Modules.S3.Internal;
 internal static class HeaderForwarding
 {
     // S3 request → Azure PUT/GET/HEAD/DELETE request.
+    //
+    // If-Match / If-None-Match are NOT in this list — they carry ETags
+    // and the proxy translates Azure's opaque "0x..." ETag to an
+    // S3-shaped 32-char hex value (see CopyFromAzureResponse). Clients
+    // round-trip the translated value, which Azure can't recognize, so
+    // we evaluate these conditionals proxy-side via TryApplyEtagConditionals.
+    // The single exception is the "*" sentinel which is forwarded
+    // explicitly so write-once PUT semantics keep working (Azure
+    // honors If-None-Match: * with identical semantics to S3).
     private static readonly string[] StandardRequestHeaders =
     {
         HeaderNames.ContentType,
@@ -25,8 +34,6 @@ internal static class HeaderForwarding
         HeaderNames.ContentDisposition,
         HeaderNames.CacheControl,
         HeaderNames.ContentMD5,
-        HeaderNames.IfMatch,
-        HeaderNames.IfNoneMatch,
         HeaderNames.IfModifiedSince,
         HeaderNames.IfUnmodifiedSince,
         HeaderNames.Range,
@@ -92,6 +99,30 @@ internal static class HeaderForwarding
                 }
             }
         }
+
+        // Forward only the "*" sentinel for If-Match / If-None-Match — Azure
+        // honors it with identical semantics to S3 (write-once / replace-only).
+        // Concrete ETag values are stripped here and re-evaluated proxy-side
+        // against the translated ETag (see TryApplyEtagConditionals).
+        ForwardStarConditional(source, target, HeaderNames.IfMatch);
+        ForwardStarConditional(source, target, HeaderNames.IfNoneMatch);
+    }
+
+    private static void ForwardStarConditional(HttpRequest source, HttpRequestMessage target, string header)
+    {
+        if (!source.Headers.TryGetValue(header, out var values))
+        {
+            return;
+        }
+        foreach (var raw in values)
+        {
+            var v = (raw ?? string.Empty).Trim();
+            if (v == "*")
+            {
+                target.Headers.TryAddWithoutValidation(header, "*");
+                return;
+            }
+        }
     }
 
     /// <summary>
@@ -100,10 +131,29 @@ internal static class HeaderForwarding
     /// <c>x-amz-meta-*</c>. The Azure request id is exposed as the AWS
     /// extended request id for diagnostic continuity.
     /// </summary>
+    /// <remarks>
+    /// ETag translation: Azure returns ETags in opaque <c>"0x8DC..."</c>
+    /// form, which the AWS SDK then tries to hex-parse as an MD5 (because
+    /// classic S3 ETags ARE the object's lowercase hex MD5). That parse
+    /// throws <see cref="ArgumentOutOfRangeException"/> on every GET, so
+    /// we replace the ETag with an S3-shaped 32-char lowercase hex string:
+    /// either the hex form of the Azure <c>Content-MD5</c> (when present —
+    /// matches the real object MD5 byte-for-byte) or a deterministic MD5
+    /// derived from the Azure ETag bytes (stable across reads, but NOT
+    /// equal to the object MD5; matches the pattern already used by
+    /// multipart synthetic part ETags). Clients using strong-ETag
+    /// conditional requests (<c>If-Match</c> / <c>If-None-Match</c>) will
+    /// still round-trip through the proxy because both sides see the
+    /// translated value.
+    /// </remarks>
     public static void CopyFromAzureResponse(HttpResponseMessage source, HttpResponse target)
     {
         foreach (var header in StandardResponseHeaders)
         {
+            if (header == HeaderNames.ETag)
+            {
+                continue;
+            }
             if (TryGetHeader(source, header, out var values))
             {
                 target.Headers[header] = values;
@@ -122,13 +172,25 @@ internal static class HeaderForwarding
             }
         }
 
+        string? contentMd5Base64 = null;
         if (source.Content is { } content)
         {
             foreach (var header in StandardResponseHeaders)
             {
+                if (header == HeaderNames.ETag)
+                {
+                    continue;
+                }
                 if (content.Headers.TryGetValues(header, out var values))
                 {
                     target.Headers[header] = string.Join(",", values);
+                }
+            }
+            if (content.Headers.TryGetValues(HeaderNames.ContentMD5, out var md5))
+            {
+                foreach (var v in md5)
+                {
+                    if (!string.IsNullOrEmpty(v)) { contentMd5Base64 = v; break; }
                 }
             }
             // Content-Length lives on HttpContent.Headers only; preserve it so
@@ -139,6 +201,11 @@ internal static class HeaderForwarding
             }
         }
 
+        if (TryGetEtag(source, out var azureEtag))
+        {
+            target.Headers[HeaderNames.ETag] = "\"" + TranslateAzureEtagToS3(azureEtag, contentMd5Base64) + "\"";
+        }
+
         if (source.Headers.TryGetValues("x-ms-request-id", out var azureReqId))
         {
             foreach (var v in azureReqId)
@@ -147,6 +214,167 @@ internal static class HeaderForwarding
                 break;
             }
         }
+    }
+
+    private static bool TryGetEtag(HttpResponseMessage source, out string value)
+    {
+        if (source.Headers.TryGetValues(HeaderNames.ETag, out var hdr))
+        {
+            foreach (var v in hdr)
+            {
+                if (!string.IsNullOrEmpty(v)) { value = v; return true; }
+            }
+        }
+        if (source.Content is { } c && c.Headers.TryGetValues(HeaderNames.ETag, out var chdr))
+        {
+            foreach (var v in chdr)
+            {
+                if (!string.IsNullOrEmpty(v)) { value = v; return true; }
+            }
+        }
+        value = string.Empty;
+        return false;
+    }
+
+    /// <summary>
+    /// True when <paramref name="request"/> carries an <see cref="HeaderNames.IfMatch"/>
+    /// or <see cref="HeaderNames.IfNoneMatch"/>-shaped header (or one of S3's
+    /// <c>x-amz-copy-source-if-*-match</c> variants) whose value is anything
+    /// other than the empty string or the <c>*</c> sentinel. Used by write
+    /// paths and copy-source paths to reject concrete-ETag preconditions
+    /// that the proxy cannot honor — once the proxy translates Azure ETags
+    /// the client's round-tripped value no longer matches Azure's raw ETag,
+    /// so forwarding verbatim would silently violate optimistic concurrency.
+    /// </summary>
+    internal static bool HasConcreteEtagPrecondition(HttpRequest request, string header)
+    {
+        if (!request.Headers.TryGetValue(header, out var values))
+        {
+            return false;
+        }
+        foreach (var raw in values)
+        {
+            var v = (raw ?? string.Empty).Trim();
+            if (v.Length == 0 || v == "*")
+            {
+                continue;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Converts an Azure-style ETag (opaque, often <c>"0x..."</c>) into an
+    /// S3-shaped 32-char lowercase hex string. Prefers the real MD5 when
+    /// Azure surfaces <c>Content-MD5</c>; falls back to a deterministic
+    /// MD5 of the ETag bytes so the value is stable across reads.
+    /// </summary>
+    internal static string TranslateAzureEtagToS3(string azureEtag, string? contentMd5Base64)
+    {
+        if (!string.IsNullOrEmpty(contentMd5Base64))
+        {
+            try
+            {
+                var bytes = Convert.FromBase64String(contentMd5Base64);
+                if (bytes.Length == 16)
+                {
+                    return Convert.ToHexString(bytes).ToLowerInvariant();
+                }
+            }
+            catch (FormatException) { /* fall through to synthetic path */ }
+        }
+        // Strip surrounding quotes so the synthetic value is stable across
+        // whichever HttpClient layer happened to surface the header.
+        var trimmed = azureEtag.AsSpan().Trim().Trim('"');
+        var hash = System.Security.Cryptography.MD5.HashData(System.Text.Encoding.ASCII.GetBytes(trimmed.ToString()));
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Evaluates S3 <c>If-Match</c> / <c>If-None-Match</c> against the
+    /// proxy-translated ETag of an upstream Azure response. Returns the
+    /// short-circuit HTTP status code the client should see when a
+    /// precondition fires (<c>304 NotModified</c> for GET/HEAD when
+    /// <c>If-None-Match</c> matches, <c>412 PreconditionFailed</c> for
+    /// <c>If-Match</c> not matching), or <c>null</c> when the request
+    /// should proceed normally.
+    /// </summary>
+    /// <remarks>
+    /// Called after <c>CopyFromAzureResponse</c> has computed the
+    /// translated ETag so the comparison sees the same value the client
+    /// originally received. <c>If-None-Match: *</c> and
+    /// <c>If-Match: *</c> are pre-forwarded to Azure (see
+    /// <see cref="ForwardStarConditional"/>) and so never reach here for
+    /// a successful Azure response — Azure will already have returned
+    /// 304/412 in those cases.
+    /// </remarks>
+    public static int? EvaluateEtagConditionals(HttpRequest source, string translatedEtagWithQuotes, bool isReadOperation)
+    {
+        // If-None-Match: any ETag value matches → 304 (read) / 412 (write).
+        if (source.Headers.TryGetValue(HeaderNames.IfNoneMatch, out var noneValues))
+        {
+            foreach (var raw in noneValues)
+            {
+                if (EtagsMatch(raw, translatedEtagWithQuotes))
+                {
+                    return isReadOperation ? StatusCodes.Status304NotModified : StatusCodes.Status412PreconditionFailed;
+                }
+            }
+        }
+
+        // If-Match: must match the current ETag, otherwise 412.
+        if (source.Headers.TryGetValue(HeaderNames.IfMatch, out var matchValues))
+        {
+            var any = false;
+            foreach (var raw in matchValues)
+            {
+                var v = (raw ?? string.Empty).Trim();
+                if (v.Length == 0) continue;
+                any = true;
+                if (v == "*" || EtagsMatch(raw, translatedEtagWithQuotes))
+                {
+                    return null;
+                }
+            }
+            if (any)
+            {
+                return StatusCodes.Status412PreconditionFailed;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool EtagsMatch(string? clientHeaderValue, string translatedEtagWithQuotes)
+    {
+        if (string.IsNullOrWhiteSpace(clientHeaderValue))
+        {
+            return false;
+        }
+        var target = translatedEtagWithQuotes.AsSpan().Trim().Trim('"');
+        // Header may carry a comma-separated list of ETags per RFC 7232.
+        var span = clientHeaderValue.AsSpan();
+        while (true)
+        {
+            var comma = span.IndexOf(',');
+            var token = (comma < 0 ? span : span[..comma]).Trim();
+            // Strip optional weak-validator prefix "W/" — for synthetic
+            // MD5-derived S3 ETags we treat weak and strong as equivalent
+            // because there's no underlying byte-level distinction.
+            if (token.Length >= 2 && (token[0] == 'W' || token[0] == 'w') && token[1] == '/')
+            {
+                token = token[2..];
+            }
+            token = token.Trim().Trim('"');
+            if (token.SequenceEqual(target))
+            {
+                return true;
+            }
+            if (comma < 0) break;
+            span = span[(comma + 1)..];
+        }
+        return false;
     }
 
     private static bool IsContentHeader(string name) =>

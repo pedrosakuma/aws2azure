@@ -105,6 +105,33 @@ public class S3ObjectOpsTests
     }
 
     [SkippableFact]
+    public async Task Put_with_concrete_if_match_returns_501_not_implemented()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
+
+        var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
+        await PutBucket(bucket);
+
+        // Concrete-ETag preconditions on writes would need a HEAD-then-PUT
+        // cycle in the proxy to honor optimistic concurrency against Azure
+        // Blob (the proxy translates ETags, so the value the client sends
+        // back is no longer recognized by Azure). Until that's wired up
+        // we reject loudly instead of silently dropping the precondition.
+        using var resp = await SendAsync(HttpMethod.Put, $"/{bucket}/obj.txt",
+            Encoding.UTF8.GetBytes("x"),
+            extraHeaders: ("If-Match", "\"d41d8cd98f00b204e9800998ecf8427e\""));
+        Assert.Equal(HttpStatusCode.NotImplemented, resp.StatusCode);
+        var xml = await resp.Content.ReadAsStringAsync();
+        Assert.Contains("<Code>NotImplemented</Code>", xml);
+
+        // The "*" sentinel must still be honored — it maps 1:1 to Azure.
+        using var ok = await SendAsync(HttpMethod.Put, $"/{bucket}/obj-new.txt",
+            Encoding.UTF8.GetBytes("y"),
+            extraHeaders: ("If-None-Match", "*"));
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+    }
+
+    [SkippableFact]
     public async Task Object_tagging_delete_clears_tags_without_dropping_blob()
     {
         Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
