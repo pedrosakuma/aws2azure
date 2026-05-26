@@ -13,6 +13,7 @@ namespace Aws2Azure.Modules.S3.Xml;
 internal static class S3XmlWriter
 {
     private const string S3Namespace = "http://s3.amazonaws.com/doc/2006-03-01/";
+    private const string Iso8601Format = "yyyy-MM-ddTHH:mm:ss.fffZ";
 
     private static readonly XmlWriterSettings Settings = new()
     {
@@ -20,7 +21,57 @@ internal static class S3XmlWriter
         OmitXmlDeclaration = false,
         Encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
         CloseOutput = false,
+        Async = true,
     };
+
+    /// <summary>
+    /// Writes ISO 8601 formatted date directly to XmlWriter without string allocation.
+    /// Format: yyyy-MM-ddTHH:mm:ss.fffZ (24 chars)
+    /// Uses a thread-local buffer to avoid allocations.
+    /// </summary>
+    [ThreadStatic]
+    private static char[]? t_dateBuffer;
+
+    private static void WriteDateTimeElement(XmlWriter writer, string elementName, DateTime utc)
+    {
+        t_dateBuffer ??= new char[24];
+        utc.TryFormat(t_dateBuffer, out var written, Iso8601Format, CultureInfo.InvariantCulture);
+        writer.WriteStartElement(elementName);
+        writer.WriteChars(t_dateBuffer, 0, written);
+        writer.WriteEndElement();
+    }
+
+    /// <summary>
+    /// Writes integer element without string allocation.
+    /// Uses a thread-local buffer to avoid allocations.
+    /// </summary>
+    [ThreadStatic]
+    private static char[]? t_intBuffer;
+
+    private static void WriteIntElement(XmlWriter writer, string elementName, int value)
+    {
+        t_intBuffer ??= new char[11]; // max int32 digits + sign
+        value.TryFormat(t_intBuffer, out var written, default, CultureInfo.InvariantCulture);
+        writer.WriteStartElement(elementName);
+        writer.WriteChars(t_intBuffer, 0, written);
+        writer.WriteEndElement();
+    }
+
+    /// <summary>
+    /// Writes long element without string allocation.
+    /// Uses a thread-local buffer to avoid allocations.
+    /// </summary>
+    [ThreadStatic]
+    private static char[]? t_longBuffer;
+
+    private static void WriteLongElement(XmlWriter writer, string elementName, long value)
+    {
+        t_longBuffer ??= new char[20]; // max int64 digits + sign
+        value.TryFormat(t_longBuffer, out var written, default, CultureInfo.InvariantCulture);
+        writer.WriteStartElement(elementName);
+        writer.WriteChars(t_longBuffer, 0, written);
+        writer.WriteEndElement();
+    }
 
     public readonly record struct OwnerInfo(string Id, string DisplayName);
 
@@ -311,6 +362,66 @@ internal static class S3XmlWriter
     /// percent-encodes Key/Prefix/Delimiter/StartAfter when the client asked
     /// for <c>encoding-type=url</c>.
     /// </summary>
+    /// <remarks>
+    /// This overload writes directly to the output stream to avoid intermediate
+    /// StringBuilder/string allocations (~2MB per request for 500 keys).
+    /// </remarks>
+    public static async Task WriteListObjectsV2ResultAsync(
+        Stream output,
+        string bucket,
+        string? prefix,
+        string? delimiter,
+        int maxKeys,
+        int keyCount,
+        bool isTruncated,
+        string? continuationToken,
+        string? nextContinuationToken,
+        string? startAfter,
+        bool encodeUrl,
+        IReadOnlyList<ListedObject> contents,
+        IReadOnlyList<string> commonPrefixes)
+    {
+        await using var writer = XmlWriter.Create(output, Settings);
+        writer.WriteStartDocument();
+        writer.WriteStartElement("ListBucketResult", S3Namespace);
+
+        writer.WriteElementString("Name", bucket);
+        writer.WriteElementString("Prefix", Encode(prefix, encodeUrl));
+        if (!string.IsNullOrEmpty(startAfter))
+        {
+            writer.WriteElementString("StartAfter", Encode(startAfter, encodeUrl));
+        }
+        if (!string.IsNullOrEmpty(continuationToken))
+        {
+            writer.WriteElementString("ContinuationToken", continuationToken);
+        }
+        if (!string.IsNullOrEmpty(nextContinuationToken))
+        {
+            writer.WriteElementString("NextContinuationToken", nextContinuationToken);
+        }
+        WriteIntElement(writer, "KeyCount", keyCount);
+        WriteIntElement(writer, "MaxKeys", maxKeys);
+        if (!string.IsNullOrEmpty(delimiter))
+        {
+            writer.WriteElementString("Delimiter", Encode(delimiter, encodeUrl));
+        }
+        writer.WriteElementString("IsTruncated", isTruncated ? "true" : "false");
+        if (encodeUrl)
+        {
+            writer.WriteElementString("EncodingType", "url");
+        }
+        WriteContentsOptimized(writer, contents, encodeUrl);
+        WriteCommonPrefixes(writer, commonPrefixes, encodeUrl);
+
+        writer.WriteEndElement();
+        writer.WriteEndDocument();
+        await writer.FlushAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// S3 ListObjectsV2 response body. Same as WriteListObjectsV2ResultAsync but
+    /// returns a string for backwards compatibility.
+    /// </summary>
     public static string ListObjectsV2Result(
         string bucket,
         string? prefix,
@@ -345,8 +456,8 @@ internal static class S3XmlWriter
             {
                 writer.WriteElementString("NextContinuationToken", nextContinuationToken);
             }
-            writer.WriteElementString("KeyCount", keyCount.ToString(CultureInfo.InvariantCulture));
-            writer.WriteElementString("MaxKeys", maxKeys.ToString(CultureInfo.InvariantCulture));
+            WriteIntElement(writer, "KeyCount", keyCount);
+            WriteIntElement(writer, "MaxKeys", maxKeys);
             if (!string.IsNullOrEmpty(delimiter))
             {
                 writer.WriteElementString("Delimiter", Encode(delimiter, encodeUrl));
@@ -356,7 +467,7 @@ internal static class S3XmlWriter
             {
                 writer.WriteElementString("EncodingType", "url");
             }
-            WriteContents(writer, contents, encodeUrl);
+            WriteContentsOptimized(writer, contents, encodeUrl);
             WriteCommonPrefixes(writer, commonPrefixes, encodeUrl);
 
             writer.WriteEndElement();
@@ -369,6 +480,56 @@ internal static class S3XmlWriter
     /// S3 ListObjects (V1) response. V1 uses <c>Marker</c> + <c>NextMarker</c>
     /// instead of continuation tokens; NextMarker is only emitted when the
     /// listing is truncated AND a delimiter was supplied (matches S3 docs).
+    /// </summary>
+    /// <remarks>
+    /// This overload writes directly to the output stream to avoid intermediate
+    /// StringBuilder/string allocations.
+    /// </remarks>
+    public static async Task WriteListBucketResultAsync(
+        Stream output,
+        string bucket,
+        string? prefix,
+        string? delimiter,
+        int maxKeys,
+        bool isTruncated,
+        string? marker,
+        string? nextMarker,
+        bool encodeUrl,
+        IReadOnlyList<ListedObject> contents,
+        IReadOnlyList<string> commonPrefixes)
+    {
+        await using var writer = XmlWriter.Create(output, Settings);
+        writer.WriteStartDocument();
+        writer.WriteStartElement("ListBucketResult", S3Namespace);
+
+        writer.WriteElementString("Name", bucket);
+        writer.WriteElementString("Prefix", Encode(prefix, encodeUrl));
+        writer.WriteElementString("Marker", Encode(marker, encodeUrl));
+        if (!string.IsNullOrEmpty(nextMarker))
+        {
+            writer.WriteElementString("NextMarker", Encode(nextMarker, encodeUrl));
+        }
+        WriteIntElement(writer, "MaxKeys", maxKeys);
+        if (!string.IsNullOrEmpty(delimiter))
+        {
+            writer.WriteElementString("Delimiter", Encode(delimiter, encodeUrl));
+        }
+        writer.WriteElementString("IsTruncated", isTruncated ? "true" : "false");
+        if (encodeUrl)
+        {
+            writer.WriteElementString("EncodingType", "url");
+        }
+        WriteContentsOptimized(writer, contents, encodeUrl);
+        WriteCommonPrefixes(writer, commonPrefixes, encodeUrl);
+
+        writer.WriteEndElement();
+        writer.WriteEndDocument();
+        await writer.FlushAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// S3 ListObjects (V1) response. Same as WriteListBucketResultAsync but
+    /// returns a string for backwards compatibility.
     /// </summary>
     public static string ListBucketResult(
         string bucket,
@@ -395,7 +556,7 @@ internal static class S3XmlWriter
             {
                 writer.WriteElementString("NextMarker", Encode(nextMarker, encodeUrl));
             }
-            writer.WriteElementString("MaxKeys", maxKeys.ToString(CultureInfo.InvariantCulture));
+            WriteIntElement(writer, "MaxKeys", maxKeys);
             if (!string.IsNullOrEmpty(delimiter))
             {
                 writer.WriteElementString("Delimiter", Encode(delimiter, encodeUrl));
@@ -405,7 +566,7 @@ internal static class S3XmlWriter
             {
                 writer.WriteElementString("EncodingType", "url");
             }
-            WriteContents(writer, contents, encodeUrl);
+            WriteContentsOptimized(writer, contents, encodeUrl);
             WriteCommonPrefixes(writer, commonPrefixes, encodeUrl);
 
             writer.WriteEndElement();
@@ -414,20 +575,22 @@ internal static class S3XmlWriter
         return sb.ToString();
     }
 
-    private static void WriteContents(XmlWriter writer, IReadOnlyList<ListedObject> contents, bool encodeUrl)
+    /// <summary>
+    /// Writes Contents elements with zero-allocation DateTime and Size formatting.
+    /// </summary>
+    private static void WriteContentsOptimized(XmlWriter writer, IReadOnlyList<ListedObject> contents, bool encodeUrl)
     {
         foreach (var entry in contents)
         {
             writer.WriteStartElement("Contents");
             writer.WriteElementString("Key", Encode(entry.Key, encodeUrl));
-            writer.WriteElementString("LastModified",
-                entry.LastModified.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
+            WriteDateTimeElement(writer, "LastModified", entry.LastModified.UtcDateTime);
             var etag = NormalizeETag(entry.ETag);
             if (!string.IsNullOrEmpty(etag))
             {
                 writer.WriteElementString("ETag", etag);
             }
-            writer.WriteElementString("Size", entry.Size.ToString(CultureInfo.InvariantCulture));
+            WriteLongElement(writer, "Size", entry.Size);
             writer.WriteElementString("StorageClass", entry.StorageClass);
             writer.WriteEndElement();
         }
