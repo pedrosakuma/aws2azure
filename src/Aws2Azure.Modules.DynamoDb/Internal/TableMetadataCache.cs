@@ -26,9 +26,9 @@ internal sealed class TableMetadataCache
     /// Tries to get cached metadata for a table.
     /// Returns null if not cached or expired.
     /// </summary>
-    public TableMetadata? TryGet(string cosmosEndpoint, string tableName)
+    public TableMetadata? TryGet(string cosmosEndpoint, string databaseName, string tableName)
     {
-        var key = BuildKey(cosmosEndpoint, tableName);
+        var key = BuildKey(cosmosEndpoint, databaseName, tableName);
         if (_cache.TryGetValue(key, out var entry))
         {
             if (DateTime.UtcNow - entry.CachedAt < _ttl)
@@ -44,23 +44,35 @@ internal sealed class TableMetadataCache
     }
 
     /// <summary>
-    /// Caches metadata for a table.
+    /// Caches metadata for a table. Only sets if generation matches current
+    /// (prevents stale reads from overwriting after invalidation).
     /// </summary>
-    public void Set(string cosmosEndpoint, string tableName, TableMetadata metadata)
+    public void Set(string cosmosEndpoint, string databaseName, string tableName, TableMetadata metadata, long generation)
     {
-        var key = BuildKey(cosmosEndpoint, tableName);
-        _cache[key] = new CacheEntry(metadata, DateTime.UtcNow);
+        var key = BuildKey(cosmosEndpoint, databaseName, tableName);
+        var entry = new CacheEntry(metadata, DateTime.UtcNow, generation);
+        
+        // Only set if generation matches current (CAS to prevent race with invalidation)
+        _cache.AddOrUpdate(key, entry, (_, existing) =>
+            existing.Generation <= generation ? entry : existing);
     }
 
     /// <summary>
-    /// Invalidates cached metadata for a specific table.
-    /// Called on CreateTable, DeleteTable, UpdateTable.
+    /// Invalidates cached metadata for a specific table by bumping generation.
+    /// Called on DeleteTable, UpdateTable.
     /// </summary>
-    public void Invalidate(string cosmosEndpoint, string tableName)
+    public void Invalidate(string cosmosEndpoint, string databaseName, string tableName)
     {
-        var key = BuildKey(cosmosEndpoint, tableName);
+        var key = BuildKey(cosmosEndpoint, databaseName, tableName);
+        // Bump global generation to invalidate any in-flight reads
+        Interlocked.Increment(ref _generation);
         _cache.TryRemove(key, out _);
     }
+
+    /// <summary>
+    /// Gets current generation for use in Set() call.
+    /// </summary>
+    public long GetGeneration() => Interlocked.Read(ref _generation);
 
     /// <summary>
     /// Clears all cached entries. Useful for testing.
@@ -73,11 +85,12 @@ internal sealed class TableMetadataCache
     public (long hits, long misses, int count) GetStats()
         => (Interlocked.Read(ref _hits), Interlocked.Read(ref _misses), _cache.Count);
 
-    private static string BuildKey(string endpoint, string tableName)
-        => string.Concat(endpoint, ":", tableName);
+    private static string BuildKey(string endpoint, string databaseName, string tableName)
+        => string.Concat(endpoint, ":", databaseName, ":", tableName);
 
     private long _hits;
     private long _misses;
+    private long _generation;
 
-    private readonly record struct CacheEntry(TableMetadata Metadata, DateTime CachedAt);
+    private readonly record struct CacheEntry(TableMetadata Metadata, DateTime CachedAt, long Generation);
 }

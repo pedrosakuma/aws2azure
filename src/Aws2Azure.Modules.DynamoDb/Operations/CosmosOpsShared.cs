@@ -74,12 +74,15 @@ internal static class CosmosOpsShared
     public static async Task<TableMetadataReadResult> TryReadTableMetadataAsync(
         CosmosClient cosmos, string tableName, CancellationToken ct)
     {
-        // Check cache first
-        var cached = MetadataCache.TryGet(cosmos.AccountEndpoint, tableName);
+        // Check cache first (includes DatabaseName in key to handle multi-database setups)
+        var cached = MetadataCache.TryGet(cosmos.AccountEndpoint, cosmos.DatabaseName, tableName);
         if (cached is not null)
         {
             return new TableMetadataReadResult { Status = TableMetadataReadStatus.Found, Metadata = cached };
         }
+
+        // Capture generation before read to prevent stale writes after invalidation
+        var generation = MetadataCache.GetGeneration();
 
         var docLink = "dbs/" + cosmos.DatabaseName + "/colls/" + tableName + "/docs/" + TableMetadata.DocId;
         var pkHeader = BuildPartitionKeyHeader(TableMetadata.DocId);
@@ -106,8 +109,8 @@ internal static class CosmosOpsShared
             resp.Dispose();
             if (meta is null) return new TableMetadataReadResult { Status = TableMetadataReadStatus.NotFound };
             
-            // Cache the result
-            MetadataCache.Set(cosmos.AccountEndpoint, tableName, meta);
+            // Cache the result (only if generation hasn't changed due to invalidation)
+            MetadataCache.Set(cosmos.AccountEndpoint, cosmos.DatabaseName, tableName, meta, generation);
             
             return new TableMetadataReadResult { Status = TableMetadataReadStatus.Found, Metadata = meta };
         }

@@ -220,7 +220,7 @@ internal static class TableLifecycleHandlers
         }
 
         // Invalidate metadata cache after successful deletion
-        CosmosOpsShared.MetadataCache.Invalidate(cosmos.AccountEndpoint, req.TableName!);
+        CosmosOpsShared.MetadataCache.Invalidate(cosmos.AccountEndpoint, cosmos.DatabaseName, req.TableName!);
 
         var description = meta is not null
             ? BuildTableDescription(meta, status: "DELETING")
