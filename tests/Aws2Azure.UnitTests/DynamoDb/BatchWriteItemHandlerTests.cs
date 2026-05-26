@@ -32,8 +32,15 @@ namespace Aws2Azure.UnitTests.DynamoDb;
 ///   both) is rejected.</item>
 /// </list>
 /// </summary>
+[Collection(DynamoDbTestCollection.Name)]
 public class BatchWriteItemHandlerTests
 {
+    public BatchWriteItemHandlerTests()
+    {
+        // Clear metadata cache at test start to ensure isolation
+        CosmosOpsShared.MetadataCache.Clear();
+    }
+
     private static readonly string MetaHashOnly =
         "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
         + "\"tableName\":\"orders\","

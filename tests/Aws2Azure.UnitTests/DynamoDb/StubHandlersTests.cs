@@ -19,8 +19,15 @@ namespace Aws2Azure.UnitTests.DynamoDb;
 /// don't break — not to assert real Azure behaviour, which the gap docs
 /// explicitly mark as unsupported.
 /// </summary>
+[Collection(DynamoDbTestCollection.Name)]
 public class StubHandlersTests
 {
+    public StubHandlersTests()
+    {
+        // Clear metadata cache at test start to ensure isolation
+        CosmosOpsShared.MetadataCache.Clear();
+    }
+
     private static CosmosClient BuildClient()
     {
         var http = new AzureHttpClient(new HttpClientHandler(), ownsHandler: true,

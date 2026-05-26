@@ -27,8 +27,15 @@ namespace Aws2Azure.UnitTests.DynamoDb;
 ///   <item>ProjectionExpression respected.</item>
 /// </list>
 /// </summary>
+[Collection(DynamoDbTestCollection.Name)]
 public class TransactGetItemsHandlerTests
 {
+    public TransactGetItemsHandlerTests()
+    {
+        // Clear metadata cache at test start to ensure isolation
+        CosmosOpsShared.MetadataCache.Clear();
+    }
+
     private static readonly string MetaHashOnly =
         "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
         + "\"tableName\":\"orders\","

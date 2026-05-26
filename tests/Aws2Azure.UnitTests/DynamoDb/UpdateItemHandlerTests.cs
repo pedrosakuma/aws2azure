@@ -23,8 +23,15 @@ namespace Aws2Azure.UnitTests.DynamoDb;
 /// retry loop under 412, and the rejection of conditional-write
 /// fields that are deferred to a later slice.
 /// </summary>
+[Collection(DynamoDbTestCollection.Name)]
 public class UpdateItemHandlerTests
 {
+    public UpdateItemHandlerTests()
+    {
+        // Clear metadata cache at test start to ensure isolation
+        CosmosOpsShared.MetadataCache.Clear();
+    }
+
     private const string Table = "orders";
 
     private static readonly string MetadataDocHashOnly =

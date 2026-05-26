@@ -24,8 +24,15 @@ namespace Aws2Azure.UnitTests.DynamoDb;
 /// preserve-original-wire-form contract that lets reads round-trip
 /// without type erosion.
 /// </summary>
+[Collection(DynamoDbTestCollection.Name)]
 public class ItemHandlersTests
 {
+    public ItemHandlersTests()
+    {
+        // Clear metadata cache at test start to ensure isolation
+        CosmosOpsShared.MetadataCache.Clear();
+    }
+
     private const string TableName = "orders";
 
     private static readonly string MetadataDoc =
