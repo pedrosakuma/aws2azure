@@ -82,6 +82,7 @@ public sealed class KinesisReceivePerfTests(KinesisPerfFixture fixture)
 
         PerfReport.Append(result, notes: $"Kinesis←EventHubs(AMQP) emulator — GetRecords drain (limit=100, shard={shardId}); calls/s metric");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
     }
 
     private static async Task PrefillAsync(

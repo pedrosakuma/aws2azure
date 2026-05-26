@@ -30,5 +30,6 @@ public sealed class SnsPerfTests(SnsPerfFixture fixture)
 
         PerfReport.Append(result, notes: "SNS→ServiceBusTopics(AMQP) emulator");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
     }
 }

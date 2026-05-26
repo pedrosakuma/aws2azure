@@ -1,6 +1,6 @@
 # aws2azure — perf baseline
 
-Generated: 2026-05-25T16:39:58.8125114Z
+Generated: 2026-05-26T00:45:17.1479737Z
 
 Closed-loop concurrent driver — AWS SDK clients pointing at the proxy
 (`Aws2Azure.Proxy`) which fronts local emulators (Azurite, Service Bus,
@@ -13,4 +13,4 @@ overhead, not real-Azure throughput.**
 | kinesis.GetRecords (256 B records) |   1 |   30.0 |       91 |       0 |          3.0 |     502.8 |     506.2 |     512.1 |     512.1 | Kinesis←EventHubs(AMQP) emulator — GetRecords drain (limit=100, shard=shardId-000000000001); calls/s metric |
 | azure-sdk.EventHubs.ReceiveBatchAsync (256 B records) |   1 |   30.0 |      111 |       0 |          3.7 |     497.7 |     504.7 |     505.8 |     506.3 | Azure SDK baseline — direct PartitionReceiver.ReceiveBatchAsync against EH emulator (no proxy); records=3400, dataCalls=53, emptyCalls=58; calls/s metric |
 | azure-sdk.EventHubs.SendAsync (256 B, c=1) |   1 |   60.0 |     4463 |       0 |         74.4 |       5.4 |       9.3 |      14.1 |   12908.4 | Azure SDK baseline — direct EventHubProducerClient against EH emulator (no proxy) |
-| dynamodb.PutItem (small)         |  16 |   20.0 |     2450 |       0 |        122.4 |     121.8 |     169.5 |     286.0 |     448.1 | DynamoDB→Cosmos (REST) emulator |
+| dynamodb.PutItem (small)         |  16 |   20.0 |     2727 |       0 |        136.3 |     107.2 |     146.9 |     301.4 |     745.7 | DynamoDB→Cosmos (REST) emulator |

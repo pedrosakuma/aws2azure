@@ -57,6 +57,7 @@ public sealed class SqsReceivePerfTests(SqsPerfFixture fixture)
 
         PerfReport.Append(result, notes: "SQS→ServiceBus(AMQP) emulator — receive+delete; empty receives count as no-op calls");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
     }
 
     private static async Task PrefillAsync(IAmazonSQS client, string queueUrl, int total)

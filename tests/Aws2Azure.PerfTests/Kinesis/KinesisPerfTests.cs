@@ -99,6 +99,7 @@ public sealed class KinesisPerfTests(KinesisPerfFixture fixture)
             await File.WriteAllTextAsync(dumpPath, fixture.ProxyOutput).ConfigureAwait(false);
         }
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
     }
 }
 

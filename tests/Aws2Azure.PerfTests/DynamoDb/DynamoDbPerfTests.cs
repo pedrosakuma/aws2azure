@@ -165,5 +165,6 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
 
         PerfReport.Append(result, notes: "DynamoDB→Cosmos (REST) emulator");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
     }
 }

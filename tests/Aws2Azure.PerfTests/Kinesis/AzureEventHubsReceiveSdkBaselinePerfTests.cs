@@ -100,5 +100,6 @@ public sealed class AzureEventHubsReceiveSdkBaselinePerfTests(KinesisPerfFixture
             + $"records={records}, dataCalls={dataCalls}, emptyCalls={emptyCalls}; calls/s metric";
         PerfReport.Append(result, notes: notes);
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
     }
 }

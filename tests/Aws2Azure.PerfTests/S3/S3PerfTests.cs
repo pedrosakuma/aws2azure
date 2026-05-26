@@ -34,5 +34,6 @@ public sealed class S3PerfTests(S3PerfFixture fixture)
 
         PerfReport.Append(result, notes: "S3→Azurite (blob REST)");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
     }
 }

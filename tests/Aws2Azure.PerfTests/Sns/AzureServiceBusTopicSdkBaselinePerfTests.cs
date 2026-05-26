@@ -34,5 +34,6 @@ public sealed class AzureServiceBusTopicSdkBaselinePerfTests(SnsPerfFixture fixt
 
         PerfReport.Append(result, notes: "Azure SDK baseline — direct ServiceBusSender against SB emulator topic (no proxy)");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
     }
 }

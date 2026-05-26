@@ -58,5 +58,6 @@ public sealed class AzureCosmosSdkBaselinePerfTests(DynamoDbPerfFixture fixture)
 
         PerfReport.Append(result, notes: "Azure SDK baseline — direct CosmosClient.UpsertItemAsync against Cosmos emulator (no proxy)");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
     }
 }
