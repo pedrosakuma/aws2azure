@@ -5,6 +5,7 @@ using Aws2Azure.Core;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
+using Aws2Azure.Core.Observability;
 using Aws2Azure.Core.SigV4;
 using Aws2Azure.Modules.S3;
 using Aws2Azure.Modules.Sqs;
@@ -57,6 +58,11 @@ builder.Services.AddSingleton<ICredentialResolver>(credentialResolver);
 
 var sigV4Validator = new SigV4Validator(credentialResolver);
 builder.Services.AddSingleton(sigV4Validator);
+
+// Observability: ProxyMetrics collects counters/histograms, PrometheusExporter
+// exposes them in Prometheus text format at /_aws2azure/metrics.
+builder.Services.AddSingleton<ProxyMetrics>();
+builder.Services.AddSingleton<PrometheusExporter>();
 
 // Single shared Azure HTTP client per process — pooled SocketsHttpHandler
 // inside. Disposed on host shutdown via the DI container.
@@ -191,12 +197,13 @@ builder.Services.AddSingleton<ServiceModuleRegistry>(sp =>
             sp.GetRequiredService<ILogger<SnsServiceModule>>(),
             CapabilityRegistry.Sns),
     ];
-    return new ServiceModuleRegistry(modules, sigV4Validator);
+    return new ServiceModuleRegistry(modules, sigV4Validator, sp.GetRequiredService<ProxyMetrics>());
 });
 
 var app = builder.Build();
 
 var registry = app.Services.GetRequiredService<ServiceModuleRegistry>();
+var prometheusExporter = app.Services.GetRequiredService<PrometheusExporter>();
 var startupLogger = app.Services.GetRequiredService<ILoggerFactory>()
     .CreateLogger("Aws2Azure.Proxy");
 ProxyLog.HostStarting(startupLogger, registry.Modules.Count, proxyConfig.Credentials.Count);
@@ -208,6 +215,13 @@ app.MapGet("/_aws2azure/modules", (ServiceModuleRegistry registry) =>
 
 app.MapGet("/_aws2azure/capabilities", (ServiceModuleRegistry registry) =>
     Results.Ok(registry.Modules.Select(m => m.Capabilities).ToArray()));
+
+// Prometheus metrics endpoint
+app.MapGet("/_aws2azure/metrics", (PrometheusExporter exporter) =>
+{
+    var content = exporter.Export();
+    return Results.Text(content, "text/plain; version=0.0.4; charset=utf-8");
+});
 
 // Catch-all dispatcher: every other request is routed by Host header.
 app.Map("/{**catchAll}", (HttpContext ctx, ServiceModuleRegistry registry) =>
