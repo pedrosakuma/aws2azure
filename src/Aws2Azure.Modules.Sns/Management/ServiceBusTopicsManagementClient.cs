@@ -7,6 +7,7 @@ using System.Text;
 using System.Xml;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
+using Aws2Azure.Core.Observability;
 using Microsoft.Extensions.Logging;
 
 namespace Aws2Azure.Modules.Sns.Management;
@@ -139,7 +140,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
 
-        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
+        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
             .ConfigureAwait(false);
         if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created or HttpStatusCode.Conflict)
         {
@@ -176,7 +177,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         using var request = new HttpRequestMessage(HttpMethod.Delete, requestUri);
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
 
-        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
+        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
             .ConfigureAwait(false);
         if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.NoContent or HttpStatusCode.NotFound)
         {
@@ -207,7 +208,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
 
-        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
+        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
             .ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
@@ -238,7 +239,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
 
-        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
+        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
             .ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
@@ -289,7 +290,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
 
-        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
+        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
             .ConfigureAwait(false);
         var respBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created)
@@ -326,7 +327,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         using var request = new HttpRequestMessage(HttpMethod.Delete, requestUri);
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
 
-        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
+        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
             .ConfigureAwait(false);
         if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.NoContent or HttpStatusCode.NotFound)
         {
@@ -359,7 +360,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
 
-        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
+        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
             .ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
@@ -392,7 +393,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
 
-        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
+        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
             .ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
@@ -443,7 +444,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
 
-        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
+        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
             .ConfigureAwait(false);
         if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created)
         {

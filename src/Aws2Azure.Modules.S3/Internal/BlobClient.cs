@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.RegularExpressions;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
+using Aws2Azure.Core.Observability;
 
 namespace Aws2Azure.Modules.S3.Internal;
 
@@ -245,7 +246,8 @@ internal sealed partial class BlobClient
             DateTimeOffset.UtcNow.ToString("R", CultureInfo.InvariantCulture));
         request.Headers.TryAddWithoutValidation("x-ms-version", "2021-12-02");
         await _auth.AuthenticateAsync(request, cancellationToken).ConfigureAwait(false);
-        return await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+        return await BackendTimingContext.TimeAsync(
+            () => _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken))
             .ConfigureAwait(false);
     }
 
@@ -371,7 +373,8 @@ internal sealed partial class BlobClient
             DateTimeOffset.UtcNow.ToString("R", CultureInfo.InvariantCulture));
         request.Headers.TryAddWithoutValidation("x-ms-version", "2021-12-02");
         await _auth.AuthenticateAsync(request, cancellationToken).ConfigureAwait(false);
-        return await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+        return await BackendTimingContext.TimeAsync(
+            () => _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken))
             .ConfigureAwait(false);
     }
 

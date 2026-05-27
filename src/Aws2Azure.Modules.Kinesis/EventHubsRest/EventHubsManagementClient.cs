@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Xml;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
+using Aws2Azure.Core.Observability;
 using Microsoft.Extensions.Logging;
 
 namespace Aws2Azure.Modules.Kinesis.EventHubsRest;
@@ -68,7 +69,7 @@ public sealed class EventHubsManagementClient : IEventHubsManagementClient
         request.Headers.TryAddWithoutValidation("Content-Type", "application/atom+xml;type=entry;charset=utf-8");
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
 
-        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken))
             .ConfigureAwait(false);
 
         if (!response.IsSuccessStatusCode)

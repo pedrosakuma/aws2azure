@@ -1,6 +1,6 @@
 # aws2azure — perf baseline
 
-Generated: 2026-05-26T20:46:53.4444808Z
+Generated: 2026-05-27T14:00:18.7420648Z
 
 Closed-loop concurrent driver — AWS SDK clients pointing at the proxy
 (`Aws2Azure.Proxy`) which fronts local emulators (Azurite, Service Bus,
@@ -17,8 +17,10 @@ overhead, not real-Azure throughput.**
 | dynamodb.Scan (pushable filter)  |   4 |   20.0 |     4895 |       0 |        244.5 |      15.3 |      24.0 |      32.5 |      63.5 | DynamoDB→Cosmos Scan — FilterPushdownVisitor (BETWEEN on score, Limit=100) |
 | dynamodb.BatchWriteItem (25 items) |   8 |   20.0 |      121 |       0 |          6.0 |    1226.8 |    1868.1 |    1889.6 |    1928.4 | DynamoDB→Cosmos BatchWriteItem — 25 PutRequest/call |
 | dynamodb.Query (pushable filter) |   8 |   20.0 |     7223 |       0 |        361.1 |      21.6 |      26.1 |      30.3 |      61.6 | DynamoDB→Cosmos Query — FilterPushdownVisitor (pushable eq on bucket) |
-| s3.GetObject (64 KiB)            |  16 |  120.0 |    75671 |       0 |        630.6 |      24.2 |      35.7 |      44.8 |     106.5 | S3→Azurite GetObject — 64 KiB random reads |
+| s3.GetObject (64 KiB)            |  16 |   20.0 |    12631 |       0 |        631.3 |      23.6 |      37.7 |      51.2 |      97.5 | S3→Azurite GetObject — 64 KiB random reads |
 | kinesis.PutRecords (25×256 B)    |   1 |   30.0 |      192 |       0 |          6.4 |     148.8 |     209.1 |     231.6 |     436.2 | Kinesis→EventHubs(AMQP) emulator — PutRecords (25 records/call) |
-| s3.ListObjectsV2 (500 keys)      |  16 |  120.0 |     3885 |       0 |         32.4 |     460.3 |     900.2 |     977.2 |    3944.6 | S3→Azurite ListObjectsV2 — 500 keys under a prefix |
+| s3.ListObjectsV2 (500 keys)      |  16 |   20.0 |      615 |       0 |         30.7 |     474.9 |     938.9 |    1995.1 |    4435.5 | S3→Azurite ListObjectsV2 — 500 keys under a prefix |
 | sqs.SendMessage (256 B)          |  16 |  120.0 |    12889 |     191 |        107.4 |      16.0 |      28.5 |    1777.6 |    6261.2 | SQS→ServiceBus(AMQP) emulator |
 | sns.Publish (256 B)              |  16 |  120.0 |    12821 |     215 |        106.8 |      21.5 |      36.6 |     281.1 |    4633.1 | SNS→ServiceBusTopics(AMQP) emulator |
+| s3.PutObject (4 KiB)             |  16 |   20.0 |     5464 |       0 |        273.1 |      54.9 |      83.6 |     134.3 |     326.1 | S3→Azurite (blob REST) |
+| azure-sdk.Blob.UploadAsync (4 KiB) |  16 |   20.0 |     4073 |       0 |        203.6 |      73.3 |     115.5 |     213.8 |     292.8 | Azure SDK baseline — direct BlobClient.UploadAsync against Azurite (no proxy) |

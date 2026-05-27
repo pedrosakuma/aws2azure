@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Aws2Azure.Amqp.ServiceBus;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
+using Aws2Azure.Core.Observability;
 
 namespace Aws2Azure.Modules.Sqs.Internal;
 
@@ -105,7 +106,9 @@ internal sealed class ServiceBusClient
     {
         ArgumentNullException.ThrowIfNull(request);
         await _auth.AuthenticateAsync(request, ct).ConfigureAwait(false);
-        return await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        return await BackendTimingContext.TimeAsync(
+            () => _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct))
+            .ConfigureAwait(false);
     }
 
     // --- Management API helpers (Slice 1 queue lifecycle) ---
