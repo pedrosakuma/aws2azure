@@ -26,6 +26,7 @@ namespace Aws2Azure.UnitTests.Sqs;
 ///     behind a real <see cref="ServiceBusAmqpSender"/> so the full
 ///     handler → sender → broker → disposition path is exercised.
 /// </summary>
+[Collection(SqsAmqpTestCollection.Name)]
 public sealed class AmqpSendMessageHandlersTests
 {
     private const string QueueName = "amqp-q";
