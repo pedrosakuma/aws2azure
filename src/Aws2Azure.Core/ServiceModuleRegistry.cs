@@ -1,8 +1,10 @@
 using System;
 using System.Buffers;
+using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
 using Aws2Azure.Core.Modules;
+using Aws2Azure.Core.Observability;
 using Aws2Azure.Core.SigV4;
 using Microsoft.AspNetCore.Http;
 
@@ -16,11 +18,13 @@ public sealed class ServiceModuleRegistry
 {
     private readonly IServiceModule[] _modules;
     private readonly SigV4Validator? _sigV4;
+    private readonly ProxyMetrics? _metrics;
 
-    public ServiceModuleRegistry(IServiceModule[] modules, SigV4Validator? sigV4Validator = null)
+    public ServiceModuleRegistry(IServiceModule[] modules, SigV4Validator? sigV4Validator = null, ProxyMetrics? metrics = null)
     {
         _modules = modules;
         _sigV4 = sigV4Validator;
+        _metrics = metrics;
     }
 
     public IReadOnlyList<IServiceModule> Modules => _modules;
@@ -50,6 +54,14 @@ public sealed class ServiceModuleRegistry
             return;
         }
 
+        // Extract operation name for metrics (service-specific header extraction)
+        var operation = ExtractOperation(context, module);
+        var requestSize = context.Request.ContentLength ?? 0;
+        
+        // Start metrics context
+        var metricsCtx = _metrics?.StartRequest(module.ServiceName, operation, requestSize);
+        var translationStart = Stopwatch.GetTimestamp();
+
         if (module.RequiresSigV4)
         {
             if (_sigV4 is null)
@@ -58,6 +70,7 @@ public sealed class ServiceModuleRegistry
                     StatusCodes.Status500InternalServerError,
                     code: "InternalError",
                     message: "SigV4 validator is not configured but module requires SigV4.");
+                RecordEndMetrics(metricsCtx, context.Response.StatusCode, 0, translationStart, null);
                 return;
             }
 
@@ -79,6 +92,7 @@ public sealed class ServiceModuleRegistry
                         StatusCodes.Status413PayloadTooLarge,
                         code: "RequestEntityTooLarge",
                         message: $"Request body exceeds the per-module buffering limit of {MaxBufferedBodyBytes} bytes.");
+                    RecordEndMetrics(metricsCtx, context.Response.StatusCode, 0, translationStart, null);
                     return;
                 }
                 bufferedHash = bufferResult.PayloadHash;
@@ -90,6 +104,7 @@ public sealed class ServiceModuleRegistry
             if (!result.IsValid)
             {
                 await EmitAuthError(context, module, result);
+                RecordEndMetrics(metricsCtx, context.Response.StatusCode, 0, translationStart, null);
                 return;
             }
 
@@ -119,6 +134,7 @@ public sealed class ServiceModuleRegistry
                             StatusCodes.Status403Forbidden,
                             code: "SignatureDoesNotMatch",
                             message: $"Required header '{name}' must be included in SignedHeaders.");
+                        RecordEndMetrics(metricsCtx, context.Response.StatusCode, 0, translationStart, null);
                         return;
                     }
                 }
@@ -128,7 +144,27 @@ public sealed class ServiceModuleRegistry
             context.Items["aws2azure.accessKeyId"] = result.AccessKeyId;
         }
 
-        await module.HandleAsync(context);
+        // Mark end of translation phase, start of backend
+        var translationTime = Stopwatch.GetElapsedTime(translationStart);
+        var backendStart = Stopwatch.GetTimestamp();
+
+        try
+        {
+            await module.HandleAsync(context);
+        }
+        catch
+        {
+            // Record error metric on unhandled exception before rethrowing
+            var backendTimeOnError = Stopwatch.GetElapsedTime(backendStart);
+            RecordEndMetrics(metricsCtx, 500, 0, translationStart, translationTime, backendTimeOnError);
+            throw;
+        }
+        
+        // Record backend time and complete metrics
+        var backendTime = Stopwatch.GetElapsedTime(backendStart);
+        var responseSize = context.Response.ContentLength ?? 0;
+        RecordEndMetrics(metricsCtx, context.Response.StatusCode, responseSize, translationStart, 
+            translationTime, backendTime);
     }
 
     /// <summary>
@@ -235,5 +271,88 @@ public sealed class ServiceModuleRegistry
         };
 
         return module.EmitAuthErrorAsync(context, status, code, result.Reason ?? code);
+    }
+    
+    /// <summary>
+    /// Extracts the operation name for metrics. Service-specific: DynamoDB/Kinesis
+    /// use X-Amz-Target, S3 uses HTTP method + path pattern, SQS uses Action query.
+    /// Returns bounded values to prevent unbounded cardinality from unauthenticated requests.
+    /// </summary>
+    private static string ExtractOperation(HttpContext context, IServiceModule module)
+    {
+        string? candidate = null;
+        
+        // AWS-JSON services (DynamoDB, Kinesis) use X-Amz-Target header
+        if (context.Request.Headers.TryGetValue("X-Amz-Target", out var target) 
+            && target.Count > 0 && !string.IsNullOrEmpty(target[0]))
+        {
+            // Format: "DynamoDB_20120810.GetItem" → "GetItem"
+            var parts = target[0]!.Split('.');
+            candidate = parts.Length > 1 ? parts[1] : target[0]!;
+        }
+        // SQS/SNS use Action query parameter
+        else if (context.Request.Query.TryGetValue("Action", out var action) 
+            && action.Count > 0 && !string.IsNullOrEmpty(action[0]))
+        {
+            candidate = action[0]!;
+        }
+        // S3: derive from HTTP method + path structure
+        else if (module.ServiceName == "s3")
+        {
+            return context.Request.Method switch
+            {
+                "GET" when context.Request.Path.Value?.Contains('/') == true => "GetObject",
+                "PUT" when context.Request.Path.Value?.Contains('/') == true => "PutObject",
+                "DELETE" when context.Request.Path.Value?.Contains('/') == true => "DeleteObject",
+                "HEAD" when context.Request.Path.Value?.Contains('/') == true => "HeadObject",
+                _ => context.Request.Method
+            };
+        }
+        
+        if (candidate is null)
+        {
+            return context.Request.Method;
+        }
+        
+        // Validate against bounded allowlist to prevent cardinality explosion
+        return IsKnownOperation(module.ServiceName, candidate) ? candidate : "unknown";
+    }
+    
+    /// <summary>
+    /// Validates operation names against a bounded allowlist per service.
+    /// Prevents unbounded cardinality from malicious/malformed requests.
+    /// </summary>
+    private static bool IsKnownOperation(string service, string operation) => service switch
+    {
+        "dynamodb" => operation is "GetItem" or "PutItem" or "UpdateItem" or "DeleteItem" 
+            or "Query" or "Scan" or "BatchGetItem" or "BatchWriteItem" or "TransactGetItems" 
+            or "TransactWriteItems" or "CreateTable" or "DeleteTable" or "DescribeTable" 
+            or "ListTables" or "UpdateTable",
+        "kinesis" => operation is "PutRecord" or "PutRecords" or "GetRecords" or "GetShardIterator" 
+            or "ListShards" or "DescribeStream" or "DescribeStreamSummary" or "CreateStream" 
+            or "DeleteStream" or "ListStreams",
+        "sqs" => operation is "SendMessage" or "SendMessageBatch" or "ReceiveMessage" 
+            or "DeleteMessage" or "DeleteMessageBatch" or "ChangeMessageVisibility" 
+            or "ChangeMessageVisibilityBatch" or "CreateQueue" or "DeleteQueue" or "GetQueueUrl" 
+            or "GetQueueAttributes" or "SetQueueAttributes" or "ListQueues" or "PurgeQueue",
+        "sns" => operation is "Publish" or "PublishBatch" or "Subscribe" or "Unsubscribe" 
+            or "CreateTopic" or "DeleteTopic" or "GetTopicAttributes" or "SetTopicAttributes" 
+            or "ListTopics" or "ListSubscriptions" or "ListSubscriptionsByTopic" 
+            or "GetSubscriptionAttributes" or "SetSubscriptionAttributes" or "ConfirmSubscription",
+        "s3" => true, // S3 operations are derived from HTTP method, already bounded
+        _ => false,
+    };
+    
+    private void RecordEndMetrics(
+        RequestMetricsContext? metricsCtx, 
+        int statusCode, 
+        long responseSize,
+        long translationStart,
+        TimeSpan? translationTime,
+        TimeSpan? backendTime = null)
+    {
+        if (_metrics is null || metricsCtx is null) return;
+        
+        _metrics.EndRequest(metricsCtx.Value, statusCode, responseSize, translationTime, backendTime);
     }
 }
