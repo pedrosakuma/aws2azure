@@ -7,20 +7,25 @@ namespace Aws2Azure.Core.Observability;
 /// <summary>
 /// Exports metrics in Prometheus text format. AOT-compatible implementation
 /// that reads from System.Diagnostics.Metrics via MeterListener.
+/// Uses struct-based keys and per-instrument bucket sets.
 /// </summary>
 public sealed class PrometheusExporter : IDisposable
 {
     private readonly MeterListener _listener;
     private readonly object _lock = new();
     
-    // Accumulated metric state
-    private readonly Dictionary<string, CounterState> _counters = new();
-    private readonly Dictionary<string, HistogramState> _histograms = new();
-    private readonly Dictionary<string, GaugeState> _gauges = new();
+    // Accumulated metric state - keyed by MetricKey for bounded key allocation
+    private readonly Dictionary<MetricKey, CounterState> _counters = new();
+    private readonly Dictionary<MetricKey, HistogramState> _histograms = new();
+    private readonly Dictionary<MetricKey, GaugeState> _gauges = new();
     
-    // Standard histogram buckets (Prometheus defaults)
-    private static readonly double[] HistogramBuckets = 
+    // Duration histogram buckets (seconds) - Prometheus defaults
+    private static readonly double[] DurationBuckets = 
         [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
+    
+    // Size histogram buckets (bytes) - powers of 2 from 256B to 64MB
+    private static readonly double[] SizeBuckets = 
+        [256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864];
     
     public PrometheusExporter()
     {
@@ -41,8 +46,7 @@ public sealed class PrometheusExporter : IDisposable
     
     private void OnMeasurement(Instrument instrument, long value, ReadOnlySpan<KeyValuePair<string, object?>> tags, object? state)
     {
-        var tagDict = TagsToDict(tags);
-        var key = BuildKey(instrument.Name, tagDict);
+        var (key, tagDict) = BuildKey(instrument.Name, tags);
         
         lock (_lock)
         {
@@ -57,9 +61,10 @@ public sealed class PrometheusExporter : IDisposable
             }
             else if (instrument is Histogram<long>)
             {
+                var buckets = GetBucketsForInstrument(instrument.Name);
                 if (!_histograms.TryGetValue(key, out var histogram))
                 {
-                    histogram = new HistogramState { Name = instrument.Name, Tags = tagDict, Description = instrument.Description };
+                    histogram = new HistogramState(instrument.Name, tagDict, instrument.Description, buckets);
                     _histograms[key] = histogram;
                 }
                 histogram.Record(value);
@@ -78,8 +83,7 @@ public sealed class PrometheusExporter : IDisposable
     
     private void OnMeasurement(Instrument instrument, double value, ReadOnlySpan<KeyValuePair<string, object?>> tags, object? state)
     {
-        var tagDict = TagsToDict(tags);
-        var key = BuildKey(instrument.Name, tagDict);
+        var (key, tagDict) = BuildKey(instrument.Name, tags);
         
         lock (_lock)
         {
@@ -94,9 +98,10 @@ public sealed class PrometheusExporter : IDisposable
             }
             else if (instrument is Histogram<double>)
             {
+                var buckets = GetBucketsForInstrument(instrument.Name);
                 if (!_histograms.TryGetValue(key, out var histogram))
                 {
-                    histogram = new HistogramState { Name = instrument.Name, Tags = tagDict, Description = instrument.Description };
+                    histogram = new HistogramState(instrument.Name, tagDict, instrument.Description, buckets);
                     _histograms[key] = histogram;
                 }
                 histogram.Record(value);
@@ -114,6 +119,12 @@ public sealed class PrometheusExporter : IDisposable
     }
     
     /// <summary>
+    /// Selects appropriate histogram buckets based on instrument name/unit.
+    /// </summary>
+    private static double[] GetBucketsForInstrument(string name) =>
+        name.EndsWith("_bytes", StringComparison.Ordinal) ? SizeBuckets : DurationBuckets;
+    
+    /// <summary>
     /// Exports all metrics in Prometheus text format.
     /// </summary>
     public string Export()
@@ -127,7 +138,7 @@ public sealed class PrometheusExporter : IDisposable
         lock (_lock)
         {
             // Counters
-            foreach (var (_, counter) in _counters.OrderBy(kv => kv.Key))
+            foreach (var (key, counter) in _counters.OrderBy(kv => kv.Key.Name).ThenBy(kv => kv.Key.TagsKey))
             {
                 WriteHelp(sb, counter.Name, "counter", counter.Description, writtenHelp);
                 sb.Append(counter.Name);
@@ -146,21 +157,23 @@ public sealed class PrometheusExporter : IDisposable
                 
                 foreach (var histogram in group)
                 {
+                    var buckets = histogram.BucketBoundaries;
+                    
                     // Bucket lines
                     long cumulative = 0;
-                    for (int i = 0; i < HistogramBuckets.Length; i++)
+                    for (int i = 0; i < buckets.Length; i++)
                     {
-                        cumulative += histogram.Buckets[i];
+                        cumulative += histogram.BucketCounts[i];
                         sb.Append(histogram.Name).Append("_bucket");
                         var bucketTags = new Dictionary<string, string>(histogram.Tags)
                         {
-                            ["le"] = HistogramBuckets[i].ToString(CultureInfo.InvariantCulture)
+                            ["le"] = buckets[i].ToString(CultureInfo.InvariantCulture)
                         };
                         WriteTags(sb, bucketTags);
                         sb.Append(' ').Append(cumulative).AppendLine();
                     }
                     // +Inf bucket
-                    cumulative += histogram.Buckets[^1];
+                    cumulative += histogram.BucketCounts[^1];
                     sb.Append(histogram.Name).Append("_bucket");
                     var infTags = new Dictionary<string, string>(histogram.Tags) { ["le"] = "+Inf" };
                     WriteTags(sb, infTags);
@@ -178,7 +191,7 @@ public sealed class PrometheusExporter : IDisposable
             }
             
             // Gauges
-            foreach (var (_, gauge) in _gauges.OrderBy(kv => kv.Key))
+            foreach (var (key, gauge) in _gauges.OrderBy(kv => kv.Key.Name).ThenBy(kv => kv.Key.TagsKey))
             {
                 WriteHelp(sb, gauge.Name, "gauge", gauge.Description, writtenHelp);
                 sb.Append(gauge.Name);
@@ -222,24 +235,63 @@ public sealed class PrometheusExporter : IDisposable
     private static string EscapeLabelValue(string value) =>
         value.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n");
     
-    private static Dictionary<string, string> TagsToDict(ReadOnlySpan<KeyValuePair<string, object?>> tags)
+    /// <summary>
+    /// Builds a MetricKey from tags. Keys are bounded by the operation allowlist
+    /// in ServiceModuleRegistry.
+    /// </summary>
+    private static (MetricKey Key, Dictionary<string, string> Tags) BuildKey(
+        string name, ReadOnlySpan<KeyValuePair<string, object?>> tags)
     {
         var dict = new Dictionary<string, string>(tags.Length);
+        var sb = new StringBuilder(64);
+        sb.Append(name);
+        
+        // Copy and sort tags for consistent key
+        var sortedTags = new List<(string Key, string Value)>(tags.Length);
+        
         foreach (var tag in tags)
         {
-            dict[tag.Key] = tag.Value?.ToString() ?? "";
+            var key = tag.Key;
+            var value = tag.Value?.ToString() ?? "";
+            sortedTags.Add((key, value));
+            dict[key] = value;
         }
-        return dict;
-    }
-    
-    private static string BuildKey(string name, Dictionary<string, string> tags)
-    {
-        if (tags.Count == 0) return name;
-        var sorted = string.Join(",", tags.OrderBy(kv => kv.Key).Select(kv => $"{kv.Key}={kv.Value}"));
-        return $"{name}{{{sorted}}}";
+        
+        sortedTags.Sort((a, b) => string.Compare(a.Key, b.Key, StringComparison.Ordinal));
+        
+        sb.Append('{');
+        for (int i = 0; i < sortedTags.Count; i++)
+        {
+            if (i > 0) sb.Append(',');
+            sb.Append(sortedTags[i].Key).Append('=').Append(sortedTags[i].Value);
+        }
+        sb.Append('}');
+        
+        return (new MetricKey(name, sb.ToString()), dict);
     }
     
     public void Dispose() => _listener.Dispose();
+    
+    /// <summary>
+    /// Struct key for metrics dictionary to reduce allocations on lookup.
+    /// </summary>
+    private readonly struct MetricKey : IEquatable<MetricKey>
+    {
+        public readonly string Name;
+        public readonly string TagsKey;
+        
+        public MetricKey(string name, string tagsKey)
+        {
+            Name = name;
+            TagsKey = tagsKey;
+        }
+        
+        public bool Equals(MetricKey other) => 
+            Name == other.Name && TagsKey == other.TagsKey;
+        
+        public override bool Equals(object? obj) => obj is MetricKey other && Equals(other);
+        public override int GetHashCode() => HashCode.Combine(Name, TagsKey);
+    }
     
     private sealed class CounterState
     {
@@ -251,27 +303,37 @@ public sealed class PrometheusExporter : IDisposable
     
     private sealed class HistogramState
     {
-        public required string Name { get; init; }
-        public required Dictionary<string, string> Tags { get; init; }
-        public string? Description { get; init; }
+        public string Name { get; }
+        public Dictionary<string, string> Tags { get; }
+        public string? Description { get; }
+        public double[] BucketBoundaries { get; }
+        public long[] BucketCounts { get; }
         public long Count;
         public double Sum;
-        public long[] Buckets = new long[HistogramBuckets.Length + 1]; // +1 for overflow
+        
+        public HistogramState(string name, Dictionary<string, string> tags, string? description, double[] buckets)
+        {
+            Name = name;
+            Tags = tags;
+            Description = description;
+            BucketBoundaries = buckets;
+            BucketCounts = new long[buckets.Length + 1]; // +1 for overflow
+        }
         
         public void Record(double value)
         {
             Count++;
             Sum += value;
             
-            for (int i = 0; i < HistogramBuckets.Length; i++)
+            for (int i = 0; i < BucketBoundaries.Length; i++)
             {
-                if (value <= HistogramBuckets[i])
+                if (value <= BucketBoundaries[i])
                 {
-                    Buckets[i]++;
+                    BucketCounts[i]++;
                     return;
                 }
             }
-            Buckets[^1]++; // Overflow bucket
+            BucketCounts[^1]++; // Overflow bucket
         }
     }
     

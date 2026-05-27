@@ -148,7 +148,17 @@ public sealed class ServiceModuleRegistry
         var translationTime = Stopwatch.GetElapsedTime(translationStart);
         var backendStart = Stopwatch.GetTimestamp();
 
-        await module.HandleAsync(context);
+        try
+        {
+            await module.HandleAsync(context);
+        }
+        catch
+        {
+            // Record error metric on unhandled exception before rethrowing
+            var backendTimeOnError = Stopwatch.GetElapsedTime(backendStart);
+            RecordEndMetrics(metricsCtx, 500, 0, translationStart, translationTime, backendTimeOnError);
+            throw;
+        }
         
         // Record backend time and complete metrics
         var backendTime = Stopwatch.GetElapsedTime(backendStart);
@@ -266,27 +276,28 @@ public sealed class ServiceModuleRegistry
     /// <summary>
     /// Extracts the operation name for metrics. Service-specific: DynamoDB/Kinesis
     /// use X-Amz-Target, S3 uses HTTP method + path pattern, SQS uses Action query.
+    /// Returns bounded values to prevent unbounded cardinality from unauthenticated requests.
     /// </summary>
     private static string ExtractOperation(HttpContext context, IServiceModule module)
     {
+        string? candidate = null;
+        
         // AWS-JSON services (DynamoDB, Kinesis) use X-Amz-Target header
         if (context.Request.Headers.TryGetValue("X-Amz-Target", out var target) 
             && target.Count > 0 && !string.IsNullOrEmpty(target[0]))
         {
             // Format: "DynamoDB_20120810.GetItem" → "GetItem"
             var parts = target[0]!.Split('.');
-            return parts.Length > 1 ? parts[1] : target[0]!;
+            candidate = parts.Length > 1 ? parts[1] : target[0]!;
         }
-        
         // SQS/SNS use Action query parameter
-        if (context.Request.Query.TryGetValue("Action", out var action) 
+        else if (context.Request.Query.TryGetValue("Action", out var action) 
             && action.Count > 0 && !string.IsNullOrEmpty(action[0]))
         {
-            return action[0]!;
+            candidate = action[0]!;
         }
-        
         // S3: derive from HTTP method + path structure
-        if (module.ServiceName == "s3")
+        else if (module.ServiceName == "s3")
         {
             return context.Request.Method switch
             {
@@ -298,8 +309,39 @@ public sealed class ServiceModuleRegistry
             };
         }
         
-        return context.Request.Method;
+        if (candidate is null)
+        {
+            return context.Request.Method;
+        }
+        
+        // Validate against bounded allowlist to prevent cardinality explosion
+        return IsKnownOperation(module.ServiceName, candidate) ? candidate : "unknown";
     }
+    
+    /// <summary>
+    /// Validates operation names against a bounded allowlist per service.
+    /// Prevents unbounded cardinality from malicious/malformed requests.
+    /// </summary>
+    private static bool IsKnownOperation(string service, string operation) => service switch
+    {
+        "dynamodb" => operation is "GetItem" or "PutItem" or "UpdateItem" or "DeleteItem" 
+            or "Query" or "Scan" or "BatchGetItem" or "BatchWriteItem" or "TransactGetItems" 
+            or "TransactWriteItems" or "CreateTable" or "DeleteTable" or "DescribeTable" 
+            or "ListTables" or "UpdateTable",
+        "kinesis" => operation is "PutRecord" or "PutRecords" or "GetRecords" or "GetShardIterator" 
+            or "ListShards" or "DescribeStream" or "DescribeStreamSummary" or "CreateStream" 
+            or "DeleteStream" or "ListStreams",
+        "sqs" => operation is "SendMessage" or "SendMessageBatch" or "ReceiveMessage" 
+            or "DeleteMessage" or "DeleteMessageBatch" or "ChangeMessageVisibility" 
+            or "ChangeMessageVisibilityBatch" or "CreateQueue" or "DeleteQueue" or "GetQueueUrl" 
+            or "GetQueueAttributes" or "SetQueueAttributes" or "ListQueues" or "PurgeQueue",
+        "sns" => operation is "Publish" or "PublishBatch" or "Subscribe" or "Unsubscribe" 
+            or "CreateTopic" or "DeleteTopic" or "GetTopicAttributes" or "SetTopicAttributes" 
+            or "ListTopics" or "ListSubscriptions" or "ListSubscriptionsByTopic" 
+            or "GetSubscriptionAttributes" or "SetSubscriptionAttributes" or "ConfirmSubscription",
+        "s3" => true, // S3 operations are derived from HTTP method, already bounded
+        _ => false,
+    };
     
     private void RecordEndMetrics(
         RequestMetricsContext? metricsCtx, 
