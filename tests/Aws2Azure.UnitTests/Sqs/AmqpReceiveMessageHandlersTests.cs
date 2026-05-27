@@ -24,6 +24,7 @@ namespace Aws2Azure.UnitTests.Sqs;
 /// the handler exercises the full receive → settle path (including the
 /// 8b.4b lock-token cache), then asserts the SQS-shaped responses.
 /// </summary>
+[Collection(SqsAmqpTestCollection.Name)]
 public sealed class AmqpReceiveMessageHandlersTests
 {
     private const string QueueName = "amqp-q";

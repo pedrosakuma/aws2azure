@@ -23,6 +23,7 @@ namespace Aws2Azure.UnitTests.Sqs;
 /// per-entry disposition path via the in-process broker simulator and
 /// asserts the SQS response shape (Successful / Failed split).
 /// </summary>
+[Collection(SqsAmqpTestCollection.Name)]
 public sealed class AmqpSendMessageBatchHandlersTests
 {
     private const string QueueName = "amqp-q";
