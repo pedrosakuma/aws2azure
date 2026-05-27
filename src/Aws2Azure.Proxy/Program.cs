@@ -227,6 +227,51 @@ var startupLogger = app.Services.GetRequiredService<ILoggerFactory>()
     .CreateLogger("Aws2Azure.Proxy");
 ProxyLog.HostStarting(startupLogger, registry.Modules.Count, proxyConfig.Credentials.Count);
 
+// Kubernetes-style health probes (standard paths)
+// Only respond if Host is not an AWS service (avoids intercepting proxied requests)
+app.MapGet("/health", (HttpContext ctx) =>
+{
+    var host = ctx.Request.Host.Host;
+    if (registry.Modules.Any(m => m.MatchesHost(host)))
+    {
+        // This is an AWS service request, not a probe - let dispatcher handle it
+        return Results.StatusCode(404);
+    }
+    return Results.Json(new LivenessResponse("healthy"), ProxyJsonContext.Default.LivenessResponse);
+});
+
+app.MapGet("/ready", (HttpContext ctx) =>
+{
+    var host = ctx.Request.Host.Host;
+    if (registry.Modules.Any(m => m.MatchesHost(host)))
+    {
+        // This is an AWS service request, not a probe - let dispatcher handle it
+        return Results.StatusCode(404);
+    }
+    
+    var services = new Dictionary<string, ServiceReadiness>();
+    foreach (var module in registry.Modules)
+    {
+        var enabled = proxyConfig.Services.TryGetValue(module.ServiceName, out var svc) && svc.Enabled;
+        services[module.ServiceName] = new ServiceReadiness(enabled, enabled);
+    }
+    
+    var hasCredentials = proxyConfig.Credentials.Count > 0;
+    var allEnabled = services.Values.Any(s => s.Enabled);
+    var isReady = hasCredentials && allEnabled;
+    
+    var response = new ReadinessResponse(
+        isReady ? "ready" : "not_ready",
+        services,
+        hasCredentials,
+        registry.Modules.Count);
+    
+    // AOT-compatible: use explicit JsonTypeInfo for consistent casing
+    return Results.Json(response, ProxyJsonContext.Default.ReadinessResponse, 
+        statusCode: isReady ? 200 : 503);
+});
+
+// Legacy internal endpoints (keep for backward compatibility)
 app.MapGet("/_aws2azure/health", () => Results.Ok(new HealthResponse("ok", registry.Modules.Count)));
 
 app.MapGet("/_aws2azure/modules", (ServiceModuleRegistry registry) =>
@@ -251,8 +296,21 @@ return 0;
 
 namespace Aws2Azure.Proxy
 {
+    // Health check responses
+    internal sealed record LivenessResponse(string Status);
+    internal sealed record ServiceReadiness(bool Enabled, bool Ready);
+    internal sealed record ReadinessResponse(
+        string Status,
+        Dictionary<string, ServiceReadiness> Services,
+        bool HasCredentials,
+        int ModuleCount);
     internal sealed record HealthResponse(string Status, int Modules);
 
+    [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+    [JsonSerializable(typeof(LivenessResponse))]
+    [JsonSerializable(typeof(ReadinessResponse))]
+    [JsonSerializable(typeof(ServiceReadiness))]
+    [JsonSerializable(typeof(Dictionary<string, ServiceReadiness>))]
     [JsonSerializable(typeof(HealthResponse))]
     [JsonSerializable(typeof(string[]))]
     [JsonSerializable(typeof(CapabilityMatrix[]))]
