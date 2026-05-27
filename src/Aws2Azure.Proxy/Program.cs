@@ -22,6 +22,25 @@ using Aws2Azure.Modules.Sns.Management;
 using Aws2Azure.Proxy;
 using Microsoft.AspNetCore.Http;
 
+// Handle --health-check flag for Docker HEALTHCHECK instruction
+if (args.Contains("--health-check"))
+{
+    var healthUrl = Environment.GetEnvironmentVariable("ASPNETCORE_URLS")?.Split(';').FirstOrDefault() 
+        ?? "http://localhost:8080";
+    healthUrl = healthUrl.Replace("+", "localhost").Replace("*", "localhost");
+    
+    using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+    try
+    {
+        var response = await http.GetAsync($"{healthUrl}/_aws2azure/health");
+        return response.IsSuccessStatusCode ? 0 : 1;
+    }
+    catch
+    {
+        return 1;
+    }
+}
+
 // Disable HttpClient's DiagnosticsHandler activity propagation: the proxy
 // does not subscribe to System.Net.Http ActivitySource/DiagnosticListener
 // events anywhere, so the Activity allocation + traceparent injection on

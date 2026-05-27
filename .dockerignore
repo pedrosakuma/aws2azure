@@ -1,0 +1,50 @@
+# aws2azure .dockerignore
+# Excludes files not needed in Docker build context for faster builds.
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE / Editor
+.vs
+.vscode
+.idea
+*.user
+*.suo
+*.sln.docstates
+
+# Build outputs (we rebuild in container)
+**/bin
+**/obj
+**/out
+**/publish
+
+# Test projects (not needed for runtime image)
+tests/
+
+# Documentation and tooling
+docs/
+tools/
+
+# CI/CD
+.github/
+
+# Local config / secrets
+*.local.json
+appsettings.*.json
+!appsettings.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker
+Dockerfile*
+docker-compose*
+.docker
+
+# Misc
+*.md
+!README.md
+LICENSE

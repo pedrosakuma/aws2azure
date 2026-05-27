@@ -1,0 +1,74 @@
+# aws2azure local development stack
+# 
+# Starts the proxy with all Azure emulators for local testing.
+# Usage: docker compose up -d
+#
+# Endpoints:
+#   - Proxy:    http://localhost:8080 (S3: s3.localhost:8080)
+#   - Azurite:  http://localhost:10000 (blob), :10001 (queue), :10002 (table)
+#   - Cosmos:   https://localhost:8081
+#   - SB Emu:   amqp://localhost:5672
+
+services:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # aws2azure proxy
+  # ─────────────────────────────────────────────────────────────────────────────
+  proxy:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      AWS2AZURE_CONFIG_FILE: /app/config.json
+      ASPNETCORE_URLS: http://+:8080
+    volumes:
+      - ./docker/config.json:/app/config.json:ro
+    depends_on:
+      azurite:
+        condition: service_healthy
+      cosmos:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "/app/Aws2Azure.Proxy", "--health-check"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Azurite (Blob, Queue, Table storage emulator)
+  # ─────────────────────────────────────────────────────────────────────────────
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    ports:
+      - "10000:10000"  # Blob
+      - "10001:10001"  # Queue
+      - "10002:10002"  # Table
+    command: azurite --loose --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "10000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Cosmos DB Emulator (Linux)
+  # ─────────────────────────────────────────────────────────────────────────────
+  cosmos:
+    image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:latest
+    ports:
+      - "8081:8081"
+      - "10251-10254:10251-10254"
+    environment:
+      AZURE_COSMOS_EMULATOR_PARTITION_COUNT: 2
+      AZURE_COSMOS_EMULATOR_IP_ADDRESS_OVERRIDE: 127.0.0.1
+      AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE: "false"
+    # Note: Cosmos emulator takes 1-2 minutes to start
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Service Bus Emulator (for SQS/SNS)
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Note: Official SB emulator requires custom setup. For development, 
+  # configure the proxy to use Azurite queues or run SB emulator separately.
+  # See: https://learn.microsoft.com/en-us/azure/service-bus-messaging/overview-emulator
+
+volumes:
+  azurite-data:
