@@ -52,14 +52,14 @@ public sealed class ProxyMetrics
             description: "Total request duration including backend call");
         
         _translationDuration = _meter.CreateHistogram<double>(
-            "aws2azure_translation_duration_seconds",
+            "aws2azure_module_duration_seconds",
             unit: "s",
-            description: "Time spent in request/response translation (parsing, serialization)");
+            description: "Total module processing time (wall-clock from SigV4 validation to response)");
         
         _backendDuration = _meter.CreateHistogram<double>(
             "aws2azure_backend_duration_seconds",
             unit: "s",
-            description: "Time spent waiting for Azure backend");
+            description: "Accumulated time in Azure backend calls (sum of all calls, may exceed module time if parallel)");
         
         _requestSize = _meter.CreateHistogram<long>(
             "aws2azure_request_size_bytes",
@@ -108,7 +108,7 @@ public sealed class ProxyMetrics
         in RequestMetricsContext ctx,
         int statusCode,
         long responseSizeBytes,
-        TimeSpan? translationTime = null,
+        TimeSpan? moduleTime = null,
         TimeSpan? backendTime = null)
     {
         Interlocked.Decrement(ref _activeRequests);
@@ -142,16 +142,18 @@ public sealed class ProxyMetrics
                 new KeyValuePair<string, object?>("operation", ctx.Operation));
         }
         
-        // Record overhead breakdown if provided
+        // Record timing breakdown if provided
+        // Note: moduleTime is wall-clock time for the handler; backendTime is the sum of all
+        // Azure backend calls (may exceed moduleTime if calls are parallel)
         var overheadTags = new TagList
         {
             { "service", ctx.Service },
             { "operation", ctx.Operation },
         };
         
-        if (translationTime.HasValue)
+        if (moduleTime.HasValue)
         {
-            _translationDuration.Record(translationTime.Value.TotalSeconds, overheadTags);
+            _translationDuration.Record(moduleTime.Value.TotalSeconds, overheadTags);
         }
         
         if (backendTime.HasValue)

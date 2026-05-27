@@ -144,9 +144,19 @@ public sealed class ServiceModuleRegistry
             context.Items["aws2azure.accessKeyId"] = result.AccessKeyId;
         }
 
-        // Mark end of translation phase, start of backend
-        var translationTime = Stopwatch.GetElapsedTime(translationStart);
-        var backendStart = Stopwatch.GetTimestamp();
+        // Mark end of SigV4 phase. Set up timing context for backend calls.
+        // Both HttpContext.Items (for explicit use) and AsyncLocal (for ambient use)
+        // are populated so modules can use either approach.
+        var accumulator = new BackendTimeAccumulator();
+        context.Items["aws2azure.metrics"] = _metrics;
+        context.Items["aws2azure.service"] = module.ServiceName;
+        context.Items["aws2azure.operation"] = operation;
+        context.Items["aws2azure.backendTimeAccumulator"] = accumulator;
+        
+        // Set ambient context for use by lower-level clients (BlobClient, AmqpClient, etc.)
+        BackendTimingContext.SetCurrent(accumulator, _metrics, module.ServiceName, operation);
+        
+        var moduleStart = Stopwatch.GetTimestamp();
 
         try
         {
@@ -155,16 +165,27 @@ public sealed class ServiceModuleRegistry
         catch
         {
             // Record error metric on unhandled exception before rethrowing
-            var backendTimeOnError = Stopwatch.GetElapsedTime(backendStart);
-            RecordEndMetrics(metricsCtx, 500, 0, translationStart, translationTime, backendTimeOnError);
+            var totalTimeOnError = Stopwatch.GetElapsedTime(moduleStart);
+            var backendTimeOnError = accumulator.GetTotal();
+            RecordEndMetrics(metricsCtx, 500, 0, translationStart, totalTimeOnError, backendTimeOnError);
             throw;
         }
+        finally
+        {
+            // Clear ambient context
+            BackendTimingContext.Clear();
+        }
         
-        // Record backend time and complete metrics
-        var backendTime = Stopwatch.GetElapsedTime(backendStart);
+        // Compute timing: backend time is the sum of all Azure calls (may exceed wall-clock
+        // if calls are parallel). We emit both metrics independently - translation time is
+        // not derived from subtraction because parallel calls make that math invalid.
+        // For parallel handlers (e.g. BatchGetItem), use the per-call backend_call_duration histogram.
+        var totalModuleTime = Stopwatch.GetElapsedTime(moduleStart);
+        var backendTime = accumulator.GetTotal();
+        
         var responseSize = context.Response.ContentLength ?? 0;
         RecordEndMetrics(metricsCtx, context.Response.StatusCode, responseSize, translationStart, 
-            translationTime, backendTime);
+            totalModuleTime, backendTime);
     }
 
     /// <summary>
@@ -348,11 +369,11 @@ public sealed class ServiceModuleRegistry
         int statusCode, 
         long responseSize,
         long translationStart,
-        TimeSpan? translationTime,
+        TimeSpan? moduleTime,
         TimeSpan? backendTime = null)
     {
         if (_metrics is null || metricsCtx is null) return;
         
-        _metrics.EndRequest(metricsCtx.Value, statusCode, responseSize, translationTime, backendTime);
+        _metrics.EndRequest(metricsCtx.Value, statusCode, responseSize, moduleTime, backendTime);
     }
 }

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Aws2Azure.Core.Azure;
+using Aws2Azure.Core.Observability;
 using Aws2Azure.Modules.Sns.Amqp;
 using Aws2Azure.Modules.Sns.Operations;
 using Microsoft.AspNetCore.Http;
@@ -156,7 +157,7 @@ internal sealed class EventGridPublisher : IEventGridPublisher
         {
             await AuthenticateAsync(request, destination, cancellationToken).ConfigureAwait(false);
 
-            using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken).ConfigureAwait(false);
+            using var response = await BackendTimingContext.TimeAsync(() => _http.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)).ConfigureAwait(false);
             if (response.IsSuccessStatusCode)
             {
                 return null;

@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
+using Aws2Azure.Core.Observability;
 
 namespace Aws2Azure.Modules.DynamoDb.Internal;
 
@@ -94,7 +95,8 @@ internal sealed class CosmosClient
         // Cosmos returns a Bearer-realm WWW-Authenticate on auth failure; the
         // shared client honours retry budgets, breaker state, and the breaker's
         // 429-aware backoff so transient-failure semantics match the SB module.
-        return await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct)
+        return await BackendTimingContext.TimeAsync(
+            () => _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct))
             .ConfigureAwait(false);
     }
 }

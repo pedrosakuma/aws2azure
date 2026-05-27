@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Diagnostics;
 using Aws2Azure.Amqp.Diagnostics;
 using Aws2Azure.Amqp.Framing;
+using Aws2Azure.Core.Observability;
 
 namespace Aws2Azure.Amqp.Connection;
 
@@ -123,7 +124,7 @@ internal sealed class AmqpLink
             throw new InvalidOperationException($"Link is not attached (state={_state}).");
 
         var timingEnabled = AmqpTimingDiagnostics.Enabled;
-        var tsStart = timingEnabled ? Stopwatch.GetTimestamp() : 0L;
+        var tsStart = Stopwatch.GetTimestamp(); // Always capture for BackendTimingContext
 
         // §2.6.7: wait for receiver credit before transferring. If the
         // peer has never sent a flow we treat that as no credit and
@@ -223,6 +224,8 @@ internal sealed class AmqpLink
                     settled: true,
                     payloadBytes: payloadBytes);
             }
+            // Record to ambient backend timing context (if set by ServiceModuleRegistry)
+            BackendTimingContext.RecordBackendCall(Stopwatch.GetElapsedTime(tsStart));
             return AmqpSendOutcome.Accepted;
         }
 
@@ -245,6 +248,8 @@ internal sealed class AmqpLink
                     settled: false,
                     payloadBytes: payloadBytes);
             }
+            // Record to ambient backend timing context (if set by ServiceModuleRegistry)
+            BackendTimingContext.RecordBackendCall(Stopwatch.GetElapsedTime(tsStart));
             return outcome;
         }
     }
