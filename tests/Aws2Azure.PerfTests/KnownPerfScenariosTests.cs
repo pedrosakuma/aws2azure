@@ -39,10 +39,14 @@ public sealed class KnownPerfScenariosTests
 
         // DynamoDB
         "dynamodb.PutItem (small)",
+        "dynamodb.GetItem (small)",
         "dynamodb.Query (pushable filter)",
         "dynamodb.Scan (pushable filter)",
         "dynamodb.BatchWriteItem (25 items)",
+        "dynamodb.BatchGetItem (25 items)",
         "azure-sdk.Cosmos.UpsertItem (small)",
+        "azure-sdk.Cosmos.ReadItem (small)",
+        "azure-sdk.Cosmos.ReadManyItems (25 keys)",
 
         // Kinesis
         "kinesis.PutRecord (256 B)",
