@@ -22,6 +22,7 @@ behavior_differences:
   - "ETag value comes from Azure (hex of MD5 for single-part uploads); shape matches S3 but bytes differ from a re-uploaded object."
   - "PUT always overwrites an existing blob, matching S3 default semantics."
   - "Concrete-ETag preconditions (If-Match / If-None-Match with a value other than '*') return 501 NotImplemented: proxy-translated S3 ETags do not round-trip back to Azure's raw ETag space, and supporting optimistic concurrency would require a HEAD-then-PUT cycle that is not yet implemented. The '*' sentinel is honored (forwarded to Azure)."
+  - "Presigned PUT is accepted (see PresignedUrl.yaml). Body integrity is not signature-protected (UNSIGNED-PAYLOAD) — identical to AWS S3 semantics."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html
   - https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-streaming.html

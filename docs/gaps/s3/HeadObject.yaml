@@ -11,6 +11,7 @@ sub_features:
     status: implemented
 behavior_differences:
   - "404 responses include x-amz-error-code: NoSuchKey and an empty body (HEAD spec)."
+  - "Presigned HEAD is accepted (see PresignedUrl.yaml)."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html
   - https://learn.microsoft.com/rest/api/storageservices/get-blob-properties
