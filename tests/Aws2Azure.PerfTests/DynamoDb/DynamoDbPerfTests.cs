@@ -328,6 +328,101 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
     }
 
     [SkippableFact]
+    public async Task GetItem_throughput()
+    {
+        Skip.IfNot(fixture.Ready, fixture.SkipReason);
+
+        using var client = fixture.CreateClient();
+
+        var result = await PerfRunner.RunAsync(
+            scenario: "dynamodb.GetItem (small)",
+            concurrency: 16,
+            duration: TimeSpan.FromSeconds(20),
+            warmup: TimeSpan.FromSeconds(3),
+            action: async (workerId, ct) =>
+            {
+                // Round-robin over the 10×50 seeded items in QueryTableName so
+                // every worker hits a different partition + sort key on each
+                // call and we exercise the point-read fast-path
+                // (DynamoDb→Cosmos ReadItemAsync via REST).
+                var pk = $"p{workerId % fixture.SeededPartitions:D2}";
+                var sk = $"s{Random.Shared.Next(0, fixture.SeededItemsPerPartition):D4}";
+                var resp = await client.GetItemAsync(new GetItemRequest
+                {
+                    TableName = fixture.QueryTableName,
+                    Key = new Dictionary<string, AttributeValue>
+                    {
+                        ["pk"] = new() { S = pk },
+                        ["sk"] = new() { S = sk },
+                    },
+                    ConsistentRead = false,
+                }, ct).ConfigureAwait(false);
+                if (resp.Item is null || resp.Item.Count == 0)
+                {
+                    throw new InvalidOperationException($"GetItem returned no item for pk={pk}, sk={sk} — seed data missing.");
+                }
+            });
+
+        PerfReport.Append(result, notes: "DynamoDB→Cosmos GetItem — point read against seeded QueryTable");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
+    }
+
+    [SkippableFact]
+    public async Task BatchGetItem_25_throughput()
+    {
+        Skip.IfNot(fixture.Ready, fixture.SkipReason);
+
+        using var client = fixture.CreateClient();
+
+        var result = await PerfRunner.RunAsync(
+            scenario: "dynamodb.BatchGetItem (25 items)",
+            concurrency: 8,
+            duration: TimeSpan.FromSeconds(20),
+            warmup: TimeSpan.FromSeconds(3),
+            action: async (workerId, ct) =>
+            {
+                // Pin to one partition per call (Cosmos read-many is most
+                // efficient within a single partition) and pick 25 distinct
+                // sort keys from the seed range.
+                var pk = $"p{workerId % fixture.SeededPartitions:D2}";
+                var keys = new List<Dictionary<string, AttributeValue>>(25);
+                var seen = new HashSet<int>();
+                while (keys.Count < 25)
+                {
+                    var idx = Random.Shared.Next(0, fixture.SeededItemsPerPartition);
+                    if (!seen.Add(idx)) continue;
+                    keys.Add(new Dictionary<string, AttributeValue>
+                    {
+                        ["pk"] = new() { S = pk },
+                        ["sk"] = new() { S = $"s{idx:D4}" },
+                    });
+                }
+                var resp = await client.BatchGetItemAsync(new BatchGetItemRequest
+                {
+                    RequestItems = new Dictionary<string, KeysAndAttributes>
+                    {
+                        [fixture.QueryTableName] = new() { Keys = keys, ConsistentRead = false },
+                    },
+                }, ct).ConfigureAwait(false);
+                if (!resp.Responses.TryGetValue(fixture.QueryTableName, out var items) || items.Count != 25)
+                {
+                    var actual = items is null ? 0 : items.Count;
+                    throw new InvalidOperationException($"BatchGetItem returned {actual}/25 items — partial response invalidates perf measurement (seed gap or proxy regression).");
+                }
+                if (resp.UnprocessedKeys is { Count: > 0 } unp
+                    && unp.TryGetValue(fixture.QueryTableName, out var left) && left.Keys.Count > 0)
+                {
+                    throw new InvalidOperationException($"BatchGetItem: {left.Keys.Count} unprocessed keys.");
+                }
+            });
+
+        PerfReport.Append(result, notes: "DynamoDB→Cosmos BatchGetItem — 25 keys, single partition");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
+    }
+
+    [SkippableFact]
     public async Task BatchWriteItem_25_throughput()
     {
         Skip.IfNot(fixture.Ready, fixture.SkipReason);

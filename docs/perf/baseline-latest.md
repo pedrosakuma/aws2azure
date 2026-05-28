@@ -1,6 +1,6 @@
 # aws2azure — perf baseline
 
-Generated: 2026-05-27T14:56:33.8974404Z
+Generated: 2026-05-28T22:28:07.3874762Z
 
 Closed-loop concurrent driver — AWS SDK clients pointing at the proxy
 (`Aws2Azure.Proxy`) which fronts local emulators (Azurite, Service Bus,
@@ -25,3 +25,7 @@ overhead, not real-Azure throughput.**
 | s3.PutObject (4 KiB)             |  16 |   20.0 |     3995 |       0 |        199.7 |      75.1 |     118.2 |     189.6 |     400.9 | S3→Azurite (blob REST) |
 | azure-sdk.Blob.UploadAsync (4 KiB) |  16 |   20.0 |     3639 |       0 |        181.9 |      75.8 |     188.7 |     231.2 |     436.5 | Azure SDK baseline — direct BlobClient.UploadAsync against Azurite (no proxy) |
 | azure-sdk.Cosmos.UpsertItem (small) |  16 |   20.0 |     3311 |       0 |        165.5 |      95.4 |     113.1 |     131.5 |     148.0 | Azure SDK baseline — direct CosmosClient.UpsertItemAsync against Cosmos emulator (no proxy) |
+| dynamodb.BatchGetItem (25 items) |   8 |   20.0 |      508 |       0 |         25.4 |     303.2 |     368.0 |     395.8 |     670.1 | DynamoDB→Cosmos BatchGetItem — 25 keys, single partition |
+| dynamodb.GetItem (small)         |  16 |   20.0 |    13861 |       0 |        692.9 |      22.1 |      29.2 |      34.6 |     263.3 | DynamoDB→Cosmos GetItem — point read against seeded QueryTable |
+| azure-sdk.Cosmos.ReadItem (small) |  16 |   20.0 |    13490 |       0 |        674.4 |      23.2 |      29.4 |      32.8 |      41.5 | Azure SDK baseline — direct CosmosClient.ReadItemAsync against Cosmos emulator (no proxy) |
+| azure-sdk.Cosmos.ReadManyItems (25 keys) |   8 |   20.0 |     6338 |       0 |        316.7 |      24.5 |      31.8 |      35.1 |      51.6 | Azure SDK baseline — direct CosmosClient.ReadManyItemsAsync against Cosmos emulator (no proxy) |
