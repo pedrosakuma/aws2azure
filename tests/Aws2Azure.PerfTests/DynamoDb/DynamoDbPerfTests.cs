@@ -405,9 +405,10 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
                         [fixture.QueryTableName] = new() { Keys = keys, ConsistentRead = false },
                     },
                 }, ct).ConfigureAwait(false);
-                if (!resp.Responses.TryGetValue(fixture.QueryTableName, out var items) || items.Count == 0)
+                if (!resp.Responses.TryGetValue(fixture.QueryTableName, out var items) || items.Count != 25)
                 {
-                    throw new InvalidOperationException("BatchGetItem returned no items — seed data missing.");
+                    var actual = items is null ? 0 : items.Count;
+                    throw new InvalidOperationException($"BatchGetItem returned {actual}/25 items — partial response invalidates perf measurement (seed gap or proxy regression).");
                 }
                 if (resp.UnprocessedKeys is { Count: > 0 } unp
                     && unp.TryGetValue(fixture.QueryTableName, out var left) && left.Keys.Count > 0)

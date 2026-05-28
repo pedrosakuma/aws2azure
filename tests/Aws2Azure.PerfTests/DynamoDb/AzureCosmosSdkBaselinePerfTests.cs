@@ -121,9 +121,9 @@ public sealed class AzureCosmosSdkBaselinePerfTests(DynamoDbPerfFixture fixture)
                 }
                 var resp = await container.ReadManyItemsAsync<BaselineReadDoc>(keys, cancellationToken: ct)
                     .ConfigureAwait(false);
-                if (resp.Count == 0)
+                if (resp.Count != 25)
                 {
-                    throw new InvalidOperationException("ReadManyItems returned no items — seed data missing.");
+                    throw new InvalidOperationException($"ReadManyItems returned {resp.Count}/25 items — partial response invalidates perf measurement (seed gap or SDK regression).");
                 }
             });
 
