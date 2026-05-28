@@ -76,6 +76,7 @@
 | s3 | [ListObjects](s3.md#listobjects) | ✅ implemented | `GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list` |
 | s3 | [ListObjectsV2](s3.md#listobjectsv2) | ✅ implemented | `GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list` |
 | s3 | [ListParts](s3.md#listparts) | ✅ implemented | `Get Block List (?comp=blocklist&blocklisttype=uncommitted)` |
+| s3 | [PresignedUrl](s3.md#presignedurl) | ✅ implemented | `(no operation — feature-flag; presigned URLs reuse GetObject / PutObject / HeadObject / DeleteObject paths)` |
 | s3 | [PutBucketAccelerateConfiguration](s3.md#putbucketaccelerateconfiguration) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
 | s3 | [PutBucketAcl](s3.md#putbucketacl) | 🟡 partial | `(no Azure equivalent — validates owner-only intent and replies 200)` |
 | s3 | [PutBucketCors](s3.md#putbucketcors) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |

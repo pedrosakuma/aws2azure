@@ -14,6 +14,7 @@ sub_features:
     status: unsupported
 behavior_differences:
   - "Soft-delete behavior depends on the configured Azure storage account; the proxy does not toggle it per-request."
+  - "Presigned DELETE is accepted (see PresignedUrl.yaml)."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObject.html
   - https://learn.microsoft.com/rest/api/storageservices/delete-blob

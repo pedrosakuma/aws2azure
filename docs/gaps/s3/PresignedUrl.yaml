@@ -1,0 +1,43 @@
+service: s3
+operation: PresignedUrl
+azure_equivalent: "(no operation — feature-flag; presigned URLs reuse GetObject / PutObject / HeadObject / DeleteObject paths)"
+status: implemented
+sub_features:
+  - name: "Presigned GET"
+    status: implemented
+    note: "Generated via boto3.generate_presigned_url('get_object', ...) or AWSSDK.S3 GetPreSignedURL with endpoint_url pointing at the proxy; the proxy validates the SigV4 signature and executes GetBlob against Azure."
+  - name: "Presigned PUT"
+    status: implemented
+    note: "Body integrity relies on TLS — SigV4 presigned PUT is signed with UNSIGNED-PAYLOAD on AWS too, so the proxy can only authenticate the request envelope (method, path, query, host, expiry)."
+  - name: "Presigned HEAD"
+    status: implemented
+  - name: "Presigned DELETE"
+    status: implemented
+  - name: "X-Amz-Expires window"
+    status: implemented
+    note: "Enforced by SigV4Validator: integer in [1, 604800] seconds; clock skew of ±15 min tolerated for X-Amz-Date."
+  - name: "X-Amz-Security-Token (STS session credentials)"
+    status: unsupported
+    gap: "aws2azure does not implement STS — credentials are static config entries; the security token query parameter is ignored."
+  - name: "Presigned POST (browser form uploads)"
+    status: unsupported
+    gap: "Browser-based POST policies are a separate signing variant; not yet implemented."
+  - name: "Presigned multipart upload subresources"
+    status: unsupported
+    gap: "?uploadId / ?partNumber via presigned URLs is not yet routed."
+  - name: "response-content-* query overrides"
+    status: unsupported
+    gap: "GetObject does not honour response-content-type / response-content-disposition / response-content-encoding / response-content-language / response-cache-control / response-expires overrides; see GetObject.yaml."
+  - name: "Azure Blob SAS issuance / redirect mode"
+    status: unsupported
+    gap: "By design — aws2azure operates in proxy mode and never hands Azure SAS tokens to the client, so storage-account keys never leave the proxy. Clients always hit the proxy URL, not the Azure Blob endpoint."
+behavior_differences:
+  - "Presigned URLs MUST be signed against the proxy host (set the AWS SDK's endpoint_url / ServiceURL to the proxy). A presigned URL signed against s3.amazonaws.com cannot be replayed at the proxy — the host is a signed header."
+  - "The proxy operates in 'Option A — proxy mode': it validates the presigned signature, then proxies the operation to Azure Blob using its configured Azure credentials. No Azure SAS is returned or redirected."
+  - "Body content for presigned PUT is not signature-protected (UNSIGNED-PAYLOAD) — identical to AWS S3 semantics."
+  - "Tampering with any signed query parameter (including X-Amz-Date, X-Amz-Expires, X-Amz-Credential, X-Amz-SignedHeaders, or the path/method) yields 403 SignatureDoesNotMatch."
+  - "Expired URLs (now > X-Amz-Date + X-Amz-Expires) yield 403 AccessDenied (mirrors S3's 'Request has expired' error)."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/ShareObjectPreSignedURL.html
+  - https://docs.aws.amazon.com/IAM/UserGuide/create-signed-request.html
+  - https://learn.microsoft.com/azure/storage/common/storage-sas-overview

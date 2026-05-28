@@ -22,6 +22,7 @@ sub_features:
 behavior_differences:
   - "Streaming end-to-end: response body is forwarded without buffering."
   - "x-amz-id-2 carries the Azure x-ms-request-id for cross-system tracing."
+  - "Presigned URLs are accepted (see PresignedUrl.yaml); the client must sign against the proxy host, and response-content-* query overrides are not honoured."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
   - https://learn.microsoft.com/rest/api/storageservices/get-blob
