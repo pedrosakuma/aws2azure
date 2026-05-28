@@ -18,13 +18,13 @@ sub_features:
     note: "Enforced by SigV4Validator: integer in [1, 604800] seconds; clock skew of ±15 min tolerated for X-Amz-Date."
   - name: "X-Amz-Security-Token (STS session credentials)"
     status: unsupported
-    gap: "aws2azure does not implement STS — credentials are static config entries; the security token query parameter is ignored."
+    gap: "aws2azure does not implement STS — credentials are static config entries. If a client includes X-Amz-Security-Token in a presigned URL it is part of the canonical query (and therefore signature-protected), but aws2azure does not validate it as a session token."
   - name: "Presigned POST (browser form uploads)"
     status: unsupported
     gap: "Browser-based POST policies are a separate signing variant; not yet implemented."
   - name: "Presigned multipart upload subresources"
-    status: unsupported
-    gap: "?uploadId / ?partNumber via presigned URLs is not yet routed."
+    status: partial
+    gap: "?uploads / ?uploadId / ?partNumber are routed by S3Router and dispatched to MultipartHandlers, and the SigV4 presigned validator is request-shape-agnostic — so presigned multipart should work — but this combination is not currently exercised by aws2azure's integration tests. Validate end-to-end before relying on it."
   - name: "response-content-* query overrides"
     status: unsupported
     gap: "GetObject does not honour response-content-type / response-content-disposition / response-content-encoding / response-content-language / response-cache-control / response-expires overrides; see GetObject.yaml."
