@@ -131,6 +131,13 @@ internal static class KeyConditionAnalyser
                     || bw.Prefix is not ConditionValueOperand pr)
                     throw new KeyConditionException(
                         $"begins_with sort-key predicate must reference '{skName}' and a value placeholder.");
+                // DynamoDB only permits begins_with on String / Binary sort
+                // keys; the encoded form of a Number key is not a meaningful
+                // textual prefix, so reject it as real DDB does.
+                if (ItemKeyFormatter.TryGetDeclaredKeyType(meta, skName, out var bwType)
+                    && string.Equals(bwType, AttributeValueTypes.Number, StringComparison.Ordinal))
+                    throw new KeyConditionException(
+                        $"begins_with is not supported on Number sort key '{skName}'.");
                 return new SkBeginsWith(ScalarFromValueRef(pr.Value, skName, meta));
             default:
                 throw new KeyConditionException(

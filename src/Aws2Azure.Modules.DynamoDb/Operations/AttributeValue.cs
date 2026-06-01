@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using Aws2Azure.Modules.DynamoDb.Internal;
+using Aws2Azure.Modules.DynamoDb.Persistence;
 
 namespace Aws2Azure.Modules.DynamoDb.Operations;
 
@@ -355,9 +356,12 @@ internal static class ItemKeyFormatter
 ///     base64; it is decoded first). DynamoDB sorts binary by unsigned
 ///     byte order, which hex preserves — fixing the previous base64
 ///     ordering bug.</item>
-///   <item><b>N</b> → raw wire string passthrough (unchanged). Numeric
-///     lexicographic ordering is deferred to a follow-up; the legacy
-///     Cosmos-unsafe-character guard is retained for this path.</item>
+///   <item><b>N</b> → order-preserving digits-only key (sign flag +
+///     fixed-width biased decimal exponent + fixed-width mantissa, with the
+///     negative branch nine's-complemented). Numeric order is preserved for
+///     <c>c.id</c> range / BETWEEN / ORDER BY, and numerically-equal values
+///     (<c>42</c>, <c>42.0</c>, <c>4.2e1</c>) collapse to one id. See
+///     <see cref="KeyScalarCodec"/>'s numeric helpers for the exact layout.</item>
 /// </list>
 ///
 /// <para>Encoding is driven by the <i>declared</i> schema type rather than
@@ -441,19 +445,16 @@ internal static class KeyScalarCodec
                 break;
 
             case AttributeValueTypes.Number:
-                // Passthrough until numeric lexicographic encoding lands.
-                // A valid DDB Number can only contain [0-9+-.eE], none of
-                // which are Cosmos-forbidden, but guard defensively so a
-                // malformed value can't smuggle a '/' into the id.
-                foreach (var ch in raw)
+                // Encode into an order-preserving, digits-only string so
+                // sort-key range / BETWEEN and ORDER BY c.id compare in
+                // numeric order, and so numerically-equal values
+                // (42, 42.0, 4.2e1) collapse to the same id/partition-key.
+                if (!InferredAttributeStorage.TryParseDdbNumber(raw, out var numParts, out var numError))
                 {
-                    if (ch is '/' or '\\' or '?' or '#')
-                    {
-                        error = $"Key attribute '{attributeName}' Number value contains the unsupported character '{ch}'.";
-                        return false;
-                    }
+                    error = $"Key attribute '{attributeName}' has an invalid Number value: {numError}";
+                    return false;
                 }
-                encoded = raw;
+                encoded = EncodeNumberKey(numParts);
                 break;
 
             default:
@@ -467,5 +468,77 @@ internal static class KeyScalarCodec
             return false;
         }
         return true;
+    }
+
+    // ---- Order-preserving numeric (N) key encoding -------------------
+    //
+    // Layout (digits-only so Cosmos string collation is irrelevant, the
+    // same property the S/B hex path relies on):
+    //   zero      -> "1"
+    //   positive  -> '2' + dec3(E + Bias)        + rightPad(D,  '0', 38)
+    //   negative  -> '0' + dec3(255 - (E + Bias)) + rightPad(comp(D), '9', 38)
+    // where E = msdExponent in [-130,125], Bias = 130 so (E + Bias) in
+    // [0,255]; D = significant digits MSD-first; comp(d) = '9' - (d - '0').
+    //
+    // Ordering proof sketch:
+    //  * Sign flags '0' < '1' < '2'  => negatives < zero < positives.
+    //  * Positive: the fixed-width offset-decimal exponent field dominates
+    //    (larger E = larger magnitude); within equal E the right-'0'-padded
+    //    mantissa compares ordinally == numeric mantissa order. Equal
+    //    numbers share one canonical (E, D) so they encode identically.
+    //  * Negative: both fields are inverted — the exponent via 255-offset
+    //    (larger magnitude sorts first/smaller) and the mantissa via the
+    //    nine's-complement with '9' padding. Fixed width removes any
+    //    prefix ambiguity, so no terminator is needed.
+    // begins_with on a Number sort key is invalid in DynamoDB (rejected in
+    // KeyConditionAnalyser), so prefix-preservation is not required.
+
+    private const int NumberMantissaWidth = 38; // == max DDB significant digits
+    private const int NumberExponentBias = 130;  // msdExponent in [-130,125]
+
+    private static string EncodeNumberKey(in InferredAttributeStorage.DdbNumberParts parts)
+    {
+        if (parts.IsZero) return "1";
+
+        int offsetE = parts.MsdExponent + NumberExponentBias; // [0,255] for valid input
+        var sb = new System.Text.StringBuilder(1 + 3 + NumberMantissaWidth);
+        if (!parts.Negative)
+        {
+            sb.Append('2');
+            AppendDec3(sb, offsetE);
+            AppendMantissa(sb, parts.Digits, parts.SignificantDigits, pad: '0', complement: false);
+        }
+        else
+        {
+            sb.Append('0');
+            AppendDec3(sb, 255 - offsetE);
+            AppendMantissa(sb, parts.Digits, parts.SignificantDigits, pad: '9', complement: true);
+        }
+        return sb.ToString();
+    }
+
+    // Fixed 3-digit decimal (MSD-first) of a value in [0,255]; order-preserving.
+    private static void AppendDec3(System.Text.StringBuilder sb, int v)
+    {
+        sb.Append((char)('0' + (v / 100) % 10));
+        sb.Append((char)('0' + (v / 10) % 10));
+        sb.Append((char)('0' + v % 10));
+    }
+
+    private static void AppendMantissa(
+        System.Text.StringBuilder sb, string digits, int count, char pad, bool complement)
+    {
+        for (int k = 0; k < NumberMantissaWidth; k++)
+        {
+            if (k < count)
+            {
+                char d = digits[k];
+                sb.Append(complement ? (char)('0' + ('9' - d)) : d);
+            }
+            else
+            {
+                sb.Append(pad);
+            }
+        }
     }
 }

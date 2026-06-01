@@ -54,11 +54,112 @@ public class KeyScalarCodecTests
         Assert.Equal("ff00", Encode("B", "{\"B\":\"/wA=\"}"));
     }
 
+    private static string EncN(string num) => Encode("N", "{\"N\":\"" + num + "\"}");
+
     [Fact]
-    public void Number_is_passthrough()
+    public void Number_equal_values_collapse_to_same_encoding()
     {
-        Assert.Equal("42", Encode("N", "{\"N\":\"42\"}"));
-        Assert.Equal("42.0", Encode("N", "{\"N\":\"42.0\"}"));
+        var canonical = EncN("42");
+        Assert.Equal(canonical, EncN("42.0"));
+        Assert.Equal(canonical, EncN("42.000"));
+        Assert.Equal(canonical, EncN("4.2e1"));
+        Assert.Equal(canonical, EncN("0.42e2"));
+        Assert.Equal(canonical, EncN("+42"));
+
+        var zero = EncN("0");
+        Assert.Equal(zero, EncN("0.0"));
+        Assert.Equal(zero, EncN("-0"));
+        Assert.Equal(zero, EncN("0e125"));
+        Assert.Equal("1", zero);
+    }
+
+    [Fact]
+    public void Number_sign_flags_partition_the_keyspace()
+    {
+        // negatives start '0', zero is "1", positives start '2'.
+        Assert.StartsWith("0", EncN("-1"));
+        Assert.Equal("1", EncN("0"));
+        Assert.StartsWith("2", EncN("1"));
+        Assert.True(string.CompareOrdinal(EncN("-1"), EncN("0")) < 0);
+        Assert.True(string.CompareOrdinal(EncN("0"), EncN("1")) < 0);
+    }
+
+    [Theory]
+    // lower numeric value first; encoding must compare ordinally-smaller.
+    [InlineData("-15", "-2")]
+    [InlineData("-2", "-1.5")]
+    [InlineData("-1.5", "-1.23")]
+    [InlineData("-1.2", "-1.19")]
+    [InlineData("-1", "-0.5")]
+    [InlineData("-0.001", "0")]
+    [InlineData("0", "0.001")]
+    [InlineData("0", "1")]
+    [InlineData("9", "10")]
+    [InlineData("20", "100")]
+    [InlineData("1.5", "1.6")]
+    [InlineData("1.23", "1.3")]
+    [InlineData("99", "100")]
+    [InlineData("1e-130", "1e-100")]
+    [InlineData("1e124", "1e125")]
+    [InlineData("-1e125", "-9.99e124")]
+    [InlineData("123456789012345678901234567890", "123456789012345678901234567891")]
+    public void Number_encoding_is_numeric_order_preserving(string lower, string higher)
+    {
+        Assert.True(
+            string.CompareOrdinal(EncN(lower), EncN(higher)) < 0,
+            $"expected enc({lower}) < enc({higher})");
+    }
+
+    [Fact]
+    public void Number_encoding_matches_decimal_order_on_random_pairs()
+    {
+        // Property test: ordinal order of the encoding must equal numeric
+        // order for a spread of values across sign / magnitude / precision.
+        string[] samples =
+        {
+            "-1e125", "-1e124", "-12345.6789", "-1000", "-100", "-99.9",
+            "-2", "-1.5", "-1.23", "-1", "-0.5", "-0.001", "-1e-130",
+            "0",
+            "1e-130", "0.001", "0.5", "1", "1.23", "1.5", "2", "9", "10",
+            "20", "99.9", "100", "1000", "12345.6789", "1e124", "1e125",
+        };
+
+        for (int a = 0; a < samples.Length; a++)
+        {
+            for (int b = 0; b < samples.Length; b++)
+            {
+                int numeric = ParseOracle(samples[a]).CompareTo(ParseOracle(samples[b]));
+                int encoded = Math.Sign(string.CompareOrdinal(EncN(samples[a]), EncN(samples[b])));
+                Assert.True(
+                    Math.Sign(numeric) == encoded,
+                    $"order mismatch for {samples[a]} vs {samples[b]}: numeric={Math.Sign(numeric)} encoded={encoded}");
+            }
+        }
+    }
+
+    private static double ParseOracle(string s) =>
+        double.Parse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture);
+
+    [Fact]
+    public void Number_encoding_has_fixed_length_for_nonzero()
+    {
+        Assert.Equal(42, EncN("1").Length);
+        Assert.Equal(42, EncN("-1").Length);
+        Assert.Equal(42, EncN("1e125").Length);
+        Assert.Equal(42, EncN("-9.99e124").Length);
+        Assert.Equal("1", EncN("0"));
+    }
+
+    [Fact]
+    public void Number_out_of_range_or_malformed_is_rejected()
+    {
+        Assert.False(TryEncode("N", "{\"N\":\"1e126\"}").ok);   // magnitude over 1e125
+        Assert.False(TryEncode("N", "{\"N\":\"1e-131\"}").ok);  // magnitude under 1e-130
+        Assert.False(TryEncode("N", "{\"N\":\"not-a-number\"}").ok);
+        Assert.False(TryEncode("N", "{\"N\":\"1/2\"}").ok);
+        Assert.False(TryEncode("N", "{\"N\":\"\"}").ok);
+        // 39 significant digits exceeds DDB's 38-digit precision.
+        Assert.False(TryEncode("N", "{\"N\":\"" + new string('1', 39) + "\"}").ok);
     }
 
     [Theory]
@@ -135,13 +236,6 @@ public class KeyScalarCodecTests
     public void Empty_binary_is_rejected()
     {
         var (ok, _) = TryEncode("B", "{\"B\":\"\"}");
-        Assert.False(ok);
-    }
-
-    [Fact]
-    public void Number_with_forbidden_char_is_rejected()
-    {
-        var (ok, _) = TryEncode("N", "{\"N\":\"1/2\"}");
         Assert.False(ok);
     }
 
