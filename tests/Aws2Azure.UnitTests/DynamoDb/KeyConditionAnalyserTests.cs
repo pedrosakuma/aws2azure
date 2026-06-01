@@ -15,6 +15,9 @@ namespace Aws2Azure.UnitTests.DynamoDb;
 /// </summary>
 public class KeyConditionAnalyserTests
 {
+    private static string Hex(string s) =>
+        System.Convert.ToHexStringLower(System.Text.Encoding.UTF8.GetBytes(s));
+
     private static TableMetadata HashOnlyMeta() => new()
     {
         TableName = "t",
@@ -67,7 +70,7 @@ public class KeyConditionAnalyserTests
     public void Hash_only_equality_yields_hash_value()
     {
         var r = Analyse("pk = :v", HashOnlyMeta(), Values((":v", "{\"S\":\"a\"}")));
-        Assert.Equal("a", r.HashValue);
+        Assert.Equal(Hex("a"), r.HashValue);
         Assert.Null(r.Sk);
     }
 
@@ -76,10 +79,10 @@ public class KeyConditionAnalyserTests
     {
         var r = Analyse("pk = :p AND sk = :s", CompositeMeta(),
             Values((":p", "{\"S\":\"a\"}"), (":s", "{\"S\":\"b\"}")));
-        Assert.Equal("a", r.HashValue);
+        Assert.Equal(Hex("a"), r.HashValue);
         var c = Assert.IsType<KeyConditionAnalyser.SkCompare>(r.Sk);
         Assert.Equal("=", c.Op);
-        Assert.Equal("b", c.Value);
+        Assert.Equal(Hex("b"), c.Value);
     }
 
     [Theory]
@@ -101,8 +104,8 @@ public class KeyConditionAnalyserTests
         var r = Analyse("pk = :p AND sk BETWEEN :lo AND :hi", CompositeMeta(),
             Values((":p", "{\"S\":\"a\"}"), (":lo", "{\"S\":\"b\"}"), (":hi", "{\"S\":\"c\"}")));
         var b = Assert.IsType<KeyConditionAnalyser.SkBetween>(r.Sk);
-        Assert.Equal("b", b.Lo);
-        Assert.Equal("c", b.Hi);
+        Assert.Equal(Hex("b"), b.Lo);
+        Assert.Equal(Hex("c"), b.Hi);
     }
 
     [Fact]
@@ -111,7 +114,7 @@ public class KeyConditionAnalyserTests
         var r = Analyse("pk = :p AND begins_with(sk, :pre)", CompositeMeta(),
             Values((":p", "{\"S\":\"a\"}"), (":pre", "{\"S\":\"ord#\"}")));
         var bw = Assert.IsType<KeyConditionAnalyser.SkBeginsWith>(r.Sk);
-        Assert.Equal("ord#", bw.Prefix);
+        Assert.Equal(Hex("ord#"), bw.Prefix);
     }
 
     [Fact]

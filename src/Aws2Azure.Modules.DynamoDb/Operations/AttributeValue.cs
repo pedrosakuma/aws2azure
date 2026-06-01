@@ -141,7 +141,7 @@ internal static class ItemKeyFormatter
         }
 
         if (!keyMap.TryGetProperty(hash.Name, out var hashEl)
-            || !TryFormatScalar(hashEl, hash, out partitionKey, out error))
+            || !TryFormatScalar(hashEl, hash, meta, out partitionKey, out error))
         {
             if (string.IsNullOrEmpty(error))
                 error = $"Key value for HASH attribute '{hash.Name}' is missing or malformed.";
@@ -151,7 +151,7 @@ internal static class ItemKeyFormatter
         if (range is not null)
         {
             if (!keyMap.TryGetProperty(range.Name, out var rangeEl)
-                || !TryFormatScalar(rangeEl, range, out var rangeStr, out error))
+                || !TryFormatScalar(rangeEl, range, meta, out var rangeStr, out error))
             {
                 if (string.IsNullOrEmpty(error))
                     error = $"Key value for RANGE attribute '{range.Name}' is missing or malformed.";
@@ -204,7 +204,7 @@ internal static class ItemKeyFormatter
             error = $"Item is missing required HASH attribute '{hash.Name}'.";
             return false;
         }
-        if (!TryFormatScalar(hashEl, hash, out partitionKey, out error)) return false;
+        if (!TryFormatScalar(hashEl, hash, meta, out partitionKey, out error)) return false;
 
         var range = FindKeyDef(meta, "RANGE");
         if (range is not null)
@@ -214,7 +214,7 @@ internal static class ItemKeyFormatter
                 error = $"Item is missing required RANGE attribute '{range.Name}'.";
                 return false;
             }
-            if (!TryFormatScalar(rangeEl, range, out var rangeStr, out error)) return false;
+            if (!TryFormatScalar(rangeEl, range, meta, out var rangeStr, out error)) return false;
             itemId = rangeStr;
         }
         else
@@ -239,9 +239,17 @@ internal static class ItemKeyFormatter
         return null;
     }
 
+    /// <summary>
+    /// Resolves the declared AttributeDefinition type for a key attribute
+    /// and formats its value into the Cosmos routing scalar via
+    /// <see cref="KeyScalarCodec"/>. Encoding is chosen by the *declared*
+    /// schema type (not the wire tag) so a mismatched tag can never route
+    /// to a different partition/id — the codec rejects it instead.
+    /// </summary>
     private static bool TryFormatScalar(
         JsonElement attrEl,
         TableKeySchemaElement schemaEntry,
+        TableMetadata meta,
         out string formatted,
         out string error)
     {
@@ -254,63 +262,22 @@ internal static class ItemKeyFormatter
             return false;
         }
 
-        if (!AttributeValueTypes.IsScalarKeyType(parsed.TypeTag))
+        string? declaredType = null;
+        foreach (var a in meta.AttributeDefinitions)
         {
-            error = $"Key attribute '{schemaEntry.Name}' must be of type S, N, or B; got {parsed.TypeTag}.";
-            return false;
-        }
-
-        if (parsed.Value.ValueKind != JsonValueKind.String)
-        {
-            error = $"Key attribute '{schemaEntry.Name}' value must be a JSON string per DynamoDB wire format.";
-            return false;
-        }
-
-        var raw = parsed.Value.GetString() ?? string.Empty;
-
-        // DynamoDB key values must be non-empty (1 byte minimum).
-        if (raw.Length == 0)
-        {
-            error = $"Key attribute '{schemaEntry.Name}' value must not be empty.";
-            return false;
-        }
-
-        // Cosmos forbids '/', '\\', '?', '#' in document ids, and
-        // partition-key strings must be ≤ 1023 bytes / id ≤ 255 chars.
-        // DynamoDB allows ~2 KiB keys with arbitrary content (binary
-        // values arrive as base64 strings on the wire, which can contain
-        // '/'). Until Slice N introduces an encoding scheme, reject keys
-        // we can't safely route — better a loud ValidationException than
-        // a silent partition-key collision.
-        foreach (var ch in raw)
-        {
-            if (ch == '/' || ch == '\\' || ch == '?' || ch == '#')
+            if (string.Equals(a.Name, schemaEntry.Name, StringComparison.Ordinal))
             {
-                error = $"Key attribute '{schemaEntry.Name}' contains the character '{ch}' which is not yet supported by the Cosmos backend in this slice.";
-                return false;
+                declaredType = a.Type;
+                break;
             }
         }
-        if (raw.Length > 255)
+        if (declaredType is null)
         {
-            error = $"Key attribute '{schemaEntry.Name}' value exceeds the 255-character routing limit imposed by the Cosmos backend.";
+            error = $"Key attribute '{schemaEntry.Name}' is not declared in the table's AttributeDefinitions.";
             return false;
         }
 
-        // Type tag in the value must match the AttributeDefinition.
-        // Cross-check against the schema so a caller can't sneak a Number
-        // key into a table declared with a String key (and vice-versa) —
-        // that would otherwise route to the same partition as the proper
-        // tagged value and silently overwrite the wrong item.
-        if (!string.IsNullOrEmpty(schemaEntry.Name))
-        {
-            // schemaEntry only carries the role (HASH/RANGE); the type is
-            // on the AttributeDefinition. The caller already validated
-            // type consistency at CreateTable time, so what's stored in
-            // the metadata is authoritative. We trust it here.
-        }
-
-        formatted = raw;
-        return true;
+        return KeyScalarCodec.TryEncode(declaredType, parsed, schemaEntry.Name, out formatted, out error);
     }
 
     /// <summary>
@@ -348,6 +315,155 @@ internal static class ItemKeyFormatter
         if (!string.Equals(parsed.TypeTag, expectedType, StringComparison.Ordinal))
         {
             error = $"Key attribute '{attributeName}' has type {parsed.TypeTag} but the table declares {expectedType}.";
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Looks up the declared AttributeDefinition type (S/N/B) for a key
+    /// attribute. Returns false when the attribute is not declared.
+    /// </summary>
+    public static bool TryGetDeclaredKeyType(TableMetadata meta, string attributeName, out string declaredType)
+    {
+        declaredType = string.Empty;
+        foreach (var a in meta.AttributeDefinitions)
+        {
+            if (string.Equals(a.Name, attributeName, StringComparison.Ordinal))
+            {
+                declaredType = a.Type;
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
+/// <summary>
+/// Encodes a DynamoDB key attribute value into the scalar string used as
+/// the Cosmos <c>id</c> / partition-key, applying an <b>order-preserving,
+/// Cosmos-safe</b> transform chosen by the table's declared key type:
+///
+/// <list type="bullet">
+///   <item><b>S</b> → lowercase hex of the UTF-8 bytes. DynamoDB sorts
+///     strings by UTF-8 byte order; fixed-width hex preserves that order
+///     lexically and is prefix-preserving on byte boundaries (so
+///     <c>begins_with</c> maps to <c>STARTSWITH</c> exactly). Because the
+///     id becomes pure ASCII hex, Cosmos' native string collation no
+///     longer influences <c>ORDER BY c.id</c>.</item>
+///   <item><b>B</b> → lowercase hex of the raw bytes (the wire value is
+///     base64; it is decoded first). DynamoDB sorts binary by unsigned
+///     byte order, which hex preserves — fixing the previous base64
+///     ordering bug.</item>
+///   <item><b>N</b> → raw wire string passthrough (unchanged). Numeric
+///     lexicographic ordering is deferred to a follow-up; the legacy
+///     Cosmos-unsafe-character guard is retained for this path.</item>
+/// </list>
+///
+/// <para>Encoding is driven by the <i>declared</i> schema type rather than
+/// the request's wire tag, and the wire tag must match — so a
+/// <c>{"B":"YQ=="}</c> value can never collide with a <c>{"S":"a"}</c>
+/// value (both would otherwise hex to <c>61</c>) on a table whose key is
+/// declared as one specific type.</para>
+/// </summary>
+internal static class KeyScalarCodec
+{
+    // Strict UTF-8: throw rather than silently substitute U+FFFD for any
+    // malformed input. System.Text.Json already guarantees valid Unicode
+    // for a parsed string, so this is defence-in-depth against collisions.
+    private static readonly System.Text.Encoding StrictUtf8 =
+        new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
+    /// <summary>
+    /// Cosmos hard limit on document id length (characters).
+    /// </summary>
+    private const int MaxCosmosIdChars = 255;
+
+    /// <summary>
+    /// Encodes <paramref name="parsed"/> (whose wire tag must equal
+    /// <paramref name="declaredType"/>) into the routing scalar. Returns
+    /// false with <paramref name="error"/> populated on type mismatch,
+    /// non-string payload, empty value, invalid base64 (for B), an
+    /// unsafe character (for N), or an encoded length exceeding Cosmos'
+    /// id limit.
+    /// </summary>
+    public static bool TryEncode(
+        string declaredType,
+        ParsedAttributeValue parsed,
+        string attributeName,
+        out string encoded,
+        out string error)
+    {
+        encoded = string.Empty;
+        error = string.Empty;
+
+        if (!string.Equals(parsed.TypeTag, declaredType, StringComparison.Ordinal))
+        {
+            error = $"Key attribute '{attributeName}' has type {parsed.TypeTag} but the table declares {declaredType}.";
+            return false;
+        }
+        if (parsed.Value.ValueKind != System.Text.Json.JsonValueKind.String)
+        {
+            error = $"Key attribute '{attributeName}' value must be a JSON string per DynamoDB wire format.";
+            return false;
+        }
+
+        var raw = parsed.Value.GetString() ?? string.Empty;
+        if (raw.Length == 0)
+        {
+            error = $"Key attribute '{attributeName}' value must not be empty.";
+            return false;
+        }
+
+        switch (declaredType)
+        {
+            case AttributeValueTypes.String:
+                encoded = Convert.ToHexStringLower(StrictUtf8.GetBytes(raw));
+                break;
+
+            case AttributeValueTypes.Binary:
+                byte[] bytes;
+                try
+                {
+                    bytes = Convert.FromBase64String(raw);
+                }
+                catch (FormatException)
+                {
+                    error = $"Key attribute '{attributeName}' binary value is not valid base64.";
+                    return false;
+                }
+                if (bytes.Length == 0)
+                {
+                    error = $"Key attribute '{attributeName}' binary value must not be empty.";
+                    return false;
+                }
+                encoded = Convert.ToHexStringLower(bytes);
+                break;
+
+            case AttributeValueTypes.Number:
+                // Passthrough until numeric lexicographic encoding lands.
+                // A valid DDB Number can only contain [0-9+-.eE], none of
+                // which are Cosmos-forbidden, but guard defensively so a
+                // malformed value can't smuggle a '/' into the id.
+                foreach (var ch in raw)
+                {
+                    if (ch is '/' or '\\' or '?' or '#')
+                    {
+                        error = $"Key attribute '{attributeName}' Number value contains the unsupported character '{ch}'.";
+                        return false;
+                    }
+                }
+                encoded = raw;
+                break;
+
+            default:
+                error = $"Key attribute '{attributeName}' has unsupported key type '{declaredType}'.";
+                return false;
+        }
+
+        if (encoded.Length > MaxCosmosIdChars)
+        {
+            error = $"Key attribute '{attributeName}' encoded value exceeds the {MaxCosmosIdChars}-character Cosmos id limit.";
             return false;
         }
         return true;

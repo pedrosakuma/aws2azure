@@ -77,6 +77,10 @@ public class ItemHandlersTests
         return r.ReadToEnd();
     }
 
+    // Routing scalars (Cosmos id / _a2a_pk) are now order-preserving
+    // lowercase-hex of the key's UTF-8 (S) / raw (B) bytes.
+    private static string Hex(string s) => Convert.ToHexStringLower(Encoding.UTF8.GetBytes(s));
+
     private static HttpResponseMessage CosmosOk(string body)
         => new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
@@ -125,15 +129,15 @@ public class ItemHandlersTests
         Assert.Equal(2, handler.Requests.Count);
         var upsert = handler.Requests[1];
         Assert.Equal(HttpMethod.Post, upsert.Method);
-        Assert.Equal("[\"customer-1\"]", upsert.Headers["x-ms-documentdb-partitionkey"]);
+        Assert.Equal($"[\"{Hex("customer-1")}\"]", upsert.Headers["x-ms-documentdb-partitionkey"]);
         Assert.Equal("true", upsert.Headers["x-ms-documentdb-is-upsert"]);
 
         // The doc carries id, _a2a_pk, _a2a, and the inferred attrs flat
         // at the root. Numbers safe for IEEE754 round-trip ride as bare
         // JSON numbers; the string-set rides under an "_a2a:SS" envelope.
         using var doc = JsonDocument.Parse(upsert.Body!);
-        Assert.Equal("order-42", doc.RootElement.GetProperty("id").GetString());
-        Assert.Equal("customer-1", doc.RootElement.GetProperty("_a2a_pk").GetString());
+        Assert.Equal(Hex("order-42"), doc.RootElement.GetProperty("id").GetString());
+        Assert.Equal(Hex("customer-1"), doc.RootElement.GetProperty("_a2a_pk").GetString());
         Assert.Equal("item", doc.RootElement.GetProperty("_a2a").GetString());
         Assert.Equal("99.95", doc.RootElement.GetProperty("total").GetRawText());
         Assert.Equal("vip", doc.RootElement.GetProperty("tags").GetProperty("_a2a:SS")[0].GetString());
@@ -158,7 +162,7 @@ public class ItemHandlersTests
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var doc = JsonDocument.Parse(handler.Requests[1].Body!);
-        Assert.Equal("only-key", doc.RootElement.GetProperty("id").GetString());
+        Assert.Equal(Hex("only-key"), doc.RootElement.GetProperty("id").GetString());
         Assert.Equal("only-key", doc.RootElement.GetProperty("pk").GetString());
     }
 
@@ -330,8 +334,8 @@ public class ItemHandlersTests
 
         var getReq = handler.Requests[1];
         Assert.Equal(HttpMethod.Get, getReq.Method);
-        Assert.EndsWith("/docs/order-42", getReq.Uri.AbsolutePath);
-        Assert.Equal("[\"customer-1\"]", getReq.Headers["x-ms-documentdb-partitionkey"]);
+        Assert.EndsWith($"/docs/{Hex("order-42")}", getReq.Uri.AbsolutePath);
+        Assert.Equal($"[\"{Hex("customer-1")}\"]", getReq.Headers["x-ms-documentdb-partitionkey"]);
         Assert.False(getReq.Headers.ContainsKey("x-ms-consistency-level"));
     }
 
@@ -429,8 +433,8 @@ public class ItemHandlersTests
         Assert.Equal(200, ctx.Response.StatusCode);
         var delReq = handler.Requests[1];
         Assert.Equal(HttpMethod.Delete, delReq.Method);
-        Assert.EndsWith("/docs/order-42", delReq.Uri.AbsolutePath);
-        Assert.Equal("[\"customer-1\"]", delReq.Headers["x-ms-documentdb-partitionkey"]);
+        Assert.EndsWith($"/docs/{Hex("order-42")}", delReq.Uri.AbsolutePath);
+        Assert.Equal($"[\"{Hex("customer-1")}\"]", delReq.Headers["x-ms-documentdb-partitionkey"]);
     }
 
     [Fact]
@@ -497,17 +501,31 @@ public class ItemHandlersTests
     }
 
     [Fact]
-    public async Task PutItem_rejects_metadata_collision_in_hash_only_table()
+    public async Task PutItem_hex_encodes_key_equal_to_metadata_sentinel()
     {
-        var (ctx, body) = NewCtx();
-        var handler = new ScriptedHandler { Responses = { CosmosOk(MetadataDocHashOnly) } };
+        // With order-preserving hex key encoding, a user key whose literal
+        // value equals the reserved metadata sentinel can no longer collide
+        // with the sidecar doc (the sentinel id is stored verbatim, user
+        // keys are hex). It is therefore accepted and routed to its hex id.
+        var (ctx, _) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDocHashOnly),
+                new HttpResponseMessage(HttpStatusCode.Created) { Content = new StringContent("{}") },
+            },
+        };
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"__aws2azure_table_meta__\"}}}";
         await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
-        Assert.Equal(400, ctx.Response.StatusCode);
-        Assert.Contains("reserved", ReadResponse(body));
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var doc = JsonDocument.Parse(handler.Requests[1].Body!);
+        var id = doc.RootElement.GetProperty("id").GetString();
+        Assert.Equal(Hex("__aws2azure_table_meta__"), id);
+        Assert.NotEqual("__aws2azure_table_meta__", id);
     }
 
     [Fact]
@@ -690,23 +708,32 @@ public class ItemHandlersTests
     }
 
     [Theory]
-    [InlineData("/")]
-    [InlineData("\\\\")]
-    [InlineData("?")]
-    [InlineData("#")]
-    public async Task PutItem_rejects_key_value_with_cosmos_forbidden_chars(string jsonEscaped)
+    [InlineData("/", "/")]
+    [InlineData("\\\\", "\\")]
+    [InlineData("?", "?")]
+    [InlineData("#", "#")]
+    public async Task PutItem_hex_encodes_key_value_with_cosmos_forbidden_chars(string jsonEscaped, string rawChar)
     {
-        var (ctx, body) = NewCtx();
-        var handler = new ScriptedHandler { Responses = { CosmosOk(MetadataDocHashOnly) } };
+        // Keys containing Cosmos-forbidden characters (/ \ ? #) used to be
+        // rejected; hex encoding now makes them safe, so the write
+        // succeeds and the doc id is the hex of the UTF-8 bytes.
+        var (ctx, _) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDocHashOnly),
+                new HttpResponseMessage(HttpStatusCode.Created) { Content = new StringContent("{}") },
+            },
+        };
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"abc" + jsonEscaped + "def\"}}}";
         await ItemHandlers.HandlePutItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
 
-        Assert.Equal(400, ctx.Response.StatusCode);
-        var text = ReadResponse(body);
-        Assert.Contains("ValidationException", text);
-        Assert.Contains("not yet supported", text);
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var doc = JsonDocument.Parse(handler.Requests[1].Body!);
+        Assert.Equal(Hex("abc" + rawChar + "def"), doc.RootElement.GetProperty("id").GetString());
     }
 
     [Fact]
