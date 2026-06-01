@@ -28,7 +28,7 @@ sub_features:
     status: unsupported
     notes: "Silently ignored; responses omit ConsumedCapacity and ItemCollectionMetrics."
 behavior_differences:
-  - "Key attribute values (S/B) are hex-encoded into the internal Cosmos `id`/partition-key (S → hex(UTF-8 bytes), B → hex(raw bytes); N passes through), accepting Cosmos-forbidden characters (`/`, `\\`, `?`, `#`) and fixing B byte-ordering. Effective raw key limit ~127 bytes; over-limit keys are rejected with ValidationException. **On-disk-format breaking change** vs earlier builds. See PutItem for the full rationale."
+  - "Key attribute values (S/B) are hex-encoded into the internal Cosmos `id`/partition-key (S → hex(UTF-8 bytes), B → hex(raw bytes), N → order-preserving numeric digit string), accepting Cosmos-forbidden characters (`/`, `\\`, `?`, `#`) and fixing B byte-ordering. Effective raw key limit ~127 bytes; over-limit keys are rejected with ValidationException. **On-disk-format breaking change** vs earlier builds. See PutItem for the full rationale."
   - "16 MB request body cap (DynamoDB) not enforced — bounded only by Kestrel limits."
   - "Per-item 400 KB cap not enforced — bounded only by Cosmos document size limits."
   - "Cosmos 429 maps to `UnprocessedItems` rather than `ProvisionedThroughputExceededException`; matches DDB SDK retry behaviour."

@@ -421,11 +421,114 @@ internal static class InferredAttributeStorage
     /// out-of-range value. The normalised string is what
     /// <c>GetItem</c> echoes back to the client.
     /// </summary>
+    /// <summary>
+    /// Structural decomposition of a validated DDB Number, shared by the
+    /// canonical emitter (<see cref="TryNormalizeDdbNumber"/>) and the
+    /// order-preserving key encoder. <see cref="Digits"/> holds the
+    /// significant digits MSD-first with no leading/trailing zeros (empty
+    /// when <see cref="IsZero"/>). <see cref="MsdExponent"/> is the decimal
+    /// exponent of the most-significant digit; for valid inputs it lies in
+    /// <c>[MinDdbNumberDecimalExponent + sig - 1, MaxDdbNumberDecimalExponent]</c>
+    /// ⊆ <c>[-130, 125]</c>.
+    /// </summary>
+    internal readonly struct DdbNumberParts
+    {
+        public bool IsZero { get; }
+        public bool Negative { get; }
+        public int MsdExponent { get; }
+        public int SignificantDigits { get; }
+        public string Digits { get; }
+
+        public DdbNumberParts(bool isZero, bool negative, int msdExponent, int significantDigits, string digits)
+        {
+            IsZero = isZero;
+            Negative = negative;
+            MsdExponent = msdExponent;
+            SignificantDigits = significantDigits;
+            Digits = digits;
+        }
+    }
+
+    /// <summary>
+    /// Normalises a raw DDB Number string to its canonical decimal form —
+    /// see <see cref="TryParseDdbNumber"/> for the parse + validation
+    /// rules. The normalised string is what <c>GetItem</c> echoes back to
+    /// the client.
+    /// </summary>
     internal static bool TryNormalizeDdbNumber(
         string raw, out string normalised, out int significantDigits, out string error)
     {
         normalised = string.Empty;
         significantDigits = 0;
+        if (!TryParseDdbNumber(raw, out var parts, out error))
+            return false;
+
+        significantDigits = parts.SignificantDigits;
+        if (parts.IsZero)
+        {
+            normalised = "0";
+            return true;
+        }
+        normalised = EmitCanonical(parts);
+        return true;
+    }
+
+    /// <summary>
+    /// Emits the canonical decimal layout from a parsed, non-zero number.
+    ///   msdExp &gt;= 0 → [-]&lt;intPart&gt;[.&lt;fracPart&gt;]  (e.g. 1500, 1.5, 1.005)
+    ///   msdExp &lt;  0 → [-]0.&lt;leadingZeros&gt;&lt;sigDigits&gt;  (e.g. 0.001, 0.5)
+    /// </summary>
+    private static string EmitCanonical(in DdbNumberParts parts)
+    {
+        int significantDigits = parts.SignificantDigits;
+        int msdExponent = parts.MsdExponent;
+        int lsdExponent = msdExponent - (significantDigits - 1);
+        string d = parts.Digits;
+
+        var sb = new System.Text.StringBuilder();
+        if (parts.Negative) sb.Append('-');
+
+        if (msdExponent >= 0)
+        {
+            int intLen = msdExponent + 1;
+            for (int k = 0; k < intLen; k++)
+                sb.Append(k < significantDigits ? d[k] : '0');
+            if (lsdExponent < 0)
+            {
+                sb.Append('.');
+                int fracLen = -lsdExponent;
+                for (int k = 0; k < fracLen; k++)
+                {
+                    // intLen + (fracLen-1) == significantDigits-1, so the
+                    // index is always within the significant-digit string.
+                    sb.Append(d[intLen + k]);
+                }
+            }
+        }
+        else
+        {
+            sb.Append('0');
+            sb.Append('.');
+            int leadingZeros = -msdExponent - 1;
+            for (int k = 0; k < leadingZeros; k++) sb.Append('0');
+            for (int k = 0; k < significantDigits; k++) sb.Append(d[k]);
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Parses and validates a raw DDB Number string (strip leading zeros,
+    /// strip trailing zeros from the fraction, expand exponent notation,
+    /// collapse <c>-0</c> to <c>0</c>) against DDB's published bounds
+    /// (≤38 significant digits, magnitude in <c>[1e-130, 9.99...e+125]</c>),
+    /// returning its structural decomposition. Returns false with
+    /// <paramref name="error"/> populated on any malformed or out-of-range
+    /// input.
+    /// </summary>
+    internal static bool TryParseDdbNumber(string raw, out DdbNumberParts parts, out string error)
+    {
+        parts = default;
         error = string.Empty;
 
         if (string.IsNullOrEmpty(raw))
@@ -526,8 +629,7 @@ internal static class InferredAttributeStorage
         }
         if (firstNonZero == -1)
         {
-            normalised = "0";
-            significantDigits = 1;
+            parts = new DdbNumberParts(isZero: true, negative: false, msdExponent: 0, significantDigits: 1, digits: string.Empty);
             return true;
         }
 
@@ -542,7 +644,7 @@ internal static class InferredAttributeStorage
             if (d != '0') break;
         }
 
-        significantDigits = lastNonZero - firstNonZero + 1;
+        int significantDigits = lastNonZero - firstNonZero + 1;
         if (significantDigits > MaxDdbNumberSignificantDigits)
         {
             error = $"Number exceeds DynamoDB's {MaxDdbNumberSignificantDigits}-digit precision limit.";
@@ -565,45 +667,18 @@ internal static class InferredAttributeStorage
             return false;
         }
 
-        // Emit canonical layout. Two cases:
-        //   msdExp >= 0  → [-]<intPart>[.<fracPart>]  (e.g. 1500, 1.5, 1.005)
-        //   msdExp <  0  → [-]0.<leadingZeros><sigDigits>  (e.g. 0.001, 0.5)
-        var sb = new System.Text.StringBuilder();
-        if (negative) sb.Append('-');
+        // Materialize the significant digits MSD-first (no leading/trailing
+        // zeros) so callers don't need the raw input span.
+        char[] digitChars = new char[significantDigits];
+        for (int k = 0; k < significantDigits; k++)
+            digitChars[k] = GetSignificantDigit(span, intStart, fracStart, intDigits, firstNonZero, k);
 
-        if (msdExponent >= 0)
-        {
-            int intLen = msdExponent + 1;
-            for (int k = 0; k < intLen; k++)
-            {
-                sb.Append(k < significantDigits ? GetSignificantDigit(span, intStart, fracStart, intDigits, firstNonZero, k) : '0');
-            }
-            if (lsdExponent < 0)
-            {
-                sb.Append('.');
-                int fracLen = -lsdExponent;
-                for (int k = 0; k < fracLen; k++)
-                {
-                    int sigIdx = intLen + k;
-                    // Trailing zeros were already stripped from
-                    // significantDigits, so sigIdx is always in range.
-                    sb.Append(GetSignificantDigit(span, intStart, fracStart, intDigits, firstNonZero, sigIdx));
-                }
-            }
-        }
-        else
-        {
-            sb.Append('0');
-            sb.Append('.');
-            int leadingZeros = -msdExponent - 1;
-            for (int k = 0; k < leadingZeros; k++) sb.Append('0');
-            for (int k = 0; k < significantDigits; k++)
-            {
-                sb.Append(GetSignificantDigit(span, intStart, fracStart, intDigits, firstNonZero, k));
-            }
-        }
-
-        normalised = sb.ToString();
+        parts = new DdbNumberParts(
+            isZero: false,
+            negative: negative,
+            msdExponent: msdExponent,
+            significantDigits: significantDigits,
+            digits: new string(digitChars));
         return true;
     }
 

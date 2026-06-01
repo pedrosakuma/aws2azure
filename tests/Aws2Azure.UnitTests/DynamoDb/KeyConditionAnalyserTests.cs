@@ -118,6 +118,29 @@ public class KeyConditionAnalyserTests
     }
 
     [Fact]
+    public void Begins_with_on_number_sort_key_is_rejected()
+    {
+        var meta = new TableMetadata
+        {
+            TableName = "t",
+            AttributeDefinitions = new List<TableAttributeDefinition>
+            {
+                new() { Name = "pk", Type = "S" },
+                new() { Name = "sk", Type = "N" },
+            },
+            KeySchema = new List<TableKeySchemaElement>
+            {
+                new() { Name = "pk", KeyType = "HASH" },
+                new() { Name = "sk", KeyType = "RANGE" },
+            },
+        };
+
+        Assert.Throws<KeyConditionException>(() => Analyse(
+            "pk = :p AND begins_with(sk, :pre)", meta,
+            Values((":p", "{\"S\":\"a\"}"), (":pre", "{\"N\":\"42\"}"))));
+    }
+
+    [Fact]
     public void Or_is_rejected()
     {
         Assert.Throws<KeyConditionException>(() => Analyse("pk = :a OR pk = :b",
@@ -160,7 +183,7 @@ public class KeyConditionAnalyserTests
     }
 
     [Fact]
-    public void Numeric_hash_value_round_trips_as_string()
+    public void Numeric_hash_value_is_order_preserving_encoded()
     {
         var meta = new TableMetadata
         {
@@ -175,7 +198,12 @@ public class KeyConditionAnalyserTests
             },
         };
         var r = Analyse("id = :v", meta, Values((":v", "{\"N\":\"42\"}")));
-        Assert.Equal("42", r.HashValue);
+        // numeric keys are encoded order-preservingly, not passed through raw.
+        Assert.NotEqual("42", r.HashValue);
+        Assert.Equal(42, r.HashValue!.Length);
+        // numerically-equal forms collapse to the same encoded id.
+        var r2 = Analyse("id = :v", meta, Values((":v", "{\"N\":\"42.0\"}")));
+        Assert.Equal(r.HashValue, r2.HashValue);
     }
 
     [Fact]
