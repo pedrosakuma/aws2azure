@@ -136,7 +136,8 @@ public class QueryHandlerTests
         Assert.Equal(200, ctx.Response.StatusCode);
         var queryReq = handler.Requests[1];
         Assert.Equal(HttpMethod.Post, queryReq.Method);
-        Assert.Equal("[\"a\"]", queryReq.Headers["x-ms-documentdb-partitionkey"]);
+        var pkHex = Convert.ToHexStringLower(Encoding.UTF8.GetBytes("a"));
+        Assert.Equal($"[\"{pkHex}\"]", queryReq.Headers["x-ms-documentdb-partitionkey"]);
         Assert.Equal("true", queryReq.Headers["x-ms-documentdb-isquery"]);
         Assert.Contains("c._a2a = 'item'", queryReq.Body);
         Assert.DoesNotContain("ORDER BY", queryReq.Body);

@@ -149,7 +149,8 @@ public class BatchWriteItemHandlerTests
 
         Assert.Equal(200, ctx.Response.StatusCode);
         Assert.Equal(HttpMethod.Delete, handler.Requests[1].Method);
-        Assert.EndsWith("/docs/a", handler.Requests[1].Uri.AbsolutePath);
+        var docHex = Convert.ToHexStringLower(Encoding.UTF8.GetBytes("a"));
+        Assert.EndsWith("/docs/" + docHex, handler.Requests[1].Uri.AbsolutePath);
     }
 
     [Fact]

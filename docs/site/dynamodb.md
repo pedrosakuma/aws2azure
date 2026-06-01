@@ -22,6 +22,7 @@
 
 ### Behaviour differences
 
+- Key attribute values (S/B) are hex-encoded into the internal Cosmos `id`/partition-key (S → hex(UTF-8 bytes), B → hex(raw bytes); N passes through), accepting Cosmos-forbidden characters (`/`, `\`, `?`, `#`) and fixing B byte-ordering. Effective raw key limit ~127 bytes; over-limit keys are rejected with ValidationException. **On-disk-format breaking change** vs earlier builds. See PutItem for the full rationale.
 - 16 MB total response size cap (DynamoDB) not enforced — bounded only by the underlying Cosmos response sizes.
 - Hard error on any single item (non-429, non-404) fails the whole batch with a single error response — DynamoDB has the same all-or-nothing semantics for non-throttle failures.
 - Cosmos 429 maps to `UnprocessedKeys` rather than `ProvisionedThroughputExceededException`; matches DDB SDK retry behaviour.
@@ -51,6 +52,7 @@
 
 ### Behaviour differences
 
+- Key attribute values (S/B) are hex-encoded into the internal Cosmos `id`/partition-key (S → hex(UTF-8 bytes), B → hex(raw bytes); N passes through), accepting Cosmos-forbidden characters (`/`, `\`, `?`, `#`) and fixing B byte-ordering. Effective raw key limit ~127 bytes; over-limit keys are rejected with ValidationException. **On-disk-format breaking change** vs earlier builds. See PutItem for the full rationale.
 - 16 MB request body cap (DynamoDB) not enforced — bounded only by Kestrel limits.
 - Per-item 400 KB cap not enforced — bounded only by Cosmos document size limits.
 - Cosmos 429 maps to `UnprocessedItems` rather than `ProvisionedThroughputExceededException`; matches DDB SDK retry behaviour.
@@ -113,7 +115,7 @@
 ### Behaviour differences
 
 - Missing container (table deleted mid-op) is distinguished from missing item via Cosmos `x-ms-substatus: 1003` and surfaces as ResourceNotFoundException; missing items remain idempotent successes.
-- Key values containing `/`, `\`, `?`, `#`, empty strings, or values longer than 255 chars are rejected with ValidationException.
+- Key attribute values (S/B) are hex-encoded into the internal Cosmos `id`/partition-key (S → hex(UTF-8 bytes), B → hex(raw bytes); N passes through), so Cosmos-forbidden characters (`/`, `\`, `?`, `#`) are accepted. The encoding is order- and prefix-preserving and invisible to clients. Effective raw key limit is ~127 bytes (hex doubles length against Cosmos' 255-char id cap); over-limit keys are rejected with ValidationException. **On-disk-format breaking change** — items written by earlier builds route under a different id.
 - Cosmos 429 surfaced as DynamoDB ProvisionedThroughputExceededException — including 429 on metadata read.
 - Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB.
 
@@ -211,7 +213,7 @@
 
 - Missing item yields 200 with no `Item` field (matches DynamoDB).
 - Missing container (table deleted mid-op) is distinguished from missing item via Cosmos `x-ms-substatus: 1003` and surfaces as ResourceNotFoundException.
-- Key values containing `/`, `\`, `?`, `#`, empty strings, or values longer than 255 chars are rejected with ValidationException.
+- Key attribute values (S/B) are hex-encoded into the internal Cosmos `id`/partition-key (S → hex(UTF-8 bytes), B → hex(raw bytes); N passes through), so Cosmos-forbidden characters (`/`, `\`, `?`, `#`) are accepted. The encoding is order- and prefix-preserving and invisible to clients. Effective raw key limit is ~127 bytes (hex doubles length against Cosmos' 255-char id cap); over-limit keys are rejected with ValidationException. **On-disk-format breaking change** — items written by earlier builds route under a different id.
 - ConsistentRead effectiveness is account-dependent; document divergence per deployment.
 - Cosmos 429 on metadata read surfaces as ProvisionedThroughputExceededException (not a fake ResourceNotFoundException).
 - Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB.
@@ -285,8 +287,8 @@
 - Attributes are stored *flat* on the Cosmos document — `{id, _a2a_pk, ...inferred attributes...}` — with no per-item type wrapper. Scalar values are stored without `{S}`/`{N}`/`{B}` tags; the type is inferred on read from the JSON value kind. Maps/lists nest as Cosmos JSON. Number values are normalised to DDB canonical form (matching real DDB) — e.g. `42.0`→`42`, `1e10`→`10000000000`. Values that cannot survive an IEEE 754 round-trip (high-precision numbers, binary, sets) are stored under a typed envelope (`_a2a:N`, `_a2a:B`, `_a2a:SS`, `_a2a:NS`, `_a2a:BS`).
 - Attribute names with the reserved `_a2a:` prefix are rejected with ValidationException at the API surface, both at top level and inside nested maps. The prefix is reserved for the typed-envelope encoding above; allowing user attributes to collide would let callers shadow / probe storage internals.
 - Numbers outside DynamoDB's published range (38 significant digits, |exp|≤125) are rejected with ValidationException — match real DDB.
-- Sentinel id `__aws2azure_table_meta__` is reserved for the table-metadata sidecar and rejected at the API surface.
-- Key values containing `/`, `\`, `?`, `#`, empty strings, or values longer than 255 chars are rejected with ValidationException pending an encoding scheme.
+- Sentinel id `__aws2azure_table_meta__` is no longer special-cased for key values: S/B keys are hex-encoded before routing (see below), so a user key can never collide with the sidecar sentinel and the value is stored normally.
+- Key attribute values (S/B) are encoded into the internal Cosmos `id`/partition-key as **order-preserving lowercase hex**: S → hex(UTF-8 bytes), B → hex(raw bytes after base64-decode). N keys pass through unchanged (numeric lexicographic ordering deferred to a follow-up). This is an **on-disk-format breaking change** — documents written by earlier builds route under a different id and are not readable by this build. The encoding is invisible to clients (key attributes are always returned from the flat-stored attributes, never reconstructed from id). Cosmos-forbidden characters (`/`, `\`, `?`, `#`) and previously-rejected empty-after-trim strings are now accepted because hex never emits them. Because hex doubles length and Cosmos caps the id at 255 chars, the effective raw key limit is ~127 bytes (vs DynamoDB's 1024 for a partition key / 1024 for a sort key); over-limit keys are rejected with ValidationException.
 - Cosmos 429 (throttled) is surfaced to clients as DynamoDB ProvisionedThroughputExceededException — including 429 on the sidecar metadata read.
 - Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB.
 
@@ -304,7 +306,7 @@
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
 | KeyConditionExpression on HASH-only tables | ✅ implemented |  |  |  |
-| KeyConditionExpression on HASH+RANGE tables (= / < / <= / > / >= / BETWEEN / begins_with) | ✅ implemented | Translated to a partition-scoped Cosmos SQL query against `c.pk = <hash>` with a predicate on `c.id` (which holds the formatted RANGE value). |  |  |
+| KeyConditionExpression on HASH+RANGE tables (= / < / <= / > / >= / BETWEEN / begins_with) | ✅ implemented | Translated to a partition-scoped Cosmos SQL query against `c.pk = <hash>` with a predicate on `c.id` (which holds the formatted RANGE value). RANGE (and HASH) key values are hex-encoded (S → hex(UTF-8 bytes), B → hex(raw bytes); N passes through), so ordered comparisons, BETWEEN, and begins_with on S/B sort keys compare in correct DynamoDB byte order — `begins_with` maps to an exact prefix match because hex is prefix-preserving on byte boundaries. Query operands and stored ids share one codec, so they always agree. |  |  |
 | FilterExpression | ✅ implemented | Pushed into the Cosmos SQL WHERE clause where safe; the remainder is evaluated in-process after the Cosmos page returns. ScannedCount reflects pre-filter rows and Count reflects post-filter rows, matching DynamoDB. Predicates supported: comparison (=, <, <=, >, >=), BETWEEN, IN, attribute_exists/not_exists/type, begins_with, contains, AND/OR/NOT. Pushdown carve-outs (these stay residual): `<>` on any path (DDB cross-type semantics), ordered comparisons / BETWEEN on B (base64 lexical order ≠ underlying byte order), begins_with on B, size(), nested paths whose first segment matches the reserved `_a2a:` envelope prefix. Numeric equality (=) and IN push a hybrid IS_NUMBER / `StringToNumber(_a2a:N)` branch as a *prefilter only* — false negatives are impossible by construction (envelope values cannot exactly equal a round-trippable parameter) and the client-side evaluator re-checks the exact canonical string anyway. Numeric ordered comparisons (<, <=, >, >=) and BETWEEN widen the envelope branch to `IS_DEFINED(_a2a:N)` so every envelope-stored row reaches the residual evaluator — otherwise `StringToNumber` rounding could false-negative boundary values. |  |  |
 | ProjectionExpression | 🟡 partial | Top-level attributes and `#alias` references are honoured. Nested paths (`a.b`, `a[0]`) are not yet supported and are rejected with ValidationException. |  |  |
 | ExpressionAttributeNames / ExpressionAttributeValues | ✅ implemented |  |  |  |
@@ -401,6 +403,7 @@
 
 ### Behaviour differences
 
+- Key attribute values (S/B) are hex-encoded into the internal Cosmos `id`/partition-key (S → hex(UTF-8 bytes), B → hex(raw bytes); N passes through), accepting Cosmos-forbidden characters (`/`, `\`, `?`, `#`) and fixing B byte-ordering. Effective raw key limit ~127 bytes; over-limit keys are rejected with ValidationException. **On-disk-format breaking change** vs earlier builds. See PutItem for the full rationale.
 - Not a true cross-container ACID read — each fan-out call sees Cosmos' latest committed value independently. For items in the same logical partition this is functionally equivalent to DynamoDB; cross-partition or cross-container reads can in theory observe writes that committed mid-fan-out (DynamoDB internally serializes the entire transaction).
 - Only validated against scripted Cosmos REST fakes; not yet exercised against real Azure Cosmos.
 
@@ -473,6 +476,7 @@
 
 ### Behaviour differences
 
+- Key attribute values (S/B) are hex-encoded into the internal Cosmos `id`/partition-key (S → hex(UTF-8 bytes), B → hex(raw bytes); N passes through), accepting Cosmos-forbidden characters (`/`, `\`, `?`, `#`) and fixing B byte-ordering. Effective raw key limit ~127 bytes; over-limit keys are rejected with ValidationException. **On-disk-format breaking change** vs earlier builds. See PutItem for the full rationale.
 - Atomicity is implemented as a GET → modify → PUT(If-Match) (or atomic-create with If-None-Match) loop with up to 4 retries on Cosmos 412/409. Sustained contention surfaces as InternalServerError after the retry budget is exhausted.
 - Numeric arithmetic is performed with System.Decimal (28-29 significant digits) rather than DynamoDB's 38-digit precision. Operands exceeding the proxy's precision are rejected up front with ValidationException to avoid silent rounding; overflow also throws ValidationException.
 - Key attributes referenced by the request are always reinforced into the resulting item — a REMOVE targeting the partition or sort key never deletes them in the stored doc.

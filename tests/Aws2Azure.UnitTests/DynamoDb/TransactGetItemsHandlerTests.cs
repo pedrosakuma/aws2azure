@@ -130,8 +130,9 @@ public class TransactGetItemsHandlerTests
 
         await TransactGetItemsHandler.HandleTransactGetItemsAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
 
-        // Last request is the per-key GET.
-        var gets = handler.Requests.FindAll(r => r.Method == HttpMethod.Get && r.Uri.AbsolutePath.Contains("/docs/a"));
+        // Last request is the per-key GET (routing id is hex of "a").
+        var docHex = Convert.ToHexStringLower(Encoding.UTF8.GetBytes("a"));
+        var gets = handler.Requests.FindAll(r => r.Method == HttpMethod.Get && r.Uri.AbsolutePath.Contains("/docs/" + docHex));
         Assert.Single(gets);
         Assert.Equal("Strong", gets[0].Headers["x-ms-consistency-level"]);
     }

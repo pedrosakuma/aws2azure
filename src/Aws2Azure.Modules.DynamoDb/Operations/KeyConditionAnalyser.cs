@@ -173,14 +173,17 @@ internal static class KeyConditionAnalyser
         if (!ParsedAttributeValue.TryParse(vr.Value, out var parsed))
             throw new KeyConditionException(
                 $"Value bound to '{attrName}' is not a typed attribute value.");
-        if (parsed.Value.ValueKind != JsonValueKind.String)
+        if (!ItemKeyFormatter.TryGetDeclaredKeyType(meta, attrName, out var declaredType))
             throw new KeyConditionException(
-                $"Key attribute '{attrName}' value must be a JSON string per DynamoDB wire format.");
-        var raw = parsed.Value.GetString() ?? string.Empty;
-        if (raw.Length == 0)
-            throw new KeyConditionException(
-                $"Key attribute '{attrName}' value must not be empty.");
-        return raw;
+                $"Key attribute '{attrName}' is not declared in the table's AttributeDefinitions.");
+
+        // Encode with the SAME codec used by the write/point-read path so a
+        // query operand routes to exactly the partition / id a matching
+        // PutItem produced. begins_with prefixes encode to a hex prefix,
+        // keeping STARTSWITH(c.id, <prefix>) exact for S and B keys.
+        if (!KeyScalarCodec.TryEncode(declaredType, parsed, attrName, out var encoded, out var encodeError))
+            throw new KeyConditionException(encodeError);
+        return encoded;
     }
 }
 
