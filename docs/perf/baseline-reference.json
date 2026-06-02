@@ -18,7 +18,7 @@
     "dynamodb.Query (pushable filter)":                            { "minThroughputPerSec": 200.0, "maxP99Ms":  150.0 },
     "dynamodb.Scan (pushable filter)":                             { "minThroughputPerSec": 120.0, "maxP99Ms":  200.0 },
     "dynamodb.BatchWriteItem (25 items)":                          { "minThroughputPerSec":   4.0, "maxP99Ms": 2500.0 },
-    "dynamodb.BatchGetItem (25 items)":                            { "minThroughputPerSec":   8.0, "maxP99Ms": 3000.0 },
+    "dynamodb.BatchGetItem (25 items)":                            { "minThroughputPerSec":  50.0, "maxP99Ms":  800.0 },
     "azure-sdk.Cosmos.UpsertItem (small)":                         { "minThroughputPerSec":  80.0, "maxP99Ms":  400.0 },
     "azure-sdk.Cosmos.ReadItem (small)":                           { "minThroughputPerSec": 300.0, "maxP99Ms":  200.0 },
     "azure-sdk.Cosmos.ReadManyItems (25 keys)":                    { "minThroughputPerSec": 100.0, "maxP99Ms":  200.0 },

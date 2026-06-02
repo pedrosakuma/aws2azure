@@ -1,21 +1,30 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
+using Aws2Azure.Modules.DynamoDb.Persistence;
 using Microsoft.AspNetCore.Http;
 
 namespace Aws2Azure.Modules.DynamoDb.Operations;
 
 /// <summary>
-/// DynamoDB <c>BatchGetItem</c> → fan-out of per-item Cosmos
-/// <c>GET /docs/{id}</c> requests with bounded concurrency. Mirrors
-/// the AWS semantics:
+/// DynamoDB <c>BatchGetItem</c> → Cosmos reads, batched per partition.
+/// Keys are grouped by their Cosmos partition key; a group of two or
+/// more keys is served by a single <c>SELECT * FROM c WHERE c.id IN
+/// (...)</c> query scoped to that partition (one round-trip instead of
+/// N point reads — see issue #185), while a singleton group keeps the
+/// cheap <c>GET /docs/{id}</c> point read. Groups run concurrently
+/// under a bounded semaphore so genuinely multi-partition requests stay
+/// capped. Mirrors the AWS semantics:
 ///
 /// <list type="bullet">
 ///   <item>At most 100 keys per request (across all tables); requests
@@ -210,18 +219,35 @@ internal static class BatchGetItemHandler
             }
         }
 
-        // Fan-out: parallel GETs with a semaphore so we never queue
-        // more than MaxParallelism concurrent Cosmos calls regardless
-        // of the per-batch cap.
+        // Group the work units by Cosmos partition key. Keys that share
+        // a partition are served by a single IN-list query (one
+        // round-trip); singletons fall back to a point read. Genuinely
+        // multi-partition batches still fan out, bounded by the
+        // semaphore below.
         var results = new PerItemResult[work.Count];
+        var groups = new Dictionary<(string Table, string Pk), KeyGroup>();
+        for (int i = 0; i < work.Count; i++)
+        {
+            var unit = work[i];
+            var gk = (unit.Table, unit.Pk);
+            if (!groups.TryGetValue(gk, out var g))
+            {
+                g = new KeyGroup(unit.Table, unit.Pk, tableConsistent[unit.Table]);
+                groups[gk] = g;
+            }
+            g.Add(unit.Id, i);
+        }
+
+        // Fan-out: parallel Cosmos calls with a semaphore so we never
+        // queue more than MaxParallelism concurrent calls regardless of
+        // the per-batch cap.
         using (var sem = new SemaphoreSlim(MaxParallelism))
         {
-            var tasks = new Task[work.Count];
-            for (int i = 0; i < work.Count; i++)
+            var groupList = new List<KeyGroup>(groups.Values);
+            var tasks = new Task[groupList.Count];
+            for (int i = 0; i < groupList.Count; i++)
             {
-                var idx = i;
-                var unit = work[i];
-                tasks[i] = ExecuteOneAsync(cosmos, unit, tableConsistent[unit.Table], sem, results, idx, ct);
+                tasks[i] = ExecuteGroupAsync(cosmos, groupList[i], sem, results, ct);
             }
             await Task.WhenAll(tasks).ConfigureAwait(false);
         }
@@ -303,75 +329,215 @@ internal static class BatchGetItemHandler
             BatchGetItemJsonContext.Default.BatchGetItemResponse).ConfigureAwait(false);
     }
 
-    private static async Task ExecuteOneAsync(
-        CosmosClient cosmos, WorkUnit unit, bool consistent,
-        SemaphoreSlim sem, PerItemResult[] results, int idx, CancellationToken ct)
+    private static async Task ExecuteGroupAsync(
+        CosmosClient cosmos, KeyGroup group,
+        SemaphoreSlim sem, PerItemResult[] results, CancellationToken ct)
     {
         await sem.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var docLink = "dbs/" + cosmos.DatabaseName + "/colls/" + unit.Table + "/docs/" + unit.Id;
-            var pkHeader = CosmosOpsShared.BuildPartitionKeyHeader(unit.Pk);
+            if (group.Count == 1)
+            {
+                await ExecutePointReadAsync(
+                    cosmos, group, group.Ids[0], group.Indices[0], results, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                await ExecuteGroupQueryAsync(cosmos, group, results, ct).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            SetGroupResult(group, results,
+                new PerItemResult(null, false, new HardError(500, "InternalServerError", ex.Message)));
+        }
+        finally
+        {
+            sem.Release();
+        }
+    }
+
+    private static async Task ExecutePointReadAsync(
+        CosmosClient cosmos, KeyGroup group, string id, int idx,
+        PerItemResult[] results, CancellationToken ct)
+    {
+        var docLink = "dbs/" + cosmos.DatabaseName + "/colls/" + group.Table + "/docs/" + id;
+        var pkHeader = CosmosOpsShared.BuildPartitionKeyHeader(group.Pk);
+        var headers = new List<KeyValuePair<string, string>>
+        {
+            new("x-ms-documentdb-partitionkey", pkHeader),
+        };
+        if (group.Consistent)
+        {
+            headers.Add(new("x-ms-consistency-level", "Strong"));
+        }
+        using var resp = await cosmos.SendAsync(
+            HttpMethod.Get, "docs", docLink, "/" + docLink,
+            content: null, headers, ct).ConfigureAwait(false);
+
+        if (resp.StatusCode == HttpStatusCode.NotFound)
+        {
+            if (CosmosOpsShared.Is404ContainerMissing(resp))
+            {
+                results[idx] = new PerItemResult(null, false,
+                    new HardError(400, "ResourceNotFoundException",
+                        $"Table not found: {group.Table}"));
+                return;
+            }
+            // DynamoDB returns missing items by omitting them — no error.
+            results[idx] = new PerItemResult(null, false, null);
+            return;
+        }
+        if (resp.StatusCode == (HttpStatusCode)429)
+        {
+            results[idx] = new PerItemResult(null, true, null);
+            return;
+        }
+        if (!resp.IsSuccessStatusCode)
+        {
+            results[idx] = await BuildHardErrorAsync(resp, ct).ConfigureAwait(false);
+            return;
+        }
+
+        await using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        var item = ItemHandlers.ExtractItemFromCosmosDoc(stream);
+        results[idx] = new PerItemResult(item, false, null);
+    }
+
+    /// <summary>
+    /// Serves every key of a single-partition group with one Cosmos
+    /// query (<c>SELECT * FROM c WHERE c._a2a = 'item' AND c.id IN
+    /// (...)</c>). Keys whose document is absent are simply left as the
+    /// default (missing) result; a Cosmos <c>429</c> throttles the whole
+    /// group into <c>UnprocessedKeys</c>; any other failure surfaces as
+    /// a hard error for every key in the group.
+    /// </summary>
+    private static async Task ExecuteGroupQueryAsync(
+        CosmosClient cosmos, KeyGroup group, PerItemResult[] results, CancellationToken ct)
+    {
+        var sb = new StringBuilder("SELECT * FROM c WHERE c.")
+            .Append(InferredAttributeStorage.DiscriminatorProperty)
+            .Append(" = '")
+            .Append(InferredAttributeStorage.DiscriminatorValueItem)
+            .Append("' AND c.id IN (");
+        var parameters = new List<CosmosSqlParameter>(group.Count);
+        for (int i = 0; i < group.Count; i++)
+        {
+            if (i > 0) sb.Append(',');
+            var name = "@id" + i.ToString(CultureInfo.InvariantCulture);
+            sb.Append(name);
+            parameters.Add(new CosmosSqlParameter(name, CosmosQueryBody.StringValue(group.Ids[i])));
+        }
+        sb.Append(')');
+        var queryBody = CosmosQueryBody.Build(sb.ToString(), parameters);
+
+        var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + group.Table;
+        var collUri = "/" + collLink + "/docs";
+        var pkHeader = CosmosOpsShared.BuildPartitionKeyHeader(group.Pk);
+        var pageSize = group.Count.ToString(CultureInfo.InvariantCulture);
+
+        string? continuation = null;
+        while (true)
+        {
+            using var content = new StringContent(queryBody, Encoding.UTF8);
+            content.Headers.ContentType = new MediaTypeHeaderValue("application/query+json");
+
             var headers = new List<KeyValuePair<string, string>>
             {
                 new("x-ms-documentdb-partitionkey", pkHeader),
+                new("x-ms-documentdb-isquery", "true"),
+                new("x-ms-max-item-count", pageSize),
             };
-            if (consistent)
+            if (group.Consistent)
             {
                 headers.Add(new("x-ms-consistency-level", "Strong"));
             }
+            if (!string.IsNullOrEmpty(continuation))
+            {
+                headers.Add(new("x-ms-continuation", continuation));
+            }
+
             using var resp = await cosmos.SendAsync(
-                HttpMethod.Get, "docs", docLink, "/" + docLink,
-                content: null, headers, ct).ConfigureAwait(false);
+                HttpMethod.Post, "docs", collLink, collUri,
+                content, headers, ct).ConfigureAwait(false);
 
             if (resp.StatusCode == HttpStatusCode.NotFound)
             {
                 if (CosmosOpsShared.Is404ContainerMissing(resp))
                 {
-                    results[idx] = new PerItemResult(null, false,
-                        new HardError(400, "ResourceNotFoundException",
-                            $"Table not found: {unit.Table}"));
+                    SetGroupResult(group, results,
+                        new PerItemResult(null, false,
+                            new HardError(400, "ResourceNotFoundException",
+                                $"Table not found: {group.Table}")));
                     return;
                 }
-                // DynamoDB returns missing items by omitting them — no error.
-                results[idx] = new PerItemResult(null, false, null);
+                // No matching documents — leave every key as the default
+                // (missing) result, matching DynamoDB's omit semantics.
                 return;
             }
             if (resp.StatusCode == (HttpStatusCode)429)
             {
-                results[idx] = new PerItemResult(null, true, null);
+                SetGroupResult(group, results, new PerItemResult(null, true, null));
                 return;
             }
             if (!resp.IsSuccessStatusCode)
             {
-                string body = string.Empty;
-                try { body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false); }
-                catch { }
-                var status = (int)resp.StatusCode;
-                var (awsStatus, code) = status switch
-                {
-                    401 or 403 => (400, "AccessDeniedException"),
-                    _ when status >= 500 => (500, "InternalServerError"),
-                    _ => (400, "ValidationException"),
-                };
-                results[idx] = new PerItemResult(null, false,
-                    new HardError(awsStatus, code, string.IsNullOrEmpty(body) ? (resp.ReasonPhrase ?? "Cosmos request failed.") : body));
+                SetGroupResult(group, results, await BuildHardErrorAsync(resp, ct).ConfigureAwait(false));
                 return;
             }
 
             await using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-            var item = ItemHandlers.ExtractItemFromCosmosDoc(stream);
-            results[idx] = new PerItemResult(item, false, null);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
+            if (doc.RootElement.TryGetProperty("Documents", out var docsEl)
+                && docsEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var docEl in docsEl.EnumerateArray())
+                {
+                    if (!docEl.TryGetProperty(InferredAttributeStorage.IdProperty, out var idEl)
+                        || idEl.ValueKind != JsonValueKind.String)
+                    {
+                        continue;
+                    }
+                    if (!group.TryGetIndex(idEl.GetString()!, out var idx)) continue;
+                    var item = InferredAttributeStorage.ExtractItem(docEl);
+                    if (item is null) continue;
+                    results[idx] = new PerItemResult(item, false, null);
+                }
+            }
+
+            continuation = null;
+            if (resp.Headers.TryGetValues("x-ms-continuation", out var ctValues))
+            {
+                foreach (var v in ctValues) { continuation = v; break; }
+            }
+            if (string.IsNullOrEmpty(continuation)) break;
         }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
+    }
+
+    private static async Task<PerItemResult> BuildHardErrorAsync(
+        HttpResponseMessage resp, CancellationToken ct)
+    {
+        string body = string.Empty;
+        try { body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false); }
+        catch { }
+        var status = (int)resp.StatusCode;
+        var (awsStatus, code) = status switch
         {
-            results[idx] = new PerItemResult(null, false,
-                new HardError(500, "InternalServerError", ex.Message));
-        }
-        finally
+            401 or 403 => (400, "AccessDeniedException"),
+            _ when status >= 500 => (500, "InternalServerError"),
+            _ => (400, "ValidationException"),
+        };
+        return new PerItemResult(null, false,
+            new HardError(awsStatus, code,
+                string.IsNullOrEmpty(body) ? (resp.ReasonPhrase ?? "Cosmos request failed.") : body));
+    }
+
+    private static void SetGroupResult(KeyGroup group, PerItemResult[] results, PerItemResult value)
+    {
+        for (int i = 0; i < group.Indices.Count; i++)
         {
-            sem.Release();
+            results[group.Indices[i]] = value;
         }
     }
 
@@ -400,6 +566,38 @@ internal static class BatchGetItemHandler
     }
 
     private readonly record struct WorkUnit(string Table, string Pk, string Id, JsonElement OriginalKey);
+
+    /// <summary>
+    /// A set of keys that share a Cosmos partition key within one table,
+    /// served by a single query (or a point read when it holds one key).
+    /// </summary>
+    private sealed class KeyGroup
+    {
+        public KeyGroup(string table, string pk, bool consistent)
+        {
+            Table = table;
+            Pk = pk;
+            Consistent = consistent;
+        }
+
+        public string Table { get; }
+        public string Pk { get; }
+        public bool Consistent { get; }
+        public List<string> Ids { get; } = new();
+        public List<int> Indices { get; } = new();
+        private readonly Dictionary<string, int> _idToIndex = new(StringComparer.Ordinal);
+
+        public int Count => Ids.Count;
+
+        public void Add(string id, int index)
+        {
+            Ids.Add(id);
+            Indices.Add(index);
+            _idToIndex[id] = index;
+        }
+
+        public bool TryGetIndex(string id, out int index) => _idToIndex.TryGetValue(id, out index);
+    }
 
     private readonly record struct PerItemResult(
         Dictionary<string, JsonElement>? Item,
