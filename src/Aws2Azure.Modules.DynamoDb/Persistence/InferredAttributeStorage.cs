@@ -106,6 +106,7 @@ internal static class InferredAttributeStorage
     private static readonly JsonEncodedText DiscPropEncoded = JsonEncodedText.Encode(DiscriminatorProperty);
     private static readonly JsonEncodedText DiscValueItemEncoded = JsonEncodedText.Encode(DiscriminatorValueItem);
     private static readonly JsonEncodedText ShadowIdPropEncoded = JsonEncodedText.Encode(ShadowEncodedIdName);
+    private static readonly JsonEncodedText ItemPropEncoded = JsonEncodedText.Encode("Item");
     private static readonly JsonEncodedText TagS = JsonEncodedText.Encode(AttributeValueTypes.String);
     private static readonly JsonEncodedText TagN = JsonEncodedText.Encode(AttributeValueTypes.Number);
     private static readonly JsonEncodedText TagBool = JsonEncodedText.Encode(AttributeValueTypes.Bool);
@@ -713,6 +714,350 @@ internal static class InferredAttributeStorage
     }
 
     /// <summary>
+    /// Streams the DynamoDB <c>GetItem</c> response envelope
+    /// (<c>{"Item":{...}}</c>) for a found Cosmos document directly into
+    /// <paramref name="writer"/>, reusing the same reserved-name skip,
+    /// shadow-<c>id</c> unmangling, and <see cref="WriteAttributeValue"/>
+    /// per-value encoder as <see cref="ExtractItem(JsonElement)"/>. This is
+    /// the allocation-lean read path: it eliminates the intermediate
+    /// <see cref="Dictionary{TKey,TValue}"/>, the per-attribute
+    /// <see cref="JsonElement.Clone"/> calls, the response model object, and
+    /// the model re-serialization that the <c>ExtractItem → model →
+    /// SerializeAsync</c> path pays.
+    ///
+    /// <para><b>Encoder contract:</b> <paramref name="writer"/> MUST be
+    /// constructed with the default <see cref="JavaScriptEncoder"/> (i.e. a
+    /// <see cref="JsonWriterOptions"/> with no <c>Encoder</c> override) so the
+    /// emitted bytes are identical to the model-based path, which terminates
+    /// in <see cref="JsonSerializer"/> using <c>JavaScriptEncoder.Default</c>.
+    /// Passing this module's relaxed-escaping <c>WriterOptions</c> would
+    /// silently diverge on non-ASCII and HTML-sensitive characters.</para>
+    ///
+    /// <para>When <paramref name="docRoot"/> is not a JSON object the
+    /// envelope collapses to <c>{}</c>, matching a null
+    /// <c>GetItemResponse.Item</c> serialized with
+    /// <c>DefaultIgnoreCondition=WhenWritingNull</c>.</para>
+    /// </summary>
+    public static void WriteGetItemEnvelope(Utf8JsonWriter writer, JsonElement docRoot)
+    {
+        writer.WriteStartObject();
+        if (docRoot.ValueKind == JsonValueKind.Object)
+        {
+            writer.WritePropertyName(ItemPropEncoded);
+            writer.WriteStartObject();
+            foreach (var prop in docRoot.EnumerateObject())
+            {
+                string targetName;
+                if (prop.Name.Equals(ShadowEncodedIdName, StringComparison.Ordinal))
+                {
+                    // Unmangle the shadow-encoded "id" attribute.
+                    targetName = IdProperty;
+                }
+                else if (IsReservedTopLevelName(prop.Name))
+                {
+                    // Routing fields, discriminator, other reserved
+                    // _a2a-namespace props — never user data.
+                    continue;
+                }
+                else
+                {
+                    targetName = prop.Name;
+                }
+
+                writer.WritePropertyName(targetName);
+                WriteAttributeValue(writer, prop.Value);
+            }
+            writer.WriteEndObject();
+        }
+        writer.WriteEndObject();
+    }
+
+    // ---- UTF-8 streaming GetItem envelope (no DOM / no String) ----------
+    //
+    // Forward-only Utf8JsonReader → Utf8JsonWriter pump that emits the same
+    // {"Item":{...}} envelope as WriteGetItemEnvelope(JsonElement) but never
+    // materializes a JsonDocument, a JsonElement, or a System.String. Keys
+    // and values are copied as raw UTF-8 spans (ValueSpan), unescaped only
+    // when the source token actually carries escapes (ValueIsEscaped). This
+    // is the realization of the original transform-on-the-fly premise and
+    // eliminates the per-string UTF8→UTF16→UTF8 round-trip that dominates
+    // allocation for large / string-heavy items.
+    //
+    // Envelope-vs-map disambiguation needs no lookahead: the encoder forbids
+    // any stored object — top-level or nested map — from carrying a key with
+    // the "_a2a:" prefix unless it is a genuine single-property envelope
+    // (BuildCosmosDocument / EncodeMap reject such names at write time), so a
+    // first property name under that prefix is deterministically an envelope.
+
+    private static ReadOnlySpan<byte> ShadowEncodedIdNameU8 => "_a2a$id"u8;
+    private static ReadOnlySpan<byte> IdNameU8 => "id"u8;
+    private static ReadOnlySpan<byte> DiscriminatorPrefixU8 => "_a2a"u8;
+    private static ReadOnlySpan<byte> EnvelopeTagPrefixU8 => "_a2a:"u8;
+
+    /// <summary>
+    /// Streaming equivalent of <see cref="WriteGetItemEnvelope(Utf8JsonWriter, JsonElement)"/>
+    /// that reads the Cosmos document straight from its UTF-8 bytes. Produces
+    /// byte-identical output (pinned by the golden corpus) with zero DOM,
+    /// JsonElement or String allocation.
+    /// </summary>
+    public static void WriteGetItemEnvelope(Utf8JsonWriter writer, ReadOnlySpan<byte> cosmosDocUtf8)
+    {
+        var reader = new Utf8JsonReader(cosmosDocUtf8);
+
+        writer.WriteStartObject();
+        if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+        {
+            // Non-object root collapses to {} (null GetItemResponse.Item).
+            writer.WriteEndObject();
+            return;
+        }
+
+        writer.WritePropertyName(ItemPropEncoded);
+        writer.WriteStartObject();
+        while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+        {
+            if (reader.ValueTextEquals(ShadowEncodedIdNameU8))
+            {
+                // Unmangle the shadow-encoded "id" attribute.
+                writer.WritePropertyName(IdPropEncoded);
+                reader.Read();
+                WriteAttributeValue(writer, ref reader);
+            }
+            else if (IsReservedTopLevelNameToken(ref reader))
+            {
+                // Routing fields, discriminator, other reserved _a2a props.
+                reader.Read();
+                reader.Skip();
+            }
+            else
+            {
+                WriteCurrentPropertyName(writer, ref reader);
+                reader.Read();
+                WriteAttributeValue(writer, ref reader);
+            }
+        }
+        writer.WriteEndObject();
+        writer.WriteEndObject();
+    }
+
+    /// <summary>Reserved top-level name check over the reader's current
+    /// PropertyName token (shadow-id is handled separately by the caller).</summary>
+    private static bool IsReservedTopLevelNameToken(ref Utf8JsonReader reader)
+    {
+        if (reader.ValueTextEquals(IdNameU8)) return true;
+        // Proxy metadata names (_a2a, _a2a_pk, ...) are always emitted
+        // canonically — never escaped — so an escaped name cannot be ours.
+        if (reader.ValueIsEscaped || reader.HasValueSequence) return false;
+        return reader.ValueSpan.StartsWith(DiscriminatorPrefixU8);
+    }
+
+    /// <summary>
+    /// Writes the typed DDB AttributeValue for the JSON value the reader is
+    /// currently positioned on. On entry the reader is on the value's first
+    /// token; on return it is on the value's last token (Skip contract).
+    /// </summary>
+    private static void WriteAttributeValue(Utf8JsonWriter writer, ref Utf8JsonReader reader)
+    {
+        switch (reader.TokenType)
+        {
+            case JsonTokenType.String:
+                writer.WriteStartObject();
+                writer.WritePropertyName(TagS);
+                WriteStringTokenValue(writer, ref reader);
+                writer.WriteEndObject();
+                break;
+
+            case JsonTokenType.Number:
+                writer.WriteStartObject();
+                writer.WritePropertyName(TagN);
+                WriteNumberTokenAsString(writer, ref reader);
+                writer.WriteEndObject();
+                break;
+
+            case JsonTokenType.True:
+            case JsonTokenType.False:
+                writer.WriteStartObject();
+                writer.WriteBoolean(TagBool, reader.TokenType == JsonTokenType.True);
+                writer.WriteEndObject();
+                break;
+
+            case JsonTokenType.Null:
+                writer.WriteStartObject();
+                writer.WriteBoolean(TagNull, true);
+                writer.WriteEndObject();
+                break;
+
+            case JsonTokenType.StartArray:
+                writer.WriteStartObject();
+                writer.WritePropertyName(TagL);
+                writer.WriteStartArray();
+                while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+                {
+                    WriteAttributeValue(writer, ref reader);
+                }
+                writer.WriteEndArray();
+                writer.WriteEndObject();
+                break;
+
+            case JsonTokenType.StartObject:
+                WriteObjectAsAttributeValue(writer, ref reader);
+                break;
+
+            default:
+                throw new InvalidOperationException(
+                    $"Cannot decode Cosmos token {reader.TokenType}.");
+        }
+    }
+
+    /// <summary>
+    /// Object disambiguation for the streaming path. Reader is on StartObject;
+    /// peeks the first property name (no count lookahead needed — see the
+    /// encoder invariant above) and either unwraps an envelope or emits an M.
+    /// On return the reader is on the matching EndObject.
+    /// </summary>
+    private static void WriteObjectAsAttributeValue(Utf8JsonWriter writer, ref Utf8JsonReader reader)
+    {
+        if (!reader.Read())
+            throw new InvalidOperationException("Truncated Cosmos object.");
+
+        if (reader.TokenType == JsonTokenType.EndObject)
+        {
+            // Empty object → empty map.
+            writer.WriteStartObject();
+            writer.WritePropertyName(TagM);
+            writer.WriteStartObject();
+            writer.WriteEndObject();
+            writer.WriteEndObject();
+            return;
+        }
+
+        // reader is on the first PropertyName.
+        if (!reader.ValueIsEscaped && !reader.HasValueSequence &&
+            reader.ValueSpan.StartsWith(EnvelopeTagPrefixU8))
+        {
+            if (reader.ValueTextEquals(EnvelopeTagN))
+            {
+                reader.Read();
+                if (reader.TokenType != JsonTokenType.String)
+                    throw new InvalidOperationException("'_a2a:N' envelope payload must be a string.");
+                writer.WriteStartObject();
+                writer.WritePropertyName(TagN);
+                WriteStringTokenValue(writer, ref reader);
+                writer.WriteEndObject();
+                reader.Read(); // consume wrapper EndObject
+                return;
+            }
+            if (reader.ValueTextEquals(EnvelopeTagB))
+            {
+                reader.Read();
+                if (reader.TokenType != JsonTokenType.String)
+                    throw new InvalidOperationException("'_a2a:B' envelope payload must be a string.");
+                writer.WriteStartObject();
+                writer.WritePropertyName(TagB);
+                WriteStringTokenValue(writer, ref reader);
+                writer.WriteEndObject();
+                reader.Read();
+                return;
+            }
+            if (reader.ValueTextEquals(EnvelopeTagSS)) { WriteUnwrappedSet(writer, TagSS, ref reader); reader.Read(); return; }
+            if (reader.ValueTextEquals(EnvelopeTagNS)) { WriteUnwrappedSet(writer, TagNS, ref reader); reader.Read(); return; }
+            if (reader.ValueTextEquals(EnvelopeTagBS)) { WriteUnwrappedSet(writer, TagBS, ref reader); reader.Read(); return; }
+
+            throw new InvalidOperationException("Unknown '_a2a:' envelope tag in Cosmos document.");
+        }
+
+        // Plain map. The first PropertyName has already been read.
+        writer.WriteStartObject();
+        writer.WritePropertyName(TagM);
+        writer.WriteStartObject();
+        while (true)
+        {
+            WriteCurrentPropertyName(writer, ref reader);
+            reader.Read();
+            WriteAttributeValue(writer, ref reader);
+            if (!reader.Read() || reader.TokenType == JsonTokenType.EndObject)
+                break;
+        }
+        writer.WriteEndObject();
+        writer.WriteEndObject();
+    }
+
+    /// <summary>Reader is on the envelope's PropertyName; reads the array
+    /// payload and writes the unwrapped set. On return the reader is on the
+    /// array's EndArray token.</summary>
+    private static void WriteUnwrappedSet(Utf8JsonWriter writer, JsonEncodedText tag, ref Utf8JsonReader reader)
+    {
+        reader.Read();
+        if (reader.TokenType != JsonTokenType.StartArray)
+            throw new InvalidOperationException($"Envelope {tag} payload must be a JSON array.");
+
+        writer.WriteStartObject();
+        writer.WritePropertyName(tag);
+        writer.WriteStartArray();
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+        {
+            if (reader.TokenType != JsonTokenType.String)
+                throw new InvalidOperationException("Set members must be JSON strings.");
+            WriteStringTokenValue(writer, ref reader);
+        }
+        writer.WriteEndArray();
+        writer.WriteEndObject();
+    }
+
+    /// <summary>Copies the current String/PropertyName token's value to the
+    /// writer as a JSON string value, raw-UTF-8 when unescaped, otherwise via
+    /// a pooled unescape buffer. Never allocates a System.String.</summary>
+    private static void WriteStringTokenValue(Utf8JsonWriter writer, ref Utf8JsonReader reader)
+    {
+        if (!reader.ValueIsEscaped && !reader.HasValueSequence)
+        {
+            writer.WriteStringValue(reader.ValueSpan);
+            return;
+        }
+
+        int max = reader.HasValueSequence ? checked((int)reader.ValueSequence.Length) : reader.ValueSpan.Length;
+        byte[]? rented = max > 256 ? ArrayPool<byte>.Shared.Rent(max) : null;
+        Span<byte> buf = rented ?? stackalloc byte[256];
+        int written = reader.CopyString(buf);
+        writer.WriteStringValue(buf[..written]);
+        if (rented is not null) ArrayPool<byte>.Shared.Return(rented);
+    }
+
+    /// <summary>Writes the current PropertyName token as a property name,
+    /// raw-UTF-8 when unescaped, otherwise via a pooled unescape buffer.</summary>
+    private static void WriteCurrentPropertyName(Utf8JsonWriter writer, ref Utf8JsonReader reader)
+    {
+        if (!reader.ValueIsEscaped && !reader.HasValueSequence)
+        {
+            writer.WritePropertyName(reader.ValueSpan);
+            return;
+        }
+
+        int max = reader.HasValueSequence ? checked((int)reader.ValueSequence.Length) : reader.ValueSpan.Length;
+        byte[]? rented = max > 256 ? ArrayPool<byte>.Shared.Rent(max) : null;
+        Span<byte> buf = rented ?? stackalloc byte[256];
+        int written = reader.CopyString(buf);
+        writer.WritePropertyName(buf[..written]);
+        if (rented is not null) ArrayPool<byte>.Shared.Return(rented);
+    }
+
+    /// <summary>Writes the current Number token as a DDB N string value
+    /// (<c>{"N":"&lt;digits&gt;"}</c>). Number tokens never carry escapes.</summary>
+    private static void WriteNumberTokenAsString(Utf8JsonWriter writer, ref Utf8JsonReader reader)
+    {
+        if (!reader.HasValueSequence)
+        {
+            writer.WriteStringValue(reader.ValueSpan);
+            return;
+        }
+        int len = checked((int)reader.ValueSequence.Length);
+        byte[] rented = ArrayPool<byte>.Shared.Rent(len);
+        reader.ValueSequence.CopyTo(rented);
+        writer.WriteStringValue(rented.AsSpan(0, len));
+        ArrayPool<byte>.Shared.Return(rented);
+    }
+
+    /// <summary>
     /// Same as <see cref="ExtractItem(Stream)"/> but takes an already-
     /// parsed <see cref="JsonElement"/> rooted at the Cosmos doc.
     /// </summary>
@@ -792,7 +1137,12 @@ internal static class InferredAttributeStorage
         {
             case JsonValueKind.String:
                 writer.WriteStartObject();
-                writer.WriteString(TagS, value.GetString());
+                // Copy the raw UTF-8 string token straight through instead of
+                // GetString() (UTF8→UTF16) + WriteString (UTF16→UTF8). WriteTo
+                // re-escapes via the destination writer's encoder, so byte
+                // parity is preserved (pinned by the golden corpus).
+                writer.WritePropertyName(TagS);
+                value.WriteTo(writer);
                 writer.WriteEndObject();
                 break;
 
@@ -857,13 +1207,14 @@ internal static class InferredAttributeStorage
                     writer.WritePropertyName(TagN);
                     if (only.Value.ValueKind != JsonValueKind.String)
                         throw new InvalidOperationException("'_a2a:N' envelope payload must be a string.");
-                    writer.WriteStringValue(only.Value.GetString());
+                    only.Value.WriteTo(writer);
                     writer.WriteEndObject();
                     return;
 
                 case EnvelopeTagB:
                     writer.WriteStartObject();
-                    writer.WriteString(TagB, only.Value.GetString());
+                    writer.WritePropertyName(TagB);
+                    only.Value.WriteTo(writer);
                     writer.WriteEndObject();
                     return;
 
@@ -911,7 +1262,7 @@ internal static class InferredAttributeStorage
         {
             if (member.ValueKind != JsonValueKind.String)
                 throw new InvalidOperationException("Set members must be JSON strings.");
-            writer.WriteStringValue(member.GetString());
+            member.WriteTo(writer);
         }
         writer.WriteEndArray();
         writer.WriteEndObject();

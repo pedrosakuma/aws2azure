@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
@@ -176,5 +177,141 @@ internal static class CosmosOpsShared
         await JsonSerializer.SerializeAsync(
             ctx.Response.Body, payload, typeInfo, ctx.RequestAborted)
             .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Writes a DynamoDB <c>GetItem</c> success envelope (<c>{"Item":{...}}</c>)
+    /// directly from a parsed Cosmos document, skipping the
+    /// <see cref="ItemModels.GetItemResponse"/> model + per-attribute
+    /// <c>Dictionary</c> materialization (and the per-attribute
+    /// <see cref="JsonElement.Clone"/> + model re-serialization the old
+    /// <c>ExtractItem → model → SerializeAsync</c> path paid).
+    ///
+    /// <para>The envelope is built fully into a pooled
+    /// <see cref="PooledByteBufferWriter"/> scratch buffer and only then handed
+    /// to <see cref="HttpResponse.BodyWriter"/> in a single
+    /// <see cref="System.IO.Pipelines.PipeWriter.WriteAsync"/>. Building into
+    /// scratch first preserves the error wall: a malformed Cosmos document that
+    /// makes the per-attribute writer throw fails <b>before</b> any byte reaches
+    /// the response, so the pipeline can still emit a clean error (matching the
+    /// old path, which serialized into an intermediate buffer). The single
+    /// <c>WriteAsync</c> is the only socket-facing call, so no synchronous IO is
+    /// issued (safe under TestServer / AllowSynchronousIO=false).</para>
+    ///
+    /// <para>The writer uses the default options (JavaScriptEncoder.Default) to
+    /// stay byte-identical to the former SerializeAsync path; see
+    /// <see cref="Persistence.InferredAttributeStorage.WriteGetItemEnvelope"/>.</para>
+    /// </summary>
+    public static async Task WriteGetItemEnvelopeAsync(
+        HttpContext ctx, JsonElement cosmosDocRoot, CancellationToken cancellationToken)
+    {
+        using var scratch = new PooledByteBufferWriter(1024);
+        using (var writer = new Utf8JsonWriter(scratch))
+        {
+            Persistence.InferredAttributeStorage.WriteGetItemEnvelope(writer, cosmosDocRoot);
+            writer.Flush();
+        }
+
+        // Envelope built successfully -> commit the response and emit in one write.
+        ctx.Response.StatusCode = 200;
+        ctx.Response.ContentType = "application/x-amz-json-1.0";
+        await ctx.Response.BodyWriter.WriteAsync(scratch.WrittenMemory, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Streaming overload: reads the Cosmos response body into a single
+    /// contiguous pooled buffer and pumps it through
+    /// <see cref="Persistence.InferredAttributeStorage.WriteGetItemEnvelope(Utf8JsonWriter, ReadOnlySpan{byte})"/>
+    /// — no <see cref="JsonDocument"/> DOM, no <see cref="JsonElement"/>, and no
+    /// per-attribute <see cref="string"/> materialization. The same scratch-then-
+    /// single-write error wall as the <see cref="JsonElement"/> overload applies.
+    /// </summary>
+    public static async Task WriteGetItemEnvelopeAsync(
+        HttpContext ctx, System.IO.Stream cosmosBody, CancellationToken cancellationToken)
+    {
+        using var input = new PooledByteBufferWriter(4096);
+        while (true)
+        {
+            Memory<byte> mem = input.GetMemory(4096);
+            int read = await cosmosBody.ReadAsync(mem, cancellationToken).ConfigureAwait(false);
+            if (read == 0) break;
+            input.Advance(read);
+        }
+
+        using var scratch = new PooledByteBufferWriter(1024);
+        using (var writer = new Utf8JsonWriter(scratch))
+        {
+            // The reader lives entirely within this synchronous call; the
+            // pooled input buffer stays valid for its whole lifetime.
+            Persistence.InferredAttributeStorage.WriteGetItemEnvelope(writer, input.WrittenMemory.Span);
+            writer.Flush();
+        }
+
+        ctx.Response.StatusCode = 200;
+        ctx.Response.ContentType = "application/x-amz-json-1.0";
+        await ctx.Response.BodyWriter.WriteAsync(scratch.WrittenMemory, cancellationToken)
+            .ConfigureAwait(false);
+    }
+}
+
+/// <summary>
+/// Minimal growable <see cref="IBufferWriter{T}"/> backed by
+/// <see cref="ArrayPool{T}"/>, so the GetItem response transform allocates no
+/// per-request output array. Not thread-safe; rent-use-dispose within a single
+/// request. Mirrors the (internal) <c>PooledByteBufferWriter</c> shape
+/// <c>System.Text.Json</c> uses for the same purpose.
+/// </summary>
+internal sealed class PooledByteBufferWriter : IBufferWriter<byte>, IDisposable
+{
+    private byte[] _buffer;
+    private int _index;
+
+    public PooledByteBufferWriter(int initialCapacity)
+    {
+        _buffer = ArrayPool<byte>.Shared.Rent(Math.Max(initialCapacity, 256));
+        _index = 0;
+    }
+
+    public ReadOnlyMemory<byte> WrittenMemory => _buffer.AsMemory(0, _index);
+
+    public void Advance(int count)
+    {
+        if (count < 0 || _index > _buffer.Length - count)
+            throw new ArgumentOutOfRangeException(nameof(count));
+        _index += count;
+    }
+
+    public Memory<byte> GetMemory(int sizeHint = 0)
+    {
+        EnsureCapacity(sizeHint);
+        return _buffer.AsMemory(_index);
+    }
+
+    public Span<byte> GetSpan(int sizeHint = 0)
+    {
+        EnsureCapacity(sizeHint);
+        return _buffer.AsSpan(_index);
+    }
+
+    private void EnsureCapacity(int sizeHint)
+    {
+        if (sizeHint < 1) sizeHint = 1;
+        if (sizeHint <= _buffer.Length - _index) return;
+
+        int needed = _index + sizeHint;
+        int newSize = Math.Max(needed, _buffer.Length * 2);
+        byte[] next = ArrayPool<byte>.Shared.Rent(newSize);
+        Array.Copy(_buffer, next, _index);
+        ArrayPool<byte>.Shared.Return(_buffer);
+        _buffer = next;
+    }
+
+    public void Dispose()
+    {
+        if (_buffer.Length == 0) return;
+        ArrayPool<byte>.Shared.Return(_buffer);
+        _buffer = Array.Empty<byte>();
+        _index = 0;
     }
 }

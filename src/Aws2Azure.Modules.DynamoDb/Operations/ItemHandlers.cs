@@ -441,10 +441,7 @@ internal static class ItemHandlers
         }
 
         await using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-        var item = ExtractItemFromCosmosDoc(stream);
-        var response = new GetItemResponse { Item = item };
-        await CosmosOpsShared.WriteJsonAsync(ctx, 200, response,
-            ItemJsonContext.Default.GetItemResponse).ConfigureAwait(false);
+        await CosmosOpsShared.WriteGetItemEnvelopeAsync(ctx, stream, ct).ConfigureAwait(false);
     }
 
     public static Task HandleDeleteItemAsync(HttpContext ctx, byte[] body, CosmosClient cosmos, SprocContext? sprocCtx, CancellationToken ct)
