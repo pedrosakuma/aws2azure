@@ -278,6 +278,37 @@ public class BatchGetItemHandlerTests
     }
 
     [Fact]
+    public async Task BatchGet_query_mid_continuation_throttle_keeps_fetched_items()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaComposite),
+                // Page 1: 'a' fetched, with a continuation token.
+                CosmosOk(QueryEnvelope(
+                    ItemDoc("61", "70", "{\"pk\":{\"S\":\"p\"},\"sk\":{\"S\":\"a\"}}")), continuation: "tok-1"),
+                // Page 2: throttled before 'b' could be read.
+                CosmosStatus((HttpStatusCode)429, "{\"code\":\"TooManyRequests\"}"),
+            },
+        };
+        var cosmos = BuildClient(handler);
+        var req = "{\"RequestItems\":{\"orders\":{\"Keys\":["
+            + "{\"pk\":{\"S\":\"p\"},\"sk\":{\"S\":\"a\"}},"
+            + "{\"pk\":{\"S\":\"p\"},\"sk\":{\"S\":\"b\"}}]}}}";
+
+        await BatchGetItemHandler.HandleBatchGetItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        // 'a' (fetched on page 1) survives in Responses; only the
+        // unresolved 'b' falls into UnprocessedKeys.
+        Assert.Equal(1, resp.RootElement.GetProperty("Responses").GetProperty("orders").GetArrayLength());
+        Assert.Equal(1, resp.RootElement.GetProperty("UnprocessedKeys").GetProperty("orders").GetProperty("Keys").GetArrayLength());
+    }
+
+    [Fact]
     public async Task BatchGet_query_forwards_partition_and_consistency_headers()
     {
         var (ctx, body) = NewCtx();

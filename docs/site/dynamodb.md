@@ -26,7 +26,7 @@
 - Key attribute values (S/B) are hex-encoded into the internal Cosmos `id`/partition-key (S → hex(UTF-8 bytes), B → hex(raw bytes), N → order-preserving numeric digit string), accepting Cosmos-forbidden characters (`/`, `\`, `?`, `#`) and fixing B byte-ordering. Effective raw key limit ~127 bytes; over-limit keys are rejected with ValidationException. **On-disk-format breaking change** vs earlier builds. See PutItem for the full rationale.
 - 16 MB total response size cap (DynamoDB) not enforced — bounded only by the underlying Cosmos response sizes.
 - Hard error on any single item (non-429, non-404) fails the whole batch with a single error response — DynamoDB has the same all-or-nothing semantics for non-throttle failures.
-- Cosmos 429 maps to `UnprocessedKeys` rather than `ProvisionedThroughputExceededException`; matches DDB SDK retry behaviour. For single-partition batched queries the throttle granularity is the whole partition group rather than the individual key.
+- Cosmos 429 maps to `UnprocessedKeys` rather than `ProvisionedThroughputExceededException`; matches DDB SDK retry behaviour. For a single-partition batched query, a 429 throttles the keys not yet returned (a first-page 429 throttles the whole partition group; items already fetched on earlier continuation pages stay in `Responses`).
 - Only validated against scripted Cosmos REST fakes; not yet exercised against real Azure Cosmos.
 
 ### References

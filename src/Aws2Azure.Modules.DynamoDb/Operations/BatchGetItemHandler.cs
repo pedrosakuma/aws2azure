@@ -478,7 +478,11 @@ internal static class BatchGetItemHandler
             }
             if (resp.StatusCode == (HttpStatusCode)429)
             {
-                SetGroupResult(group, results, new PerItemResult(null, true, null));
+                // Throttle only the keys still unresolved on this page —
+                // items already fetched on earlier continuation pages stay
+                // in Responses, matching the per-point-read semantics where
+                // a throttle affects only the throttled subset.
+                MarkUnresolvedThrottled(group, results);
                 return;
             }
             if (!resp.IsSuccessStatusCode)
@@ -538,6 +542,25 @@ internal static class BatchGetItemHandler
         for (int i = 0; i < group.Indices.Count; i++)
         {
             results[group.Indices[i]] = value;
+        }
+    }
+
+    /// <summary>
+    /// Marks every group key that has not yet been resolved (no item
+    /// fetched, not already throttled, no hard error) as throttled. Used
+    /// when a 429 lands part-way through draining a multi-page query so
+    /// items already returned on earlier pages survive into Responses.
+    /// </summary>
+    private static void MarkUnresolvedThrottled(KeyGroup group, PerItemResult[] results)
+    {
+        for (int i = 0; i < group.Indices.Count; i++)
+        {
+            var idx = group.Indices[i];
+            var r = results[idx];
+            if (r.Item is null && !r.Throttled && r.HardError is null)
+            {
+                results[idx] = new PerItemResult(null, true, null);
+            }
         }
     }
 
