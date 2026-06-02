@@ -140,6 +140,103 @@ public class KeyScalarCodecTests
     private static double ParseOracle(string s) =>
         double.Parse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture);
 
+    // ---- Exact-oracle ordering proof -------------------------------------
+    //
+    // A DDB number is sign * M * 10^lsdExp where M is the significant-digit
+    // integer (no trailing zero) and lsdExp is the exponent of its least
+    // significant digit. BigInteger lets us compare any two such values
+    // exactly — no float rounding — which is the part `double` cannot do for
+    // 16-38 digit mantissas or magnitudes near 1e+-125. This is the
+    // independent oracle that validates the encoder across the FULL accepted
+    // domain, including "large magnitude, low precision vs high precision".
+    private readonly record struct ExactNumber(
+        int Sign, System.Numerics.BigInteger Magnitude, int LsdExp, string Wire);
+
+    private static int OracleCompare(in ExactNumber a, in ExactNumber b)
+    {
+        if (a.Sign != b.Sign) return a.Sign.CompareTo(b.Sign);
+        int e = Math.Min(a.LsdExp, b.LsdExp);
+        var scaledA = a.Magnitude * System.Numerics.BigInteger.Pow(10, a.LsdExp - e);
+        var scaledB = b.Magnitude * System.Numerics.BigInteger.Pow(10, b.LsdExp - e);
+        int magCmp = scaledA.CompareTo(scaledB);
+        return a.Sign > 0 ? magCmp : -magCmp; // for negatives, larger magnitude = smaller value
+    }
+
+    private static ExactNumber MakeExact(int sign, string significantDigits, int lsdExp)
+    {
+        // significantDigits is MSD-first with no trailing zero; build wire form
+        // "<sign><digits>e<lsdExp>" which the codec normalizes back.
+        var mag = System.Numerics.BigInteger.Parse(significantDigits);
+        string wire = (sign < 0 ? "-" : "") + significantDigits + "e" + lsdExp.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return new ExactNumber(sign, mag, lsdExp, wire);
+    }
+
+    [Fact]
+    public void Number_encoding_matches_exact_bigint_order_across_full_domain()
+    {
+        var rng = new Random(20260602); // fixed seed for CI determinism
+        var samples = new System.Collections.Generic.List<ExactNumber>();
+
+        // Targeted stress: large magnitude, low vs high precision at the same
+        // and adjacent exponents — the case `double` oracles cannot resolve.
+        void Add(int sign, string digits, int lsd) => samples.Add(MakeExact(sign, digits, lsd));
+        string D38a = "1" + new string('0', 36) + "1";              // 38 digits: 1...01
+        string D38nines = new string('9', 38);                       // 38 nines
+        string D38int = "12345678901234567890123456789012345678";    // 38 digits
+        string D38intPlus1 = "12345678901234567890123456789012345679"; // differs in last digit
+        Assert.Equal(38, D38a.Length);
+        Assert.Equal(38, D38nines.Length);
+        Assert.Equal(38, D38int.Length);
+        Assert.Equal(38, D38intPlus1.Length);
+        foreach (var sign in new[] { 1, -1 })
+        {
+            Add(sign, "1", 125);          // 1e125 (one significant digit)
+            Add(sign, D38a, 88);          // 1e125 + 1e88 (38 digits, MSD at E=125)
+            Add(sign, D38nines, 87);      // ~9.99..e124 (38 nines, MSD at E=124)
+            Add(sign, "1", 124);          // 1e124
+            Add(sign, "1", -130);         // 1e-130 (magnitude floor)
+            Add(sign, "2", -130);         // 2e-130
+            Add(sign, "1", -129);         // 1e-129
+            Add(sign, D38int, 0);         // 38-digit integer
+            Add(sign, D38intPlus1, 0);    // differs only in the last (38th) digit
+            Add(sign, "1", 0);
+            Add(sign, "2", 0);
+            Add(sign, "15", -1);          // 1.5
+        }
+
+        // Random spread across sign / precision / exponent within DDB range.
+        for (int i = 0; i < 400; i++)
+        {
+            int sign = rng.Next(2) == 0 ? 1 : -1;
+            int digitLen = rng.Next(1, 39); // 1..38 significant digits
+            var digitsArr = new char[digitLen];
+            digitsArr[0] = (char)('1' + rng.Next(9)); // MSD non-zero
+            for (int k = 1; k < digitLen - 1; k++) digitsArr[k] = (char)('0' + rng.Next(10));
+            if (digitLen > 1) digitsArr[digitLen - 1] = (char)('1' + rng.Next(9)); // no trailing zero
+            string digits = new string(digitsArr);
+
+            // Keep within DDB bounds: msdExp <= 125 and lsdExp >= -130.
+            int minMsd = -130 + (digitLen - 1);
+            int msdExp = rng.Next(minMsd, 126);
+            int lsdExp = msdExp - (digitLen - 1);
+            samples.Add(MakeExact(sign, digits, lsdExp));
+        }
+
+        // Every ordered pair must encode in the same order the exact oracle says.
+        for (int i = 0; i < samples.Count; i++)
+        {
+            for (int j = 0; j < samples.Count; j++)
+            {
+                int expected = Math.Sign(OracleCompare(samples[i], samples[j]));
+                int actual = Math.Sign(string.CompareOrdinal(
+                    EncN(samples[i].Wire), EncN(samples[j].Wire)));
+                Assert.True(
+                    expected == actual,
+                    $"order mismatch: {samples[i].Wire} vs {samples[j].Wire}: oracle={expected} encoded={actual}");
+            }
+        }
+    }
+
     [Fact]
     public void Number_encoding_has_fixed_length_for_nonzero()
     {
