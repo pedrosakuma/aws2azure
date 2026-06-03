@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace Aws2Azure.Core.SigV4;
@@ -47,6 +48,71 @@ public static class CanonicalRequest
     {
         var canonicalHash = SigningKey.Sha256Hex(Encoding.UTF8.GetBytes(canonicalRequest));
         return $"{SigV4Constants.Algorithm}\n{amzDate}\n{scope}\n{canonicalHash}";
+    }
+
+    /// <summary>
+    /// Allocation-light overload that builds the string-to-sign from an already
+    /// computed canonical-request SHA-256 digest (see
+    /// <see cref="HashCanonicalRequest"/>), avoiding the canonical-request
+    /// <see cref="string"/> and its re-hash. Byte-identical to
+    /// <see cref="StringToSign(string,string,string)"/> when
+    /// <paramref name="canonicalHash"/> is the SHA-256 of the UTF-8 canonical
+    /// request.
+    /// </summary>
+    public static string StringToSign(string amzDate, string scope, ReadOnlySpan<byte> canonicalHash)
+    {
+        var canonicalHashHex = SigningKey.ToLowerHex(canonicalHash);
+        return $"{SigV4Constants.Algorithm}\n{amzDate}\n{scope}\n{canonicalHashHex}";
+    }
+
+    /// <summary>
+    /// Allocation-light equivalent of <c>SHA256(UTF8(<see cref="Build"/>(...)))</c>.
+    /// Assembles the canonical request directly as UTF-8 bytes into a pooled
+    /// buffer and hashes it in one shot, writing the 32-byte digest into
+    /// <paramref name="hash"/>. Produces a byte-identical canonical request to
+    /// <see cref="Build"/> (proven by the golden equivalence tests), but without
+    /// the canonical <see cref="string"/>, the per-header lookup
+    /// <see cref="Dictionary{TKey,TValue}"/>, or the per-header collapsed
+    /// <see cref="string"/>s / <see cref="StringBuilder"/>s.
+    /// </summary>
+    public static void HashCanonicalRequest(
+        string httpMethod,
+        string rawPath,
+        string rawQueryString,
+        IReadOnlyList<KeyValuePair<string, string>> headers,
+        string[] signedHeaders,
+        string payloadHash,
+        bool s3PathStyle,
+        Span<byte> hash)
+    {
+        var writer = new PooledByteWriter(512);
+        try
+        {
+            writer.WriteUtf8(httpMethod.ToUpperInvariant());
+            writer.WriteByte((byte)'\n');
+            writer.WriteUtf8(CanonicalUri(rawPath, s3PathStyle));
+            writer.WriteByte((byte)'\n');
+            writer.WriteUtf8(CanonicalQuery(rawQueryString));
+            writer.WriteByte((byte)'\n');
+            WriteCanonicalHeaders(ref writer, headers, signedHeaders);
+            writer.WriteByte((byte)'\n');
+            for (var i = 0; i < signedHeaders.Length; i++)
+            {
+                if (i > 0)
+                {
+                    writer.WriteByte((byte)';');
+                }
+                writer.WriteUtf8(signedHeaders[i]);
+            }
+            writer.WriteByte((byte)'\n');
+            writer.WriteUtf8(payloadHash);
+
+            SHA256.HashData(writer.WrittenSpan, hash);
+        }
+        finally
+        {
+            writer.Dispose();
+        }
     }
 
     /// <summary>
@@ -158,6 +224,126 @@ public static class CanonicalRequest
                 }
             }
             sb.Append('\n');
+        }
+    }
+
+    /// <summary>
+    /// Byte-pipe equivalent of <see cref="AppendCanonicalHeaders"/>: for each
+    /// signed header it emits <c>name:value\n</c> with multi-value headers
+    /// comma-joined in their original order. Matches the string path's lookup
+    /// semantics exactly — the actual header name is folded to lowercase and
+    /// compared Ordinal against the (already-lowercase, for the Authorization
+    /// path) signed header name, so a non-lowercase signed header matches
+    /// nothing and emits an empty value, just like the dictionary lookup.
+    /// </summary>
+    private static void WriteCanonicalHeaders(
+        ref PooledByteWriter writer,
+        IReadOnlyList<KeyValuePair<string, string>> headers,
+        string[] signedHeaders)
+    {
+        for (var i = 0; i < signedHeaders.Length; i++)
+        {
+            var name = signedHeaders[i];
+            writer.WriteUtf8(name);
+            writer.WriteByte((byte)':');
+
+            var first = true;
+            for (var h = 0; h < headers.Count; h++)
+            {
+                if (!HeaderNameMatches(headers[h].Key, name))
+                {
+                    continue;
+                }
+
+                if (!first)
+                {
+                    writer.WriteByte((byte)',');
+                }
+                WriteCollapsedValue(ref writer, headers[h].Value);
+                first = false;
+            }
+
+            writer.WriteByte((byte)'\n');
+        }
+    }
+
+    /// <summary>
+    /// True when <paramref name="actual"/> folded to lowercase equals
+    /// <paramref name="signed"/> (Ordinal). HTTP header names are ASCII tokens
+    /// (RFC 7230), so an ASCII fold is identical to
+    /// <c>actual.ToLowerInvariant() == signed</c> for any valid header name.
+    /// </summary>
+    private static bool HeaderNameMatches(string actual, string signed)
+    {
+        if (actual.Length != signed.Length)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < actual.Length; i++)
+        {
+            var a = actual[i];
+            if (a >= 'A' && a <= 'Z')
+            {
+                a = (char)(a + 32);
+            }
+            if (a != signed[i])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Byte-pipe equivalent of <see cref="TrimAndCollapseWhitespace"/>: collapses
+    /// the value into a pooled <see cref="char"/> scratch buffer (preserving
+    /// surrogate pairs), then UTF-8 encodes the whole collapsed span in one shot
+    /// — byte-identical to encoding the trimmed/collapsed string.
+    /// </summary>
+    private static void WriteCollapsedValue(ref PooledByteWriter writer, string value)
+    {
+        var span = value.AsSpan().Trim();
+        if (span.IsEmpty)
+        {
+            return;
+        }
+
+        var scratch = ArrayPool<char>.Shared.Rent(span.Length);
+        try
+        {
+            var written = 0;
+            var inQuotes = false;
+            var lastWasSpace = false;
+            for (var i = 0; i < span.Length; i++)
+            {
+                var c = span[i];
+                if (c == '"')
+                {
+                    inQuotes = !inQuotes;
+                    scratch[written++] = c;
+                    lastWasSpace = false;
+                    continue;
+                }
+                if (!inQuotes && (c == ' ' || c == '\t'))
+                {
+                    if (!lastWasSpace)
+                    {
+                        scratch[written++] = ' ';
+                        lastWasSpace = true;
+                    }
+                    continue;
+                }
+                scratch[written++] = c;
+                lastWasSpace = false;
+            }
+
+            writer.WriteUtf8(scratch.AsSpan(0, written));
+        }
+        finally
+        {
+            ArrayPool<char>.Shared.Return(scratch);
         }
     }
 
