@@ -197,6 +197,12 @@ public class KeyScalarCodecTests
             Add(sign, "1", -130);         // 1e-130 (magnitude floor)
             Add(sign, "2", -130);         // 2e-130
             Add(sign, "1", -129);         // 1e-129
+            // #189 regression: multi-digit mantissas at the magnitude floor whose
+            // LSD sits below 1e-130 are valid (magnitude >= 1e-130). lsdExp here
+            // is below -130, exercising the newly-accepted region.
+            Add(sign, "11", -131);        // 1.1e-130 (LSD at 1e-131)
+            Add(sign, "99", -131);        // 9.9e-130
+            Add(sign, D38a, -167);        // 38 digits, MSD at 1e-130, LSD at 1e-167
             Add(sign, D38int, 0);         // 38-digit integer
             Add(sign, D38intPlus1, 0);    // differs only in the last (38th) digit
             Add(sign, "1", 0);
@@ -252,11 +258,30 @@ public class KeyScalarCodecTests
     {
         Assert.False(TryEncode("N", "{\"N\":\"1e126\"}").ok);   // magnitude over 1e125
         Assert.False(TryEncode("N", "{\"N\":\"1e-131\"}").ok);  // magnitude under 1e-130
+        Assert.False(TryEncode("N", "{\"N\":\"9.9e-131\"}").ok); // multi-digit, msdExp -131
         Assert.False(TryEncode("N", "{\"N\":\"not-a-number\"}").ok);
         Assert.False(TryEncode("N", "{\"N\":\"1/2\"}").ok);
         Assert.False(TryEncode("N", "{\"N\":\"\"}").ok);
         // 39 significant digits exceeds DDB's 38-digit precision.
         Assert.False(TryEncode("N", "{\"N\":\"" + new string('1', 39) + "\"}").ok);
+    }
+
+    [Fact]
+    public void Number_at_magnitude_floor_with_extra_precision_is_accepted_and_ordered()
+    {
+        // #189 regression: values at the 1e-130 magnitude floor that carry more
+        // than one significant digit (LSD below 1e-130) must encode and sort
+        // correctly: 1e-130 < 1.1e-130 < 2e-130 < 1e-129.
+        Assert.True(TryEncode("N", "{\"N\":\"1.1e-130\"}").ok);
+        Assert.True(TryEncode("N", "{\"N\":\"9.9e-130\"}").ok);
+
+        var floor = EncN("1e-130");
+        var floorPlus = EncN("1.1e-130");
+        var two = EncN("2e-130");
+        var nextDecade = EncN("1e-129");
+        Assert.True(string.CompareOrdinal(floor, floorPlus) < 0);
+        Assert.True(string.CompareOrdinal(floorPlus, two) < 0);
+        Assert.True(string.CompareOrdinal(two, nextDecade) < 0);
     }
 
     [Theory]

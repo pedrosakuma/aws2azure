@@ -200,6 +200,7 @@ public class InferredAttributeStorageTests
     [InlineData("999999999999999999999999999999999999999")]   // 39 sig digits
     [InlineData("1e126")]                                       // magnitude over 1e125
     [InlineData("1e-131")]                                      // magnitude below 1e-130
+    [InlineData("9.9e-131")]                                    // multi-digit, magnitude below 1e-130 (msdExp -131)
     [InlineData("")]
     [InlineData("-")]
     [InlineData(".")]
@@ -235,6 +236,47 @@ public class InferredAttributeStorageTests
             input, out var actual, out var sig, out _));
         Assert.Equal(expected, actual);
         Assert.Equal(expectedSig, sig);
+    }
+
+    [Theory]
+    // Regression for #189: DynamoDB's lower bound is a *magnitude* (MSD)
+    // constraint on the value, not a constraint on the least-significant-digit
+    // position. A value with magnitude >= 1e-130 and more than one significant
+    // digit near the floor (so its LSD sits below 1e-130) is accepted by real
+    // DynamoDB — the proxy previously rejected it.
+    [InlineData("1.1e-130", 129, "11")]
+    [InlineData("1.5e-130", 129, "15")]
+    [InlineData("9.9e-130", 129, "99")]
+    [InlineData("2.5e-130", 129, "25")]
+    public void Number_at_magnitude_floor_with_sub_floor_lsd_is_accepted(
+        string input, int leadingZeros, string mantissa)
+    {
+        string expected = "0." + new string('0', leadingZeros) + mantissa;
+        Assert.True(
+            InferredAttributeStorage.TryNormalizeDdbNumber(input, out var actual, out _, out var error),
+            error);
+        Assert.Equal(expected, actual);
+
+        // Full encode/decode path must accept and round-trip it (envelope path,
+        // since the long fraction is not exactly double-representable).
+        RoundTrip($"{{\"x\":{{\"N\":\"{input}\"}}}}", $"{{\"x\":{{\"N\":\"{expected}\"}}}}");
+    }
+
+    [Fact]
+    public void Number_38_significant_digits_at_magnitude_floor_is_accepted()
+    {
+        // 38 significant digits with MSD at 1e-130 → LSD at 1e-167, far below
+        // the floor, but the value's magnitude is exactly at the floor. Real
+        // DynamoDB accepts (38-digit precision, magnitude >= 1e-130).
+        string mantissa = "1" + new string('0', 36) + "1"; // 38 digits: 1...01
+        string input = "1." + new string('0', 36) + "1e-130";
+        string expected = "0." + new string('0', 129) + mantissa;
+        Assert.True(
+            InferredAttributeStorage.TryNormalizeDdbNumber(input, out var actual, out var sig, out var error),
+            error);
+        Assert.Equal(expected, actual);
+        Assert.Equal(38, sig);
+        RoundTrip($"{{\"x\":{{\"N\":\"{input}\"}}}}", $"{{\"x\":{{\"N\":\"{expected}\"}}}}");
     }
 
     [Fact]
