@@ -31,11 +31,32 @@ public sealed class DynamoDbSprocFixture : IAsyncLifetime
 
     public string AccessKeyId => "AKIA-IT-SPROC";
     public string Secret { get; } = "sproc-test-" + Guid.NewGuid().ToString("N");
-    public string CosmosKey => EmulatorMasterKey;
+    public string CosmosKey { get; private set; } = EmulatorMasterKey;
     public string DatabaseName => "aws2azure-sproc";
+
+    // One-off real-Azure validation hook (see repo emulator caveat): when
+    // AWS2AZURE_REAL_COSMOS_ENDPOINT / _KEY are set, the fixture targets a real
+    // Cosmos DB account instead of the emulator container, so the server-side
+    // stored-procedure transaction (which the emulator cannot run) is exercised.
+    private static string? RealEndpoint =>
+        Environment.GetEnvironmentVariable("AWS2AZURE_REAL_COSMOS_ENDPOINT");
+    private static string? RealKey =>
+        Environment.GetEnvironmentVariable("AWS2AZURE_REAL_COSMOS_KEY");
+    private static bool RealCosmosEnabled =>
+        !string.IsNullOrWhiteSpace(RealEndpoint) && !string.IsNullOrWhiteSpace(RealKey);
 
     public async Task InitializeAsync()
     {
+        if (RealCosmosEnabled)
+        {
+            var ep = RealEndpoint!.Trim();
+            CosmosEndpoint = ep.EndsWith('/') ? ep : ep + "/";
+            CosmosKey = RealKey!.Trim();
+            DockerAvailable = true;
+            await StartProxyAsync();
+            return;
+        }
+
         try
         {
             _container = new ContainerBuilder()
@@ -61,6 +82,11 @@ public sealed class DynamoDbSprocFixture : IAsyncLifetime
             return;
         }
 
+        await StartProxyAsync();
+    }
+
+    private async Task StartProxyAsync()
+    {
         _configFile = Path.Combine(Path.GetTempPath(),
             "aws2azure-sproc-it-" + Guid.NewGuid().ToString("N") + ".json");
         
@@ -94,8 +120,12 @@ public sealed class DynamoDbSprocFixture : IAsyncLifetime
 
         Environment.SetEnvironmentVariable("AWS2AZURE_CONFIG_FILE", _configFile);
 
-        using (var bootstrap = new HttpClient())
+        // In real-Azure mode the database is pre-provisioned out of band (az CLI);
+        // the test-only REST bootstrap only targets the emulator. The proxy
+        // creates the per-test containers itself via its production auth path.
+        if (!RealCosmosEnabled)
         {
+            using var bootstrap = new HttpClient();
             await CosmosRestBootstrap.EnsureDatabaseAsync(
                 bootstrap, CosmosEndpoint, CosmosKey, DatabaseName);
         }
