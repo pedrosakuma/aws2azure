@@ -180,16 +180,20 @@ public sealed class SigV4Validator
             request.Headers, signedHeaders, request.PayloadHash, request.S3PathStyle,
             canonicalHash);
 
-        var stringToSign = CanonicalRequest.StringToSign(amzDate, scope.ToScopeString(), canonicalHash);
+        Span<byte> expectedHex = stackalloc byte[64];
+        SigningKey.ComputeExpectedSignatureHex(secret, scope, amzDate, canonicalHash, expectedHex);
 
-        var signingKey = SigningKey.Derive(secret, scope.Date, scope.Region, scope.Service);
-        var expected = SigningKey.HmacSha256(signingKey, Encoding.UTF8.GetBytes(stringToSign));
-        var expectedHex = SigningKey.ToLowerHex(expected);
+        // A SigV4 signature is always 64 lowercase hex chars; ASCII.GetBytes is
+        // 1:1 so a length check on the string matches the old byte-length guard.
+        if (clientSignature.Length != expectedHex.Length)
+        {
+            return SigV4ValidationResult.Fail(SigV4ValidationStatus.InvalidSignature,
+                "signature mismatch");
+        }
 
-        var clientBytes = Encoding.ASCII.GetBytes(clientSignature);
-        var expectedBytes = Encoding.ASCII.GetBytes(expectedHex);
-        if (clientBytes.Length != expectedBytes.Length
-            || !CryptographicOperations.FixedTimeEquals(clientBytes, expectedBytes))
+        Span<byte> clientBytes = stackalloc byte[64];
+        Encoding.ASCII.GetBytes(clientSignature, clientBytes);
+        if (!CryptographicOperations.FixedTimeEquals(clientBytes, expectedHex))
         {
             return SigV4ValidationResult.Fail(SigV4ValidationStatus.InvalidSignature,
                 "signature mismatch");
