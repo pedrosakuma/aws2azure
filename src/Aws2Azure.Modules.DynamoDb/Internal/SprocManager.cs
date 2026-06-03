@@ -21,6 +21,11 @@ internal sealed partial class SprocManager
 
     public const string SprocId = "atomicWrite";
 
+    // Versioned so a future body change provisions a fresh sproc instead of
+    // silently running stale server-side JS (EnsureSproc treats 409 as success
+    // and never replaces the body).
+    public const string TransactSprocId = "atomicTransactWrite_v1";
+
     public SprocManager(ILogger<SprocManager> logger)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -83,6 +88,131 @@ internal sealed partial class SprocManager
             ct).ConfigureAwait(false);
 
         return await ParseSprocResponseAsync(response, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Ensures the multi-op <c>atomicTransactWrite</c> sproc exists in the
+    /// given container. Cached separately from the single-write sproc.
+    /// </summary>
+    public async Task<bool> EnsureTransactSprocAsync(CosmosClient cosmos, string containerName, CancellationToken ct)
+    {
+        var cacheKey = $"{cosmos.DatabaseName}:{containerName}:{TransactSprocId}";
+
+        if (_sprocCache.TryGetValue(cacheKey, out var state) && state == SprocState.Available)
+        {
+            return true;
+        }
+
+        var created = await TryCreateNamedSprocAsync(cosmos, containerName, TransactSprocId, TransactSprocBody, ct).ConfigureAwait(false);
+        _sprocCache[cacheKey] = created ? SprocState.Available : SprocState.Failed;
+        return created;
+    }
+
+    /// <summary>
+    /// Executes the <c>atomicTransactWrite</c> sproc with a pre-built JSON
+    /// array of operations. The whole array commits atomically within a single
+    /// logical partition (Cosmos stored-procedure transaction) or not at all.
+    /// </summary>
+    public async Task<SprocTransactResult> ExecuteTransactAsync(
+        CosmosClient cosmos,
+        string containerName,
+        string partitionKey,
+        string operationsJsonArray,
+        CancellationToken ct)
+    {
+        var sprocLink = $"dbs/{cosmos.DatabaseName}/colls/{containerName}/sprocs/{TransactSprocId}";
+        var requestUri = $"/{sprocLink}";
+
+        // Sproc takes a single parameter (the operations array), so the
+        // parameter list is [ <operationsArray> ].
+        var paramsJson = "[" + operationsJsonArray + "]";
+        using var content = new StringContent(paramsJson, Encoding.UTF8, "application/json");
+
+        var headers = new[]
+        {
+            new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", $"[\"{EscapeJsonString(partitionKey)}\"]"),
+        };
+
+        var response = await cosmos.SendAsync(
+            HttpMethod.Post, "sprocs", sprocLink, requestUri, content, headers, ct).ConfigureAwait(false);
+
+        var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        if (response.IsSuccessStatusCode)
+        {
+            // Condition failure is reported as a 2xx with { success: false }.
+            // Parse the body rather than string-matching so whitespace / property
+            // ordering from the server can't be misread as a successful commit.
+            if (TryReadSuccessFlag(body, out var success) && !success)
+            {
+                return new SprocTransactResult { Attempted = true, ConditionFailed = true, ResponseBody = body };
+            }
+            return new SprocTransactResult { Attempted = true, Success = true, ResponseBody = body };
+        }
+
+        return new SprocTransactResult
+        {
+            Attempted = true,
+            StatusCode = (int)response.StatusCode,
+            ErrorBody = body,
+        };
+    }
+
+    // Reads the `success` boolean from the sproc response body. Returns false
+    // (flag indeterminate) when the body is missing, not JSON, or lacks a
+    // boolean `success` property — callers then treat the result as a commit.
+    private static bool TryReadSuccessFlag(string? body, out bool success)
+    {
+        success = false;
+        if (string.IsNullOrEmpty(body))
+        {
+            return false;
+        }
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("success", out var s)
+                && (s.ValueKind == JsonValueKind.True || s.ValueKind == JsonValueKind.False))
+            {
+                success = s.GetBoolean();
+                return true;
+            }
+        }
+        catch (JsonException)
+        {
+            // Fall through — treat as indeterminate.
+        }
+        return false;
+    }
+
+    private async Task<bool> TryCreateNamedSprocAsync(
+        CosmosClient cosmos, string containerName, string sprocId, string sprocBody, CancellationToken ct)
+    {
+        var sprocsLink = $"dbs/{cosmos.DatabaseName}/colls/{containerName}";
+        var requestUri = $"/{sprocsLink}/sprocs";
+
+        var body = new SprocCreateBody { Id = sprocId, Body = sprocBody };
+        var json = JsonSerializer.Serialize(body, SprocJsonContext.Default.SprocCreateBody);
+
+        using var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        var response = await cosmos.SendAsync(
+            HttpMethod.Post, "sprocs", sprocsLink, requestUri, content, extraHeaders: null, ct).ConfigureAwait(false);
+
+        if (response.IsSuccessStatusCode)
+        {
+            LogSprocCreated(_logger, containerName);
+            return true;
+        }
+        if (response.StatusCode == HttpStatusCode.Conflict)
+        {
+            LogSprocAlreadyExists(_logger, containerName);
+            return true;
+        }
+
+        var errorBody = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        LogSprocCreateFailed(_logger, containerName, (int)response.StatusCode, errorBody);
+        return false;
     }
 
     private async Task<bool> TryCreateSprocAsync(CosmosClient cosmos, string containerName, CancellationToken ct)
@@ -456,6 +586,218 @@ function atomicWrite(op, docId, payload, conditionAst, updateAst) {
     }
 }
 """;
+
+    /// <summary>
+    /// Multi-operation stored procedure for <c>TransactWriteItems</c>. Executes
+    /// a list of PUT / DELETE / CHECK operations atomically within a single
+    /// logical partition. Algorithm (rollback-safe):
+    /// <list type="number">
+    ///   <item>Read every target document.</item>
+    ///   <item>Evaluate every operation's condition. If ANY fails, emit
+    ///   <c>{success:false, reasons:[...]}</c> and perform NO writes.</item>
+    ///   <item>Otherwise perform every write (PUT=upsert, DELETE=delete,
+    ///   CHECK=no-op). A write error throws, aborting the whole sproc
+    ///   transaction so nothing partial is committed.</item>
+    /// </list>
+    /// Only the condition evaluator is shared with <c>atomicWrite</c>; there is
+    /// deliberately no update executor here — atomic <c>Update</c> is rejected
+    /// by the handler and documented as a gap.
+    /// </summary>
+    internal const string TransactSprocBody = """
+function atomicTransactWrite(operations) {
+    var ctx = getContext();
+    var coll = ctx.getCollection();
+    var resp = ctx.getResponse();
+    var selfLink = coll.getSelfLink();
+    var n = operations.length;
+    var existing = new Array(n);
+
+    readNext(0);
+
+    function readNext(i) {
+        if (i >= n) { evaluateAndWrite(); return; }
+        var op = operations[i];
+        var docLink = selfLink + 'docs/' + op.id;
+        var accepted = coll.readDocument(docLink, {}, function(err, doc) {
+            if (err) {
+                if (err.number === 404) { existing[i] = null; readNext(i + 1); return; }
+                throw err;
+            }
+            existing[i] = doc;
+            readNext(i + 1);
+        });
+        if (!accepted) throw new Error('readDocument not accepted at operation ' + i);
+    }
+
+    function evaluateAndWrite() {
+        var reasons = new Array(n);
+        var anyFail = false;
+        for (var i = 0; i < n; i++) {
+            var cond = operations[i].condition;
+            var pass = (cond === null || cond === undefined) ? true : evaluateCondition(cond, existing[i]);
+            reasons[i] = pass ? { code: 'None' } : { code: 'ConditionalCheckFailed' };
+            if (!pass) anyFail = true;
+        }
+        if (anyFail) { resp.setBody({ success: false, reasons: reasons }); return; }
+        writeNext(0);
+    }
+
+    function writeNext(i) {
+        if (i >= n) { resp.setBody({ success: true }); return; }
+        var op = operations[i];
+        var docLink = selfLink + 'docs/' + op.id;
+        if (op.type === 'PUT') {
+            var accP = coll.upsertDocument(selfLink, op.doc, function(err) {
+                if (err) throw err;
+                writeNext(i + 1);
+            });
+            if (!accP) throw new Error('upsertDocument not accepted at operation ' + i);
+        } else if (op.type === 'DELETE') {
+            if (existing[i]) {
+                var accD = coll.deleteDocument(docLink, function(err) {
+                    if (err) throw err;
+                    writeNext(i + 1);
+                });
+                if (!accD) throw new Error('deleteDocument not accepted at operation ' + i);
+            } else {
+                writeNext(i + 1);
+            }
+        } else {
+            // CHECK: read-only, no write.
+            writeNext(i + 1);
+        }
+    }
+
+    // Condition evaluator: interprets the AST from C# ConditionExpressionParser.
+    // Mirrors the evaluator in the atomicWrite sproc.
+    function evaluateCondition(ast, doc) {
+        if (!ast) return true;
+        switch (ast.type) {
+            case 'AND': return evaluateCondition(ast.left, doc) && evaluateCondition(ast.right, doc);
+            case 'OR': return evaluateCondition(ast.left, doc) || evaluateCondition(ast.right, doc);
+            case 'NOT': return !evaluateCondition(ast.operand, doc);
+            case 'COMPARE': return evaluateCompare(ast, doc);
+            case 'BETWEEN':
+                var val = getAttrValue(doc, extractPath(ast.value));
+                return val >= extractValue(ast.low) && val <= extractValue(ast.high);
+            case 'IN':
+                var v = getAttrValue(doc, extractPath(ast.attr));
+                var inVals = ast.values.map(function(x) { return extractValue(x); });
+                return inVals.indexOf(v) >= 0;
+            case 'ATTR_EXISTS': return hasAttr(doc, extractPath(ast.attr));
+            case 'ATTR_NOT_EXISTS': return !hasAttr(doc, extractPath(ast.attr));
+            case 'ATTR_TYPE': return checkAttrType(doc, extractPath(ast.attr), ast.attrType);
+            case 'BEGINS_WITH':
+                var str = getAttrValue(doc, extractPath(ast.attr));
+                return typeof str === 'string' && str.indexOf(extractValue(ast.prefix)) === 0;
+            case 'CONTAINS':
+                var container = getAttrValue(doc, extractPath(ast.attr));
+                var containsVal = extractValue(ast.value);
+                if (typeof container === 'string') return container.indexOf(containsVal) >= 0;
+                if (Array.isArray(container)) return container.indexOf(containsVal) >= 0;
+                return false;
+            case 'SIZE':
+                var size = getSize(doc, extractPath(ast.attr));
+                return evaluateCompareValue(size, ast.op, extractValue(ast.sizeValue));
+            default:
+                return true;
+        }
+    }
+
+    function evaluateCompare(ast, doc) {
+        var left = extractOperandValue(doc, ast.attr);
+        var right = extractOperandValue(doc, ast.value);
+        switch (ast.op) {
+            case '=': case 'EQ': return left === right;
+            case '<>': case 'NE': return left !== right;
+            case '<': case 'LT': return left < right;
+            case '<=': case 'LE': return left <= right;
+            case '>': case 'GT': return left > right;
+            case '>=': case 'GE': return left >= right;
+            default: return false;
+        }
+    }
+
+    function extractPath(operand) {
+        if (operand && typeof operand === 'object' && operand.path) return operand.path;
+        return operand;
+    }
+
+    function extractValue(operand) {
+        if (operand && typeof operand === 'object') {
+            if ('path' in operand) return undefined;
+            return operand;
+        }
+        return operand;
+    }
+
+    function extractOperandValue(doc, operand) {
+        if (operand && typeof operand === 'object') {
+            if (operand.path) return getAttrValue(doc, operand.path);
+            if (operand.size) return getSize(doc, operand.size);
+        }
+        return operand;
+    }
+
+    function evaluateCompareValue(left, op, right) {
+        switch (op) {
+            case '=': case 'EQ': return left === right;
+            case '<>': case 'NE': return left !== right;
+            case '<': case 'LT': return left < right;
+            case '<=': case 'LE': return left <= right;
+            case '>': case 'GT': return left > right;
+            case '>=': case 'GE': return left >= right;
+            default: return false;
+        }
+    }
+
+    function getAttrValue(doc, path) {
+        if (!doc) return undefined;
+        var parts = path.split('.');
+        var cur = doc;
+        for (var i = 0; i < parts.length; i++) {
+            if (cur === null || cur === undefined) return undefined;
+            cur = cur[parts[i]];
+        }
+        return cur;
+    }
+
+    function hasAttr(doc, path) {
+        if (!doc) return false;
+        var parts = path.split('.');
+        var cur = doc;
+        for (var i = 0; i < parts.length; i++) {
+            if (cur === null || cur === undefined) return false;
+            if (!cur.hasOwnProperty(parts[i])) return false;
+            cur = cur[parts[i]];
+        }
+        return true;
+    }
+
+    function getSize(doc, path) {
+        var val = getAttrValue(doc, path);
+        if (typeof val === 'string') return val.length;
+        if (Array.isArray(val)) return val.length;
+        if (val && typeof val === 'object') return Object.keys(val).length;
+        return 0;
+    }
+
+    function checkAttrType(doc, path, expectedType) {
+        var val = getAttrValue(doc, path);
+        switch (expectedType) {
+            case 'S': return typeof val === 'string';
+            case 'N': return typeof val === 'number';
+            case 'B': return false;
+            case 'BOOL': return typeof val === 'boolean';
+            case 'NULL': return val === null;
+            case 'L': return Array.isArray(val);
+            case 'M': return val && typeof val === 'object' && !Array.isArray(val);
+            case 'SS': case 'NS': case 'BS': return Array.isArray(val);
+            default: return false;
+        }
+    }
+}
+""";
 }
 
 internal enum SprocOperation
@@ -470,6 +812,28 @@ internal sealed class SprocExecuteResult
     public bool Success { get; init; }
     public bool ConditionFailed { get; init; }
     public int StatusCode { get; init; }
+    public string? ErrorBody { get; init; }
+    public string? ResponseBody { get; init; }
+}
+
+/// <summary>
+/// Result of an <c>atomicTransactWrite</c> sproc execution.
+/// </summary>
+internal sealed class SprocTransactResult
+{
+    /// <summary>Whether the sproc was actually invoked.</summary>
+    public bool Attempted { get; init; }
+
+    /// <summary>All conditions passed and all writes committed.</summary>
+    public bool Success { get; init; }
+
+    /// <summary>At least one condition failed; no writes were performed.
+    /// <see cref="ResponseBody"/> carries the positional <c>reasons</c> array.</summary>
+    public bool ConditionFailed { get; init; }
+
+    /// <summary>HTTP status when the sproc call itself failed (non-2xx).</summary>
+    public int StatusCode { get; init; }
+
     public string? ErrorBody { get; init; }
     public string? ResponseBody { get; init; }
 }

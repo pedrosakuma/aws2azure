@@ -160,7 +160,7 @@ public sealed class DynamoDbServiceModule : IServiceModule
                 await TransactGetItemsHandler.HandleTransactGetItemsAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
                 return;
             case DynamoDbOperation.TransactWriteItems:
-                await TransactWriteItemsHandler.HandleTransactWriteItemsAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                await TransactWriteItemsHandler.HandleTransactWriteItemsAsync(context, parsed.Body, cosmos, _sprocContext, context.RequestAborted).ConfigureAwait(false);
                 return;
             case DynamoDbOperation.DescribeTimeToLive:
                 await TimeToLiveHandlers.HandleDescribeTimeToLiveAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);

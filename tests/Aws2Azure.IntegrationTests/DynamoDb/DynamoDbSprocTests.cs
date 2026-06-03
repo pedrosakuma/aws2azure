@@ -19,6 +19,14 @@ public class DynamoDbSprocTests
     private readonly DynamoDbSprocFixture _fx;
     private readonly ITestOutputHelper _output;
 
+    // The Cosmos linux emulator (vnext-preview) rejects server-side scripts with
+    // "Server-side scripts are not supported in this emulator", so the proxy
+    // cannot provision the atomicTransactWrite sproc. TransactWriteItems has no
+    // non-atomic fallback, so its server-side JS can only be validated against
+    // real Azure Cosmos DB. These tests skip cleanly when provisioning fails.
+    private const string SprocUnsupportedReason =
+        "Cosmos emulator lacks server-side script support; validate TransactWriteItems against real Azure Cosmos DB.";
+
     public DynamoDbSprocTests(DynamoDbSprocFixture fx, ITestOutputHelper output)
     {
         _fx = fx;
@@ -321,6 +329,249 @@ public class DynamoDbSprocTests
         }
     }
 
+    [SkippableFact]
+    public async Task TransactWriteItems_AtomicMultiPut_Commits()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping DynamoDB sproc test.");
+
+        var table = "twi" + Guid.NewGuid().ToString("N")[..8];
+        await CreateHashRangeTableAsync(table);
+
+        try
+        {
+            var body = $$"""
+            {
+              "TransactItems": [
+                { "Put": { "TableName": "{{table}}", "Item": {
+                    "pk": { "S": "order-1" }, "sk": { "S": "a" }, "v": { "N": "1" } } } },
+                { "Put": { "TableName": "{{table}}", "Item": {
+                    "pk": { "S": "order-1" }, "sk": { "S": "b" }, "v": { "N": "2" } } } }
+              ]
+            }
+            """;
+            var (status, respBody, _) = await ExecuteWithTimingAsync("TransactWriteItems", body);
+            Skip.If(respBody.Contains("could not be provisioned", StringComparison.Ordinal), SprocUnsupportedReason);
+            Assert.True(status == HttpStatusCode.OK, $"TransactWriteItems → {(int)status} {respBody}");
+
+            Assert.True(await ItemExistsAsync(table, "order-1", "a"));
+            Assert.True(await ItemExistsAsync(table, "order-1", "b"));
+        }
+        finally
+        {
+            await DeleteTableAsync(table);
+        }
+    }
+
+    [SkippableFact]
+    public async Task TransactWriteItems_ConditionFailure_RollsBackAllWrites()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping DynamoDB sproc test.");
+
+        var table = "twi" + Guid.NewGuid().ToString("N")[..8];
+        await CreateHashRangeTableAsync(table);
+
+        try
+        {
+            // Pre-create sk=b so the attribute_not_exists condition on it fails.
+            var setup = $$"""
+            {
+              "TableName": "{{table}}",
+              "Item": { "pk": { "S": "order-1" }, "sk": { "S": "b" }, "v": { "N": "9" } }
+            }
+            """;
+            await ExecuteAndAssertAsync("PutItem", setup, "setup existing item");
+
+            var body = $$"""
+            {
+              "TransactItems": [
+                { "Put": { "TableName": "{{table}}", "Item": {
+                    "pk": { "S": "order-1" }, "sk": { "S": "a" }, "v": { "N": "1" } } } },
+                { "Put": { "TableName": "{{table}}", "Item": {
+                    "pk": { "S": "order-1" }, "sk": { "S": "b" }, "v": { "N": "2" } },
+                    "ConditionExpression": "attribute_not_exists(pk)" } }
+              ]
+            }
+            """;
+            var (status, respBody, _) = await ExecuteWithTimingAsync("TransactWriteItems", body);
+            Skip.If(respBody.Contains("could not be provisioned", StringComparison.Ordinal), SprocUnsupportedReason);
+            Assert.Equal(HttpStatusCode.BadRequest, status);
+            Assert.Contains("TransactionCanceledException", respBody);
+            Assert.Contains("ConditionalCheckFailed", respBody);
+
+            // Rollback: sk=a was never written, sk=b keeps its original value.
+            Assert.False(await ItemExistsAsync(table, "order-1", "a"));
+            var existing = await GetItemAsync(table, "order-1", "b");
+            Assert.Equal("9", existing!.Value.GetProperty("v").GetProperty("N").GetString());
+        }
+        finally
+        {
+            await DeleteTableAsync(table);
+        }
+    }
+
+    [SkippableFact]
+    public async Task TransactWriteItems_ConditionCheckGate_AllowsWrite()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping DynamoDB sproc test.");
+
+        var table = "twi" + Guid.NewGuid().ToString("N")[..8];
+        await CreateHashRangeTableAsync(table);
+
+        try
+        {
+            // A gate item that the ConditionCheck inspects.
+            var setup = $$"""
+            {
+              "TableName": "{{table}}",
+              "Item": { "pk": { "S": "order-1" }, "sk": { "S": "gate" }, "status": { "S": "open" } }
+            }
+            """;
+            await ExecuteAndAssertAsync("PutItem", setup, "setup gate item");
+
+            var body = $$"""
+            {
+              "TransactItems": [
+                { "ConditionCheck": { "TableName": "{{table}}",
+                    "Key": { "pk": { "S": "order-1" }, "sk": { "S": "gate" } },
+                    "ConditionExpression": "#s = :open",
+                    "ExpressionAttributeNames": { "#s": "status" },
+                    "ExpressionAttributeValues": { ":open": { "S": "open" } } } },
+                { "Put": { "TableName": "{{table}}", "Item": {
+                    "pk": { "S": "order-1" }, "sk": { "S": "line-1" }, "qty": { "N": "3" } } } }
+              ]
+            }
+            """;
+            var (status, respBody, _) = await ExecuteWithTimingAsync("TransactWriteItems", body);
+            Skip.If(respBody.Contains("could not be provisioned", StringComparison.Ordinal), SprocUnsupportedReason);
+            Assert.True(status == HttpStatusCode.OK, $"TransactWriteItems → {(int)status} {respBody}");
+            Assert.True(await ItemExistsAsync(table, "order-1", "line-1"));
+
+            // Now flip the gate and confirm the ConditionCheck blocks the write.
+            var flip = $$"""
+            {
+              "TableName": "{{table}}",
+              "Item": { "pk": { "S": "order-1" }, "sk": { "S": "gate" }, "status": { "S": "closed" } }
+            }
+            """;
+            await ExecuteAndAssertAsync("PutItem", flip, "flip gate");
+
+            var body2 = $$"""
+            {
+              "TransactItems": [
+                { "ConditionCheck": { "TableName": "{{table}}",
+                    "Key": { "pk": { "S": "order-1" }, "sk": { "S": "gate" } },
+                    "ConditionExpression": "#s = :open",
+                    "ExpressionAttributeNames": { "#s": "status" },
+                    "ExpressionAttributeValues": { ":open": { "S": "open" } } } },
+                { "Put": { "TableName": "{{table}}", "Item": {
+                    "pk": { "S": "order-1" }, "sk": { "S": "line-2" }, "qty": { "N": "5" } } } }
+              ]
+            }
+            """;
+            var (status2, body2Resp, _) = await ExecuteWithTimingAsync("TransactWriteItems", body2);
+            Assert.Equal(HttpStatusCode.BadRequest, status2);
+            Assert.Contains("ConditionalCheckFailed", body2Resp);
+            Assert.False(await ItemExistsAsync(table, "order-1", "line-2"));
+        }
+        finally
+        {
+            await DeleteTableAsync(table);
+        }
+    }
+
+    [SkippableFact]
+    public async Task TransactWriteItems_DeleteWithinTransaction_Removes()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping DynamoDB sproc test.");
+
+        var table = "twi" + Guid.NewGuid().ToString("N")[..8];
+        await CreateHashRangeTableAsync(table);
+
+        try
+        {
+            var setup = $$"""
+            {
+              "TableName": "{{table}}",
+              "Item": { "pk": { "S": "order-1" }, "sk": { "S": "old" }, "v": { "N": "1" } }
+            }
+            """;
+            await ExecuteAndAssertAsync("PutItem", setup, "setup item to delete");
+
+            var body = $$"""
+            {
+              "TransactItems": [
+                { "Delete": { "TableName": "{{table}}",
+                    "Key": { "pk": { "S": "order-1" }, "sk": { "S": "old" } } } },
+                { "Put": { "TableName": "{{table}}", "Item": {
+                    "pk": { "S": "order-1" }, "sk": { "S": "new" }, "v": { "N": "2" } } } }
+              ]
+            }
+            """;
+            var (status, respBody, _) = await ExecuteWithTimingAsync("TransactWriteItems", body);
+            Skip.If(respBody.Contains("could not be provisioned", StringComparison.Ordinal), SprocUnsupportedReason);
+            Assert.True(status == HttpStatusCode.OK, $"TransactWriteItems → {(int)status} {respBody}");
+
+            Assert.False(await ItemExistsAsync(table, "order-1", "old"));
+            Assert.True(await ItemExistsAsync(table, "order-1", "new"));
+        }
+        finally
+        {
+            await DeleteTableAsync(table);
+        }
+    }
+
+    [SkippableFact]
+    public async Task TransactWriteItems_CrossPartition_Rejected()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping DynamoDB sproc test.");
+
+        var table = "twi" + Guid.NewGuid().ToString("N")[..8];
+        await CreateHashRangeTableAsync(table);
+
+        try
+        {
+            var body = $$"""
+            {
+              "TransactItems": [
+                { "Put": { "TableName": "{{table}}", "Item": {
+                    "pk": { "S": "order-1" }, "sk": { "S": "a" } } } },
+                { "Put": { "TableName": "{{table}}", "Item": {
+                    "pk": { "S": "order-2" }, "sk": { "S": "b" } } } }
+              ]
+            }
+            """;
+            var (status, respBody, _) = await ExecuteWithTimingAsync("TransactWriteItems", body);
+            Assert.Equal(HttpStatusCode.BadRequest, status);
+            Assert.Contains("ValidationException", respBody);
+            Assert.Contains("partition-key", respBody);
+        }
+        finally
+        {
+            await DeleteTableAsync(table);
+        }
+    }
+
+    private async Task<bool> ItemExistsAsync(string table, string pk, string sk)
+        => (await GetItemAsync(table, pk, sk)) is not null;
+
+    private async Task<JsonElement?> GetItemAsync(string table, string pk, string sk)
+    {
+        var getBody = $$"""
+        {
+          "TableName": "{{table}}",
+          "Key": { "pk": { "S": "{{pk}}" }, "sk": { "S": "{{sk}}" } },
+          "ConsistentRead": true
+        }
+        """;
+        var (_, respBody, _) = await ExecuteWithTimingAsync("GetItem", getBody);
+        using var doc = JsonDocument.Parse(respBody);
+        if (!doc.RootElement.TryGetProperty("Item", out var item))
+        {
+            return null;
+        }
+        return item.Clone();
+    }
+
     private async Task<(HttpStatusCode status, string body, TimeSpan elapsed)> ExecuteWithTimingAsync(
         string operation, string body)
     {
@@ -350,6 +601,25 @@ public class DynamoDbSprocTests
         }
         """;
         await ExecuteAndAssertAsync("CreateTable", body, "setup CreateTable");
+    }
+
+    private async Task CreateHashRangeTableAsync(string table)
+    {
+        var body = $$"""
+        {
+          "TableName": "{{table}}",
+          "AttributeDefinitions": [
+            { "AttributeName": "pk", "AttributeType": "S" },
+            { "AttributeName": "sk", "AttributeType": "S" }
+          ],
+          "KeySchema": [
+            { "AttributeName": "pk", "KeyType": "HASH" },
+            { "AttributeName": "sk", "KeyType": "RANGE" }
+          ],
+          "BillingMode": "PAY_PER_REQUEST"
+        }
+        """;
+        await ExecuteAndAssertAsync("CreateTable", body, "setup CreateTable (pk+sk)");
     }
 
     private async Task DeleteTableAsync(string table)
