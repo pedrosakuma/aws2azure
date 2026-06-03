@@ -429,8 +429,8 @@ internal static class InferredAttributeStorage
     /// significant digits MSD-first with no leading/trailing zeros (empty
     /// when <see cref="IsZero"/>). <see cref="MsdExponent"/> is the decimal
     /// exponent of the most-significant digit; for valid inputs it lies in
-    /// <c>[MinDdbNumberDecimalExponent + sig - 1, MaxDdbNumberDecimalExponent]</c>
-    /// ⊆ <c>[-130, 125]</c>.
+    /// <c>[MinDdbNumberDecimalExponent, MaxDdbNumberDecimalExponent]</c>
+    /// == <c>[-130, 125]</c>.
     /// </summary>
     internal readonly struct DdbNumberParts
     {
@@ -655,14 +655,19 @@ internal static class InferredAttributeStorage
         // Decimal exponent of the most-significant digit, with the
         // explicit exponent folded in.
         int msdExponent = (intDigits - 1 - firstNonZero) + expValue;
-        int lsdExponent = msdExponent - (significantDigits - 1);
 
+        // DynamoDB's documented numeric range is a *magnitude* constraint on
+        // the value (most-significant-digit exponent), combined with the
+        // 38-significant-digit precision cap enforced above — NOT a constraint
+        // on the least-significant-digit position. A value like 1.1e-130 has
+        // magnitude >= 1e-130 and is accepted by real DynamoDB even though its
+        // LSD sits at 1e-131; so the floor must test msdExponent, not lsdExponent.
         if (msdExponent > MaxDdbNumberDecimalExponent)
         {
             error = $"Number magnitude exceeds DynamoDB's 1e+{MaxDdbNumberDecimalExponent} upper bound.";
             return false;
         }
-        if (lsdExponent < MinDdbNumberDecimalExponent)
+        if (msdExponent < MinDdbNumberDecimalExponent)
         {
             error = $"Number magnitude is below DynamoDB's 1e{MinDdbNumberDecimalExponent} lower bound.";
             return false;
