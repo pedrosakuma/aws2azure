@@ -24,7 +24,7 @@ internal sealed partial class SprocManager
     // Versioned so a future body change provisions a fresh sproc instead of
     // silently running stale server-side JS (EnsureSproc treats 409 as success
     // and never replaces the body).
-    public const string TransactSprocId = "atomicTransactWrite_v1";
+    public const string TransactSprocId = "atomicTransactWrite_v2";
 
     public SprocManager(ILogger<SprocManager> logger)
     {
@@ -617,16 +617,20 @@ function atomicTransactWrite(operations) {
     function readNext(i) {
         if (i >= n) { evaluateAndWrite(); return; }
         var op = operations[i];
-        var docLink = selfLink + 'docs/' + op.id;
-        var accepted = coll.readDocument(docLink, {}, function(err, doc) {
-            if (err) {
-                if (err.number === 404) { existing[i] = null; readNext(i + 1); return; }
-                throw err;
-            }
-            existing[i] = doc;
+        // getSelfLink() is RID-based, so a constructed 'docs/<userId>' link is
+        // an invalid mixed link that real Cosmos rejects with "Error creating
+        // request message". Read by id with a partition-local query instead —
+        // every operation shares the sproc's single logical partition.
+        var query = {
+            query: 'SELECT * FROM c WHERE c.id = @id',
+            parameters: [{ name: '@id', value: op.id }]
+        };
+        var accepted = coll.queryDocuments(selfLink, query, {}, function(err, docs) {
+            if (err) throw err;
+            existing[i] = (docs && docs.length > 0) ? docs[0] : null;
             readNext(i + 1);
         });
-        if (!accepted) throw new Error('readDocument not accepted at operation ' + i);
+        if (!accepted) throw new Error('queryDocuments not accepted at operation ' + i);
     }
 
     function evaluateAndWrite() {
@@ -645,7 +649,6 @@ function atomicTransactWrite(operations) {
     function writeNext(i) {
         if (i >= n) { resp.setBody({ success: true }); return; }
         var op = operations[i];
-        var docLink = selfLink + 'docs/' + op.id;
         if (op.type === 'PUT') {
             var accP = coll.upsertDocument(selfLink, op.doc, function(err) {
                 if (err) throw err;
@@ -654,7 +657,9 @@ function atomicTransactWrite(operations) {
             if (!accP) throw new Error('upsertDocument not accepted at operation ' + i);
         } else if (op.type === 'DELETE') {
             if (existing[i]) {
-                var accD = coll.deleteDocument(docLink, function(err) {
+                // Delete via the document's own RID-based self link (from the
+                // query result) — a constructed id link would be rejected.
+                var accD = coll.deleteDocument(existing[i]._self, function(err) {
                     if (err) throw err;
                     writeNext(i + 1);
                 });
