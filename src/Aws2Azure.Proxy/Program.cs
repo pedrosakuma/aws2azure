@@ -49,7 +49,22 @@ if (args.Contains("--health-check"))
 // Must run before any HttpClient / SocketsHttpHandler is constructed.
 AppContext.SetSwitch("System.Net.Http.EnableActivityPropagation", false);
 
-var builder = WebApplication.CreateSlimBuilder(args);
+// Anchor the content root to the assembly directory rather than the current
+// working directory. WebApplication discovers appsettings*.json relative to
+// the content root, and when the proxy is launched from a working directory
+// other than its binaries — the perf harness runs `dotnet run` from the repo
+// root, and some container layouts differ — cwd-relative discovery misses the
+// bundled appsettings.json and the logging floor it sets. The result is that
+// ASP.NET Core's per-request "Request starting"/"Request finished" Info logs
+// fire and allocate a formatted String on every request (a #192 hot spot).
+// Setting ContentRootPath here keeps the standard configuration precedence
+// (JSON < environment variables < command line) intact, unlike re-adding the
+// JSON providers after the builder defaults.
+var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = AppContext.BaseDirectory,
+});
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
