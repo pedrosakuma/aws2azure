@@ -191,7 +191,7 @@ public sealed class DynamoDbServiceModule : IServiceModule
     /// <summary>
     /// #204 startup probe: reads each distinct Cosmos account's default
     /// consistency level and, when it cannot honor DynamoDB
-    /// <c>ConsistentRead</c> (i.e. below Strong / Bounded Staleness), either
+    /// <c>ConsistentRead</c> (i.e. below Strong), either
     /// warns (<see cref="ConsistencyCheckMode.Warn"/>) or throws
     /// <see cref="CosmosConsistencyValidationException"/>
     /// (<see cref="ConsistencyCheckMode.Required"/>). A no-op under
@@ -225,8 +225,17 @@ public sealed class DynamoDbServiceModule : IServiceModule
                 var cosmos = new CosmosClient(_http, creds, auth);
                 level = await cosmos.ReadAccountConsistencyAsync(ct).ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is not CosmosConsistencyValidationException and not OperationCanceledException)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
+                // Genuine caller cancellation (host shutdown) — propagate.
+                throw;
+            }
+            catch (Exception ex) when (ex is not CosmosConsistencyValidationException)
+            {
+                // Probe failure: network / auth / non-2xx, and HttpClient
+                // timeouts (surfaced as TaskCanceledException with the caller
+                // token NOT cancelled). Warn-and-continue, or fail closed under
+                // Required.
                 if (_consistencyLogger is not null)
                 {
                     ConsistencyLog.ProbeFailed(_consistencyLogger, creds.Endpoint, ex.Message);
@@ -269,7 +278,7 @@ public sealed class DynamoDbServiceModule : IServiceModule
                     break;
                 case CosmosConsistency.ProbeOutcome.Fail:
                     throw new CosmosConsistencyValidationException(
-                        $"Cosmos account '{creds.Endpoint}' default consistency is '{level}', which cannot honor DynamoDB ConsistentRead. Set the account default to Strong or Bounded Staleness, or lower DynamoDb.ConsistencyCheck.");
+                        $"Cosmos account '{creds.Endpoint}' default consistency is '{level}', which cannot honor DynamoDB ConsistentRead. Set the account default to Strong, or lower DynamoDb.ConsistencyCheck.");
             }
         }
     }

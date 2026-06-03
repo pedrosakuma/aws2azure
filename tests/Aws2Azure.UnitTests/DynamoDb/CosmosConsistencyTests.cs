@@ -46,10 +46,10 @@ public class CosmosConsistencyTests
     }
 
     [Fact]
-    public void CanHonorConsistentRead_only_strong_and_bounded()
+    public void CanHonorConsistentRead_only_strong()
     {
         Assert.True(CosmosConsistency.CanHonorConsistentRead(CosmosConsistencyLevel.Strong));
-        Assert.True(CosmosConsistency.CanHonorConsistentRead(CosmosConsistencyLevel.BoundedStaleness));
+        Assert.False(CosmosConsistency.CanHonorConsistentRead(CosmosConsistencyLevel.BoundedStaleness));
         Assert.False(CosmosConsistency.CanHonorConsistentRead(CosmosConsistencyLevel.Session));
         Assert.False(CosmosConsistency.CanHonorConsistentRead(CosmosConsistencyLevel.ConsistentPrefix));
         Assert.False(CosmosConsistency.CanHonorConsistentRead(CosmosConsistencyLevel.Eventual));
@@ -64,12 +64,17 @@ public class CosmosConsistencyTests
             CosmosConsistency.Decide(CosmosConsistencyLevel.Eventual, ConsistencyCheckMode.Disabled));
         Assert.Equal(CosmosConsistency.ProbeOutcome.Ok,
             CosmosConsistency.Decide(CosmosConsistencyLevel.Strong, ConsistencyCheckMode.Disabled));
-        // Honorable levels are always Ok.
+        // Only Strong is honorable.
         Assert.Equal(CosmosConsistency.ProbeOutcome.Ok,
             CosmosConsistency.Decide(CosmosConsistencyLevel.Strong, ConsistencyCheckMode.Warn));
         Assert.Equal(CosmosConsistency.ProbeOutcome.Ok,
+            CosmosConsistency.Decide(CosmosConsistencyLevel.Strong, ConsistencyCheckMode.Required));
+        // Bounded Staleness is below the bar: warns under Warn, fails under Required.
+        Assert.Equal(CosmosConsistency.ProbeOutcome.Warn,
+            CosmosConsistency.Decide(CosmosConsistencyLevel.BoundedStaleness, ConsistencyCheckMode.Warn));
+        Assert.Equal(CosmosConsistency.ProbeOutcome.Fail,
             CosmosConsistency.Decide(CosmosConsistencyLevel.BoundedStaleness, ConsistencyCheckMode.Required));
-        // Below-threshold warns under Warn, fails under Required.
+        // Other below-threshold levels warn under Warn, fail under Required.
         Assert.Equal(CosmosConsistency.ProbeOutcome.Warn,
             CosmosConsistency.Decide(CosmosConsistencyLevel.Session, ConsistencyCheckMode.Warn));
         Assert.Equal(CosmosConsistency.ProbeOutcome.Fail,

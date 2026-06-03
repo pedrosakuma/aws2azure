@@ -29,7 +29,7 @@ internal enum CosmosConsistencyLevel
 /// strengthens it (see the REST contract for <c>x-ms-consistency-level</c>).
 /// So the proxy's <c>x-ms-consistency-level: Strong</c> header on a
 /// <c>ConsistentRead</c> is silently ignored unless the account's own default
-/// is already Strong or Bounded Staleness — on Session / Consistent Prefix /
+/// is already Strong — on Bounded Staleness / Session / Consistent Prefix /
 /// Eventual accounts <c>ConsistentRead</c> and read-your-write are not
 /// honored.</para>
 /// </summary>
@@ -76,11 +76,15 @@ internal static class CosmosConsistency
 
     /// <summary>
     /// True when an account at <paramref name="level"/> can honor DynamoDB
-    /// <c>ConsistentRead</c> (i.e. a per-request Strong request is not
-    /// downgraded). Only Strong and Bounded Staleness qualify.
+    /// <c>ConsistentRead</c> (latest-committed, linearizable read-your-write).
+    /// Only <see cref="CosmosConsistencyLevel.Strong"/> qualifies: a per-request
+    /// Strong override can only relax, never strengthen, the account default, so
+    /// on any weaker account default the override is a no-op. Bounded Staleness
+    /// serves strong reads only within a single write region and can return
+    /// stale data otherwise, so it is intentionally excluded.
     /// </summary>
     public static bool CanHonorConsistentRead(CosmosConsistencyLevel level)
-        => level is CosmosConsistencyLevel.Strong or CosmosConsistencyLevel.BoundedStaleness;
+        => level is CosmosConsistencyLevel.Strong;
 
     /// <summary>The action the startup probe should take for one account.</summary>
     internal enum ProbeOutcome

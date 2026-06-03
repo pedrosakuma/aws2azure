@@ -42,14 +42,15 @@ public sealed class DynamoDbSettings
     /// <summary>
     /// Startup probe of each configured Cosmos account's default consistency
     /// level versus what DynamoDB <c>ConsistentRead</c> / read-your-write
-    /// require (Strong or Bounded Staleness). Cosmos only relaxes consistency
-    /// per request, never strengthens it, so on a Session / Consistent Prefix /
-    /// Eventual account the proxy's <c>x-ms-consistency-level: Strong</c> header
+    /// require (Strong). Cosmos only relaxes consistency
+    /// per request, never strengthens it, so on a Bounded Staleness / Session /
+    /// Consistent Prefix / Eventual account the proxy's
+    /// <c>x-ms-consistency-level: Strong</c> header
     /// is silently ignored and <c>ConsistentRead</c> is not honored (#204).
     /// <list type="bullet">
     ///   <item><c>Disabled</c> (default) — no probe; no startup network call.</item>
-    ///   <item><c>Warn</c> — probe each account at startup; log a warning when below Strong/Bounded.</item>
-    ///   <item><c>Required</c> — probe each account at startup; fail startup when below Strong/Bounded (or when the probe cannot determine the level).</item>
+    ///   <item><c>Warn</c> — probe each account at startup; log a warning when below Strong.</item>
+    ///   <item><c>Required</c> — probe each account at startup; fail startup when below Strong (or when the probe cannot determine the level).</item>
     /// </list>
     /// </summary>
     public ConsistencyCheckMode ConsistencyCheck { get; set; } = ConsistencyCheckMode.Disabled;
