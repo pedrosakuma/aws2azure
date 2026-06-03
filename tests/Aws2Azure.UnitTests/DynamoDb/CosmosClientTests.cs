@@ -163,6 +163,62 @@ public class CosmosClientTests
             new MasterKeyCosmosAuthenticator("MDE=")));
     }
 
+    // The request URI is now resolved against a base Uri hoisted into the
+    // ctor (instead of re-parsed per request). This corpus proves the
+    // produced RequestUri is byte-identical to the old per-call
+    // new Uri(new Uri(endpoint.TrimEnd('/') + "/"), requestUri.TrimStart('/'))
+    // across endpoint trailing-slash / :443 variants, nested paths,
+    // un-escaped doc ids, and query strings.
+    public static TheoryData<string, string> UriCorpus()
+    {
+        var data = new TheoryData<string, string>();
+        foreach (var endpoint in new[]
+        {
+            "https://example.documents.azure.com:443/",
+            "https://example.documents.azure.com:443",
+            "https://example.documents.azure.com/",
+            "https://example.documents.azure.com",
+        })
+        {
+            foreach (var requestUri in new[]
+            {
+                "/dbs",
+                "/dbs/main/colls/orders/docs/pk-12345",
+                "/dbs/main/colls/orders/docs",
+                "/dbs/main/colls/orders/docs/id with spaces",
+                "/dbs/main/colls/orders/docs/id%2Fencoded",
+                "/dbs/main/colls/orders/docs/ünïçödé",
+                "/dbs/main/colls/orders/docs?$filter=x",
+            })
+            {
+                data.Add(endpoint, requestUri);
+            }
+        }
+
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(UriCorpus))]
+    public async Task SendAsync_request_uri_matches_per_call_oracle(string endpoint, string requestUri)
+    {
+        var captured = new RecordingHandler();
+        using var http = new AzureHttpClient(captured, ownsHandler: false);
+        var creds = new CosmosCredentials
+        {
+            Endpoint = endpoint,
+            PrimaryKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+            DatabaseName = "main",
+        };
+
+        var client = new CosmosClient(http, creds, new MasterKeyCosmosAuthenticator(creds.PrimaryKey));
+        using var resp = await client.SendAsync(
+            HttpMethod.Get, "docs", "", requestUri, content: null, extraHeaders: null, CancellationToken.None);
+
+        var oracle = new Uri(new Uri(endpoint.TrimEnd('/') + "/", UriKind.Absolute), requestUri.TrimStart('/'));
+        Assert.Equal(oracle.AbsoluteUri, captured.Last!.RequestUri!.AbsoluteUri);
+    }
+
     private sealed class RecordingHandler : HttpMessageHandler
     {
         public HttpRequestMessage? Last { get; private set; }

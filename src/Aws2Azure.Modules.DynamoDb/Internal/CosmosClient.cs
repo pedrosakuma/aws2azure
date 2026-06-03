@@ -24,6 +24,7 @@ internal sealed class CosmosClient
 {
     private readonly AzureHttpClient _http;
     private readonly string _endpoint;
+    private readonly Uri _baseUri;
     private readonly ICosmosAuthenticator _authenticator;
 
     public const string ApiVersion = "2018-12-31";
@@ -47,6 +48,10 @@ internal sealed class CosmosClient
 
         _http = http;
         _endpoint = credentials.Endpoint;
+        // The account base URI is constant per client; parsing it per request
+        // (new Uri over endpoint.TrimEnd('/') + "/") was pure hot-path waste.
+        // Hoisted here so SendAsync only pays the per-request relative resolve.
+        _baseUri = new Uri(_endpoint.TrimEnd('/') + "/", UriKind.Absolute);
         _authenticator = authenticator;
         DatabaseName = credentials.DatabaseName;
     }
@@ -72,8 +77,7 @@ internal sealed class CosmosClient
         ArgumentNullException.ThrowIfNull(resourceLink);
         ArgumentException.ThrowIfNullOrEmpty(requestUri);
 
-        var baseUri = new Uri(_endpoint.TrimEnd('/') + "/", UriKind.Absolute);
-        using var request = new HttpRequestMessage(method, new Uri(baseUri, requestUri.TrimStart('/')));
+        using var request = new HttpRequestMessage(method, new Uri(_baseUri, requestUri.TrimStart('/')));
 
         await _authenticator.AuthenticateAsync(request, resourceType, resourceLink, ct).ConfigureAwait(false);
         request.Headers.TryAddWithoutValidation("x-ms-version", ApiVersion);
