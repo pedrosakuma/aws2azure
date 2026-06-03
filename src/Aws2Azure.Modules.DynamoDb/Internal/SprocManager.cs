@@ -139,8 +139,10 @@ internal sealed partial class SprocManager
         var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         if (response.IsSuccessStatusCode)
         {
-            // Condition failure is reported as a 200 with success:false.
-            if (body.Contains("\"success\":false") || body.Contains("\"success\": false"))
+            // Condition failure is reported as a 2xx with { success: false }.
+            // Parse the body rather than string-matching so whitespace / property
+            // ordering from the server can't be misread as a successful commit.
+            if (TryReadSuccessFlag(body, out var success) && !success)
             {
                 return new SprocTransactResult { Attempted = true, ConditionFailed = true, ResponseBody = body };
             }
@@ -153,6 +155,34 @@ internal sealed partial class SprocManager
             StatusCode = (int)response.StatusCode,
             ErrorBody = body,
         };
+    }
+
+    // Reads the `success` boolean from the sproc response body. Returns false
+    // (flag indeterminate) when the body is missing, not JSON, or lacks a
+    // boolean `success` property — callers then treat the result as a commit.
+    private static bool TryReadSuccessFlag(string? body, out bool success)
+    {
+        success = false;
+        if (string.IsNullOrEmpty(body))
+        {
+            return false;
+        }
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("success", out var s)
+                && (s.ValueKind == JsonValueKind.True || s.ValueKind == JsonValueKind.False))
+            {
+                success = s.GetBoolean();
+                return true;
+            }
+        }
+        catch (JsonException)
+        {
+            // Fall through — treat as indeterminate.
+        }
+        return false;
     }
 
     private async Task<bool> TryCreateNamedSprocAsync(
@@ -702,8 +732,9 @@ function atomicTransactWrite(operations) {
     }
 
     function extractOperandValue(doc, operand) {
-        if (operand && typeof operand === 'object' && operand.path) {
-            return getAttrValue(doc, operand.path);
+        if (operand && typeof operand === 'object') {
+            if (operand.path) return getAttrValue(doc, operand.path);
+            if (operand.size) return getSize(doc, operand.size);
         }
         return operand;
     }

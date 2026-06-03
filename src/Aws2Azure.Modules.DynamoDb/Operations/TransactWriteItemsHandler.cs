@@ -280,7 +280,20 @@ internal static class TransactWriteItemsHandler
                 id, docJson, conditionJson);
         }
 
-        var opsJson = BuildOperationsJson(prepared);
+        string opsJson;
+        try
+        {
+            opsJson = BuildOperationsJson(prepared);
+        }
+        catch (JsonException)
+        {
+            // A condition/value AST that serialized to malformed JSON (e.g. an
+            // ExpressionAttributeValues entry like {"N":"not-a-number"}) only
+            // surfaces here, when WriteRawValue re-validates the embedded token.
+            // Map it to a ValidationException rather than a 500.
+            await Reject(ctx, "One or more ExpressionAttributeValues are not valid DynamoDB attribute values.").ConfigureAwait(false);
+            return;
+        }
 
         var ready = await sprocCtx.Manager.EnsureTransactSprocAsync(cosmos, table!, ct).ConfigureAwait(false);
         if (!ready)

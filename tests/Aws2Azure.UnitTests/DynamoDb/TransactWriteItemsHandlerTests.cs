@@ -232,6 +232,28 @@ public class TransactWriteItemsHandlerTests
     }
 
     [Fact]
+    public async Task Malformed_numeric_condition_value_rejected_with_validation_error()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler { Responses = { CosmosOk(MetaPkSk) } };
+        var cosmos = BuildClient(handler);
+        // {"N":"not-a-number"} parses as a condition operand but serializes to a
+        // raw, invalid JSON token — the handler must surface a ValidationException
+        // (400), not throw / 500, when the embedded condition is re-validated.
+        var req = "{\"TransactItems\":[{\"Put\":{\"TableName\":\"orders\",\"Item\":" +
+            "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"},\"v\":{\"N\":\"1\"}}," +
+            "\"ConditionExpression\":\"v = :bad\"," +
+            "\"ExpressionAttributeValues\":{\":bad\":{\"N\":\"not-a-number\"}}}}]}";
+
+        await Run(ctx, cosmos, EnabledSproc(), req);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        var resp = ReadResponse(body);
+        Assert.Contains("ValidationException", resp);
+        Assert.Contains("ExpressionAttributeValues", resp);
+    }
+
+    [Fact]
     public async Task Success_returns_empty_200_and_sends_sproc()
     {
         var (ctx, body) = NewCtx();
