@@ -62,6 +62,62 @@ public class CosmosMasterKeyAuthTests
         var d = CosmosMasterKeyAuth.GetHttpUtcDate(new DateTimeOffset(2024, 1, 2, 3, 4, 5, TimeSpan.Zero));
         Assert.Equal("tue, 02 jan 2024 03:04:05 gmt", d);
     }
+
+    // Adversarial corpus proving the allocation-light BuildAuthHeader byte pipe
+    // is identical to the Build(string) String oracle. resourceLink carries
+    // multi-byte / surrogate UTF-8 to exercise verbatim encoding; verbs and
+    // resource types exercise the ASCII case-fold.
+    public static TheoryData<string, string, string, string> AuthCorpus()
+    {
+        const string date = "thu, 27 apr 2017 00:51:12 gmt";
+        var data = new TheoryData<string, string, string, string>();
+        foreach (var verb in new[] { "GET", "POST", "PUT", "DELETE", "get", "Patch" })
+        {
+            foreach (var (type, link) in new[]
+            {
+                ("dbs", ""),
+                ("DBS", "dbs/db1"),
+                ("colls", "dbs/db1/colls/c1"),
+                ("docs", "dbs/db1/colls/c1/docs/id-With_Mixed.Case~123"),
+                ("docs", "dbs/db1/colls/c1/docs/ünïçödé-Ωμ"),
+                ("docs", "dbs/db1/colls/c1/docs/😀-surrogate-🚀"),
+                ("sprocs", "dbs/db1/colls/c1/sprocs/sp+slash/plus"),
+            })
+            {
+                data.Add(verb, type, link, date);
+            }
+        }
+
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(AuthCorpus))]
+    public void BuildAuthHeader_is_byte_identical_to_string_oracle(
+        string verb, string resourceType, string resourceLink, string date)
+    {
+        const string key = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
+        var keyBytes = Convert.FromBase64String(key);
+
+        var oracle = CosmosMasterKeyAuth.Build(verb, resourceType, resourceLink, date, key);
+        var bytePipe = CosmosMasterKeyAuth.BuildAuthHeader(verb, resourceType, resourceLink, date, keyBytes);
+
+        Assert.Equal(oracle, bytePipe);
+    }
+
+    [Fact]
+    public void BuildAuthHeader_long_resource_link_uses_pool_path()
+    {
+        const string key = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
+        var keyBytes = Convert.FromBase64String(key);
+        const string date = "thu, 27 apr 2017 00:51:12 gmt";
+        // Force the ArrayPool fallback branch (string-to-sign > 256 bytes).
+        var link = "dbs/db1/colls/c1/docs/" + new string('x', 400);
+
+        Assert.Equal(
+            CosmosMasterKeyAuth.Build("GET", "docs", link, date, key),
+            CosmosMasterKeyAuth.BuildAuthHeader("GET", "docs", link, date, keyBytes));
+    }
 }
 
 public class CosmosClientTests

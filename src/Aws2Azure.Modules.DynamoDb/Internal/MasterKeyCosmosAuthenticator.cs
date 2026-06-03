@@ -12,13 +12,15 @@ namespace Aws2Azure.Modules.DynamoDb.Internal;
 /// </summary>
 internal sealed class MasterKeyCosmosAuthenticator : ICosmosAuthenticator
 {
-    private readonly string _base64MasterKey;
+    private readonly byte[] _masterKeyBytes;
     private readonly Func<DateTimeOffset> _clock;
 
     public MasterKeyCosmosAuthenticator(string base64MasterKey, Func<DateTimeOffset>? clock = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(base64MasterKey);
-        _base64MasterKey = base64MasterKey;
+        // Decode the master key once: it is fixed per credential, so paying
+        // the base64 decode per request was pure hot-path waste.
+        _masterKeyBytes = Convert.FromBase64String(base64MasterKey);
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
     }
 
@@ -29,8 +31,8 @@ internal sealed class MasterKeyCosmosAuthenticator : ICosmosAuthenticator
         CancellationToken ct)
     {
         var utcDate = CosmosMasterKeyAuth.GetHttpUtcDate(_clock());
-        var auth = CosmosMasterKeyAuth.Build(
-            request.Method.Method, resourceType, resourceLink, utcDate, _base64MasterKey);
+        var auth = CosmosMasterKeyAuth.BuildAuthHeader(
+            request.Method.Method, resourceType, resourceLink, utcDate, _masterKeyBytes);
 
         request.Headers.TryAddWithoutValidation("authorization", auth);
         request.Headers.TryAddWithoutValidation("x-ms-date", utcDate);
