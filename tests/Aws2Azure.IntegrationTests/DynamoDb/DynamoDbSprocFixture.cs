@@ -45,6 +45,15 @@ public sealed class DynamoDbSprocFixture : IAsyncLifetime
     private static bool RealCosmosEnabled =>
         !string.IsNullOrWhiteSpace(RealEndpoint) && !string.IsNullOrWhiteSpace(RealKey);
 
+    /// <summary>
+    /// True when the fixture is targeting a real Azure Cosmos DB account
+    /// (AWS2AZURE_REAL_COSMOS_ENDPOINT / _KEY set) rather than the emulator.
+    /// Tests that depend on behavior the emulator cannot reproduce — server-side
+    /// scripts, 2 MB page / x-ms-continuation pagination, RU throttling — gate on
+    /// this so they skip cleanly on the emulator-backed CI run.
+    /// </summary>
+    public bool IsRealCosmos => RealCosmosEnabled;
+
     public async Task InitializeAsync()
     {
         if (RealCosmosEnabled)
