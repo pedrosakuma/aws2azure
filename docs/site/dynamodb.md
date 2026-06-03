@@ -15,7 +15,7 @@
 | Throttling → UnprocessedKeys | ✅ implemented | A Cosmos 429 on a point read drops that key into `UnprocessedKeys`; a 429 on a batched single-partition query drops the whole partition's keys into `UnprocessedKeys`. Either way SDK retry loops re-issue only the throttled subset and the rest of the batch still returns 200. |  |  |
 | ProjectionExpression (per table) | 🟡 partial | Top-level attribute names + `#alias` honoured. Nested paths (`a.b`, `a[0]`) rejected. |  |  |
 | ExpressionAttributeNames (per table) | ✅ implemented |  |  |  |
-| ConsistentRead (per table) | ✅ implemented | Sets `x-ms-consistency-level: Strong` on every Cosmos read (point read or batched query) for that table; account-level consistency cap still applies. |  |  |
+| ConsistentRead (per table) | ✅ implemented | Sets `x-ms-consistency-level: Strong` on every Cosmos read (point read or batched query) for that table; account-level consistency cap still applies. Opt-in startup probe (`DynamoDb.ConsistencyCheck` = Warn/Required, #204) flags accounts that cannot honor Strong at boot. |  |  |
 | 100-item-per-call cap | ✅ implemented | Requests over 100 keys (across all tables) rejected with ValidationException, matching the DynamoDB hard limit. |  |  |
 | Duplicate-key rejection | ✅ implemented | Same (table, pk, id) repeated in a single call → ValidationException, matching DynamoDB. |  |  |
 | Legacy AttributesToGet | ⛔ unsupported | Rejected with ValidationException — use ProjectionExpression. |  |  |
@@ -207,7 +207,7 @@
 | HASH-only key tables | ✅ implemented |  |  |  |
 | HASH+RANGE composite key tables | ✅ implemented |  |  |  |
 | Full wire-form round-trip on response Item | ✅ implemented |  |  |  |
-| ConsistentRead | 🟡 partial | Mapped to Cosmos `x-ms-consistency-level: Strong` request header. Honoured only when the account's max consistency permits Strong; Session/weaker accounts silently downgrade. |  |  |
+| ConsistentRead | 🟡 partial | Mapped to Cosmos `x-ms-consistency-level: Strong` request header. Honoured only when the account's max consistency permits Strong; Session/weaker accounts silently downgrade. Opt-in startup probe (`DynamoDb.ConsistencyCheck` = Warn/Required, #204) detects such accounts at boot and warns or fails startup. |  |  |
 | ProjectionExpression / AttributesToGet | ⛔ unsupported | Rejected with ValidationException pending expression parser slice (#12). |  |  |
 | ExpressionAttributeNames | ⛔ unsupported |  |  |  |
 | ReturnConsumedCapacity | ⛔ unsupported |  |  |  |
@@ -318,7 +318,7 @@
 | Limit | ✅ implemented |  |  |  |
 | ExclusiveStartKey / LastEvaluatedKey | ✅ implemented | Pagination round-trips the Cosmos `x-ms-continuation` token inside a sentinel attribute `__a2a_continuation` (typed-string `S`). Most AWS SDKs treat LastEvaluatedKey as opaque and pass it back verbatim, which is what the proxy requires. |  |  |
 | ScanIndexForward | ✅ implemented | Maps to `ORDER BY c.id ASC\|DESC`; only emitted for composite-key tables (hash-only Query returns at most one item). |  |  |
-| ConsistentRead | ✅ implemented | Forwards `x-ms-consistency-level: Strong` for the Cosmos query when true; account-level consistency cap still applies. |  |  |
+| ConsistentRead | ✅ implemented | Forwards `x-ms-consistency-level: Strong` for the Cosmos query when true; account-level consistency cap still applies. Opt-in startup probe (`DynamoDb.ConsistencyCheck` = Warn/Required, #204) flags accounts that cannot honor Strong at boot. |  |  |
 | Select | 🟡 partial | ALL_ATTRIBUTES (default), SPECIFIC_ATTRIBUTES, and COUNT supported. ALL_PROJECTED_ATTRIBUTES requires IndexName and is rejected. |  |  |
 | IndexName (GSI / LSI) | ⛔ unsupported | Querying secondary indexes is not yet supported; requests carrying IndexName are rejected with ValidationException. |  |  |
 | Legacy KeyConditions / QueryFilter / ConditionalOperator | ⛔ unsupported | Legacy v1 parameters are rejected loudly with ValidationException — use KeyConditionExpression / FilterExpression. |  |  |
@@ -352,7 +352,7 @@
 | ExpressionAttributeNames / ExpressionAttributeValues | ✅ implemented |  |  |  |
 | Limit | ✅ implemented | Caps the *scanned* (pre-filter) row count when the filter is residual-only; pageSize is sized to the remaining evaluation budget so the per-page continuation never skips rows. When a FilterExpression is pushed (fully or partially) into the Cosmos SQL, Cosmos pre-filters at the storage layer and `scanned` becomes post-prefilter — see behavior_differences for the page-boundary trade-off. |  |  |
 | ExclusiveStartKey / LastEvaluatedKey | ✅ implemented | Pagination round-trips the Cosmos `x-ms-continuation` token inside a sentinel attribute `__a2a_continuation` (typed-string `S`). Most AWS SDKs treat LastEvaluatedKey as opaque and pass it back verbatim. |  |  |
-| ConsistentRead | ✅ implemented | Forwards `x-ms-consistency-level: Strong` for the Cosmos query when true; account-level consistency cap still applies. |  |  |
+| ConsistentRead | ✅ implemented | Forwards `x-ms-consistency-level: Strong` for the Cosmos query when true; account-level consistency cap still applies. Opt-in startup probe (`DynamoDb.ConsistencyCheck` = Warn/Required, #204) flags accounts that cannot honor Strong at boot. |  |  |
 | Select | 🟡 partial | ALL_ATTRIBUTES (default), SPECIFIC_ATTRIBUTES, and COUNT supported. ALL_PROJECTED_ATTRIBUTES requires IndexName and is rejected. |  |  |
 | IndexName (GSI / LSI) | ⛔ unsupported | Scanning secondary indexes is not yet supported; requests carrying IndexName are rejected with ValidationException. |  |  |
 | Parallel scan (Segment / TotalSegments) | ⛔ unsupported | Rejected with ValidationException. Cosmos cross-partition queries fan out internally; explicit per-segment parallelism is deferred to a later slice. |  |  |

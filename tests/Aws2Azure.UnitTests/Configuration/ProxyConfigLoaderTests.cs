@@ -96,6 +96,32 @@ public class ProxyConfigLoaderTests : IDisposable
     }
 
     [Fact]
+    public void Env_var_overrides_dynamodb_consistency_check()
+    {
+        var env = new Dictionary<string, string?>
+        {
+            ["AWS2AZURE__DYNAMODB__CONSISTENCYCHECK"] = "required",
+        };
+
+        var config = ProxyConfigLoader.Load(jsonFilePath: null, env);
+
+        Assert.Equal(ConsistencyCheckMode.Required, config.DynamoDb.ConsistencyCheck);
+    }
+
+    [Fact]
+    public void Env_var_ignores_invalid_dynamodb_consistency_check()
+    {
+        var env = new Dictionary<string, string?>
+        {
+            ["AWS2AZURE__DYNAMODB__CONSISTENCYCHECK"] = "banana",
+        };
+
+        var config = ProxyConfigLoader.Load(jsonFilePath: null, env);
+
+        Assert.Equal(ConsistencyCheckMode.Disabled, config.DynamoDb.ConsistencyCheck);
+    }
+
+    [Fact]
     public void Throws_on_malformed_json()
     {
         File.WriteAllText(_tempFile, "{ this is not valid json");

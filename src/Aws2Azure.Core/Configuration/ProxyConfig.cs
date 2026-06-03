@@ -38,6 +38,39 @@ public sealed class DynamoDbSettings
     /// </list>
     /// </summary>
     public StoredProcedureMode UseStoredProcedures { get; set; } = StoredProcedureMode.Disabled;
+
+    /// <summary>
+    /// Startup probe of each configured Cosmos account's default consistency
+    /// level versus what DynamoDB <c>ConsistentRead</c> / read-your-write
+    /// require (Strong). Cosmos only relaxes consistency
+    /// per request, never strengthens it, so on a Bounded Staleness / Session /
+    /// Consistent Prefix / Eventual account the proxy's
+    /// <c>x-ms-consistency-level: Strong</c> header
+    /// is silently ignored and <c>ConsistentRead</c> is not honored (#204).
+    /// <list type="bullet">
+    ///   <item><c>Disabled</c> (default) — no probe; no startup network call.</item>
+    ///   <item><c>Warn</c> — probe each account at startup; log a warning when below Strong.</item>
+    ///   <item><c>Required</c> — probe each account at startup; fail startup when below Strong (or when the probe cannot determine the level).</item>
+    /// </list>
+    /// </summary>
+    public ConsistencyCheckMode ConsistencyCheck { get; set; } = ConsistencyCheckMode.Disabled;
+}
+
+/// <summary>
+/// Startup validation mode for the Cosmos account default consistency level
+/// versus DynamoDB <c>ConsistentRead</c> semantics (#204).
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<ConsistencyCheckMode>))]
+public enum ConsistencyCheckMode
+{
+    /// <summary>Do not probe account consistency at startup (no boot network call).</summary>
+    Disabled = 0,
+
+    /// <summary>Probe at startup; log a warning when an account cannot honor ConsistentRead.</summary>
+    Warn = 1,
+
+    /// <summary>Probe at startup; fail startup when an account cannot honor ConsistentRead.</summary>
+    Required = 2,
 }
 
 /// <summary>
