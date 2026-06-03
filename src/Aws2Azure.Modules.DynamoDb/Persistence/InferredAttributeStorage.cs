@@ -153,6 +153,28 @@ internal static class InferredAttributeStorage
     }
 
     /// <summary>
+    /// True if <paramref name="name"/> is a Cosmos-internal system field that
+    /// Cosmos injects at the document root on every read (<c>_rid</c>,
+    /// <c>_self</c>, <c>_etag</c>, <c>_ts</c>, <c>_attachments</c>, and on some
+    /// response shapes <c>_lsn</c>/<c>_metadata</c>). These are storage
+    /// metadata, never user data, and must be stripped from every DynamoDB
+    /// read response (#203).
+    /// </summary>
+    /// <remarks>
+    /// Read-only by design: unlike <see cref="IsReservedTopLevelName"/> this is
+    /// NOT consulted by the encoder, so a user attribute literally named e.g.
+    /// <c>_etag</c> is still written verbatim and then stripped on read.
+    /// Disambiguating that rare collision requires namespacing user attributes
+    /// (see #203); the allowlist is intentionally exact — never a <c>_</c>
+    /// wildcard — to avoid eating legitimate user attributes such as <c>ttl</c>.
+    /// </remarks>
+    public static bool IsCosmosSystemField(string name) => name switch
+    {
+        "_rid" or "_self" or "_etag" or "_ts" or "_attachments" or "_lsn" or "_metadata" => true,
+        _ => false,
+    };
+
+    /// <summary>
     /// True if the attribute name can be written directly at the root
     /// without shadow-encoding. The only collision the encoder rewrites
     /// transparently is <c>id</c>; every other reserved name is a hard
@@ -758,10 +780,11 @@ internal static class InferredAttributeStorage
                     // Unmangle the shadow-encoded "id" attribute.
                     targetName = IdProperty;
                 }
-                else if (IsReservedTopLevelName(prop.Name))
+                else if (IsReservedTopLevelName(prop.Name) || IsCosmosSystemField(prop.Name))
                 {
                     // Routing fields, discriminator, other reserved
-                    // _a2a-namespace props — never user data.
+                    // _a2a-namespace props, and Cosmos system fields
+                    // (_rid/_self/_etag/_ts/_attachments/...) — never user data.
                     continue;
                 }
                 else
@@ -828,9 +851,10 @@ internal static class InferredAttributeStorage
                 reader.Read();
                 WriteAttributeValue(writer, ref reader);
             }
-            else if (IsReservedTopLevelNameToken(ref reader))
+            else if (IsReservedTopLevelNameToken(ref reader) || IsCosmosSystemFieldToken(ref reader))
             {
-                // Routing fields, discriminator, other reserved _a2a props.
+                // Routing fields, discriminator, other reserved _a2a props,
+                // and Cosmos system fields (_rid/_self/_etag/_ts/...).
                 reader.Read();
                 reader.Skip();
             }
@@ -855,6 +879,19 @@ internal static class InferredAttributeStorage
         if (reader.ValueIsEscaped || reader.HasValueSequence) return false;
         return reader.ValueSpan.StartsWith(DiscriminatorPrefixU8);
     }
+
+    /// <summary>Streaming counterpart of <see cref="IsCosmosSystemField"/> over
+    /// the reader's current PropertyName token. Must stay in sync with that
+    /// switch. <see cref="Utf8JsonReader.ValueTextEquals(ReadOnlySpan{byte})"/>
+    /// transparently handles escaped names, so no escape guard is needed.</summary>
+    private static bool IsCosmosSystemFieldToken(ref Utf8JsonReader reader)
+        => reader.ValueTextEquals("_rid"u8)
+        || reader.ValueTextEquals("_self"u8)
+        || reader.ValueTextEquals("_etag"u8)
+        || reader.ValueTextEquals("_ts"u8)
+        || reader.ValueTextEquals("_attachments"u8)
+        || reader.ValueTextEquals("_lsn"u8)
+        || reader.ValueTextEquals("_metadata"u8);
 
     /// <summary>
     /// Writes the typed DDB AttributeValue for the JSON value the reader is
@@ -1086,10 +1123,11 @@ internal static class InferredAttributeStorage
                     // Unmangle the shadow-encoded "id" attribute.
                     targetName = IdProperty;
                 }
-                else if (IsReservedTopLevelName(prop.Name))
+                else if (IsReservedTopLevelName(prop.Name) || IsCosmosSystemField(prop.Name))
                 {
                     // Routing fields, discriminator, other reserved
-                    // _a2a-namespace props — never user data.
+                    // _a2a-namespace props, and Cosmos system fields
+                    // (_rid/_self/_etag/_ts/_attachments/...) — never user data.
                     continue;
                 }
                 else
