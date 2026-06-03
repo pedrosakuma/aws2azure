@@ -414,19 +414,30 @@
 
 ## TransactWriteItems
 
-- **Status:** ⛔ unsupported
-- **Azure equivalent:** `Azure Cosmos DB (Core SQL API) — no cross-container ACID`
+- **Status:** 🟡 partial
+- **Azure equivalent:** `Azure Cosmos DB (Core SQL API) — single-partition stored-procedure transaction`
 
 ### Sub-features
 
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
-| ACID writes across items | ⛔ unsupported | Azure Cosmos DB only offers transactional batches within a single logical partition of a single container. DynamoDB TransactWriteItems supports up to 100 writes across multiple tables with full ACID guarantees — there is no faithful mapping. |  |  |
-| ConditionCheck / ConditionExpression | ⛔ unsupported |  |  |  |
+| Atomic Put / Delete / ConditionCheck | ✅ implemented | All operations run inside one Cosmos stored procedure (`atomicTransactWrite_v1`), which executes as a single server-side ACID transaction. Either every write commits or none do (any write error throws and Cosmos rolls back the sproc). |  |  |
+| ConditionExpression (Put / Delete / ConditionCheck) | ✅ implemented | Conditions are evaluated server-side in the sproc before any write. If ANY condition fails, no writes are performed and the call returns `TransactionCanceledException` with positional `CancellationReasons`. `ConditionCheck.ConditionExpression` is required (matches DynamoDB). Top-level / `#alias` attribute paths; same expression surface as PutItem/DeleteItem conditions. |  |  |
+| Update | ⛔ unsupported | Atomic in-transaction `Update` is rejected with `ValidationException`. Use `Put` to overwrite the whole item, or perform the update outside the transaction. Documented gap — server-side UpdateExpression execution inside the multi-op sproc is a planned fast-follow. |  |  |
+| 100-item-per-call cap | ✅ implemented | Requests over 100 items rejected with ValidationException. |  |  |
+| Positional CancellationReasons | ✅ implemented | On condition failure, `CancellationReasons` is aligned positionally with TransactItems — `None` for items whose condition passed, `ConditionalCheckFailed` for those that failed. |  |  |
+| ClientRequestToken (idempotency) | ⛔ unsupported | Accepted but not honoured — aws2azure has no idempotency store, so a retried token is re-executed rather than de-duplicated. |  |  |
+| ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported | Silently ignored; response omits ConsumedCapacity / ItemCollectionMetrics. |  |  |
 
 ### Behaviour differences
 
-- Every TransactWriteItems call returns `TransactionCanceledException` with an explanatory message. Callers must fall back to `BatchWriteItem` (no atomicity) or per-item `PutItem` / `UpdateItem` / `DeleteItem` with their own application-level coordination.
+- **Single table + single partition key only.** A Cosmos stored-procedure transaction is scoped to one container and one logical partition. Operations spanning more than one table, or more than one partition-key value, are rejected with `ValidationException`. DynamoDB allows up to 100 writes across multiple tables and partitions with full ACID — that surface is not reproducible on Cosmos.
+- Duplicate operations on the same item (same table + key) are rejected with `ValidationException` (matches DynamoDB's `cannot include multiple operations on one item`).
+- Stored procedures must be enabled (DynamoDB stored-procedure mode `Preferred` or `Required`). With sprocs disabled the request is rejected with `ValidationException` — there is no honest non-atomic fallback for a transaction.
+- `Update` is rejected (see sub-features) — atomic transactional update is not yet implemented.
+- Large transactions (approaching 100 operations) may exceed the Cosmos stored-procedure execution-time / response-size budget; such calls surface as a rolled-back failure rather than a partial commit.
+- Key attribute values are hex/numeric-encoded into the internal Cosmos `id`/partition-key the same way as PutItem/DeleteItem (S → hex(UTF-8 bytes), B → hex(raw bytes), N → order-preserving digit string). See PutItem for the full rationale.
+- The Cosmos linux emulator (`vnext-preview`) rejects server-side scripts (`Server-side scripts are not supported in this emulator`), so the `atomicTransactWrite_v1` stored procedure cannot be provisioned there. The C# request-validation surface (single-table / single-partition / duplicate-target / 100-item-cap rejection) is exercised against the emulator, but the **server-side JS transaction body itself can only be validated against real Azure Cosmos DB**. Integration tests that execute the sproc skip automatically when provisioning fails.
 
 ### References
 

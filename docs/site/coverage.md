@@ -17,7 +17,7 @@
 | dynamodb | [Scan](dynamodb.md#scan) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [TagResource](dynamodb.md#tagresource) | ⚪ stub | `Azure Cosmos DB account/resource tags (control plane)` |
 | dynamodb | [TransactGetItems](dynamodb.md#transactgetitems) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
-| dynamodb | [TransactWriteItems](dynamodb.md#transactwriteitems) | ⛔ unsupported | `Azure Cosmos DB (Core SQL API) — no cross-container ACID` |
+| dynamodb | [TransactWriteItems](dynamodb.md#transactwriteitems) | 🟡 partial | `Azure Cosmos DB (Core SQL API) — single-partition stored-procedure transaction` |
 | dynamodb | [UntagResource](dynamodb.md#untagresource) | ⚪ stub | `Azure Cosmos DB account/resource tags (control plane)` |
 | dynamodb | [UpdateItem](dynamodb.md#updateitem) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [UpdateTimeToLive](dynamodb.md#updatetimetolive) | ⛔ unsupported | `Azure Cosmos DB container `defaultTtl` / per-item `ttl`` |

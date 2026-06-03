@@ -64,7 +64,7 @@ public sealed class DynamoDbSprocFixture : IAsyncLifetime
         _configFile = Path.Combine(Path.GetTempPath(),
             "aws2azure-sproc-it-" + Guid.NewGuid().ToString("N") + ".json");
         
-        // Config with storedProcedures: Preferred
+        // Config with useStoredProcedures: Preferred
         var config = $$"""
         {
           "services": {
@@ -73,7 +73,7 @@ public sealed class DynamoDbSprocFixture : IAsyncLifetime
             "dynamodb": { "enabled": true }
           },
           "dynamoDb": {
-            "storedProcedures": "Preferred"
+            "useStoredProcedures": "Preferred"
           },
           "credentials": [
             {

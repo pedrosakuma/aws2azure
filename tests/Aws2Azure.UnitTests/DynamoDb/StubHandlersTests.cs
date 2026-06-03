@@ -55,21 +55,7 @@ public class StubHandlersTests
         return new StreamReader(body).ReadToEnd();
     }
 
-    // ----- TransactWriteItems -----
-
-    [Fact]
-    public async Task TransactWrite_always_fails_with_explanatory_TransactionCanceledException()
-    {
-        var (ctx, body) = NewCtx();
-        var req = "{\"TransactItems\":[{\"Put\":{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"a\"}}}}]}";
-
-        await TransactWriteItemsHandler.HandleTransactWriteItemsAsync(ctx, Encoding.UTF8.GetBytes(req), BuildClient(), default);
-
-        Assert.Equal(400, ctx.Response.StatusCode);
-        var text = ReadResponse(body);
-        Assert.Contains("TransactionCanceledException", text);
-        Assert.Contains("not supported", text);
-    }
+    // ----- TransactWriteItems: see TransactWriteItemsHandlerTests for full coverage. -----
 
     // ----- DescribeTimeToLive -----
 
