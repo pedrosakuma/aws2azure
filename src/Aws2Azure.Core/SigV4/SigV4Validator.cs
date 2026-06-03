@@ -174,11 +174,13 @@ public sealed class SigV4Validator
             }
         }
 
-        var canonicalRequest = CanonicalRequest.Build(
+        Span<byte> canonicalHash = stackalloc byte[32];
+        CanonicalRequest.HashCanonicalRequest(
             request.HttpMethod, request.RawPath, request.RawQueryString,
-            request.Headers, signedHeaders, request.PayloadHash, request.S3PathStyle);
+            request.Headers, signedHeaders, request.PayloadHash, request.S3PathStyle,
+            canonicalHash);
 
-        var stringToSign = CanonicalRequest.StringToSign(amzDate, scope.ToScopeString(), canonicalRequest);
+        var stringToSign = CanonicalRequest.StringToSign(amzDate, scope.ToScopeString(), canonicalHash);
 
         var signingKey = SigningKey.Derive(secret, scope.Date, scope.Region, scope.Service);
         var expected = SigningKey.HmacSha256(signingKey, Encoding.UTF8.GetBytes(stringToSign));
