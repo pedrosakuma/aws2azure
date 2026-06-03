@@ -39,6 +39,7 @@ sub_features:
     status: unsupported
     notes: "Silently ignored; response omits ConsumedCapacity."
 behavior_differences:
+  - "Cosmos storage-metadata system fields (`_rid`/`_self`/`_etag`/`_ts`/`_attachments`/`_lsn`/`_metadata`) are stripped from response items and never surface as DynamoDB attributes (#203). Caveat: a user attribute literally named identically is also stripped on read; the durable fix is attribute namespacing."
   - "Scan order is **not** stable. Cosmos cross-partition query does not guarantee a deterministic walk across partitions; DynamoDB Scan is also unordered, but specific item ordering across pages may differ."
   - "When a FilterExpression is pushed (fully or partially) into the Cosmos SQL, Limit's pre-filter semantics cannot be reproduced exactly — Cosmos pre-filters at the storage layer, so `scanned` becomes post-prefilter. The proxy preserves the Cosmos page boundary in that case: it returns after the first non-empty page and surfaces the Cosmos continuation as LastEvaluatedKey, rather than topping up matches across pages with a drifted page boundary."
   - "Cosmos 429 (throttled) is surfaced as DynamoDB ProvisionedThroughputExceededException — expect this often on large scans."
