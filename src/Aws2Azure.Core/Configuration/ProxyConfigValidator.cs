@@ -25,6 +25,11 @@ public static class ProxyConfigValidator
             errors.Add($"sns.defaultBackend: unknown value '{(int)config.Sns.DefaultBackend}'.");
         }
 
+        if (!Enum.IsDefined(typeof(ConsistencyCheckMode), config.DynamoDb.ConsistencyCheck))
+        {
+            errors.Add($"dynamoDb.consistencyCheck: unknown value '{(int)config.DynamoDb.ConsistencyCheck}'.");
+        }
+
         var seen = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 0; i < config.Credentials.Count; i++)
         {

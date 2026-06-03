@@ -26,7 +26,7 @@ sub_features:
     notes: "Maps to `ORDER BY c.id ASC|DESC`; only emitted for composite-key tables (hash-only Query returns at most one item)."
   - name: ConsistentRead
     status: implemented
-    notes: "Forwards `x-ms-consistency-level: Strong` for the Cosmos query when true; account-level consistency cap still applies."
+    notes: "Forwards `x-ms-consistency-level: Strong` for the Cosmos query when true; account-level consistency cap still applies. Opt-in startup probe (`DynamoDb.ConsistencyCheck` = Warn/Required, #204) flags accounts that cannot honor Strong at boot."
   - name: Select
     status: partial
     notes: "ALL_ATTRIBUTES (default), SPECIFIC_ATTRIBUTES, and COUNT supported. ALL_PROJECTED_ATTRIBUTES requires IndexName and is rejected."

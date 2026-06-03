@@ -103,5 +103,29 @@ internal sealed class CosmosClient
             () => _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct))
             .ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Reads the Cosmos DatabaseAccount resource (<c>GET /</c>) and returns its
+    /// default consistency level. Used by the #204 startup probe to detect
+    /// accounts that cannot honor DynamoDB <c>ConsistentRead</c>. Account-level
+    /// reads sign with an empty resource type and link. Throws on a non-success
+    /// status so the caller can distinguish a probe failure from a determinable
+    /// (but weak) level.
+    /// </summary>
+    public async Task<CosmosConsistencyLevel> ReadAccountConsistencyAsync(CancellationToken ct)
+    {
+        using var resp = await SendAsync(
+            HttpMethod.Get,
+            resourceType: string.Empty,
+            resourceLink: string.Empty,
+            requestUri: "/",
+            content: null,
+            extraHeaders: null,
+            ct).ConfigureAwait(false);
+
+        resp.EnsureSuccessStatusCode();
+        var body = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+        return CosmosConsistency.ParseDefaultConsistency(body);
+    }
 }
 

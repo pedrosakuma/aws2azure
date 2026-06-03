@@ -11,7 +11,7 @@ sub_features:
     status: implemented
   - name: ConsistentRead
     status: partial
-    notes: "Mapped to Cosmos `x-ms-consistency-level: Strong` request header. Honoured only when the account's max consistency permits Strong; Session/weaker accounts silently downgrade."
+    notes: "Mapped to Cosmos `x-ms-consistency-level: Strong` request header. Honoured only when the account's max consistency permits Strong; Session/weaker accounts silently downgrade. Opt-in startup probe (`DynamoDb.ConsistencyCheck` = Warn/Required, #204) detects such accounts at boot and warns or fails startup."
   - name: ProjectionExpression / AttributesToGet
     status: unsupported
     notes: "Rejected with ValidationException pending expression parser slice (#12)."

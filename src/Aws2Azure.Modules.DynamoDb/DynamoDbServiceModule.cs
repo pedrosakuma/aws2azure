@@ -25,6 +25,7 @@ public sealed class DynamoDbServiceModule : IServiceModule
     private readonly ICredentialResolver _credentials;
     private readonly EntraIdTokenProvider _tokenProvider;
     private readonly ILogger? _scanLogger;
+    private readonly ILogger? _consistencyLogger;
     private readonly DynamoDbSettings _settings;
     private readonly SprocManager? _sprocManager;
 
@@ -49,6 +50,7 @@ public sealed class DynamoDbServiceModule : IServiceModule
         // Logger is optional — when null, hot paths simply skip emission;
         // tests construct the module without a factory.
         _scanLogger = loggerFactory?.CreateLogger("Aws2Azure.Modules.DynamoDb.Scan");
+        _consistencyLogger = loggerFactory?.CreateLogger("Aws2Azure.Modules.DynamoDb.Consistency");
         Capabilities = capabilities;
 
         // Create SprocManager if sprocs are enabled
@@ -184,6 +186,92 @@ public sealed class DynamoDbServiceModule : IServiceModule
             "InternalServerError",
             $"Operation {DynamoDbOperationNames.ToShortName(parsed.Operation)} is not yet implemented.")
             .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// #204 startup probe: reads each distinct Cosmos account's default
+    /// consistency level and, when it cannot honor DynamoDB
+    /// <c>ConsistentRead</c> (i.e. below Strong / Bounded Staleness), either
+    /// warns (<see cref="ConsistencyCheckMode.Warn"/>) or throws
+    /// <see cref="CosmosConsistencyValidationException"/>
+    /// (<see cref="ConsistencyCheckMode.Required"/>). A no-op under
+    /// <see cref="ConsistencyCheckMode.Disabled"/> — no startup network call.
+    /// Probe failures and indeterminate levels warn-and-continue under Warn and
+    /// fail closed under Required.
+    /// </summary>
+    public async Task ValidateAccountConsistencyAsync(
+        System.Collections.Generic.IReadOnlyList<CosmosCredentials> accounts,
+        System.Threading.CancellationToken ct)
+    {
+        var mode = _settings.ConsistencyCheck;
+        if (mode == ConsistencyCheckMode.Disabled)
+        {
+            return;
+        }
+        ArgumentNullException.ThrowIfNull(accounts);
+
+        var seen = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var creds in accounts)
+        {
+            if (creds is null || string.IsNullOrEmpty(creds.Endpoint) || !seen.Add(creds.Endpoint))
+            {
+                continue;
+            }
+
+            CosmosConsistencyLevel level;
+            try
+            {
+                var auth = CreateAuthenticator(creds);
+                var cosmos = new CosmosClient(_http, creds, auth);
+                level = await cosmos.ReadAccountConsistencyAsync(ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not CosmosConsistencyValidationException and not OperationCanceledException)
+            {
+                if (_consistencyLogger is not null)
+                {
+                    ConsistencyLog.ProbeFailed(_consistencyLogger, creds.Endpoint, ex.Message);
+                }
+                if (mode == ConsistencyCheckMode.Required)
+                {
+                    throw new CosmosConsistencyValidationException(
+                        $"Cosmos account '{creds.Endpoint}' consistency probe failed under ConsistencyCheck=Required: {ex.Message}");
+                }
+                continue;
+            }
+
+            if (level == CosmosConsistencyLevel.Unknown)
+            {
+                if (_consistencyLogger is not null)
+                {
+                    ConsistencyLog.Indeterminate(_consistencyLogger, creds.Endpoint);
+                }
+                if (mode == ConsistencyCheckMode.Required)
+                {
+                    throw new CosmosConsistencyValidationException(
+                        $"Cosmos account '{creds.Endpoint}' default consistency could not be determined under ConsistencyCheck=Required.");
+                }
+                continue;
+            }
+
+            switch (CosmosConsistency.Decide(level, mode))
+            {
+                case CosmosConsistency.ProbeOutcome.Ok:
+                    if (_consistencyLogger is not null)
+                    {
+                        ConsistencyLog.Honored(_consistencyLogger, creds.Endpoint, level.ToString());
+                    }
+                    break;
+                case CosmosConsistency.ProbeOutcome.Warn:
+                    if (_consistencyLogger is not null)
+                    {
+                        ConsistencyLog.BelowStrong(_consistencyLogger, creds.Endpoint, level.ToString());
+                    }
+                    break;
+                case CosmosConsistency.ProbeOutcome.Fail:
+                    throw new CosmosConsistencyValidationException(
+                        $"Cosmos account '{creds.Endpoint}' default consistency is '{level}', which cannot honor DynamoDB ConsistentRead. Set the account default to Strong or Bounded Staleness, or lower DynamoDb.ConsistencyCheck.");
+            }
+        }
     }
 
     private ICosmosAuthenticator CreateAuthenticator(CosmosCredentials creds)

@@ -22,7 +22,7 @@ sub_features:
     notes: "Pagination round-trips the Cosmos `x-ms-continuation` token inside a sentinel attribute `__a2a_continuation` (typed-string `S`). Most AWS SDKs treat LastEvaluatedKey as opaque and pass it back verbatim."
   - name: ConsistentRead
     status: implemented
-    notes: "Forwards `x-ms-consistency-level: Strong` for the Cosmos query when true; account-level consistency cap still applies."
+    notes: "Forwards `x-ms-consistency-level: Strong` for the Cosmos query when true; account-level consistency cap still applies. Opt-in startup probe (`DynamoDb.ConsistencyCheck` = Warn/Required, #204) flags accounts that cannot honor Strong at boot."
   - name: Select
     status: partial
     notes: "ALL_ATTRIBUTES (default), SPECIFIC_ATTRIBUTES, and COUNT supported. ALL_PROJECTED_ATTRIBUTES requires IndexName and is rejected."

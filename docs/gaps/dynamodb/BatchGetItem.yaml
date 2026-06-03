@@ -22,7 +22,7 @@ sub_features:
     status: implemented
   - name: ConsistentRead (per table)
     status: implemented
-    notes: "Sets `x-ms-consistency-level: Strong` on every Cosmos read (point read or batched query) for that table; account-level consistency cap still applies."
+    notes: "Sets `x-ms-consistency-level: Strong` on every Cosmos read (point read or batched query) for that table; account-level consistency cap still applies. Opt-in startup probe (`DynamoDb.ConsistencyCheck` = Warn/Required, #204) flags accounts that cannot honor Strong at boot."
   - name: 100-item-per-call cap
     status: implemented
     notes: "Requests over 100 keys (across all tables) rejected with ValidationException, matching the DynamoDB hard limit."

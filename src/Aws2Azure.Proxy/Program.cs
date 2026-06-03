@@ -242,6 +242,31 @@ var startupLogger = app.Services.GetRequiredService<ILoggerFactory>()
     .CreateLogger("Aws2Azure.Proxy");
 ProxyLog.HostStarting(startupLogger, registry.Modules.Count, proxyConfig.Credentials.Count);
 
+// #204: startup probe of each Cosmos account's default consistency level
+// (opt-in via DynamoDb.ConsistencyCheck). Under Required, an account that
+// cannot honor ConsistentRead fails startup; under Warn it only logs.
+if (proxyConfig.DynamoDb.ConsistencyCheck != ConsistencyCheckMode.Disabled)
+{
+    var dynamoModule = registry.Modules.OfType<DynamoDbServiceModule>().FirstOrDefault();
+    if (dynamoModule is not null)
+    {
+        var cosmosAccounts = proxyConfig.Credentials
+            .Select(c => c.Azure.Cosmos)
+            .Where(c => c is not null)
+            .Select(c => c!)
+            .ToList();
+        try
+        {
+            await dynamoModule.ValidateAccountConsistencyAsync(cosmosAccounts, CancellationToken.None);
+        }
+        catch (CosmosConsistencyValidationException ex)
+        {
+            Console.Error.WriteLine(ex.Message);
+            return 1;
+        }
+    }
+}
+
 // Kubernetes-style health probes (standard paths)
 // Only respond if Host is not an AWS service (avoids intercepting proxied requests)
 app.MapGet("/health", (HttpContext ctx) =>

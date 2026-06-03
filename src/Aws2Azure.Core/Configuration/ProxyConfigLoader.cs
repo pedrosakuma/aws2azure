@@ -108,6 +108,10 @@ public static class ProxyConfigLoader
             {
                 config.DynamoDb.UseStoredProcedures = mode;
             }
+            else if (field == "CONSISTENCYCHECK" && TryParseConsistencyCheckMode(value, out var ccMode))
+            {
+                config.DynamoDb.ConsistencyCheck = ccMode;
+            }
             return;
         }
 
@@ -220,6 +224,18 @@ public static class ProxyConfigLoader
         if (!string.IsNullOrWhiteSpace(value)
             && Enum.TryParse<StoredProcedureMode>(value, ignoreCase: true, out mode)
             && Enum.IsDefined(typeof(StoredProcedureMode), mode))
+        {
+            return true;
+        }
+        mode = default;
+        return false;
+    }
+
+    private static bool TryParseConsistencyCheckMode(string? value, out ConsistencyCheckMode mode)
+    {
+        if (!string.IsNullOrWhiteSpace(value)
+            && Enum.TryParse<ConsistencyCheckMode>(value, ignoreCase: true, out mode)
+            && Enum.IsDefined(typeof(ConsistencyCheckMode), mode))
         {
             return true;
         }
