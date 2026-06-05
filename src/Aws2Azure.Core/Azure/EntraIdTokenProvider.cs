@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Net;
 using System.Net.Http;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -46,21 +47,41 @@ public sealed class EntraIdTokenProvider
         var cacheKey = tenantId + "|" + clientId + "|" + scope;
         var now = _clock.GetUtcNow();
 
+        CacheEntry? cached = null;
         lock (_lock)
         {
-            if (_cache.TryGetValue(cacheKey, out var entry) && entry.ExpiresAt - SafetyWindow > now)
+            if (_cache.TryGetValue(cacheKey, out var entry))
             {
-                return entry.Token;
+                cached = entry;
+                if (entry.ExpiresAt - SafetyWindow > now)
+                {
+                    return entry.Token;
+                }
             }
         }
 
-        var token = await RequestTokenAsync(tenantId, clientId, clientSecret, scope, cancellationToken).ConfigureAwait(false);
-
-        lock (_lock)
+        try
         {
-            _cache[cacheKey] = new CacheEntry(token.AccessToken, now.AddSeconds(token.ExpiresInSeconds));
+            var token = await RequestTokenAsync(tenantId, clientId, clientSecret, scope, cancellationToken).ConfigureAwait(false);
+
+            lock (_lock)
+            {
+                _cache[cacheKey] = new CacheEntry(token.AccessToken, now.AddSeconds(token.ExpiresInSeconds));
+            }
+            return token.AccessToken;
         }
-        return token.AccessToken;
+        catch (EntraIdTokenException) when (cached is { } valid && valid.ExpiresAt > _clock.GetUtcNow())
+        {
+            // A proactive refresh inside the safety window hit a throttle/transient/
+            // auth failure, but the previously cached token has not actually expired
+            // (re-checked against the current clock, not the pre-await snapshot, so a
+            // refresh that outlives the token's remaining validity still surfaces the
+            // error). Serve it rather than failing the client's request: a real AWS
+            // service would not surface a throttle that originated in our internal
+            // token refresh while a usable credential is still in hand. The
+            // token-endpoint error is only surfaced once no unexpired token remains.
+            return valid.Token;
+        }
     }
 
     private async Task<EntraIdTokenResponse> RequestTokenAsync(
@@ -88,7 +109,7 @@ public sealed class EntraIdTokenProvider
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"Entra ID token request failed: {(int)response.StatusCode} {response.ReasonPhrase}. Body: {body}");
+            throw new EntraIdTokenException(response.StatusCode, body);
         }
 
         var token = System.Text.Json.JsonSerializer.Deserialize(body, EntraIdJsonContext.Default.EntraIdTokenResponse);
@@ -105,6 +126,49 @@ public sealed class EntraIdTokenProvider
     }
 
     private readonly record struct CacheEntry(string Token, DateTimeOffset ExpiresAt);
+}
+
+/// <summary>
+/// Thrown by <see cref="EntraIdTokenProvider"/> when the Entra ID token endpoint
+/// returns a non-success status. Carries the originating HTTP status so consuming
+/// modules can render the AWS-service-native error shape (a token 429 becomes the
+/// service's retryable throttle, a token 5xx its transient error, an auth /
+/// bad-request its access-denied error) instead of a bare HTTP 500.
+/// </summary>
+public sealed class EntraIdTokenException : Exception
+{
+    public EntraIdTokenException(HttpStatusCode statusCode, string? responseBody)
+        : base($"Entra ID token request failed with HTTP {(int)statusCode}.")
+    {
+        StatusCode = statusCode;
+        ResponseBody = responseBody;
+    }
+
+    /// <summary>The raw status returned by the Entra ID token endpoint.</summary>
+    public HttpStatusCode StatusCode { get; }
+
+    /// <summary>
+    /// The token-endpoint response body. For internal logging only — it must never
+    /// be echoed to AWS clients, as it can carry Azure auth diagnostics.
+    /// </summary>
+    public string? ResponseBody { get; }
+
+    /// <summary>
+    /// Normalises the token-endpoint status into the downstream backend status a
+    /// service error mapper should see, preserving wire-faithfulness: 429 stays a
+    /// throttle; 408 / 5xx (incl. the open-breaker synthetic 503) collapse to a
+    /// transient 503; every other status (400 / 401 / 403 — invalid_client, expired
+    /// secret, tenant mismatch) is a downstream auth failure surfaced as 403 so the
+    /// service mapper renders its access-denied shape rather than a misleading
+    /// client-side ValidationException / InvalidParameter.
+    /// </summary>
+    public HttpStatusCode BackendStatus => StatusCode switch
+    {
+        HttpStatusCode.TooManyRequests => HttpStatusCode.TooManyRequests,
+        HttpStatusCode.RequestTimeout => HttpStatusCode.ServiceUnavailable,
+        >= HttpStatusCode.InternalServerError => HttpStatusCode.ServiceUnavailable,
+        _ => HttpStatusCode.Forbidden,
+    };
 }
 
 public sealed class EntraIdTokenResponse

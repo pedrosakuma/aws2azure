@@ -230,3 +230,55 @@ public class CosmosClientTests
         }
     }
 }
+
+public class CosmosClientAadTokenFailureTests
+{
+    // When AAD token acquisition fails, CosmosClient.SendAsync surfaces a synthetic
+    // response carrying the normalised backend status so the existing
+    // CosmosOpsShared.WriteCosmosErrorAsync mapping renders the faithful DynamoDB
+    // error (token 429 -> ProvisionedThroughputExceededException, transient 503 ->
+    // InternalServerError, auth -> AccessDeniedException). The Cosmos data-plane send
+    // is never reached. (#213)
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests, HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.InternalServerError, HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.BadRequest, HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden)]
+    public async Task SendAsync_returns_synthetic_response_when_token_endpoint_fails(
+        HttpStatusCode tokenStatus, HttpStatusCode expectedStatus)
+    {
+        using var tokenHttp = new AzureHttpClient(
+            new StatusHandler(tokenStatus), ownsHandler: true);
+        var tokenProvider = new EntraIdTokenProvider(tokenHttp, authority: new Uri("https://login.test/"));
+
+        using var cosmosHttp = new AzureHttpClient(new ThrowingHandler(), ownsHandler: true);
+        var creds = new CosmosCredentials
+        {
+            Endpoint = "https://acct.documents.azure.com:443/",
+            DatabaseName = "main",
+            TenantId = "tenant",
+            ClientId = "client",
+            ClientSecret = "secret",
+        };
+        var client = new CosmosClient(cosmosHttp, creds, new AadCosmosAuthenticator(tokenProvider, "tenant", "client", "secret"));
+
+        using var resp = await client.SendAsync(
+            HttpMethod.Get, "docs", "dbs/main/colls/c/docs/1", "/dbs/main/colls/c/docs/1",
+            content: null, extraHeaders: null, CancellationToken.None);
+
+        Assert.Equal(expectedStatus, resp.StatusCode);
+    }
+
+    private sealed class StatusHandler(HttpStatusCode status) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+            => Task.FromResult(new HttpResponseMessage(status));
+    }
+
+    private sealed class ThrowingHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+            => throw new InvalidOperationException("Cosmos data-plane must not be called when token acquisition fails.");
+    }
+}

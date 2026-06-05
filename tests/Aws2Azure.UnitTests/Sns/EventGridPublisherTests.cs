@@ -143,6 +143,63 @@ public sealed class EventGridPublisherTests
     }
 
     [Fact]
+    public async Task PublishBatchAsync_marks_entries_throttled_when_token_endpoint_throttles()
+    {
+        // A 429 from the Entra ID token endpoint (AAD auth) must surface to the SNS
+        // caller as the retryable Throttled shape — not a flat InternalFailure — so
+        // the AWS SDK backs off and retries. (#213)
+        var handler = new RecordingHandler(request =>
+            request.RequestUri!.Host == "login.test"
+                ? new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+                : new HttpResponseMessage(HttpStatusCode.OK));
+        var publisher = NewPublisher(handler, authority: new Uri("https://login.test/"));
+
+        var result = await publisher.PublishBatchAsync(
+            new EventGridPublishDestination(
+                "https://orders.eastus-1.eventgrid.azure.net/api/events",
+                null,
+                "tenant",
+                "client",
+                "secret"),
+            [NewMessage(Guid.NewGuid()), NewMessage(Guid.NewGuid(), message: "two")],
+            CancellationToken.None);
+
+        Assert.Equal(2, result.Outcomes.Count);
+        Assert.All(result.Outcomes, outcome =>
+        {
+            Assert.False(outcome.Succeeded);
+            Assert.Equal("Throttled", outcome.ErrorCode);
+        });
+    }
+
+    [Fact]
+    public async Task PublishBatchAsync_marks_entries_access_denied_when_token_endpoint_rejects_credentials()
+    {
+        // A token-endpoint 400 (invalid_client) / 401 is a downstream auth failure,
+        // NOT a client request-validation error: it must surface as an SNS
+        // AuthorizationError, not InvalidParameter. (#213)
+        var handler = new RecordingHandler(request =>
+            request.RequestUri!.Host == "login.test"
+                ? new HttpResponseMessage(HttpStatusCode.BadRequest)
+                : new HttpResponseMessage(HttpStatusCode.OK));
+        var publisher = NewPublisher(handler, authority: new Uri("https://login.test/"));
+
+        var result = await publisher.PublishBatchAsync(
+            new EventGridPublishDestination(
+                "https://orders.eastus-1.eventgrid.azure.net/api/events",
+                null,
+                "tenant",
+                "client",
+                "secret"),
+            [NewMessage(Guid.NewGuid())],
+            CancellationToken.None);
+
+        var outcome = Assert.Single(result.Outcomes);
+        Assert.False(outcome.Succeeded);
+        Assert.Equal("AuthorizationError", outcome.ErrorCode);
+    }
+
+    [Fact]
     public async Task PublishBatchAsync_marks_all_entries_failed_on_http_failure()
     {
         var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.InternalServerError)

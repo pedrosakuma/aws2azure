@@ -265,6 +265,106 @@ public class EntraIdTokenProviderTests
         Assert.Equal(2, handler.CallCount);
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests, HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.RequestTimeout, HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.InternalServerError, HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.BadGateway, HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.BadRequest, HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.Forbidden, HttpStatusCode.Forbidden)]
+    public void EntraIdTokenException_NormalisesBackendStatus(HttpStatusCode raw, HttpStatusCode expected)
+    {
+        var ex = new EntraIdTokenException(raw, "body");
+        Assert.Equal(raw, ex.StatusCode);
+        Assert.Equal(expected, ex.BackendStatus);
+    }
+
+    [Fact]
+    public async Task GetTokenAsync_NonSuccessThrowsStatusPreservingException()
+    {
+        var fakeClock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var handler = new ScriptedHandler();
+        var http = new AzureHttpClient(handler, ownsHandler: true);
+        var provider = new EntraIdTokenProvider(http, authority: new Uri("https://login.test/"), clock: fakeClock);
+
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+        {
+            Content = new StringContent("{\"error\":\"throttled\"}")
+        });
+
+        var ex = await Assert.ThrowsAsync<EntraIdTokenException>(() =>
+            provider.GetTokenAsync("tenant", "client", "secret", "https://storage.azure.com/.default").AsTask());
+        Assert.Equal(HttpStatusCode.TooManyRequests, ex.StatusCode);
+        Assert.Equal(HttpStatusCode.TooManyRequests, ex.BackendStatus);
+    }
+
+    [Fact]
+    public async Task GetTokenAsync_ServesUnexpiredCachedTokenWhenRefreshThrottled()
+    {
+        var fakeClock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var handler = new ScriptedHandler();
+        var http = new AzureHttpClient(handler, ownsHandler: true);
+        var provider = new EntraIdTokenProvider(http, authority: new Uri("https://login.test/"), clock: fakeClock);
+
+        handler.Enqueue(MakeToken("token-1", expiresIn: 3600));
+        var t1 = await provider.GetTokenAsync("tenant", "client", "secret", "https://storage.azure.com/.default");
+        Assert.Equal("token-1", t1);
+
+        // Advance into the safety window so a proactive refresh fires, but the cached
+        // token has NOT actually expired (token-1 expires at +3600s; we are at +3540s).
+        fakeClock.Advance(TimeSpan.FromMinutes(59));
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.TooManyRequests));
+
+        var t2 = await provider.GetTokenAsync("tenant", "client", "secret", "https://storage.azure.com/.default");
+        Assert.Equal("token-1", t2); // served the still-valid cached token instead of surfacing the 429
+        Assert.Equal(2, handler.CallCount); // refresh was attempted
+    }
+
+    [Fact]
+    public async Task GetTokenAsync_SurfacesFailureWhenCachedTokenExpired()
+    {
+        var fakeClock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var handler = new ScriptedHandler();
+        var http = new AzureHttpClient(handler, ownsHandler: true);
+        var provider = new EntraIdTokenProvider(http, authority: new Uri("https://login.test/"), clock: fakeClock);
+
+        handler.Enqueue(MakeToken("token-1", expiresIn: 3600));
+        await provider.GetTokenAsync("tenant", "client", "secret", "https://storage.azure.com/.default");
+
+        // Past actual expiry: the cached token is no longer usable, so the throttle
+        // must surface to the caller.
+        fakeClock.Advance(TimeSpan.FromMinutes(61));
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.TooManyRequests));
+
+        await Assert.ThrowsAsync<EntraIdTokenException>(() =>
+            provider.GetTokenAsync("tenant", "client", "secret", "https://storage.azure.com/.default").AsTask());
+    }
+
+    [Fact]
+    public async Task GetTokenAsync_SurfacesFailureWhenCachedTokenExpiresDuringRefresh()
+    {
+        var fakeClock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        // The handler advances the clock past the cached token's expiry WHILE the
+        // refresh is in flight, then fails it. The cached-token fallback must re-read
+        // the clock (not the pre-await snapshot) and therefore surface the error.
+        var handler = new ClockAdvancingHandler(fakeClock);
+        var http = new AzureHttpClient(handler, ownsHandler: true);
+        var provider = new EntraIdTokenProvider(http, authority: new Uri("https://login.test/"), clock: fakeClock);
+
+        handler.Enqueue(MakeToken("token-1", expiresIn: 3600));
+        await provider.GetTokenAsync("tenant", "client", "secret", "https://storage.azure.com/.default");
+
+        // Move into the safety window but BEFORE expiry (token-1 expires at +3600s).
+        fakeClock.Advance(TimeSpan.FromMinutes(59)); // +3540s
+        // The refresh fails AND, as part of handling it, the clock advances past expiry.
+        handler.EnqueueFailureThatAdvances(new HttpResponseMessage(HttpStatusCode.TooManyRequests), TimeSpan.FromMinutes(2));
+
+        await Assert.ThrowsAsync<EntraIdTokenException>(() =>
+            provider.GetTokenAsync("tenant", "client", "secret", "https://storage.azure.com/.default").AsTask());
+    }
+
     private static HttpResponseMessage MakeToken(string token, int expiresIn)
     {
         var payload = "{\"access_token\":\"" + token + "\",\"token_type\":\"Bearer\",\"expires_in\":" + expiresIn + "}";
@@ -283,6 +383,22 @@ public class EntraIdTokenProviderTests
         {
             CallCount++;
             return Task.FromResult(_queue.Dequeue());
+        }
+    }
+
+    private sealed class ClockAdvancingHandler(FakeTimeProvider clock) : HttpMessageHandler
+    {
+        private readonly Queue<(HttpResponseMessage Response, TimeSpan Advance)> _queue = new();
+        public void Enqueue(HttpResponseMessage r) => _queue.Enqueue((r, TimeSpan.Zero));
+        public void EnqueueFailureThatAdvances(HttpResponseMessage r, TimeSpan advance) => _queue.Enqueue((r, advance));
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var (response, advance) = _queue.Dequeue();
+            if (advance > TimeSpan.Zero)
+            {
+                clock.Advance(advance);
+            }
+            return Task.FromResult(response);
         }
     }
 }

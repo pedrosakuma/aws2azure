@@ -182,6 +182,16 @@ internal sealed class EventGridPublisher : IEventGridPublisher
                 "Azure Event Grid publish timed out.",
                 SenderFault: false);
         }
+        catch (EntraIdTokenException exception)
+        {
+            // AAD token acquisition failed; route the normalised backend status
+            // through the same CreateFailure path Azure HTTP failures use, so a token
+            // 429 surfaces as the SNS Throttled shape and transient/auth failures stay
+            // faithful — instead of a flat InternalFailure. The token-endpoint body is
+            // never echoed to the SNS caller.
+            EventGridPublisherLog.PublishAuthFailed(_logger, destination.Endpoint, exception);
+            return CreateFailure(exception.BackendStatus, string.Empty);
+        }
         catch (HttpRequestException exception)
         {
             EventGridPublisherLog.PublishTransportFailed(_logger, destination.Endpoint, exception);
@@ -193,9 +203,12 @@ internal sealed class EventGridPublisher : IEventGridPublisher
         }
         catch (Exception exception)
         {
-            // Catches AAD token-provider failures and other auth-layer exceptions so a Batch publish
-            // surfaces per-entry Failed entries rather than a request-level 500. Azure response bodies
-            // are logged internally but never bubble up into client-visible SNS error messages.
+            // Catches residual auth-layer failures (e.g. a malformed token-endpoint
+            // 200 with no access_token) and other unexpected exceptions so a Batch
+            // publish surfaces per-entry Failed entries rather than a request-level
+            // 500. Status-bearing token failures are handled by the EntraIdTokenException
+            // catch above. Azure response bodies are logged internally but never bubble
+            // up into client-visible SNS error messages.
             EventGridPublisherLog.PublishAuthFailed(_logger, destination.Endpoint, exception);
             return new EventGridPublishFailure(
                 StatusCodes.Status500InternalServerError,
