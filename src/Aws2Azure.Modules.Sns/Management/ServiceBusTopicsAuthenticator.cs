@@ -56,13 +56,25 @@ public sealed class ServiceBusTopicsAuthenticator : IServiceBusTopicsAuthenticat
             return;
         }
 
-        var token = await _tokenProvider.GetTokenAsync(
-            credentials.TenantId!,
-            credentials.ClientId!,
-            credentials.ClientSecret!,
-            ServiceBusScope,
-            cancellationToken).ConfigureAwait(false);
-        request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + token);
+        try
+        {
+            var token = await _tokenProvider.GetTokenAsync(
+                credentials.TenantId!,
+                credentials.ClientId!,
+                credentials.ClientSecret!,
+                ServiceBusScope,
+                cancellationToken).ConfigureAwait(false);
+            request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + token);
+        }
+        catch (EntraIdTokenException ex)
+        {
+            // Convert an AAD token-endpoint failure into the module's status-carrying
+            // error so the existing SnsTopicSupport.WriteManagementErrorAsync mapping
+            // renders the faithful SNS error (429 -> Throttled, transient ->
+            // InternalFailure, auth -> AuthorizationError). The token-endpoint body is
+            // dropped — it must never reach the AWS client.
+            throw new ServiceBusTopicsManagementException(ex.BackendStatus, null);
+        }
     }
 
     internal static string GenerateSharedAccessSignature(Uri resourceUri, string keyName, string keyValue, DateTimeOffset expiry)

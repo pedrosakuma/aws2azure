@@ -79,7 +79,25 @@ internal sealed class CosmosClient
 
         using var request = new HttpRequestMessage(method, new Uri(_baseUri, requestUri.TrimStart('/')));
 
-        await _authenticator.AuthenticateAsync(request, resourceType, resourceLink, ct).ConfigureAwait(false);
+        try
+        {
+            await _authenticator.AuthenticateAsync(request, resourceType, resourceLink, ct).ConfigureAwait(false);
+        }
+        catch (EntraIdTokenException ex)
+        {
+            // AAD token acquisition failed before the Cosmos request was sent.
+            // Surface a synthetic response carrying the normalised backend status so
+            // the existing CosmosOpsShared.WriteCosmosErrorAsync mapping renders the
+            // faithful DynamoDB error (token 429 -> ProvisionedThroughputExceededException,
+            // transient 503 -> InternalServerError, auth -> AccessDeniedException).
+            // Mirrors the open-breaker synthetic-503 (#211); zero per-operation code.
+            return new HttpResponseMessage(ex.BackendStatus)
+            {
+                RequestMessage = request,
+                Content = new ByteArrayContent([]),
+            };
+        }
+
         request.Headers.TryAddWithoutValidation("x-ms-version", ApiVersion);
 
         if (extraHeaders is not null)

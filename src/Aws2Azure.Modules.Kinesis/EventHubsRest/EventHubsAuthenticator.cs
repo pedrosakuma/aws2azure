@@ -56,13 +56,25 @@ public sealed class EventHubsAuthenticator : IEventHubsAuthenticator
             return;
         }
 
-        var token = await _tokenProvider.GetTokenAsync(
-            credentials.TenantId!,
-            credentials.ClientId!,
-            credentials.ClientSecret!,
-            EventHubsScope,
-            cancellationToken).ConfigureAwait(false);
-        request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + token);
+        try
+        {
+            var token = await _tokenProvider.GetTokenAsync(
+                credentials.TenantId!,
+                credentials.ClientId!,
+                credentials.ClientSecret!,
+                EventHubsScope,
+                cancellationToken).ConfigureAwait(false);
+            request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + token);
+        }
+        catch (EntraIdTokenException ex)
+        {
+            // Convert an AAD token-endpoint failure into the module's status-carrying
+            // error so the existing KinesisMetadataSupport.WriteManagementErrorAsync
+            // mapping renders the faithful Kinesis error (429 -> LimitExceededException,
+            // transient -> InternalFailure, auth -> AccessDeniedException). The
+            // token-endpoint body is dropped — it must never reach the AWS client.
+            throw new EventHubsManagementException(ex.BackendStatus, null);
+        }
     }
 
     internal static string GenerateSharedAccessSignature(Uri resourceUri, string keyName, string keyValue, DateTimeOffset expiry)
