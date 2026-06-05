@@ -19,7 +19,10 @@ internal sealed partial class SprocManager
     private readonly ILogger<SprocManager> _logger;
     private readonly ConcurrentDictionary<string, SprocState> _sprocCache = new(StringComparer.Ordinal);
 
-    public const string SprocId = "atomicWrite";
+    // Versioned so a body change provisions a fresh sproc instead of silently
+    // running stale server-side JS (EnsureSproc treats 409 as success and never
+    // replaces the body). v2 fixes the invalid mixed-link readDocument bug (#202).
+    public const string SprocId = "atomicWrite_v2";
 
     // Versioned so a future body change provisions a fresh sproc instead of
     // silently running stale server-side JS (EnsureSproc treats 409 as success
@@ -37,7 +40,7 @@ internal sealed partial class SprocManager
     /// </summary>
     public async Task<bool> EnsureSprocAsync(CosmosClient cosmos, string containerName, CancellationToken ct)
     {
-        var cacheKey = $"{cosmos.DatabaseName}:{containerName}";
+        var cacheKey = $"{cosmos.DatabaseName}:{containerName}:{SprocId}";
 
         if (_sprocCache.TryGetValue(cacheKey, out var state) && state == SprocState.Available)
         {
@@ -321,17 +324,30 @@ function atomicWrite(op, docId, payload, conditionAst, updateAst) {
     var coll = ctx.getCollection();
     var resp = ctx.getResponse();
     var selfLink = coll.getSelfLink();
-    var docLink = selfLink + 'docs/' + docId;
-    
-    // Read existing document (may not exist)
-    var accepted = coll.readDocument(docLink, {}, function(err, existing) {
-        if (err && err.number !== 404) {
-            throw err;
-        }
-        
+
+    // getSelfLink() is RID-based, so a constructed 'docs/<userId>' link is an
+    // invalid mixed link that real Cosmos rejects with "Error creating request
+    // message" (#202). Read by id with a partition-local query instead — the
+    // sproc executes within the single logical partition of docId.
+    var query = {
+        query: 'SELECT * FROM c WHERE c.id = @id',
+        parameters: [{ name: '@id', value: docId }]
+    };
+    var accepted = coll.queryDocuments(selfLink, query, {}, function(err, docs) {
+        if (err) throw err;
+
+        var existing = (docs && docs.length > 0) ? docs[0] : null;
+        // Capture the document's own RID-based self link before stripping it —
+        // deleteDocument requires it (a constructed id link is rejected).
+        var existingSelf = existing ? existing._self : null;
+        // Strip Cosmos system fields so they neither leak into ReturnValues nor
+        // get re-upserted: upsertDocument rejects a body that carries stale
+        // _self / _rid / _etag / _ts system properties.
+        if (existing) stripSystemFields(existing);
+
         // Clone existing before any mutation (for ReturnValues=ALL_OLD)
         var oldItemClone = existing ? JSON.parse(JSON.stringify(existing)) : null;
-        
+
         // Evaluate condition if present
         if (conditionAst !== null) {
             if (!evaluateCondition(conditionAst, existing)) {
@@ -339,16 +355,16 @@ function atomicWrite(op, docId, payload, conditionAst, updateAst) {
                 return;
             }
         }
-        
+
         // Execute operation
         switch (op) {
             case 'PUT':
                 if (payload === null) throw { code: 400, body: 'Payload required for PUT' };
-                // payload is already an object (not JSON string)
+                // payload is already an object (not JSON string) built clean by C#
                 coll.upsertDocument(selfLink, payload, function(e) { if (e) throw e; });
                 resp.setBody({ success: true, operation: 'PUT', oldItem: oldItemClone });
                 break;
-                
+
             case 'UPDATE':
                 if (updateAst === null) throw { code: 400, body: 'UpdateAst required for UPDATE' };
                 var baseDoc = existing || {};
@@ -361,20 +377,32 @@ function atomicWrite(op, docId, payload, conditionAst, updateAst) {
                 coll.upsertDocument(selfLink, updatedDoc, function(e) { if (e) throw e; });
                 resp.setBody({ success: true, operation: 'UPDATE', oldItem: oldItemClone, newItem: updatedDoc });
                 break;
-                
+
             case 'DELETE':
-                if (existing) {
-                    coll.deleteDocument(docLink, function(e) { if (e) throw e; });
+                if (existingSelf) {
+                    coll.deleteDocument(existingSelf, function(e) { if (e) throw e; });
                 }
                 resp.setBody({ success: true, operation: 'DELETE', oldItem: oldItemClone });
                 break;
-                
+
             default:
                 throw { code: 400, body: 'Unknown operation: ' + op };
         }
     });
-    
+
     if (!accepted) throw { code: 429, body: 'Request not accepted' };
+
+    // Removes Cosmos-generated system fields from a queried document so they
+    // are not re-written or surfaced as DynamoDB attributes.
+    function stripSystemFields(d) {
+        delete d._rid;
+        delete d._self;
+        delete d._etag;
+        delete d._ts;
+        delete d._attachments;
+        delete d._lsn;
+        delete d._metadata;
+    }
     
     // Condition evaluator: interprets the AST from C# ConditionExpressionParser
     function evaluateCondition(ast, doc) {
@@ -523,7 +551,7 @@ function atomicWrite(op, docId, payload, conditionAst, updateAst) {
         if (updateAst.set) {
             for (var i = 0; i < updateAst.set.length; i++) {
                 var s = updateAst.set[i];
-                setAttr(doc, s.path, s.value);
+                setAttr(doc, s.path, resolveSetValue(doc, s.value));
             }
         }
         
@@ -564,7 +592,34 @@ function atomicWrite(op, docId, payload, conditionAst, updateAst) {
         
         return doc;
     }
-    
+
+    // Resolves a tagged SET-value operand ($k discriminator from
+    // SprocAstSerializer.WriteValueOperand) against the current document.
+    function resolveSetValue(doc, v) {
+        if (v === null || typeof v !== 'object' || !('$k' in v)) return v;
+        switch (v.$k) {
+            case 'lit':
+                return v.v;
+            case 'path':
+                return getAttrValue(doc, v.p);
+            case 'op':
+                var l = resolveSetValue(doc, v.l);
+                var r = resolveSetValue(doc, v.r);
+                return v.o === '+' ? (l + r) : (l - r);
+            case 'ifne':
+                var cur = getAttrValue(doc, v.p);
+                return (cur !== undefined && cur !== null) ? cur : resolveSetValue(doc, v.f);
+            case 'lap':
+                var ll = resolveSetValue(doc, v.l);
+                if (!Array.isArray(ll)) ll = [];
+                var rr = resolveSetValue(doc, v.r);
+                if (!Array.isArray(rr)) rr = [];
+                return ll.concat(rr);
+            default:
+                return v;
+        }
+    }
+
     function setAttr(doc, path, value) {
         var parts = path.split('.');
         var cur = doc;
