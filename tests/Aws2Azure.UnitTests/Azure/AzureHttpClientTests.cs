@@ -365,6 +365,38 @@ public class EntraIdTokenProviderTests
             provider.GetTokenAsync("tenant", "client", "secret", "https://storage.azure.com/.default").AsTask());
     }
 
+    [Fact]
+    public async Task GetTokenAsync_CoalescesConcurrentRefreshesIntoSingleRequest()
+    {
+        // N callers race to fetch the same (tenant, client, scope) token on a cold cache.
+        // Single-flight must collapse them onto exactly ONE token-endpoint request: a
+        // refresh herd would otherwise self-throttle the token endpoint. The handler is
+        // gated so that, were single-flight absent, every concurrent caller would enter
+        // SendAsync and the assertion would observe CallCount == N instead of 1.
+        var fakeClock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var handler = new GatedTokenHandler("token-1", expiresIn: 3600);
+        var http = new AzureHttpClient(handler, ownsHandler: true);
+        var provider = new EntraIdTokenProvider(http, authority: new Uri("https://login.test/"), clock: fakeClock);
+
+        const int n = 24;
+        var tasks = new Task<string>[n];
+        for (var i = 0; i < n; i++)
+        {
+            tasks[i] = provider.GetTokenAsync("tenant", "client", "secret", "https://storage.azure.com/.default").AsTask();
+        }
+
+        // Wait for the single leader to enter the gated fetch, then give the remaining
+        // callers a window to join the in-flight refresh before releasing it.
+        await handler.WaitForEntryAsync().WaitAsync(TimeSpan.FromSeconds(30));
+        await Task.Delay(50);
+        handler.Release();
+
+        var results = await Task.WhenAll(tasks).WaitAsync(TimeSpan.FromSeconds(30));
+
+        Assert.Equal(1, handler.CallCount);
+        Assert.All(results, r => Assert.Equal("token-1", r));
+    }
+
     private static HttpResponseMessage MakeToken(string token, int expiresIn)
     {
         var payload = "{\"access_token\":\"" + token + "\",\"token_type\":\"Bearer\",\"expires_in\":" + expiresIn + "}";
@@ -399,6 +431,39 @@ public class EntraIdTokenProviderTests
                 clock.Advance(advance);
             }
             return Task.FromResult(response);
+        }
+    }
+
+    // Counts SendAsync invocations and blocks each one on a shared gate, so a test can
+    // hold the in-flight refresh open while concurrent callers pile up behind it.
+    private sealed class GatedTokenHandler : HttpMessageHandler
+    {
+        private readonly string _token;
+        private readonly int _expiresIn;
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _callCount;
+
+        public GatedTokenHandler(string token, int expiresIn)
+        {
+            _token = token;
+            _expiresIn = expiresIn;
+        }
+
+        public int CallCount => Volatile.Read(ref _callCount);
+        public Task WaitForEntryAsync() => _entered.Task;
+        public void Release() => _release.TrySetResult();
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _callCount);
+            _entered.TrySetResult();
+            await _release.Task.ConfigureAwait(false);
+            var payload = "{\"access_token\":\"" + _token + "\",\"token_type\":\"Bearer\",\"expires_in\":" + _expiresIn + "}";
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(payload, Encoding.UTF8, "application/json")
+            };
         }
     }
 }
