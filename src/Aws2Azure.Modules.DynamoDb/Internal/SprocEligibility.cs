@@ -164,7 +164,7 @@ internal static class SprocEligibility
                 // (InferredAttributeStorage), but the sproc operates on the raw
                 // Cosmos document where "id" is the routing/sort-key field — so
                 // a condition or update on it would read/write the wrong value.
-                // Any name in the reserved "_a2a" namespace (or "id"/"pk") is
+                // Any name in the reserved "_a2a" namespace (or "id") is
                 // likewise translated on the C# write path the sproc bypasses.
                 if (i == 0 && InferredAttributeStorage.IsReservedTopLevelName(attr.Name))
                 {
