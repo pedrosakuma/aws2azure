@@ -70,14 +70,16 @@ public sealed class EntraIdTokenProvider
             }
             return token.AccessToken;
         }
-        catch (EntraIdTokenException) when (cached is { } valid && valid.ExpiresAt > now)
+        catch (EntraIdTokenException) when (cached is { } valid && valid.ExpiresAt > _clock.GetUtcNow())
         {
             // A proactive refresh inside the safety window hit a throttle/transient/
-            // auth failure, but the previously cached token has not actually expired.
-            // Serve it rather than failing the client's request: a real AWS service
-            // would not surface a throttle that originated in our internal token
-            // refresh while a usable credential is still in hand. The token-endpoint
-            // error is only surfaced once no unexpired token remains.
+            // auth failure, but the previously cached token has not actually expired
+            // (re-checked against the current clock, not the pre-await snapshot, so a
+            // refresh that outlives the token's remaining validity still surfaces the
+            // error). Serve it rather than failing the client's request: a real AWS
+            // service would not surface a throttle that originated in our internal
+            // token refresh while a usable credential is still in hand. The
+            // token-endpoint error is only surfaced once no unexpired token remains.
             return valid.Token;
         }
     }

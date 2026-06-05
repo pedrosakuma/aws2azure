@@ -342,6 +342,29 @@ public class EntraIdTokenProviderTests
             provider.GetTokenAsync("tenant", "client", "secret", "https://storage.azure.com/.default").AsTask());
     }
 
+    [Fact]
+    public async Task GetTokenAsync_SurfacesFailureWhenCachedTokenExpiresDuringRefresh()
+    {
+        var fakeClock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        // The handler advances the clock past the cached token's expiry WHILE the
+        // refresh is in flight, then fails it. The cached-token fallback must re-read
+        // the clock (not the pre-await snapshot) and therefore surface the error.
+        var handler = new ClockAdvancingHandler(fakeClock);
+        var http = new AzureHttpClient(handler, ownsHandler: true);
+        var provider = new EntraIdTokenProvider(http, authority: new Uri("https://login.test/"), clock: fakeClock);
+
+        handler.Enqueue(MakeToken("token-1", expiresIn: 3600));
+        await provider.GetTokenAsync("tenant", "client", "secret", "https://storage.azure.com/.default");
+
+        // Move into the safety window but BEFORE expiry (token-1 expires at +3600s).
+        fakeClock.Advance(TimeSpan.FromMinutes(59)); // +3540s
+        // The refresh fails AND, as part of handling it, the clock advances past expiry.
+        handler.EnqueueFailureThatAdvances(new HttpResponseMessage(HttpStatusCode.TooManyRequests), TimeSpan.FromMinutes(2));
+
+        await Assert.ThrowsAsync<EntraIdTokenException>(() =>
+            provider.GetTokenAsync("tenant", "client", "secret", "https://storage.azure.com/.default").AsTask());
+    }
+
     private static HttpResponseMessage MakeToken(string token, int expiresIn)
     {
         var payload = "{\"access_token\":\"" + token + "\",\"token_type\":\"Bearer\",\"expires_in\":" + expiresIn + "}";
@@ -360,6 +383,22 @@ public class EntraIdTokenProviderTests
         {
             CallCount++;
             return Task.FromResult(_queue.Dequeue());
+        }
+    }
+
+    private sealed class ClockAdvancingHandler(FakeTimeProvider clock) : HttpMessageHandler
+    {
+        private readonly Queue<(HttpResponseMessage Response, TimeSpan Advance)> _queue = new();
+        public void Enqueue(HttpResponseMessage r) => _queue.Enqueue((r, TimeSpan.Zero));
+        public void EnqueueFailureThatAdvances(HttpResponseMessage r, TimeSpan advance) => _queue.Enqueue((r, advance));
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var (response, advance) = _queue.Dequeue();
+            if (advance > TimeSpan.Zero)
+            {
+                clock.Advance(advance);
+            }
+            return Task.FromResult(response);
         }
     }
 }
