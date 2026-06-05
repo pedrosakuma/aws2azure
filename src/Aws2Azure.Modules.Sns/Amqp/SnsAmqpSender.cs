@@ -252,8 +252,14 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
             ? "sas|" + credentials.SasKeyName.Trim()
             : "aad|" + credentials.TenantId + "|" + credentials.ClientId;
 
-    private static SnsBatchSendOutcome CreateBatchOutcome(SnsAmqpException exception)
-        => new(false, "InternalFailure", BuildFailureMessage(exception), false);
+    internal static SnsBatchSendOutcome CreateBatchOutcome(SnsAmqpException exception)
+        => exception.Kind == SnsAmqpFailureKind.Throttled
+            ? new SnsBatchSendOutcome(
+                false,
+                "Throttled",
+                "Azure Service Bus Topics throttled the publish request; retry with back-off.",
+                SenderFault: true)
+            : new SnsBatchSendOutcome(false, "InternalFailure", BuildFailureMessage(exception), false);
 
     private static string BuildFailureMessage(SnsAmqpException exception)
     {
