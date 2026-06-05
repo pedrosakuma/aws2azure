@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Aws2Azure.Modules.DynamoDb.Expressions;
+using Aws2Azure.Modules.DynamoDb.Persistence;
 
 namespace Aws2Azure.Modules.DynamoDb.Internal;
 
@@ -134,12 +135,41 @@ internal static class SprocEligibility
 
     private static bool IsPathEligible(DocumentPath path)
     {
-        foreach (var seg in path.Segments)
+        var segments = path.Segments;
+        for (var i = 0; i < segments.Count; i++)
         {
+            var seg = segments[i];
+
             // The JS path helpers split on '.' only; list indexes are not parsed.
             if (seg is IndexPathSegment)
             {
                 return false;
+            }
+
+            if (seg is AttributePathSegment attr)
+            {
+                // The serializer flattens the path into a single dot-joined
+                // string and the sproc splits it back on '.'. An attribute
+                // name that itself contains a dot (legal via
+                // ExpressionAttributeNames) would be mis-parsed as a nested
+                // path, so it cannot be executed faithfully server-side.
+                if (attr.Name.IndexOf('.') >= 0)
+                {
+                    return false;
+                }
+
+                // The root attribute may collide with a reserved Cosmos doc
+                // property. The most important case is a user attribute named
+                // exactly "id": storage shadow-encodes it as "_a2a$id"
+                // (InferredAttributeStorage), but the sproc operates on the raw
+                // Cosmos document where "id" is the routing/sort-key field — so
+                // a condition or update on it would read/write the wrong value.
+                // Any name in the reserved "_a2a" namespace (or "id"/"pk") is
+                // likewise translated on the C# write path the sproc bypasses.
+                if (i == 0 && InferredAttributeStorage.IsReservedTopLevelName(attr.Name))
+                {
+                    return false;
+                }
             }
         }
         return true;
@@ -159,7 +189,15 @@ internal static class SprocEligibility
             }
             return prop.Value.GetString() switch
             {
-                "S" or "N" or "BOOL" or "NULL" or "L" or "M" => true,
+                // S / BOOL / NULL / L map to plain JSON shapes the sproc's
+                // checkAttrType can test unambiguously. "N" and "M" are
+                // deliberately excluded: high-precision numbers are stored as
+                // {"_a2a:N":...} envelope OBJECTS (so checkAttrType would report
+                // them as "M", not "N") and binary/set values are likewise
+                // envelope objects that would be mis-reported as "M". Allowing
+                // either tag would let attribute_type() silently mis-evaluate
+                // against encoded stored values, so route those to the fallback.
+                "S" or "BOOL" or "NULL" or "L" => true,
                 _ => false,
             };
         }

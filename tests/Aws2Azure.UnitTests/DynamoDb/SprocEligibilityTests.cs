@@ -180,6 +180,75 @@ public class SprocEligibilityTests
     }
 
     [Fact]
+    public void Attribute_type_map_tag_is_ineligible()
+    {
+        // "M" collides with _a2a:* envelope objects (sets/binary/high-precision
+        // N), which the sproc's checkAttrType would also report as "M".
+        var c = Cond("attribute_type(payload, :t)",
+            values: new Dictionary<string, JsonElement> { [":t"] = Val("{\"S\":\"M\"}") });
+        Assert.False(SprocEligibility.IsEligible(c, null));
+    }
+
+    [Fact]
+    public void Attribute_type_number_tag_is_ineligible()
+    {
+        // "N": high-precision numbers are stored as {"_a2a:N":...} envelope
+        // objects, which checkAttrType would not report as "N".
+        var c = Cond("attribute_type(count, :t)",
+            values: new Dictionary<string, JsonElement> { [":t"] = Val("{\"S\":\"N\"}") });
+        Assert.False(SprocEligibility.IsEligible(c, null));
+    }
+
+    [Fact]
+    public void Condition_on_root_id_attribute_is_ineligible()
+    {
+        // A user attribute named "id" is shadow-encoded as "_a2a$id" in storage;
+        // the sproc would operate on the raw Cosmos routing field instead.
+        var c = Cond("#i = :v",
+            names: new Dictionary<string, string> { ["#i"] = "id" },
+            values: new Dictionary<string, JsonElement> { [":v"] = Val("{\"S\":\"x\"}") });
+        Assert.False(SprocEligibility.IsEligible(c, null));
+    }
+
+    [Fact]
+    public void Update_on_root_id_attribute_is_ineligible()
+    {
+        var u = Upd("SET #i = :v",
+            names: new Dictionary<string, string> { ["#i"] = "id" },
+            values: new Dictionary<string, JsonElement> { [":v"] = Val("{\"S\":\"x\"}") });
+        Assert.False(SprocEligibility.IsEligible(null, u));
+    }
+
+    [Fact]
+    public void Condition_on_reserved_namespace_attribute_is_ineligible()
+    {
+        var c = Cond("#r = :v",
+            names: new Dictionary<string, string> { ["#r"] = "_a2a" },
+            values: new Dictionary<string, JsonElement> { [":v"] = Val("{\"S\":\"x\"}") });
+        Assert.False(SprocEligibility.IsEligible(c, null));
+    }
+
+    [Fact]
+    public void Dotted_attribute_name_path_is_ineligible()
+    {
+        // A literal dot in the attribute name (via ExpressionAttributeNames)
+        // would be mis-parsed as a nested path by the dot-splitting sproc.
+        var c = Cond("#d = :v",
+            names: new Dictionary<string, string> { ["#d"] = "with.dot" },
+            values: new Dictionary<string, JsonElement> { [":v"] = Val("{\"S\":\"x\"}") });
+        Assert.False(SprocEligibility.IsEligible(c, null));
+    }
+
+    [Fact]
+    public void Update_on_dotted_attribute_name_is_ineligible()
+    {
+        var u = Upd("SET #d = :v",
+            names: new Dictionary<string, string> { ["#d"] = "with.dot" },
+            values: new Dictionary<string, JsonElement> { [":v"] = Val("{\"S\":\"x\"}") });
+        Assert.False(SprocEligibility.IsEligible(null, u));
+    }
+
+    [Fact]
     public void Eligible_condition_but_ineligible_update_is_ineligible()
     {
         var c = Cond("version = :v",
