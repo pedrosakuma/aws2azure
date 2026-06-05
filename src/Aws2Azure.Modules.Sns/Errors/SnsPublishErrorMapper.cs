@@ -19,6 +19,18 @@ internal static class SnsPublishErrorMapper
                 message: "Access denied when sending to Azure Service Bus Topics over AMQP.");
         }
 
+        if (exception.Kind == SnsAmqpFailureKind.Throttled)
+        {
+            // Mirror the SNS REST/Event Grid throttle shape (HTTP 429 / "Throttled"
+            // / Sender fault) so the AWS SDK retries with back-off.
+            return SnsErrorResponse.WriteErrorAsync(
+                context,
+                StatusCodes.Status429TooManyRequests,
+                errorType: "Sender",
+                errorCode: "Throttled",
+                message: "Azure Service Bus Topics throttled the publish request; retry with back-off.");
+        }
+
         return SnsErrorResponse.WriteErrorAsync(
             context,
             StatusCodes.Status500InternalServerError,
@@ -36,17 +48,31 @@ internal static class SnsPublishErrorMapper
             message: exception.Failure.ErrorMessage);
 
     public static SnsBatchSendOutcome CreateBatchFailure(SnsAmqpException exception)
-        => exception.Kind == SnsAmqpFailureKind.Auth
-            ? new SnsBatchSendOutcome(
+    {
+        if (exception.Kind == SnsAmqpFailureKind.Auth)
+        {
+            return new SnsBatchSendOutcome(
                 false,
                 "AuthorizationError",
                 "Access denied when sending to Azure Service Bus Topics over AMQP.",
-                SenderFault: false)
-            : new SnsBatchSendOutcome(
-                false,
-                "InternalFailure",
-                BuildFailureMessage(exception),
                 SenderFault: false);
+        }
+
+        if (exception.Kind == SnsAmqpFailureKind.Throttled)
+        {
+            return new SnsBatchSendOutcome(
+                false,
+                "Throttled",
+                "Azure Service Bus Topics throttled the publish request; retry with back-off.",
+                SenderFault: true);
+        }
+
+        return new SnsBatchSendOutcome(
+            false,
+            "InternalFailure",
+            BuildFailureMessage(exception),
+            SenderFault: false);
+    }
 
     private static string BuildFailureMessage(SnsAmqpException exception)
     {

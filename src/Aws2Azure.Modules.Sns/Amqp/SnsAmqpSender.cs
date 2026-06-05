@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Collections.Concurrent;
+using System.Net;
 using System.Text.Json;
 using Aws2Azure.Amqp.Connection;
 using Aws2Azure.Amqp.Framing;
@@ -251,8 +252,14 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
             ? "sas|" + credentials.SasKeyName.Trim()
             : "aad|" + credentials.TenantId + "|" + credentials.ClientId;
 
-    private static SnsBatchSendOutcome CreateBatchOutcome(SnsAmqpException exception)
-        => new(false, "InternalFailure", BuildFailureMessage(exception), false);
+    internal static SnsBatchSendOutcome CreateBatchOutcome(SnsAmqpException exception)
+        => exception.Kind == SnsAmqpFailureKind.Throttled
+            ? new SnsBatchSendOutcome(
+                false,
+                "Throttled",
+                "Azure Service Bus Topics throttled the publish request; retry with back-off.",
+                SenderFault: true)
+            : new SnsBatchSendOutcome(false, "InternalFailure", BuildFailureMessage(exception), false);
 
     private static string BuildFailureMessage(SnsAmqpException exception)
     {
@@ -267,7 +274,7 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
         return message;
     }
 
-    private static bool TryWrap(Exception exception, out SnsAmqpException wrapped)
+    internal static bool TryWrap(Exception exception, out SnsAmqpException wrapped)
     {
         switch (exception)
         {
@@ -280,6 +287,16 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
                     cbsAuthentication,
                     SnsAmqpFailureKind.Auth,
                     description: cbsAuthentication.StatusDescription);
+                return true;
+            case EntraIdTokenException tokenException:
+                // A throttle / transient / auth failure from the Entra ID token
+                // endpoint surfaces here when CBS authorization acquires a bearer
+                // token during sender open. Classify it so the handler renders the
+                // service-native retryable shape instead of a bare 500.
+                wrapped = new SnsAmqpException(
+                    "Service Bus Topics AMQP authorization failed.",
+                    tokenException,
+                    MapTokenStatus(tokenException.BackendStatus));
                 return true;
             case ServiceBusSendException sendException:
                 wrapped = new SnsAmqpException(
@@ -324,6 +341,13 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
         AmqpErrorKind.ServerFatal => SnsAmqpFailureKind.ServerFatal,
         AmqpErrorKind.Redirect => SnsAmqpFailureKind.Redirect,
         _ => SnsAmqpFailureKind.Unknown,
+    };
+
+    private static SnsAmqpFailureKind MapTokenStatus(HttpStatusCode backendStatus) => backendStatus switch
+    {
+        HttpStatusCode.TooManyRequests => SnsAmqpFailureKind.Throttled,
+        HttpStatusCode.ServiceUnavailable => SnsAmqpFailureKind.Transient,
+        _ => SnsAmqpFailureKind.Auth,
     };
 
     private static SnsAmqpFailureKind MapOutcome(AmqpDispositionOutcome outcome) => outcome switch

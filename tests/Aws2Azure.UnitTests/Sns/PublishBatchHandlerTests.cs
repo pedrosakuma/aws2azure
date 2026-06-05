@@ -197,6 +197,64 @@ public sealed class PublishBatchHandlerTests
         Assert.DoesNotContain("<ErrorResponse", body);
     }
 
+    [Fact]
+    public async Task HandleAsync_renders_throttled_batch_outcomes_as_sns_throttled_failures()
+    {
+        var context = NewContext();
+        var sender = new FakeSnsAmqpSender((_, _, _, messages, _) =>
+        {
+            var outcome = new SnsBatchSendOutcome(
+                false,
+                "Throttled",
+                "Azure Service Bus Topics throttled the publish request; retry with back-off.",
+                SenderFault: true);
+            var outcomes = new SnsBatchSendOutcome[messages.Count];
+            Array.Fill(outcomes, outcome);
+            return Task.FromResult(new SnsBatchSendResult(outcomes));
+        });
+
+        await PublishBatchHandler.HandleAsync(
+            context,
+            NewParseResult(
+                ("TopicArn", "arn:aws:sns:us-west-2:000000000000:orders"),
+                ("PublishBatchRequestEntries.member.1.Id", "a"),
+                ("PublishBatchRequestEntries.member.1.Message", "one"),
+                ("PublishBatchRequestEntries.member.2.Id", "b"),
+                ("PublishBatchRequestEntries.member.2.Message", "two")),
+            NewCredentials(),
+            eventGridCredentials: null,
+            new SnsSettings(),
+            sender,
+            new FakeEventGridPublisher(),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        var body = ReadBody(context);
+        Assert.Contains("<Failed>", body);
+        Assert.Contains("<Code>Throttled</Code>", body);
+        Assert.Contains("<SenderFault>true</SenderFault>", body);
+        Assert.DoesNotContain("<ErrorResponse", body);
+    }
+
+    [Theory]
+    [InlineData("Throttled", "Throttled", true)]
+    [InlineData("Transient", "InternalFailure", false)]
+    [InlineData("ServerFatal", "InternalFailure", false)]
+    public void CreateBatchOutcome_maps_failure_kind_to_faithful_wire_code(
+        string kind,
+        string expectedCode,
+        bool expectedSenderFault)
+    {
+        var outcome = SnsAmqpSender.CreateBatchOutcome(new SnsAmqpException(
+            "failed",
+            new InvalidOperationException(),
+            Enum.Parse<SnsAmqpFailureKind>(kind)));
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(expectedCode, outcome.ErrorCode);
+        Assert.Equal(expectedSenderFault, outcome.SenderFault);
+    }
+
     private static ServiceBusTopicsCredentials NewCredentials() => new()
     {
         Namespace = "myns",
