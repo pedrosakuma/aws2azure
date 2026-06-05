@@ -23,6 +23,7 @@ public sealed class EntraIdTokenProvider
     private readonly Uri _authority;
     private readonly object _lock = new();
     private readonly Dictionary<string, CacheEntry> _cache = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Task<string>> _inflight = new(StringComparer.Ordinal);
 
     public EntraIdTokenProvider(AzureHttpClient http, Uri? authority = null, TimeProvider? clock = null)
     {
@@ -48,6 +49,7 @@ public sealed class EntraIdTokenProvider
         var now = _clock.GetUtcNow();
 
         CacheEntry? cached = null;
+        Task<string> refresh;
         lock (_lock)
         {
             if (_cache.TryGetValue(cacheKey, out var entry))
@@ -58,17 +60,25 @@ public sealed class EntraIdTokenProvider
                     return entry.Token;
                 }
             }
+
+            // Single-flight: coalesce concurrent refreshes for the same key onto one
+            // token-endpoint request. The cache check and the in-flight join happen
+            // under the same lock the leader uses to publish a fresh entry, so a
+            // caller that observed an in-window entry cannot also start a duplicate
+            // refresh once another leader has already repopulated the cache.
+            if (!_inflight.TryGetValue(cacheKey, out refresh!))
+            {
+                refresh = RefreshAndCacheAsync(cacheKey, tenantId, clientId, clientSecret, scope);
+                _inflight[cacheKey] = refresh;
+            }
         }
 
         try
         {
-            var token = await RequestTokenAsync(tenantId, clientId, clientSecret, scope, cancellationToken).ConfigureAwait(false);
-
-            lock (_lock)
-            {
-                _cache[cacheKey] = new CacheEntry(token.AccessToken, now.AddSeconds(token.ExpiresInSeconds));
-            }
-            return token.AccessToken;
+            // Await the shared refresh under this caller's own cancellation token so an
+            // individual caller giving up never cancels the fetch other callers (or the
+            // cache) still depend on.
+            return await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (EntraIdTokenException) when (cached is { } valid && valid.ExpiresAt > _clock.GetUtcNow())
         {
@@ -81,6 +91,37 @@ public sealed class EntraIdTokenProvider
             // token refresh while a usable credential is still in hand. The
             // token-endpoint error is only surfaced once no unexpired token remains.
             return valid.Token;
+        }
+    }
+
+    private async Task<string> RefreshAndCacheAsync(
+        string cacheKey,
+        string tenantId,
+        string clientId,
+        string clientSecret,
+        string scope)
+    {
+        // Yield before touching the network so the refresh body never runs on the
+        // caller's stack while the dictionary lock is held (the leader starts this
+        // task from inside the lock).
+        await Task.Yield();
+        try
+        {
+            var issuedAt = _clock.GetUtcNow();
+            var token = await RequestTokenAsync(tenantId, clientId, clientSecret, scope, CancellationToken.None).ConfigureAwait(false);
+
+            lock (_lock)
+            {
+                _cache[cacheKey] = new CacheEntry(token.AccessToken, issuedAt.AddSeconds(token.ExpiresInSeconds));
+            }
+            return token.AccessToken;
+        }
+        finally
+        {
+            lock (_lock)
+            {
+                _inflight.Remove(cacheKey);
+            }
         }
     }
 
