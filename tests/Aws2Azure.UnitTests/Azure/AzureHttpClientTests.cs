@@ -99,7 +99,7 @@ public class AzureHttpClientTests
             var response = await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://example.test/x"));
             Assert.Equal((HttpStatusCode)429, response.StatusCode);
         }
-        // Breaker never opened → no CircuitBreakerOpenException → all 20 reached the handler.
+        // Breaker never opened → no fast-fail 503 → all 20 reached the handler.
         Assert.Equal(20, handler.CallCount);
     }
 
@@ -131,9 +131,10 @@ public class AzureHttpClientTests
         var r1 = await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://example.test/x"));
         Assert.Equal(HttpStatusCode.ServiceUnavailable, r1.StatusCode);
 
-        // Open: a call before OpenDuration elapses is rejected without reaching the handler.
-        await Assert.ThrowsAsync<CircuitBreakerOpenException>(() =>
-            client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://example.test/x")));
+        // Open: a call before OpenDuration elapses is rejected with a synthetic
+        // 503 without reaching the handler.
+        var rOpen = await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://example.test/x"));
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, rOpen.StatusCode);
         Assert.Equal(1, handler.CallCount);
 
         // 2) Past OpenDuration → half-open; the single probe receives a 429.

@@ -280,7 +280,9 @@ internal enum CircuitBreakerDecision
     Allow,
     /// <summary>Half-open — this request is the trial probe.</summary>
     AllowProbe,
-    /// <summary>Open — fail-fast with <see cref="CircuitBreakerOpenException"/>.</summary>
+    /// <summary>Open — fail-fast; <see cref="AzureHttpClient.SendAsync"/>
+    /// short-circuits with a synthetic 503 so the caller's 5xx mapping renders
+    /// a faithful, retryable transient error.</summary>
     RejectOpen,
 }
 
@@ -295,23 +297,3 @@ internal readonly record struct CircuitBreakerStateSnapshot(
     CircuitBreakerStateName State,
     int ConsecutiveFailures,
     DateTimeOffset? OpenUntil);
-
-/// <summary>
-/// Thrown by <see cref="AzureHttpClient.SendAsync"/> when the per-endpoint
-/// circuit breaker is open. Treat as a transient signal — retry layers
-/// above should back off and try a different endpoint or wait for the
-/// breaker's cool-down to elapse.
-/// </summary>
-public sealed class CircuitBreakerOpenException : Exception
-{
-    public CircuitBreakerOpenException(string endpointKey, DateTimeOffset? openUntil)
-        : base($"Circuit breaker open for endpoint '{endpointKey}'"
-            + (openUntil is { } until ? $" until {until:O}." : "."))
-    {
-        EndpointKey = endpointKey;
-        OpenUntil = openUntil;
-    }
-
-    public string EndpointKey { get; }
-    public DateTimeOffset? OpenUntil { get; }
-}

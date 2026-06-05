@@ -82,8 +82,22 @@ public sealed class AzureHttpClient : IDisposable
             var decision = _breaker.OnBeforeRequest(endpointKey, out admission);
             if (decision == CircuitBreakerDecision.RejectOpen)
             {
-                var snapshot = _breaker.Inspect(endpointKey);
-                throw new CircuitBreakerOpenException(endpointKey, snapshot.OpenUntil);
+                // The per-endpoint breaker is open: the downstream Azure endpoint
+                // is unhealthy and we shed load to protect the proxy. Rather than
+                // throw (which would propagate to Kestrel as a bare, body-less
+                // HTTP 500 — faithful to no AWS service), return a synthetic 503
+                // so the calling module's existing 5xx mapping renders its
+                // service-native, retryable transient error. An open breaker is
+                // thus byte-indistinguishable from a real backend 503: the
+                // requester sees exactly the transient error a real AWS service
+                // would emit while its backend is unavailable, and the AWS SDK
+                // retries it. The default ReasonPhrase ("Service Unavailable")
+                // leaks nothing about the proxy. No admission was acquired, so
+                // there is no breaker outcome to report here.
+                return new HttpResponseMessage(System.Net.HttpStatusCode.ServiceUnavailable)
+                {
+                    RequestMessage = request
+                };
             }
             hasAdmission = true;
         }
