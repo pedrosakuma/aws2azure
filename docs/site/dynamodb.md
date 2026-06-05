@@ -120,11 +120,8 @@
 - Missing container (table deleted mid-op) is distinguished from missing item via Cosmos `x-ms-substatus: 1003` and surfaces as ResourceNotFoundException; missing items remain idempotent successes.
 - Key attribute values (S/B) are hex-encoded into the internal Cosmos `id`/partition-key (S → hex(UTF-8 bytes), B → hex(raw bytes), N → order-preserving numeric digit string), so Cosmos-forbidden characters (`/`, `\`, `?`, `#`) are accepted. The encoding is order- and prefix-preserving and invisible to clients. Effective raw key limit is ~127 bytes (hex doubles length against Cosmos' 255-char id cap); over-limit keys are rejected with ValidationException. **On-disk-format breaking change** — items written by earlier builds route under a different id.
 - Cosmos 429 surfaced as DynamoDB ProvisionedThroughputExceededException — including 429 on metadata read.
-- Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB.
-
-### References
-
-- <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DeleteItem.html>
+- Conditional deletes use the single-item `atomicWrite_v2` Cosmos stored procedure when stored procedures are enabled and the ConditionExpression is within the sproc's supported subset (scalar comparisons, AND/OR/NOT, `attribute_exists`/`attribute_not_exists`, `attribute_type` of S/N/BOOL/NULL/L/M, `begins_with`, BETWEEN, IN): the condition is evaluated server-side and the delete is applied atomically, addressing the document by its own `_self` link from the read query (a constructed `getSelfLink() + 'docs/' + id` link is an invalid mixed link rejected by real Cosmos). **Validated against real Azure Cosmos DB** (Strong consistency). Conditions outside the subset (`size()`, `contains()`, `attribute_type` of a set/binary, binary/set literal comparisons, list-index paths) and the case where the sproc is unavailable (e.g. the emulator) fall back to the non-atomic GET → DELETE path under mode `Preferred`, or fail loud under `Required`.
+- Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; the fallback path is emulator-covered, the `atomicWrite_v2` sproc path is validated against real Azure Cosmos DB.
 
 ## DeleteTable
 
@@ -295,11 +292,8 @@
 - Sentinel id `__aws2azure_table_meta__` is no longer special-cased for key values: S/B keys are hex-encoded before routing (see below), so a user key can never collide with the sidecar sentinel and the value is stored normally.
 - Key attribute values are encoded into the internal Cosmos `id`/partition-key with an **order-preserving, digits-only codec** so Cosmos collation never matters: S → lowercase hex(UTF-8 bytes); B → lowercase hex(raw bytes after base64-decode); N → a fixed-width sign+exponent+mantissa digit string (sign flag, 3-digit biased decimal exponent, 38-digit mantissa = 42 chars) that sorts in true numeric order. Numerically-equal numbers collapse to one id (`42`, `42.0`, `4.2e1`, `+42` → same; `0`, `-0`, `0.0` → same), fixing the earlier bug where `{"N":"42"}` and `{"N":"42.0"}` routed to different documents. This is an **on-disk-format breaking change** — documents written by earlier builds route under a different id and are not readable by this build. The encoding is invisible to clients (key attributes are always returned from the flat-stored attributes, never reconstructed from id). Cosmos-forbidden characters (`/`, `\`, `?`, `#`) and previously-rejected empty-after-trim strings are now accepted because the codec never emits them. Because hex doubles length and Cosmos caps the id at 255 chars, the effective raw S/B key limit is ~127 bytes (vs DynamoDB's 1024); N keys are always 42 chars; over-limit keys are rejected with ValidationException.
 - Cosmos 429 (throttled) is surfaced to clients as DynamoDB ProvisionedThroughputExceededException — including 429 on the sidecar metadata read.
-- Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB.
-
-### References
-
-- <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_PutItem.html>
+- Conditional writes use the single-item `atomicWrite_v2` Cosmos stored procedure when stored procedures are enabled and the ConditionExpression is within the sproc's supported subset (scalar comparisons, AND/OR/NOT, `attribute_exists`/`attribute_not_exists`, `attribute_type` of S/N/BOOL/NULL/L/M, `begins_with`, BETWEEN, IN): the condition is evaluated server-side and the PUT is applied atomically in one round-trip. **Validated against real Azure Cosmos DB** (Strong consistency). The v2 body reads the existing document with a partition-local `SELECT * FROM c WHERE c.id = @id` query (an earlier `getSelfLink() + 'docs/' + id` read link was an invalid RID+id mixed link rejected by real Cosmos with `Error creating request message`; the emulator could not catch it because it does not run sprocs) and strips Cosmos system fields before the upsert. Conditions outside the subset — `size()`, `contains()`, `attribute_type` of a set/binary, comparisons against binary/set literals, list-index paths — are routed away from the sproc: under mode `Preferred` the request falls back to the non-atomic GET → PUT loop; under `Required` it fails loud rather than degrade atomicity.
+- Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; the GET → PUT fallback path is emulator-covered, the `atomicWrite_v2` sproc path is validated against real Azure Cosmos DB.
 
 ## Query
 
@@ -502,12 +496,10 @@
 - Numeric arithmetic is performed with System.Decimal (28-29 significant digits) rather than DynamoDB's 38-digit precision. Operands exceeding the proxy's precision are rejected up front with ValidationException to avoid silent rounding; overflow also throws ValidationException.
 - Key attributes referenced by the request are always reinforced into the resulting item — a REMOVE targeting the partition or sort key never deletes them in the stored doc.
 - Cosmos 429 (throttled) is surfaced to clients as DynamoDB ProvisionedThroughputExceededException.
-- Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB.
-
-### References
-
-- <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateItem.html>
-- <https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Expressions.UpdateExpressions.html>
+- Conditional / ReturnValues=NONE updates use the single-item `atomicWrite_v2` Cosmos stored procedure when stored procedures are enabled AND the expression is within the sproc's supported subset: the condition is evaluated and the UpdateExpression applied server-side in one atomic round-trip. **Validated against real Azure Cosmos DB** (Strong consistency). The v2 body fixes two defects the emulator could never catch (it does not run sprocs): (1) the read link is a partition-local `SELECT * FROM c WHERE c.id = @id` query rather than an invalid `getSelfLink() + 'docs/' + id` mixed link; (2) SET-value operands are serialised as `$k`-tagged envelopes (`lit`/`path`/`op`/`ifne`/`lap`) so the sproc resolves arithmetic (`a = a + :i`), attribute copies, `if_not_exists` and `list_append` server-side instead of storing the unresolved AST.
+- The sproc executes only the slice of the expression surface it can reproduce faithfully: SET (scalar/native-map/list literals, `+`/`-` arithmetic, path copy, `if_not_exists`, `list_append`) and REMOVE, with scalar conditions (comparisons, AND/OR/NOT, `attribute_exists`/`attribute_not_exists`, `attribute_type` of S/N/BOOL/NULL/L/M, `begins_with`, BETWEEN, IN). Anything outside it — `ADD`/`DELETE` clauses, string/number/binary **sets**, **binary** values, **high-precision numbers** that do not round-trip through a double, **list-index paths** (`a[0]`), and the `size()` / `contains()` condition forms — is routed away from the sproc: under stored-procedure mode `Preferred` it falls back to the non-atomic GET → modify → PUT loop; under `Required` it fails loud rather than run divergent server-side JS. Atomic counters are still served atomically via `SET c = c + :n`.
+- Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; the GET → modify → PUT fallback path is emulator-covered, the `atomicWrite_v2` sproc path is validated against real Azure Cosmos DB.
+- https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Expressions.UpdateExpressions.html
 
 ## UpdateTimeToLive
 

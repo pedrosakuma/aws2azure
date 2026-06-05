@@ -42,6 +42,33 @@ internal sealed class SprocContext
 /// </summary>
 internal static class SprocDispatcher
 {
+    private const string UnsupportedFeatureMessage =
+        "The conditional write uses an expression feature the atomic stored procedure cannot " +
+        "execute faithfully (sets, binary, high-precision numbers, list-index paths, ADD/DELETE " +
+        "clauses, size(), or contains()). Use stored-procedure mode Preferred or Disabled for " +
+        "these operations.";
+
+    /// <summary>
+    /// Returns a short-circuit result when the request falls outside the slice
+    /// of the expression surface the sproc executes faithfully (see
+    /// <see cref="SprocEligibility"/>): <c>NotAttempted</c> under Preferred so
+    /// the caller takes the GET → modify → PUT fallback, or a loud failure under
+    /// Required so atomicity is never silently degraded. Returns <c>null</c> when
+    /// the request is eligible and dispatch should proceed.
+    /// </summary>
+    private static SprocWriteResult? GateEligibility(
+        SprocContext ctx, ConditionNode? condition, UpdateExpressionAst? update)
+    {
+        if (SprocEligibility.IsEligible(condition, update))
+        {
+            return null;
+        }
+
+        return ctx.IsSprocRequired
+            ? SprocWriteResult.Failed(UnsupportedFeatureMessage)
+            : SprocWriteResult.NotAttempted;
+    }
+
     /// <summary>
     /// Attempts to execute a conditional PutItem via stored procedure.
     /// Returns (success, conditionFailed, error) tuple.
@@ -59,6 +86,11 @@ internal static class SprocDispatcher
         if (!ctx.IsSprocEnabled || ctx.Manager is null)
         {
             return SprocWriteResult.NotAttempted;
+        }
+
+        if (GateEligibility(ctx, condition, update: null) is { } putGate)
+        {
+            return putGate;
         }
 
         // Ensure sproc exists
@@ -121,6 +153,11 @@ internal static class SprocDispatcher
         if (!ctx.IsSprocEnabled || ctx.Manager is null)
         {
             return SprocWriteResult.NotAttempted;
+        }
+
+        if (GateEligibility(ctx, condition, updateAst) is { } updateGate)
+        {
+            return updateGate;
         }
 
         // Ensure sproc exists
@@ -194,6 +231,11 @@ internal static class SprocDispatcher
         if (!ctx.IsSprocEnabled || ctx.Manager is null)
         {
             return SprocWriteResult.NotAttempted;
+        }
+
+        if (GateEligibility(ctx, condition, update: null) is { } deleteGate)
+        {
+            return deleteGate;
         }
 
         // Ensure sproc exists

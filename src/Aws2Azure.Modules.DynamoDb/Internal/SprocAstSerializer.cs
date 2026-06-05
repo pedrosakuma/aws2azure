@@ -229,35 +229,41 @@ internal static class SprocAstSerializer
 
     private static void WriteValueOperand(StringBuilder sb, ValueOperand operand)
     {
+        // SET-value operands are tagged with a "$k" discriminator so the sproc's
+        // resolveSetValue can interpret them unambiguously. Literal values are
+        // wrapped (even maps/lists), so a user attribute that happens to look
+        // like an operand can never be misread (#202).
         switch (operand)
         {
             case ValueRefOperand vr:
+                sb.Append("{\"$k\":\"lit\",\"v\":");
                 WriteValue(sb, vr.Value);
+                sb.Append('}');
                 break;
             case PathOperand po:
-                sb.Append("{\"path\":\"").Append(EscapeJson(PathToString(po.Path))).Append("\"}");
+                sb.Append("{\"$k\":\"path\",\"p\":\"").Append(EscapeJson(PathToString(po.Path))).Append("\"}");
                 break;
             case ArithmeticOperand ao:
-                sb.Append("{\"op\":\"").Append(ao.Op == ArithmeticOp.Add ? "+" : "-").Append("\",\"left\":");
+                sb.Append("{\"$k\":\"op\",\"o\":\"").Append(ao.Op == ArithmeticOp.Add ? "+" : "-").Append("\",\"l\":");
                 WriteValueOperand(sb, ao.Left);
-                sb.Append(",\"right\":");
+                sb.Append(",\"r\":");
                 WriteValueOperand(sb, ao.Right);
                 sb.Append('}');
                 break;
             case IfNotExistsOperand ine:
-                sb.Append("{\"ifNotExists\":{\"path\":\"").Append(EscapeJson(PathToString(ine.Path))).Append("\",\"fallback\":");
+                sb.Append("{\"$k\":\"ifne\",\"p\":\"").Append(EscapeJson(PathToString(ine.Path))).Append("\",\"f\":");
                 WriteValueOperand(sb, ine.Fallback);
-                sb.Append("}}");
+                sb.Append('}');
                 break;
             case ListAppendOperand la:
-                sb.Append("{\"listAppend\":{\"left\":");
+                sb.Append("{\"$k\":\"lap\",\"l\":");
                 WriteValueOperand(sb, la.Left);
-                sb.Append(",\"right\":");
+                sb.Append(",\"r\":");
                 WriteValueOperand(sb, la.Right);
-                sb.Append("}}");
+                sb.Append('}');
                 break;
             default:
-                sb.Append("null");
+                sb.Append("{\"$k\":\"lit\",\"v\":null}");
                 break;
         }
     }
