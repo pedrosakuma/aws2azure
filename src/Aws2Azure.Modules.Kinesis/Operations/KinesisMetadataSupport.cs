@@ -140,6 +140,14 @@ internal static class KinesisMetadataSupport
                 StatusCodes.Status403Forbidden,
                 "AccessDeniedException",
                 "Access denied when calling the Azure Event Hubs management API."),
+            // Throttling (HTTP 429) maps to the Kinesis control-plane throttle
+            // shape so the AWS SDK retries with back-off. The shared
+            // AzureHttpClient passes 429 through without internal retry.
+            HttpStatusCode.TooManyRequests => KinesisErrorResponse.WriteAsync(
+                context,
+                StatusCodes.Status400BadRequest,
+                "LimitExceededException",
+                "Azure Event Hubs throttled the management request; retry with back-off."),
             _ => KinesisErrorResponse.WriteAsync(
                 context,
                 StatusCodes.Status502BadGateway,

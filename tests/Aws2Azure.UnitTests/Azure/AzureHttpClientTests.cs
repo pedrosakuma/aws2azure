@@ -53,8 +53,11 @@ public class AzureHttpClientTests
     }
 
     [Fact]
-    public async Task SendAsync_Retries429_HonoringRetryAfterDelta()
+    public async Task SendAsync_429IsPassedThrough_NotRetried()
     {
+        // Throttling is the AWS client's responsibility: the proxy surfaces the
+        // 429 (→ ProvisionedThroughputExceededException / SlowDown) on the first
+        // hit rather than absorbing it behind internal backoff.
         var first = new HttpResponseMessage((HttpStatusCode)429);
         first.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromMilliseconds(5));
         var handler = new SequenceHandler(first, new HttpResponseMessage(HttpStatusCode.OK));
@@ -66,8 +69,83 @@ public class AzureHttpClientTests
         });
 
         var response = await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://example.test/x"));
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal((HttpStatusCode)429, response.StatusCode);
+        Assert.Equal(1, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task SendAsync_429DoesNotTripCircuitBreaker()
+    {
+        // Sustained throttling must never open the per-endpoint breaker: a 429
+        // proves the endpoint is reachable (backpressure, not an outage). Drive
+        // far more 429s than the failure threshold and assert the breaker stays
+        // closed (every call still reaches the handler).
+        var responses = new HttpResponseMessage[20];
+        for (var i = 0; i < responses.Length; i++)
+        {
+            responses[i] = new HttpResponseMessage((HttpStatusCode)429);
+        }
+        var handler = new SequenceHandler(responses);
+        var client = new AzureHttpClient(handler, ownsHandler: true, new AzureHttpClientOptions
+        {
+            MaxAttempts = 3,
+            BaseRetryDelay = TimeSpan.FromMilliseconds(1),
+            MaxRetryDelay = TimeSpan.FromMilliseconds(2),
+            CircuitBreaker = new CircuitBreakerOptions { Enabled = true, FailureThreshold = 3 }
+        });
+
+        for (var i = 0; i < responses.Length; i++)
+        {
+            var response = await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://example.test/x"));
+            Assert.Equal((HttpStatusCode)429, response.StatusCode);
+        }
+        // Breaker never opened → no CircuitBreakerOpenException → all 20 reached the handler.
+        Assert.Equal(20, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task SendAsync_429AsHalfOpenProbe_ClosesBreaker()
+    {
+        // Open the breaker with a 503, advance past OpenDuration so the next call
+        // is a half-open probe, then deliver a 429 as that probe. A throttle
+        // proves the endpoint is reachable, so the probe is treated as a success
+        // and the breaker closes (the following call is admitted to the handler).
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var handler = new SequenceHandler(
+            new HttpResponseMessage(HttpStatusCode.ServiceUnavailable), // trips breaker
+            new HttpResponseMessage((HttpStatusCode)429),               // half-open probe
+            new HttpResponseMessage(HttpStatusCode.OK));                // admitted after close
+        var options = new AzureHttpClientOptions
+        {
+            MaxAttempts = 1,
+            CircuitBreaker = new CircuitBreakerOptions
+            {
+                Enabled = true,
+                FailureThreshold = 1,
+                OpenDuration = TimeSpan.FromSeconds(30)
+            }
+        };
+        var client = new AzureHttpClient(handler, ownsHandler: true, options, clock);
+
+        // 1) 503 trips the breaker (FailureThreshold = 1).
+        var r1 = await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://example.test/x"));
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, r1.StatusCode);
+
+        // Open: a call before OpenDuration elapses is rejected without reaching the handler.
+        await Assert.ThrowsAsync<CircuitBreakerOpenException>(() =>
+            client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://example.test/x")));
+        Assert.Equal(1, handler.CallCount);
+
+        // 2) Past OpenDuration → half-open; the single probe receives a 429.
+        clock.Advance(TimeSpan.FromSeconds(31));
+        var r2 = await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://example.test/x"));
+        Assert.Equal((HttpStatusCode)429, r2.StatusCode);
         Assert.Equal(2, handler.CallCount);
+
+        // 3) The 429 probe closed the breaker → the next call is admitted.
+        var r3 = await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://example.test/x"));
+        Assert.Equal(HttpStatusCode.OK, r3.StatusCode);
+        Assert.Equal(3, handler.CallCount);
     }
 
     [Fact]
@@ -94,7 +172,7 @@ public class AzureHttpClientTests
     [InlineData(HttpStatusCode.Forbidden)]
     [InlineData(HttpStatusCode.NotFound)]
     [InlineData(HttpStatusCode.Conflict)]
-    public async Task SendAsync_DoesNotRetry4xxOtherThan408And429(HttpStatusCode status)
+    public async Task SendAsync_DoesNotRetry4xxOtherThan408(HttpStatusCode status)
     {
         var handler = new SequenceHandler(new HttpResponseMessage(status));
         var client = new AzureHttpClient(handler, ownsHandler: true, new AzureHttpClientOptions
@@ -129,7 +207,9 @@ public class AzureHttpClientTests
         // Regression: with high attempt counts the exponential `Math.Pow(2, n-1)`
         // can produce a non-finite double that overflows TimeSpan.FromMilliseconds.
         // Compute should clamp to MaxRetryDelay even when the math overflows.
-        var first = new HttpResponseMessage((HttpStatusCode)429); // Throttled path
+        // Uses 503 (a still-retried category) — 429 is now passed through without
+        // any internal retry, so it would never exercise the back-off math.
+        var first = new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
         var handler = new SequenceHandler(first, new HttpResponseMessage(HttpStatusCode.OK));
         var client = new AzureHttpClient(handler, ownsHandler: true, new AzureHttpClientOptions
         {

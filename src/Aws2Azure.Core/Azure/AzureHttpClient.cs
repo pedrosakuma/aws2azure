@@ -100,9 +100,25 @@ public sealed class AzureHttpClient : IDisposable
                 {
                     response = await _client.SendAsync(request, completionOption, cancellationToken).ConfigureAwait(false);
                     category = ClassifyStatus(response.StatusCode);
-                    if (category == RetryCategory.None || attempt >= maxAttempts)
+
+                    // Throttling (HTTP 429) is passed straight through to the
+                    // caller instead of being retried internally. AWS clients
+                    // own throttle backoff — DynamoDB surfaces
+                    // ProvisionedThroughputExceededException, S3 surfaces
+                    // SlowDown, both retried by the SDK's (often adaptive)
+                    // retry strategy the application configured — and there is
+                    // no AWS wire header to forward Azure's x-ms-retry-after-ms
+                    // into. Retrying here would stack a second backoff layer
+                    // under the client's, hold the request open for seconds,
+                    // and trip the per-endpoint breaker on what is backpressure,
+                    // not an outage. The attempt is reported to the breaker as a
+                    // reachable endpoint (success) so a throttle never opens —
+                    // nor latches open via abandon — the circuit.
+                    var throttled = category == RetryCategory.Throttled;
+                    if (category == RetryCategory.None || throttled || attempt >= maxAttempts)
                     {
-                        RecordOutcome(endpointKey, hasAdmission, admission, category);
+                        RecordOutcome(endpointKey, hasAdmission, admission,
+                            throttled ? RetryCategory.None : category);
                         outcomeReported = true;
                         return response;
                     }
@@ -204,10 +220,11 @@ public sealed class AzureHttpClient : IDisposable
     private TimeSpan ComputeDelay(int attempt, RetryCategory category, HttpResponseMessage? response)
     {
         // Per-category strategy:
-        //   Throttled (429): always honour Retry-After. When absent the
-        //     floor is half MaxRetryDelay because the server told us to
-        //     slow down — exponential back-off from BaseRetryDelay would
-        //     be too aggressive.
+        //   Throttled (429): NOT reached here — 429 is passed straight through
+        //     to the caller without an internal retry (see SendAsync), so the
+        //     AWS client owns throttle backoff. The branch below is retained
+        //     intentionally so re-enabling internal throttle-retry is a
+        //     one-line change in SendAsync, not a rewrite.
         //   ServiceUnavailable (503): honour Retry-After when present,
         //     otherwise exponential back-off (the most common Azure 503
         //     pattern — transient capacity issue).

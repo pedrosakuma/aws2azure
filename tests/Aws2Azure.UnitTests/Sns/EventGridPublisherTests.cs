@@ -113,6 +113,36 @@ public sealed class EventGridPublisherTests
     }
 
     [Fact]
+    public async Task PublishBatchAsync_marks_entries_throttled_on_http_429()
+    {
+        // The shared AzureHttpClient passes 429 through without internal retry,
+        // so the Event Grid failure mapper must surface the SNS ThrottledException
+        // the AWS SDK retries with back-off (not a generic InternalFailure).
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+        {
+            Content = new StringContent("slow down", Encoding.UTF8, "text/plain"),
+        });
+        var publisher = NewPublisher(handler);
+
+        var result = await publisher.PublishBatchAsync(
+            new EventGridPublishDestination(
+                "https://orders.eastus-1.eventgrid.azure.net/api/events",
+                "sas-key",
+                null,
+                null,
+                null),
+            [NewMessage(Guid.NewGuid()), NewMessage(Guid.NewGuid(), message: "two")],
+            CancellationToken.None);
+
+        Assert.Equal(2, result.Outcomes.Count);
+        Assert.All(result.Outcomes, outcome =>
+        {
+            Assert.False(outcome.Succeeded);
+            Assert.Equal("Throttled", outcome.ErrorCode);
+        });
+    }
+
+    [Fact]
     public async Task PublishBatchAsync_marks_all_entries_failed_on_http_failure()
     {
         var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.InternalServerError)

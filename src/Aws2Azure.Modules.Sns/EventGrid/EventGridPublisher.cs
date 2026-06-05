@@ -341,6 +341,14 @@ internal sealed class EventGridPublisher : IEventGridPublisher
                 "InvalidParameter",
                 "Azure Event Grid rejected the publish request.",
                 SenderFault: true),
+            // Throttling (HTTP 429) maps to the SNS ThrottledException shape so
+            // the AWS SDK retries with back-off. The shared AzureHttpClient
+            // passes 429 through without internal retry.
+            HttpStatusCode.TooManyRequests => new EventGridPublishFailure(
+                StatusCodes.Status429TooManyRequests,
+                "Throttled",
+                "Azure Event Grid throttled the publish request; retry with back-off.",
+                SenderFault: true),
             _ => new EventGridPublishFailure(
                 StatusCodes.Status500InternalServerError,
                 "InternalFailure",

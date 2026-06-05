@@ -234,6 +234,15 @@ internal static class SnsTopicSupport
             System.Net.HttpStatusCode.NotFound => WriteNotFoundAsync(
                 context,
                 "The requested SNS resource was not found in Azure Service Bus."),
+            // Throttling (HTTP 429) maps to the SNS ThrottledException shape
+            // (HTTP 429) so the AWS SDK retries with back-off. The shared
+            // AzureHttpClient passes 429 through without internal retry.
+            System.Net.HttpStatusCode.TooManyRequests => SnsErrorResponse.WriteErrorAsync(
+                context,
+                StatusCodes.Status429TooManyRequests,
+                errorType: "Sender",
+                errorCode: "Throttled",
+                message: "Azure Service Bus throttled the management request; retry with back-off."),
             _ => SnsErrorResponse.WriteErrorAsync(
                 context,
                 StatusCodes.Status502BadGateway,
