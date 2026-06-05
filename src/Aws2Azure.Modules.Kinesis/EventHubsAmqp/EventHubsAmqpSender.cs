@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Collections.Concurrent;
+using System.Net;
 using System.Text.Json;
 using Aws2Azure.Amqp.Connection;
 using Aws2Azure.Amqp.Framing;
@@ -386,7 +387,7 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
         return message;
     }
 
-    private static bool TryWrap(Exception exception, out EventHubsAmqpException wrapped)
+    internal static bool TryWrap(Exception exception, out EventHubsAmqpException wrapped)
     {
         switch (exception)
         {
@@ -399,6 +400,16 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
                     cbsAuthentication,
                     EventHubsAmqpFailureKind.Auth,
                     description: cbsAuthentication.StatusDescription);
+                return true;
+            case EntraIdTokenException tokenException:
+                // A throttle / transient / auth failure from the Entra ID token
+                // endpoint surfaces here when CBS authorization acquires a bearer
+                // token during sender open. Classify it so the handler renders the
+                // service-native retryable shape instead of a bare 500.
+                wrapped = new EventHubsAmqpException(
+                    "Event Hubs AMQP authorization failed.",
+                    tokenException,
+                    MapTokenStatus(tokenException.BackendStatus));
                 return true;
             case ServiceBusSendException sendException:
                 wrapped = new EventHubsAmqpException(
@@ -456,6 +467,13 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
         AmqpErrorKind.ServerFatal => EventHubsAmqpFailureKind.ServerFatal,
         AmqpErrorKind.Redirect => EventHubsAmqpFailureKind.Redirect,
         _ => EventHubsAmqpFailureKind.Unknown,
+    };
+
+    private static EventHubsAmqpFailureKind MapTokenStatus(HttpStatusCode backendStatus) => backendStatus switch
+    {
+        HttpStatusCode.TooManyRequests => EventHubsAmqpFailureKind.Throttled,
+        HttpStatusCode.ServiceUnavailable => EventHubsAmqpFailureKind.Transient,
+        _ => EventHubsAmqpFailureKind.Auth,
     };
 
     private static EventHubsAmqpFailureKind MapOutcome(AmqpDispositionOutcome outcome) => outcome switch

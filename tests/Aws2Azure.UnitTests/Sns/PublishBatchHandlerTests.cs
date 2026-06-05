@@ -197,6 +197,38 @@ public sealed class PublishBatchHandlerTests
         Assert.DoesNotContain("<ErrorResponse", body);
     }
 
+    [Fact]
+    public async Task HandleAsync_marks_all_entries_throttled_when_token_endpoint_throttles()
+    {
+        var context = NewContext();
+        var sender = new FakeSnsAmqpSender((_, _, _, _, _) => throw new SnsAmqpException(
+            "throttled",
+            new InvalidOperationException(),
+            SnsAmqpFailureKind.Throttled));
+
+        await PublishBatchHandler.HandleAsync(
+            context,
+            NewParseResult(
+                ("TopicArn", "arn:aws:sns:us-west-2:000000000000:orders"),
+                ("PublishBatchRequestEntries.member.1.Id", "a"),
+                ("PublishBatchRequestEntries.member.1.Message", "one"),
+                ("PublishBatchRequestEntries.member.2.Id", "b"),
+                ("PublishBatchRequestEntries.member.2.Message", "two")),
+            NewCredentials(),
+            eventGridCredentials: null,
+            new SnsSettings(),
+            sender,
+            new FakeEventGridPublisher(),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        var body = ReadBody(context);
+        Assert.Contains("<Failed>", body);
+        Assert.Contains("<Code>Throttled</Code>", body);
+        Assert.Contains("<SenderFault>true</SenderFault>", body);
+        Assert.DoesNotContain("<ErrorResponse", body);
+    }
+
     private static ServiceBusTopicsCredentials NewCredentials() => new()
     {
         Namespace = "myns",

@@ -263,6 +263,31 @@ public sealed class PublishHandlerTests
         Assert.Contains("link detached", ReadBody(context));
     }
 
+    [Fact]
+    public async Task HandleAsync_maps_amqp_throttle_to_sns_throttled_error()
+    {
+        var context = NewContext();
+        var sender = new FakeSnsAmqpSender(sendHandler: (_, _, _, _, _) => throw new SnsAmqpException(
+            "throttled",
+            new InvalidOperationException(),
+            SnsAmqpFailureKind.Throttled));
+
+        await PublishHandler.HandleAsync(
+            context,
+            NewParseResult(("TopicArn", "arn:aws:sns:us-west-2:000000000000:orders"), ("Message", "hello")),
+            NewCredentials(),
+            eventGridCredentials: null,
+            new SnsSettings(),
+            sender,
+            new FakeEventGridPublisher(),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status429TooManyRequests, context.Response.StatusCode);
+        var body = ReadBody(context);
+        Assert.Contains("Throttled", body);
+        Assert.Contains("<Type>Sender</Type>", body);
+    }
+
     private static ServiceBusTopicsCredentials NewCredentials() => new()
     {
         Namespace = "myns",
