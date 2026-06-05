@@ -97,8 +97,11 @@ internal sealed class CosmosClient
         }
 
         // Cosmos returns a Bearer-realm WWW-Authenticate on auth failure; the
-        // shared client honours retry budgets, breaker state, and the breaker's
-        // 429-aware backoff so transient-failure semantics match the SB module.
+        // shared client honours retry budgets and breaker state. HTTP 429
+        // (RU throttling) is passed straight through without internal retry —
+        // the DynamoDB error mapper surfaces it as
+        // ProvisionedThroughputExceededException so the AWS SDK owns the
+        // back-off (see AzureHttpClient.SendAsync).
         return await BackendTimingContext.TimeAsync(
             () => _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct))
             .ConfigureAwait(false);

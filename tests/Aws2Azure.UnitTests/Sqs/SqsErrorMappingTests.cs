@@ -36,6 +36,17 @@ public class SqsErrorMappingTests
         Assert.Equal(502, m.StatusCode);
     }
 
+    [Fact]
+    public void TooManyRequests_maps_to_throttling_503()
+    {
+        // The shared AzureHttpClient passes 429 through without internal retry,
+        // so the mapper must surface a retryable throttle the AWS SDK recognizes.
+        using var resp = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+        var m = SqsErrorMapping.FromServiceBus(resp);
+        Assert.Equal("ServiceUnavailable", m.Code);
+        Assert.Equal(503, m.StatusCode);
+    }
+
     // ---------- FromAmqp (slice 8c.1) ----------
 
     [Fact]

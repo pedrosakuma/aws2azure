@@ -145,6 +145,14 @@ public static class SqsErrorMapping
             404 or 410 => QueueDoesNotExist(),
             409 => QueueAlreadyExists(
                 "aws2azure: Azure Service Bus reports the queue already exists with different attributes."),
+            // Throttling (HTTP 429) is surfaced as a retryable SQS server error,
+            // mirroring the AMQP throttle path (FromAmqp). The shared
+            // AzureHttpClient passes 429 straight through without internal retry,
+            // so the AWS SDK owns the back-off — a generic InternalError here
+            // would not be classified as throttling by the client.
+            429 => new Mapping(StatusCodes.Status503ServiceUnavailable, "ServiceUnavailable",
+                "aws2azure: Azure Service Bus throttled the request; retry with back-off.",
+                SqsErrorResponse.FaultType.Receiver),
             >= 500 => new Mapping(StatusCodes.Status502BadGateway, "ServiceUnavailable",
                 "aws2azure: upstream Azure Service Bus returned HTTP " + status + ".",
                 SqsErrorResponse.FaultType.Receiver),
