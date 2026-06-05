@@ -39,11 +39,29 @@ public class CircuitBreakerTests
         }
         Assert.Equal(3, handler.CallCount);
 
-        // Next one fails fast — no extra HTTP call.
-        var ex = await Assert.ThrowsAsync<CircuitBreakerOpenException>(
-            () => client.SendAsync(Req("https://example.test/x")));
-        Assert.Contains("example.test", ex.EndpointKey);
+        // Next one fails fast — synthetic 503, no extra HTTP call.
+        var open = await client.SendAsync(Req("https://example.test/x"));
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, open.StatusCode);
         Assert.Equal(3, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task OpenBreakerReturnsSynthetic503WithoutCallingHandler()
+    {
+        // #211: an open breaker must surface a faithful, retryable transient
+        // error, not a bare 500. SendAsync returns a synthetic 503 (handler NOT
+        // invoked) so each module's existing 5xx mapping renders its
+        // service-native envelope — indistinguishable from a real backend 503.
+        var handler = new InfiniteHandler(() => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        using var client = NewClient(handler, FastOpts(threshold: 2, maxAttempts: 1));
+
+        for (int i = 0; i < 2; i++)
+            (await client.SendAsync(Req("https://example.test/x"))).Dispose();
+        Assert.Equal(2, handler.CallCount); // breaker now open
+
+        var open = await client.SendAsync(Req("https://example.test/x"));
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, open.StatusCode);
+        Assert.Equal(2, handler.CallCount); // fast-fail: handler not invoked
     }
 
     [Fact]
@@ -80,8 +98,10 @@ public class CircuitBreakerTests
         for (int i = 0; i < 3; i++)
             (await client.SendAsync(Req("https://example.test/x"))).Dispose();
 
-        await Assert.ThrowsAsync<CircuitBreakerOpenException>(
-            () => client.SendAsync(Req("https://example.test/x")));
+        // Fast-fail returns a synthetic 503; no network call.
+        var open = await client.SendAsync(Req("https://example.test/x"));
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, open.StatusCode);
+        Assert.Equal(3, handler.CallCount);
 
         // Advance past open duration → next call is the probe.
         clock.Advance(TimeSpan.FromSeconds(11));
@@ -113,9 +133,9 @@ public class CircuitBreakerTests
         var probe = await client.SendAsync(Req("https://example.test/x"));
         Assert.Equal(HttpStatusCode.ServiceUnavailable, probe.StatusCode);
 
-        // Without advancing, next request should fail fast again.
-        await Assert.ThrowsAsync<CircuitBreakerOpenException>(
-            () => client.SendAsync(Req("https://example.test/x")));
+        // Without advancing, next request should fail fast again (synthetic 503).
+        var open = await client.SendAsync(Req("https://example.test/x"));
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, open.StatusCode);
         Assert.Equal(4, handler.CallCount);
     }
 
@@ -139,8 +159,8 @@ public class CircuitBreakerTests
 
         for (int i = 0; i < 3; i++)
             (await client.SendAsync(Req("https://a.example.test/x"))).Dispose();
-        await Assert.ThrowsAsync<CircuitBreakerOpenException>(
-            () => client.SendAsync(Req("https://a.example.test/x")));
+        var open = await client.SendAsync(Req("https://a.example.test/x"));
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, open.StatusCode);
 
         // b.example.test is a different endpoint — its breaker is still closed.
         var r = await client.SendAsync(Req("https://b.example.test/x"));
@@ -159,8 +179,8 @@ public class CircuitBreakerTests
             (await client.SendAsync(Req("https://example.test/x"))).Dispose();
         Assert.Equal(9, handler.CallCount);
 
-        await Assert.ThrowsAsync<CircuitBreakerOpenException>(
-            () => client.SendAsync(Req("https://example.test/x")));
+        var open = await client.SendAsync(Req("https://example.test/x"));
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, open.StatusCode);
         Assert.Equal(9, handler.CallCount);
     }
 
@@ -172,9 +192,9 @@ public class CircuitBreakerTests
 
         await Assert.ThrowsAsync<HttpRequestException>(() => client.SendAsync(Req("https://example.test/x")));
         await Assert.ThrowsAsync<HttpRequestException>(() => client.SendAsync(Req("https://example.test/x")));
-        // Tripped now.
-        await Assert.ThrowsAsync<CircuitBreakerOpenException>(
-            () => client.SendAsync(Req("https://example.test/x")));
+        // Tripped now — fast-fail returns a synthetic 503, not the transport exception.
+        var open = await client.SendAsync(Req("https://example.test/x"));
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, open.StatusCode);
     }
 
     [Fact]
