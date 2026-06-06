@@ -397,6 +397,78 @@ public class EntraIdTokenProviderTests
         Assert.All(results, r => Assert.Equal("token-1", r));
     }
 
+    [Fact]
+    public async Task GetTokenAsync_ServesStaleTokenWhileRevalidatingInBackground()
+    {
+        var fakeClock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var handler = new ScriptedHandler();
+        var http = new AzureHttpClient(handler, ownsHandler: true);
+        var provider = new EntraIdTokenProvider(http, authority: new Uri("https://login.test/"), clock: fakeClock);
+
+        handler.Enqueue(MakeToken("token-1", expiresIn: 3600));
+        Assert.Equal("token-1", await provider.GetTokenAsync("tenant", "client", "secret", "https://storage.azure.com/.default"));
+
+        // Move into the stale-but-servable band: inside the 5-min safety window but
+        // comfortably above the 2-min blocking floor (token-1 expires at +3600s; at
+        // +3420s there are 180s left).
+        fakeClock.Advance(TimeSpan.FromSeconds(3420));
+        handler.Enqueue(MakeToken("token-2", expiresIn: 3600));
+
+        // The caller gets the still-valid token immediately; the refresh runs in the
+        // background and never blocks the request.
+        Assert.Equal("token-1", await provider.GetTokenAsync("tenant", "client", "secret", "https://storage.azure.com/.default"));
+
+        // The background revalidation eventually repopulates the cache; poll the
+        // externally-visible state (not the handler's entry count, which increments
+        // before the cache is written) until token-2 is served.
+        var latest = "token-1";
+        await SpinUntilAsync(
+            async () =>
+            {
+                latest = await provider.GetTokenAsync("tenant", "client", "secret", "https://storage.azure.com/.default");
+                return latest == "token-2";
+            },
+            TimeSpan.FromSeconds(30));
+
+        Assert.Equal("token-2", latest);
+        Assert.Equal(2, handler.CallCount); // single-flight: exactly one background refresh fired
+    }
+
+    [Fact]
+    public async Task GetTokenAsync_BlocksForFreshTokenBelowServableFloor()
+    {
+        var fakeClock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var handler = new ScriptedHandler();
+        var http = new AzureHttpClient(handler, ownsHandler: true);
+        var provider = new EntraIdTokenProvider(http, authority: new Uri("https://login.test/"), clock: fakeClock);
+
+        handler.Enqueue(MakeToken("token-1", expiresIn: 3600));
+        Assert.Equal("token-1", await provider.GetTokenAsync("tenant", "client", "secret", "https://storage.azure.com/.default"));
+
+        // Move below the 2-min blocking floor (token-1 expires at +3600s; at +3540s
+        // only 60s remain). The caller must block on the fresh token rather than serve
+        // the near-dead cached one.
+        fakeClock.Advance(TimeSpan.FromSeconds(3540));
+        handler.Enqueue(MakeToken("token-2", expiresIn: 3600));
+
+        Assert.Equal("token-2", await provider.GetTokenAsync("tenant", "client", "secret", "https://storage.azure.com/.default"));
+        Assert.Equal(2, handler.CallCount);
+    }
+
+    private static async Task SpinUntilAsync(Func<Task<bool>> condition, TimeSpan timeout)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (!await condition())
+        {
+            if (sw.Elapsed > timeout)
+            {
+                throw new TimeoutException("Condition was not satisfied within the timeout.");
+            }
+
+            await Task.Delay(10);
+        }
+    }
+
     private static HttpResponseMessage MakeToken(string token, int expiresIn)
     {
         var payload = "{\"access_token\":\"" + token + "\",\"token_type\":\"Bearer\",\"expires_in\":" + expiresIn + "}";
@@ -409,11 +481,12 @@ public class EntraIdTokenProviderTests
     private sealed class ScriptedHandler : HttpMessageHandler
     {
         private readonly Queue<HttpResponseMessage> _queue = new();
-        public int CallCount { get; private set; }
+        private int _callCount;
+        public int CallCount => Volatile.Read(ref _callCount);
         public void Enqueue(HttpResponseMessage r) => _queue.Enqueue(r);
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            CallCount++;
+            Interlocked.Increment(ref _callCount);
             return Task.FromResult(_queue.Dequeue());
         }
     }

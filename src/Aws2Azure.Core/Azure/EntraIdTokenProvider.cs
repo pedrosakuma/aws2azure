@@ -12,11 +12,23 @@ namespace Aws2Azure.Core.Azure;
 /// Acquires OAuth 2.0 bearer tokens from Entra ID using the client-credentials
 /// flow, talking directly to the v2.0 token endpoint (no Azure.Identity).
 /// Tokens are cached per (tenant, clientId, scope) tuple and refreshed when
-/// inside a safety window before expiry.
+/// inside a safety window before expiry. Inside that window — but while the
+/// cached token still has comfortable life left — refresh happens off the
+/// caller's critical path (stale-while-revalidate): the still-valid token is
+/// returned immediately and a single-flight refresh runs in the background.
 /// </summary>
 public sealed class EntraIdTokenProvider
 {
+    // Below this remaining lifetime a (single-flight) refresh is started. While the
+    // token still has more than the blocking floor left, that refresh runs in the
+    // background and the cached token is served immediately.
     private static readonly TimeSpan SafetyWindow = TimeSpan.FromMinutes(5);
+
+    // Hard floor: once a token has less than this remaining we stop serving it stale
+    // and block on a fresh fetch instead. A token this close to expiry may not
+    // outlive the downstream Azure call (plus clock skew), so the small latency cost
+    // buys correctness. Must stay below SafetyWindow so a stale-serve band exists.
+    private static readonly TimeSpan MinimumServableLifetime = TimeSpan.FromMinutes(2);
 
     private readonly AzureHttpClient _http;
     private readonly TimeProvider _clock;
@@ -50,14 +62,28 @@ public sealed class EntraIdTokenProvider
 
         CacheEntry? cached = null;
         Task<string> refresh;
+        string? staleToken = null;
+        var createdRefresh = false;
         lock (_lock)
         {
             if (_cache.TryGetValue(cacheKey, out var entry))
             {
                 cached = entry;
-                if (entry.ExpiresAt - SafetyWindow > now)
+                var remaining = entry.ExpiresAt - now;
+                if (remaining > SafetyWindow)
                 {
+                    // Outside the safety window: the cached token is fresh, no refresh.
                     return entry.Token;
+                }
+
+                if (remaining > MinimumServableLifetime)
+                {
+                    // Stale-while-revalidate: inside the safety window but still well
+                    // above the blocking floor. Arm a single-flight refresh below and
+                    // serve the current token now, keeping the fetch off this request's
+                    // critical path. Only callers past the floor (or with no usable
+                    // cached token) pay the refresh latency.
+                    staleToken = entry.Token;
                 }
             }
 
@@ -70,7 +96,25 @@ public sealed class EntraIdTokenProvider
             {
                 refresh = RefreshAndCacheAsync(cacheKey, tenantId, clientId, clientSecret, scope);
                 _inflight[cacheKey] = refresh;
+                createdRefresh = true;
             }
+        }
+
+        if (createdRefresh)
+        {
+            // Observe the refresh's outcome exactly once, at creation, so a background
+            // (stale-while-revalidate) refresh that faults with no awaiter never
+            // surfaces as an unobserved task exception. Harmless for an awaited
+            // refresh — the awaiter observes it too. Correctness never depends on this:
+            // a failed revalidation leaves the still-valid cached token in place and
+            // the next caller retries (or, once the token crosses the blocking floor,
+            // awaits a fresh fetch and surfaces any error wire-faithfully).
+            ObserveExceptions(refresh);
+        }
+
+        if (staleToken is not null)
+        {
+            return staleToken;
         }
 
         try
@@ -90,8 +134,25 @@ public sealed class EntraIdTokenProvider
             // service would not surface a throttle that originated in our internal
             // token refresh while a usable credential is still in hand. The
             // token-endpoint error is only surfaced once no unexpired token remains.
+            //
+            // This last-resort fallback intentionally serves ANY still-unexpired token,
+            // including one below MinimumServableLifetime. The floor only governs the
+            // happy-path decision (serve-stale vs. block for a fresh token) when a
+            // refresh CAN still succeed; here the refresh has already failed, so the
+            // choice is between serving a near-expiry credential or leaking an internal
+            // token-refresh error to the AWS client — wire-faithfulness favours the
+            // former. The floor is not an absolute no-near-expiry guarantee.
             return valid.Token;
         }
+    }
+
+    private static void ObserveExceptions(Task task)
+    {
+        task.ContinueWith(
+            static t => _ = t.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     private async Task<string> RefreshAndCacheAsync(
