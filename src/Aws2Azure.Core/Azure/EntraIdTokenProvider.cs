@@ -134,6 +134,14 @@ public sealed class EntraIdTokenProvider
             // service would not surface a throttle that originated in our internal
             // token refresh while a usable credential is still in hand. The
             // token-endpoint error is only surfaced once no unexpired token remains.
+            //
+            // This last-resort fallback intentionally serves ANY still-unexpired token,
+            // including one below MinimumServableLifetime. The floor only governs the
+            // happy-path decision (serve-stale vs. block for a fresh token) when a
+            // refresh CAN still succeed; here the refresh has already failed, so the
+            // choice is between serving a near-expiry credential or leaking an internal
+            // token-refresh error to the AWS client — wire-faithfulness favours the
+            // former. The floor is not an absolute no-near-expiry guarantee.
             return valid.Token;
         }
     }
