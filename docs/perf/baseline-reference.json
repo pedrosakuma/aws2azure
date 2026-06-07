@@ -1,6 +1,9 @@
 {
   "comment": "Per-scenario regression thresholds for tests/Aws2Azure.PerfTests. Numbers reflect emulator-bound baselines captured on the project's reference dev hardware; see docs/perf/baseline-latest.md for the live observed snapshot. Operators bump these values manually when a deliberate change to the proxy raises or lowers expected throughput. minThroughputPerSec floors observed ops/s; maxP99Ms ceilings observed p99. Either field can be 0 to opt out of that half of the gate, but EVERY scenario must have an entry — KnownPerfScenariosTests asserts coverage so newly added scenarios force the operator to think about a threshold (use {0,0} to defer if needed).",
   "scenarios": {
+    "entra.GetToken (cache hit, 1 key, c=64)":                     { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
+    "entra.GetToken (cache hit, 64 keys, c=64)":                   { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
+
     "s3.PutObject (4 KiB)":                                        { "minThroughputPerSec":  50.0, "maxP99Ms":  500.0 },
     "s3.GetObject (64 KiB)":                                       { "minThroughputPerSec": 100.0, "maxP99Ms":  500.0 },
     "azure-sdk.Blob.UploadAsync (4 KiB)":                          { "minThroughputPerSec":  50.0, "maxP99Ms":  500.0 },
