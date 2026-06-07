@@ -22,6 +22,10 @@ public sealed class KnownPerfScenariosTests
     /// </summary>
     public static readonly IReadOnlyList<string> All = new[]
     {
+        // Core (in-process microbenchmarks)
+        "entra.GetToken (cache hit, 1 key, c=64)",
+        "entra.GetToken (cache hit, 64 keys, c=64)",
+
         // S3
         "s3.PutObject (4 KiB)",
         "s3.GetObject (64 KiB)",

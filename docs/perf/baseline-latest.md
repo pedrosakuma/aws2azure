@@ -1,6 +1,6 @@
 # aws2azure — perf baseline
 
-Generated: 2026-05-28T22:28:07.3874762Z
+Generated: 2026-06-07T01:35:59.6207767Z
 
 Closed-loop concurrent driver — AWS SDK clients pointing at the proxy
 (`Aws2Azure.Proxy`) which fronts local emulators (Azurite, Service Bus,
@@ -29,3 +29,5 @@ overhead, not real-Azure throughput.**
 | dynamodb.GetItem (small)         |  16 |   20.0 |    13861 |       0 |        692.9 |      22.1 |      29.2 |      34.6 |     263.3 | DynamoDB→Cosmos GetItem — point read against seeded QueryTable |
 | azure-sdk.Cosmos.ReadItem (small) |  16 |   20.0 |    13490 |       0 |        674.4 |      23.2 |      29.4 |      32.8 |      41.5 | Azure SDK baseline — direct CosmosClient.ReadItemAsync against Cosmos emulator (no proxy) |
 | azure-sdk.Cosmos.ReadManyItems (25 keys) |   8 |   20.0 |     6338 |       0 |        316.7 |      24.5 |      31.8 |      35.1 |      51.6 | Azure SDK baseline — direct CosmosClient.ReadManyItemsAsync against Cosmos emulator (no proxy) |
+| entra.GetToken (cache hit, 64 keys, c=64) |  64 |    0.5 |  2000014 |       0 |    4330313.1 |       0.0 |       0.0 |       0.0 |       6.8 | in-proc token cache-hit, distinct key per worker; token-endpoint fetches=64 |
+| entra.GetToken (cache hit, 1 key, c=64) |  64 |    0.4 |  2000015 |       0 |    4751866.5 |       0.0 |       0.0 |       0.0 |      10.1 | in-proc token cache-hit, 1 hot key under the global lock; token-endpoint fetches=1 |
