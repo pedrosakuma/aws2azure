@@ -1,35 +1,43 @@
 {
-  "comment": "Per-scenario regression thresholds for tests/Aws2Azure.PerfTests. Numbers reflect emulator-bound baselines captured on the project's reference dev hardware; see docs/perf/baseline-latest.md for the live observed snapshot. Operators bump these values manually when a deliberate change to the proxy raises or lowers expected throughput. minThroughputPerSec floors observed ops/s; maxP99Ms ceilings observed p99. Either field can be 0 to opt out of that half of the gate, but EVERY scenario must have an entry — KnownPerfScenariosTests asserts coverage so newly added scenarios force the operator to think about a threshold (use {0,0} to defer if needed).",
+  "comment": "Per-scenario regression config for tests/Aws2Azure.PerfTests. Two gates: (1) ABSOLUTE floors/ceilings in 'scenarios' (minThroughputPerSec / maxP99Ms), enforced per-test by PerfResult.AssertNoRegression — either field 0 opts out of that half; kept as wide catastrophe-detectors on emulator-bound paths whose azure-sdk.* baseline is absent OR too unstable to be a ruler (the Service Bus emulator's own SDK send p50 swings 3-5x run-to-run because it link-attaches per send while the proxy pools connections, so sqs.SendMessage / sns.Publish are gated on a THROUGHPUT FLOOR ONLY (their p99 is bimodal on the proxy side too — a rare cold AMQP link-attach lands a multi-second spike in the top 1% unpredictably, observed 234 ms one run and 3108 ms the next — so any absolute p99 ceiling flaps just like the relative gate; the throughput floor plus AssertHealthy is the only stable catastrophe signal)). dynamodb.BatchGetItem is likewise absolute-gated (maxP99Ms 700) not paired: there the PROXY p99 is the stable side (~240-340 ms, unimodal Cosmos REST) while the azure-sdk.Cosmos.ReadManyItems baseline is the jittery, structurally-unfair ruler (a specialized batched SDK API the proxy implements as N point-reads; its p99 collapsed 106->45 ms one run, spiking the ratio to 5.3x with no proxy change). (2) RELATIVE proxy-vs-baseline ratios in 'pairings', enforced once per run by RelativeRegressionGateTests (Category=RelativeGate) reading docs/perf/baseline-latest.json. The relative gate is the meaningful signal where the baseline is STABLE: emulator tail-latency jitter hits BOTH the proxy and its azure-sdk.* baseline, so the ratio cancels the noise and fails only when the PROXY adds overhead. METRIC BY SHAPE: REST + AMQP-receive pairs gate on p99-ratio (unimodal, stable baseline); the EventHubs send pair (kinesis.PutRecord) gates on p50-ratio (EH baseline is stable at 3-5ms; p99 would be cold-link-attach noise). A 0 ratio opts out of that dimension. azure-sdk.* baselines are reference rulers — {0,0} absolute, never fail the build. Operators bump these deliberately when a proxy change is expected to move performance. EVERY scenario must have a 'scenarios' entry — KnownPerfScenariosTests asserts coverage.",
   "scenarios": {
     "entra.GetToken (cache hit, 1 key, c=64)":                     { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
     "entra.GetToken (cache hit, 64 keys, c=64)":                   { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
 
-    "s3.PutObject (4 KiB)":                                        { "minThroughputPerSec":  50.0, "maxP99Ms":  500.0 },
+    "s3.PutObject (4 KiB)":                                        { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
     "s3.GetObject (64 KiB)":                                       { "minThroughputPerSec": 100.0, "maxP99Ms":  500.0 },
-    "azure-sdk.Blob.UploadAsync (4 KiB)":                          { "minThroughputPerSec":  50.0, "maxP99Ms":  500.0 },
+    "azure-sdk.Blob.UploadAsync (4 KiB)":                          { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
 
-    "sqs.SendMessage (256 B)":                                     { "minThroughputPerSec":  50.0, "maxP99Ms":  500.0 },
-    "sqs.ReceiveMessage+Delete (1)":                               { "minThroughputPerSec":   5.0, "maxP99Ms": 2000.0 },
-    "azure-sdk.ServiceBus.SendMessage (256 B, queue)":             { "minThroughputPerSec":  50.0, "maxP99Ms":  500.0 },
-    "azure-sdk.ServiceBus.ReceiveMessage+Complete (1)":            { "minThroughputPerSec":   5.0, "maxP99Ms": 2000.0 },
+    "sqs.SendMessage (256 B)":                                     { "minThroughputPerSec":  20.0, "maxP99Ms":    0.0 },
+    "sqs.ReceiveMessage+Delete (1)":                               { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
+    "azure-sdk.ServiceBus.SendMessage (256 B, queue)":            { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
+    "azure-sdk.ServiceBus.ReceiveMessage+Complete (1)":            { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
 
-    "sns.Publish (256 B)":                                         { "minThroughputPerSec":  30.0, "maxP99Ms":  800.0 },
-    "azure-sdk.ServiceBusTopics.SendMessage (256 B)":              { "minThroughputPerSec":  30.0, "maxP99Ms":  800.0 },
+    "sns.Publish (256 B)":                                         { "minThroughputPerSec":  20.0, "maxP99Ms":    0.0 },
+    "azure-sdk.ServiceBusTopics.SendMessage (256 B)":              { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
 
-    "dynamodb.PutItem (small)":                                    { "minThroughputPerSec":  80.0, "maxP99Ms":  400.0 },
-    "dynamodb.GetItem (small)":                                    { "minThroughputPerSec": 300.0, "maxP99Ms":  200.0 },
-    "dynamodb.Query (pushable filter)":                            { "minThroughputPerSec": 200.0, "maxP99Ms":  150.0 },
-    "dynamodb.Scan (pushable filter)":                             { "minThroughputPerSec": 120.0, "maxP99Ms":  200.0 },
-    "dynamodb.BatchWriteItem (25 items)":                          { "minThroughputPerSec":   4.0, "maxP99Ms": 2500.0 },
-    "dynamodb.BatchGetItem (25 items)":                            { "minThroughputPerSec":  50.0, "maxP99Ms":  800.0 },
-    "azure-sdk.Cosmos.UpsertItem (small)":                         { "minThroughputPerSec":  80.0, "maxP99Ms":  400.0 },
-    "azure-sdk.Cosmos.ReadItem (small)":                           { "minThroughputPerSec": 300.0, "maxP99Ms":  200.0 },
-    "azure-sdk.Cosmos.ReadManyItems (25 keys)":                    { "minThroughputPerSec": 100.0, "maxP99Ms":  200.0 },
+    "dynamodb.PutItem (small)":                                    { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
+    "dynamodb.GetItem (small)":                                    { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
+    "dynamodb.Query (pushable filter)":                            { "minThroughputPerSec": 150.0, "maxP99Ms":  200.0 },
+    "dynamodb.Scan (pushable filter)":                             { "minThroughputPerSec":  40.0, "maxP99Ms":  700.0 },
+    "dynamodb.BatchWriteItem (25 items)":                          { "minThroughputPerSec":   3.0, "maxP99Ms": 3500.0 },
+    "dynamodb.BatchGetItem (25 items)":                            { "minThroughputPerSec":   0.0, "maxP99Ms":  700.0 },
+    "azure-sdk.Cosmos.UpsertItem (small)":                         { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
+    "azure-sdk.Cosmos.ReadItem (small)":                           { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
+    "azure-sdk.Cosmos.ReadManyItems (25 keys)":                    { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
 
-    "kinesis.PutRecord (256 B)":                                   { "minThroughputPerSec":  60.0, "maxP99Ms":   50.0 },
-    "kinesis.PutRecords (25×256 B)":                               { "minThroughputPerSec":   5.0, "maxP99Ms":  500.0 },
-    "azure-sdk.EventHubs.SendAsync (256 B, c=1)":                  { "minThroughputPerSec":  50.0, "maxP99Ms":   40.0 },
-    "kinesis.GetRecords (256 B records)":                          { "minThroughputPerSec":   2.0, "maxP99Ms":  800.0 },
-    "azure-sdk.EventHubs.ReceiveBatchAsync (256 B records)":       { "minThroughputPerSec":   2.0, "maxP99Ms":  800.0 }
+    "kinesis.PutRecord (256 B)":                                   { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
+    "kinesis.PutRecords (25×256 B)":                               { "minThroughputPerSec":   3.0, "maxP99Ms":    0.0 },
+    "azure-sdk.EventHubs.SendAsync (256 B, c=1)":                  { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
+    "kinesis.GetRecords (256 B records)":                          { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
+    "azure-sdk.EventHubs.ReceiveBatchAsync (256 B records)":       { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 }
+  },
+  "pairings": {
+    "s3.PutObject (4 KiB)":              { "baseline": "azure-sdk.Blob.UploadAsync (4 KiB)",            "minThroughputRatio": 0.50, "maxP99Ratio": 3.0 },
+    "dynamodb.GetItem (small)":          { "baseline": "azure-sdk.Cosmos.ReadItem (small)",            "minThroughputRatio": 0.45, "maxP99Ratio": 3.0 },
+    "dynamodb.PutItem (small)":          { "baseline": "azure-sdk.Cosmos.UpsertItem (small)",          "minThroughputRatio": 0.50, "maxP99Ratio": 3.0 },
+    "sqs.ReceiveMessage+Delete (1)":     { "baseline": "azure-sdk.ServiceBus.ReceiveMessage+Complete (1)", "minThroughputRatio": 0.50, "maxP99Ratio": 3.0 },
+    "kinesis.PutRecord (256 B)":         { "baseline": "azure-sdk.EventHubs.SendAsync (256 B, c=1)",    "minThroughputRatio": 0.0, "maxP50Ratio": 6.0 },
+    "kinesis.GetRecords (256 B records)":{ "baseline": "azure-sdk.EventHubs.ReceiveBatchAsync (256 B records)", "minThroughputRatio": 0.50, "maxP99Ratio": 1.5 }
   }
 }

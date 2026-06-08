@@ -35,7 +35,10 @@ jobs:
       - name: Restore + build
         run: dotnet build -c Release --nologo
       - name: Run perf scenarios
-        run: dotnet test tests/Aws2Azure.PerfTests -c Release --no-build --nologo --logger "console;verbosity=normal"
+        run: dotnet test tests/Aws2Azure.PerfTests -c Release --no-build --nologo --filter "Category!=RelativeGate" --logger "console;verbosity=normal"
+      - name: Relative regression gate (proxy vs SDK baseline)
+        if: always()
+        run: dotnet test tests/Aws2Azure.PerfTests -c Release --no-build --nologo --filter "Category=RelativeGate" --logger "console;verbosity=normal"
       - name: Upload perf baseline + history
         if: always()
         uses: actions/upload-artifact@v4
@@ -43,6 +46,7 @@ jobs:
           name: perf-results
           path: |
             docs/perf/baseline-latest.md
+            docs/perf/baseline-latest.json
             docs/perf/history.csv
           if-no-files-found: warn
           retention-days: 90

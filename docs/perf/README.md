@@ -92,7 +92,98 @@ p50`. Always read the two columns together.
 > future, set `AWS2AZURE_AMQP_TIMING=1` to get per-send breadcrumbs and
 > compare with the `AzureEventHubsSdkBaselinePerfTests` row.
 
-## Roadmap
+## Regression gates
+
+Two independent gates guard against perf regressions. They run as **two
+separate `dotnet test` invocations** in `.github/workflows/perf.yml` (the
+relative gate reads a file the scenario step writes, and xUnit gives no
+cross-collection ordering — so a dedicated second process is the robust
+hand-off point):
+
+### 1. Absolute health + floors — `AssertHealthy` / `AssertNoRegression`
+
+Runs inside each scenario. `AssertHealthy()` fails on no completions or a
+>10% failure rate — a genuinely broken proxy path. `AssertNoRegression()`
+compares against per-scenario floors/ceilings in
+[`baseline-reference.json`](baseline-reference.json) (`minThroughputPerSec`
+/ `maxP99Ms`). **On emulator-bound AMQP paths these absolutes are set to
+`0` (disabled)** because the emulator's multi-second cold-connect tail
+stalls move p99 by 20× run-to-run — an absolute ceiling there only produces
+chronic false reds. Those paths are gated relatively instead (below). REST
+paths (S3/DynamoDB) keep meaningful absolute floors.
+
+### 2. Relative proxy-vs-SDK gate — `RelativeRegressionGate`
+
+Each proxy scenario is paired in `baseline-reference.json`'s `pairings`
+section with an `azure-sdk.*` baseline scenario that measures the **same
+operation against the same emulator with no proxy in the path**. The gate
+fails only when the proxy's throughput drops below — or its latency climbs
+above — a configured *multiple* of that baseline:
+
+```jsonc
+"pairings": {
+  // REST / receive: gate on p99-ratio (+ throughput)
+  "dynamodb.GetItem (small)": { "baseline": "azure-sdk.Cosmos.ReadItem (small)", "minThroughputRatio": 0.45, "maxP99Ratio": 3.0 },
+  // AMQP send: gate on p50-ratio only (p99 is cold-attach noise)
+  "sns.Publish (256 B)":      { "baseline": "azure-sdk.ServiceBusTopics.SendMessage (256 B)", "minThroughputRatio": 0.0, "maxP50Ratio": 5.0 }
+}
+```
+
+`azure-sdk.*` baselines never fail the build — they are reference rulers,
+never the proxy side of a pairing.
+
+Because the emulator's tail-latency jitter hits **both** sides equally, the
+ratio cancels the noise — a failure here is genuine proxy overhead, not
+flakiness. A `0` ratio opts out of that dimension.
+
+**Metric by path shape** — the gate picks the statistic that is *stable* for
+each path, and only pairs against a baseline that is itself a stable ruler:
+
+- **REST + AMQP receive** pairs gate on **p99-ratio** (and usually
+  throughput-ratio): their latency distribution is unimodal and their SDK
+  baseline is stable, so p99 is a reliable signal.
+- **EventHubs send** (`kinesis.PutRecord`) gates on **p50-ratio (median)**. A
+  send's distribution is bimodal — a steady mode plus rare multi-second cold
+  link-attach spikes — and which side those spikes land in p99 (vs max) is
+  essentially random per run, so the p99-ratio swings wildly (observed
+  **0.06×–11×** between structurally identical send pairs in one run). The
+  median ignores the cold-attach tail; the EH baseline is stable (~3–5 ms,
+  thousands of clean samples), so the p50-ratio is meaningful.
+- **Service Bus sends** (`sqs.SendMessage`, `sns.Publish`) are **NOT paired**
+  and gate on a **throughput floor only**. The SB emulator's *own* SDK send
+  baseline is too unstable to be a relative ruler (its p50 swings 3–5×
+  run-to-run — queue 8→23.5 ms, topic 43→8.8 ms — because the baseline
+  link-attaches per send while the proxy pools connections). And an *absolute*
+  p99 ceiling is no better: the proxy's own send p99 is bimodal, with a rare
+  cold AMQP link-attach dropping a multi-second spike into the top 1%
+  unpredictably (observed **234 ms** one run, **3108 ms** the next). So these
+  paths rely on `AssertHealthy` (no completions / >10% failures) plus a
+  throughput floor (`minThroughputPerSec`) as the catastrophe detector; the
+  latency tail carries no stable signal at any threshold.
+- **DynamoDB BatchGetItem** is also **NOT paired** — it gates on an **absolute
+  p99 ceiling** instead. Here the *proxy* is the stable side (Cosmos REST p99
+  ~240–340 ms across runs, unimodal), while the `Cosmos.ReadManyItems` baseline
+  is the jittery, structurally-unfair ruler: it is a specialized batched SDK
+  API the proxy can only approximate as N point-reads, and its own p99 collapsed
+  from ~106 ms to ~45 ms in one run, spiking the *ratio* to 5.3× with no proxy
+  change. Gating the stable proxy p99 against a fixed ceiling is the honest
+  signal; a real proxy regression still trips it.
+
+A **freshness window** (2 h) makes the gate skip any pair whose proxy and
+baseline rows were not captured in the same run, so a fresh proxy row is
+never judged against a stale committed baseline.
+
+The machine-readable hand-off file `baseline-latest.json` is written by the
+scenario step (merged in place by scenario name, each row stamped
+`capturedAtUtc`) and is **gitignored** — it is fresh per run. The
+human-readable `baseline-latest.md` snapshot stays tracked.
+
+To adjust a gate, edit `baseline-reference.json` deliberately — bump a ratio
+only when a code change is an understood, accepted trade-off. The guard
+tests in `KnownPerfScenariosTests` fail the build if a pairing references an
+unknown scenario.
+
+
 
 - Workload matrix per module (small / medium / large payload, 1 / 16 / 64
   concurrency) — currently MVP is a single point per module.

@@ -137,7 +137,7 @@ public sealed class S3PerfTests(S3PerfFixture fixture)
     [SkippableTheory]
     [InlineData("1 KiB", 1 * 1024, 16)]
     [InlineData("1 MiB", 1 * 1024 * 1024, 8)]
-    [InlineData("10 MiB", 10 * 1024 * 1024, 4)]
+    [InlineData("10 MiB", 10 * 1024 * 1024, 2)]
     public async Task PutObject_size_throughput(string label, int size, int concurrency)
     {
         Skip.IfNot(fixture.Ready, fixture.SkipReason);

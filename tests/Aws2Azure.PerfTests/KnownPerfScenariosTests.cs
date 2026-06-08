@@ -87,6 +87,31 @@ public sealed class KnownPerfScenariosTests
             string.Join("\n  - ", stale));
     }
 
+    [Fact]
+    public void Every_pairing_references_known_scenarios()
+    {
+        var path = FindRepoPath("docs", "perf", "baseline-reference.json");
+        var doc = JsonSerializer.Deserialize(File.ReadAllText(path), PerfBaselineJsonContext.Default.PerfBaselineDocument);
+        var pairings = doc?.Pairings;
+        if (pairings is null || pairings.Count == 0) return; // pairings are optional
+
+        var known = new HashSet<string>(All);
+        var problems = new List<string>();
+        foreach (var (proxy, pairing) in pairings)
+        {
+            if (!known.Contains(proxy))
+                problems.Add($"pairing key '{proxy}' is not a known scenario");
+            if (string.IsNullOrWhiteSpace(pairing.Baseline))
+                problems.Add($"pairing '{proxy}' has no baseline");
+            else if (!known.Contains(pairing.Baseline))
+                problems.Add($"pairing '{proxy}' references unknown baseline '{pairing.Baseline}'");
+            if (string.Equals(proxy, pairing.Baseline, StringComparison.Ordinal))
+                problems.Add($"pairing '{proxy}' is paired with itself");
+        }
+        Assert.True(problems.Count == 0,
+            "Invalid pairings in baseline-reference.json:\n  - " + string.Join("\n  - ", problems));
+    }
+
     private static string FindRepoPath(params string[] segments)
     {
         var dir = AppContext.BaseDirectory;

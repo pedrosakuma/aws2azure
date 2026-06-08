@@ -44,7 +44,29 @@ internal static class PerfReport
         {
             WriteMarkdownMerged(mdPath, result.Scenario, row);
             AppendHistoryCsv(csvPath, result, notes);
+            WriteJsonMerged(result, notes);
         }
+    }
+
+    private static void WriteJsonMerged(PerfResult result, string? notes)
+    {
+        var path = GetResultsJsonPath();
+        var doc = PerfResultsFile.LoadOrEmpty(path);
+        doc.Scenarios[result.Scenario] = new PerfResultRow
+        {
+            Concurrency = result.Concurrency,
+            ElapsedSeconds = result.ElapsedSeconds,
+            Completed = result.Completed,
+            Failures = result.Failures,
+            ThroughputPerSec = result.ThroughputPerSec,
+            P50Ms = result.P50Us / 1000.0,
+            P95Ms = result.P95Us / 1000.0,
+            P99Ms = result.P99Us / 1000.0,
+            MaxMs = result.MaxUs / 1000.0,
+            CapturedAtUtc = DateTime.UtcNow,
+            Notes = notes,
+        };
+        PerfResultsFile.Save(path, doc);
     }
 
     private static void WriteMarkdownMerged(string path, string scenario, string newRow)
@@ -165,6 +187,7 @@ internal static class PerfReport
 
     public static string GetReportPath() => Path.Combine(GetPerfDir(), "baseline-latest.md");
     public static string GetHistoryCsvPath() => Path.Combine(GetPerfDir(), "history.csv");
+    public static string GetResultsJsonPath() => Path.Combine(GetPerfDir(), "baseline-latest.json");
 
     private static string GetPerfDir()
     {
