@@ -112,50 +112,11 @@ public sealed class SnsPerfTests(SnsPerfFixture fixture)
         result.AssertNoRegression();
     }
 
-    [SkippableFact]
-    public async Task SetSubscriptionAttributes_throughput()
-    {
-        Skip.IfNot(fixture.Ready, fixture.SkipReason);
-
-        using var client = fixture.CreateClient();
-
-        // Seed one subscription per worker slot so concurrent workers never
-        // update the SAME Service Bus subscription — SB management uses
-        // optimistic concurrency (ETag) and concurrent UpdateSubscription on
-        // one entity returns HTTP 409.
-        const int workers = 8;
-        var subscriptionArns = new string[workers];
-        for (var i = 0; i < workers; i++)
-        {
-            var seeded = await client.SubscribeAsync(new SubscribeRequest
-            {
-                TopicArn = fixture.TopicArn,
-                Protocol = "sqs",
-                Endpoint = $"arn:aws:sqs:us-east-1:000000000000:perf-set-{i:D2}-{Guid.NewGuid().ToString("N")[..8]}",
-                ReturnSubscriptionArn = true,
-            }).ConfigureAwait(false);
-            subscriptionArns[i] = seeded.SubscriptionArn;
-        }
-
-        var result = await PerfRunner.RunAsync(
-            scenario: "sns.SetSubscriptionAttributes (FilterPolicy)",
-            concurrency: workers,
-            duration: TimeSpan.FromSeconds(20),
-            warmup: TimeSpan.FromSeconds(3),
-            action: async (workerId, ct) =>
-            {
-                // Each worker owns a distinct subscription (warmup id -1 → slot 0).
-                var slot = workerId < 0 ? 0 : workerId % subscriptionArns.Length;
-                await client.SetSubscriptionAttributesAsync(new SetSubscriptionAttributesRequest
-                {
-                    SubscriptionArn = subscriptionArns[slot],
-                    AttributeName = "FilterPolicy",
-                    AttributeValue = $"{{\"kind\":[\"perf-{slot}\"]}}",
-                }, ct).ConfigureAwait(false);
-            });
-
-        PerfReport.Append(result, notes: "SNS→ServiceBusTopics management — SetSubscriptionAttributes(FilterPolicy), one subscription per worker (avoids ETag 409); exercises get-then-update metadata path (emulator does not persist subscription metadata; results are emulator-bound).");
-        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
-        result.AssertNoRegression();
-    }
+    // NOTE: A SetSubscriptionAttributes perf scenario is intentionally omitted.
+    // The handler does a get-then-conditional-update against the Service Bus
+    // management API, and the SB emulator returns HTTP 409 on UpdateSubscription
+    // and does not persist subscription UserMetadata — the same emulator
+    // limitation that forces the integration roundtrip test to Skip.If(true)
+    // (see SnsSubscriptionsServiceBusTests). SetSubscriptionAttributes perf must
+    // be measured against real Azure; tracked alongside #177.
 }
