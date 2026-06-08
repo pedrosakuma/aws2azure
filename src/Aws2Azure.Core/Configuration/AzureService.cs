@@ -12,4 +12,5 @@ public enum AzureService
     Cosmos,
     EventHubs,
     EventGrid,
+    KeyVault,
 }

@@ -44,11 +44,15 @@ jobs:
         run: dotnet build -c Release --nologo
       - name: Run real-Azure SQS integration tests
         env:
-          # Secret is intentionally unavailable on PRs from forks; the
-          # tests guard on this and skip rather than fail in that case,
-          # so unprivileged contributors do not see red CI for a check
+          # Secrets are intentionally unavailable on PRs from forks; the
+          # tests guard on these and skip rather than fail in that case,
+          # so unprivileged contributors do not see red CI for checks
           # they cannot run.
           AZURE_SB_CONNSTR: ${{ secrets.AZURE_SB_CONNSTR }}
+          AZURE_KEYVAULT_URL: ${{ secrets.AZURE_KEYVAULT_URL }}
+          AZURE_KEYVAULT_TENANT_ID: ${{ secrets.AZURE_KEYVAULT_TENANT_ID }}
+          AZURE_KEYVAULT_CLIENT_ID: ${{ secrets.AZURE_KEYVAULT_CLIENT_ID }}
+          AZURE_KEYVAULT_CLIENT_SECRET: ${{ secrets.AZURE_KEYVAULT_CLIENT_SECRET }}
         run: |
           dotnet test tests/Aws2Azure.IntegrationTests \
             -c Release --no-build --nologo \

@@ -18,6 +18,7 @@ public class StaticCredentialResolverTests
                     ServiceBus = new ServiceBusCredentials { Namespace = "ns1", SasKeyName = "n", SasKey = "k" },
                     ServiceBusTopics = new ServiceBusTopicsCredentials { Namespace = "ns-topics", SasKeyName = "topic-rule", SasKey = "topic-key" },
                     EventGrid = new EventGridCredentials { Endpoint = "https://example.westus2-1.eventgrid.azure.net/api/events", AccessKey = "eg-key" },
+                   KeyVault = new KeyVaultCredentials { VaultUrl = "https://vault-example.vault.azure.net/", TenantId = "tenant-1", ClientId = "client-1", ClientSecret = "secret-1" },
                 },
             },
             new CredentialEntry
@@ -76,6 +77,9 @@ public class StaticCredentialResolverTests
 
         var eventGrid = Assert.IsType<EventGridCredentials>(resolver.GetAzureCredentialsFor("AKIA1", AzureService.EventGrid));
         Assert.Equal("https://example.westus2-1.eventgrid.azure.net/api/events", eventGrid.Endpoint);
+
+        var keyVault = Assert.IsType<KeyVaultCredentials>(resolver.GetAzureCredentialsFor("AKIA1", AzureService.KeyVault));
+        Assert.Equal("https://vault-example.vault.azure.net/", keyVault.VaultUrl);
 
         var cosmos = Assert.IsType<CosmosCredentials>(resolver.GetAzureCredentialsFor("AKIA2", AzureService.Cosmos));
         Assert.Equal("https://x", cosmos.Endpoint);

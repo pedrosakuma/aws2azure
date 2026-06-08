@@ -25,6 +25,7 @@
     <ProjectReference Include="..\..\src\Aws2Azure.Modules.DynamoDb\Aws2Azure.Modules.DynamoDb.csproj" />
     <ProjectReference Include="..\..\src\Aws2Azure.Modules.Kinesis\Aws2Azure.Modules.Kinesis.csproj" />
     <ProjectReference Include="..\..\src\Aws2Azure.Modules.Sns\Aws2Azure.Modules.Sns.csproj" />
+    <ProjectReference Include="..\..\src\Aws2Azure.Modules.SecretsManager\Aws2Azure.Modules.SecretsManager.csproj" />
   </ItemGroup>
 
 </Project>

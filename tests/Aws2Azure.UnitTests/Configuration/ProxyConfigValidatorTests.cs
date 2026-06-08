@@ -336,6 +336,63 @@ public class ProxyConfigValidatorTests
     }
 
     [Fact]
+    public void Accepts_key_vault_with_aad_credentials()
+    {
+        var config = new ProxyConfig
+        {
+            Credentials =
+            {
+                new CredentialEntry
+                {
+                    AwsAccessKeyId = "AKIA1",
+                    AwsSecretAccessKey = "secret",
+                    Azure = new AzureCredentials
+                    {
+                        KeyVault = new KeyVaultCredentials
+                        {
+                            VaultUrl = "https://example.vault.azure.net/",
+                            TenantId = "tenant",
+                            ClientId = "client",
+                            ClientSecret = "secret",
+                        },
+                    },
+                },
+            },
+        };
+
+        var ex = Record.Exception(() => ProxyConfigValidator.Validate(config));
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void Rejects_key_vault_when_aad_fields_are_incomplete()
+    {
+        var config = new ProxyConfig
+        {
+            Credentials =
+            {
+                new CredentialEntry
+                {
+                    AwsAccessKeyId = "AKIA1",
+                    AwsSecretAccessKey = "secret",
+                    Azure = new AzureCredentials
+                    {
+                        KeyVault = new KeyVaultCredentials
+                        {
+                            VaultUrl = "https://example.vault.azure.net/",
+                            TenantId = "tenant",
+                            ClientId = "client",
+                        },
+                    },
+                },
+            },
+        };
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+        Assert.Contains("keyVault: tenantId, clientId, and clientSecret are required together", ex.Message);
+    }
+
+    [Fact]
     public void Throws_when_event_grid_topic_backend_has_no_destination_or_auth()
     {
         var config = new ProxyConfig

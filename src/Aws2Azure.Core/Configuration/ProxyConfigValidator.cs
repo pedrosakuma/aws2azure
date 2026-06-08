@@ -212,6 +212,26 @@ public static class ProxyConfigValidator
         {
             ValidateEventGrid(eventGrid, prefix + ".eventGrid", errors);
         }
+
+        if (azure.KeyVault is { } keyVault)
+        {
+            if (string.IsNullOrWhiteSpace(keyVault.VaultUrl))
+            {
+                errors.Add($"{prefix}.keyVault.vaultUrl: required.");
+            }
+            else
+            {
+                ValidateAbsoluteUri(keyVault.VaultUrl, $"{prefix}.keyVault.vaultUrl", errors, Uri.UriSchemeHttps);
+            }
+
+            var hasTenant = !string.IsNullOrWhiteSpace(keyVault.TenantId);
+            var hasClientId = !string.IsNullOrWhiteSpace(keyVault.ClientId);
+            var hasClientSecret = !string.IsNullOrWhiteSpace(keyVault.ClientSecret);
+            if (!hasTenant || !hasClientId || !hasClientSecret)
+            {
+                errors.Add($"{prefix}.keyVault: tenantId, clientId, and clientSecret are required together for Key Vault AAD auth.");
+            }
+        }
     }
 
     private static void ValidateServiceBusTopics(

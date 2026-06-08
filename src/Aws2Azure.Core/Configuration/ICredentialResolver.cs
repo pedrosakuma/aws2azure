@@ -16,7 +16,7 @@ public interface ICredentialResolver
     /// <see cref="BlobCredentials"/>, <see cref="ServiceBusCredentials"/>,
     /// <see cref="ServiceBusTopicsCredentials"/>,
     /// <see cref="CosmosCredentials"/>, <see cref="EventHubsCredentials"/>,
-    /// or <see cref="EventGridCredentials"/>.
+    /// <see cref="EventGridCredentials"/>, or <see cref="KeyVaultCredentials"/>.
     /// </summary>
     object? GetAzureCredentialsFor(string awsAccessKeyId, AzureService service);
 }
@@ -65,6 +65,7 @@ public sealed class StaticCredentialResolver : ICredentialResolver
             AzureService.Cosmos           => entry.Azure.Cosmos,
             AzureService.EventHubs        => entry.Azure.EventHubs,
             AzureService.EventGrid        => entry.Azure.EventGrid,
+            AzureService.KeyVault         => entry.Azure.KeyVault,
             _ => null,
         };
     }
