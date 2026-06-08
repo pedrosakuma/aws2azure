@@ -482,8 +482,10 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
                 // Round-robin over the 10×50 seeded items so each call rewrites
                 // an existing item — exercises the UpdateExpression parse +
                 // translation path (DynamoDb→Cosmos PATCH/replace) rather than
-                // an upsert of a brand-new document.
-                var pk = $"p{workerId % fixture.SeededPartitions:D2}";
+                // an upsert of a brand-new document. Normalize the warmup
+                // worker id (-1) to a seeded partition so warmup doesn't upsert
+                // junk rows into the shared QueryTable.
+                var pk = $"p{(workerId < 0 ? 0 : workerId % fixture.SeededPartitions):D2}";
                 var sk = $"s{Random.Shared.Next(0, fixture.SeededItemsPerPartition):D4}";
                 await client.UpdateItemAsync(new UpdateItemRequest
                 {

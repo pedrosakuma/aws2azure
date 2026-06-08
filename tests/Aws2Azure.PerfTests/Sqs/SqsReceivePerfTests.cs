@@ -140,10 +140,16 @@ public sealed class SqsReceivePerfTests(SqsPerfFixture fixture)
                     {
                         deleteReq.Entries.Add(new DeleteMessageBatchRequestEntry($"d{i}", msgs[i].ReceiptHandle));
                     }
-                    await client.DeleteMessageBatchAsync(deleteReq, ct).ConfigureAwait(false);
+                    var deleteResp = await client.DeleteMessageBatchAsync(deleteReq, ct).ConfigureAwait(false);
+                    if (deleteResp.Failed is { Count: > 0 } delFailed)
+                    {
+                        throw new InvalidOperationException(
+                            $"DeleteMessageBatch reported {delFailed.Count} failed entries — first: {delFailed[0].Code} {delFailed[0].Message}");
+                    }
 
                     // Replenish what we drained (best-effort; worker id keeps
-                    // message bodies distinct) so the pool stays populated.
+                    // message bodies distinct) so the pool stays populated. A
+                    // replenish failure silently drains the pool, so surface it.
                     var sendReq = new SendMessageBatchRequest
                     {
                         QueueUrl = fixture.QueueUrl,
@@ -153,7 +159,12 @@ public sealed class SqsReceivePerfTests(SqsPerfFixture fixture)
                     {
                         sendReq.Entries.Add(new SendMessageBatchRequestEntry($"e{i}", $"recycle-w{workerId}-{Guid.NewGuid():N}"));
                     }
-                    await client.SendMessageBatchAsync(sendReq, ct).ConfigureAwait(false);
+                    var sendResp = await client.SendMessageBatchAsync(sendReq, ct).ConfigureAwait(false);
+                    if (sendResp.Failed is { Count: > 0 } sendFailed)
+                    {
+                        throw new InvalidOperationException(
+                            $"DeleteMessageBatch replenish reported {sendFailed.Count} failed sends — first: {sendFailed[0].Code} {sendFailed[0].Message}");
+                    }
                 }
             });
 
