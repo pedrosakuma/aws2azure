@@ -32,3 +32,5 @@ TestResults/
 
 # Perf — locally-generated cumulative history (artifact uploaded by perf workflow; not committed)
 docs/perf/history.csv
+# Perf — machine-readable per-run results consumed by the relative gate (fresh each run; not committed)
+docs/perf/baseline-latest.json

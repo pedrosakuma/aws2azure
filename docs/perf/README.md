@@ -92,7 +92,62 @@ p50`. Always read the two columns together.
 > future, set `AWS2AZURE_AMQP_TIMING=1` to get per-send breadcrumbs and
 > compare with the `AzureEventHubsSdkBaselinePerfTests` row.
 
-## Roadmap
+## Regression gates
+
+Two independent gates guard against perf regressions. They run as **two
+separate `dotnet test` invocations** in `.github/workflows/perf.yml` (the
+relative gate reads a file the scenario step writes, and xUnit gives no
+cross-collection ordering — so a dedicated second process is the robust
+hand-off point):
+
+### 1. Absolute health + floors — `AssertHealthy` / `AssertNoRegression`
+
+Runs inside each scenario. `AssertHealthy()` fails on no completions or a
+>10% failure rate — a genuinely broken proxy path. `AssertNoRegression()`
+compares against per-scenario floors/ceilings in
+[`baseline-reference.json`](baseline-reference.json) (`minThroughputPerSec`
+/ `maxP99Ms`). **On emulator-bound AMQP paths these absolutes are set to
+`0` (disabled)** because the emulator's multi-second cold-connect tail
+stalls move p99 by 20× run-to-run — an absolute ceiling there only produces
+chronic false reds. Those paths are gated relatively instead (below). REST
+paths (S3/DynamoDB) keep meaningful absolute floors.
+
+### 2. Relative proxy-vs-SDK gate — `RelativeRegressionGate`
+
+Each proxy scenario is paired in `baseline-reference.json`'s `pairings`
+section with an `azure-sdk.*` baseline scenario that measures the **same
+operation against the same emulator with no proxy in the path**. The gate
+fails only when the proxy's throughput drops below — or its p99 climbs above
+— a configured *multiple* of that baseline:
+
+```jsonc
+"pairings": {
+  "sns.Publish": { "baseline": "azure-sdk.sns.Publish", "minThroughputRatio": 0.0, "maxP99Ratio": 1.5 }
+}
+```
+
+Because the emulator's tail-latency jitter hits **both** sides equally, the
+ratio cancels the noise — a failure here is genuine proxy overhead, not
+flakiness. A `0` ratio opts out of that half: AMQP-send pairs use
+`minThroughputRatio: 0` (short-window throughput is skewed by cold stalls
+eating baseline completions) and gate on p99-ratio only. `azure-sdk.*`
+baselines never fail the build (they are never the proxy side of a pairing).
+
+A **freshness window** (2 h) makes the gate skip any pair whose proxy and
+baseline rows were not captured in the same run, so a fresh proxy row is
+never judged against a stale committed baseline.
+
+The machine-readable hand-off file `baseline-latest.json` is written by the
+scenario step (merged in place by scenario name, each row stamped
+`capturedAtUtc`) and is **gitignored** — it is fresh per run. The
+human-readable `baseline-latest.md` snapshot stays tracked.
+
+To adjust a gate, edit `baseline-reference.json` deliberately — bump a ratio
+only when a code change is an understood, accepted trade-off. The guard
+tests in `KnownPerfScenariosTests` fail the build if a pairing references an
+unknown scenario.
+
+
 
 - Workload matrix per module (small / medium / large payload, 1 / 16 / 64
   concurrency) — currently MVP is a single point per module.
