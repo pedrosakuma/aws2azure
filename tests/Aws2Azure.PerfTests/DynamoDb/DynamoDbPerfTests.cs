@@ -464,4 +464,82 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
         result.AssertNoRegression();
     }
+
+    [SkippableFact]
+    public async Task UpdateItem_throughput()
+    {
+        Skip.IfNot(fixture.Ready, fixture.SkipReason);
+
+        using var client = fixture.CreateClient();
+
+        var result = await PerfRunner.RunAsync(
+            scenario: "dynamodb.UpdateItem (SET expression)",
+            concurrency: 16,
+            duration: TimeSpan.FromSeconds(20),
+            warmup: TimeSpan.FromSeconds(3),
+            action: async (workerId, ct) =>
+            {
+                // Round-robin over the 10×50 seeded items so each call rewrites
+                // an existing item — exercises the UpdateExpression parse +
+                // translation path (DynamoDb→Cosmos PATCH/replace) rather than
+                // an upsert of a brand-new document.
+                var pk = $"p{workerId % fixture.SeededPartitions:D2}";
+                var sk = $"s{Random.Shared.Next(0, fixture.SeededItemsPerPartition):D4}";
+                await client.UpdateItemAsync(new UpdateItemRequest
+                {
+                    TableName = fixture.QueryTableName,
+                    Key = new Dictionary<string, AttributeValue>
+                    {
+                        ["pk"] = new() { S = pk },
+                        ["sk"] = new() { S = sk },
+                    },
+                    UpdateExpression = "SET payload = :p, score = :s",
+                    ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                    {
+                        [":p"] = new() { S = "upd-256-bytes-of-padding-" + new string('y', 200) },
+                        [":s"] = new() { N = Random.Shared.Next(0, 100).ToString(System.Globalization.CultureInfo.InvariantCulture) },
+                    },
+                }, ct).ConfigureAwait(false);
+            });
+
+        PerfReport.Append(result, notes: "DynamoDB→Cosmos UpdateItem — SET expression on seeded QueryTable items");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
+    }
+
+    [SkippableFact]
+    public async Task DeleteItem_throughput()
+    {
+        Skip.IfNot(fixture.Ready, fixture.SkipReason);
+
+        using var client = fixture.CreateClient();
+
+        var result = await PerfRunner.RunAsync(
+            scenario: "dynamodb.DeleteItem (idempotent)",
+            concurrency: 16,
+            duration: TimeSpan.FromSeconds(20),
+            warmup: TimeSpan.FromSeconds(3),
+            action: async (workerId, ct) =>
+            {
+                // Delete unique keys that were never written. DynamoDB DeleteItem
+                // is idempotent — a missing item is a 200 success — and the
+                // proxy's translation cost (table-metadata read + Cosmos DELETE)
+                // is independent of item existence. This avoids seed-pool
+                // exhaustion over a 20 s run while faithfully measuring the
+                // DeleteItem hot path.
+                var key = $"del-w{workerId:D2}-{Guid.NewGuid():N}";
+                await client.DeleteItemAsync(new DeleteItemRequest
+                {
+                    TableName = fixture.TableName,
+                    Key = new Dictionary<string, AttributeValue>
+                    {
+                        ["pk"] = new() { S = key },
+                    },
+                }, ct).ConfigureAwait(false);
+            });
+
+        PerfReport.Append(result, notes: "DynamoDB→Cosmos DeleteItem — idempotent delete of unique non-existent keys (200 no-op; cost independent of existence)");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
+    }
 }
