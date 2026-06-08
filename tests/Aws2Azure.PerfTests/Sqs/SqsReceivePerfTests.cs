@@ -60,6 +60,119 @@ public sealed class SqsReceivePerfTests(SqsPerfFixture fixture)
         result.AssertNoRegression();
     }
 
+    [SkippableFact]
+    public async Task ChangeMessageVisibility_throughput()
+    {
+        Skip.IfNot(fixture.Ready, fixture.SkipReason);
+
+        using var client = fixture.CreateClient();
+        await DrainAsync(client, fixture.QueueUrl).ConfigureAwait(false);
+        await PrefillAsync(client, fixture.QueueUrl, PrefillCount).ConfigureAwait(false);
+
+        var result = await PerfRunner.RunAsync(
+            scenario: "sqs.ReceiveMessage+ChangeVisibility (0)",
+            concurrency: Concurrency,
+            duration: Duration,
+            warmup: Warmup,
+            action: async (_, ct) =>
+            {
+                var resp = await client.ReceiveMessageAsync(new ReceiveMessageRequest
+                {
+                    QueueUrl = fixture.QueueUrl,
+                    MaxNumberOfMessages = 1,
+                    WaitTimeSeconds = 0,
+                }, ct).ConfigureAwait(false);
+
+                if (resp.Messages is { Count: > 0 })
+                {
+                    // VisibilityTimeout=0 maps to AMQP Abandon — the message
+                    // returns to the queue immediately, so the prefilled pool
+                    // never drains and the scenario sustains a steady
+                    // receive+change-visibility round-trip for the full window.
+                    await client.ChangeMessageVisibilityAsync(new ChangeMessageVisibilityRequest
+                    {
+                        QueueUrl = fixture.QueueUrl,
+                        ReceiptHandle = resp.Messages[0].ReceiptHandle,
+                        VisibilityTimeout = 0,
+                    }, ct).ConfigureAwait(false);
+                }
+            });
+
+        PerfReport.Append(result, notes: "SQS→ServiceBus(AMQP) emulator — receive+ChangeMessageVisibility(0)=Abandon; pool recycles so it never drains");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
+    }
+
+    [SkippableFact]
+    public async Task DeleteMessageBatch_throughput()
+    {
+        Skip.IfNot(fixture.Ready, fixture.SkipReason);
+
+        using var client = fixture.CreateClient();
+        await DrainAsync(client, fixture.QueueUrl).ConfigureAwait(false);
+        // Seed an initial pool so the first iterations have something to drain;
+        // each iteration then re-sends what it deletes to keep the pool roughly
+        // constant and the DeleteMessageBatch handler continuously hot.
+        await PrefillAsync(client, fixture.QueueUrl, 300).ConfigureAwait(false);
+
+        var result = await PerfRunner.RunAsync(
+            scenario: "sqs.ReceiveMessage+DeleteMessageBatch (10)",
+            concurrency: 8,
+            duration: Duration,
+            warmup: Warmup,
+            action: async (workerId, ct) =>
+            {
+                var resp = await client.ReceiveMessageAsync(new ReceiveMessageRequest
+                {
+                    QueueUrl = fixture.QueueUrl,
+                    MaxNumberOfMessages = 10,
+                    WaitTimeSeconds = 0,
+                }, ct).ConfigureAwait(false);
+
+                if (resp.Messages is { Count: > 0 } msgs)
+                {
+                    var deleteReq = new DeleteMessageBatchRequest
+                    {
+                        QueueUrl = fixture.QueueUrl,
+                        Entries = new List<DeleteMessageBatchRequestEntry>(msgs.Count),
+                    };
+                    for (var i = 0; i < msgs.Count; i++)
+                    {
+                        deleteReq.Entries.Add(new DeleteMessageBatchRequestEntry($"d{i}", msgs[i].ReceiptHandle));
+                    }
+                    var deleteResp = await client.DeleteMessageBatchAsync(deleteReq, ct).ConfigureAwait(false);
+                    if (deleteResp.Failed is { Count: > 0 } delFailed)
+                    {
+                        throw new InvalidOperationException(
+                            $"DeleteMessageBatch reported {delFailed.Count} failed entries — first: {delFailed[0].Code} {delFailed[0].Message}");
+                    }
+
+                    // Replenish what we drained (best-effort; worker id keeps
+                    // message bodies distinct) so the pool stays populated. A
+                    // replenish failure silently drains the pool, so surface it.
+                    var sendReq = new SendMessageBatchRequest
+                    {
+                        QueueUrl = fixture.QueueUrl,
+                        Entries = new List<SendMessageBatchRequestEntry>(msgs.Count),
+                    };
+                    for (var i = 0; i < msgs.Count; i++)
+                    {
+                        sendReq.Entries.Add(new SendMessageBatchRequestEntry($"e{i}", $"recycle-w{workerId}-{Guid.NewGuid():N}"));
+                    }
+                    var sendResp = await client.SendMessageBatchAsync(sendReq, ct).ConfigureAwait(false);
+                    if (sendResp.Failed is { Count: > 0 } sendFailed)
+                    {
+                        throw new InvalidOperationException(
+                            $"DeleteMessageBatch replenish reported {sendFailed.Count} failed sends — first: {sendFailed[0].Code} {sendFailed[0].Message}");
+                    }
+                }
+            });
+
+        PerfReport.Append(result, notes: "SQS→ServiceBus(AMQP) emulator — receive+DeleteMessageBatch(10)+replenish; throughput conflates the three ops, use the proxy profiler to attribute the DeleteMessageBatch handler");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
+    }
+
     private static async Task PrefillAsync(IAmazonSQS client, string queueUrl, int total)
     {
         // SendMessageBatch caps at 10 entries / 256 KiB per call. The SB
