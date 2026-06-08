@@ -29,6 +29,16 @@ Tier 1 is fully offline: auth/validation errors are rejected in the SigV4 stage
 **before** any Azure call, so the proxy boots in-process via
 `WebApplicationFactory` with a dummy Blob credential and no container.
 
+Tier 2 is a **live differential**: the same validly-signed request is sent to the
+proxy (booted over a real **Azurite** backend so its Azure→S3 error translation
+runs) and to **LocalStack S3** (an authoritative real-S3 shape); the two
+canonical responses are diffed allow-list-aware. It needs Docker, so its tests
+are gated with `[SkippableFact]` + `Skip.IfNot(DockerAvailable, …)`: the every-PR
+`ci.yml` run (no Docker) **skips** them, keeping Tier 1 offline and blocking,
+while the dedicated `conformance.yml` workflow (Docker) runs them
+nightly / on the `run-integration` label. In record mode the LocalStack response
+is written as the committed golden so Tier 1 can diff against it offline.
+
 ## How it works
 
 ```
@@ -80,12 +90,19 @@ Any divergence **not** covered by a documented tag fails the Tier-1 run.
 ## Running
 
 ```bash
-dotnet test tests/Aws2Azure.Conformance            # Tier 1 (offline)
+dotnet test tests/Aws2Azure.Conformance            # Tier 1 offline; Tier 2 skips without Docker
+AWS2AZURE_CONFORMANCE_RECORD=1 dotnet test tests/Aws2Azure.Conformance   # (re)capture goldens from LocalStack
 ```
 
-## Scope of the first slice (issue #228)
+## Scope so far (issue #228)
 
-S3 proxy-side auth errors: `SignatureDoesNotMatch`, `InvalidAccessKeyId`,
-`RequestTimeTooSkewed`. The Tier-2 LocalStack capture (which lands authoritative
-goldens, flagged emulator-derived) and backend-mapped errors (`NoSuchBucket` /
-`NoSuchKey`, needing an Azure-Blob backend) follow in stacked PRs.
+- **Tier 1 — S3 proxy-side auth errors** (offline, every PR):
+  `SignatureDoesNotMatch`, `InvalidAccessKeyId`, `RequestTimeTooSkewed`.
+- **Tier 2 — S3 backend-mapped errors** (LocalStack differential, Docker):
+  `NoSuchBucket` (GET on a missing bucket) and `NoSuchKey` (GET a missing key in
+  an existing bucket), proxy-over-Azurite vs LocalStack S3. The accepted
+  faithful divergences (proxy omits `x-amz-id-2` / `<HostId>` / `<BucketName>` /
+  `<Key>` and adds `charset=utf-8`) are documented in
+  `docs/gaps/s3/GetObject.yaml`.
+
+Real-AWS goldens (Tier 3) and further operations follow in later PRs.
