@@ -104,6 +104,7 @@ public sealed class AzureCredentials
     public CosmosCredentials? Cosmos { get; set; }
     public EventHubsCredentials? EventHubs { get; set; }
     public EventGridCredentials? EventGrid { get; set; }
+    public KeyVaultCredentials? KeyVault { get; set; }
 }
 
 public sealed class BlobCredentials
@@ -224,6 +225,14 @@ public sealed class SnsTopicSettings
     /// settings are used.
     /// </summary>
     public string? EventGridAccessKey { get; set; }
+}
+
+public sealed class KeyVaultCredentials
+{
+    public string VaultUrl { get; set; } = string.Empty;
+    public string? TenantId { get; set; }
+    public string? ClientId { get; set; }
+    public string? ClientSecret { get; set; }
 }
 
 public sealed class EventGridCredentials

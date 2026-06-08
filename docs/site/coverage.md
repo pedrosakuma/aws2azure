@@ -101,6 +101,12 @@
 | s3 | [RestoreObject](s3.md#restoreobject) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
 | s3 | [UploadPart](s3.md#uploadpart) | ✅ implemented | `Put Block (?comp=block&blockid=…)` |
 | s3 | [UploadPartCopy](s3.md#uploadpartcopy) | ✅ implemented | `Put Block From URL (?comp=block&blockid=…)` |
+| secretsmanager | [CreateSecret](secretsmanager.md#createsecret) | ✅ implemented | `PUT https://{vault}.vault.azure.net/secrets/{name}` |
+| secretsmanager | [DeleteSecret](secretsmanager.md#deletesecret) | ✅ implemented | `DELETE https://{vault}.vault.azure.net/secrets/{name}` |
+| secretsmanager | [DescribeSecret](secretsmanager.md#describesecret) | ✅ implemented | `GET https://{vault}.vault.azure.net/secrets/{name}?api-version=7.4` |
+| secretsmanager | [GetSecretValue](secretsmanager.md#getsecretvalue) | ✅ implemented | `GET https://{vault}.vault.azure.net/secrets/{name}/versions/{version?}` |
+| secretsmanager | [ListSecrets](secretsmanager.md#listsecrets) | ✅ implemented | `GET https://{vault}.vault.azure.net/secrets?api-version=7.4` |
+| secretsmanager | [UpdateSecret](secretsmanager.md#updatesecret) | ✅ implemented | `PUT https://{vault}.vault.azure.net/secrets/{name}/versions` |
 | sns | [ConfirmSubscription](sns.md#confirmsubscription) | 🟡 partial | `Azure Service Bus topic subscriptions` |
 | sns | [CreateTopic](sns.md#createtopic) | 🟡 partial | `Azure Service Bus Topics management REST API` |
 | sns | [DeleteTopic](sns.md#deletetopic) | 🟡 partial | `Azure Service Bus Topics management REST API` |

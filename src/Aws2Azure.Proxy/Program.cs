@@ -12,6 +12,7 @@ using Aws2Azure.Modules.Sqs;
 using Aws2Azure.Modules.DynamoDb;
 using Aws2Azure.Modules.Kinesis;
 using Aws2Azure.Modules.Sns;
+using Aws2Azure.Modules.SecretsManager;
 using Aws2Azure.Modules.Kinesis.EventHubsAmqp;
 using Aws2Azure.Modules.Kinesis.EventHubsRest;
 using Aws2Azure.Modules.Kinesis.Operations;
@@ -230,6 +231,11 @@ builder.Services.AddSingleton<ServiceModuleRegistry>(sp =>
             sp.GetRequiredService<IEventGridPublisher>(),
             sp.GetRequiredService<ILogger<SnsServiceModule>>(),
             CapabilityRegistry.Sns),
+        new SecretsManagerServiceModule(
+            azureHttpClient,
+            credentialResolver,
+            CapabilityRegistry.Secretsmanager,
+            tokenProvider),
     ];
     return new ServiceModuleRegistry(modules, sigV4Validator, sp.GetRequiredService<ProxyMetrics>());
 });
