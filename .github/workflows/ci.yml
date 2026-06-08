@@ -17,5 +17,7 @@ jobs:
         run: dotnet build -c Release --nologo
       - name: Unit tests
         run: dotnet test tests/Aws2Azure.UnitTests -c Release --no-build --nologo
+      - name: Conformance tests (Tier 1, offline)
+        run: dotnet test tests/Aws2Azure.Conformance -c Release --no-build --nologo
       - name: AOT publish (linux-x64)
         run: dotnet publish src/Aws2Azure.Proxy -c Release -r linux-x64 --nologo
