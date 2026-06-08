@@ -160,6 +160,14 @@ each path, and only pairs against a baseline that is itself a stable ruler:
   paths rely on `AssertHealthy` (no completions / >10% failures) plus a
   throughput floor (`minThroughputPerSec`) as the catastrophe detector; the
   latency tail carries no stable signal at any threshold.
+- **DynamoDB BatchGetItem** is also **NOT paired** — it gates on an **absolute
+  p99 ceiling** instead. Here the *proxy* is the stable side (Cosmos REST p99
+  ~240–340 ms across runs, unimodal), while the `Cosmos.ReadManyItems` baseline
+  is the jittery, structurally-unfair ruler: it is a specialized batched SDK
+  API the proxy can only approximate as N point-reads, and its own p99 collapsed
+  from ~106 ms to ~45 ms in one run, spiking the *ratio* to 5.3× with no proxy
+  change. Gating the stable proxy p99 against a fixed ceiling is the honest
+  signal; a real proxy regression still trips it.
 
 A **freshness window** (2 h) makes the gate skip any pair whose proxy and
 baseline rows were not captured in the same run, so a fresh proxy row is
