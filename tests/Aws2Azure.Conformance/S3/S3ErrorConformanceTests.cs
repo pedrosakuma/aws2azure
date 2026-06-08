@@ -39,9 +39,14 @@ public sealed class S3ErrorConformanceTests : IClassFixture<ConformanceProxyFixt
         var canonical = AwsErrorCanonicalizer.Canonicalize(
             (int)response.StatusCode, FlattenHeaders(response), body);
 
-        // (1) AWS-contract oracle — always enforced, offline.
+        // (1) AWS-contract oracle — always enforced, offline. Pin the S3 <Error>
+        // envelope shape, not merely "some parseable XML": status, root element,
+        // and the required Code + Message fields.
         Assert.Equal(testCase.ExpectedStatus, canonical.StatusCode);
         Assert.Equal(CanonicalResponse.BodyKindXmlError, canonical.BodyKind);
+        var root = canonical.BodyFields.FirstOrDefault(f => f.Name == "(root)");
+        Assert.Equal("Error", root.Value);
+        Assert.Contains(canonical.BodyFields, f => f.Name == "Message");
         var code = canonical.BodyFields.FirstOrDefault(f => f.Name == "Code");
         Assert.Equal(testCase.ExpectedCode, code.Value);
 
@@ -51,7 +56,8 @@ public sealed class S3ErrorConformanceTests : IClassFixture<ConformanceProxyFixt
         {
             var expected = CanonicalResponse.ParseRendered(golden.CanonicalText);
             var allow = ConformanceAllowList.FromGapDocs("s3");
-            var (_, unexpected) = allow.Partition(CanonicalDiff.Compare(expected, canonical));
+            var (_, unexpected) = allow.Partition(
+                CanonicalDiff.Compare(expected, canonical), testCase.Name);
             Assert.True(unexpected.Count == 0, BuildReport(testCase, golden, unexpected, canonical));
         }
     }

@@ -68,6 +68,13 @@ Divergence tags: `status`, `body-kind`, `missing-header:<name>`,
 `extra-header:<name>`, `header-value:<name>`, `missing-field:<name>`,
 `extra-field:<name>`, `field-value:<name>`.
 
+A bare `[conformance:<tag>]` accepts the divergence **service-wide** (use for
+genuinely cross-cutting gaps, e.g. the proxy omitting `x-amz-id-2` on every S3
+error). To accept a divergence for **one case only** — so a narrow waiver can't
+silently suppress the same divergence elsewhere — scope it with the case name:
+`[conformance:<caseName>::<tag>]` (e.g.
+`[conformance:signature-does-not-match::field-value:Code]`).
+
 Any divergence **not** covered by a documented tag fails the Tier-1 run.
 
 ## Running

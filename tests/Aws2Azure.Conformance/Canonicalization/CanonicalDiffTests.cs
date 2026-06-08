@@ -110,6 +110,30 @@ public sealed class ConformanceAllowListTests
     }
 
     [Fact]
+    public void Case_scoped_tag_does_not_suppress_other_cases()
+    {
+        // A waiver scoped to one case must not accept the same divergence in a
+        // different case (gpt-5.5 finding: service-global tags over-suppress).
+        var allow = new ConformanceAllowList(new[] { "signature-does-not-match::field-value:Code" });
+        var divergence = new Divergence("field-value:Code", "Code mismatch");
+
+        Assert.True(allow.Accepts(divergence, "signature-does-not-match"));
+        Assert.False(allow.Accepts(divergence, "invalid-access-key-id"));
+        Assert.False(allow.Accepts(divergence, caseName: null));
+    }
+
+    [Fact]
+    public void Service_wide_tag_accepts_in_every_case()
+    {
+        var allow = new ConformanceAllowList(new[] { "missing-header:x-amz-id-2" });
+        var divergence = new Divergence("missing-header:x-amz-id-2", "header omitted");
+
+        Assert.True(allow.Accepts(divergence, "signature-does-not-match"));
+        Assert.True(allow.Accepts(divergence, "invalid-access-key-id"));
+        Assert.True(allow.Accepts(divergence, caseName: null));
+    }
+
+    [Fact]
     public void Real_s3_gap_docs_load_without_error()
     {
         // Smoke: the allow-list can parse the committed S3 gap docs. Tag set may

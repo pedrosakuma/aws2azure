@@ -1,3 +1,4 @@
+using System.Text;
 using System.Xml;
 
 namespace Aws2Azure.Conformance.Canonicalization;
@@ -98,9 +99,8 @@ public static class AwsErrorCanonicalizer
             return fields;
         }
 
-        // Note: ReadElementContentAsString advances the reader past the element's
-        // end tag to the next node, so the loop must NOT call Read() again after a
-        // successful read — doing so would skip every other sibling element.
+        // ReadElement fully consumes each child element and leaves the reader
+        // positioned on the next node, so the loop must NOT call Read() after it.
         while (!(reader.NodeType == XmlNodeType.EndElement && reader.Depth == rootDepth))
         {
             if (reader.NodeType != XmlNodeType.Element || reader.Depth != rootDepth + 1)
@@ -112,20 +112,7 @@ public static class AwsErrorCanonicalizer
                 continue;
             }
 
-            var name = reader.LocalName;
-            string rawValue;
-            try
-            {
-                rawValue = reader.ReadElementContentAsString();
-            }
-            catch (InvalidOperationException)
-            {
-                // Element has nested element children (rare for error envelopes):
-                // record presence with a structural marker and skip its subtree.
-                rawValue = "<nested>";
-                reader.Skip();
-            }
-
+            var (name, rawValue) = ReadElement(reader);
             var value = policy.VolatileBodyElements.Contains(name)
                         || policy.NonContractualBodyElements.Contains(name)
                 ? CanonicalResponse.Masked
@@ -134,6 +121,47 @@ public static class AwsErrorCanonicalizer
         }
 
         return fields;
+    }
+
+    /// <summary>
+    /// Reads a single error-envelope child element and leaves the reader on the
+    /// next node. Leaf elements yield their text; an element with nested element
+    /// children yields the structural marker <c>&lt;nested&gt;</c> (its presence is
+    /// part of the contract surface even when its inner shape is not).
+    /// </summary>
+    private static (string Name, string Value) ReadElement(XmlReader reader)
+    {
+        var name = reader.LocalName;
+        if (reader.IsEmptyElement)
+        {
+            reader.Read();
+            return (name, string.Empty);
+        }
+
+        var startDepth = reader.Depth;
+        var text = new StringBuilder();
+        var nested = false;
+        reader.Read();
+        while (!(reader.NodeType == XmlNodeType.EndElement && reader.Depth == startDepth))
+        {
+            if (reader.NodeType == XmlNodeType.Element)
+            {
+                nested = true;
+                reader.Skip(); // advances past the child subtree to the next node
+                continue;
+            }
+            if (reader.NodeType is XmlNodeType.Text or XmlNodeType.CDATA
+                or XmlNodeType.SignificantWhitespace or XmlNodeType.Whitespace)
+            {
+                text.Append(reader.Value);
+            }
+            if (!reader.Read())
+            {
+                break;
+            }
+        }
+        reader.Read(); // consume the end tag, positioning on the next sibling
+        return (name, nested ? "<nested>" : text.ToString());
     }
 
     private static string NormalizeHeaderValue(string name, string value)

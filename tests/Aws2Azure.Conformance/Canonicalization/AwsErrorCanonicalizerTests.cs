@@ -203,6 +203,40 @@ public sealed class AwsErrorCanonicalizerTests
     }
 
     [Fact]
+    public void Nested_element_yields_marker_and_preserves_sibling_fields()
+    {
+        // An element with nested element children must degrade to a structural
+        // marker WITHOUT collapsing the whole envelope to opaque or dropping the
+        // sibling Code field (regression guard for the canonicalizer being reused
+        // by the Tier-2 differential).
+        var xml =
+            "<Error><Code>SlowDown</Code>" +
+            "<Detail><Inner>x</Inner><Other>y</Other></Detail>" +
+            "<Resource>/bucket</Resource></Error>";
+        var c = AwsErrorCanonicalizer.Canonicalize(503,
+            new[] { H("Content-Type", "application/xml") }, xml);
+
+        Assert.Equal(CanonicalResponse.BodyKindXmlError, c.BodyKind);
+        var fields = c.BodyFields.ToDictionary(f => f.Name, f => f.Value);
+        Assert.Equal("SlowDown", fields["Code"]);
+        Assert.Equal("<nested>", fields["Detail"]);
+        Assert.Equal("/bucket", fields["Resource"]);
+    }
+
+    [Fact]
+    public void Empty_child_element_yields_empty_value_and_keeps_siblings()
+    {
+        var xml = "<Error><Code>X</Code><Resource/><RequestId>r</RequestId></Error>";
+        var c = AwsErrorCanonicalizer.Canonicalize(404,
+            new[] { H("Content-Type", "application/xml") }, xml);
+
+        var fields = c.BodyFields.ToDictionary(f => f.Name, f => f.Value);
+        Assert.Equal("X", fields["Code"]);
+        Assert.Equal(string.Empty, fields["Resource"]);
+        Assert.Equal(CanonicalResponse.Masked, fields["RequestId"]);
+    }
+
+    [Fact]
     public void ParseRendered_round_trips_so_diff_against_a_golden_is_empty()
     {
         var c = AwsErrorCanonicalizer.Canonicalize(403,

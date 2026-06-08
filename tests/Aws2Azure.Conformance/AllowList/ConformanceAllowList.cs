@@ -18,27 +18,84 @@ public sealed class ConformanceAllowList
     private static readonly Regex TagPattern =
         new(@"\[conformance:(?<tag>[^\]]+)\]", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    private readonly HashSet<string> _tags;
+    /// <summary>Separator marking a case-scoped tag: <c>&lt;caseName&gt;::&lt;tag&gt;</c>.</summary>
+    public const string ScopeSeparator = "::";
 
-    public ConformanceAllowList(IEnumerable<string> tags) =>
-        _tags = new HashSet<string>(tags, StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _serviceWide;
+    private readonly Dictionary<string, HashSet<string>> _caseScoped;
 
-    public IReadOnlyCollection<string> Tags => _tags;
+    public ConformanceAllowList(IEnumerable<string> declaredTags)
+    {
+        _serviceWide = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        _caseScoped = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var raw in declaredTags)
+        {
+            var declared = raw.Trim();
+            var sep = declared.IndexOf(ScopeSeparator, StringComparison.Ordinal);
+            if (sep > 0)
+            {
+                var caseName = declared[..sep].Trim();
+                var tag = declared[(sep + ScopeSeparator.Length)..].Trim();
+                if (!_caseScoped.TryGetValue(caseName, out var set))
+                {
+                    _caseScoped[caseName] = set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                }
+                set.Add(tag);
+            }
+            else
+            {
+                _serviceWide.Add(declared);
+            }
+        }
+    }
 
-    public bool Accepts(Divergence divergence) => _tags.Contains(divergence.Tag);
+    /// <summary>Every declared tag (service-wide and case-scoped, re-qualified) — for diagnostics.</summary>
+    public IReadOnlyCollection<string> Tags
+    {
+        get
+        {
+            var all = new List<string>(_serviceWide);
+            foreach (var (caseName, set) in _caseScoped)
+            {
+                foreach (var tag in set)
+                {
+                    all.Add(caseName + ScopeSeparator + tag);
+                }
+            }
+            return all;
+        }
+    }
+
+    /// <summary>
+    /// A divergence is accepted when it is documented either service-wide
+    /// (<c>[conformance:&lt;tag&gt;]</c>) or scoped to <paramref name="caseName"/>
+    /// (<c>[conformance:&lt;caseName&gt;::&lt;tag&gt;]</c>). Case scoping prevents a
+    /// per-case waiver (e.g. <c>field-value:Code</c>) from silently suppressing the
+    /// same divergence in every other case.
+    /// </summary>
+    public bool Accepts(Divergence divergence, string? caseName = null)
+    {
+        if (_serviceWide.Contains(divergence.Tag))
+        {
+            return true;
+        }
+        return caseName is not null
+            && _caseScoped.TryGetValue(caseName, out var set)
+            && set.Contains(divergence.Tag);
+    }
 
     /// <summary>
     /// Partitions divergences into the ones the gap docs accept and the ones that
     /// are unexpected (and therefore must fail the conformance run).
     /// </summary>
     public (IReadOnlyList<Divergence> Accepted, IReadOnlyList<Divergence> Unexpected) Partition(
-        IEnumerable<Divergence> divergences)
+        IEnumerable<Divergence> divergences, string? caseName = null)
     {
         var accepted = new List<Divergence>();
         var unexpected = new List<Divergence>();
         foreach (var d in divergences)
         {
-            (Accepts(d) ? accepted : unexpected).Add(d);
+            (Accepts(d, caseName) ? accepted : unexpected).Add(d);
         }
         return (accepted, unexpected);
     }
