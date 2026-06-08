@@ -137,20 +137,26 @@ ratio cancels the noise — a failure here is genuine proxy overhead, not
 flakiness. A `0` ratio opts out of that dimension.
 
 **Metric by path shape** — the gate picks the statistic that is *stable* for
-each path:
+each path, and only pairs against a baseline that is itself a stable ruler:
 
 - **REST + AMQP receive** pairs gate on **p99-ratio** (and usually
-  throughput-ratio): their latency distribution is unimodal, so p99 is a
-  stable signal.
-- **AMQP send** pairs gate on **p50-ratio (median) only**. A send's
-  distribution is bimodal — a steady mode plus rare multi-second cold
+  throughput-ratio): their latency distribution is unimodal and their SDK
+  baseline is stable, so p99 is a reliable signal.
+- **EventHubs send** (`kinesis.PutRecord`) gates on **p50-ratio (median)**. A
+  send's distribution is bimodal — a steady mode plus rare multi-second cold
   link-attach spikes — and which side those spikes land in p99 (vs max) is
-  essentially random per run and per pool/warmup dynamics. Observed proof:
-  in a single CI run `sqs.SendMessage` showed a p99-ratio of **11×** while the
-  structurally identical `sns.Publish` showed **0.06×**. The median ignores
-  the cold-attach tail and captures the real steady-state proxy overhead;
-  throughput is opted out too because cold stalls skew completions over the
-  short window.
+  essentially random per run, so the p99-ratio swings wildly (observed
+  **0.06×–11×** between structurally identical send pairs in one run). The
+  median ignores the cold-attach tail; the EH baseline is stable (~3–5 ms,
+  thousands of clean samples), so the p50-ratio is meaningful.
+- **Service Bus sends** (`sqs.SendMessage`, `sns.Publish`) are **NOT paired** —
+  they fall back to wide absolute catastrophe-detectors in the `scenarios`
+  section. The SB emulator's *own* SDK send baseline is too unstable to be a
+  ruler: its p50 swings 3–5× run-to-run (queue 8→23.5 ms, topic 43→8.8 ms)
+  because the baseline link-attaches per send while the proxy pools
+  connections. A relative gate against a ruler that itself moves 5× is noise,
+  so these rely on `AssertHealthy` (no completions / >10% failures) plus a
+  loose absolute p99 ceiling.
 
 A **freshness window** (2 h) makes the gate skip any pair whose proxy and
 baseline rows were not captured in the same run, so a fresh proxy row is

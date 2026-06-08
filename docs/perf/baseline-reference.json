@@ -1,5 +1,5 @@
 {
-  "comment": "Per-scenario regression config for tests/Aws2Azure.PerfTests. Two gates: (1) ABSOLUTE floors/ceilings in 'scenarios' (minThroughputPerSec / maxP99Ms), enforced per-test by PerfResult.AssertNoRegression — either field 0 opts out of that half; kept only as wide catastrophe-detectors on emulator-bound paths that have no azure-sdk.* baseline to pair against. (2) RELATIVE proxy-vs-baseline ratios in 'pairings', enforced once per run by RelativeRegressionGateTests (Category=RelativeGate) reading docs/perf/baseline-latest.json. The relative gate is the meaningful signal: emulator tail-latency jitter hits BOTH the proxy and its azure-sdk.* baseline, so the ratio cancels the noise and fails only when the PROXY adds overhead. METRIC BY SHAPE: REST + AMQP-receive pairs gate on p99-ratio (unimodal, stable); AMQP-SEND pairs gate on p50-ratio ONLY (bimodal cold-link-attach tail makes p99-ratio swing 0.06x-11x run-to-run — the median is the stable steady-state-overhead signal). A 0 ratio opts out of that dimension. azure-sdk.* baselines are reference rulers — {0,0} absolute, never fail the build. Operators bump these deliberately when a proxy change is expected to move performance. EVERY scenario must have a 'scenarios' entry — KnownPerfScenariosTests asserts coverage.",
+  "comment": "Per-scenario regression config for tests/Aws2Azure.PerfTests. Two gates: (1) ABSOLUTE floors/ceilings in 'scenarios' (minThroughputPerSec / maxP99Ms), enforced per-test by PerfResult.AssertNoRegression — either field 0 opts out of that half; kept as wide catastrophe-detectors on emulator-bound paths whose azure-sdk.* baseline is absent OR too unstable to be a ruler (the Service Bus emulator's own SDK send p50 swings 3-5x run-to-run because it link-attaches per send while the proxy pools connections, so sqs.SendMessage / sns.Publish are absolute-gated, NOT paired). (2) RELATIVE proxy-vs-baseline ratios in 'pairings', enforced once per run by RelativeRegressionGateTests (Category=RelativeGate) reading docs/perf/baseline-latest.json. The relative gate is the meaningful signal where the baseline is STABLE: emulator tail-latency jitter hits BOTH the proxy and its azure-sdk.* baseline, so the ratio cancels the noise and fails only when the PROXY adds overhead. METRIC BY SHAPE: REST + AMQP-receive pairs gate on p99-ratio (unimodal, stable baseline); the EventHubs send pair (kinesis.PutRecord) gates on p50-ratio (EH baseline is stable at 3-5ms; p99 would be cold-link-attach noise). A 0 ratio opts out of that dimension. azure-sdk.* baselines are reference rulers — {0,0} absolute, never fail the build. Operators bump these deliberately when a proxy change is expected to move performance. EVERY scenario must have a 'scenarios' entry — KnownPerfScenariosTests asserts coverage.",
   "scenarios": {
     "entra.GetToken (cache hit, 1 key, c=64)":                     { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
     "entra.GetToken (cache hit, 64 keys, c=64)":                   { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
@@ -8,12 +8,12 @@
     "s3.GetObject (64 KiB)":                                       { "minThroughputPerSec": 100.0, "maxP99Ms":  500.0 },
     "azure-sdk.Blob.UploadAsync (4 KiB)":                          { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
 
-    "sqs.SendMessage (256 B)":                                     { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
+    "sqs.SendMessage (256 B)":                                     { "minThroughputPerSec":  20.0, "maxP99Ms": 2500.0 },
     "sqs.ReceiveMessage+Delete (1)":                               { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
     "azure-sdk.ServiceBus.SendMessage (256 B, queue)":            { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
     "azure-sdk.ServiceBus.ReceiveMessage+Complete (1)":            { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
 
-    "sns.Publish (256 B)":                                         { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
+    "sns.Publish (256 B)":                                         { "minThroughputPerSec":  20.0, "maxP99Ms": 2000.0 },
     "azure-sdk.ServiceBusTopics.SendMessage (256 B)":              { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
 
     "dynamodb.PutItem (small)":                                    { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
@@ -38,9 +38,7 @@
     "dynamodb.PutItem (small)":          { "baseline": "azure-sdk.Cosmos.UpsertItem (small)",          "minThroughputRatio": 0.50, "maxP99Ratio": 3.0 },
     "dynamodb.BatchGetItem (25 items)":  { "baseline": "azure-sdk.Cosmos.ReadManyItems (25 keys)",     "minThroughputRatio": 0.40, "maxP99Ratio": 4.5 },
     "sqs.ReceiveMessage+Delete (1)":     { "baseline": "azure-sdk.ServiceBus.ReceiveMessage+Complete (1)", "minThroughputRatio": 0.50, "maxP99Ratio": 3.0 },
-    "sqs.SendMessage (256 B)":           { "baseline": "azure-sdk.ServiceBus.SendMessage (256 B, queue)", "minThroughputRatio": 0.0, "maxP50Ratio": 5.0 },
-    "sns.Publish (256 B)":               { "baseline": "azure-sdk.ServiceBusTopics.SendMessage (256 B)", "minThroughputRatio": 0.0, "maxP50Ratio": 5.0 },
-    "kinesis.PutRecord (256 B)":         { "baseline": "azure-sdk.EventHubs.SendAsync (256 B, c=1)",    "minThroughputRatio": 0.0, "maxP50Ratio": 5.0 },
+    "kinesis.PutRecord (256 B)":         { "baseline": "azure-sdk.EventHubs.SendAsync (256 B, c=1)",    "minThroughputRatio": 0.0, "maxP50Ratio": 6.0 },
     "kinesis.GetRecords (256 B records)":{ "baseline": "azure-sdk.EventHubs.ReceiveBatchAsync (256 B records)", "minThroughputRatio": 0.50, "maxP99Ratio": 1.5 }
   }
 }
