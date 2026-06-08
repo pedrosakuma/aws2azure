@@ -1,0 +1,36 @@
+name: conformance
+
+on:
+  schedule:
+    # Nightly at 04:30 UTC (~01:30 BRT), 30 min after the integration suite so
+    # the two emulator jobs don't contend for the runner's Docker resources.
+    - cron: '30 4 * * *'
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize, reopened]
+
+jobs:
+  conformance-tier2:
+    # Tier-2 LocalStack differential is non-blocking: runs on nightly schedule,
+    # manual dispatch, or PRs carrying the `run-integration` label (reused so a
+    # single label opts a sensitive PR into all emulator-backed suites). The
+    # blocking Tier-1 offline conformance step still runs on every PR in ci.yml.
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'run-integration'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Verify Docker available
+        run: docker info
+      - name: Restore + build
+        run: dotnet build -c Release --nologo
+      - name: Run Tier-2 conformance (proxy-over-Azurite vs LocalStack S3)
+        env:
+          AWS2AZURE_CONFORMANCE_TIER2: '1'
+        run: dotnet test tests/Aws2Azure.Conformance -c Release --no-build --nologo

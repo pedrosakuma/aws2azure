@@ -169,15 +169,25 @@ public static class AwsErrorCanonicalizer
         var trimmed = value.Trim();
         if (name == "content-type")
         {
-            // "application/xml; charset=utf-8" -> "application/xml; charset=utf-8"
-            // (lowercased, single space after each ';'). Charset differences are
-            // preserved deliberately — they are a real, if minor, divergence.
+            // Compare the base media type (and any non-charset parameters). The
+            // charset parameter is not part of the AWS error wire contract that
+            // SDK clients depend on — they parse the XML error body regardless —
+            // so it is normalized out rather than surfaced as a divergence. This
+            // keeps a genuine media-type regression (e.g. application/json or
+            // text/html on an error) detectable via header-value:content-type
+            // without a blunt waiver having to bless every content-type value.
             var parts = trimmed.Split(';');
-            for (var i = 0; i < parts.Length; i++)
+            var kept = new List<string>(parts.Length);
+            foreach (var raw in parts)
             {
-                parts[i] = parts[i].Trim().ToLowerInvariant();
+                var part = raw.Trim().ToLowerInvariant();
+                if (part.Length == 0 || part.StartsWith("charset=", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                kept.Add(part);
             }
-            return string.Join("; ", parts);
+            return string.Join("; ", kept);
         }
         return trimmed;
     }

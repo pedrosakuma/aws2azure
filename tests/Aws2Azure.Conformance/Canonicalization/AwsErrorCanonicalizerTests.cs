@@ -120,14 +120,18 @@ public sealed class AwsErrorCanonicalizerTests
     }
 
     [Fact]
-    public void Content_type_charset_difference_is_preserved()
+    public void Content_type_charset_is_normalized_out()
     {
+        // The charset parameter is not part of the AWS error wire contract that
+        // SDK clients depend on (they parse the XML body regardless), so it is
+        // normalized away: a bare media type and one carrying charset canonicalize
+        // identically, leaving only a genuine media-type change detectable.
         var withCharset = AwsErrorCanonicalizer.Canonicalize(404,
             new[] { H("Content-Type", "application/xml; charset=utf-8") }, NoSuchKeyXml);
         var without = AwsErrorCanonicalizer.Canonicalize(404,
             new[] { H("Content-Type", "application/xml") }, NoSuchKeyXml);
 
-        Assert.NotEqual(withCharset.Render(), without.Render());
+        Assert.Equal(withCharset.Render(), without.Render());
     }
 
     [Fact]

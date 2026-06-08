@@ -14,6 +14,7 @@ public sealed class ConformanceProxyFixture : IDisposable
 {
     private readonly WebApplicationFactory<Program> _factory;
     private readonly string _configFile;
+    private readonly string? _previousConfigFile;
 
     public const string AccessKeyId = "AKIACONFORMANCE0001";
     public const string Secret = "conformanceSecretKey0123456789abcdefABCDEF";
@@ -42,6 +43,7 @@ public sealed class ConformanceProxyFixture : IDisposable
         }
         """;
         File.WriteAllText(_configFile, config);
+        _previousConfigFile = Environment.GetEnvironmentVariable("AWS2AZURE_CONFIG_FILE");
         Environment.SetEnvironmentVariable("AWS2AZURE_CONFIG_FILE", _configFile);
 
         _factory = new WebApplicationFactory<Program>()
@@ -57,5 +59,6 @@ public sealed class ConformanceProxyFixture : IDisposable
         _factory.Dispose();
         Client.Dispose();
         try { File.Delete(_configFile); } catch { /* best-effort */ }
+        Environment.SetEnvironmentVariable("AWS2AZURE_CONFIG_FILE", _previousConfigFile);
     }
 }
