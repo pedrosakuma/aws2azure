@@ -31,4 +31,6 @@ jobs:
       - name: Restore + build
         run: dotnet build -c Release --nologo
       - name: Run Tier-2 conformance (proxy-over-Azurite vs LocalStack S3)
+        env:
+          AWS2AZURE_CONFORMANCE_TIER2: '1'
         run: dotnet test tests/Aws2Azure.Conformance -c Release --no-build --nologo

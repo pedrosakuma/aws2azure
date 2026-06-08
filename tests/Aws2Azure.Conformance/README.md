@@ -32,12 +32,15 @@ Tier 1 is fully offline: auth/validation errors are rejected in the SigV4 stage
 Tier 2 is a **live differential**: the same validly-signed request is sent to the
 proxy (booted over a real **Azurite** backend so its Azure→S3 error translation
 runs) and to **LocalStack S3** (an authoritative real-S3 shape); the two
-canonical responses are diffed allow-list-aware. It needs Docker, so its tests
-are gated with `[SkippableFact]` + `Skip.IfNot(DockerAvailable, …)`: the every-PR
-`ci.yml` run (no Docker) **skips** them, keeping Tier 1 offline and blocking,
-while the dedicated `conformance.yml` workflow (Docker) runs them
-nightly / on the `run-integration` label. In record mode the LocalStack response
-is written as the committed golden so Tier 1 can diff against it offline.
+canonical responses are diffed allow-list-aware. It needs Docker **and** is
+opt-in: the tests run only when `AWS2AZURE_CONFORMANCE_TIER2=1` is set (the
+fixture skips booting any container otherwise). GitHub's `ubuntu-latest` has a
+Docker daemon, so gating on Docker presence alone would let the every-PR
+`ci.yml` run boot the containers — the explicit switch prevents that. The
+dedicated `conformance.yml` workflow (Docker) sets the switch and runs the
+differential nightly / on the `run-integration` label. In record mode the
+LocalStack response is written as the committed golden so Tier 1 can diff
+against it offline.
 
 ## How it works
 
@@ -71,7 +74,7 @@ add a machine-readable tag to `behavior_differences` in
 ```yaml
 behavior_differences:
   - "Proxy omits the server-side x-amz-id-2 correlation header [conformance:missing-header:x-amz-id-2]"
-  - "Content-Type carries charset=utf-8 unlike bare AWS application/xml [conformance:header-value:content-type]"
+  - "Proxy omits the informational <HostId> error element real S3 emits [conformance:missing-field:HostId]"
 ```
 
 Divergence tags: `status`, `body-kind`, `missing-header:<name>`,
@@ -90,8 +93,9 @@ Any divergence **not** covered by a documented tag fails the Tier-1 run.
 ## Running
 
 ```bash
-dotnet test tests/Aws2Azure.Conformance            # Tier 1 offline; Tier 2 skips without Docker
-AWS2AZURE_CONFORMANCE_RECORD=1 dotnet test tests/Aws2Azure.Conformance   # (re)capture goldens from LocalStack
+dotnet test tests/Aws2Azure.Conformance            # Tier 1 offline; Tier 2 skips unless AWS2AZURE_CONFORMANCE_TIER2=1
+AWS2AZURE_CONFORMANCE_TIER2=1 dotnet test tests/Aws2Azure.Conformance              # Tier 1 + Tier 2 (needs Docker)
+AWS2AZURE_CONFORMANCE_TIER2=1 AWS2AZURE_CONFORMANCE_RECORD=1 dotnet test tests/Aws2Azure.Conformance   # (re)capture goldens from LocalStack
 ```
 
 ## Scope so far (issue #228)
@@ -102,7 +106,8 @@ AWS2AZURE_CONFORMANCE_RECORD=1 dotnet test tests/Aws2Azure.Conformance   # (re)c
   `NoSuchBucket` (GET on a missing bucket) and `NoSuchKey` (GET a missing key in
   an existing bucket), proxy-over-Azurite vs LocalStack S3. The accepted
   faithful divergences (proxy omits `x-amz-id-2` / `<HostId>` / `<BucketName>` /
-  `<Key>` and adds `charset=utf-8`) are documented in
-  `docs/gaps/s3/GetObject.yaml`.
+  `<Key>`) are documented in `docs/gaps/s3/GetObject.yaml`. The error
+  content-type charset parameter is treated as non-contractual and normalized
+  out (SDK clients parse the XML body regardless).
 
 Real-AWS goldens (Tier 3) and further operations follow in later PRs.

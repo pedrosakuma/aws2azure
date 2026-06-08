@@ -26,8 +26,9 @@ namespace Aws2Azure.Conformance.S3;
 [Collection(S3BackendDifferentialCollection.Name)]
 public sealed class S3BackendConformanceTests
 {
-    private const string SkipNoDocker =
-        "Docker is not available; Tier-2 LocalStack differential runs in CI only.";
+    private const string SkipDisabled =
+        "Tier-2 LocalStack differential is opt-in (set AWS2AZURE_CONFORMANCE_TIER2=1); " +
+        "it runs in the dedicated conformance.yml workflow, not the blocking every-PR job.";
 
     private readonly S3BackendDifferentialFixture _fx;
 
@@ -40,7 +41,13 @@ public sealed class S3BackendConformanceTests
     [MemberData(nameof(CaseNames))]
     public async Task Proxy_backend_error_matches_localstack(string caseName)
     {
-        Skip.IfNot(_fx.DockerAvailable, SkipNoDocker);
+        Skip.IfNot(S3BackendDifferentialFixture.Tier2Enabled, SkipDisabled);
+
+        // When Tier-2 is enabled the fixture must have booted both containers;
+        // a startup failure should already have failed the collection, so this
+        // is a hard assertion (not a skip) to keep the signal honest.
+        Assert.True(_fx.DockerAvailable,
+            "Tier-2 is enabled but Azurite/LocalStack did not start.");
 
         var testCase = S3BackendErrorMatrix.Cases.Single(c => c.Name == caseName);
 

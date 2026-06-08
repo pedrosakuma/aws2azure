@@ -47,10 +47,22 @@ public sealed class CanonicalDiffTests
     }
 
     [Fact]
-    public void Content_type_charset_mismatch_is_tagged_header_value()
+    public void Content_type_charset_mismatch_produces_no_divergence()
     {
+        // charset is normalized out of the canonical form, so a charset-only
+        // difference must not surface as a content-type divergence.
         var expected = Make(403, "application/xml", Xml);
         var actual = Make(403, "application/xml; charset=utf-8", Xml);
+        var diffs = CanonicalDiff.Compare(expected, actual);
+        Assert.DoesNotContain(diffs, d => d.Tag == "header-value:content-type");
+    }
+
+    [Fact]
+    public void Content_type_media_type_mismatch_is_tagged_header_value()
+    {
+        // A genuine media-type change (not just charset) must still be detected.
+        var expected = Make(403, "application/xml", Xml);
+        var actual = Make(403, "application/json", Xml);
         var diffs = CanonicalDiff.Compare(expected, actual);
         Assert.Contains(diffs, d => d.Tag == "header-value:content-type");
     }

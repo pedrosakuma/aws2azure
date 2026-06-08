@@ -37,6 +37,7 @@ public sealed class S3BackendDifferentialFixture : IAsyncLifetime
     private IContainer? _localStack;
     private WebApplicationFactory<Program>? _factory;
     private string? _configFile;
+    private string? _previousConfigFile;
 
     public bool DockerAvailable { get; private set; }
 
@@ -57,43 +58,59 @@ public sealed class S3BackendDifferentialFixture : IAsyncLifetime
     public string AccessKeyId => "DEVSTOREACCOUNT1";
     public string Secret => AzuriteAccountKey;
 
+    /// <summary>
+    /// Tier-2 is opt-in: it boots Azurite + LocalStack containers and is meant to
+    /// run only in the dedicated <c>conformance.yml</c> workflow (nightly /
+    /// <c>run-integration</c> label), never in the blocking every-PR
+    /// <c>ci.yml</c> job. GitHub's <c>ubuntu-latest</c> has a working Docker
+    /// daemon, so gating on Docker availability alone is not enough — without
+    /// this explicit switch the every-PR run would boot the containers. The
+    /// <c>conformance.yml</c> job sets <c>AWS2AZURE_CONFORMANCE_TIER2=1</c>.
+    /// </summary>
+    public static bool Tier2Enabled =>
+        Environment.GetEnvironmentVariable("AWS2AZURE_CONFORMANCE_TIER2") is "1" or "true";
+
     public async Task InitializeAsync()
     {
-        string blobEndpoint;
-        try
-        {
-            _azurite = new ContainerBuilder()
-                .WithImage(AzuriteImage)
-                .WithName("aws2azure-conf-azurite-" + Guid.NewGuid().ToString("N")[..8])
-                .WithPortBinding(10000, true)
-                .WithCommand("azurite-blob", "--blobHost", "0.0.0.0", "--skipApiVersionCheck")
-                .WithWaitStrategy(Wait.ForUnixContainer().UntilPortIsAvailable(10000))
-                .Build();
-
-            _localStack = new ContainerBuilder()
-                .WithImage(LocalStackImage)
-                .WithName("aws2azure-conf-localstack-" + Guid.NewGuid().ToString("N")[..8])
-                .WithEnvironment("SERVICES", "s3")
-                .WithEnvironment("EAGER_SERVICE_LOADING", "1")
-                .WithPortBinding(4566, true)
-                .WithWaitStrategy(Wait.ForUnixContainer().UntilMessageIsLogged("Ready."))
-                .Build();
-
-            await _azurite.StartAsync();
-            await _localStack.StartAsync();
-
-            var blobPort = _azurite.GetMappedPublicPort(10000);
-            blobEndpoint = $"http://{_azurite.Hostname}:{blobPort}/{AzuriteAccountName}";
-
-            var lsPort = _localStack.GetMappedPublicPort(4566);
-            LocalStackBaseUri = new Uri($"http://{_localStack.Hostname}:{lsPort}/");
-            DockerAvailable = true;
-        }
-        catch
+        // Opt-in gate. When Tier-2 is not enabled we do NOT boot any container —
+        // the collection fixture initializes even though every test in it skips,
+        // so short-circuiting here is what actually keeps the every-PR run
+        // offline. When Tier-2 IS enabled, container/startup failures are left to
+        // propagate and fail the collection rather than being swallowed into a
+        // misleading "skipped, green" result (the conformance.yml job verifies
+        // Docker before running, so a failure here is a real Tier-2 regression).
+        if (!Tier2Enabled)
         {
             DockerAvailable = false;
             return;
         }
+
+        _azurite = new ContainerBuilder()
+            .WithImage(AzuriteImage)
+            .WithName("aws2azure-conf-azurite-" + Guid.NewGuid().ToString("N")[..8])
+            .WithPortBinding(10000, true)
+            .WithCommand("azurite-blob", "--blobHost", "0.0.0.0", "--skipApiVersionCheck")
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilPortIsAvailable(10000))
+            .Build();
+
+        _localStack = new ContainerBuilder()
+            .WithImage(LocalStackImage)
+            .WithName("aws2azure-conf-localstack-" + Guid.NewGuid().ToString("N")[..8])
+            .WithEnvironment("SERVICES", "s3")
+            .WithEnvironment("EAGER_SERVICE_LOADING", "1")
+            .WithPortBinding(4566, true)
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilMessageIsLogged("Ready."))
+            .Build();
+
+        await _azurite.StartAsync();
+        await _localStack.StartAsync();
+
+        var blobPort = _azurite.GetMappedPublicPort(10000);
+        var blobEndpoint = $"http://{_azurite.Hostname}:{blobPort}/{AzuriteAccountName}";
+
+        var lsPort = _localStack.GetMappedPublicPort(4566);
+        LocalStackBaseUri = new Uri($"http://{_localStack.Hostname}:{lsPort}/");
+        DockerAvailable = true;
 
         _configFile = Path.Combine(Path.GetTempPath(),
             "aws2azure-conf-backend-" + Guid.NewGuid().ToString("N") + ".json");
@@ -116,6 +133,7 @@ public sealed class S3BackendDifferentialFixture : IAsyncLifetime
         }
         """;
         await File.WriteAllTextAsync(_configFile, config);
+        _previousConfigFile = Environment.GetEnvironmentVariable("AWS2AZURE_CONFIG_FILE");
         Environment.SetEnvironmentVariable("AWS2AZURE_CONFIG_FILE", _configFile);
 
         _factory = new WebApplicationFactory<Program>()
@@ -172,6 +190,7 @@ public sealed class S3BackendDifferentialFixture : IAsyncLifetime
         {
             try { File.Delete(_configFile); } catch { /* best-effort */ }
         }
+        Environment.SetEnvironmentVariable("AWS2AZURE_CONFIG_FILE", _previousConfigFile);
     }
 }
 
