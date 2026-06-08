@@ -149,14 +149,17 @@ each path, and only pairs against a baseline that is itself a stable ruler:
   **0.06×–11×** between structurally identical send pairs in one run). The
   median ignores the cold-attach tail; the EH baseline is stable (~3–5 ms,
   thousands of clean samples), so the p50-ratio is meaningful.
-- **Service Bus sends** (`sqs.SendMessage`, `sns.Publish`) are **NOT paired** —
-  they fall back to wide absolute catastrophe-detectors in the `scenarios`
-  section. The SB emulator's *own* SDK send baseline is too unstable to be a
-  ruler: its p50 swings 3–5× run-to-run (queue 8→23.5 ms, topic 43→8.8 ms)
-  because the baseline link-attaches per send while the proxy pools
-  connections. A relative gate against a ruler that itself moves 5× is noise,
-  so these rely on `AssertHealthy` (no completions / >10% failures) plus a
-  loose absolute p99 ceiling.
+- **Service Bus sends** (`sqs.SendMessage`, `sns.Publish`) are **NOT paired**
+  and gate on a **throughput floor only**. The SB emulator's *own* SDK send
+  baseline is too unstable to be a relative ruler (its p50 swings 3–5×
+  run-to-run — queue 8→23.5 ms, topic 43→8.8 ms — because the baseline
+  link-attaches per send while the proxy pools connections). And an *absolute*
+  p99 ceiling is no better: the proxy's own send p99 is bimodal, with a rare
+  cold AMQP link-attach dropping a multi-second spike into the top 1%
+  unpredictably (observed **234 ms** one run, **3108 ms** the next). So these
+  paths rely on `AssertHealthy` (no completions / >10% failures) plus a
+  throughput floor (`minThroughputPerSec`) as the catastrophe detector; the
+  latency tail carries no stable signal at any threshold.
 
 A **freshness window** (2 h) makes the gate skip any pair whose proxy and
 baseline rows were not captured in the same run, so a fresh proxy row is
