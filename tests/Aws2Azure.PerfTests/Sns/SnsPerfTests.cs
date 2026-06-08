@@ -119,32 +119,42 @@ public sealed class SnsPerfTests(SnsPerfFixture fixture)
 
         using var client = fixture.CreateClient();
 
-        // Seed one subscription whose FilterPolicy we rewrite each iteration.
-        var seeded = await client.SubscribeAsync(new SubscribeRequest
+        // Seed one subscription per worker slot so concurrent workers never
+        // update the SAME Service Bus subscription — SB management uses
+        // optimistic concurrency (ETag) and concurrent UpdateSubscription on
+        // one entity returns HTTP 409.
+        const int workers = 8;
+        var subscriptionArns = new string[workers];
+        for (var i = 0; i < workers; i++)
         {
-            TopicArn = fixture.TopicArn,
-            Protocol = "sqs",
-            Endpoint = "arn:aws:sqs:us-east-1:000000000000:perf-set-" + Guid.NewGuid().ToString("N")[..12],
-            ReturnSubscriptionArn = true,
-        }).ConfigureAwait(false);
-        var subscriptionArn = seeded.SubscriptionArn;
+            var seeded = await client.SubscribeAsync(new SubscribeRequest
+            {
+                TopicArn = fixture.TopicArn,
+                Protocol = "sqs",
+                Endpoint = $"arn:aws:sqs:us-east-1:000000000000:perf-set-{i:D2}-{Guid.NewGuid().ToString("N")[..8]}",
+                ReturnSubscriptionArn = true,
+            }).ConfigureAwait(false);
+            subscriptionArns[i] = seeded.SubscriptionArn;
+        }
 
         var result = await PerfRunner.RunAsync(
             scenario: "sns.SetSubscriptionAttributes (FilterPolicy)",
-            concurrency: 8,
+            concurrency: workers,
             duration: TimeSpan.FromSeconds(20),
             warmup: TimeSpan.FromSeconds(3),
             action: async (workerId, ct) =>
             {
+                // Each worker owns a distinct subscription (warmup id -1 → slot 0).
+                var slot = workerId < 0 ? 0 : workerId % subscriptionArns.Length;
                 await client.SetSubscriptionAttributesAsync(new SetSubscriptionAttributesRequest
                 {
-                    SubscriptionArn = subscriptionArn,
+                    SubscriptionArn = subscriptionArns[slot],
                     AttributeName = "FilterPolicy",
-                    AttributeValue = $"{{\"kind\":[\"perf-{(workerId < 0 ? 0 : workerId)}\"]}}",
+                    AttributeValue = $"{{\"kind\":[\"perf-{slot}\"]}}",
                 }, ct).ConfigureAwait(false);
             });
 
-        PerfReport.Append(result, notes: "SNS→ServiceBusTopics management — SetSubscriptionAttributes(FilterPolicy) rewriting one subscription; exercises get-then-update metadata path (emulator does not persist subscription metadata; results are emulator-bound).");
+        PerfReport.Append(result, notes: "SNS→ServiceBusTopics management — SetSubscriptionAttributes(FilterPolicy), one subscription per worker (avoids ETag 409); exercises get-then-update metadata path (emulator does not persist subscription metadata; results are emulator-bound).");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
         result.AssertNoRegression();
     }
