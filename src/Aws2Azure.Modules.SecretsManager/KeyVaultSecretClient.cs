@@ -85,6 +85,31 @@ internal sealed class KeyVaultSecretClient
         return string.Empty;
     }
 
+    /// <summary>
+    /// Extracts the Key Vault <c>$skiptoken</c> continuation value from a list
+    /// response <c>nextLink</c> URL so it can be surfaced as an opaque AWS
+    /// <c>NextToken</c>. Also tolerates a bare <c>skiptoken</c> spelling.
+    /// </summary>
+    public static string? ExtractSkipToken(string? nextLink)
+    {
+        if (string.IsNullOrWhiteSpace(nextLink))
+        {
+            return null;
+        }
+
+        const string marker = "skiptoken=";
+        var idx = nextLink.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (idx < 0)
+        {
+            return null;
+        }
+
+        var start = idx + marker.Length;
+        var end = nextLink.IndexOf('&', start);
+        var raw = end < 0 ? nextLink[start..] : nextLink[start..end];
+        return string.IsNullOrEmpty(raw) ? null : Uri.UnescapeDataString(raw);
+    }
+
     public static string GetVersionId(string id)
     {
         if (string.IsNullOrWhiteSpace(id))
@@ -202,31 +227,55 @@ internal sealed class KeyVaultSecretClient
 
     public static IReadOnlyDictionary<string, string> GetTags(JsonElement root)
     {
+        var empty = new Dictionary<string, string>(StringComparer.Ordinal);
         if (root.ValueKind != JsonValueKind.Object)
         {
-            return new Dictionary<string, string>(StringComparer.Ordinal);
+            return empty;
         }
 
         JsonElement tags;
-        if (root.TryGetProperty("tags", out var lower) && lower.ValueKind == JsonValueKind.Object)
+        if (root.TryGetProperty("tags", out var lower) && (lower.ValueKind == JsonValueKind.Object || lower.ValueKind == JsonValueKind.Array))
         {
             tags = lower;
         }
-        else if (root.TryGetProperty("Tags", out var upper) && upper.ValueKind == JsonValueKind.Object)
+        else if (root.TryGetProperty("Tags", out var upper) && (upper.ValueKind == JsonValueKind.Object || upper.ValueKind == JsonValueKind.Array))
         {
             tags = upper;
         }
         else
         {
-            return new Dictionary<string, string>(StringComparer.Ordinal);
-        }
-
-        if (tags.ValueKind != JsonValueKind.Object)
-        {
-            return new Dictionary<string, string>(StringComparer.Ordinal);
+            return empty;
         }
 
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        // Key Vault exposes tags as a JSON map; AWS Secrets Manager sends them
+        // as an array of { "Key": ..., "Value": ... } objects. Accept both.
+        if (tags.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var entry in tags.EnumerateArray())
+            {
+                if (entry.ValueKind != JsonValueKind.Object
+                    || !entry.TryGetProperty("Key", out var key)
+                    || key.ValueKind != JsonValueKind.String)
+                {
+                    continue;
+                }
+
+                var keyName = key.GetString();
+                if (string.IsNullOrEmpty(keyName))
+                {
+                    continue;
+                }
+
+                result[keyName] = entry.TryGetProperty("Value", out var value) && value.ValueKind == JsonValueKind.String
+                    ? value.GetString() ?? string.Empty
+                    : string.Empty;
+            }
+
+            return result;
+        }
+
         foreach (var property in tags.EnumerateObject())
         {
             result[property.Name] = property.Value.ValueKind == JsonValueKind.String

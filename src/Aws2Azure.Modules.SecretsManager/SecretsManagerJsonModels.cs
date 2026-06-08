@@ -31,6 +31,7 @@ internal sealed record DescribeSecretResponse(
     [property: JsonPropertyName("Description")] string? Description,
     [property: JsonPropertyName("CreatedDate")][property: JsonConverter(typeof(EpochDateTimeOffsetConverter))] DateTimeOffset CreatedDate,
     [property: JsonPropertyName("LastChangedDate")][property: JsonConverter(typeof(EpochDateTimeOffsetConverter))] DateTimeOffset? LastChangedDate,
+    [property: JsonPropertyName("Tags")] IReadOnlyList<SecretsManagerTag>? Tags,
     [property: JsonPropertyName("VersionIdsToStages")] IReadOnlyDictionary<string, IReadOnlyList<string>>? VersionIdsToStages,
     [property: JsonPropertyName("RotationEnabled")] bool? RotationEnabled,
     [property: JsonPropertyName("DeletedDate")][property: JsonConverter(typeof(EpochDateTimeOffsetConverter))] DateTimeOffset? DeletedDate);

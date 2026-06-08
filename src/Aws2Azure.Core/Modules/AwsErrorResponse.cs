@@ -18,7 +18,8 @@ public static class AwsErrorResponse
         int statusCode,
         string code,
         string message,
-        string? resource = null)
+        string? resource = null,
+        string jsonContentType = "application/x-amz-json-1.0")
     {
         context.Response.StatusCode = statusCode;
         var requestId = ResolveRequestId(context);
@@ -31,7 +32,7 @@ public static class AwsErrorResponse
         }
         else
         {
-            context.Response.ContentType = "application/x-amz-json-1.0";
+            context.Response.ContentType = jsonContentType;
             await context.Response.WriteAsync(BuildJson(code, message));
         }
     }

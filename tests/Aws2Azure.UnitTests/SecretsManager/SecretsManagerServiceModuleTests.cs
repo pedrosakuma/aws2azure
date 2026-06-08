@@ -124,7 +124,7 @@ public sealed class SecretsManagerServiceModuleTests
 
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent("{\"value\":[{\"id\":\"https://example.vault.azure.net/secrets/demo\",\"name\":\"demo\",\"description\":\"account secret\",\"tags\":{\"env\":\"dev\"},\"attributes\":{\"created\":1710000000,\"updated\":1710001000}}],\"nextLink\":\"https://example.vault.azure.net/secrets?api-version=7.4&continuationToken=abc\"}", Encoding.UTF8, "application/json"),
+                Content = new StringContent("{\"value\":[{\"id\":\"https://example.vault.azure.net/secrets/demo\",\"name\":\"demo\",\"description\":\"account secret\",\"tags\":{\"env\":\"dev\"},\"attributes\":{\"created\":1710000000,\"updated\":1710001000}}],\"nextLink\":\"https://example.vault.azure.net/secrets?api-version=7.4&$skiptoken=abc123&maxresults=25\"}", Encoding.UTF8, "application/json"),
             });
         }), ownsHandler: false);
 
@@ -144,8 +144,40 @@ public sealed class SecretsManagerServiceModuleTests
         var tag = secret.GetProperty("Tags")[0];
         Assert.Equal("env", tag.GetProperty("Key").GetString());
         Assert.Equal("dev", tag.GetProperty("Value").GetString());
-        Assert.Equal("https://example.vault.azure.net/secrets?api-version=7.4&continuationToken=abc", document.RootElement.GetProperty("NextToken").GetString());
+        Assert.Equal("abc123", document.RootElement.GetProperty("NextToken").GetString());
         Assert.False(secret.TryGetProperty("VersionIdsToStages", out _));
+    }
+
+    [Fact]
+    public async Task HandleAsync_ListSecrets_forwards_next_token_as_key_vault_skiptoken()
+    {
+        string? requestedUri = null;
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            requestedUri = request.RequestUri.ToString();
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}", Encoding.UTF8, "application/json"),
+            });
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.ListSecrets", "{\"NextToken\":\"abc123\",\"MaxResults\":10}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.NotNull(requestedUri);
+        Assert.Contains("$skiptoken=abc123", requestedUri);
+        Assert.Contains("maxresults=10", requestedUri);
     }
 
     [Fact]
@@ -344,6 +376,40 @@ public sealed class SecretsManagerServiceModuleTests
         using var document = JsonDocument.Parse(body);
         Assert.Equal("def456", document.RootElement.GetProperty("VersionId").GetString());
         Assert.Equal("demo", document.RootElement.GetProperty("Name").GetString());
+    }
+
+    [Fact]
+    public async Task HandleAsync_UpdateSecret_returns_not_found_when_secret_is_absent()
+    {
+        var putAttempted = false;
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.Method == HttpMethod.Put)
+            {
+                putAttempted = true;
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.UpdateSecret", "{\"SecretId\":\"missing\",\"SecretString\":\"new-secret\"}");
+
+        await module.HandleAsync(context);
+
+        Assert.False(putAttempted);
+        Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        using var document = JsonDocument.Parse(body);
+        Assert.Equal("ResourceNotFoundException", document.RootElement.GetProperty("__type").GetString());
     }
 
     [Fact]

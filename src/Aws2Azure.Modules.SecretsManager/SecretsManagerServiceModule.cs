@@ -64,20 +64,20 @@ public sealed class SecretsManagerServiceModule : IServiceModule
 
         if (!KeyVaultSecretClient.IsSupported(operation))
         {
-            await AwsErrorResponse.WriteAsync(context, AwsErrorFormat.Json, StatusCodes.Status501NotImplemented, "NotImplementedException", $"Secrets Manager operation '{operation}' is not implemented yet.").ConfigureAwait(false);
+            await WriteAwsErrorAsync(context, StatusCodes.Status501NotImplemented, "NotImplementedException", $"Secrets Manager operation '{operation}' is not implemented yet.").ConfigureAwait(false);
             return;
         }
 
         var accessKeyId = context.Items["aws2azure.accessKeyId"] as string;
         if (string.IsNullOrWhiteSpace(accessKeyId))
         {
-            await AwsErrorResponse.WriteAsync(context, AwsErrorFormat.Json, StatusCodes.Status403Forbidden, "MissingAuthenticationTokenException", "Request is missing AWS credentials.").ConfigureAwait(false);
+            await WriteAwsErrorAsync(context, StatusCodes.Status403Forbidden, "MissingAuthenticationTokenException", "Request is missing AWS credentials.").ConfigureAwait(false);
             return;
         }
 
         if (_credentials.GetAzureCredentialsFor(accessKeyId, AzureService.KeyVault) is not KeyVaultCredentials keyVault)
         {
-            await AwsErrorResponse.WriteAsync(context, AwsErrorFormat.Json, StatusCodes.Status403Forbidden, "AccessDeniedException", "No Key Vault credentials configured for the supplied AWS access key.").ConfigureAwait(false);
+            await WriteAwsErrorAsync(context, StatusCodes.Status403Forbidden, "AccessDeniedException", "No Key Vault credentials configured for the supplied AWS access key.").ConfigureAwait(false);
             return;
         }
 
@@ -103,7 +103,7 @@ public sealed class SecretsManagerServiceModule : IServiceModule
                     await HandleDeleteSecretAsync(context, client, document, context.RequestAborted).ConfigureAwait(false);
                     return;
                 case "ListSecrets":
-                    await HandleListSecretsAsync(context, client, context.RequestAborted).ConfigureAwait(false);
+                    await HandleListSecretsAsync(context, client, document, context.RequestAborted).ConfigureAwait(false);
                     return;
                 case "DescribeSecret":
                     await HandleDescribeSecretAsync(context, client, document, context.RequestAborted).ConfigureAwait(false);
@@ -143,7 +143,7 @@ public sealed class SecretsManagerServiceModule : IServiceModule
 
     private static async Task WriteAwsErrorAsync(HttpContext context, int statusCode, string code, string message)
     {
-        await AwsErrorResponse.WriteAsync(context, AwsErrorFormat.Json, statusCode, code, message).ConfigureAwait(false);
+        await AwsErrorResponse.WriteAsync(context, AwsErrorFormat.Json, statusCode, code, message, resource: null, jsonContentType: "application/x-amz-json-1.1").ConfigureAwait(false);
     }
 
     private static async Task WriteJsonAsync<T>(HttpContext context, T payload, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typeInfo)
@@ -156,6 +156,13 @@ public sealed class SecretsManagerServiceModule : IServiceModule
     private static string? ReadString(JsonDocument document, string propertyName)
         => document.RootElement.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
             ? property.GetString()
+            : null;
+
+    private static int? ReadInt(JsonDocument document, string propertyName)
+        => document.RootElement.TryGetProperty(propertyName, out var property)
+            && property.ValueKind == JsonValueKind.Number
+            && property.TryGetInt32(out var value)
+            ? value
             : null;
 
     private async Task HandleGetSecretValueAsync(HttpContext context, KeyVaultSecretClient client, JsonDocument document, CancellationToken cancellationToken)
@@ -262,6 +269,21 @@ public sealed class SecretsManagerServiceModule : IServiceModule
     {
         var name = KeyVaultSecretClient.NormalizeSecretName(ReadString(document, "SecretId") ?? ReadString(document, "Name") ?? string.Empty);
         var token = await client.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
+
+        // Key Vault PUT /secrets/{name} is an upsert, but AWS UpdateSecret must
+        // fail with ResourceNotFoundException when the secret does not exist.
+        var exists = await SecretExistsAsync(context, client, token, name, cancellationToken).ConfigureAwait(false);
+        if (exists is null)
+        {
+            return;
+        }
+
+        if (!exists.Value)
+        {
+            await WriteAwsErrorAsync(context, StatusCodes.Status404NotFound, "ResourceNotFoundException", $"Secrets Manager can't find the specified secret '{name}'.").ConfigureAwait(false);
+            return;
+        }
+
         using var request = new HttpRequestMessage(HttpMethod.Put, client.BuildVaultUri(KeyVaultSecretClient.BuildSecretPath(name)));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         request.Content = new StringContent(KeyVaultSecretClient.BuildJsonBody(
@@ -318,10 +340,27 @@ public sealed class SecretsManagerServiceModule : IServiceModule
         await WriteJsonAsync(context, payload, SecretsManagerJsonContext.Default.DeleteSecretResponse).ConfigureAwait(false);
     }
 
-    private async Task HandleListSecretsAsync(HttpContext context, KeyVaultSecretClient client, CancellationToken cancellationToken)
+    private async Task HandleListSecretsAsync(HttpContext context, KeyVaultSecretClient client, JsonDocument document, CancellationToken cancellationToken)
     {
         var token = await client.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
-        using var request = new HttpRequestMessage(HttpMethod.Get, client.BuildVaultUri("/secrets"));
+
+        // AWS NextToken carries the Key Vault $skiptoken so callers can page.
+        // We always rebuild our own vault URI (never trust an inbound URL) to
+        // avoid turning NextToken into an SSRF vector with a live bearer token.
+        var skipToken = ReadString(document, "NextToken");
+        var maxResults = ReadInt(document, "MaxResults");
+        var requestUri = client.BuildVaultUri("/secrets");
+        if (maxResults is > 0)
+        {
+            requestUri += "&maxresults=" + maxResults.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        if (!string.IsNullOrWhiteSpace(skipToken))
+        {
+            requestUri += "&$skiptoken=" + Uri.EscapeDataString(skipToken);
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
@@ -336,7 +375,7 @@ public sealed class SecretsManagerServiceModule : IServiceModule
 
         var items = new List<ListSecretsItem>();
         var nextToken = secretDocument.RootElement.TryGetProperty("nextLink", out var nextLink) && nextLink.ValueKind == JsonValueKind.String
-            ? nextLink.GetString()
+            ? KeyVaultSecretClient.ExtractSkipToken(nextLink.GetString())
             : null;
         if (secretDocument.RootElement.TryGetProperty("value", out var valueElement) && valueElement.ValueKind == JsonValueKind.Array)
         {
@@ -395,6 +434,10 @@ public sealed class SecretsManagerServiceModule : IServiceModule
         var created = KeyVaultSecretClient.GetCreatedDate(secretDocument.RootElement);
         var lastChanged = KeyVaultSecretClient.GetLastChangedDate(secretDocument.RootElement);
         var description = KeyVaultSecretClient.GetDescription(secretDocument.RootElement);
+        var tags = KeyVaultSecretClient.GetTags(secretDocument.RootElement);
+        var tagList = tags.Count == 0
+            ? Array.Empty<SecretsManagerTag>()
+            : tags.Select(static kvp => new SecretsManagerTag(kvp.Key, kvp.Value)).ToArray();
         var versionIdsToStages = string.IsNullOrWhiteSpace(id)
             ? null
             : new Dictionary<string, IReadOnlyList<string>>
@@ -408,6 +451,7 @@ public sealed class SecretsManagerServiceModule : IServiceModule
             Description: description,
             CreatedDate: created,
             LastChangedDate: lastChanged,
+            Tags: tagList,
             VersionIdsToStages: versionIdsToStages,
             RotationEnabled: null,
             DeletedDate: null);
@@ -439,6 +483,7 @@ public sealed class SecretsManagerServiceModule : IServiceModule
         => statusCode switch
         {
             HttpStatusCode.NotFound => StatusCodes.Status404NotFound,
+            HttpStatusCode.Conflict => StatusCodes.Status409Conflict,
             HttpStatusCode.BadRequest => StatusCodes.Status400BadRequest,
             HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => StatusCodes.Status403Forbidden,
             HttpStatusCode.TooManyRequests => StatusCodes.Status429TooManyRequests,
@@ -450,6 +495,7 @@ public sealed class SecretsManagerServiceModule : IServiceModule
         => statusCode switch
         {
             HttpStatusCode.NotFound => "ResourceNotFoundException",
+            HttpStatusCode.Conflict => "ResourceExistsException",
             HttpStatusCode.BadRequest => "InvalidParameterException",
             HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => "AccessDeniedException",
             HttpStatusCode.TooManyRequests => "ThrottlingException",
