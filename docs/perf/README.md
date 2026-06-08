@@ -117,21 +117,40 @@ paths (S3/DynamoDB) keep meaningful absolute floors.
 Each proxy scenario is paired in `baseline-reference.json`'s `pairings`
 section with an `azure-sdk.*` baseline scenario that measures the **same
 operation against the same emulator with no proxy in the path**. The gate
-fails only when the proxy's throughput drops below — or its p99 climbs above
-— a configured *multiple* of that baseline:
+fails only when the proxy's throughput drops below — or its latency climbs
+above — a configured *multiple* of that baseline:
 
 ```jsonc
 "pairings": {
-  "sns.Publish": { "baseline": "azure-sdk.sns.Publish", "minThroughputRatio": 0.0, "maxP99Ratio": 1.5 }
+  // REST / receive: gate on p99-ratio (+ throughput)
+  "dynamodb.GetItem (small)": { "baseline": "azure-sdk.Cosmos.ReadItem (small)", "minThroughputRatio": 0.45, "maxP99Ratio": 3.0 },
+  // AMQP send: gate on p50-ratio only (p99 is cold-attach noise)
+  "sns.Publish (256 B)":      { "baseline": "azure-sdk.ServiceBusTopics.SendMessage (256 B)", "minThroughputRatio": 0.0, "maxP50Ratio": 5.0 }
 }
 ```
 
+`azure-sdk.*` baselines never fail the build — they are reference rulers,
+never the proxy side of a pairing.
+
 Because the emulator's tail-latency jitter hits **both** sides equally, the
 ratio cancels the noise — a failure here is genuine proxy overhead, not
-flakiness. A `0` ratio opts out of that half: AMQP-send pairs use
-`minThroughputRatio: 0` (short-window throughput is skewed by cold stalls
-eating baseline completions) and gate on p99-ratio only. `azure-sdk.*`
-baselines never fail the build (they are never the proxy side of a pairing).
+flakiness. A `0` ratio opts out of that dimension.
+
+**Metric by path shape** — the gate picks the statistic that is *stable* for
+each path:
+
+- **REST + AMQP receive** pairs gate on **p99-ratio** (and usually
+  throughput-ratio): their latency distribution is unimodal, so p99 is a
+  stable signal.
+- **AMQP send** pairs gate on **p50-ratio (median) only**. A send's
+  distribution is bimodal — a steady mode plus rare multi-second cold
+  link-attach spikes — and which side those spikes land in p99 (vs max) is
+  essentially random per run and per pool/warmup dynamics. Observed proof:
+  in a single CI run `sqs.SendMessage` showed a p99-ratio of **11×** while the
+  structurally identical `sns.Publish` showed **0.06×**. The median ignores
+  the cold-attach tail and captures the real steady-state proxy overhead;
+  throughput is opted out too because cold stalls skew completions over the
+  short window.
 
 A **freshness window** (2 h) makes the gate skip any pair whose proxy and
 baseline rows were not captured in the same run, so a fresh proxy row is

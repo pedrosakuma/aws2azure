@@ -12,17 +12,24 @@ public sealed class RelativeRegressionGateEvaluatorTests
 {
     private static readonly DateTime T0 = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
-    private static PerfResultRow Row(double throughput, double p99Ms, long completed = 1000, DateTime? at = null)
+    private static PerfResultRow Row(double throughput, double p99Ms, double p50Ms = 0, long completed = 1000, DateTime? at = null)
         => new()
         {
             ThroughputPerSec = throughput,
+            P50Ms = p50Ms,
             P99Ms = p99Ms,
             Completed = completed,
             CapturedAtUtc = at ?? T0,
         };
 
-    private static PerfBaselinePairing Pair(string baseline, double minThroughputRatio, double maxP99Ratio)
-        => new() { Baseline = baseline, MinThroughputRatio = minThroughputRatio, MaxP99Ratio = maxP99Ratio };
+    private static PerfBaselinePairing Pair(string baseline, double minThroughputRatio, double maxP99Ratio, double maxP50Ratio = 0)
+        => new()
+        {
+            Baseline = baseline,
+            MinThroughputRatio = minThroughputRatio,
+            MaxP50Ratio = maxP50Ratio,
+            MaxP99Ratio = maxP99Ratio,
+        };
 
     [Fact]
     public void Passes_when_proxy_within_both_ratios()
@@ -70,6 +77,63 @@ public sealed class RelativeRegressionGateEvaluatorTests
 
         var v = Assert.Single(report.Violations);
         Assert.Contains("p99", v);
+    }
+
+    [Fact]
+    public void Fails_when_p50_above_ratio_ceiling()
+    {
+        var results = new Dictionary<string, PerfResultRow>
+        {
+            ["proxy"] = Row(throughput: 100, p99Ms: 100, p50Ms: 60), // 6× baseline median, ceiling 5×
+            ["base"] = Row(throughput: 100, p99Ms: 100, p50Ms: 10),
+        };
+        var pairings = new Dictionary<string, PerfBaselinePairing>
+        {
+            ["proxy"] = Pair("base", minThroughputRatio: 0.0, maxP99Ratio: 0.0, maxP50Ratio: 5.0),
+        };
+
+        var report = RelativeRegressionGate.Evaluate(results, pairings);
+
+        var v = Assert.Single(report.Violations);
+        Assert.Contains("p50", v);
+    }
+
+    [Fact]
+    public void Send_pair_gates_on_p50_and_ignores_the_bimodal_p99_tail()
+    {
+        // The real sqs.SendMessage signature: a cold AMQP link-attach spike
+        // lands in the proxy's p99 (11× the baseline's) but the steady-state
+        // median is healthy. A send pair gates on p50 ONLY (p99 opted out), so
+        // this must PASS — gating it on p99 would be pure cold-attach noise.
+        var results = new Dictionary<string, PerfResultRow>
+        {
+            ["sqs.SendMessage"] = Row(throughput: 113, p99Ms: 234, p50Ms: 28),
+            ["sdk"] = Row(throughput: 95, p99Ms: 21, p50Ms: 8),
+        };
+        var pairings = new Dictionary<string, PerfBaselinePairing>
+        {
+            ["sqs.SendMessage"] = Pair("sdk", minThroughputRatio: 0.0, maxP99Ratio: 0.0, maxP50Ratio: 5.0),
+        };
+
+        var report = RelativeRegressionGate.Evaluate(results, pairings);
+
+        Assert.Empty(report.Violations);
+        Assert.Single(report.Checked);
+    }
+
+    [Fact]
+    public void Zero_p50_ratio_opts_out_of_median_half()
+    {
+        var results = new Dictionary<string, PerfResultRow>
+        {
+            ["proxy"] = Row(throughput: 100, p99Ms: 100, p50Ms: 9999), // huge median, but p50 ratio disabled
+            ["base"] = Row(throughput: 100, p99Ms: 100, p50Ms: 10),
+        };
+        var pairings = new Dictionary<string, PerfBaselinePairing> { ["proxy"] = Pair("base", 0.5, 2.0) };
+
+        var report = RelativeRegressionGate.Evaluate(results, pairings);
+
+        Assert.Empty(report.Violations);
     }
 
     [Fact]

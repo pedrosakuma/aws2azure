@@ -87,8 +87,22 @@ internal sealed class PerfBaselineEntry
 /// operation against the same emulator with no proxy in the path. Because the
 /// emulator's tail-latency jitter hits both sides, the ratio cancels the noise
 /// and only fires when the proxy itself regresses. A 0 ratio opts out of that
-/// half (e.g. AMQP-send pairs skip the throughput ratio because cold-connect
-/// stalls skew completions over a short window — only p99 is meaningful there).
+/// dimension.
+///
+/// <para>Metric choice by path shape:</para>
+/// <list type="bullet">
+///   <item><b>REST + AMQP receive</b> pairs gate on <see cref="MaxP99Ratio"/>
+///   (and usually <see cref="MinThroughputRatio"/>): their latency distribution
+///   is unimodal so p99 is a stable signal.</item>
+///   <item><b>AMQP send</b> pairs gate on <see cref="MaxP50Ratio"/> ONLY. A
+///   send's distribution is bimodal — a steady mode plus rare multi-second cold
+///   link-attach spikes — and which side those spikes land in p99 (vs max) is
+///   essentially random per run and per pool/warmup dynamics, so the p99 ratio
+///   swings wildly (observed 0.06×–11× between two structurally identical send
+///   pairs in one run). The median ignores the cold-attach tail and captures the
+///   real steady-state proxy overhead; throughput is likewise opted out because
+///   cold stalls skew completions over a short window.</item>
+/// </list>
 /// </summary>
 internal sealed class PerfBaselinePairing
 {
@@ -97,6 +111,9 @@ internal sealed class PerfBaselinePairing
 
     [JsonPropertyName("minThroughputRatio")]
     public double MinThroughputRatio { get; set; }
+
+    [JsonPropertyName("maxP50Ratio")]
+    public double MaxP50Ratio { get; set; }
 
     [JsonPropertyName("maxP99Ratio")]
     public double MaxP99Ratio { get; set; }

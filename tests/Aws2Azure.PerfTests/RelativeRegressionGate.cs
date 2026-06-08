@@ -83,6 +83,17 @@ internal static class RelativeRegressionGate
                 }
             }
 
+            if (pairing.MaxP50Ratio > 0 && baseline.P50Ms > 0)
+            {
+                var ceiling = baseline.P50Ms * pairing.MaxP50Ratio;
+                if (proxy.P50Ms > ceiling)
+                {
+                    problems.Add(string.Format(inv,
+                        "p50 {0:0.0} ms > {1:0.0} ms ({2:0.##}× baseline {3:0.0})",
+                        proxy.P50Ms, ceiling, pairing.MaxP50Ratio, baseline.P50Ms));
+                }
+            }
+
             if (pairing.MaxP99Ratio > 0 && baseline.P99Ms > 0)
             {
                 var ceiling = baseline.P99Ms * pairing.MaxP99Ratio;
@@ -101,9 +112,10 @@ internal static class RelativeRegressionGate
             else
             {
                 checked_.Add(string.Format(inv,
-                    "{0} vs {1}: throughput {2:0.0}/{3:0.0} ops/s, p99 {4:0.0}/{5:0.0} ms — OK",
+                    "{0} vs {1}: throughput {2:0.0}/{3:0.0} ops/s, p50 {4:0.0}/{5:0.0} ms, p99 {6:0.0}/{7:0.0} ms — OK",
                     proxyScenario, baselineScenario,
-                    proxy.ThroughputPerSec, baseline.ThroughputPerSec, proxy.P99Ms, baseline.P99Ms));
+                    proxy.ThroughputPerSec, baseline.ThroughputPerSec,
+                    proxy.P50Ms, baseline.P50Ms, proxy.P99Ms, baseline.P99Ms));
             }
         }
 
