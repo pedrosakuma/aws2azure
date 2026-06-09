@@ -29,10 +29,14 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 ///   <item><c>FilterExpression</c> is split by
 ///   <see cref="FilterPushdownVisitor"/>: the pushable fragment is
 ///   appended to the Cosmos WHERE clause; any residual is evaluated
-///   in-process via <see cref="ConditionEvaluator"/>. Either way
-///   <c>ScannedCount</c> reflects pre-filter rows (those returned by
-///   Cosmos) and <c>Count</c> reflects post-filter rows — matching
-///   DynamoDB semantics.</item>
+///   in-process via <see cref="ConditionEvaluator"/>. <c>Count</c> always
+///   reflects post-filter rows. <c>ScannedCount</c> must reflect rows
+///   examined <em>before</em> the filter: when nothing is pushed it is the
+///   streamed row count; when a fragment is pushed (so Cosmos pre-filters)
+///   a complete unbounded pass recovers it with a server-side
+///   <c>SELECT VALUE COUNT(1)</c> over the same scope minus the pushed
+///   filter (see <see cref="ScannedCountQuery"/>). A pushed filter combined
+///   with <c>Limit</c> is a documented divergence — see the gap doc.</item>
 ///   <item><c>ProjectionExpression</c> is applied in-process. Same
 ///   subset as Query: top-level attributes / <c>#alias</c>.</item>
 ///   <item><c>Limit</c> caps the pre-filter (scanned) count, just
@@ -282,6 +286,29 @@ internal static class ScanHandler
             if (pushdown.Sql is not null && matched > 0) break;
         }
 
+        // With the filter pushed into Cosmos, `scanned` counts only matched
+        // documents — not DynamoDB's pre-filter ScannedCount. For a single
+        // complete unbounded pass (no Limit, no incoming ExclusiveStartKey, no
+        // outgoing continuation), recover the faithful count with a cheap
+        // server-side aggregate over the same scope minus the pushed filter.
+        // The Limit/paginated case stays a documented divergence: the aggregate
+        // spans the whole scope, so on a resumed (continuationIn) or partial
+        // (continuationOut) page it would not match DynamoDB's per-page count.
+        if (pushdown.Sql is not null
+            && wantedScanned == int.MaxValue
+            && string.IsNullOrEmpty(continuationIn)
+            && string.IsNullOrEmpty(continuationOut))
+        {
+            var faithful = await ScannedCountQuery.CountAsync(
+                cosmos, collLink, collUri, BuildScanCountSql(),
+                System.Array.Empty<CosmosSqlParameter>(),
+                partitionKeyHeader: null, strong: req.ConsistentRead == true, ct).ConfigureAwait(false);
+            if (faithful is int fc && fc >= matched)
+            {
+                scanned = fc;
+            }
+        }
+
         var response = new ScanResponse
         {
             Items = countOnly ? null : items,
@@ -308,6 +335,14 @@ internal static class ScanHandler
             : "SELECT * FROM c WHERE c._a2a = 'item'";
         return CosmosQueryBody.Build(sql, pushdown.Parameters);
     }
+
+    /// <summary>
+    /// The aggregate counterpart of <see cref="BuildScanQueryBody"/> used to
+    /// recover a faithful <c>ScannedCount</c>: the base scan predicate with
+    /// no pushed filter, projected as a server-side count.
+    /// </summary>
+    internal static string BuildScanCountSql()
+        => "SELECT VALUE COUNT(1) FROM c WHERE c._a2a = 'item'";
 
     private static Dictionary<string, JsonElement>? ExtractItemEnvelope(JsonElement docEl)
         => Persistence.InferredAttributeStorage.ExtractItem(docEl);

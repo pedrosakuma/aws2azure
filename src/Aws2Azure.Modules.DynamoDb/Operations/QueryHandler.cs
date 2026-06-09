@@ -28,10 +28,14 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 ///   <item><c>FilterExpression</c> is split by
 ///   <see cref="FilterPushdownVisitor"/>: the pushable fragment is
 ///   appended to the Cosmos WHERE clause; any residual is evaluated
-///   in-process via <see cref="ConditionEvaluator"/>. Either way
-///   <c>ScannedCount</c> reflects pre-filter rows (those returned by
-///   Cosmos) and <c>Count</c> reflects post-filter rows — matching
-///   DynamoDB.</item>
+///   in-process via <see cref="ConditionEvaluator"/>. <c>Count</c> always
+///   reflects post-filter rows. <c>ScannedCount</c> must reflect rows
+///   examined <em>before</em> the filter: when nothing is pushed it is the
+///   streamed row count; when a fragment is pushed (so Cosmos pre-filters)
+///   a complete unbounded pass recovers it with a server-side
+///   <c>SELECT VALUE COUNT(1)</c> over the same key scope minus the pushed
+///   filter (see <see cref="ScannedCountQuery"/>). A pushed filter combined
+///   with <c>Limit</c> is a documented divergence — see the gap doc.</item>
 ///   <item><c>ProjectionExpression</c> is applied in-process. Each
 ///   path may be a top-level attribute or a <c>#alias</c>; nested
 ///   path projection is deferred.</item>
@@ -304,6 +308,29 @@ internal static class QueryHandler
             if (pushdown.Sql is not null && matched > 0) break;
         }
 
+        // See ScanHandler: a pushed filter makes `scanned` count only matched
+        // documents. Recover DynamoDB's pre-filter ScannedCount only for a
+        // single complete unbounded pass (no Limit, no incoming
+        // ExclusiveStartKey, no outgoing continuation) via a server-side
+        // aggregate over the same key scope minus the pushed filter
+        // (single-partition, so cheap). Limit/paginated queries remain a
+        // documented divergence: the aggregate spans the whole scope and would
+        // not match DynamoDB's per-page count on a resumed/partial page.
+        if (pushdown.Sql is not null
+            && wantedScanned == int.MaxValue
+            && string.IsNullOrEmpty(continuationIn)
+            && string.IsNullOrEmpty(continuationOut))
+        {
+            var (countSql, countParams) = BuildCountSql(keyCond, FindKey(meta, "RANGE") is not null);
+            var faithful = await ScannedCountQuery.CountAsync(
+                cosmos, collLink, collUri, countSql, countParams,
+                partitionKeyHeader: pkHeader, strong: req.ConsistentRead == true, ct).ConfigureAwait(false);
+            if (faithful is int fc && fc >= matched)
+            {
+                scanned = fc;
+            }
+        }
+
         var response = new QueryResponse
         {
             Items = countOnly ? null : items,
@@ -323,6 +350,38 @@ internal static class QueryHandler
     {
         var sb = new StringBuilder("SELECT * FROM c WHERE c._a2a = 'item'");
         var parameters = new List<CosmosSqlParameter>();
+        AppendSortKeyPredicate(sb, keyCond, parameters);
+        if (pushdown.Sql is { } fSql)
+        {
+            sb.Append(" AND ").Append(fSql);
+            foreach (var fp in pushdown.Parameters) parameters.Add(fp);
+        }
+        if (composite)
+        {
+            sb.Append(" ORDER BY c.id ").Append(forward ? "ASC" : "DESC");
+        }
+        return (sb.ToString(), parameters);
+    }
+
+    /// <summary>
+    /// The aggregate counterpart of <see cref="BuildSql"/> used to recover a
+    /// faithful <c>ScannedCount</c>: the same partition/sort-key scope with no
+    /// pushed filter and no ORDER BY (illegal alongside <c>VALUE COUNT</c>),
+    /// projected as a server-side count.
+    /// </summary>
+    internal static (string sql, List<CosmosSqlParameter> parameters) BuildCountSql(
+        KeyConditionAnalyser.AnalysedKeyCondition keyCond, bool composite)
+    {
+        var sb = new StringBuilder("SELECT VALUE COUNT(1) FROM c WHERE c._a2a = 'item'");
+        var parameters = new List<CosmosSqlParameter>();
+        AppendSortKeyPredicate(sb, keyCond, parameters);
+        return (sb.ToString(), parameters);
+    }
+
+    private static void AppendSortKeyPredicate(
+        StringBuilder sb, KeyConditionAnalyser.AnalysedKeyCondition keyCond,
+        List<CosmosSqlParameter> parameters)
+    {
         if (keyCond.Sk is { } sk)
         {
             switch (sk)
@@ -342,16 +401,6 @@ internal static class QueryHandler
                     break;
             }
         }
-        if (pushdown.Sql is { } fSql)
-        {
-            sb.Append(" AND ").Append(fSql);
-            foreach (var fp in pushdown.Parameters) parameters.Add(fp);
-        }
-        if (composite)
-        {
-            sb.Append(" ORDER BY c.id ").Append(forward ? "ASC" : "DESC");
-        }
-        return (sb.ToString(), parameters);
     }
 
     private static Dictionary<string, JsonElement>? ExtractItemEnvelope(JsonElement docEl)
