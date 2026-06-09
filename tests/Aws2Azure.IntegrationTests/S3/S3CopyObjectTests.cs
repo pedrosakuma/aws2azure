@@ -90,6 +90,37 @@ public class S3CopyObjectTests
     }
 
     [SkippableFact]
+    public async Task CopyObject_with_sdk_percent_encoded_source_succeeds()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
+
+        // The official AWS SDKs marshal x-amz-copy-source fully percent-encoded
+        // (bucket%2Fkey), unlike the hand-built '/bucket/key' form the other
+        // tests use. Exercise that exact wire shape end-to-end (#225).
+        var srcBucket = "it-" + Guid.NewGuid().ToString("N")[..10];
+        var dstBucket = "it-" + Guid.NewGuid().ToString("N")[..10];
+        await PutBucket(srcBucket);
+        await PutBucket(dstBucket);
+
+        var body = Encoding.UTF8.GetBytes("sdk-encoded-copy-source");
+        await PutObject(srcBucket, "nested/src.txt", body, contentType: "text/plain");
+
+        var encodedSource = srcBucket + "%2F" + "nested%2Fsrc.txt";
+        using (var resp = await CopyRaw(copySourceRaw: encodedSource, dstBucket: dstBucket, dstKey: "dst.txt"))
+        {
+            Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+            var doc = XDocument.Parse(await resp.Content.ReadAsStringAsync());
+            Assert.Equal("CopyObjectResult", doc.Root!.Name.LocalName);
+        }
+
+        using (var resp = await SendAsync(HttpMethod.Get, $"/{dstBucket}/dst.txt", Array.Empty<byte>()))
+        {
+            Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+            Assert.Equal(body, await resp.Content.ReadAsByteArrayAsync());
+        }
+    }
+
+    [SkippableFact]
     public async Task CopyObject_missing_source_returns_NoSuchKey()
     {
         Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");

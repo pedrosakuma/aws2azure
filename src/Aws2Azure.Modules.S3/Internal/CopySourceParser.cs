@@ -8,6 +8,10 @@ namespace Aws2Azure.Modules.S3.Internal;
 ///   <item><c>{bucket}/{key}</c> (legacy)</item>
 ///   <item><c>arn:aws:s3:::…</c> (S3-on-Outposts — out of scope)</item>
 /// </list>
+/// The bucket/key separator may be a literal <c>/</c> or a percent-encoded
+/// <c>%2F</c>: the official AWS SDKs fully percent-encode the value
+/// (including the separator) when marshalling <c>CopyObjectRequest</c>, so
+/// the wire form is <c>{bucket}%2F{key}</c>. Both forms are accepted.
 /// Optional trailing <c>?versionId=…</c> is rejected in this slice — we
 /// have no versioning story yet and silently ignoring the qualifier would
 /// land the wrong object.
@@ -49,14 +53,19 @@ internal static class CopySourceParser
             s = s[1..];
         }
 
-        var slash = s.IndexOf('/', StringComparison.Ordinal);
-        if (slash <= 0 || slash >= s.Length - 1)
+        // Locate the bucket/key boundary. The AWS SDKs percent-encode the
+        // separator as %2F (CopyObjectRequest marshalling), while hand-built
+        // and legacy callers use a literal '/'. Accept whichever appears
+        // first. Bucket names cannot contain '/' or '%', so the first
+        // separator is unambiguous and everything before it is the bucket.
+        var (sepIndex, sepLen) = FindSeparator(s);
+        if (sepIndex <= 0 || sepIndex + sepLen >= s.Length)
         {
             return Fail("x-amz-copy-source must be of the form '/{bucket}/{key}'.");
         }
 
-        var bucket = s[..slash];
-        var encodedKey = s[(slash + 1)..];
+        var bucket = s[..sepIndex];
+        var encodedKey = s[(sepIndex + sepLen)..];
 
         if (!IsWellFormedPercentEncoding(encodedKey))
         {
@@ -74,6 +83,25 @@ internal static class CopySourceParser
         }
 
         return new ParseResult(true, bucket, decodedKey, null);
+    }
+
+    private static (int Index, int Length) FindSeparator(string s)
+    {
+        // The separator is either a literal '/' (length 1) or a percent-encoded
+        // '%2F'/'%2f' (length 3), whichever comes first.
+        for (var i = 0; i < s.Length; i++)
+        {
+            if (s[i] == '/')
+            {
+                return (i, 1);
+            }
+            if (s[i] == '%' && i + 2 < s.Length
+                && s[i + 1] == '2' && (s[i + 2] == 'F' || s[i + 2] == 'f'))
+            {
+                return (i, 3);
+            }
+        }
+        return (-1, 0);
     }
 
     private static bool IsWellFormedPercentEncoding(string s)

@@ -169,6 +169,56 @@ public sealed class S3PerfTests(S3PerfFixture fixture)
     }
 
     [SkippableFact]
+    public async Task CopyObject_throughput()
+    {
+        Skip.IfNot(fixture.Ready, fixture.SkipReason);
+
+        using var client = fixture.CreateClient();
+
+        // Pre-seed source objects. CopyObjectRequest marshals x-amz-copy-source
+        // as the SDK's default percent-encoded '{bucket}%2F{key}' form, so this
+        // scenario also guards the #225 regression on the hot path. Seed cost is
+        // outside the perf window.
+        const int seedCount = 64;
+        var payload = new byte[4 * 1024];
+        Random.Shared.NextBytes(payload);
+        var srcKeys = new string[seedCount];
+        for (var i = 0; i < seedCount; i++)
+        {
+            srcKeys[i] = $"perf-copy-src/{i:D4}-{Guid.NewGuid():N}";
+            using var ms = new MemoryStream(payload, writable: false);
+            await client.PutObjectAsync(new PutObjectRequest
+            {
+                BucketName = fixture.Bucket,
+                Key = srcKeys[i],
+                InputStream = ms,
+                UseChunkEncoding = false,
+            }).ConfigureAwait(false);
+        }
+
+        var result = await PerfRunner.RunAsync(
+            scenario: "s3.CopyObject (4 KiB)",
+            concurrency: 16,
+            duration: TimeSpan.FromSeconds(20),
+            warmup: TimeSpan.FromSeconds(3),
+            action: async (workerId, ct) =>
+            {
+                var srcKey = srcKeys[Random.Shared.Next(srcKeys.Length)];
+                await client.CopyObjectAsync(new CopyObjectRequest
+                {
+                    SourceBucket = fixture.Bucket,
+                    SourceKey = srcKey,
+                    DestinationBucket = fixture.Bucket,
+                    DestinationKey = $"perf-copy-dst/w{workerId:D2}/{Guid.NewGuid():N}",
+                }, ct).ConfigureAwait(false);
+            });
+
+        PerfReport.Append(result, notes: "S3→Azurite CopyObject — 4 KiB intra-account server-side copy (SDK %2F-encoded copy-source)");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
+    }
+
+    [SkippableFact]
     public async Task DeleteObject_throughput()
     {
         Skip.IfNot(fixture.Ready, fixture.SkipReason);
