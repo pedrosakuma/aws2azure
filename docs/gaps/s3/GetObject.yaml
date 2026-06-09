@@ -7,6 +7,7 @@ sub_features:
     status: implemented
   - name: conditional headers (If-Match / If-None-Match / If-Modified-Since / If-Unmodified-Since)
     status: implemented
+    gap: "The proxy translates ETags, so concrete-ETag conditionals are evaluated proxy-side after Azure returns 200 (Azure cannot recognize the S3-shaped value). A failed If-Match on a read yields 412 PreconditionFailed with a faithful <Error> envelope; If-None-Match match yields 304."
   - name: standard response headers (ETag, Last-Modified, Content-Type, Content-Length, Content-Encoding, Cache-Control, Accept-Ranges, Content-Range)
     status: implemented
   - name: user metadata (x-amz-meta-*)
@@ -31,6 +32,7 @@ behavior_differences:
   - "Error envelopes omit the <HostId> element that real S3 emits. [conformance:missing-field:HostId]"
   - "NoSuchBucket envelopes omit the informational <BucketName> element real S3 includes. [conformance:nosuchbucket-get-object::missing-field:BucketName]"
   - "NoSuchKey envelopes omit the informational <Key> element real S3 includes. [conformance:nosuchkey-get-object::missing-field:Key]"
+  - "PreconditionFailed envelopes omit the informational <Condition> element (e.g. <Condition>If-Match</Condition>) real S3 includes. [conformance:precondition-failed-get::missing-field:Condition]"
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
   - https://learn.microsoft.com/rest/api/storageservices/get-blob
