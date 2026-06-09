@@ -257,4 +257,129 @@ public sealed class AwsErrorCanonicalizerTests
         Assert.Equal(c.Render(), reparsed.Render());
         Assert.Empty(CanonicalDiff.Compare(c, reparsed));
     }
+
+    // --- JSON-protocol error envelope (DynamoDB / Kinesis / modern SQS) ---
+
+    private const string ResourceNotFoundJson =
+        "{\"__type\":\"com.amazonaws.dynamodb.v20120810#ResourceNotFoundException\"," +
+        "\"message\":\"Requested resource not found: Table: t not found\"}";
+
+    [Fact]
+    public void Json_envelope_maps_type_to_short_code_and_masks_message()
+    {
+        var c = AwsErrorCanonicalizer.Canonicalize(
+            400,
+            new[] { H("Content-Type", "application/x-amz-json-1.0") },
+            ResourceNotFoundJson);
+
+        Assert.Equal(CanonicalResponse.BodyKindJsonError, c.BodyKind);
+        var fields = c.BodyFields.ToDictionary(f => f.Name, f => f.Value);
+        Assert.Equal("ResourceNotFoundException", fields["Code"]);
+        Assert.Equal(CanonicalResponse.Masked, fields["Message"]);
+    }
+
+    [Fact]
+    public void Json_envelope_is_detected_by_leading_brace_without_content_type()
+    {
+        var c = AwsErrorCanonicalizer.Canonicalize(
+            400, Array.Empty<KeyValuePair<string, string>>(), ResourceNotFoundJson);
+
+        Assert.Equal(CanonicalResponse.BodyKindJsonError, c.BodyKind);
+    }
+
+    [Fact]
+    public void Json_short_code_is_namespace_prefix_independent()
+    {
+        // SDK clients dispatch on the short error-code name; the coral namespace
+        // prefix differs across AWS implementations and must not be a divergence.
+        var prefixed = AwsErrorCanonicalizer.Canonicalize(400,
+            new[] { H("Content-Type", "application/x-amz-json-1.1") },
+            "{\"__type\":\"com.amazon.coral.service#ValidationException\",\"message\":\"m\"}");
+        var bare = AwsErrorCanonicalizer.Canonicalize(400,
+            new[] { H("Content-Type", "application/x-amz-json-1.1") },
+            "{\"__type\":\"ValidationException\",\"Message\":\"different wording\"}");
+
+        Assert.Equal(prefixed.Render(), bare.Render());
+    }
+
+    [Fact]
+    public void Two_json_responses_differing_only_in_message_canonicalize_equal()
+    {
+        var a = AwsErrorCanonicalizer.Canonicalize(400,
+            new[] { H("Content-Type", "application/x-amz-json-1.0") },
+            "{\"__type\":\"ResourceNotFoundException\",\"message\":\"Table A not found\"}");
+        var b = AwsErrorCanonicalizer.Canonicalize(400,
+            new[] { H("Content-Type", "application/x-amz-json-1.0") },
+            "{\"__type\":\"ResourceNotFoundException\",\"message\":\"Table B not found\"}");
+
+        Assert.Equal(a.Render(), b.Render());
+    }
+
+    [Fact]
+    public void Different_json_error_code_produces_different_canonical_form()
+    {
+        var a = AwsErrorCanonicalizer.Canonicalize(400,
+            new[] { H("Content-Type", "application/x-amz-json-1.0") },
+            "{\"__type\":\"ResourceNotFoundException\",\"message\":\"m\"}");
+        var b = AwsErrorCanonicalizer.Canonicalize(400,
+            new[] { H("Content-Type", "application/x-amz-json-1.0") },
+            "{\"__type\":\"ValidationException\",\"message\":\"m\"}");
+
+        Assert.NotEqual(a.Render(), b.Render());
+    }
+
+    [Fact]
+    public void Json_nested_value_yields_marker_and_keeps_scalar_siblings()
+    {
+        var c = AwsErrorCanonicalizer.Canonicalize(400,
+            new[] { H("Content-Type", "application/x-amz-json-1.0") },
+            "{\"__type\":\"Throttling\",\"message\":\"slow\"," +
+            "\"detail\":{\"inner\":1},\"retryable\":true}");
+
+        var fields = c.BodyFields.ToDictionary(f => f.Name, f => f.Value);
+        Assert.Equal("Throttling", fields["Code"]);
+        Assert.Equal("<nested>", fields["detail"]);
+        Assert.Equal("true", fields["retryable"]);
+    }
+
+    [Fact]
+    public void Malformed_json_is_surfaced_as_opaque_not_thrown()
+    {
+        var c = AwsErrorCanonicalizer.Canonicalize(500,
+            new[] { H("Content-Type", "application/x-amz-json-1.0") },
+            "{\"__type\":\"oops");
+
+        Assert.Equal(CanonicalResponse.BodyKindOpaque, c.BodyKind);
+        Assert.Contains(c.BodyFields, f => f.Name == "(unparseable-json)");
+    }
+
+    [Fact]
+    public void Non_object_json_is_surfaced_as_opaque()
+    {
+        var c = AwsErrorCanonicalizer.Canonicalize(500,
+            new[] { H("Content-Type", "application/json") }, "[1,2,3]");
+
+        Assert.Equal(CanonicalResponse.BodyKindOpaque, c.BodyKind);
+    }
+
+    [Fact]
+    public void Json_and_xml_envelopes_with_same_code_share_the_code_field_name()
+    {
+        // Cross-protocol normalization: both surface the dispatch key under
+        // "Code", so the Tier-2 driver's CodeOf() works uniformly. The body
+        // KIND still differs (xml-error vs json-error), preserving protocol
+        // observability.
+        var xml = AwsErrorCanonicalizer.Canonicalize(400,
+            new[] { H("Content-Type", "application/xml") },
+            "<Error><Code>ValidationException</Code><Message>m</Message></Error>");
+        var json = AwsErrorCanonicalizer.Canonicalize(400,
+            new[] { H("Content-Type", "application/x-amz-json-1.0") },
+            "{\"__type\":\"ValidationException\",\"message\":\"m\"}");
+
+        Assert.Equal("ValidationException",
+            xml.BodyFields.Single(f => f.Name == "Code").Value);
+        Assert.Equal("ValidationException",
+            json.BodyFields.Single(f => f.Name == "Code").Value);
+        Assert.NotEqual(xml.BodyKind, json.BodyKind);
+    }
 }

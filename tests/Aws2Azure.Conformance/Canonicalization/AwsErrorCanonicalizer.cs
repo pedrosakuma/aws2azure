@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using System.Xml;
 
 namespace Aws2Azure.Conformance.Canonicalization;
@@ -55,25 +56,47 @@ public static class AwsErrorCanonicalizer
         }
 
         var baseType = (contentType ?? string.Empty).Split(';')[0].Trim().ToLowerInvariant();
+        var trimmed = body.TrimStart();
         var looksXml = baseType is "application/xml" or "text/xml"
-            || body.TrimStart().StartsWith('<');
-        if (!looksXml)
+            || trimmed.StartsWith('<');
+        if (looksXml)
         {
-            return (CanonicalResponse.BodyKindOpaque,
-                new List<CanonicalField> { new("(raw)", body.Trim()) });
+            try
+            {
+                return (CanonicalResponse.BodyKindXmlError, ParseXmlError(body, policy));
+            }
+            catch (XmlException)
+            {
+                // Malformed XML is itself a faithful observation — surface it as an
+                // opaque body rather than throwing.
+                return (CanonicalResponse.BodyKindOpaque,
+                    new List<CanonicalField> { new("(unparseable-xml)", body.Trim()) });
+            }
         }
 
-        try
+        // AWS JSON-protocol services (DynamoDB, Kinesis, modern SQS, …) return
+        // their error as a JSON envelope ({"__type":"…#Code","message":"…"})
+        // rather than the S3-style XML <Error>. Canonicalize it onto the same
+        // contract surface (a Code field + masked Message) so the Tier-1 replay
+        // and Tier-2 differential work uniformly across protocols.
+        var looksJson = baseType.Contains("json", StringComparison.Ordinal)
+            || trimmed.StartsWith('{');
+        if (looksJson)
         {
-            return (CanonicalResponse.BodyKindXmlError, ParseXmlError(body, policy));
+            try
+            {
+                var (kind, fields) = ParseJsonError(body, policy);
+                return (kind, fields);
+            }
+            catch (JsonException)
+            {
+                return (CanonicalResponse.BodyKindOpaque,
+                    new List<CanonicalField> { new("(unparseable-json)", body.Trim()) });
+            }
         }
-        catch (XmlException)
-        {
-            // Malformed XML is itself a faithful observation — surface it as an
-            // opaque body rather than throwing.
-            return (CanonicalResponse.BodyKindOpaque,
-                new List<CanonicalField> { new("(unparseable-xml)", body.Trim()) });
-        }
+
+        return (CanonicalResponse.BodyKindOpaque,
+            new List<CanonicalField> { new("(raw)", body.Trim()) });
     }
 
     private static List<CanonicalField> ParseXmlError(string body, CanonicalizationPolicy policy)
@@ -163,6 +186,106 @@ public static class AwsErrorCanonicalizer
         reader.Read(); // consume the end tag, positioning on the next sibling
         return (name, nested ? "<nested>" : text.ToString());
     }
+
+    /// <summary>
+    /// AWS JSON-protocol error envelope. Top-level properties are projected onto
+    /// the same canonical surface as the XML path:
+    /// <list type="bullet">
+    ///   <item><c>__type</c> → <c>Code</c>, reduced to the short error-code name
+    ///   (the namespace prefix before <c>#</c> / after the last <c>.</c> is not
+    ///   contracted — SDK clients dispatch on the short name).</item>
+    ///   <item><c>message</c>/<c>Message</c> → <c>Message</c> (masked: the wording
+    ///   is non-contractual).</item>
+    ///   <item>volatile correlation ids (RequestId, …) are masked via policy.</item>
+    ///   <item>nested object/array values degrade to the <c>&lt;nested&gt;</c>
+    ///   marker, matching the XML path.</item>
+    /// </list>
+    /// </summary>
+    private static (string Kind, List<CanonicalField> Fields) ParseJsonError(
+        string body, CanonicalizationPolicy policy)
+    {
+        using var doc = JsonDocument.Parse(body);
+        var root = doc.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            // Arrays / scalars are not an AWS error-envelope shape; surface them
+            // opaquely rather than masquerading as a structured error.
+            return (CanonicalResponse.BodyKindOpaque,
+                new List<CanonicalField> { new("(raw)", body.Trim()) });
+        }
+
+        var fields = new List<CanonicalField>();
+        foreach (var prop in root.EnumerateObject())
+        {
+            var name = NormalizeJsonFieldName(prop.Name);
+            string value;
+            if (name == "Code")
+            {
+                value = ShortErrorCode(prop.Value.ValueKind == JsonValueKind.String
+                    ? prop.Value.GetString() ?? string.Empty
+                    : JsonValueToString(prop.Value));
+            }
+            else if (policy.VolatileBodyElements.Contains(name)
+                     || policy.NonContractualBodyElements.Contains(name))
+            {
+                value = CanonicalResponse.Masked;
+            }
+            else
+            {
+                value = JsonValueToString(prop.Value);
+            }
+            fields.Add(new CanonicalField(name, value));
+        }
+
+        return (CanonicalResponse.BodyKindJsonError, fields);
+    }
+
+    /// <summary>
+    /// Maps an AWS JSON error property name onto the canonical field name shared
+    /// with the XML envelope: <c>__type</c> → <c>Code</c>, <c>message</c> →
+    /// <c>Message</c>. All other names pass through unchanged.
+    /// </summary>
+    private static string NormalizeJsonFieldName(string name) => name switch
+    {
+        "__type" => "Code",
+        _ when string.Equals(name, "message", StringComparison.OrdinalIgnoreCase) => "Message",
+        _ => name,
+    };
+
+    /// <summary>
+    /// Reduces a JSON <c>__type</c> value to the short error-code name AWS SDK
+    /// clients dispatch on, stripping the namespace prefix
+    /// (<c>com.amazonaws.dynamodb.v20120810#ResourceNotFoundException</c> →
+    /// <c>ResourceNotFoundException</c>).
+    /// </summary>
+    private static string ShortErrorCode(string type)
+    {
+        var s = type.Trim();
+        var hash = s.LastIndexOf('#');
+        if (hash >= 0)
+        {
+            s = s[(hash + 1)..];
+        }
+        var dot = s.LastIndexOf('.');
+        if (dot >= 0)
+        {
+            s = s[(dot + 1)..];
+        }
+        return s.Trim();
+    }
+
+    private static string JsonValueToString(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.String => (value.GetString() ?? string.Empty).Trim(),
+        JsonValueKind.Number => value.GetRawText(),
+        JsonValueKind.True => "true",
+        JsonValueKind.False => "false",
+        JsonValueKind.Null => "null",
+        // Nested object/array: surface the structural marker, mirroring the XML
+        // path, so the presence of a nested member is part of the contract
+        // surface even when its inner shape is not.
+        _ => "<nested>",
+    };
 
     private static string NormalizeHeaderValue(string name, string value)
     {
