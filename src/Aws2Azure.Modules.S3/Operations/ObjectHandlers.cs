@@ -637,6 +637,24 @@ internal static class ObjectHandlers
             var shortCircuit = HeaderForwarding.EvaluateEtagConditionals(context.Request, translatedEtag, isReadOperation: true);
             if (shortCircuit is { } status)
             {
+                if (status == StatusCodes.Status412PreconditionFailed)
+                {
+                    // A failed If-Match on a HEAD is 412 PreconditionFailed.
+                    // HEAD carries no body, but the response must not leak the
+                    // object's success metadata (ETag / Last-Modified /
+                    // Content-Length) copied from Azure's 200 — emit a clean
+                    // bodiless error with x-amz-error-code, like every other
+                    // HEAD error path.
+                    context.Response.Headers.Clear();
+                    await EmitHeadErrorAsync(context, new S3ErrorMapping.Mapping(
+                        StatusCodes.Status412PreconditionFailed,
+                        "PreconditionFailed",
+                        "At least one of the pre-conditions you specified did not hold.")).ConfigureAwait(false);
+                    return;
+                }
+
+                // 304 Not Modified (If-None-Match matched): bodiless, headers
+                // preserved as Azure returned them.
                 context.Response.StatusCode = status;
             }
         }

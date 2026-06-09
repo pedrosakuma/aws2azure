@@ -126,6 +126,16 @@ public class S3ObjectOpsTests
         // The object-metadata headers copied from Azure's 200 must not leak
         // onto the error response.
         Assert.Null(resp.Headers.ETag);
+
+        // HEAD with the same failing If-Match → 412, bodiless, signalled via
+        // x-amz-error-code (HEAD carries no XML body), and must likewise not
+        // leak the object's success metadata.
+        using var head = await SendAsync(HttpMethod.Head, $"/{bucket}/cond.txt", Array.Empty<byte>(),
+            extraHeaders: ("If-Match", "\"00000000000000000000000000000000\""));
+        Assert.Equal(HttpStatusCode.PreconditionFailed, head.StatusCode);
+        Assert.Equal("PreconditionFailed", head.Headers.GetValues("x-amz-error-code").Single());
+        Assert.Null(head.Headers.ETag);
+        Assert.Equal(0, head.Content.Headers.ContentLength);
     }
 
     [SkippableFact]

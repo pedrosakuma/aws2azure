@@ -5,12 +5,14 @@ status: implemented
 sub_features:
   - name: conditional headers
     status: implemented
+    gap: "Concrete-ETag conditionals are evaluated proxy-side (the proxy translates ETags). A failed If-Match yields a bodiless 412 with x-amz-error-code: PreconditionFailed and no leaked object metadata; If-None-Match match yields 304."
   - name: standard response headers (ETag, Last-Modified, Content-Length, Content-Type, …)
     status: implemented
   - name: user metadata (x-amz-meta-*)
     status: implemented
 behavior_differences:
   - "404 responses include x-amz-error-code: NoSuchKey and an empty body (HEAD spec)."
+  - "412 PreconditionFailed (failed If-Match) responses include x-amz-error-code: PreconditionFailed and an empty body (HEAD spec)."
   - "Presigned HEAD is accepted (see PresignedUrl.yaml)."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html
