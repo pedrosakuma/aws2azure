@@ -98,10 +98,13 @@ AWS2AZURE_CONFORMANCE_TIER2=1 dotnet test tests/Aws2Azure.Conformance           
 AWS2AZURE_CONFORMANCE_TIER2=1 AWS2AZURE_CONFORMANCE_RECORD=1 dotnet test tests/Aws2Azure.Conformance   # (re)capture goldens from LocalStack
 ```
 
-## Scope so far (issue #228)
+## Scope so far (issues #228, #234)
 
-- **Tier 1 — S3 proxy-side auth errors** (offline, every PR):
-  `SignatureDoesNotMatch`, `InvalidAccessKeyId`, `RequestTimeTooSkewed`.
+- **Tier 1 — S3 proxy-side errors** (offline, every PR): rejected before any
+  Azure call, in either the SigV4 stage (`SignatureDoesNotMatch`,
+  `InvalidAccessKeyId`, `RequestTimeTooSkewed`) or the request-validation stage
+  (`InvalidBucketName` — a validly-signed request to a syntactically invalid
+  bucket name).
 - **Tier 2 — S3 backend-mapped errors** (LocalStack differential, Docker):
   `NoSuchBucket` (GET on a missing bucket) and `NoSuchKey` (GET a missing key in
   an existing bucket), proxy-over-Azurite vs LocalStack S3. The accepted
