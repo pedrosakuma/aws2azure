@@ -107,6 +107,19 @@ public class ScanHandlerTests
         return sb.ToString();
     }
 
+    // SELECT VALUE COUNT(1) yields a bare number per partition page.
+    private static string CountEnvelope(params long[] partials)
+    {
+        var sb = new StringBuilder("{\"_rid\":\"x\",\"Documents\":[");
+        for (int i = 0; i < partials.Length; i++)
+        {
+            if (i > 0) sb.Append(',');
+            sb.Append(partials[i].ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        sb.Append("],\"_count\":").Append(partials.Length).Append('}');
+        return sb.ToString();
+    }
+
     [Fact]
     public async Task Scan_returns_all_items_with_cross_partition_header()
     {
@@ -196,6 +209,107 @@ public class ScanHandlerTests
         var queryReq = handler.Requests[1];
         // Body is JSON-encoded so `"` is escaped as `\"`.
         Assert.Contains("c[\\\"v\\\"] = @fp0", queryReq.Body);
+    }
+
+    [Fact]
+    public async Task Scan_pushed_filter_recovers_scanned_count_via_aggregate()
+    {
+        // With the filter enforced server-side, Cosmos streams back only the
+        // 2 matching docs. A faithful DynamoDB ScannedCount (pre-filter) must
+        // still report every examined item — recovered via a SELECT VALUE
+        // COUNT(1) over the same scope minus the pushed filter.
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(Metadata),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"S\":\"x\"}}"),
+                    DocWithItem("b", "b", "{\"pk\":{\"S\":\"b\"},\"v\":{\"S\":\"x\"}}"))),
+                CosmosOk(CountEnvelope(5)),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"FilterExpression\":\"v = :v\","
+                  + "\"ExpressionAttributeValues\":{\":v\":{\"S\":\"x\"}}}";
+
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(2, resp.RootElement.GetProperty("Count").GetInt32());
+        Assert.Equal(5, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+
+        Assert.Equal(3, handler.Requests.Count);
+        var countReq = handler.Requests[2];
+        Assert.Contains("SELECT VALUE COUNT(1)", countReq.Body);
+        // The aggregate must NOT carry the pushed filter, and must fan out
+        // cross-partition (no partition-key scoping for a table-wide Scan).
+        Assert.DoesNotContain("@fp0", countReq.Body);
+        Assert.Equal("true", countReq.Headers["x-ms-documentdb-query-enablecrosspartition"]);
+        Assert.False(countReq.Headers.ContainsKey("x-ms-documentdb-partitionkey"));
+    }
+
+    [Fact]
+    public async Task Scan_pushed_filter_with_limit_skips_aggregate()
+    {
+        // A Limit makes the pre-filter ScannedCount page-bounded; under
+        // server-side filtering the page boundary differs from DynamoDB's,
+        // so we do NOT issue the aggregate (documented divergence) — no
+        // third request, ScannedCount stays the streamed value.
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(Metadata),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"S\":\"x\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Limit\":10,"
+                  + "\"FilterExpression\":\"v = :v\","
+                  + "\"ExpressionAttributeValues\":{\":v\":{\"S\":\"x\"}}}";
+
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(1, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task Scan_pushed_filter_falls_back_when_aggregate_fails()
+    {
+        // Best-effort: if the count aggregate cannot be read, fall back to
+        // the streamed counter rather than failing the request. (The stub
+        // returns 500 for the unscripted third request.)
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(Metadata),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"S\":\"x\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"FilterExpression\":\"v = :v\","
+                  + "\"ExpressionAttributeValues\":{\":v\":{\"S\":\"x\"}}}";
+
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.Equal(1, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+        Assert.Equal(3, handler.Requests.Count);
     }
 
     [Fact]

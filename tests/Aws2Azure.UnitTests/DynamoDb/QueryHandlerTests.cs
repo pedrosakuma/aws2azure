@@ -113,6 +113,51 @@ public class QueryHandlerTests
         return sb.ToString();
     }
 
+    private static string CountEnvelope(long n)
+        => "{\"_rid\":\"x\",\"Documents\":[" + n.ToString(System.Globalization.CultureInfo.InvariantCulture) + "],\"_count\":1}";
+
+    [Fact]
+    public async Task Query_pushed_filter_recovers_scanned_count_via_partition_scoped_aggregate()
+    {
+        // Filter pushed into Cosmos → streamed docs are pre-filtered, so the
+        // faithful pre-filter ScannedCount is recovered with a SELECT VALUE
+        // COUNT(1) over the same single-partition key scope, minus the filter.
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataHashOnly),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"9\"}}"),
+                    DocWithItem("a", "b", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"8\"}}"))),
+                CosmosOk(CountEnvelope(5)),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"FilterExpression\":\"v > :min\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":min\":{\"N\":\"3\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(2, resp.RootElement.GetProperty("Count").GetInt32());
+        Assert.Equal(5, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+
+        Assert.Equal(3, handler.Requests.Count);
+        var countReq = handler.Requests[2];
+        Assert.Contains("SELECT VALUE COUNT(1)", countReq.Body);
+        Assert.DoesNotContain("@fp0", countReq.Body);
+        Assert.DoesNotContain("ORDER BY", countReq.Body);
+        // The aggregate stays scoped to the queried partition (single-partition).
+        var pkHex = Convert.ToHexStringLower(Encoding.UTF8.GetBytes("a"));
+        Assert.Equal($"[\"{pkHex}\"]", countReq.Headers["x-ms-documentdb-partitionkey"]);
+        Assert.False(countReq.Headers.ContainsKey("x-ms-documentdb-query-enablecrosspartition"));
+    }
+
     [Fact]
     public async Task Query_hash_only_returns_matching_item()
     {
