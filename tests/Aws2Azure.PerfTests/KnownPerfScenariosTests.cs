@@ -29,6 +29,7 @@ public sealed class KnownPerfScenariosTests
         // S3
         "s3.PutObject (4 KiB)",
         "s3.GetObject (64 KiB)",
+        "s3.CopyObject (4 KiB)",
         "azure-sdk.Blob.UploadAsync (4 KiB)",
 
         // SQS
