@@ -55,7 +55,13 @@ raw HTTP response ──▶ AwsErrorCanonicalizer ──▶ CanonicalResponse �
   AWS clients actually contract on. Non-deterministic values (request/host ids,
   dates) and the non-contractual `Message` wording are masked; transport/server
   headers are dropped; everything is sorted. Two *faithfully equivalent*
-  responses canonicalize to identical text.
+  responses canonicalize to identical text. Both the S3-style **XML** `<Error>`
+  envelope and the AWS **JSON**-protocol envelope (`{"__type":"…#Code",
+  "message":"…"}`, used by DynamoDB / Kinesis / modern SQS) are understood:
+  `__type` is reduced to the short error `Code` (namespace-prefix independent)
+  so the dispatch key is compared uniformly across protocols, while the body
+  *kind* (`xml-error` vs `json-error`) is still diffed so a genuine protocol
+  switch surfaces as a divergence.
 - **Goldens** (`Goldens/`, `fixtures/<service>/*.golden`) store a canonical
   response plus provenance. Plain text, reviewed in PRs. Captured from
   LocalStack/AWS — **never hand-authored** (hand-authoring re-encodes the

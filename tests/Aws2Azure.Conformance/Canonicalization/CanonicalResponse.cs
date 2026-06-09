@@ -25,6 +25,7 @@ public sealed record CanonicalResponse(
     public const string Masked = "<MASKED>";
 
     public const string BodyKindXmlError = "xml-error";
+    public const string BodyKindJsonError = "json-error";
     public const string BodyKindEmpty = "empty";
     public const string BodyKindOpaque = "opaque";
 
