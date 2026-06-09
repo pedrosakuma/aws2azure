@@ -283,6 +283,41 @@ public class ScanHandlerTests
     }
 
     [Fact]
+    public async Task Scan_pushed_filter_with_exclusive_start_key_skips_aggregate()
+    {
+        // A resumed page (ExclusiveStartKey present) reports only the items
+        // examined from the resume point onward. The whole-scope aggregate
+        // would over-count, so we do NOT issue it on a resumed pass even when
+        // the final page carries no outgoing continuation — ScannedCount stays
+        // the streamed (page-local) value. Only one Cosmos data request runs
+        // (metadata is cached) and no third aggregate request fires.
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(Metadata),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"S\":\"x\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes("RESUME-Z"));
+        var req = "{\"TableName\":\"orders\","
+                  + "\"FilterExpression\":\"v = :v\","
+                  + "\"ExpressionAttributeValues\":{\":v\":{\"S\":\"x\"}},"
+                  + "\"ExclusiveStartKey\":{\"__a2a_continuation\":{\"S\":\"" + b64 + "\"}}}";
+
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(1, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+        Assert.Equal("RESUME-Z", handler.Requests[1].Headers["x-ms-continuation"]);
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
     public async Task Scan_pushed_filter_falls_back_when_aggregate_fails()
     {
         // Best-effort: if the count aggregate cannot be read, fall back to
@@ -291,6 +326,37 @@ public class ScanHandlerTests
         var (ctx, body) = NewCtx();
         var handler = new ScriptedHandler
         {
+            Responses =
+            {
+                CosmosOk(Metadata),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"S\":\"x\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"FilterExpression\":\"v = :v\","
+                  + "\"ExpressionAttributeValues\":{\":v\":{\"S\":\"x\"}}}";
+
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.Equal(1, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+        Assert.Equal(3, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task Scan_pushed_filter_falls_back_when_aggregate_throws()
+    {
+        // Best-effort: a transport exception on the supplementary count call
+        // must degrade to the streamed counter, never fail the already-200
+        // Scan whose data was fetched successfully.
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            ThrowWhenExhausted = true,
             Responses =
             {
                 CosmosOk(Metadata),
@@ -590,6 +656,7 @@ public class ScanHandlerTests
     {
         public List<HttpResponseMessage> Responses { get; } = new();
         public List<CapturedRequest> Requests { get; } = new();
+        public bool ThrowWhenExhausted { get; set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -607,7 +674,11 @@ public class ScanHandlerTests
             Requests.Add(new CapturedRequest(request.Method, request.RequestUri!, headers, body));
 
             if (Responses.Count == 0)
+            {
+                if (ThrowWhenExhausted)
+                    throw new HttpRequestException("simulated transport blip");
                 return new HttpResponseMessage(HttpStatusCode.InternalServerError);
+            }
             var next = Responses[0];
             Responses.RemoveAt(0);
             return next;

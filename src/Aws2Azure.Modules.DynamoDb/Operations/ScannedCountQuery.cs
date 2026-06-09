@@ -24,11 +24,13 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 /// <em>without</em> the pushed filter.</para>
 ///
 /// <para>Best-effort: returns <c>null</c> when the aggregate cannot be
-/// read (non-success status, or no numeric payload) so callers fall back
-/// to the streaming counter rather than failing the request. The
-/// aggregate may arrive as one rolled-up number or as per-partition
-/// partials spread across <c>Documents</c> entries and continuation
-/// pages, so every numeric value seen is summed.</para>
+/// read — non-success status, no numeric payload, or any non-cancellation
+/// exception (transient transport blip, malformed body) — so callers fall
+/// back to the streaming counter rather than failing an already-successful
+/// request. Genuine caller cancellation still propagates. The aggregate may
+/// arrive as one rolled-up number or as per-partition partials spread across
+/// <c>Documents</c> entries and continuation pages, so every numeric value
+/// seen is summed.</para>
 /// </summary>
 internal static class ScannedCountQuery
 {
@@ -47,62 +49,76 @@ internal static class ScannedCountQuery
         string? continuation = null;
         var body = CosmosQueryBody.Build(countSql, parameters);
 
-        do
+        try
         {
-            using var content = new StringContent(body, Encoding.UTF8);
-            content.Headers.ContentType = new MediaTypeHeaderValue("application/query+json");
+            do
+            {
+                using var content = new StringContent(body, Encoding.UTF8);
+                content.Headers.ContentType = new MediaTypeHeaderValue("application/query+json");
 
-            var headers = new List<KeyValuePair<string, string>>
-            {
-                new("x-ms-documentdb-isquery", "true"),
-                new("x-ms-max-item-count", "1000"),
-            };
-            if (partitionKeyHeader is not null)
-            {
-                headers.Add(new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", partitionKeyHeader));
-            }
-            else
-            {
-                headers.Add(new KeyValuePair<string, string>("x-ms-documentdb-query-enablecrosspartition", "true"));
-            }
-            if (strong)
-            {
-                headers.Add(new KeyValuePair<string, string>("x-ms-consistency-level", "Strong"));
-            }
-            if (!string.IsNullOrEmpty(continuation))
-            {
-                headers.Add(new KeyValuePair<string, string>("x-ms-continuation", continuation));
-            }
-
-            using var resp = await cosmos.SendAsync(
-                HttpMethod.Post, "docs", collLink, collUri, content, headers, ct).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode)
-            {
-                return null;
-            }
-
-            using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
-            if (doc.RootElement.TryGetProperty("Documents", out var arr)
-                && arr.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var el in arr.EnumerateArray())
+                var headers = new List<KeyValuePair<string, string>>
                 {
-                    if (TryReadAggregate(el, out var n))
+                    new("x-ms-documentdb-isquery", "true"),
+                    new("x-ms-max-item-count", "1000"),
+                };
+                if (partitionKeyHeader is not null)
+                {
+                    headers.Add(new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", partitionKeyHeader));
+                }
+                else
+                {
+                    headers.Add(new KeyValuePair<string, string>("x-ms-documentdb-query-enablecrosspartition", "true"));
+                }
+                if (strong)
+                {
+                    headers.Add(new KeyValuePair<string, string>("x-ms-consistency-level", "Strong"));
+                }
+                if (!string.IsNullOrEmpty(continuation))
+                {
+                    headers.Add(new KeyValuePair<string, string>("x-ms-continuation", continuation));
+                }
+
+                using var resp = await cosmos.SendAsync(
+                    HttpMethod.Post, "docs", collLink, collUri, content, headers, ct).ConfigureAwait(false);
+                if (!resp.IsSuccessStatusCode)
+                {
+                    return null;
+                }
+
+                using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+                using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
+                if (doc.RootElement.TryGetProperty("Documents", out var arr)
+                    && arr.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var el in arr.EnumerateArray())
                     {
-                        total += n;
-                        sawNumber = true;
+                        if (TryReadAggregate(el, out var n))
+                        {
+                            total += n;
+                            sawNumber = true;
+                        }
                     }
                 }
-            }
 
-            continuation = null;
-            if (resp.Headers.TryGetValues("x-ms-continuation", out var ctValues))
-            {
-                foreach (var v in ctValues) { continuation = v; break; }
+                continuation = null;
+                if (resp.Headers.TryGetValues("x-ms-continuation", out var ctValues))
+                {
+                    foreach (var v in ctValues) { continuation = v; break; }
+                }
             }
+            while (!string.IsNullOrEmpty(continuation));
         }
-        while (!string.IsNullOrEmpty(continuation));
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            // Best-effort: a transient transport blip or an unexpected aggregate
+            // body must degrade to the streaming counter, never fail an
+            // already-successful Scan/Query.
+            return null;
+        }
 
         if (!sawNumber)
         {

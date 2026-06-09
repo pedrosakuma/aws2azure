@@ -309,12 +309,16 @@ internal static class QueryHandler
         }
 
         // See ScanHandler: a pushed filter makes `scanned` count only matched
-        // documents. Recover DynamoDB's pre-filter ScannedCount for a complete
-        // unbounded pass via a server-side aggregate over the same key scope
-        // minus the pushed filter (single-partition, so cheap). Limit/paginated
-        // queries remain a documented divergence under pushdown.
+        // documents. Recover DynamoDB's pre-filter ScannedCount only for a
+        // single complete unbounded pass (no Limit, no incoming
+        // ExclusiveStartKey, no outgoing continuation) via a server-side
+        // aggregate over the same key scope minus the pushed filter
+        // (single-partition, so cheap). Limit/paginated queries remain a
+        // documented divergence: the aggregate spans the whole scope and would
+        // not match DynamoDB's per-page count on a resumed/partial page.
         if (pushdown.Sql is not null
             && wantedScanned == int.MaxValue
+            && string.IsNullOrEmpty(continuationIn)
             && string.IsNullOrEmpty(continuationOut))
         {
             var (countSql, countParams) = BuildCountSql(keyCond, FindKey(meta, "RANGE") is not null);

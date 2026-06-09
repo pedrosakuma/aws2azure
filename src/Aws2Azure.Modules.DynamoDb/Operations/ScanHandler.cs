@@ -287,13 +287,16 @@ internal static class ScanHandler
         }
 
         // With the filter pushed into Cosmos, `scanned` counts only matched
-        // documents — not DynamoDB's pre-filter ScannedCount. For a complete
-        // unbounded pass (no Limit, no continuation), recover the faithful
-        // count with a cheap server-side aggregate over the same scope minus
-        // the pushed filter. The Limit/paginated case stays a documented
-        // divergence: page boundaries differ once Cosmos filters server-side.
+        // documents — not DynamoDB's pre-filter ScannedCount. For a single
+        // complete unbounded pass (no Limit, no incoming ExclusiveStartKey, no
+        // outgoing continuation), recover the faithful count with a cheap
+        // server-side aggregate over the same scope minus the pushed filter.
+        // The Limit/paginated case stays a documented divergence: the aggregate
+        // spans the whole scope, so on a resumed (continuationIn) or partial
+        // (continuationOut) page it would not match DynamoDB's per-page count.
         if (pushdown.Sql is not null
             && wantedScanned == int.MaxValue
+            && string.IsNullOrEmpty(continuationIn)
             && string.IsNullOrEmpty(continuationOut))
         {
             var faithful = await ScannedCountQuery.CountAsync(
