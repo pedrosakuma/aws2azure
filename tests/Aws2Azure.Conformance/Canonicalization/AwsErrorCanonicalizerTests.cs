@@ -303,6 +303,45 @@ public sealed class AwsErrorCanonicalizerTests
     }
 
     [Fact]
+    public void Json_short_code_strips_legacy_colon_and_comma_suffixes()
+    {
+        // The SDK's sanitizeErrorCode splits off everything at the first ',' then
+        // first ':' then takes the part after '#'. An envelope carrying such a
+        // suffix must canonicalize equal to one without it.
+        var plain = AwsErrorCanonicalizer.Canonicalize(400,
+            new[] { H("Content-Type", "application/x-amz-json-1.0") },
+            "{\"__type\":\"ValidationException\",\"message\":\"m\"}");
+        var colon = AwsErrorCanonicalizer.Canonicalize(400,
+            new[] { H("Content-Type", "application/x-amz-json-1.0") },
+            "{\"__type\":\"ValidationException:some context detail\",\"message\":\"m\"}");
+        var comma = AwsErrorCanonicalizer.Canonicalize(400,
+            new[] { H("Content-Type", "application/x-amz-json-1.0") },
+            "{\"__type\":\"ValidationException,context\",\"message\":\"m\"}");
+
+        Assert.Equal("ValidationException",
+            colon.BodyFields.Single(f => f.Name == "Code").Value);
+        Assert.Equal(plain.Render(), colon.Render());
+        Assert.Equal(plain.Render(), comma.Render());
+    }
+
+    [Fact]
+    public void Json_lowercase_code_key_is_treated_as_the_dispatch_code()
+    {
+        // restJson services may convey the error code via a body "code" key
+        // rather than "__type"; the SDK's loadErrorCode treats them equivalently.
+        var viaCode = AwsErrorCanonicalizer.Canonicalize(400,
+            new[] { H("Content-Type", "application/json") },
+            "{\"code\":\"com.amazonaws.foo#ThrottlingException\",\"message\":\"slow\"}");
+        var viaType = AwsErrorCanonicalizer.Canonicalize(400,
+            new[] { H("Content-Type", "application/json") },
+            "{\"__type\":\"ThrottlingException\",\"message\":\"slow\"}");
+
+        Assert.Equal("ThrottlingException",
+            viaCode.BodyFields.Single(f => f.Name == "Code").Value);
+        Assert.Equal(viaType.Render(), viaCode.Render());
+    }
+
+    [Fact]
     public void Two_json_responses_differing_only_in_message_canonicalize_equal()
     {
         var a = AwsErrorCanonicalizer.Canonicalize(400,

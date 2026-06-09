@@ -242,34 +242,50 @@ public static class AwsErrorCanonicalizer
 
     /// <summary>
     /// Maps an AWS JSON error property name onto the canonical field name shared
-    /// with the XML envelope: <c>__type</c> → <c>Code</c>, <c>message</c> →
-    /// <c>Message</c>. All other names pass through unchanged.
+    /// with the XML envelope: <c>__type</c> and a body <c>code</c> key both →
+    /// <c>Code</c> (the SDK's <c>loadErrorCode</c> derives the dispatch code from
+    /// either), <c>message</c> → <c>Message</c>. Other names pass through.
     /// </summary>
-    private static string NormalizeJsonFieldName(string name) => name switch
+    private static string NormalizeJsonFieldName(string name)
     {
-        "__type" => "Code",
-        _ when string.Equals(name, "message", StringComparison.OrdinalIgnoreCase) => "Message",
-        _ => name,
-    };
+        if (name == "__type"
+            || string.Equals(name, "code", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Code";
+        }
+        if (string.Equals(name, "message", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Message";
+        }
+        return name;
+    }
 
     /// <summary>
-    /// Reduces a JSON <c>__type</c> value to the short error-code name AWS SDK
-    /// clients dispatch on, stripping the namespace prefix
+    /// Reduces a JSON error-type value to the short error-code name AWS SDK
+    /// clients dispatch on, mirroring the SDK's <c>sanitizeErrorCode</c>: split
+    /// off everything at the first <c>,</c>, then the first <c>:</c>, then take
+    /// the segment after the first <c>#</c>
     /// (<c>com.amazonaws.dynamodb.v20120810#ResourceNotFoundException</c> →
-    /// <c>ResourceNotFoundException</c>).
+    /// <c>ResourceNotFoundException</c>;
+    /// <c>ValidationException:context</c> → <c>ValidationException</c>).
     /// </summary>
     private static string ShortErrorCode(string type)
     {
         var s = type.Trim();
-        var hash = s.LastIndexOf('#');
+        var comma = s.IndexOf(',');
+        if (comma >= 0)
+        {
+            s = s[..comma];
+        }
+        var colon = s.IndexOf(':');
+        if (colon >= 0)
+        {
+            s = s[..colon];
+        }
+        var hash = s.IndexOf('#');
         if (hash >= 0)
         {
             s = s[(hash + 1)..];
-        }
-        var dot = s.LastIndexOf('.');
-        if (dot >= 0)
-        {
-            s = s[(dot + 1)..];
         }
         return s.Trim();
     }
