@@ -56,10 +56,22 @@ public sealed class S3BackendConformanceTests
         {
             await _fx.CreateBucketOnBothAsync(bucket);
         }
-        var path = $"/{bucket}/{S3BackendErrorMatrix.MissingKey}";
 
-        var proxy = await SendGetAsync(_fx.ProxyClient, _fx.ProxyBaseUri, path);
-        var localStack = await SendGetAsync(_fx.LocalStackClient, _fx.LocalStackBaseUri, path);
+        string path;
+        if (testCase.RequiresExistingObject)
+        {
+            await _fx.PutObjectOnBothAsync(
+                bucket, S3BackendErrorMatrix.ExistingKey,
+                Encoding.UTF8.GetBytes("conformance conditional object"));
+            path = $"/{bucket}/{S3BackendErrorMatrix.ExistingKey}";
+        }
+        else
+        {
+            path = $"/{bucket}/{S3BackendErrorMatrix.MissingKey}";
+        }
+
+        var proxy = await SendGetAsync(_fx.ProxyClient, _fx.ProxyBaseUri, path, testCase.ConfigureRequest);
+        var localStack = await SendGetAsync(_fx.LocalStackClient, _fx.LocalStackBaseUri, path, testCase.ConfigureRequest);
 
         // (1) Proxy AWS-contract oracle.
         Assert.Equal(testCase.ExpectedStatus, proxy.StatusCode);
@@ -97,11 +109,17 @@ public sealed class S3BackendConformanceTests
         }
     }
 
-    private async Task<CanonicalResponse> SendGetAsync(HttpClient client, Uri baseUri, string path)
+    private async Task<CanonicalResponse> SendGetAsync(
+        HttpClient client, Uri baseUri, string path,
+        Action<HttpRequestMessage>? configure = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(baseUri, path));
         ConformanceSigV4Signer.SignHeader(
             request, Array.Empty<byte>(), _fx.AccessKeyId, _fx.Secret);
+        // Conditional headers (e.g. If-Match) are not part of the signed header
+        // set, so attach them after signing — exactly as a real SDK leaves
+        // unsigned headers off the canonical request.
+        configure?.Invoke(request);
         using var response = await client.SendAsync(request);
         var body = await response.Content.ReadAsStringAsync();
         return AwsErrorCanonicalizer.Canonicalize(

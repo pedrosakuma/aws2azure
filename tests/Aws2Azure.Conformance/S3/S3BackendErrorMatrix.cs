@@ -12,17 +12,22 @@ public sealed record S3BackendErrorCase(
     string Name,
     int ExpectedStatus,
     string ExpectedCode,
-    bool RequiresExistingBucket);
+    bool RequiresExistingBucket,
+    bool RequiresExistingObject = false,
+    Action<System.Net.Http.HttpRequestMessage>? ConfigureRequest = null);
 
 /// <summary>
-/// The S3 backend-error matrix. Every case is a <c>GET object</c> whose target
-/// is absent on both backends in the same way (missing container vs missing
-/// blob), so the proxy-over-Azurite response and the LocalStack response should
-/// be wire-faithful up to the documented gaps in the gap-doc allow-list.
+/// The S3 backend-error matrix. Cases are <c>GET object</c> requests whose
+/// outcome should be wire-faithful between the proxy-over-Azurite response and
+/// the LocalStack response, up to the documented gaps in the gap-doc allow-list.
+/// Most target an object absent on both backends in the same way (missing
+/// container vs missing blob); conditional cases instead provision a real object
+/// and attach an unsatisfiable precondition header.
 /// </summary>
 public static class S3BackendErrorMatrix
 {
     public const string MissingKey = "missing-object-key.txt";
+    public const string ExistingKey = "conditional-object.txt";
 
     public static IReadOnlyList<S3BackendErrorCase> Cases { get; } = new[]
     {
@@ -41,5 +46,18 @@ public static class S3BackendErrorMatrix
             404,
             "NoSuchKey",
             RequiresExistingBucket: true),
+
+        // GET an existing object with an If-Match the object's ETag cannot
+        // satisfy → 412 PreconditionFailed on both. The proxy evaluates the
+        // condition locally (it translates ETags, so Azure can't), and must
+        // emit a full <Error> envelope — not an empty 412 — to match S3.
+        new S3BackendErrorCase(
+            "precondition-failed-get",
+            412,
+            "PreconditionFailed",
+            RequiresExistingBucket: true,
+            RequiresExistingObject: true,
+            ConfigureRequest: req => req.Headers.TryAddWithoutValidation(
+                "If-Match", "\"00000000000000000000000000000000\"")),
     };
 }

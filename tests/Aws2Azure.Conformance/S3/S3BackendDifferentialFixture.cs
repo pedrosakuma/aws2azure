@@ -173,6 +173,35 @@ public sealed class S3BackendDifferentialFixture : IAsyncLifetime
         }
     }
 
+    /// <summary>
+    /// Provisions the same object on both backends so a subsequent conditional
+    /// GET evaluates against a real object (e.g. an unsatisfiable If-Match → 412
+    /// PreconditionFailed) rather than mapping to a not-found error.
+    /// </summary>
+    public async Task PutObjectOnBothAsync(string bucket, string key, byte[] body)
+    {
+        await PutObjectAsync(ProxyClient, ProxyBaseUri, bucket, key, body);
+        await PutObjectAsync(LocalStackClient, LocalStackBaseUri, bucket, key, body);
+    }
+
+    private async Task PutObjectAsync(HttpClient client, Uri baseUri, string bucket, string key, byte[] body)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put, new Uri(baseUri, $"/{bucket}/{key}"))
+        {
+            Content = new ByteArrayContent(body),
+        };
+        request.Content.Headers.ContentLength = body.Length;
+        ConformanceSigV4Signer.SignHeader(request, body, AccessKeyId, Secret);
+        using var response = await client.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            var responseBody = await response.Content.ReadAsStringAsync();
+            throw new InvalidOperationException(
+                $"Object provisioning failed at {baseUri.Host}: {(int)response.StatusCode} {responseBody}");
+        }
+    }
+
     public async Task DisposeAsync()
     {
         ProxyClient?.Dispose();

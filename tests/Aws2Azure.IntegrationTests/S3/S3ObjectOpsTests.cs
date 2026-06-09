@@ -105,6 +105,40 @@ public class S3ObjectOpsTests
     }
 
     [SkippableFact]
+    public async Task Get_with_failing_if_match_returns_PreconditionFailed_xml()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
+
+        var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
+        await PutBucket(bucket);
+        await PutObject(bucket, "cond.txt", Encoding.UTF8.GetBytes("conditional get body"));
+
+        // GET with an If-Match the object's ETag cannot satisfy. Real S3
+        // returns 412 with a full PreconditionFailed <Error> body (not an
+        // empty 412), and SDK clients dispatch on the <Code> — the proxy
+        // must reproduce that envelope, not a bare status.
+        using var resp = await SendAsync(HttpMethod.Get, $"/{bucket}/cond.txt", Array.Empty<byte>(),
+            extraHeaders: ("If-Match", "\"00000000000000000000000000000000\""));
+        Assert.Equal(HttpStatusCode.PreconditionFailed, resp.StatusCode);
+        var xml = await resp.Content.ReadAsStringAsync();
+        Assert.Contains("<Code>PreconditionFailed</Code>", xml);
+        Assert.Equal("application/xml", resp.Content.Headers.ContentType?.MediaType);
+        // The object-metadata headers copied from Azure's 200 must not leak
+        // onto the error response.
+        Assert.Null(resp.Headers.ETag);
+
+        // HEAD with the same failing If-Match → 412, bodiless, signalled via
+        // x-amz-error-code (HEAD carries no XML body), and must likewise not
+        // leak the object's success metadata.
+        using var head = await SendAsync(HttpMethod.Head, $"/{bucket}/cond.txt", Array.Empty<byte>(),
+            extraHeaders: ("If-Match", "\"00000000000000000000000000000000\""));
+        Assert.Equal(HttpStatusCode.PreconditionFailed, head.StatusCode);
+        Assert.Equal("PreconditionFailed", head.Headers.GetValues("x-amz-error-code").Single());
+        Assert.Null(head.Headers.ETag);
+        Assert.Equal(0, head.Content.Headers.ContentLength);
+    }
+
+    [SkippableFact]
     public async Task Put_with_concrete_if_match_returns_501_not_implemented()
     {
         Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
