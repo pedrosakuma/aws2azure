@@ -6,6 +6,7 @@
 
     "s3.PutObject (4 KiB)":                                        { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
     "s3.GetObject (64 KiB)":                                       { "minThroughputPerSec": 100.0, "maxP99Ms":  500.0 },
+    "s3.CopyObject (4 KiB)":                                       { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
     "azure-sdk.Blob.UploadAsync (4 KiB)":                          { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
 
     "sqs.SendMessage (256 B)":                                     { "minThroughputPerSec":  20.0, "maxP99Ms":    0.0 },
