@@ -78,9 +78,13 @@ public static class S3ErrorMatrix
 
         // Validly signed (passes SigV4) but targets a syntactically invalid
         // bucket name. The proxy rejects it in the request-validation stage
-        // (BlobClient.IsValidContainerName) before any Azure call. The
-        // underscore is illegal in both an Azure container name and an S3
-        // bucket name, so real S3 likewise answers 400 InvalidBucketName.
+        // (BlobClient.IsValidContainerName) before any Azure call. A 2-char
+        // name violates the 3-63 length rule shared by S3 and Azure container
+        // names, so both the proxy and real S3 answer 400 InvalidBucketName.
+        // (Note: real S3 only classifies length / a narrow set of syntax
+        // violations as InvalidBucketName for a path-style GET — underscore /
+        // uppercase / dotted names return 404 NoSuchBucket — so the oracle must
+        // use a name S3 itself rejects, verified against live s3.us-east-1.)
         new S3ErrorCase(
             "invalid-bucket-name",
             "s3:InvalidBucketName",
@@ -90,6 +94,6 @@ public static class S3ErrorMatrix
                 req, EmptyBody,
                 ConformanceProxyFixture.AccessKeyId,
                 ConformanceProxyFixture.Secret),
-            Path: "/conformance_invalid_bucket/key.txt"),
+            Path: "/ab/key.txt"),
     };
 }
