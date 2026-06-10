@@ -17,7 +17,8 @@ public sealed record S3BackendErrorCase(
     Action<System.Net.Http.HttpRequestMessage>? ConfigureRequest = null,
     System.Net.Http.HttpMethod? Method = null,
     string? SignRegion = null,
-    bool TargetsBucketRoot = false);
+    bool TargetsBucketRoot = false,
+    string? LocationConstraint = null);
 
 /// <summary>
 /// The S3 backend-error matrix. Most cases are <c>GET object</c> requests whose
@@ -71,7 +72,14 @@ public static class S3BackendErrorMatrix
         // gets ContainerAlreadyExists, and — because the signed scope region is
         // not us-east-1 — maps it to the same 409. Unlike the GET-object cases
         // above this targets the bucket root with a PUT (CreateBucket); the
-        // bucket is provisioned first via RequiresExistingBucket.
+        // bucket is provisioned first via RequiresExistingBucket. The
+        // CreateBucketConfiguration/LocationConstraint body is required so that
+        // LocalStack actually records the bucket's region as eu-west-1 — without
+        // it a non-us-east-1 CreateBucket is rejected with
+        // IllegalLocationConstraintException before it can reach
+        // BucketAlreadyOwnedByYou. The proxy ignores the body (region comes from
+        // the signed scope, and LocationConstraint is unsupported), so its 409 is
+        // unaffected; both backends receive the same signed request.
         new S3BackendErrorCase(
             "bucketalreadyownedbyyou-recreate",
             409,
@@ -79,6 +87,7 @@ public static class S3BackendErrorMatrix
             RequiresExistingBucket: true,
             Method: System.Net.Http.HttpMethod.Put,
             SignRegion: "eu-west-1",
-            TargetsBucketRoot: true),
+            TargetsBucketRoot: true,
+            LocationConstraint: "eu-west-1"),
     };
 }

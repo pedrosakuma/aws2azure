@@ -149,27 +149,40 @@ public sealed class S3BackendDifferentialFixture : IAsyncLifetime
     /// <summary>
     /// Provisions the same bucket on both backends (through the proxy → Azurite,
     /// and directly on LocalStack) so a subsequent missing-key GET maps to
-    /// <c>NoSuchKey</c> on both rather than <c>NoSuchBucket</c>.
+    /// <c>NoSuchKey</c> on both rather than <c>NoSuchBucket</c>. When
+    /// <paramref name="region"/> is not us-east-1 a
+    /// <c>CreateBucketConfiguration</c>/<c>LocationConstraint</c> body is required
+    /// so LocalStack records the bucket in that region (else it rejects the create
+    /// with <c>IllegalLocationConstraintException</c>); the proxy ignores the body.
     /// </summary>
-    public async Task CreateBucketOnBothAsync(string bucket)
+    public async Task CreateBucketOnBothAsync(
+        string bucket, string region = "us-east-1", byte[]? body = null)
     {
-        await PutBucketAsync(ProxyClient, ProxyBaseUri, bucket);
-        await PutBucketAsync(LocalStackClient, LocalStackBaseUri, bucket);
+        await PutBucketAsync(ProxyClient, ProxyBaseUri, bucket, region, body);
+        await PutBucketAsync(LocalStackClient, LocalStackBaseUri, bucket, region, body);
     }
 
-    private async Task PutBucketAsync(HttpClient client, Uri baseUri, string bucket)
+    private async Task PutBucketAsync(
+        HttpClient client, Uri baseUri, string bucket,
+        string region = "us-east-1", byte[]? body = null)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Put, new Uri(baseUri, $"/{bucket}"));
+        var payload = body ?? Array.Empty<byte>();
+        if (body is not null)
+        {
+            request.Content = new ByteArrayContent(body);
+            request.Content.Headers.ContentLength = body.Length;
+        }
         ConformanceSigV4Signer.SignHeader(
-            request, Array.Empty<byte>(), AccessKeyId, Secret);
+            request, payload, AccessKeyId, Secret, region: region);
         using var response = await client.SendAsync(request);
         if (response.StatusCode is not (HttpStatusCode.OK or HttpStatusCode.NoContent
             or HttpStatusCode.Conflict))
         {
-            var body = await response.Content.ReadAsStringAsync();
+            var responseBody = await response.Content.ReadAsStringAsync();
             throw new InvalidOperationException(
-                $"Bucket provisioning failed at {baseUri.Host}: {(int)response.StatusCode} {body}");
+                $"Bucket provisioning failed at {baseUri.Host}: {(int)response.StatusCode} {responseBody}");
         }
     }
 
