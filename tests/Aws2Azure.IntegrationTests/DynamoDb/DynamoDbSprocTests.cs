@@ -19,13 +19,22 @@ public class DynamoDbSprocTests
     private readonly DynamoDbSprocFixture _fx;
     private readonly ITestOutputHelper _output;
 
-    // The Cosmos linux emulator (vnext-preview) rejects server-side scripts with
-    // "Server-side scripts are not supported in this emulator", so the proxy
-    // cannot provision the atomicTransactWrite sproc. TransactWriteItems has no
-    // non-atomic fallback, so its server-side JS can only be validated against
-    // real Azure Cosmos DB. These tests skip cleanly when provisioning fails.
+    // The Cosmos linux emulator rejects server-side scripts, so the proxy cannot
+    // run the atomicTransactWrite sproc. TransactWriteItems has no non-atomic
+    // fallback, so its server-side JS can only be validated against real Azure
+    // Cosmos DB. These tests skip cleanly when the emulator refuses the sproc.
     private const string SprocUnsupportedReason =
         "Cosmos emulator lacks server-side script support; validate TransactWriteItems against real Azure Cosmos DB.";
+
+    // The emulator's script limitation surfaces via two distinct code paths
+    // depending on the build: older builds reject *provisioning* the sproc (the
+    // proxy then emits "...could not be provisioned"); newer builds accept
+    // creating it but reject *executing* it ("Server-side script execution is
+    // not supported in this emulator"). Either signature means the sproc path
+    // can't be exercised here, so the test skips rather than fails.
+    private static bool IsSprocUnsupported(string responseBody) =>
+        responseBody.Contains("could not be provisioned", StringComparison.Ordinal)
+        || responseBody.Contains("not supported in this emulator", StringComparison.Ordinal);
 
     public DynamoDbSprocTests(DynamoDbSprocFixture fx, ITestOutputHelper output)
     {
@@ -350,7 +359,7 @@ public class DynamoDbSprocTests
             }
             """;
             var (status, respBody, _) = await ExecuteWithTimingAsync("TransactWriteItems", body);
-            Skip.If(respBody.Contains("could not be provisioned", StringComparison.Ordinal), SprocUnsupportedReason);
+            Skip.If(IsSprocUnsupported(respBody), SprocUnsupportedReason);
             Assert.True(status == HttpStatusCode.OK, $"TransactWriteItems → {(int)status} {respBody}");
 
             Assert.True(await ItemExistsAsync(table, "order-1", "a"));
@@ -393,7 +402,7 @@ public class DynamoDbSprocTests
             }
             """;
             var (status, respBody, _) = await ExecuteWithTimingAsync("TransactWriteItems", body);
-            Skip.If(respBody.Contains("could not be provisioned", StringComparison.Ordinal), SprocUnsupportedReason);
+            Skip.If(IsSprocUnsupported(respBody), SprocUnsupportedReason);
             Assert.Equal(HttpStatusCode.BadRequest, status);
             Assert.Contains("TransactionCanceledException", respBody);
             Assert.Contains("ConditionalCheckFailed", respBody);
@@ -442,7 +451,7 @@ public class DynamoDbSprocTests
             }
             """;
             var (status, respBody, _) = await ExecuteWithTimingAsync("TransactWriteItems", body);
-            Skip.If(respBody.Contains("could not be provisioned", StringComparison.Ordinal), SprocUnsupportedReason);
+            Skip.If(IsSprocUnsupported(respBody), SprocUnsupportedReason);
             Assert.True(status == HttpStatusCode.OK, $"TransactWriteItems → {(int)status} {respBody}");
             Assert.True(await ItemExistsAsync(table, "order-1", "line-1"));
 
@@ -508,7 +517,7 @@ public class DynamoDbSprocTests
             }
             """;
             var (status, respBody, _) = await ExecuteWithTimingAsync("TransactWriteItems", body);
-            Skip.If(respBody.Contains("could not be provisioned", StringComparison.Ordinal), SprocUnsupportedReason);
+            Skip.If(IsSprocUnsupported(respBody), SprocUnsupportedReason);
             Assert.True(status == HttpStatusCode.OK, $"TransactWriteItems → {(int)status} {respBody}");
 
             Assert.False(await ItemExistsAsync(table, "order-1", "old"));
