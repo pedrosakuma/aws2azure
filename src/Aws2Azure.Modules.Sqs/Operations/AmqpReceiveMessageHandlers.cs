@@ -377,6 +377,15 @@ internal static class AmqpReceiveMessageHandlers
             return;
         }
 
+        // FIFO: register session-link activity BEFORE the renew round-trip
+        // so the idle-TTL sweeper (#262) can't dispose the cached receiver
+        // while RenewSessionLockAsync is in flight (the management call is a
+        // network round-trip; a slot already near the idle edge could
+        // otherwise be swept mid-renew, defeating the renewal). No-op when no
+        // receiver is cached.
+        if (!string.IsNullOrEmpty(decoded.SessionId))
+            _ = receivers.TryGetExistingSessionReceiver(queueName, decoded.SessionId);
+
         DateTimeOffset lockedUntil;
         try
         {
@@ -402,13 +411,8 @@ internal static class AmqpReceiveMessageHandlers
         var grantedSeconds = Math.Max(0, (int)Math.Round((lockedUntil - DateTimeOffset.UtcNow).TotalSeconds));
         if (!string.IsNullOrEmpty(decoded.SessionId))
         {
-            // FIFO: the renewal extended the broker session lock via
-            // $management, but that does not register as activity on the
-            // cached session-receiver link. Without this the idle-TTL
-            // sweeper (#262) could dispose the link — releasing the very
-            // session the client just renewed — so a later DeleteMessage
-            // would fail ReceiptHandleIsInvalid. Reset the link's idle
-            // clock (no-op if no receiver is cached).
+            // Extend the idle window from renewal completion (the pre-renew
+            // touch above protected the slot during the in-flight call).
             _ = receivers.TryGetExistingSessionReceiver(queueName, decoded.SessionId);
         }
         if (grantedSeconds != visibility)
@@ -680,6 +684,13 @@ internal static class AmqpReceiveMessageHandlers
                 return;
             }
 
+            // FIFO: touch the session-link BEFORE the renew round-trip so the
+            // idle sweeper can't dispose it mid-renew (see
+            // ChangeMessageVisibilityAsync). No-op if uncached; thread-safe
+            // under the fan-out.
+            if (!string.IsNullOrEmpty(decoded.SessionId))
+                _ = receivers.TryGetExistingSessionReceiver(queueName, decoded.SessionId);
+
             try
             {
                 _ = string.IsNullOrEmpty(decoded.SessionId)
@@ -708,10 +719,8 @@ internal static class AmqpReceiveMessageHandlers
             }
             if (!string.IsNullOrEmpty(decoded.SessionId))
             {
-                // FIFO: register the renewal as session-link activity so the
-                // idle-TTL sweeper (#262) doesn't dispose the link we just
-                // renewed (see ChangeMessageVisibilityAsync). No-op if no
-                // receiver is cached; thread-safe under the fan-out.
+                // Extend the idle window from renewal completion (the
+                // pre-renew touch above protected the slot during the call).
                 _ = receivers.TryGetExistingSessionReceiver(queueName, decoded.SessionId);
             }
             lock (ok) ok.Add(new BatchEntryOk(entry.Id));
