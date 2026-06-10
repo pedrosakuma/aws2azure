@@ -152,6 +152,21 @@ AWS2AZURE_CONFORMANCE_TIER2=1 AWS2AZURE_CONFORMANCE_RECORD=1 dotnet test tests/A
   `text/xml` + `<ErrorResponse>` root; JSON → `application/x-amz-json` + `__type`
   ending in the dispatch code) in addition to the protocol-independent status +
   short code.
+- **Tier 1 — SNS proxy-side errors** (offline, every PR): the last service in
+  the #234 "templatize the error matrix" checklist. SNS is single-protocol
+  (legacy AWS **Query** only), so this matrix is the second to drive the AWS
+  Query `<ErrorResponse>` XML envelope through the canonicalizer's unwrap path —
+  this time via a module that uses the **default** `EmitSigV4FailureAsync` (the
+  REST-XML 403 vocabulary, no per-request override), confirming the unwrap is
+  protocol-agnostic. Two cases: a parser-stage `InvalidAction` (HTTP 400,
+  validly-signed Query request naming an unknown action; this case must sign
+  `content-type` because SNS enforces it via `RequiredSignedHeaders`) plus the
+  REST-XML SigV4 case `SignatureDoesNotMatch` (HTTP 403, wrong secret). Each
+  asserts the faithful Query wire shape (`text/xml` + `<ErrorResponse>` root)
+  alongside the status + short code. (The unknown-access-key case is deferred to
+  issue #247: the proxy currently returns S3's `InvalidAccessKeyId` for all XML
+  services, but real SNS answers `UnrecognizedClientException` / 403 and SQS-Query
+  answers `InvalidClientTokenId` / 403 — a per-service auth-vocabulary fix.)
 - **Tier 2 — S3 backend-mapped errors** (LocalStack differential, Docker):
   `NoSuchBucket` (GET on a missing bucket) and `NoSuchKey` (GET a missing key in
   an existing bucket), proxy-over-Azurite vs LocalStack S3. The accepted
