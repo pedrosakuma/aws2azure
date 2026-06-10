@@ -499,6 +499,74 @@ public sealed class AmqpReceiveMessageHandlersTests
     }
 
     [Fact]
+    public async Task DeleteMessage_on_fifo_queue_returns_invalid_handle_when_session_receiver_disposed_under_settle()
+    {
+        // #262 idle-TTL sweeper race: the cached session receiver can be
+        // evicted (disposed) between TryGetExistingSessionReceiver and the
+        // CompleteAsync call. CompleteAsync then throws ObjectDisposedException.
+        // A swept session's broker lock is gone, so this must surface as a
+        // stale receipt handle (ReceiptHandleIsInvalid / 404) — not a generic
+        // internal error — to stay wire-faithful with real SQS.
+        const string SessionId = "group-A";
+        var tag = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee").ToByteArray();
+        await using var harness = await TestHarness.OpenSessionAsync(
+            FifoQueueName, SessionId,
+            (tag, EncodeMessage("fifo-to-delete", groupId: SessionId)));
+
+        var receiveCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(receiveCtx,
+            QueryParsed(SqsOperation.ReceiveMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}")),
+            harness.Provider, CancellationToken.None);
+        var handle = ExtractReceiptHandle(ReadBody(receiveCtx));
+
+        // Sweeper evicts the idle session link out from under the settle.
+        await harness.Receiver.DisposeAsync();
+
+        var deleteCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(deleteCtx,
+            QueryParsed(SqsOperation.DeleteMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+                ("ReceiptHandle", handle)),
+            harness.Provider, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status404NotFound, deleteCtx.Response.StatusCode);
+        Assert.Contains("ReceiptHandleIsInvalid", ReadBody(deleteCtx));
+    }
+
+    [Fact]
+    public async Task ChangeMessageVisibility_zero_on_fifo_queue_returns_invalid_handle_when_session_receiver_disposed_under_settle()
+    {
+        // CMV=0 abandons via the session receiver; mirror the DeleteMessage
+        // sweeper-race case for the AbandonAsync settle path (#262).
+        const string SessionId = "group-A";
+        var tag = Guid.Parse("ffffffff-eeee-dddd-cccc-bbbbbbbbbbbb").ToByteArray();
+        await using var harness = await TestHarness.OpenSessionAsync(
+            FifoQueueName, SessionId,
+            (tag, EncodeMessage("fifo-to-abandon", groupId: SessionId)));
+
+        var receiveCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(receiveCtx,
+            QueryParsed(SqsOperation.ReceiveMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}")),
+            harness.Provider, CancellationToken.None);
+        var handle = ExtractReceiptHandle(ReadBody(receiveCtx));
+
+        await harness.Receiver.DisposeAsync();
+
+        var cmvCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(cmvCtx,
+            QueryParsed(SqsOperation.ChangeMessageVisibility,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+                ("ReceiptHandle", handle),
+                ("VisibilityTimeout", "0")),
+            harness.Provider, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status404NotFound, cmvCtx.Response.StatusCode);
+        Assert.Contains("ReceiptHandleIsInvalid", ReadBody(cmvCtx));
+    }
+
+    [Fact]
     public async Task ChangeMessageVisibility_positive_on_fifo_queue_renews_session_lock_and_emits_clamp_header()
     {
         const string SessionId = "group-A";

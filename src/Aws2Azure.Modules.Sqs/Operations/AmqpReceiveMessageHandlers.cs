@@ -254,7 +254,7 @@ internal static class AmqpReceiveMessageHandlers
         {
             await InvalidateSettleReceiverAsync(receivers, queueName, decoded.SessionId).ConfigureAwait(false);
             await WriteErrorAsync(context, parsed.Protocol,
-                MapAmqpException(ex, "DeleteMessage")).ConfigureAwait(false);
+                MapSettleException(ex, "DeleteMessage")).ConfigureAwait(false);
             return;
         }
         if (!settled)
@@ -339,7 +339,7 @@ internal static class AmqpReceiveMessageHandlers
             {
                 await InvalidateSettleReceiverAsync(receivers, queueName, decoded.SessionId).ConfigureAwait(false);
                 await WriteErrorAsync(context, parsed.Protocol,
-                    MapAmqpException(ex, "ChangeMessageVisibility")).ConfigureAwait(false);
+                    MapSettleException(ex, "ChangeMessageVisibility")).ConfigureAwait(false);
                 return;
             }
             if (!abandoned)
@@ -511,7 +511,7 @@ internal static class AmqpReceiveMessageHandlers
                 // (see receiversToInvalidate above): disposing the
                 // shared session receiver mid-batch can hang siblings.
                 lock (receiversToInvalidate) receiversToInvalidate.Add(decoded.SessionId ?? string.Empty);
-                var m = MapAmqpException(ex, "DeleteMessageBatch");
+                var m = MapSettleException(ex, "DeleteMessageBatch");
                 lock (failed) failed.Add(new BatchEntryError(entry.Id, m.Code, m.Message,
                     SenderFault: m.FaultType == SqsErrorResponse.FaultType.Sender));
                 return;
@@ -638,7 +638,7 @@ internal static class AmqpReceiveMessageHandlers
                 {
                     // Defer invalidation (see DeleteMessageBatchAsync).
                     lock (receiversToInvalidate) receiversToInvalidate.Add(decoded.SessionId ?? string.Empty);
-                    var m = MapAmqpException(ex, "ChangeMessageVisibilityBatch");
+                    var m = MapSettleException(ex, "ChangeMessageVisibilityBatch");
                     lock (failed) failed.Add(new BatchEntryError(entry.Id, m.Code, m.Message,
                         SenderFault: m.FaultType == SqsErrorResponse.FaultType.Sender));
                     return;
@@ -1056,6 +1056,23 @@ internal static class AmqpReceiveMessageHandlers
             _ => SqsErrorMapping.InternalError($"aws2azure: AMQP {operation} failed."),
         };
     }
+
+    /// <summary>
+    /// Settle-path (<see cref="ServiceBusReceiver.CompleteAsync"/> /
+    /// <see cref="ServiceBusReceiver.AbandonAsync"/>) variant of
+    /// <see cref="MapAmqpException"/>. A receiver disposed out from
+    /// under an in-flight settle — the idle-TTL sweeper (#262) evicting
+    /// a long-idle session link, or pool/connection teardown — surfaces
+    /// as <see cref="ObjectDisposedException"/>. The Service Bus session
+    /// lock is therefore gone, which is SQS-faithfully a stale / expired
+    /// receipt handle (<c>ReceiptHandleIsInvalid</c>), not an internal
+    /// error: a session is only swept after the idle window, well past
+    /// its lock duration, so the message is already redeliverable.
+    /// </summary>
+    private static SqsErrorMapping.Mapping MapSettleException(Exception ex, string operation)
+        => ex is ObjectDisposedException
+            ? SqsErrorMapping.ReceiptHandleInvalid()
+            : MapAmqpException(ex, operation);
 
     /// <summary>
     /// Translates a <see cref="ServiceBusManagementException"/> (raised

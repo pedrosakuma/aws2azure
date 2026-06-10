@@ -548,6 +548,53 @@ public sealed class ServiceBusAmqpPoolTests
         Assert.Equal(0, pool.SessionReceiverCount);
     }
 
+    [Fact]
+    public async Task GetSessionReceiver_racing_the_sweeper_never_orphans_the_warm_connection()
+    {
+        // #262 Fix A regression: when the idle-TTL sweeper disposes a
+        // session-receiver slot concurrently with GetSessionReceiverAsync,
+        // the resulting ObjectDisposedException from the child slot must NOT
+        // bubble to the connection-level catch (which would evict the whole
+        // warm ConnectionSlot and force a fresh dial). The connection is
+        // never re-created, so CreateCallCount stays 1 throughout; a buggy
+        // build that orphans the connection would dial again (>1).
+        var clock = new ManualClock(new DateTimeOffset(2026, 6, 10, 0, 0, 0, TimeSpan.Zero));
+        await using var factory = new FakeFactory(DefaultSettings());
+        await using var pool = new ServiceBusAmqpPool(
+            factory, sessionReceiverIdleTimeout: TimeSpan.FromMilliseconds(1),
+            timeProvider: clock);
+
+        var endpoint = ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net");
+        await pool.GetSessionReceiverAsync(endpoint, "Root", "k", "fifo-q", "session-1")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        const int Iterations = 500;
+        var getter = Task.Run(async () =>
+        {
+            for (var i = 0; i < Iterations; i++)
+            {
+                var r = await pool.GetSessionReceiverAsync(endpoint, "Root", "k", "fifo-q", "session-1")
+                    .WaitAsync(TimeSpan.FromSeconds(10));
+                Assert.Equal("session-1", r.SessionId);
+            }
+        });
+        var sweeper = Task.Run(async () =>
+        {
+            for (var i = 0; i < Iterations; i++)
+            {
+                clock.Advance(TimeSpan.FromSeconds(1));
+                await pool.SweepIdleSessionReceiversAsync();
+            }
+        });
+
+        await Task.WhenAll(getter, sweeper).WaitAsync(TimeSpan.FromSeconds(30));
+
+        // The connection was reused for every re-open; it was never orphaned
+        // and re-dialed despite the racing slot disposals.
+        Assert.Equal(1, factory.CreateCallCount);
+        Assert.Equal(1, pool.ConnectionCount);
+    }
+
     /// <summary>
     /// Deterministic <see cref="TimeProvider"/> for the idle-TTL sweeper
     /// tests (#262): a settable clock whose <see cref="CreateTimer"/>
@@ -557,11 +604,15 @@ public sealed class ServiceBusAmqpPoolTests
     /// </summary>
     private sealed class ManualClock(DateTimeOffset now) : TimeProvider
     {
-        private DateTimeOffset _now = now;
+        // Thread-safe so the concurrency regression test
+        // (GetSessionReceiver racing the sweeper) can advance the clock
+        // from one task while the pool reads it from another.
+        private long _nowTicks = now.UtcTicks;
 
-        public override DateTimeOffset GetUtcNow() => _now;
+        public override DateTimeOffset GetUtcNow()
+            => new(Volatile.Read(ref _nowTicks), TimeSpan.Zero);
 
-        public void Advance(TimeSpan delta) => _now = _now.Add(delta);
+        public void Advance(TimeSpan delta) => Interlocked.Add(ref _nowTicks, delta.Ticks);
 
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
             => new NoopTimer();

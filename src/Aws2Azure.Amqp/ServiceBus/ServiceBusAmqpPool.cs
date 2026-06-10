@@ -797,13 +797,31 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         {
             ThrowIfDisposed();
             var slotKey = new SessionReceiverKey(queueName, sessionId);
-            var slot = await GetOrPublishSessionReceiverSlotAsync(slotKey, static () => new SessionReceiverSlot())
-                .ConfigureAwait(false);
-            var receiver = await slot
-                .GetOrCreateAsync(connection, key.Endpoint, queueName, sessionId, cancellationToken)
-                .ConfigureAwait(false);
-            slot.Touch(_timeProvider.GetUtcNow());
-            return receiver;
+            while (true)
+            {
+                var slot = await GetOrPublishSessionReceiverSlotAsync(slotKey, static () => new SessionReceiverSlot())
+                    .ConfigureAwait(false);
+                try
+                {
+                    var receiver = await slot
+                        .GetOrCreateAsync(connection, key.Endpoint, queueName, sessionId, cancellationToken)
+                        .ConfigureAwait(false);
+                    slot.Touch(_timeProvider.GetUtcNow());
+                    return receiver;
+                }
+                catch (ObjectDisposedException) when (Volatile.Read(ref _disposed) == 0)
+                {
+                    // The idle-TTL sweeper (#262) disposed this session-receiver
+                    // slot concurrently. The ConnectionSlot itself is still alive
+                    // (_disposed == 0), so the dead child slot must NOT bubble to
+                    // the connection-level catch in GetSessionReceiverAsync — that
+                    // would evict the entire warm connection (orphaning its senders
+                    // and sibling session links). Drop the dead slot (only if it's
+                    // still the published one) and retry with a fresh slot, which
+                    // is sweep-immune until its first Touch.
+                    _sessionReceivers.TryRemove(KeyValuePair.Create(slotKey, slot));
+                }
+            }
         }
 
         private async ValueTask<SessionReceiverSlot> GetOrPublishSessionReceiverSlotAsync(
