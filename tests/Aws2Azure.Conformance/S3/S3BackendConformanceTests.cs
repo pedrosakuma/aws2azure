@@ -54,11 +54,23 @@ public sealed class S3BackendConformanceTests
         var bucket = "conf-" + Guid.NewGuid().ToString("N")[..16];
         if (testCase.RequiresExistingBucket)
         {
-            await _fx.CreateBucketOnBothAsync(bucket);
+            // Provision the bucket in the same region (and with the same
+            // LocationConstraint body) the test request uses, so a region-sensitive
+            // re-create finds an existing bucket in a matching region rather than
+            // tripping IllegalLocationConstraintException on LocalStack.
+            await _fx.CreateBucketOnBothAsync(
+                bucket,
+                region: testCase.SignRegion ?? "us-east-1",
+                body: BuildCreateBucketBody(testCase.LocationConstraint));
         }
 
         string path;
-        if (testCase.RequiresExistingObject)
+        if (testCase.TargetsBucketRoot)
+        {
+            // CreateBucket-style cases address the bucket root (no key).
+            path = $"/{bucket}";
+        }
+        else if (testCase.RequiresExistingObject)
         {
             await _fx.PutObjectOnBothAsync(
                 bucket, S3BackendErrorMatrix.ExistingKey,
@@ -70,8 +82,8 @@ public sealed class S3BackendConformanceTests
             path = $"/{bucket}/{S3BackendErrorMatrix.MissingKey}";
         }
 
-        var proxy = await SendGetAsync(_fx.ProxyClient, _fx.ProxyBaseUri, path, testCase.ConfigureRequest);
-        var localStack = await SendGetAsync(_fx.LocalStackClient, _fx.LocalStackBaseUri, path, testCase.ConfigureRequest);
+        var proxy = await SendAsync(_fx.ProxyClient, _fx.ProxyBaseUri, testCase, path);
+        var localStack = await SendAsync(_fx.LocalStackClient, _fx.LocalStackBaseUri, testCase, path);
 
         // (1) Proxy AWS-contract oracle.
         Assert.Equal(testCase.ExpectedStatus, proxy.StatusCode);
@@ -103,28 +115,53 @@ public sealed class S3BackendConformanceTests
                 localStack,
                 new GoldenProvenance(
                     GoldenProvenance.SourceLocalStack,
-                    "GetObject",
+                    testCase.TargetsBucketRoot ? "CreateBucket" : "GetObject",
                     DateTimeOffset.UtcNow,
                     "Captured from LocalStack S3 by the Tier-2 differential job (emulator-derived)."));
         }
     }
 
-    private async Task<CanonicalResponse> SendGetAsync(
-        HttpClient client, Uri baseUri, string path,
-        Action<HttpRequestMessage>? configure = null)
+    private async Task<CanonicalResponse> SendAsync(
+        HttpClient client, Uri baseUri, S3BackendErrorCase testCase, string path)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(baseUri, path));
+        var body = BuildCreateBucketBody(testCase.LocationConstraint) ?? Array.Empty<byte>();
+        using var request = new HttpRequestMessage(
+            testCase.Method ?? HttpMethod.Get, new Uri(baseUri, path));
+        if (body.Length > 0)
+        {
+            request.Content = new ByteArrayContent(body);
+            request.Content.Headers.ContentLength = body.Length;
+        }
+        // Most cases sign for us-east-1 (the fixture's default); region-sensitive
+        // cases (e.g. BucketAlreadyOwnedByYou) sign for another region so the
+        // proxy's region-aware branch (#236) is exercised. The signed scope
+        // region is independent of the request Host.
         ConformanceSigV4Signer.SignHeader(
-            request, Array.Empty<byte>(), _fx.AccessKeyId, _fx.Secret);
+            request, body, _fx.AccessKeyId, _fx.Secret,
+            region: testCase.SignRegion ?? "us-east-1");
         // Conditional headers (e.g. If-Match) are not part of the signed header
         // set, so attach them after signing — exactly as a real SDK leaves
         // unsigned headers off the canonical request.
-        configure?.Invoke(request);
+        testCase.ConfigureRequest?.Invoke(request);
         using var response = await client.SendAsync(request);
-        var body = await response.Content.ReadAsStringAsync();
+        var responseBody = await response.Content.ReadAsStringAsync();
         return AwsErrorCanonicalizer.Canonicalize(
-            (int)response.StatusCode, FlattenHeaders(response), body);
+            (int)response.StatusCode, FlattenHeaders(response), responseBody);
     }
+
+    /// <summary>
+    /// Builds the <c>CreateBucketConfiguration</c> body for a CreateBucket request
+    /// in a non-us-east-1 region, or <c>null</c> when no LocationConstraint is set
+    /// (empty-body GET/PUT). S3 requires this body when the request region is not
+    /// us-east-1; LocalStack uses it to record the bucket's region.
+    /// </summary>
+    private static byte[]? BuildCreateBucketBody(string? locationConstraint) =>
+        locationConstraint is null
+            ? null
+            : Encoding.UTF8.GetBytes(
+                "<CreateBucketConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">" +
+                $"<LocationConstraint>{locationConstraint}</LocationConstraint>" +
+                "</CreateBucketConfiguration>");
 
     private static string RootOf(CanonicalResponse r) =>
         r.BodyFields.FirstOrDefault(f => f.Name == "(root)").Value;
