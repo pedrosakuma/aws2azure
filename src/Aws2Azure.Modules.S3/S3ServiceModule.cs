@@ -114,7 +114,7 @@ public sealed class S3ServiceModule : IServiceModule
             or S3Operation.ListParts
             or S3Operation.ListMultipartUploads)
         {
-            await MultipartHandlers.HandleAsync(context, route, blob, context.RequestAborted).ConfigureAwait(false);
+            await MultipartHandlers.HandleAsync(context, route, blob, context.RequestAborted, _credentials).ConfigureAwait(false);
         }
         else if (IsLongTailSubresource(route.Operation))
         {

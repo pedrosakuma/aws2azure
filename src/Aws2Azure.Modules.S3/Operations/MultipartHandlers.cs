@@ -2,9 +2,11 @@ using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Security.Cryptography;
+using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Modules.S3.Errors;
 using Aws2Azure.Modules.S3.Internal;
+using Aws2Azure.Modules.S3.Streaming;
 using Aws2Azure.Modules.S3.Xml;
 using Microsoft.AspNetCore.Http;
 
@@ -33,11 +35,11 @@ internal static class MultipartHandlers
     /// headroom while keeping memory bounded.</summary>
     private const int MaxCompleteBodyBytes = 4 * 1024 * 1024;
 
-    public static Task HandleAsync(HttpContext context, S3RouteResult route, BlobClient blob, CancellationToken ct) =>
+    public static Task HandleAsync(HttpContext context, S3RouteResult route, BlobClient blob, CancellationToken ct, ICredentialResolver? credentials = null) =>
         route.Operation switch
         {
             S3Operation.CreateMultipartUpload => CreateAsync(context, blob, route.Bucket!, route.Key!, ct),
-            S3Operation.UploadPart            => UploadPartAsync(context, blob, route.Bucket!, route.Key!, ct),
+            S3Operation.UploadPart            => UploadPartAsync(context, blob, route.Bucket!, route.Key!, credentials, ct),
             S3Operation.UploadPartCopy        => UploadPartCopyAsync(context, blob, route.Bucket!, route.Key!, ct),
             S3Operation.CompleteMultipartUpload => CompleteAsync(context, blob, route.Bucket!, route.Key!, ct),
             S3Operation.AbortMultipartUpload  => AbortAsync(context, blob, route.Bucket!, route.Key!, ct),
@@ -77,7 +79,7 @@ internal static class MultipartHandlers
 
     // ---------- UploadPart ----------
 
-    private static async Task UploadPartAsync(HttpContext ctx, BlobClient blob, string bucket, string key, CancellationToken ct)
+    private static async Task UploadPartAsync(HttpContext ctx, BlobClient blob, string bucket, string key, ICredentialResolver? credentials, CancellationToken ct)
     {
         if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
@@ -101,56 +103,68 @@ internal static class MultipartHandlers
             return;
         }
 
-        // S3 rejects aws-chunked here for the same reason PutObject does:
-        // we don't decode the chunk framing, so forwarding raw bytes would
-        // corrupt the part.
-        if (ctx.Request.Headers.TryGetValue("x-amz-content-sha256", out var contentSha))
-        {
-            foreach (var raw in contentSha)
-            {
-                var v = (raw ?? string.Empty).Trim();
-                if (v.StartsWith("STREAMING-", StringComparison.Ordinal))
-                {
-                    await WriteErrorAsync(ctx,
-                        new S3ErrorMapping.Mapping(StatusCodes.Status501NotImplemented,
-                            "NotImplemented",
-                            "aws2azure: aws-chunked payload uploads are not supported for UploadPart."))
-                        .ConfigureAwait(false);
-                    return;
-                }
-            }
-        }
-
         var blockId = UploadIdCodec.BlockId(token.Value.NonceHex, partNumber);
         var query   = "?comp=block&blockid=" + Uri.EscapeDataString(blockId);
 
-        // Wrap the request body so we incrementally MD5-hash the part while
-        // it streams to Azure. The hex MD5 becomes the S3 part ETag the
-        // client echoes back in CompleteMultipartUpload.
-        using var md5 = MD5.Create();
-        using var hashing = new HashingStream(ctx.Request.Body, md5);
+        // Modern AWS SDKs stream the part body with aws-chunked framing (signed
+        // or unsigned, with or without a checksum trailer). Decode it so the
+        // MD5/ETag and the bytes forwarded to Azure are the real part content,
+        // not the chunk framing.
+        Stream partBody = ctx.Request.Body;
+        long? contentLength = ctx.Request.ContentLength;
+        AwsChunkedDecoder? chunkedDecoder = null;
 
-        using var azureReq = new HttpRequestMessage(HttpMethod.Put, blob.BuildBlobUri(bucket, key, query))
+        var chunkedFormat = AwsChunkedRequest.Detect(ctx.Request);
+        if (chunkedFormat.Detected)
         {
-            Content = new StreamContent(hashing),
-        };
-        azureReq.Options.Set(Aws2Azure.Core.Azure.AzureHttpClient.NoRetryOption, true);
-        if (ctx.Request.ContentLength is { } len)
-        {
-            azureReq.Content.Headers.ContentLength = len;
+            if (ctx.Request.Headers.TryGetValue("x-amz-decoded-content-length", out var decodedLenHeader)
+                && long.TryParse(decodedLenHeader.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var decodedLen))
+            {
+                contentLength = decodedLen;
+            }
+            else
+            {
+                contentLength = null; // unknown
+            }
+
+            chunkedDecoder = AwsChunkedRequest.CreateDecoder(ctx.Request, chunkedFormat, credentials);
+            partBody = chunkedDecoder;
         }
 
-        using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
-        if (!azureResp.IsSuccessStatusCode)
+        try
         {
-            await WriteErrorAsync(ctx, S3ErrorMapping.FromAzure(azureResp, S3Operation.UploadPart)).ConfigureAwait(false);
-            return;
-        }
+            // Wrap the request body so we incrementally MD5-hash the part while
+            // it streams to Azure. The hex MD5 becomes the S3 part ETag the
+            // client echoes back in CompleteMultipartUpload.
+            using var md5 = MD5.Create();
+            using var hashing = new HashingStream(partBody, md5);
 
-        var etag = "\"" + Convert.ToHexString(md5.Hash!).ToLowerInvariant() + "\"";
-        ctx.Response.StatusCode = StatusCodes.Status200OK;
-        ctx.Response.Headers["ETag"] = etag;
-        ctx.Response.ContentLength = 0;
+            using var azureReq = new HttpRequestMessage(HttpMethod.Put, blob.BuildBlobUri(bucket, key, query))
+            {
+                Content = new StreamContent(hashing),
+            };
+            azureReq.Options.Set(Aws2Azure.Core.Azure.AzureHttpClient.NoRetryOption, true);
+            if (contentLength is { } len)
+            {
+                azureReq.Content.Headers.ContentLength = len;
+            }
+
+            using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
+            if (!azureResp.IsSuccessStatusCode)
+            {
+                await WriteErrorAsync(ctx, S3ErrorMapping.FromAzure(azureResp, S3Operation.UploadPart)).ConfigureAwait(false);
+                return;
+            }
+
+            var etag = "\"" + Convert.ToHexString(md5.Hash!).ToLowerInvariant() + "\"";
+            ctx.Response.StatusCode = StatusCodes.Status200OK;
+            ctx.Response.Headers["ETag"] = etag;
+            ctx.Response.ContentLength = 0;
+        }
+        finally
+        {
+            chunkedDecoder?.Dispose();
+        }
     }
 
     // ---------- UploadPartCopy ----------

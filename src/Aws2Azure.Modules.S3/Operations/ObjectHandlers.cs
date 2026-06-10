@@ -402,12 +402,14 @@ internal static class ObjectHandlers
             return;
         }
 
-        // Detect aws-chunked encoding (STREAMING-AWS4-HMAC-SHA256-PAYLOAD)
+        // Detect aws-chunked encoding (all STREAMING-* framings, signed or
+        // unsigned, with or without a trailing checksum section).
         Stream bodyStream = context.Request.Body;
         long? contentLength = context.Request.ContentLength;
         AwsChunkedDecoder? chunkedDecoder = null;
 
-        if (TryDetectAwsChunked(context.Request, out var streamingType))
+        var chunkedFormat = AwsChunkedRequest.Detect(context.Request);
+        if (chunkedFormat.Detected)
         {
             // Use x-amz-decoded-content-length as the real content length
             if (context.Request.Headers.TryGetValue("x-amz-decoded-content-length", out var decodedLenHeader)
@@ -420,14 +422,7 @@ internal static class ObjectHandlers
                 contentLength = null; // unknown
             }
 
-            // Build signing context for chunk signature verification (optional but recommended)
-            ChunkSigningContext? signingContext = null;
-            if (credentials is not null && TryBuildChunkSigningContext(context.Request, credentials, out signingContext))
-            {
-                // signingContext is populated - will verify each chunk signature
-            }
-
-            chunkedDecoder = new AwsChunkedDecoder(context.Request.Body, signingContext, leaveOpen: true);
+            chunkedDecoder = AwsChunkedRequest.CreateDecoder(context.Request, chunkedFormat, credentials);
             bodyStream = chunkedDecoder;
         }
 
@@ -477,71 +472,6 @@ internal static class ObjectHandlers
         {
             chunkedDecoder?.Dispose();
         }
-    }
-
-    private static bool TryDetectAwsChunked(HttpRequest request, out string streamingType)
-    {
-        streamingType = string.Empty;
-        if (!request.Headers.TryGetValue("x-amz-content-sha256", out var contentSha))
-            return false;
-
-        foreach (var raw in contentSha)
-        {
-            var v = (raw ?? string.Empty).Trim();
-            // Only support the base streaming format, not TRAILER variants
-            // which require parsing trailing headers and checksums
-            if (string.Equals(v, "STREAMING-AWS4-HMAC-SHA256-PAYLOAD", StringComparison.Ordinal))
-            {
-                streamingType = v;
-                return true;
-            }
-
-            // Reject unsupported TRAILER variants explicitly
-            if (v.StartsWith("STREAMING-", StringComparison.Ordinal) &&
-                v.Contains("-TRAILER", StringComparison.Ordinal))
-            {
-                // Return false to fall through to 501 error path
-                return false;
-            }
-        }
-        return false;
-    }
-
-    private static bool TryBuildChunkSigningContext(HttpRequest request, ICredentialResolver credentials, out ChunkSigningContext? context)
-    {
-        context = null;
-
-        // Parse Authorization header to get seed signature and credential scope
-        var authHeader = request.Headers["Authorization"].ToString();
-        if (string.IsNullOrEmpty(authHeader) || !AuthorizationHeader.TryParse(authHeader, out var parsed))
-            return false;
-
-        // Get amz-date
-        var amzDate = request.Headers["x-amz-date"].ToString();
-        if (string.IsNullOrEmpty(amzDate))
-            amzDate = request.Headers["Date"].ToString();
-        if (string.IsNullOrEmpty(amzDate))
-            return false;
-
-        // Get AWS secret for the access key
-        if (!credentials.TryGetAwsSecret(parsed.Credential.AccessKeyId, out var secret))
-            return false;
-
-        // Derive signing key
-        var signingKey = SigningKey.Derive(
-            secret,
-            parsed.Credential.Date,
-            parsed.Credential.Region,
-            parsed.Credential.Service);
-
-        context = new ChunkSigningContext
-        {
-            SigningKey = signingKey,
-            AmzDate = amzDate,
-            CredentialScope = parsed.Credential.ToScopeString(),
-            SeedSignature = parsed.Signature,
-        };
-        return true;
     }
 
     private static bool HasConcreteEtagPrecondition(HttpRequest request, string header)

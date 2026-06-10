@@ -7,8 +7,8 @@ sub_features:
     status: implemented
     note: "ETag returned to clients is hex(MD5) of the part body, computed in-flight as the body streams to Azure."
   - name: aws-chunked-payload
-    status: unsupported
-    note: "STREAMING-AWS4-HMAC-SHA256-PAYLOAD is rejected with NotImplemented; same constraint as PutObject."
+    status: implemented
+    note: "Decodes every STREAMING-* chunk framing (signed AWS4-HMAC-SHA256-PAYLOAD and unsigned, with or without a checksum trailer) before streaming the decoded part to Azure; the part ETag is the MD5 of the decoded bytes. The trailing checksum / x-amz-trailer-signature section is consumed and discarded (Azure validates integrity independently). The -ECDSA-* (SigV4a) variants are not recognized."
   - name: server-side-encryption-customer
     status: unsupported
 behavior_differences:
