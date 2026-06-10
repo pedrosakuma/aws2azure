@@ -21,7 +21,9 @@ internal static class ConformanceSigV4Signer
         string secret,
         string region = "us-east-1",
         string service = "s3",
-        DateTimeOffset? now = null)
+        DateTimeOffset? now = null,
+        IReadOnlyList<string>? extraSignedHeaders = null,
+        bool? s3PathStyle = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (request.RequestUri is null)
@@ -48,13 +50,47 @@ internal static class ConformanceSigV4Signer
             new(SigV4Constants.AmzContentSha256Header, payloadHash),
         };
 
-        var signedHeaders = new[]
+        var signedSet = new SortedSet<string>(StringComparer.Ordinal)
         {
             "host",
             SigV4Constants.AmzContentSha256Header,
             SigV4Constants.AmzDateHeader,
         };
-        Array.Sort(signedHeaders, StringComparer.Ordinal);
+        // Some modules require additional headers be signed (e.g. DynamoDB's
+        // X-Amz-Target, which the proxy enforces via RequiredSignedHeaders so a
+        // signed payload cannot be redirected to a different operation). Pull the
+        // value off the request — it must already be attached.
+        if (extraSignedHeaders is not null)
+        {
+            foreach (var name in extraSignedHeaders)
+            {
+                var lower = name.ToLowerInvariant();
+                if (!signedSet.Add(lower)) continue;
+                string? value = null;
+                if (request.Headers.TryGetValues(lower, out var hv))
+                {
+                    value = string.Join(",", hv);
+                }
+                else if (request.Content?.Headers.TryGetValues(lower, out var chv) == true)
+                {
+                    value = string.Join(",", chv);
+                }
+                if (value is null)
+                {
+                    throw new InvalidOperationException(
+                        $"ConformanceSigV4Signer: extra signed header '{lower}' is not present on the request.");
+                }
+                headers.Add(new KeyValuePair<string, string>(lower, value));
+            }
+        }
+        var signedHeaders = signedSet.ToArray();
+
+        // Mirror the proxy's per-service path canonicalization
+        // (ServiceModuleRegistry: s3PathStyle = ServiceName == "s3"). S3
+        // single-encodes the path; every other service double-encodes it, so a
+        // multi-service signer must follow suit or it would produce a signature
+        // the proxy rejects for any non-root path on a non-S3 service.
+        var pathStyle = s3PathStyle ?? string.Equals(service, "s3", StringComparison.Ordinal);
 
         var canonical = CanonicalRequest.Build(
             request.Method.Method,
@@ -63,7 +99,7 @@ internal static class ConformanceSigV4Signer
             headers,
             signedHeaders,
             payloadHash,
-            s3PathStyle: true);
+            s3PathStyle: pathStyle);
 
         var stringToSign = CanonicalRequest.StringToSign(amzDate, scope, canonical);
 

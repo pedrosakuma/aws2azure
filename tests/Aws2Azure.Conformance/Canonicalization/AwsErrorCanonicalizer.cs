@@ -192,8 +192,8 @@ public static class AwsErrorCanonicalizer
     /// the same canonical surface as the XML path:
     /// <list type="bullet">
     ///   <item><c>__type</c> → <c>Code</c>, reduced to the short error-code name
-    ///   (the namespace prefix before <c>#</c> / after the last <c>.</c> is not
-    ///   contracted — SDK clients dispatch on the short name).</item>
+    ///   via <see cref="ShortErrorCode"/> (mirrors the AWS SDK's
+    ///   <c>sanitizeErrorCode</c>) — SDK clients dispatch on the short name.</item>
     ///   <item><c>message</c>/<c>Message</c> → <c>Message</c> (masked: the wording
     ///   is non-contractual).</item>
     ///   <item>volatile correlation ids (RequestId, …) are masked via policy.</item>

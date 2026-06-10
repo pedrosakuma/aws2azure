@@ -111,6 +111,16 @@ AWS2AZURE_CONFORMANCE_TIER2=1 AWS2AZURE_CONFORMANCE_RECORD=1 dotnet test tests/A
   `InvalidAccessKeyId`, `RequestTimeTooSkewed`) or the request-validation stage
   (`InvalidBucketName` — a validly-signed request to a syntactically invalid
   bucket name).
+- **Tier 1 — DynamoDB proxy-side errors** (offline, every PR): the first
+  **JSON-protocol** service matrix, exercising the JSON-envelope canonicalizer
+  end-to-end. A validly-signed AWS-JSON request is rejected by the wire-protocol
+  parser before any Cosmos call — `UnknownOperationException` (unknown
+  `X-Amz-Target` op) and `SerializationException` (non-JSON body) — and the
+  proxy's `{"__type":"…#Code","message":"…"}` envelope is asserted against the
+  AWS contract (status + `json-error` body kind + short `__type` dispatch code +
+  `application/x-amz-json` media type). `X-Amz-Target` is part of the signed
+  header set because the proxy enforces it via `RequiredSignedHeaders` (faithful
+  to real DynamoDB).
 - **Tier 2 — S3 backend-mapped errors** (LocalStack differential, Docker):
   `NoSuchBucket` (GET on a missing bucket) and `NoSuchKey` (GET a missing key in
   an existing bucket), proxy-over-Azurite vs LocalStack S3. The accepted
@@ -118,5 +128,13 @@ AWS2AZURE_CONFORMANCE_TIER2=1 AWS2AZURE_CONFORMANCE_RECORD=1 dotnet test tests/A
   `<Key>`) are documented in `docs/gaps/s3/GetObject.yaml`. The error
   content-type charset parameter is treated as non-contractual and normalized
   out (SDK clients parse the XML body regardless).
+
+> Note: DynamoDB SigV4 *auth* errors are deliberately **not** in the Tier-1
+> matrix yet. The proxy currently renders them with S3-style codes
+> (`SignatureDoesNotMatch` / `InvalidAccessKeyId` / `RequestTimeTooSkewed`, all
+> 403) for every module, whereas AWS JSON-protocol services return
+> `InvalidSignatureException` / `UnrecognizedClientException` (HTTP 400). That
+> suspected cross-module divergence is tracked in #241 — LocalStack cannot
+> be the oracle for it because it ignores signatures.
 
 Real-AWS goldens (Tier 3) and further operations follow in later PRs.
