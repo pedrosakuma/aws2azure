@@ -114,7 +114,16 @@ public static class AwsErrorCanonicalizer
 
         using var reader = XmlReader.Create(new StringReader(body), settings);
         reader.MoveToContent();
-        fields.Add(new CanonicalField("(root)", reader.LocalName));
+        var rootName = reader.LocalName;
+        fields.Add(new CanonicalField("(root)", rootName));
+
+        // AWS Query/EC2-protocol services (SQS, SNS, …) wrap the fault in
+        // <ErrorResponse><Error>…</Error><RequestId>…</RequestId></ErrorResponse>,
+        // nesting Code/Message one level below the root — unlike the S3 REST-XML
+        // <Error> root. Unwrap the single <Error> child so its Code/Message reach
+        // the same contract surface (top-level Code + masked Message) the S3 path
+        // produces, keeping the canonical form protocol-uniform.
+        var unwrapError = string.Equals(rootName, "ErrorResponse", StringComparison.Ordinal);
 
         var rootDepth = reader.Depth;
         if (reader.IsEmptyElement || !reader.Read())
@@ -135,15 +144,46 @@ public static class AwsErrorCanonicalizer
                 continue;
             }
 
-            var (name, rawValue) = ReadElement(reader);
-            var value = policy.VolatileBodyElements.Contains(name)
-                        || policy.NonContractualBodyElements.Contains(name)
-                ? CanonicalResponse.Masked
-                : rawValue.Trim();
-            fields.Add(new CanonicalField(name, value));
+            if (unwrapError
+                && string.Equals(reader.LocalName, "Error", StringComparison.Ordinal)
+                && !reader.IsEmptyElement)
+            {
+                // Flatten the wrapped <Error>'s children (Type/Code/Message) to
+                // the top level instead of recording the structural <nested>
+                // marker, so downstream sees the same Code/Message fields as S3.
+                var errorDepth = reader.Depth;
+                reader.Read();
+                while (!(reader.NodeType == XmlNodeType.EndElement && reader.Depth == errorDepth))
+                {
+                    if (reader.NodeType != XmlNodeType.Element || reader.Depth != errorDepth + 1)
+                    {
+                        if (!reader.Read())
+                        {
+                            break;
+                        }
+                        continue;
+                    }
+                    AddElementField(reader, fields, policy);
+                }
+                reader.Read(); // consume </Error>, positioning on the next sibling
+                continue;
+            }
+
+            AddElementField(reader, fields, policy);
         }
 
         return fields;
+    }
+
+    private static void AddElementField(
+        XmlReader reader, List<CanonicalField> fields, CanonicalizationPolicy policy)
+    {
+        var (name, rawValue) = ReadElement(reader);
+        var value = policy.VolatileBodyElements.Contains(name)
+                    || policy.NonContractualBodyElements.Contains(name)
+            ? CanonicalResponse.Masked
+            : rawValue.Trim();
+        fields.Add(new CanonicalField(name, value));
     }
 
     /// <summary>
