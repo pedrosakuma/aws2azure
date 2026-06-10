@@ -1,4 +1,5 @@
 using System;
+using System.Net.Http;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.Sqs.Internal;
 using Xunit;
@@ -90,5 +91,23 @@ public class ServiceBusClientTests
         Assert.Throws<ArgumentException>(() => new ServiceBusClient(
             new Aws2Azure.Core.Azure.AzureHttpClient(),
             new ServiceBusCredentials { Namespace = "ns", SasKeyName = "k" }));
+    }
+
+    [Fact]
+    public void Atom_entry_content_uses_parameterised_media_type_without_throwing()
+    {
+        // Regression: the StringContent(string, Encoding, string) overload routes
+        // the media type through MediaTypeHeaderValue's single-arg ctor, which
+        // throws FormatException on the `type=entry` parameter required by the
+        // Service Bus management API. CreateQueueAsync/UpdateQueueAsync used that
+        // overload, so every real CreateQueue against Service Bus 500'd. The
+        // helper must build the content with a parsed media type instead.
+        using var content = ServiceBusClient.CreateAtomEntryContent("<entry/>");
+
+        var contentType = content.Headers.ContentType;
+        Assert.NotNull(contentType);
+        Assert.Equal("application/atom+xml", contentType!.MediaType);
+        Assert.Equal("entry", Assert.Single(contentType.Parameters, p => p.Name == "type").Value);
+        Assert.Equal("utf-8", contentType.CharSet);
     }
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -113,6 +114,20 @@ internal sealed class ServiceBusClient
 
     // --- Management API helpers (Slice 1 queue lifecycle) ---
 
+    // Service Bus management requires the Atom entry media type, whose
+    // `type=entry` parameter the StringContent(string, Encoding, string)
+    // overload rejects (it routes through MediaTypeHeaderValue's single-arg
+    // ctor, which throws FormatException on parameters). Build the content with
+    // a parsed media type instead.
+    private const string AtomEntryMediaType = "application/atom+xml;type=entry;charset=utf-8";
+
+    internal static StringContent CreateAtomEntryContent(string atomEntryXml)
+    {
+        var content = new StringContent(atomEntryXml, Encoding.UTF8);
+        content.Headers.ContentType = MediaTypeHeaderValue.Parse(AtomEntryMediaType);
+        return content;
+    }
+
     /// <summary>
     /// PUTs the supplied Atom <c>QueueDescription</c> entry, creating the
     /// queue if it doesn't exist. Service Bus returns 201 on create, 200 on
@@ -121,7 +136,7 @@ internal sealed class ServiceBusClient
     public Task<HttpResponseMessage> CreateQueueAsync(string queueName, string atomEntryXml, CancellationToken ct)
     {
         var req = new HttpRequestMessage(HttpMethod.Put, BuildUri(queueName, $"api-version={ApiVersion}"));
-        req.Content = new StringContent(atomEntryXml, Encoding.UTF8, "application/atom+xml;type=entry");
+        req.Content = CreateAtomEntryContent(atomEntryXml);
         req.Headers.TryAddWithoutValidation("If-None-Match", "*");
         return SendAsync(req, ct);
     }
@@ -301,7 +316,7 @@ internal sealed class ServiceBusClient
         ArgumentException.ThrowIfNullOrEmpty(queueName);
         ArgumentException.ThrowIfNullOrEmpty(atomEntryXml);
         var req = new HttpRequestMessage(HttpMethod.Put, BuildUri(queueName, $"api-version={ApiVersion}"));
-        req.Content = new StringContent(atomEntryXml, Encoding.UTF8, "application/atom+xml;type=entry");
+        req.Content = CreateAtomEntryContent(atomEntryXml);
         req.Headers.TryAddWithoutValidation("If-Match", "*");
         return SendAsync(req, ct);
     }
