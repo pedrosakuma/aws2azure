@@ -113,9 +113,11 @@ AWS2AZURE_CONFORMANCE_TIER2=1 AWS2AZURE_CONFORMANCE_RECORD=1 dotnet test tests/A
   bucket name).
 - **Tier 1 — DynamoDB proxy-side errors** (offline, every PR): the first
   **JSON-protocol** service matrix, exercising the JSON-envelope canonicalizer
-  end-to-end. A validly-signed AWS-JSON request is rejected by the wire-protocol
-  parser before any Cosmos call — `UnknownOperationException` (unknown
-  `X-Amz-Target` op) and `SerializationException` (non-JSON body) — and the
+  end-to-end. Two parser-stage cases — a validly-signed AWS-JSON request rejected
+  by the wire-protocol parser before any Cosmos call: `UnknownOperationException`
+  (unknown `X-Amz-Target` op) and `SerializationException` (non-JSON body) — plus
+  two SigV4 auth-stage cases: `InvalidSignatureException` (wrong secret) and
+  `UnrecognizedClientException` (unknown access key), both **HTTP 400**. The
   proxy's `{"__type":"…#Code","message":"…"}` envelope is asserted against the
   AWS contract (status + `json-error` body kind + short `__type` dispatch code +
   `application/x-amz-json` media type). `X-Amz-Target` is part of the signed
@@ -129,12 +131,13 @@ AWS2AZURE_CONFORMANCE_TIER2=1 AWS2AZURE_CONFORMANCE_RECORD=1 dotnet test tests/A
   content-type charset parameter is treated as non-contractual and normalized
   out (SDK clients parse the XML body regardless).
 
-> Note: DynamoDB SigV4 *auth* errors are deliberately **not** in the Tier-1
-> matrix yet. The proxy currently renders them with S3-style codes
-> (`SignatureDoesNotMatch` / `InvalidAccessKeyId` / `RequestTimeTooSkewed`, all
-> 403) for every module, whereas AWS JSON-protocol services return
-> `InvalidSignatureException` / `UnrecognizedClientException` (HTTP 400). That
-> suspected cross-module divergence is tracked in #241 — LocalStack cannot
-> be the oracle for it because it ignores signatures.
+> Note: SigV4 *auth* errors are protocol-aware (issue #241, fixed). REST-XML
+> services (S3) keep the 403 + S3-code shape (`SignatureDoesNotMatch` /
+> `InvalidAccessKeyId` / `RequestTimeTooSkewed`); AWS-JSON services (DynamoDB,
+> Kinesis, the modern SQS JSON path) return `InvalidSignatureException` /
+> `UnrecognizedClientException` at **HTTP 400**, via
+> `AuthErrorVocabulary.Resolve(ErrorFormat, status)`. The two DynamoDB auth cases
+> above are Tier-1-only: LocalStack can't be their oracle (it ignores
+> signatures), so the expected outcome is the AWS JSON-protocol contract.
 
 Real-AWS goldens (Tier 3) and further operations follow in later PRs.

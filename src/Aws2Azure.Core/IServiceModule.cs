@@ -1,4 +1,5 @@
 using Aws2Azure.Core.Modules;
+using Aws2Azure.Core.SigV4;
 using Microsoft.AspNetCore.Http;
 
 namespace Aws2Azure.Core;
@@ -77,4 +78,23 @@ public interface IServiceModule
     /// </summary>
     ValueTask EmitAuthErrorAsync(HttpContext context, int statusCode, string code, string message)
         => new(AwsErrorResponse.WriteAsync(context, ErrorFormat, statusCode, code, message));
+
+    /// <summary>
+    /// Renders a SigV4 validation failure using the (HTTP status, error code)
+    /// vocabulary real AWS returns for this module's wire protocol. The default
+    /// keys the vocabulary on <see cref="ErrorFormat"/> via
+    /// <see cref="AuthErrorVocabulary"/> — REST-XML services (S3) keep the
+    /// 403 + S3-code shape, AWS-JSON services (DynamoDB, Kinesis) get the
+    /// 400 + <c>InvalidSignatureException</c>/<c>UnrecognizedClientException</c>
+    /// shape — then delegates rendering to <see cref="EmitAuthErrorAsync"/>.
+    /// Modules whose callers split across wire protocols (SQS Query vs
+    /// AWS-JSON) override this to negotiate the per-request format before
+    /// resolving the vocabulary. See issue #241.
+    /// </summary>
+    ValueTask EmitSigV4FailureAsync(HttpContext context, SigV4ValidationStatus status, string reason)
+    {
+        var (statusCode, code) = AuthErrorVocabulary.Resolve(ErrorFormat, status);
+        return EmitAuthErrorAsync(context, statusCode, code,
+            string.IsNullOrEmpty(reason) ? code : reason);
+    }
 }
