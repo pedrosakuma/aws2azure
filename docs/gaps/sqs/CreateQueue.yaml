@@ -20,7 +20,7 @@ sub_features:
     notes: "Accepted; long-polling emulation lands in Slice 4."
   - name: Attribute.FifoQueue / ContentBasedDeduplication
     status: partial
-    notes: "Maps to RequiresSession + RequiresDuplicateDetection; full FIFO routing lands in Slice 5."
+    notes: "Maps to RequiresSession + RequiresDuplicateDetection. FIFO routing is implemented end-to-end on the AMQP transport (MessageGroupId -> SB SessionId on send; session-aware receive pins one consumer per group for strict per-group ordering — see ReceiveMessage). Strict ordering requires `transport: Amqp`; the REST transport cannot express session-receive and therefore does not provide strict per-group ordering (won't implement — inherent SB REST limitation)."
   - name: Attribute.RedrivePolicy
     status: implemented
     notes: "Slice 5: SQS RedrivePolicy JSON ({deadLetterTargetArn,maxReceiveCount}) is parsed and mapped to SB ForwardDeadLetteredMessagesTo (queue-name segment of the ARN) + MaxDeliveryCount. maxReceiveCount is bounded to 1..1000 per SQS. The target DLQ must already exist (auto-provisioning is intentionally not implemented; client owns DLQ lifecycle)."

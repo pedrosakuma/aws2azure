@@ -305,15 +305,15 @@
 |---|---|---|---|---|
 | Service Bus subscription provisioning | ✅ implemented | Creates an Azure Service Bus topic subscription with deterministic subscription IDs derived from TopicArn + Protocol + Endpoint so repeat Subscribe calls return the same ARN. Supported protocols in this slice: sqs, https, http. |  |  |
 | Subscription metadata projection | ✅ implemented | Stores protocol, endpoint, compact filter policy JSON, and RawMessageDelivery in SubscriptionDescription.UserMetadata. Requests that would exceed the 1024-character Service Bus UserMetadata limit are rejected with InvalidParameter. |  |  |
-| Subscriber delivery forwarder | ⛔ unsupported | This slice only manages subscription metadata. Messages accumulate in the Service Bus subscription until a later slice wires forwarding to HTTPS endpoints or SQS-backed queues. |  |  |
+| Subscriber delivery forwarder | ⛔ unsupported | WON'T IMPLEMENT (out of scope by design). aws2azure provides the SNS *publish* side: Subscribe records subscription metadata and published messages land in the backing Azure Service Bus topic subscription, where any Azure-native consumer can read them. It does NOT implement the SNS *delivery* side (pushing each message out to an HTTPS/HTTP endpoint or into an SQS-backed queue). Active push delivery requires a stateful, always-on dispatcher with retry/backoff, dead-letter, and signed delivery — i.e. a callback service (Azure Function / hosted worker) that lives entirely outside this stateless request/response proxy. Use a native Azure subscriber (Service Bus consumer, or an Event Grid event subscription with its own webhook/handler) instead. |  |  |
 
 ### Behaviour differences
 
 - HTTPS / HTTP subscriptions are auto-confirmed immediately. SNS token-based confirmation is not implemented in this slice.
 - When a deterministic subscription already exists but its stored metadata differs from the new Subscribe request, aws2azure returns the existing ARN and logs a warning instead of replacing the subscription.
 - Only sqs, https, and http protocols are accepted. email, email-json, sms, lambda, application, and firehose are rejected with InvalidParameter.
-- Subscriptions always live on Azure Service Bus in this slice, even for SNS topics whose Publish / PublishBatch backend is Event Grid.
-- Event Grid-backed SNS topics do not fan out to those Service Bus subscriptions yet. Until a later slice adds a forwarder, subscribers created on Event Grid-backed topics will not receive published messages.
+- Subscriptions always live on Azure Service Bus, even for SNS topics whose Publish / PublishBatch backend is Event Grid.
+- Subscribers do not receive actively-pushed deliveries: aws2azure is publish-only and never forwards messages out to HTTPS/HTTP endpoints or SQS-backed queues (see the 'Subscriber delivery forwarder' sub-feature — won't implement, out of scope). Messages are readable from the backing Service Bus subscription by a native Azure consumer. Event Grid-backed SNS topics likewise do not fan out to the Service Bus subscriptions created here.
 - The Microsoft Service Bus emulator does not persist or echo subscription UserMetadata, where this proxy stores Protocol/Endpoint/FilterPolicy/RawMessageDelivery. Emulator-backed integration tests therefore skip the subscription lifecycle assertions; correctness is validated against real Azure Service Bus.
 
 ### References
