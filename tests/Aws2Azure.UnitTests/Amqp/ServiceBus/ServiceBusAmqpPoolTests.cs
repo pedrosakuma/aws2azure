@@ -458,6 +458,122 @@ public sealed class ServiceBusAmqpPoolTests
             pool.GetSessionReceiverAsync(ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"), "Root", "k", "q", sessionId: ""));
     }
 
+    [Fact]
+    public async Task SweepIdleSessionReceivers_is_noop_when_no_idle_timeout_configured()
+    {
+        // Default ctor => no sweeper; sweeping is a no-op even for an
+        // open, long-idle session receiver (pre-#262 behaviour).
+        await using var factory = new FakeFactory(DefaultSettings());
+        await using var pool = new ServiceBusAmqpPool(factory);
+
+        await pool.GetSessionReceiverAsync(ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"), "Root", "k", "fifo-q", "session-1")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(0, await pool.SweepIdleSessionReceiversAsync());
+        Assert.Equal(1, pool.SessionReceiverCount);
+    }
+
+    [Fact]
+    public async Task SweepIdleSessionReceivers_evicts_links_idle_beyond_timeout_and_keeps_connection_warm()
+    {
+        var clock = new ManualClock(new DateTimeOffset(2026, 6, 10, 0, 0, 0, TimeSpan.Zero));
+        await using var factory = new FakeFactory(DefaultSettings());
+        await using var pool = new ServiceBusAmqpPool(
+            factory, sessionReceiverIdleTimeout: TimeSpan.FromMinutes(5),
+            sweepInterval: TimeSpan.FromMinutes(1), timeProvider: clock);
+
+        await pool.GetSessionReceiverAsync(ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"), "Root", "k", "fifo-q", "session-1")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        await pool.GetSessionReceiverAsync(ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"), "Root", "k", "fifo-q", "session-2")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(2, pool.SessionReceiverCount);
+
+        // No time elapsed -> nothing idle.
+        Assert.Equal(0, await pool.SweepIdleSessionReceiversAsync());
+        Assert.Equal(2, pool.SessionReceiverCount);
+
+        // Past the idle window -> both links evicted, connection warm.
+        clock.Advance(TimeSpan.FromMinutes(6));
+        Assert.Equal(2, await pool.SweepIdleSessionReceiversAsync());
+        Assert.Equal(0, pool.SessionReceiverCount);
+        Assert.Equal(1, pool.ConnectionCount);
+        Assert.Equal(1, factory.CreateCallCount);
+
+        // The session can be re-acquired on the still-warm connection.
+        var reopened = await pool.GetSessionReceiverAsync(ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"), "Root", "k", "fifo-q", "session-1")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("session-1", reopened.SessionId);
+        Assert.Equal(1, factory.CreateCallCount);
+    }
+
+    [Fact]
+    public async Task SweepIdleSessionReceivers_keeps_links_within_idle_window()
+    {
+        var clock = new ManualClock(new DateTimeOffset(2026, 6, 10, 0, 0, 0, TimeSpan.Zero));
+        await using var factory = new FakeFactory(DefaultSettings());
+        await using var pool = new ServiceBusAmqpPool(
+            factory, sessionReceiverIdleTimeout: TimeSpan.FromMinutes(5), timeProvider: clock);
+
+        await pool.GetSessionReceiverAsync(ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"), "Root", "k", "fifo-q", "session-1")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        clock.Advance(TimeSpan.FromMinutes(3));
+        Assert.Equal(0, await pool.SweepIdleSessionReceiversAsync());
+        Assert.Equal(1, pool.SessionReceiverCount);
+    }
+
+    [Fact]
+    public async Task TryGetExistingSessionReceiver_resets_idle_clock()
+    {
+        var clock = new ManualClock(new DateTimeOffset(2026, 6, 10, 0, 0, 0, TimeSpan.Zero));
+        await using var factory = new FakeFactory(DefaultSettings());
+        await using var pool = new ServiceBusAmqpPool(
+            factory, sessionReceiverIdleTimeout: TimeSpan.FromMinutes(5), timeProvider: clock);
+
+        await pool.GetSessionReceiverAsync(ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"), "Root", "k", "fifo-q", "session-1")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Approach the idle edge, then a settle-path access (TryGet) resets
+        // the activity clock — an actively-drained session survives.
+        clock.Advance(TimeSpan.FromMinutes(4));
+        Assert.NotNull(pool.TryGetExistingSessionReceiver(ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"), "Root", "fifo-q", "session-1"));
+
+        clock.Advance(TimeSpan.FromMinutes(3));
+        Assert.Equal(0, await pool.SweepIdleSessionReceiversAsync());
+        Assert.Equal(1, pool.SessionReceiverCount);
+
+        // Now leave it idle past the window -> evicted.
+        clock.Advance(TimeSpan.FromMinutes(6));
+        Assert.Equal(1, await pool.SweepIdleSessionReceiversAsync());
+        Assert.Equal(0, pool.SessionReceiverCount);
+    }
+
+    /// <summary>
+    /// Deterministic <see cref="TimeProvider"/> for the idle-TTL sweeper
+    /// tests (#262): a settable clock whose <see cref="CreateTimer"/>
+    /// returns an inert timer, so the pool's background sweeper never
+    /// fires on wall-clock time — tests drive eviction explicitly via
+    /// <c>SweepIdleSessionReceiversAsync</c>.
+    /// </summary>
+    private sealed class ManualClock(DateTimeOffset now) : TimeProvider
+    {
+        private DateTimeOffset _now = now;
+
+        public override DateTimeOffset GetUtcNow() => _now;
+
+        public void Advance(TimeSpan delta) => _now = _now.Add(delta);
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+            => new NoopTimer();
+
+        private sealed class NoopTimer : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+            public void Dispose() { }
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
+    }
+
     /// <summary>
     /// Wraps another factory and gates each <c>CreateAsync</c> on an
     /// external task so tests can interleave it with pool disposal.

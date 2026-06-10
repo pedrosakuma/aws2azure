@@ -159,6 +159,26 @@ static AzureHttpClient BuildAzureHttpClient()
     return new AzureHttpClient();
 }
 
+// Resolves the FIFO session-receiver idle-TTL for the AMQP pool (#262).
+// AWS2AZURE_SB_SESSION_IDLE_SECONDS overrides the default; a value <= 0
+// disables the background sweeper (session receivers then live until
+// link failure or shutdown, the pre-#262 behaviour).
+static TimeSpan? ResolveSessionReceiverIdleTimeout()
+{
+    var raw = Environment.GetEnvironmentVariable("AWS2AZURE_SB_SESSION_IDLE_SECONDS");
+    if (string.IsNullOrWhiteSpace(raw))
+        return ServiceBusAmqpPool.DefaultSessionReceiverIdleTimeout;
+    if (!int.TryParse(raw, System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out var seconds))
+    {
+        Console.Error.WriteLine(
+            $"WARNING: AWS2AZURE_SB_SESSION_IDLE_SECONDS='{raw}' is not an integer; " +
+            "using the default FIFO session-receiver idle timeout.");
+        return ServiceBusAmqpPool.DefaultSessionReceiverIdleTimeout;
+    }
+    return seconds <= 0 ? null : TimeSpan.FromSeconds(seconds);
+}
+
 // Service Bus AMQP pool — shared across all credential entries. Lazy:
 // connections / receivers materialise on first AMQP queue use, so a
 // REST-only deployment pays zero cost. The pool is registered as a
@@ -174,7 +194,13 @@ var amqpConnectionSettings = new AmqpConnectionSettings
     ContainerId = $"aws2azure-{Environment.MachineName}-{Environment.ProcessId}",
 };
 var amqpFactory = new ServiceBusAmqpConnectionFactory(amqpConnectionSettings);
-var amqpPool = new ServiceBusAmqpPool(amqpFactory);
+// Idle-TTL eviction of FIFO session-receiver links (#262): a background
+// sweeper closes session receivers with no receive/settle activity in
+// the idle window, returning the broker session for another consumer
+// (scale-up rebalance) and freeing the AMQP link. Overridable via
+// AWS2AZURE_SB_SESSION_IDLE_SECONDS (<=0 disables the sweeper).
+var sessionIdleTimeout = ResolveSessionReceiverIdleTimeout();
+var amqpPool = new ServiceBusAmqpPool(amqpFactory, sessionIdleTimeout);
 builder.Services.AddSingleton(amqpPool);
 builder.Services.AddSingleton<IEventHubsAmqpSender>(sp =>
     new EventHubsAmqpSender(

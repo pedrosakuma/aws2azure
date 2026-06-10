@@ -35,15 +35,70 @@ namespace Aws2Azure.Amqp.ServiceBus;
 /// </summary>
 internal sealed class ServiceBusAmqpPool : IAsyncDisposable
 {
+    /// <summary>
+    /// Default idle window after which an unused FIFO session-receiver
+    /// link is torn down by the background sweeper (#262). Comfortably
+    /// larger than a typical queue LockDuration / visibility timeout so
+    /// an in-flight message's settle window has elapsed before the link
+    /// is evicted — eviction then merely returns the broker session to
+    /// the broker for another consumer (scale-up rebalance), matching
+    /// SQS visibility-timeout semantics.
+    /// </summary>
+    public static readonly TimeSpan DefaultSessionReceiverIdleTimeout = TimeSpan.FromMinutes(5);
+
+    /// <summary>Default cadence of the idle session-receiver sweep.</summary>
+    public static readonly TimeSpan DefaultSweepInterval = TimeSpan.FromMinutes(1);
+
     private readonly IServiceBusAmqpConnectionFactory _factory;
     private readonly ConcurrentDictionary<ServiceBusAmqpConnectionKey, ConnectionSlot> _connections
         = new();
+    private readonly TimeProvider _timeProvider;
+    private readonly TimeSpan? _sessionReceiverIdleTimeout;
+    private readonly ITimer? _sweepTimer;
+    private int _sweepRunning;
     private int _disposed;
 
     public ServiceBusAmqpPool(IServiceBusAmqpConnectionFactory factory)
+        : this(factory, sessionReceiverIdleTimeout: null, sweepInterval: null, timeProvider: null)
+    {
+    }
+
+    /// <summary>
+    /// Creates a pool with proactive idle-TTL eviction of FIFO
+    /// session-receiver links (#262). When
+    /// <paramref name="sessionReceiverIdleTimeout"/> is non-null a
+    /// background timer fires every <paramref name="sweepInterval"/>
+    /// and closes session receivers that have had no receive/settle
+    /// activity within the idle window — detaching the AMQP link and
+    /// returning the Service Bus session to the broker while leaving the
+    /// shared connection warm. When it is <c>null</c> no sweeper runs
+    /// and session receivers are only evicted on link failure
+    /// (<see cref="InvalidateSessionReceiverAsync"/>) or pool disposal.
+    /// </summary>
+    public ServiceBusAmqpPool(
+        IServiceBusAmqpConnectionFactory factory,
+        TimeSpan? sessionReceiverIdleTimeout,
+        TimeSpan? sweepInterval = null,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(factory);
+        if (sessionReceiverIdleTimeout is { } idle && idle <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(sessionReceiverIdleTimeout));
         _factory = factory;
+        _timeProvider = timeProvider ?? TimeProvider.System;
+        _sessionReceiverIdleTimeout = sessionReceiverIdleTimeout;
+
+        if (sessionReceiverIdleTimeout is not null)
+        {
+            var period = sweepInterval ?? DefaultSweepInterval;
+            if (period <= TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(sweepInterval));
+            _sweepTimer = _timeProvider.CreateTimer(
+                static state => ((ServiceBusAmqpPool)state!).OnSweepTimer(),
+                this,
+                period,
+                period);
+        }
     }
 
     /// <summary>
@@ -420,6 +475,74 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     /// <summary>Number of cached connections; useful in tests.</summary>
     public int ConnectionCount => _connections.Count;
 
+    /// <summary>
+    /// Total cached FIFO session-receiver links across every connection.
+    /// Diagnostics / test surface for the idle-TTL sweeper (#262).
+    /// </summary>
+    public int SessionReceiverCount
+    {
+        get
+        {
+            var total = 0;
+            foreach (var slot in _connections.Values)
+                total += slot.SessionReceiverCount;
+            return total;
+        }
+    }
+
+    /// <summary>
+    /// Closes FIFO session-receiver links idle longer than the idle
+    /// timeout the pool was created with (#262), detaching each link and
+    /// returning its Service Bus session to the broker while leaving the
+    /// shared connection warm. Returns the number of links evicted, or
+    /// <c>0</c> when no idle timeout is configured or the pool is
+    /// disposed. Best-effort: a link that turns active between the
+    /// idle-check and the eviction simply has its activity timestamp
+    /// reset and is skipped on the next sweep. Settle for an in-flight
+    /// message whose link is evicted fails and is treated as a stale
+    /// handle by the SQS handler (the broker redelivers the group on
+    /// session-lock expiry — SQS visibility-timeout semantics).
+    /// </summary>
+    internal async Task<int> SweepIdleSessionReceiversAsync(CancellationToken cancellationToken = default)
+    {
+        if (_sessionReceiverIdleTimeout is not { } idle) return 0;
+        if (Volatile.Read(ref _disposed) != 0) return 0;
+        var now = _timeProvider.GetUtcNow();
+        var evicted = 0;
+        foreach (var slot in _connections.Values)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            evicted += await slot.SweepIdleSessionReceiversAsync(now, idle).ConfigureAwait(false);
+        }
+        return evicted;
+    }
+
+    private void OnSweepTimer()
+    {
+        // Skip overlapping sweeps: a long sweep (many connections) must
+        // not stack up behind a fast timer period.
+        if (Interlocked.Exchange(ref _sweepRunning, 1) != 0) return;
+        _ = SweepFromTimerAsync();
+    }
+
+    private async Task SweepFromTimerAsync()
+    {
+        try
+        {
+            await SweepIdleSessionReceiversAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // Best-effort hygiene sweep — never surface to the timer
+            // thread. Stale links that survive get retried next tick or
+            // fail closed on next use (lazy InvalidateSessionReceiverAsync).
+        }
+        finally
+        {
+            Volatile.Write(ref _sweepRunning, 0);
+        }
+    }
+
     private void ThrowIfDisposed()
     {
         if (Volatile.Read(ref _disposed) != 0)
@@ -451,7 +574,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                 throw new ObjectDisposedException(nameof(ServiceBusAmqpPool));
             return existing;
         }
-        var fresh = new ConnectionSlot();
+        var fresh = new ConnectionSlot(_timeProvider);
         var slot = _connections.GetOrAdd(key, fresh);
         if (ReferenceEquals(slot, fresh) && Volatile.Read(ref _disposed) != 0)
         {
@@ -471,6 +594,10 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        // Stop the idle-TTL sweeper before draining connections so it
+        // can't race the eviction loop below (#262).
+        if (_sweepTimer is not null)
+            await _sweepTimer.DisposeAsync().ConfigureAwait(false);
         // Drain-loop: each GetOrCreateConnectionSlot call site checks
         // _disposed after publishing, so once we've set the flag any
         // concurrent publish either (a) sees the flag and self-cleans
@@ -490,6 +617,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
 
     private sealed class ConnectionSlot : IAsyncDisposable
     {
+        private readonly TimeProvider _timeProvider;
         private readonly SemaphoreSlim _connectionLock = new(1, 1);
         private readonly ConcurrentDictionary<string, ReceiverSlot> _receivers
             = new(StringComparer.OrdinalIgnoreCase);
@@ -501,6 +629,8 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             = new(StringComparer.OrdinalIgnoreCase);
         private ServiceBusAmqpConnection? _connection;
         private int _disposed;
+
+        public ConnectionSlot(TimeProvider timeProvider) => _timeProvider = timeProvider;
 
         public async Task<ServiceBusAmqpConnection> GetOrCreateConnectionAsync(
             IServiceBusAmqpConnectionFactory factory,
@@ -669,9 +799,11 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             var slotKey = new SessionReceiverKey(queueName, sessionId);
             var slot = await GetOrPublishSessionReceiverSlotAsync(slotKey, static () => new SessionReceiverSlot())
                 .ConfigureAwait(false);
-            return await slot
+            var receiver = await slot
                 .GetOrCreateAsync(connection, key.Endpoint, queueName, sessionId, cancellationToken)
                 .ConfigureAwait(false);
+            slot.Touch(_timeProvider.GetUtcNow());
+            return receiver;
         }
 
         private async ValueTask<SessionReceiverSlot> GetOrPublishSessionReceiverSlotAsync(
@@ -726,6 +858,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                         await ourSlot.DisposeAsync().ConfigureAwait(false);
                         throw new ObjectDisposedException(nameof(ConnectionSlot));
                     }
+                    ourSlot.Touch(_timeProvider.GetUtcNow());
                     return fresh;
                 }
 
@@ -735,9 +868,11 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                 await ourSlot.DisposeAsync().ConfigureAwait(false);
                 try
                 {
-                    return await inserted
+                    var receiver = await inserted
                         .GetOrCreateAsync(connection, key.Endpoint, queueName, resolvedId, cancellationToken)
                         .ConfigureAwait(false);
+                    inserted.Touch(_timeProvider.GetUtcNow());
+                    return receiver;
                 }
                 catch (ObjectDisposedException)
                 {
@@ -761,6 +896,32 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         }
 
         /// <summary>
+        /// Closes session-receiver links idle longer than
+        /// <paramref name="idleTimeout"/> as of <paramref name="now"/>
+        /// (#262). Each evicted link is detached and its Service Bus
+        /// session returns to the broker; the shared connection stays
+        /// warm. Returns the number of links evicted. Slots created but
+        /// not yet successfully opened (no activity stamp) are never
+        /// swept, so an in-flight broker-assigned acquire is safe.
+        /// </summary>
+        public async Task<int> SweepIdleSessionReceiversAsync(DateTimeOffset now, TimeSpan idleTimeout)
+        {
+            if (Volatile.Read(ref _disposed) != 0) return 0;
+            var evicted = 0;
+            foreach (var entry in _sessionReceivers.ToArray())
+            {
+                if (!entry.Value.IsIdle(now, idleTimeout)) continue;
+                if (_sessionReceivers.TryRemove(entry))
+                {
+                    try { await entry.Value.DisposeAsync().ConfigureAwait(false); }
+                    catch { /* swallow during idle eviction */ }
+                    evicted++;
+                }
+            }
+            return evicted;
+        }
+
+        /// <summary>
         /// Returns the receiver cached for (queue, sessionId) without
         /// opening a fresh session. Returns <c>null</c> when no slot
         /// exists yet or the cached slot has been disposed. The pool
@@ -771,7 +932,11 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         {
             if (!_sessionReceivers.TryGetValue(new SessionReceiverKey(queueName, sessionId), out var slot))
                 return null;
-            return slot.TryGetExisting();
+            var receiver = slot.TryGetExisting();
+            // A live settle / peek keeps the link active for the idle
+            // sweeper (#262); don't evict a session that's being drained.
+            if (receiver is not null) slot.Touch(_timeProvider.GetUtcNow());
+            return receiver;
         }
 
         public async Task<ServiceBusManagementClient> GetOrCreateManagementClientAsync(
@@ -1137,7 +1302,30 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     {
         private readonly SemaphoreSlim _lock = new(1, 1);
         private ServiceBusReceiver? _receiver;
+        private long _lastActivityTicks;
         private int _disposed;
+
+        /// <summary>
+        /// Records receive/settle activity for the idle-TTL sweeper
+        /// (#262). A zero stamp means "never used / open in flight" and
+        /// is never considered idle, so a slot that is mid-creation is
+        /// safe from eviction.
+        /// </summary>
+        public void Touch(DateTimeOffset now) => Volatile.Write(ref _lastActivityTicks, now.UtcTicks);
+
+        /// <summary>
+        /// True when the slot has recorded at least one activity and has
+        /// been idle for at least <paramref name="idleTimeout"/> as of
+        /// <paramref name="now"/>. Disposed slots report not-idle (the
+        /// owner already evicted them).
+        /// </summary>
+        public bool IsIdle(DateTimeOffset now, TimeSpan idleTimeout)
+        {
+            if (Volatile.Read(ref _disposed) != 0) return false;
+            var ticks = Volatile.Read(ref _lastActivityTicks);
+            if (ticks == 0) return false;
+            return now - new DateTimeOffset(ticks, TimeSpan.Zero) >= idleTimeout;
+        }
 
         /// <summary>
         /// Creates a slot that already owns a pre-opened receiver.
