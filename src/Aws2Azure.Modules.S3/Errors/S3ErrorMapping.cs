@@ -1,5 +1,7 @@
 namespace Aws2Azure.Modules.S3.Errors;
 
+using Aws2Azure.Modules.S3.Internal;
+
 /// <summary>
 /// Maps Azure Blob storage HTTP failures to the corresponding S3 error code
 /// and status. Drives bucket-lifecycle handlers in slice 1; expanded as later
@@ -98,6 +100,41 @@ internal static class S3ErrorMapping
 
     public static Mapping InvalidBucketName() =>
         new(400, "InvalidBucketName", "The specified bucket is not valid.");
+
+    public static Mapping NoSuchBucket() =>
+        new(404, "NoSuchBucket", "The specified bucket does not exist.");
+
+    /// <summary>
+    /// Faithful path-style bucket-name classification for <em>lookup</em>
+    /// operations — every S3 op that resolves an existing bucket (GET / HEAD /
+    /// PUT object, list, delete, multipart, DeleteBucket, …), i.e. all but
+    /// CreateBucket. Real us-east-1 path-style S3 only answers
+    /// <c>400 InvalidBucketName</c> for names that break the 3–63 length rule;
+    /// names that are merely not Azure-addressable (uppercase, underscore,
+    /// dotted, leading-dot, consecutive hyphens — all legal-shaped *legacy* S3
+    /// bucket names) resolve to <c>404 NoSuchBucket</c>, because no such Azure
+    /// container can possibly exist. Keying this on Azure's stricter container
+    /// rules returned <c>400</c> where real S3 returns <c>404</c> and let an AWS
+    /// SDK distinguish the proxy from AWS (issue #237).
+    /// <para>Returns <c>null</c> when the name is Azure-addressable and the
+    /// caller should proceed to Azure (which yields its own 200 / 404).</para>
+    /// </summary>
+    public static Mapping? ClassifyLookupBucketName(string? bucket)
+    {
+        // S3's syntactic length rule (3–63) — the only condition that yields
+        // InvalidBucketName on the lenient path-style lookup path. Azure's
+        // container length range is identical, so this never rejects a name
+        // Azure could host.
+        if (string.IsNullOrEmpty(bucket) || bucket.Length < 3 || bucket.Length > 63)
+        {
+            return InvalidBucketName();
+        }
+
+        // Length-legal but not an Azure container name (uppercase, '_', '.',
+        // leading '.', "--"): a perfectly addressable legacy S3 name that simply
+        // doesn't exist as an Azure container.
+        return BlobClient.IsValidContainerName(bucket) ? null : NoSuchBucket();
+    }
 
     public static Mapping InvalidObjectKey() =>
         new(400, "InvalidArgument", "The specified object key is not valid.");

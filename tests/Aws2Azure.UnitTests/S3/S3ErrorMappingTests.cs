@@ -28,4 +28,37 @@ public class S3ErrorMappingTests
         Assert.Equal(expectedCode, mapping.Code);
         Assert.False(string.IsNullOrWhiteSpace(mapping.Message));
     }
+
+    // issue #237: path-style lookup bucket-name classification. Only the 3-63
+    // length rule yields 400 InvalidBucketName; length-legal but Azure-illegal
+    // names (uppercase, '_', '.', leading '.', "--") resolve to 404 NoSuchBucket
+    // because no such Azure container can exist; valid container names proceed.
+    [Theory]
+    [InlineData(null, 400, "InvalidBucketName")]
+    [InlineData("", 400, "InvalidBucketName")]
+    [InlineData("a", 400, "InvalidBucketName")]
+    [InlineData("ab", 400, "InvalidBucketName")]
+    [InlineData("this-bucket-name-is-way-too-long-to-be-valid-because-it-exceeds-63", 400, "InvalidBucketName")]
+    [InlineData("conformance_invalid_bucket", 404, "NoSuchBucket")]
+    [InlineData("Conformance-Invalid", 404, "NoSuchBucket")]
+    [InlineData("bad..name", 404, "NoSuchBucket")]
+    [InlineData(".badname", 404, "NoSuchBucket")]
+    [InlineData("bad--name", 404, "NoSuchBucket")]
+    public void ClassifyLookupBucketName_splits_invalid_from_nonexistent(
+        string? bucket, int expectedStatus, string expectedCode)
+    {
+        var mapping = S3ErrorMapping.ClassifyLookupBucketName(bucket);
+        Assert.NotNull(mapping);
+        Assert.Equal(expectedStatus, mapping!.Value.StatusCode);
+        Assert.Equal(expectedCode, mapping.Value.Code);
+    }
+
+    [Theory]
+    [InlineData("abc")]
+    [InlineData("my-valid-bucket")]
+    [InlineData("bucket123")]
+    public void ClassifyLookupBucketName_returns_null_for_azure_addressable_names(string bucket)
+    {
+        Assert.Null(S3ErrorMapping.ClassifyLookupBucketName(bucket));
+    }
 }

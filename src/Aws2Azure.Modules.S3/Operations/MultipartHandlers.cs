@@ -50,9 +50,9 @@ internal static class MultipartHandlers
 
     private static async Task CreateAsync(HttpContext ctx, BlobClient blob, string bucket, string key, CancellationToken ct)
     {
-        if (!BlobClient.IsValidContainerName(bucket))
+        if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
-            await WriteErrorAsync(ctx, S3ErrorMapping.InvalidBucketName()).ConfigureAwait(false);
+            await WriteErrorAsync(ctx, bucketError).ConfigureAwait(false);
             return;
         }
         if (!S3ObjectKey.IsValid(key))
@@ -546,9 +546,9 @@ internal static class MultipartHandlers
 
     private static async Task ListMultipartUploadsAsync(HttpContext ctx, BlobClient blob, string bucket, CancellationToken ct)
     {
-        if (!BlobClient.IsValidContainerName(bucket))
+        if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
-            await WriteErrorAsync(ctx, S3ErrorMapping.InvalidBucketName()).ConfigureAwait(false);
+            await WriteErrorAsync(ctx, bucketError).ConfigureAwait(false);
             return;
         }
 

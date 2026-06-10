@@ -45,9 +45,14 @@ internal static class SubresourceHandlers
         var bucket = route.Bucket;
         var key = route.Key;
 
-        if (string.IsNullOrEmpty(bucket) || !BlobClient.IsValidContainerName(bucket))
+        if (string.IsNullOrEmpty(bucket))
         {
             await WriteErrorAsync(context, S3ErrorMapping.InvalidBucketName()).ConfigureAwait(false);
+            return;
+        }
+        if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
+        {
+            await WriteErrorAsync(context, bucketError).ConfigureAwait(false);
             return;
         }
 
