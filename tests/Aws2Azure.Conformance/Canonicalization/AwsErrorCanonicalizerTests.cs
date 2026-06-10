@@ -421,4 +421,69 @@ public sealed class AwsErrorCanonicalizerTests
             json.BodyFields.Single(f => f.Name == "Code").Value);
         Assert.NotEqual(xml.BodyKind, json.BodyKind);
     }
+
+    private const string SqsQueryErrorXml =
+        "<?xml version=\"1.0\"?>" +
+        "<ErrorResponse xmlns=\"http://queue.amazonaws.com/doc/2012-11-05/\">" +
+        "<Error><Type>Sender</Type><Code>InvalidAction</Code>" +
+        "<Message>The action NotAReal is invalid.</Message></Error>" +
+        "<RequestId>SQS-REQ-001</RequestId></ErrorResponse>";
+
+    [Fact]
+    public void Unwraps_aws_query_error_response_envelope_to_top_level_code_and_message()
+    {
+        var c = AwsErrorCanonicalizer.Canonicalize(
+            400,
+            new[] { H("Content-Type", "text/xml; charset=utf-8") },
+            SqsQueryErrorXml);
+
+        Assert.Equal(400, c.StatusCode);
+        Assert.Equal(CanonicalResponse.BodyKindXmlError, c.BodyKind);
+        var fields = c.BodyFields.ToDictionary(f => f.Name, f => f.Value);
+        // The faithful root is the AWS Query wrapper, not S3's bare <Error>.
+        Assert.Equal("ErrorResponse", fields["(root)"]);
+        // …but the nested <Error>'s children are flattened to the same contract
+        // surface the S3 path produces, so CodeOf()/Message work uniformly.
+        Assert.Equal("InvalidAction", fields["Code"]);
+        Assert.Equal("Sender", fields["Type"]);
+        Assert.Equal(CanonicalResponse.Masked, fields["Message"]);
+        Assert.Equal(CanonicalResponse.Masked, fields["RequestId"]);
+        // The structural <nested> marker must NOT leak — Error was unwrapped.
+        Assert.False(fields.ContainsKey("Error"));
+    }
+
+    [Fact]
+    public void Query_error_responses_differing_only_in_request_id_canonicalize_equal()
+    {
+        var a = AwsErrorCanonicalizer.Canonicalize(400,
+            new[] { H("Content-Type", "text/xml; charset=utf-8") },
+            SqsQueryErrorXml.Replace("SQS-REQ-001", "AAA"));
+        var b = AwsErrorCanonicalizer.Canonicalize(400,
+            new[] { H("Content-Type", "text/xml; charset=utf-8") },
+            SqsQueryErrorXml.Replace("SQS-REQ-001", "BBB"));
+
+        Assert.Equal(a.Render(), b.Render());
+    }
+
+    [Fact]
+    public void Query_and_rest_xml_envelopes_with_same_code_share_the_code_field_name()
+    {
+        // SQS Query (<ErrorResponse><Error>…) and S3 REST-XML (<Error>…) both
+        // surface the dispatch key under "Code", but the faithful (root) differs
+        // so protocol observability is preserved.
+        var query = AwsErrorCanonicalizer.Canonicalize(403,
+            new[] { H("Content-Type", "text/xml; charset=utf-8") },
+            "<ErrorResponse><Error><Type>Sender</Type><Code>SignatureDoesNotMatch</Code>" +
+            "<Message>m</Message></Error><RequestId>r</RequestId></ErrorResponse>");
+        var rest = AwsErrorCanonicalizer.Canonicalize(403,
+            new[] { H("Content-Type", "application/xml") },
+            "<Error><Code>SignatureDoesNotMatch</Code><Message>m</Message></Error>");
+
+        Assert.Equal("SignatureDoesNotMatch",
+            query.BodyFields.Single(f => f.Name == "Code").Value);
+        Assert.Equal("SignatureDoesNotMatch",
+            rest.BodyFields.Single(f => f.Name == "Code").Value);
+        Assert.Equal("ErrorResponse", query.BodyFields.Single(f => f.Name == "(root)").Value);
+        Assert.Equal("Error", rest.BodyFields.Single(f => f.Name == "(root)").Value);
+    }
 }
