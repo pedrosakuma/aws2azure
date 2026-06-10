@@ -591,6 +591,34 @@ public sealed class AmqpReceiveMessageHandlersTests
     }
 
     [Fact]
+    public async Task ChangeMessageVisibility_positive_on_fifo_queue_registers_session_link_activity_after_renew()
+    {
+        // #262 Fix B: a successful FIFO renewal goes through $management,
+        // which does not register as activity on the cached session-receiver
+        // link. The handler must explicitly reset the link's idle clock
+        // (TryGetExistingSessionReceiver) so the idle-TTL sweeper does not
+        // dispose the very session the client just renewed.
+        const string SessionId = "group-A";
+        var grantedExpiry = DateTimeOffset.UtcNow.AddSeconds(30);
+        grantedExpiry = DateTimeOffset.FromUnixTimeMilliseconds(grantedExpiry.ToUnixTimeMilliseconds());
+        await using var harness = await TestHarness.OpenWithManagementAsync(
+            FifoQueueName, renewExpiry: grantedExpiry, sessionId: SessionId);
+
+        var v3 = AmqpReceiptHandle.Encode(FifoQueueName, Guid.NewGuid(), DateTimeOffset.UtcNow, SessionId);
+        var ctx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(ctx,
+            QueryParsed(SqsOperation.ChangeMessageVisibility,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+                ("ReceiptHandle", v3),
+                ("VisibilityTimeout", "300")),
+            harness.Provider, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.True(harness.Provider.TryGetExistingSessionCount >= 1,
+            "positive FIFO CMV must touch the session-receiver slot after renew");
+    }
+
+    [Fact]
     public async Task ChangeMessageVisibility_positive_on_fifo_queue_maps_session_lock_lost_to_MessageNotInflight()
     {
         const string SessionId = "group-B";
@@ -916,6 +944,7 @@ public sealed class AmqpReceiveMessageHandlersTests
         public int InvalidateManagementCount { get; private set; }
         public int InvalidateSessionCount { get; private set; }
         public int AcquireSessionCount { get; private set; }
+        public int TryGetExistingSessionCount { get; private set; }
 
         public FakeAmqpReceiverProvider(string queueName, ServiceBusReceiver receiver,
             ServiceBusManagementClient? management = null,
@@ -968,6 +997,7 @@ public sealed class AmqpReceiveMessageHandlersTests
         public ServiceBusReceiver? TryGetExistingSessionReceiver(string queueName, string sessionId)
         {
             Assert.Equal(_expectedQueue, queueName);
+            TryGetExistingSessionCount++;
             // The fake tracks a single bound session receiver — once
             // wired (by OpenSessionAsync) it stays cached for the test
             // duration. Returning null lets tests exercise the

@@ -400,6 +400,17 @@ internal static class AmqpReceiveMessageHandlers
         }
 
         var grantedSeconds = Math.Max(0, (int)Math.Round((lockedUntil - DateTimeOffset.UtcNow).TotalSeconds));
+        if (!string.IsNullOrEmpty(decoded.SessionId))
+        {
+            // FIFO: the renewal extended the broker session lock via
+            // $management, but that does not register as activity on the
+            // cached session-receiver link. Without this the idle-TTL
+            // sweeper (#262) could dispose the link — releasing the very
+            // session the client just renewed — so a later DeleteMessage
+            // would fail ReceiptHandleIsInvalid. Reset the link's idle
+            // clock (no-op if no receiver is cached).
+            _ = receivers.TryGetExistingSessionReceiver(queueName, decoded.SessionId);
+        }
         if (grantedSeconds != visibility)
         {
             context.Response.Headers["Aws2Azure-VisibilityClamped"] =
@@ -694,6 +705,14 @@ internal static class AmqpReceiveMessageHandlers
                 lock (failed) failed.Add(new BatchEntryError(entry.Id, m.Code, m.Message,
                     SenderFault: m.FaultType == SqsErrorResponse.FaultType.Sender));
                 return;
+            }
+            if (!string.IsNullOrEmpty(decoded.SessionId))
+            {
+                // FIFO: register the renewal as session-link activity so the
+                // idle-TTL sweeper (#262) doesn't dispose the link we just
+                // renewed (see ChangeMessageVisibilityAsync). No-op if no
+                // receiver is cached; thread-safe under the fan-out.
+                _ = receivers.TryGetExistingSessionReceiver(queueName, decoded.SessionId);
             }
             lock (ok) ok.Add(new BatchEntryOk(entry.Id));
         }, ct).ConfigureAwait(false);

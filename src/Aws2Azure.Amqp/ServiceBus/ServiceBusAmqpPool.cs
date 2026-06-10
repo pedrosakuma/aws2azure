@@ -809,16 +809,24 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                     slot.Touch(_timeProvider.GetUtcNow());
                     return receiver;
                 }
-                catch (ObjectDisposedException) when (Volatile.Read(ref _disposed) == 0)
+                catch (ObjectDisposedException) when (Volatile.Read(ref _disposed) == 0 && slot.IsDisposed)
                 {
-                    // The idle-TTL sweeper (#262) disposed this session-receiver
-                    // slot concurrently. The ConnectionSlot itself is still alive
-                    // (_disposed == 0), so the dead child slot must NOT bubble to
-                    // the connection-level catch in GetSessionReceiverAsync — that
-                    // would evict the entire warm connection (orphaning its senders
-                    // and sibling session links). Drop the dead slot (only if it's
-                    // still the published one) and retry with a fresh slot, which
-                    // is sweep-immune until its first Touch.
+                    // The idle-TTL sweeper (#262) disposed THIS session-receiver
+                    // slot concurrently (slot.IsDisposed). The ConnectionSlot
+                    // itself is still alive (_disposed == 0), so the dead child
+                    // slot must NOT bubble to the connection-level catch in
+                    // GetSessionReceiverAsync — that would evict the entire warm
+                    // connection (orphaning its senders and sibling session
+                    // links). Drop the dead slot (only if it's still the
+                    // published one) and retry with a fresh slot, which is
+                    // sweep-immune until its first Touch.
+                    //
+                    // An ObjectDisposedException from a concurrently-replaced
+                    // stale CONNECTION (GetOrCreateConnectionAsync disposes the
+                    // old connection while this ConnectionSlot stays alive) does
+                    // NOT satisfy slot.IsDisposed, so it bubbles to the outer
+                    // catch which re-dials — avoiding an infinite retry against
+                    // a dead connection.
                     _sessionReceivers.TryRemove(KeyValuePair.Create(slotKey, slot));
                 }
             }
@@ -1330,6 +1338,15 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         /// safe from eviction.
         /// </summary>
         public void Touch(DateTimeOffset now) => Volatile.Write(ref _lastActivityTicks, now.UtcTicks);
+
+        /// <summary>
+        /// True once this slot has been disposed (by the idle-TTL sweeper
+        /// or connection eviction). Distinguishes a swept child slot from a
+        /// concurrently-replaced stale connection in the
+        /// <see cref="ConnectionSlot.GetOrCreateSessionReceiverAsync"/>
+        /// retry filter (#262 Fix A).
+        /// </summary>
+        public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
         /// <summary>
         /// True when the slot has recorded at least one activity and has
