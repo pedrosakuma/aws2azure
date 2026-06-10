@@ -14,15 +14,19 @@ public sealed record S3BackendErrorCase(
     string ExpectedCode,
     bool RequiresExistingBucket,
     bool RequiresExistingObject = false,
-    Action<System.Net.Http.HttpRequestMessage>? ConfigureRequest = null);
+    Action<System.Net.Http.HttpRequestMessage>? ConfigureRequest = null,
+    System.Net.Http.HttpMethod? Method = null,
+    string? SignRegion = null,
+    bool TargetsBucketRoot = false);
 
 /// <summary>
-/// The S3 backend-error matrix. Cases are <c>GET object</c> requests whose
+/// The S3 backend-error matrix. Most cases are <c>GET object</c> requests whose
 /// outcome should be wire-faithful between the proxy-over-Azurite response and
-/// the LocalStack response, up to the documented gaps in the gap-doc allow-list.
-/// Most target an object absent on both backends in the same way (missing
-/// container vs missing blob); conditional cases instead provision a real object
-/// and attach an unsatisfiable precondition header.
+/// the LocalStack response, up to the documented gaps in the gap-doc allow-list
+/// (missing container vs missing blob, or a conditional GET against a real
+/// object). One case is a <c>PUT</c> against the bucket root (CreateBucket) that
+/// re-creates an owned bucket outside us-east-1, exercising the region-sensitive
+/// <c>BucketAlreadyOwnedByYou</c> branch.
 /// </summary>
 public static class S3BackendErrorMatrix
 {
@@ -59,5 +63,22 @@ public static class S3BackendErrorMatrix
             RequiresExistingObject: true,
             ConfigureRequest: req => req.Headers.TryAddWithoutValidation(
                 "If-Match", "\"00000000000000000000000000000000\"")),
+
+        // PUT a bucket the caller already owns, signed for a region OTHER than
+        // us-east-1. Real S3 (and LocalStack) answer 409 BucketAlreadyOwnedByYou;
+        // only us-east-1 collapses the re-create to an idempotent 200 OK (issue
+        // #236), so eu-west-1 exercises the 409 branch. The proxy reaches Azure,
+        // gets ContainerAlreadyExists, and — because the signed scope region is
+        // not us-east-1 — maps it to the same 409. Unlike the GET-object cases
+        // above this targets the bucket root with a PUT (CreateBucket); the
+        // bucket is provisioned first via RequiresExistingBucket.
+        new S3BackendErrorCase(
+            "bucketalreadyownedbyyou-recreate",
+            409,
+            "BucketAlreadyOwnedByYou",
+            RequiresExistingBucket: true,
+            Method: System.Net.Http.HttpMethod.Put,
+            SignRegion: "eu-west-1",
+            TargetsBucketRoot: true),
     };
 }
