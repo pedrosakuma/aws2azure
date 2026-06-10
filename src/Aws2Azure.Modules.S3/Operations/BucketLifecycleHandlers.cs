@@ -77,6 +77,12 @@ internal static class BucketLifecycleHandlers
         await WriteXmlAsync(context, StatusCodes.Status200OK, body).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// The default AWS region whose endpoint (<c>s3.amazonaws.com</c> /
+    /// <c>us-east-1</c>) makes CreateBucket idempotent for the bucket owner.
+    /// </summary>
+    private const string UsEast1 = "us-east-1";
+
     private static async Task CreateBucketAsync(HttpContext context, BlobClient blob, string bucket, CancellationToken cancellationToken)
     {
         if (!BlobClient.IsValidContainerName(bucket))
@@ -88,10 +94,40 @@ internal static class BucketLifecycleHandlers
         using var response = await blob.CreateContainerAsync(bucket, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.CreateBucket)).ConfigureAwait(false);
+            var mapping = S3ErrorMapping.FromAzure(response, S3Operation.CreateBucket);
+
+            // Region-sensitive CreateBucket idempotency: in us-east-1 (the default
+            // region / global endpoint) real S3 returns 200 OK when the owner
+            // re-creates a bucket they already own; only other regions return
+            // 409 BucketAlreadyOwnedByYou. Azure's ContainerAlreadyExists maps to
+            // that 409, so collapse it to a faithful 200 when the request was
+            // signed for us-east-1 (issue #236).
+            if (mapping is { StatusCode: 409, Code: "BucketAlreadyOwnedByYou" }
+                && IsUsEast1(context))
+            {
+                WriteCreateBucketSuccess(context, bucket);
+                return;
+            }
+
+            await WriteErrorAsync(context, mapping).ConfigureAwait(false);
             return;
         }
 
+        WriteCreateBucketSuccess(context, bucket);
+    }
+
+    /// <summary>
+    /// True when the request was signed for the us-east-1 region (the only region
+    /// where S3 CreateBucket is idempotent for the owner). Absent a signed region
+    /// we conservatively keep the non-us-east-1 behavior.
+    /// </summary>
+    private static bool IsUsEast1(HttpContext context) =>
+        context.Items.TryGetValue("aws2azure.region", out var region)
+        && region is string r
+        && string.Equals(r, UsEast1, StringComparison.OrdinalIgnoreCase);
+
+    private static void WriteCreateBucketSuccess(HttpContext context, string bucket)
+    {
         // S3 returns 200 OK with empty body and a Location header pointing
         // at the new bucket. The Location is host-relative since we lack
         // per-account host configuration in slice 1.

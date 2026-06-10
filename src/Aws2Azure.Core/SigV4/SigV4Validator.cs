@@ -18,12 +18,13 @@ public readonly record struct SigV4ValidationResult(
     SigV4ValidationStatus Status,
     string? Reason = null,
     string? AccessKeyId = null,
-    string[]? SignedHeaders = null)
+    string[]? SignedHeaders = null,
+    string? Region = null)
 {
     public bool IsValid => Status == SigV4ValidationStatus.Ok;
 
-    public static SigV4ValidationResult Ok(string accessKeyId, string[] signedHeaders)
-        => new(SigV4ValidationStatus.Ok, AccessKeyId: accessKeyId, SignedHeaders: signedHeaders);
+    public static SigV4ValidationResult Ok(string accessKeyId, string[] signedHeaders, string region)
+        => new(SigV4ValidationStatus.Ok, AccessKeyId: accessKeyId, SignedHeaders: signedHeaders, Region: region);
 
     public static SigV4ValidationResult Fail(SigV4ValidationStatus status, string reason)
         => new(status, reason);
@@ -199,7 +200,7 @@ public sealed class SigV4Validator
                 "signature mismatch");
         }
 
-        return SigV4ValidationResult.Ok(scope.AccessKeyId, signedHeaders);
+        return SigV4ValidationResult.Ok(scope.AccessKeyId, signedHeaders, scope.Region);
     }
 
     private static string? FindHeader(IReadOnlyList<KeyValuePair<string, string>> headers, string name)

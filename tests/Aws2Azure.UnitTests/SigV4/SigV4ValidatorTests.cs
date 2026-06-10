@@ -65,6 +65,9 @@ public class SigV4ValidatorTests
 
         Assert.True(result.IsValid);
         Assert.Equal(AccessKeyId, result.AccessKeyId);
+        // The signed region is surfaced so modules can reproduce region-sensitive
+        // AWS behaviors (e.g. S3 CreateBucket idempotency in us-east-1) — issue #236.
+        Assert.Equal(Region, result.Region);
     }
 
     [Fact]
