@@ -22,7 +22,8 @@ internal static class ConformanceSigV4Signer
         string region = "us-east-1",
         string service = "s3",
         DateTimeOffset? now = null,
-        IReadOnlyList<string>? extraSignedHeaders = null)
+        IReadOnlyList<string>? extraSignedHeaders = null,
+        bool? s3PathStyle = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (request.RequestUri is null)
@@ -84,6 +85,13 @@ internal static class ConformanceSigV4Signer
         }
         var signedHeaders = signedSet.ToArray();
 
+        // Mirror the proxy's per-service path canonicalization
+        // (ServiceModuleRegistry: s3PathStyle = ServiceName == "s3"). S3
+        // single-encodes the path; every other service double-encodes it, so a
+        // multi-service signer must follow suit or it would produce a signature
+        // the proxy rejects for any non-root path on a non-S3 service.
+        var pathStyle = s3PathStyle ?? string.Equals(service, "s3", StringComparison.Ordinal);
+
         var canonical = CanonicalRequest.Build(
             request.Method.Method,
             Uri.UnescapeDataString(request.RequestUri.AbsolutePath),
@@ -91,7 +99,7 @@ internal static class ConformanceSigV4Signer
             headers,
             signedHeaders,
             payloadHash,
-            s3PathStyle: true);
+            s3PathStyle: pathStyle);
 
         var stringToSign = CanonicalRequest.StringToSign(amzDate, scope, canonical);
 
