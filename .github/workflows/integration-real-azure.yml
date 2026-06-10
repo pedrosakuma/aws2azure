@@ -1,18 +1,24 @@
 name: integration-real-azure
 
-# Real-Azure integration coverage for the SQS module.
+# Real-Azure integration coverage for the service modules (issue #153).
 #
-# This workflow targets a live Azure Service Bus namespace whose
-# connection string is supplied via the `AZURE_SB_CONNSTR` repository
-# secret. It complements the emulator-less in-process REST fakes
-# (covered every PR by the unit suite) and Azurite/S3 emulator
-# integration (covered by `integration.yml`).
+# Emulators (Azurite, Service Bus / Event Hubs / Cosmos emulators) are
+# necessary but NOT sufficient — they diverge from real Azure on auth,
+# default ports, throttling and feature surface. This scheduled job runs
+# CRUD smoke round-trips through the proxy against LIVE Azure to catch
+# real-Azure-only regressions (e.g. the AMQP port-defaulting bug fixed in
+# 1560d11 that emulators never surfaced).
 #
-# Rationale (see docs/adr/0001-sb-rest-runtime-protocol.md):
-# the Microsoft Service Bus emulator does not implement the runtime
-# REST API the proxy is built on, so emulator-backed Testcontainers
-# cannot exercise the SQS module's hot path. Real Azure is the only
-# backend that does — gated and infrequent to keep cost low.
+# Coverage (each gated independently on its own secret; a backend whose
+# secret is absent skips rather than fails):
+#   S3        -> Blob Storage   (CreateBucket -> Put/Get/Delete object -> DeleteBucket)
+#   DynamoDB  -> Cosmos DB      (CreateTable -> Put/Get/Delete item -> DeleteTable)
+#   SQS       -> Service Bus    (CreateQueue -> Send/Receive/Delete -> DeleteQueue)
+#   Kinesis   -> Event Hubs     (PutRecord to a pre-existing hub)
+#   Secrets   -> Key Vault      (secret lifecycle)
+#
+# Resource provisioning, the service principal, budget alerts and the
+# secret matrix are documented in docs/testing/real-azure-nightly.md.
 on:
   schedule:
     # Nightly at 05:00 UTC, an hour after the emulator `integration`
@@ -31,7 +37,7 @@ jobs:
        contains(github.event.pull_request.labels.*.name, 'run-real-azure'))
     runs-on: ubuntu-latest
     # Concurrency guard: never run two real-Azure jobs against the
-    # same secret in parallel. Cost + test isolation.
+    # same secrets in parallel. Cost + test isolation.
     concurrency:
       group: integration-real-azure
       cancel-in-progress: false
@@ -42,13 +48,29 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Restore + build
         run: dotnet build -c Release --nologo
-      - name: Run real-Azure SQS integration tests
+      - name: Run real-Azure integration tests
         env:
-          # Secrets are intentionally unavailable on PRs from forks; the
-          # tests guard on these and skip rather than fail in that case,
-          # so unprivileged contributors do not see red CI for checks
-          # they cannot run.
+          # Secrets are intentionally unavailable on PRs from forks and on
+          # any backend an operator has not provisioned; the tests guard on
+          # these and skip rather than fail in that case, so unprivileged
+          # contributors do not see red CI for checks they cannot run.
+          # S3 -> Blob Storage
+          AZURE_BLOB_ACCOUNT: ${{ secrets.AZURE_BLOB_ACCOUNT }}
+          AZURE_BLOB_KEY: ${{ secrets.AZURE_BLOB_KEY }}
+          AZURE_BLOB_ENDPOINT: ${{ secrets.AZURE_BLOB_ENDPOINT }}
+          # DynamoDB -> Cosmos DB (database must pre-exist)
+          AZURE_COSMOS_ENDPOINT: ${{ secrets.AZURE_COSMOS_ENDPOINT }}
+          AZURE_COSMOS_KEY: ${{ secrets.AZURE_COSMOS_KEY }}
+          AZURE_COSMOS_DATABASE: ${{ secrets.AZURE_COSMOS_DATABASE }}
+          # SQS -> Service Bus
           AZURE_SB_CONNSTR: ${{ secrets.AZURE_SB_CONNSTR }}
+          # Kinesis -> Event Hubs (hub must pre-exist)
+          AZURE_EVENTHUBS_CONNSTR: ${{ secrets.AZURE_EVENTHUBS_CONNSTR }}
+          AZURE_EVENTHUBS_NAMESPACE: ${{ secrets.AZURE_EVENTHUBS_NAMESPACE }}
+          AZURE_EVENTHUBS_SAS_KEYNAME: ${{ secrets.AZURE_EVENTHUBS_SAS_KEYNAME }}
+          AZURE_EVENTHUBS_SAS_KEY: ${{ secrets.AZURE_EVENTHUBS_SAS_KEY }}
+          AZURE_EVENTHUBS_STREAM: ${{ secrets.AZURE_EVENTHUBS_STREAM }}
+          # Secrets Manager -> Key Vault
           AZURE_KEYVAULT_URL: ${{ secrets.AZURE_KEYVAULT_URL }}
           AZURE_KEYVAULT_TENANT_ID: ${{ secrets.AZURE_KEYVAULT_TENANT_ID }}
           AZURE_KEYVAULT_CLIENT_ID: ${{ secrets.AZURE_KEYVAULT_CLIENT_ID }}
