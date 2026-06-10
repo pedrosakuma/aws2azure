@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using Aws2Azure.Conformance.AllowList;
 using Aws2Azure.Conformance.Canonicalization;
 using Aws2Azure.Conformance.Goldens;
@@ -53,8 +54,22 @@ public sealed class KinesisErrorConformanceTests : IClassFixture<KinesisConforma
         Assert.Contains(canonical.BodyFields, f => f.Name == "Message");
         var code = canonical.BodyFields.FirstOrDefault(f => f.Name == "Code");
         Assert.Equal(testCase.ExpectedCode, code.Value);
-        Assert.Contains("application/x-amz-json",
-            response.Content.Headers.ContentType?.ToString() ?? string.Empty);
+
+        // (1b) Kinesis-specific raw-wire assertions. The canonicalized Code and
+        // the "application/x-amz-json" prefix above are deliberately normalized
+        // (they mirror how SDKs dispatch), so on their own they would still pass
+        // if the proxy regressed to a coral-prefixed __type or the wrong AWS-JSON
+        // version. Pin the faithful Kinesis shape directly: __type is the BARE
+        // error code (no com.amazonaws…# namespace prefix) and the media type is
+        // exactly application/x-amz-json-1.1.
+        Assert.Equal("application/x-amz-json-1.1",
+            response.Content.Headers.ContentType?.MediaType);
+        using (var doc = JsonDocument.Parse(body))
+        {
+            Assert.True(doc.RootElement.TryGetProperty("__type", out var typeProp),
+                "Kinesis error envelope must carry a __type field.");
+            Assert.Equal(testCase.ExpectedCode, typeProp.GetString());
+        }
 
         // (2) Golden faithfulness diff — active once a golden is committed for
         // this case (Kinesis SigV4 errors cannot be sourced from LocalStack,
