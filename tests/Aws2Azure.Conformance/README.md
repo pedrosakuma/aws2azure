@@ -123,6 +123,16 @@ AWS2AZURE_CONFORMANCE_TIER2=1 AWS2AZURE_CONFORMANCE_RECORD=1 dotnet test tests/A
   `application/x-amz-json` media type). `X-Amz-Target` is part of the signed
   header set because the proxy enforces it via `RequiredSignedHeaders` (faithful
   to real DynamoDB).
+- **Tier 1 — Kinesis proxy-side errors** (offline, every PR): the second
+  **JSON-protocol** service matrix, mirroring DynamoDB's four cases against the
+  Kinesis module. Kinesis speaks **AWS JSON 1.1** and renders `__type` as the
+  *bare* error code with no `com.amazonaws…#` namespace prefix, so this matrix
+  additionally validates the canonicalizer's prefix-free `__type` path. The two
+  auth-stage cases (`InvalidSignatureException`, `UnrecognizedClientException`,
+  both **HTTP 400**) exercise the issue #241 fix through a module that uses the
+  *default* `EmitSigV4FailureAsync` (no per-request SQS-style override), while the
+  parser-stage cases assert `UnknownOperationException` (unknown `X-Amz-Target`
+  op) and `SerializationException` (non-JSON body).
 - **Tier 2 — S3 backend-mapped errors** (LocalStack differential, Docker):
   `NoSuchBucket` (GET on a missing bucket) and `NoSuchKey` (GET a missing key in
   an existing bucket), proxy-over-Azurite vs LocalStack S3. The accepted
@@ -136,8 +146,8 @@ AWS2AZURE_CONFORMANCE_TIER2=1 AWS2AZURE_CONFORMANCE_RECORD=1 dotnet test tests/A
 > `InvalidAccessKeyId` / `RequestTimeTooSkewed`); AWS-JSON services (DynamoDB,
 > Kinesis, the modern SQS JSON path) return `InvalidSignatureException` /
 > `UnrecognizedClientException` at **HTTP 400**, via
-> `AuthErrorVocabulary.Resolve(ErrorFormat, status)`. The two DynamoDB auth cases
-> above are Tier-1-only: LocalStack can't be their oracle (it ignores
+> `AuthErrorVocabulary.Resolve(ErrorFormat, status)`. The DynamoDB and Kinesis
+> auth cases above are Tier-1-only: LocalStack can't be their oracle (it ignores
 > signatures), so the expected outcome is the AWS JSON-protocol contract.
 
 Real-AWS goldens (Tier 3) and further operations follow in later PRs.
