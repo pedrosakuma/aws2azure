@@ -10,7 +10,35 @@ proxy against **live Azure**, nightly, to catch real-Azure-only regressions
 (e.g. the AMQP port-defaulting bug fixed in `1560d11` that no emulator
 surfaced).
 
-This implements roadmap issue **#153**.
+This implements roadmap issue **#153**; the ephemeral provisioning flow below
+implements **#257**.
+
+## How it runs: provision → test → deallocate
+
+The nightly job is **self-contained** — there are no standing Azure resources
+and no long-lived account-key secrets:
+
+1. **Log in to Azure via OIDC** (`azure/login@v2`, federated credentials — no
+   stored client secret).
+2. **Provision** a per-run, uniquely-named resource group
+   (`aws2azure-it-<run_id>-<attempt>`) from
+   [`deploy/realazure/main.bicep`](../../deploy/realazure/main.bicep): a Storage
+   account, a Service Bus namespace, a serverless Cosmos DB account + database,
+   and an Event Hubs namespace + hub.
+3. **Export** the freshly-minted connection details (fetched with
+   `az … keys list`, masked) into the test environment.
+4. **Run** the `Category=RealAzure` suite against them.
+5. **Deallocate** — `az group delete --yes --no-wait` in an `if: always()`
+   teardown, so the resource group is removed even when provisioning or the
+   tests fail.
+
+A [`real-azure-reaper`](../../.github/workflows/real-azure-reaper.yml) workflow
+runs every 6 hours as a backstop, deleting any `purpose=aws2azure-nightly`
+resource group older than `MAX_AGE_HOURS` (default 6) — covering the rare case
+where a force-cancelled run skips its teardown.
+
+Cosmos DB account creation dominates the run (~5–10 min); the full
+provision → test → deallocate cycle is well within a nightly budget.
 
 ## What runs
 
@@ -21,16 +49,16 @@ proxy ([`RealAzureProxyFixture`](../../tests/Aws2Azure.IntegrationTests/Fixtures
 
 | AWS service | Azure backend | Round-trip | Provisioning |
 |---|---|---|---|
-| S3 | Blob Storage | CreateBucket → Put/Get/Delete object → DeleteBucket | Self-contained (the proxy creates the container) |
-| DynamoDB | Cosmos DB | CreateTable → Put/Get/Delete item → DeleteTable | The Cosmos **database** must pre-exist; the test owns the table (container) |
-| SQS | Service Bus | CreateQueue → Send/Receive/Delete → DeleteQueue | Self-contained (the proxy creates the queue) |
-| Kinesis | Event Hubs | PutRecord | The Event Hub **must pre-exist** (`CreateStream` is not implemented) |
-| Secrets Manager | Key Vault | secret lifecycle | Self-contained |
+| S3 | Blob Storage | CreateBucket → Put/Get/Delete object → DeleteBucket | Ephemeral (Bicep); the proxy creates the container |
+| DynamoDB | Cosmos DB | CreateTable → Put/Get/Delete item → DeleteTable | Ephemeral (Bicep) account + **database**; the test owns the table (container) |
+| SQS | Service Bus | CreateQueue → Send/Receive/Delete → DeleteQueue | Ephemeral (Bicep); the proxy creates the queue |
+| Kinesis | Event Hubs | PutRecord | Ephemeral (Bicep) namespace + **hub** (`CreateStream` is not implemented) |
+| Secrets Manager | Key Vault | secret lifecycle | **Standing** — runs only when `AZURE_KEYVAULT_*` secrets are set (see below) |
 
-Every backend is gated **independently** on its own secret(s): a backend whose
-secrets are absent **skips** (it does not fail), so fork PRs, local
-`dotnet test`, and partially-provisioned environments stay green. When no
-backend at all is configured the proxy process is never started.
+Every backend is gated **independently** on its environment: a backend whose
+values are absent **skips** (it does not fail), so fork PRs, local
+`dotnet test`, and the no-OIDC case stay green. When no backend at all is
+configured the proxy process is never started.
 
 ## When it runs
 
@@ -41,70 +69,93 @@ backend at all is configured the proxy process is never started.
   against real Azure before merge).
 
 A concurrency guard (`group: integration-real-azure`,
-`cancel-in-progress: false`) prevents two runs from racing on the same Azure
-resources.
+`cancel-in-progress: false`) prevents two runs from racing.
 
-## Required repository secrets
+## One-time operator setup (OIDC)
 
-Add these under **Settings → Secrets and variables → Actions**. Omit a group to
-skip that service.
+The job authenticates to Azure with **workload-identity federation** — no
+client secret is stored in the repo. Run once against the target subscription:
 
-| Secret | Service | Notes |
-|---|---|---|
-| `AZURE_BLOB_ACCOUNT` | S3 | Storage account name |
-| `AZURE_BLOB_KEY` | S3 | Storage account key |
-| `AZURE_BLOB_ENDPOINT` | S3 | *(optional)* override; defaults to `https://{account}.blob.core.windows.net` |
-| `AZURE_COSMOS_ENDPOINT` | DynamoDB | e.g. `https://{acct}.documents.azure.com:443/` |
-| `AZURE_COSMOS_KEY` | DynamoDB | Cosmos primary key |
-| `AZURE_COSMOS_DATABASE` | DynamoDB | **Pre-existing** database id (e.g. `aws2azure-it`) |
-| `AZURE_SB_CONNSTR` | SQS | Service Bus namespace connection string (`Endpoint=sb://…;SharedAccessKeyName=…;SharedAccessKey=…`) |
-| `AZURE_EVENTHUBS_CONNSTR` | Kinesis | *(optional)* Event Hubs namespace connection string — preferred over the discrete fields below |
-| `AZURE_EVENTHUBS_NAMESPACE` | Kinesis | Short namespace name (if not using the connstr) |
-| `AZURE_EVENTHUBS_SAS_KEYNAME` | Kinesis | SAS rule name (if not using the connstr) |
-| `AZURE_EVENTHUBS_SAS_KEY` | Kinesis | SAS key (if not using the connstr) |
-| `AZURE_EVENTHUBS_STREAM` | Kinesis | **Pre-existing** Event Hub entity name |
-| `AZURE_KEYVAULT_URL` | Secrets Manager | Vault URL |
-| `AZURE_KEYVAULT_TENANT_ID` | Secrets Manager | Service principal tenant |
-| `AZURE_KEYVAULT_CLIENT_ID` | Secrets Manager | Service principal app id |
-| `AZURE_KEYVAULT_CLIENT_SECRET` | Secrets Manager | Service principal secret |
+```bash
+SUB=<subscription-id>
+TENANT=<tenant-id>
+REPO=pedrosakuma/aws2azure
 
-## Provisioning the Azure side
+# 1. App registration + service principal for GitHub Actions.
+APP_ID=$(az ad app create --display-name aws2azure-github-oidc --query appId -o tsv)
+az ad sp create --id "$APP_ID"
 
-Create a dedicated, disposable resource group (e.g. `aws2azure-nightly`) and
-provision **one** of each backend. The SAS-key shapes above keep CI simple; the
-Cosmos and Event Hubs modules also support an Entra service-principal shape if
-preferred.
+# 2. Federated credentials for the contexts the workflow runs in.
+az ad app federated-credential create --id "$APP_ID" --parameters '{
+  "name": "github-main",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:'"$REPO"':ref:refs/heads/main",
+  "audiences": ["api://AzureADTokenExchange"]
+}'
+az ad app federated-credential create --id "$APP_ID" --parameters '{
+  "name": "github-pull-request",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:'"$REPO"':pull_request",
+  "audiences": ["api://AzureADTokenExchange"]
+}'
 
-1. **Service principal** with **Contributor** on the resource group (used at
-   minimum for the Key Vault data plane and for any AAD-shaped backend). Grant
-   it Key Vault **Secrets Officer** on the vault.
-2. **Pre-create** the two resources the proxy does not provision on the data
-   plane:
-   - a Cosmos **database** named per `AZURE_COSMOS_DATABASE`;
-   - an Event Hub **entity** named per `AZURE_EVENTHUBS_STREAM` (1 partition is
-     enough for `PutRecord`).
-3. **Budget alert** — add a Cost Management budget on the resource group (e.g.
-   a few USD/month) with an email action group so a runaway loop is caught
-   early. The smoke tests create and delete their own buckets/queues/tables, so
-   steady-state cost is dominated by the always-on namespaces, not test data.
+# 3. Subscription-scoped Contributor (needs resource-group create/delete).
+SP_ID=$(az ad sp show --id "$APP_ID" --query id -o tsv)
+az role assignment create --assignee-object-id "$SP_ID" \
+  --assignee-principal-type ServicePrincipal \
+  --role Contributor --scope "/subscriptions/$SUB"
 
-## Cleanup
+# 4. Repo secrets consumed by azure/login.
+gh secret set AZURE_CLIENT_ID --body "$APP_ID"
+gh secret set AZURE_TENANT_ID --body "$TENANT"
+gh secret set AZURE_SUBSCRIPTION_ID --body "$SUB"
+```
 
-Every test deletes the resources it creates in a `finally` block, so a failed
-assertion **still** tears down its bucket / queue / table. The pre-existing
-Cosmos database and Event Hub entity are intentionally **not** deleted (they are
-shared, operator-owned fixtures). Because resource names are GUID-suffixed, a
-crash that bypasses cleanup leaks at most one uniquely-named, empty entity per
-run — periodically prune the resource group if desired.
+The federated-credential subjects above cover scheduled / `workflow_dispatch`
+runs on `main` and label-gated pull requests **from the repository itself**.
+Fork PRs receive no OIDC token (and no secrets), so the job's gate skips
+provisioning and the tests skip — fork contributors never see red CI for a
+check they cannot run.
+
+> **Budget guardrail.** Add a Cost Management budget on the subscription with an
+> email/action-group alert. Ephemeral resources only exist for the duration of a
+> run, but the budget catches a stuck teardown or a misbehaving reaper.
+
+## Secrets Manager (Key Vault) — standing secrets
+
+Unlike the four data-plane backends, the proxy authenticates to Key Vault with a
+**service principal** (client id + secret), not an account key, so it is not
+auto-provisioned. The SecretsManager smoke runs only when these standing repo
+secrets are present (otherwise it skips):
+
+| Secret | Notes |
+|---|---|
+| `AZURE_KEYVAULT_URL` | Vault URL |
+| `AZURE_KEYVAULT_TENANT_ID` | Service principal tenant |
+| `AZURE_KEYVAULT_CLIENT_ID` | Service principal app id |
+| `AZURE_KEYVAULT_CLIENT_SECRET` | Service principal secret |
 
 ## Running locally
 
+You can run the same flow on a workstation with the Azure CLI logged in:
+
 ```bash
-# Export the secrets for the backends you want to exercise, then:
+RG=aws2azure-it-local
+az group create -n "$RG" -l eastus2 --tags purpose=aws2azure-nightly
+az deployment group create -g "$RG" -n aws2azure-realazure \
+  -f deploy/realazure/main.bicep \
+  -p cosmosDatabaseName=dynamodb eventHubName=kinesis-smoke
+
+# Export the connection details (see the workflow's "Export connection info"
+# step for the exact az queries), then:
 dotnet build -c Release
 dotnet test tests/Aws2Azure.IntegrationTests -c Release --no-build \
   --filter "Category=RealAzure"
+
+az group delete -n "$RG" --yes --no-wait    # always tear down
 ```
 
-Backends without exported secrets skip; with none exported, every real-Azure
-test skips.
+Backends without exported environment values skip; with none exported, every
+real-Azure test skips. Each test also deletes the bucket / queue / table it
+creates in a `finally` block, so the ephemeral resource group is the only
+cleanup the harness itself does not perform.

@@ -138,6 +138,12 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
             ForcePathStyle = true,
             UseHttp = true,
             AuthenticationRegion = AuthRegion,
+            // AWSSDK.S3 4.x defaults to STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER
+            // (a CRC32 checksum trailer) which the S3 module does not yet decode
+            // (see issue #258). Pin the supported non-trailer streaming format so
+            // the smoke exercises the real PutObject round-trip deterministically.
+            RequestChecksumCalculation = Amazon.Runtime.RequestChecksumCalculation.WHEN_REQUIRED,
+            ResponseChecksumValidation = Amazon.Runtime.ResponseChecksumValidation.WHEN_REQUIRED,
         });
 
     public AmazonDynamoDBClient CreateDynamoDbClient() => new(

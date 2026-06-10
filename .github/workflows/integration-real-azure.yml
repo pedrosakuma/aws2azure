@@ -1,6 +1,6 @@
 name: integration-real-azure
 
-# Real-Azure integration coverage for the service modules (issue #153).
+# Real-Azure integration coverage for the service modules (issues #153, #257).
 #
 # Emulators (Azurite, Service Bus / Event Hubs / Cosmos emulators) are
 # necessary but NOT sufficient — they diverge from real Azure on auth,
@@ -9,16 +9,25 @@ name: integration-real-azure
 # real-Azure-only regressions (e.g. the AMQP port-defaulting bug fixed in
 # 1560d11 that emulators never surfaced).
 #
-# Coverage (each gated independently on its own secret; a backend whose
-# secret is absent skips rather than fails):
+# Ephemeral provision -> test -> deallocate (issue #257): the job logs into
+# Azure via OIDC (no stored client secret), provisions a per-run, uniquely
+# named resource group from deploy/realazure/main.bicep, exports the freshly
+# minted connection details into the test environment, runs the
+# Category=RealAzure suite, then deletes the resource group in an
+# `if: always()` teardown. There are no standing Azure resources and no
+# long-lived account-key secrets to manage.
+#
+# Coverage (each gated independently; a backend whose env is absent skips
+# rather than fails):
 #   S3        -> Blob Storage   (CreateBucket -> Put/Get/Delete object -> DeleteBucket)
 #   DynamoDB  -> Cosmos DB      (CreateTable -> Put/Get/Delete item -> DeleteTable)
 #   SQS       -> Service Bus    (CreateQueue -> Send/Receive/Delete -> DeleteQueue)
-#   Kinesis   -> Event Hubs     (PutRecord to a pre-existing hub)
-#   Secrets   -> Key Vault      (secret lifecycle)
+#   Kinesis   -> Event Hubs     (PutRecord to a provisioned hub)
+#   Secrets   -> Key Vault      (secret lifecycle; NOT ephemeral — runs only when
+#                                the standing AZURE_KEYVAULT_* secrets are set)
 #
-# Resource provisioning, the service principal, budget alerts and the
-# secret matrix are documented in docs/testing/real-azure-nightly.md.
+# One-time operator setup (OIDC + reaper) is documented in
+# docs/testing/real-azure-nightly.md.
 on:
   schedule:
     # Nightly at 05:00 UTC, an hour after the emulator `integration`
@@ -28,6 +37,10 @@ on:
   pull_request:
     types: [labeled, synchronize, reopened]
 
+permissions:
+  id-token: write   # required for the azure/login OIDC token exchange
+  contents: read
+
 jobs:
   real-azure:
     if: >-
@@ -36,41 +49,113 @@ jobs:
       (github.event_name == 'pull_request' &&
        contains(github.event.pull_request.labels.*.name, 'run-real-azure'))
     runs-on: ubuntu-latest
-    # Concurrency guard: never run two real-Azure jobs against the
-    # same secrets in parallel. Cost + test isolation.
+    # Concurrency guard: never run two real-Azure jobs in parallel (cost +
+    # the reaper's age heuristic both assume a single active run).
     concurrency:
       group: integration-real-azure
       cancel-in-progress: false
+    env:
+      AZURE_LOCATION: eastus2
+      # Unique per run+attempt so retries never collide and the reaper can
+      # always identify orphans by the shared `purpose` tag.
+      RG_NAME: aws2azure-it-${{ github.run_id }}-${{ github.run_attempt }}
+      DEPLOYMENT_NAME: aws2azure-realazure
+      # The DynamoDB module creates containers but not the database, and the
+      # Kinesis module does not implement CreateStream — Bicep pre-creates both
+      # and the fixture targets these names.
+      AZURE_COSMOS_DATABASE: dynamodb
+      AZURE_EVENTHUBS_STREAM: kinesis-smoke
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+
+      # Provisioning needs the OIDC client id. When it is absent (fork PRs, or
+      # before an operator has wired up OIDC) we skip provision/login/teardown;
+      # the test step then skips every RealAzure test and the job stays green.
+      - name: Check provisioning credentials
+        id: gate
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        run: |
+          if [ -n "$AZURE_CLIENT_ID" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::AZURE_CLIENT_ID not set — real-Azure provisioning skipped; RealAzure tests will skip."
+          fi
+
       - name: Restore + build
         run: dotnet build -c Release --nologo
+
+      - name: Azure login (OIDC)
+        if: steps.gate.outputs.enabled == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Provision ephemeral Azure backends
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          az group create -n "$RG_NAME" -l "$AZURE_LOCATION" \
+            --tags purpose=aws2azure-nightly \
+                   run-id="${{ github.run_id }}" \
+                   created="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o none
+          az deployment group create -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
+            -f deploy/realazure/main.bicep \
+            -p cosmosDatabaseName="$AZURE_COSMOS_DATABASE" \
+               eventHubName="$AZURE_EVENTHUBS_STREAM" \
+            -o none
+
+      - name: Export connection info
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          out() {
+            az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
+              --query "properties.outputs.$1.value" -o tsv
+          }
+          STORAGE="$(out storageAccountName)"
+          SB_NS="$(out serviceBusNamespaceName)"
+          COSMOS="$(out cosmosAccountName)"
+          COSMOS_ENDPOINT="$(out cosmosEndpoint)"
+          EH_NS="$(out eventHubsNamespaceName)"
+
+          BLOB_KEY="$(az storage account keys list -n "$STORAGE" -g "$RG_NAME" --query '[0].value' -o tsv)"
+          SB_CONN="$(az servicebus namespace authorization-rule keys list -g "$RG_NAME" \
+            --namespace-name "$SB_NS" --name RootManageSharedAccessKey \
+            --query primaryConnectionString -o tsv)"
+          COSMOS_KEY="$(az cosmosdb keys list -n "$COSMOS" -g "$RG_NAME" --query primaryMasterKey -o tsv)"
+          EH_CONN="$(az eventhubs namespace authorization-rule keys list -g "$RG_NAME" \
+            --namespace-name "$EH_NS" --name RootManageSharedAccessKey \
+            --query primaryConnectionString -o tsv)"
+
+          # Mask every secret before it lands in $GITHUB_ENV / logs.
+          for v in "$BLOB_KEY" "$SB_CONN" "$COSMOS_KEY" "$EH_CONN"; do
+            echo "::add-mask::$v"
+          done
+
+          {
+            echo "AZURE_BLOB_ACCOUNT=$STORAGE"
+            echo "AZURE_BLOB_KEY=$BLOB_KEY"
+            echo "AZURE_COSMOS_ENDPOINT=$COSMOS_ENDPOINT"
+            echo "AZURE_COSMOS_KEY=$COSMOS_KEY"
+            echo "AZURE_COSMOS_DATABASE=$AZURE_COSMOS_DATABASE"
+            echo "AZURE_SB_CONNSTR=$SB_CONN"
+            echo "AZURE_EVENTHUBS_CONNSTR=$EH_CONN"
+            echo "AZURE_EVENTHUBS_STREAM=$AZURE_EVENTHUBS_STREAM"
+          } >> "$GITHUB_ENV"
+
       - name: Run real-Azure integration tests
         env:
-          # Secrets are intentionally unavailable on PRs from forks and on
-          # any backend an operator has not provisioned; the tests guard on
-          # these and skip rather than fail in that case, so unprivileged
-          # contributors do not see red CI for checks they cannot run.
-          # S3 -> Blob Storage
-          AZURE_BLOB_ACCOUNT: ${{ secrets.AZURE_BLOB_ACCOUNT }}
-          AZURE_BLOB_KEY: ${{ secrets.AZURE_BLOB_KEY }}
-          AZURE_BLOB_ENDPOINT: ${{ secrets.AZURE_BLOB_ENDPOINT }}
-          # DynamoDB -> Cosmos DB (database must pre-exist)
-          AZURE_COSMOS_ENDPOINT: ${{ secrets.AZURE_COSMOS_ENDPOINT }}
-          AZURE_COSMOS_KEY: ${{ secrets.AZURE_COSMOS_KEY }}
-          AZURE_COSMOS_DATABASE: ${{ secrets.AZURE_COSMOS_DATABASE }}
-          # SQS -> Service Bus
-          AZURE_SB_CONNSTR: ${{ secrets.AZURE_SB_CONNSTR }}
-          # Kinesis -> Event Hubs (hub must pre-exist)
-          AZURE_EVENTHUBS_CONNSTR: ${{ secrets.AZURE_EVENTHUBS_CONNSTR }}
-          AZURE_EVENTHUBS_NAMESPACE: ${{ secrets.AZURE_EVENTHUBS_NAMESPACE }}
-          AZURE_EVENTHUBS_SAS_KEYNAME: ${{ secrets.AZURE_EVENTHUBS_SAS_KEYNAME }}
-          AZURE_EVENTHUBS_SAS_KEY: ${{ secrets.AZURE_EVENTHUBS_SAS_KEY }}
-          AZURE_EVENTHUBS_STREAM: ${{ secrets.AZURE_EVENTHUBS_STREAM }}
-          # Secrets Manager -> Key Vault
+          # Secrets Manager -> Key Vault stays on the standing-secret model
+          # (the proxy authenticates to Key Vault with a service principal, not
+          # an account key). When these are unset the SecretsManager smoke skips.
           AZURE_KEYVAULT_URL: ${{ secrets.AZURE_KEYVAULT_URL }}
           AZURE_KEYVAULT_TENANT_ID: ${{ secrets.AZURE_KEYVAULT_TENANT_ID }}
           AZURE_KEYVAULT_CLIENT_ID: ${{ secrets.AZURE_KEYVAULT_CLIENT_ID }}
@@ -79,3 +164,11 @@ jobs:
           dotnet test tests/Aws2Azure.IntegrationTests \
             -c Release --no-build --nologo \
             --filter "Category=RealAzure"
+
+      # The deallocate guarantee: delete the ephemeral resource group even when
+      # provisioning or the tests failed. --no-wait returns immediately; the
+      # reaper workflow is the backstop for force-cancelled runs.
+      - name: Deallocate ephemeral Azure backends
+        if: always() && steps.gate.outputs.enabled == 'true'
+        run: |
+          az group delete -n "$RG_NAME" --yes --no-wait || true

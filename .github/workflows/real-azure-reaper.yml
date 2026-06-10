@@ -1,0 +1,80 @@
+name: real-azure-reaper
+
+# Backstop cleanup for the ephemeral provision -> test -> deallocate flow
+# (issue #257). The `integration-real-azure` job deletes its resource group in
+# an `if: always()` teardown, but a force-cancelled run (e.g. the runner is
+# killed) can leak one. This scheduled reaper deletes any resource group tagged
+# `purpose=aws2azure-nightly` whose `created` tag is older than MAX_AGE_HOURS,
+# or that carries no `created` tag at all (manual / interrupted provisioning).
+#
+# It is safe to run alongside an active nightly job: a fresh run's resource
+# group is far younger than the age threshold, and the nightly concurrency
+# guard ensures at most one active run.
+on:
+  schedule:
+    - cron: '30 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  reap:
+    runs-on: ubuntu-latest
+    env:
+      MAX_AGE_HOURS: '6'
+    steps:
+      - name: Check credentials
+        id: gate
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        run: |
+          if [ -n "$AZURE_CLIENT_ID" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::AZURE_CLIENT_ID not set — reaper has nothing to authenticate with; skipping."
+          fi
+
+      - name: Azure login (OIDC)
+        if: steps.gate.outputs.enabled == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Delete orphaned resource groups
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          now="$(date -u +%s)"
+          max_age_secs=$(( MAX_AGE_HOURS * 3600 ))
+          deleted=0
+
+          # One row per candidate RG: name + its `created` tag (may be empty).
+          az group list --tag purpose=aws2azure-nightly \
+            --query "[].{name:name, created:tags.created}" -o json \
+            | jq -c '.[]' | while read -r row; do
+              name="$(echo "$row" | jq -r '.name')"
+              created="$(echo "$row" | jq -r '.created // empty')"
+
+              if [ -z "$created" ]; then
+                echo "::warning::$name has no 'created' tag — deleting as orphan."
+                az group delete -n "$name" --yes --no-wait || true
+                continue
+              fi
+
+              created_secs="$(date -u -d "$created" +%s 2>/dev/null || echo 0)"
+              age=$(( now - created_secs ))
+              if [ "$created_secs" -eq 0 ]; then
+                echo "::warning::$name has an unparseable 'created' tag ('$created') — deleting as orphan."
+                az group delete -n "$name" --yes --no-wait || true
+              elif [ "$age" -gt "$max_age_secs" ]; then
+                echo "Reaping $name (age ${age}s > ${max_age_secs}s)."
+                az group delete -n "$name" --yes --no-wait || true
+              else
+                echo "Keeping $name (age ${age}s <= ${max_age_secs}s — likely an active run)."
+              fi
+            done
