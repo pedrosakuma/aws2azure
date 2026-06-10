@@ -111,5 +111,35 @@ public static class S3ErrorMatrix
                 ConformanceProxyFixture.AccessKeyId,
                 ConformanceProxyFixture.Secret),
             Path: "/conformance_invalid_bucket/key.txt"),
+
+        // Multipart lookup paths classify the destination bucket BEFORE decoding
+        // the uploadId, so the same path-style rules apply: a length-illegal
+        // bucket is 400 InvalidBucketName even with an uploadId present, rather
+        // than leaking a 404 NoSuchUpload (issue #237 review follow-up). A GET
+        // carrying ?uploadId routes to ListParts.
+        new S3ErrorCase(
+            "multipart-invalid-bucket-name",
+            "s3:InvalidBucketName",
+            400,
+            "InvalidBucketName",
+            req => ConformanceSigV4Signer.SignHeader(
+                req, EmptyBody,
+                ConformanceProxyFixture.AccessKeyId,
+                ConformanceProxyFixture.Secret),
+            Path: "/ab/key.txt?uploadId=nonexistent"),
+
+        // Same multipart lookup path, Azure-illegal (length-legal) bucket name:
+        // resolves to 404 NoSuchBucket before the uploadId is examined, not
+        // NoSuchUpload.
+        new S3ErrorCase(
+            "multipart-azure-illegal-bucket-name-is-nosuchbucket",
+            "s3:NoSuchBucket",
+            404,
+            "NoSuchBucket",
+            req => ConformanceSigV4Signer.SignHeader(
+                req, EmptyBody,
+                ConformanceProxyFixture.AccessKeyId,
+                ConformanceProxyFixture.Secret),
+            Path: "/conformance_invalid_bucket/key.txt?uploadId=nonexistent"),
     };
 }
