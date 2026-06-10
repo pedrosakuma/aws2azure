@@ -11,11 +11,13 @@ using Microsoft.AspNetCore.Http;
 namespace Aws2Azure.UnitTests.Modules;
 
 /// <summary>
-/// Unit coverage for the protocol-aware SigV4 auth-error vocabulary (issue
-/// #241). AWS REST-XML services (S3) answer SigV4 failures with HTTP 403 and the
-/// S3 error codes; AWS-JSON services (DynamoDB, Kinesis, modern SQS) answer with
-/// HTTP 400 and the JSON exception vocabulary. The proxy must render the shape
-/// matching the caller's wire protocol or an AWS SDK sees a non-faithful error.
+/// Unit coverage for the protocol-aware SigV4 auth-error vocabulary (issues #241
+/// and #247). AWS-JSON services answer SigV4 failures with HTTP 400 and the JSON
+/// exception vocabulary; XML services answer with HTTP 403, but the unknown-key
+/// code is service-specific — S3 returns <c>InvalidAccessKeyId</c> while the AWS
+/// Query front door (SNS, SQS-Query) returns <c>InvalidClientTokenId</c>. The
+/// proxy must render the shape matching the caller's wire dialect or an AWS SDK
+/// sees a non-faithful error.
 /// </summary>
 public class AuthErrorVocabularyTests
 {
@@ -25,10 +27,10 @@ public class AuthErrorVocabularyTests
     [InlineData(SigV4ValidationStatus.Expired, 400, "InvalidSignatureException")]
     [InlineData(SigV4ValidationStatus.UnknownAccessKey, 400, "UnrecognizedClientException")]
     [InlineData(SigV4ValidationStatus.Malformed, 400, "IncompleteSignatureException")]
-    public void Json_maps_to_400_with_json_exception_vocabulary(
+    public void Json_dialect_maps_to_400_with_json_exception_vocabulary(
         SigV4ValidationStatus status, int expectedStatus, string expectedCode)
     {
-        var (statusCode, code) = AuthErrorVocabulary.Resolve(AwsErrorFormat.Json, status);
+        var (statusCode, code) = AuthErrorVocabulary.Resolve(AwsAuthErrorDialect.Json, status);
         Assert.Equal(expectedStatus, statusCode);
         Assert.Equal(expectedCode, code);
     }
@@ -39,10 +41,26 @@ public class AuthErrorVocabularyTests
     [InlineData(SigV4ValidationStatus.Expired, 403, "AccessDenied")]
     [InlineData(SigV4ValidationStatus.ClockSkewTooLarge, 403, "RequestTimeTooSkewed")]
     [InlineData(SigV4ValidationStatus.Malformed, 400, "InvalidRequest")]
-    public void Xml_keeps_the_s3_403_vocabulary(
+    public void S3Xml_dialect_keeps_the_bespoke_s3_403_vocabulary(
         SigV4ValidationStatus status, int expectedStatus, string expectedCode)
     {
-        var (statusCode, code) = AuthErrorVocabulary.Resolve(AwsErrorFormat.Xml, status);
+        var (statusCode, code) = AuthErrorVocabulary.Resolve(AwsAuthErrorDialect.S3Xml, status);
+        Assert.Equal(expectedStatus, statusCode);
+        Assert.Equal(expectedCode, code);
+    }
+
+    [Theory]
+    // Only the unknown-key code differs from S3 (issue #247): the AWS Query front
+    // door returns InvalidClientTokenId/403. Every other XML code is shared.
+    [InlineData(SigV4ValidationStatus.InvalidSignature, 403, "SignatureDoesNotMatch")]
+    [InlineData(SigV4ValidationStatus.UnknownAccessKey, 403, "InvalidClientTokenId")]
+    [InlineData(SigV4ValidationStatus.Expired, 403, "AccessDenied")]
+    [InlineData(SigV4ValidationStatus.ClockSkewTooLarge, 403, "RequestTimeTooSkewed")]
+    [InlineData(SigV4ValidationStatus.Malformed, 400, "InvalidRequest")]
+    public void QueryXml_dialect_uses_invalid_client_token_id_for_unknown_key(
+        SigV4ValidationStatus status, int expectedStatus, string expectedCode)
+    {
+        var (statusCode, code) = AuthErrorVocabulary.Resolve(AwsAuthErrorDialect.QueryXml, status);
         Assert.Equal(expectedStatus, statusCode);
         Assert.Equal(expectedCode, code);
     }
@@ -62,6 +80,18 @@ public class EmitSigV4FailureDefaultTests
         public CapabilityMatrix Capabilities { get; } = new("vocab", []);
         public bool RequiresSigV4 => true;
         public AwsErrorFormat ErrorFormat { get; init; }
+        public ValueTask HandleAsync(HttpContext context) => ValueTask.CompletedTask;
+    }
+
+    // Mirrors S3: an XML module that opts into the bespoke S3 auth dialect.
+    private sealed class S3DialectModule : IServiceModule
+    {
+        public string ServiceName => "s3vocab";
+        public bool MatchesHost(string host) => true;
+        public CapabilityMatrix Capabilities { get; } = new("s3vocab", []);
+        public bool RequiresSigV4 => true;
+        public AwsErrorFormat ErrorFormat => AwsErrorFormat.Xml;
+        public AwsAuthErrorDialect AuthErrorDialect => AwsAuthErrorDialect.S3Xml;
         public ValueTask HandleAsync(HttpContext context) => ValueTask.CompletedTask;
     }
 
@@ -116,6 +146,33 @@ public class EmitSigV4FailureDefaultTests
         var doc = XDocument.Parse(ReadBody(ctx));
         Assert.Equal("SignatureDoesNotMatch", doc.Root!.Element("Code")!.Value);
     }
+
+    [Fact]
+    public async Task Default_xml_module_uses_invalid_client_token_id_for_unknown_key()
+    {
+        // A plain XML module inherits the AWS Query front-door dialect (#247).
+        IServiceModule module = new VocabularyModule { ErrorFormat = AwsErrorFormat.Xml };
+        var ctx = NewContext();
+
+        await module.EmitSigV4FailureAsync(ctx, SigV4ValidationStatus.UnknownAccessKey, "no such key");
+
+        Assert.Equal(StatusCodes.Status403Forbidden, ctx.Response.StatusCode);
+        var doc = XDocument.Parse(ReadBody(ctx));
+        Assert.Equal("InvalidClientTokenId", doc.Root!.Element("Code")!.Value);
+    }
+
+    [Fact]
+    public async Task S3_dialect_module_keeps_invalid_access_key_for_unknown_key()
+    {
+        IServiceModule module = new S3DialectModule();
+        var ctx = NewContext();
+
+        await module.EmitSigV4FailureAsync(ctx, SigV4ValidationStatus.UnknownAccessKey, "no such key");
+
+        Assert.Equal(StatusCodes.Status403Forbidden, ctx.Response.StatusCode);
+        var doc = XDocument.Parse(ReadBody(ctx));
+        Assert.Equal("InvalidAccessKeyId", doc.Root!.Element("Code")!.Value);
+    }
 }
 
 /// <summary>
@@ -148,6 +205,24 @@ public class RegistryAuthErrorVocabularyTests
         public CapabilityMatrix Capabilities { get; } = new("fake", []);
         public bool RequiresSigV4 => true;
         public AwsErrorFormat ErrorFormat { get; init; }
+        public bool Invoked { get; private set; }
+        public ValueTask HandleAsync(HttpContext context)
+        {
+            Invoked = true;
+            context.Response.StatusCode = StatusCodes.Status200OK;
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    // Mirrors S3: an XML module that opts into the bespoke S3 auth dialect.
+    private sealed class S3RegistryTestModule : IServiceModule
+    {
+        public string ServiceName => "fakes3";
+        public bool MatchesHost(string host) => host.StartsWith("fake.", StringComparison.OrdinalIgnoreCase);
+        public CapabilityMatrix Capabilities { get; } = new("fakes3", []);
+        public bool RequiresSigV4 => true;
+        public AwsErrorFormat ErrorFormat => AwsErrorFormat.Xml;
+        public AwsAuthErrorDialect AuthErrorDialect => AwsAuthErrorDialect.S3Xml;
         public bool Invoked { get; private set; }
         public ValueTask HandleAsync(HttpContext context)
         {
@@ -193,9 +268,24 @@ public class RegistryAuthErrorVocabularyTests
     }
 
     [Fact]
-    public async Task Xml_module_unknown_key_returns_403_invalid_access_key()
+    public async Task Default_xml_module_unknown_key_returns_403_invalid_client_token_id()
     {
         var module = new RegistryTestModule { ErrorFormat = AwsErrorFormat.Xml };
+        var registry = new ServiceModuleRegistry([module], new SigV4Validator(ResolverWithKey("AKIA")));
+        var ctx = UnknownKeyRequest();
+
+        await registry.DispatchAsync(ctx);
+
+        Assert.False(module.Invoked);
+        Assert.Equal(StatusCodes.Status403Forbidden, ctx.Response.StatusCode);
+        var doc = XDocument.Parse(ReadBody(ctx));
+        Assert.Equal("InvalidClientTokenId", doc.Root!.Element("Code")!.Value);
+    }
+
+    [Fact]
+    public async Task S3_dialect_module_unknown_key_returns_403_invalid_access_key()
+    {
+        var module = new S3RegistryTestModule();
         var registry = new ServiceModuleRegistry([module], new SigV4Validator(ResolverWithKey("AKIA")));
         var ctx = UnknownKeyRequest();
 

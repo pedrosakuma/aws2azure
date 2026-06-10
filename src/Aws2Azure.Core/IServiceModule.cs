@@ -64,6 +64,18 @@ public interface IServiceModule
     /// <summary>Format used to render error responses (XML for S3, JSON elsewhere).</summary>
     AwsErrorFormat ErrorFormat { get; }
 
+    /// <summary>
+    /// The auth-error vocabulary this module's callers speak. The default maps
+    /// the wire <see cref="ErrorFormat"/> to a dialect — JSON → AWS-JSON, XML →
+    /// the AWS Query front-door dialect (<c>InvalidClientTokenId</c> for an
+    /// unknown key), which is the common case for XML services (SNS, SQS-Query,
+    /// STS, EC2, …). S3, whose unknown-key code is the bespoke
+    /// <c>InvalidAccessKeyId</c>, overrides this to
+    /// <see cref="AwsAuthErrorDialect.S3Xml"/>. See issue #247.
+    /// </summary>
+    AwsAuthErrorDialect AuthErrorDialect
+        => ErrorFormat == AwsErrorFormat.Json ? AwsAuthErrorDialect.Json : AwsAuthErrorDialect.QueryXml;
+
     /// <summary>Entry point invoked after routing and SigV4 validation.</summary>
     ValueTask HandleAsync(HttpContext context);
 
@@ -82,18 +94,19 @@ public interface IServiceModule
     /// <summary>
     /// Renders a SigV4 validation failure using the (HTTP status, error code)
     /// vocabulary real AWS returns for this module's wire protocol. The default
-    /// keys the vocabulary on <see cref="ErrorFormat"/> via
-    /// <see cref="AuthErrorVocabulary"/> — REST-XML services (S3) keep the
-    /// 403 + S3-code shape, AWS-JSON services (DynamoDB, Kinesis) get the
+    /// keys the vocabulary on <see cref="AuthErrorDialect"/> via
+    /// <see cref="AuthErrorVocabulary"/> — REST-XML services keep the 403 shape
+    /// (S3 → <c>InvalidAccessKeyId</c>, Query front door → <c>InvalidClientTokenId</c>
+    /// for an unknown key), AWS-JSON services (DynamoDB, Kinesis) get the
     /// 400 + <c>InvalidSignatureException</c>/<c>UnrecognizedClientException</c>
     /// shape — then delegates rendering to <see cref="EmitAuthErrorAsync"/>.
     /// Modules whose callers split across wire protocols (SQS Query vs
-    /// AWS-JSON) override this to negotiate the per-request format before
-    /// resolving the vocabulary. See issue #241.
+    /// AWS-JSON) override this to negotiate the per-request dialect before
+    /// resolving the vocabulary. See issues #241 and #247.
     /// </summary>
     ValueTask EmitSigV4FailureAsync(HttpContext context, SigV4ValidationStatus status, string reason)
     {
-        var (statusCode, code) = AuthErrorVocabulary.Resolve(ErrorFormat, status);
+        var (statusCode, code) = AuthErrorVocabulary.Resolve(AuthErrorDialect, status);
         return EmitAuthErrorAsync(context, statusCode, code,
             string.IsNullOrEmpty(reason) ? code : reason);
     }

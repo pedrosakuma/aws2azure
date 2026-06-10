@@ -119,13 +119,14 @@ public static class SqsErrorMatrix
             Body: "Action=ListQueues&Version=2012-11-05",
             SecretOverride: "this-is-not-the-configured-secret-000000000"),
 
-        // A Query request signed with an unknown access key → InvalidAccessKeyId
-        // / 403, the faithful Query-protocol vocabulary.
+        // A Query request signed with an unknown access key → InvalidClientTokenId
+        // / 403, the faithful Query front-door vocabulary (issue #247). S3 is the
+        // only XML service that answers InvalidAccessKeyId here.
         new SqsErrorCase(
             "query-unrecognized-client",
             SqsCaseProtocol.Query,
             403,
-            "InvalidAccessKeyId",
+            "InvalidClientTokenId",
             Body: "Action=ListQueues&Version=2012-11-05",
             AccessKeyOverride: "AKIACONFORMANCEUNKNOWN",
             SecretOverride: "any-secret-since-the-key-is-unknown-00000000"),

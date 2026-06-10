@@ -146,7 +146,8 @@ AWS2AZURE_CONFORMANCE_TIER2=1 AWS2AZURE_CONFORMANCE_RECORD=1 dotnet test tests/A
   request naming an unknown action) plus two SigV4 auth pairs that pin **both
   branches** of the issue #241 SQS `EmitSigV4FailureAsync` override — the only
   per-request protocol-negotiated auth vocabulary in the proxy. The Query branch
-  answers `SignatureDoesNotMatch` / `InvalidAccessKeyId` at **HTTP 403**; the
+  answers `SignatureDoesNotMatch` / `InvalidClientTokenId` at **HTTP 403** (the
+  AWS Query front-door unknown-key code, issue #247); the
   AWS-JSON branch answers `InvalidSignatureException` / `UnrecognizedClientException`
   at **HTTP 400**. Each case asserts the protocol-correct raw wire shape (Query →
   `text/xml` + `<ErrorResponse>` root; JSON → `application/x-amz-json` + `__type`
@@ -157,16 +158,14 @@ AWS2AZURE_CONFORMANCE_TIER2=1 AWS2AZURE_CONFORMANCE_RECORD=1 dotnet test tests/A
   (legacy AWS **Query** only), so this matrix is the second to drive the AWS
   Query `<ErrorResponse>` XML envelope through the canonicalizer's unwrap path —
   this time via a module that uses the **default** `EmitSigV4FailureAsync` (the
-  REST-XML 403 vocabulary, no per-request override), confirming the unwrap is
-  protocol-agnostic. Two cases: a parser-stage `InvalidAction` (HTTP 400,
+  AWS Query XML 403 vocabulary, no per-request override), confirming the unwrap is
+  protocol-agnostic. Three cases: a parser-stage `InvalidAction` (HTTP 400,
   validly-signed Query request naming an unknown action; this case must sign
-  `content-type` because SNS enforces it via `RequiredSignedHeaders`) plus the
-  REST-XML SigV4 case `SignatureDoesNotMatch` (HTTP 403, wrong secret). Each
-  asserts the faithful Query wire shape (`text/xml` + `<ErrorResponse>` root)
-  alongside the status + short code. (The unknown-access-key case is deferred to
-  issue #247: the proxy currently returns S3's `InvalidAccessKeyId` for all XML
-  services, but real SNS answers `UnrecognizedClientException` / 403 and SQS-Query
-  answers `InvalidClientTokenId` / 403 — a per-service auth-vocabulary fix.)
+  `content-type` because SNS enforces it via `RequiredSignedHeaders`) plus two
+  SigV4 auth cases — `SignatureDoesNotMatch` (HTTP 403, wrong secret) and
+  `InvalidClientTokenId` (HTTP 403, unknown access key — the shared AWS Query
+  front-door code, issue #247). Each asserts the faithful Query wire shape
+  (`text/xml` + `<ErrorResponse>` root) alongside the status + short code.
 - **Tier 2 — S3 backend-mapped errors** (LocalStack differential, Docker):
   `NoSuchBucket` (GET on a missing bucket) and `NoSuchKey` (GET a missing key in
   an existing bucket), proxy-over-Azurite vs LocalStack S3. The accepted
@@ -175,12 +174,14 @@ AWS2AZURE_CONFORMANCE_TIER2=1 AWS2AZURE_CONFORMANCE_RECORD=1 dotnet test tests/A
   content-type charset parameter is treated as non-contractual and normalized
   out (SDK clients parse the XML body regardless).
 
-> Note: SigV4 *auth* errors are protocol-aware (issue #241, fixed). REST-XML
-> services (S3) keep the 403 + S3-code shape (`SignatureDoesNotMatch` /
-> `InvalidAccessKeyId` / `RequestTimeTooSkewed`); AWS-JSON services (DynamoDB,
-> Kinesis, the modern SQS JSON path) return `InvalidSignatureException` /
-> `UnrecognizedClientException` at **HTTP 400**, via
-> `AuthErrorVocabulary.Resolve(ErrorFormat, status)`. The DynamoDB and Kinesis
+> Note: SigV4 *auth* errors are protocol-aware (issues #241 and #247, fixed).
+> XML services keep the 403 shape but the unknown-key code is service-specific —
+> S3 returns `InvalidAccessKeyId`, the AWS Query front door (SNS, SQS-Query)
+> returns `InvalidClientTokenId`; the shared codes are `SignatureDoesNotMatch` /
+> `RequestTimeTooSkewed`. AWS-JSON services (DynamoDB, Kinesis, the modern SQS
+> JSON path) return `InvalidSignatureException` / `UnrecognizedClientException`
+> at **HTTP 400**, via `AuthErrorVocabulary.Resolve(dialect, status)` where the
+> dialect comes from each module's `AuthErrorDialect`. The DynamoDB and Kinesis
 > auth cases above are Tier-1-only: LocalStack can't be their oracle (it ignores
 > signatures), so the expected outcome is the AWS JSON-protocol contract.
 

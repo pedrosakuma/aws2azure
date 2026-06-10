@@ -93,17 +93,18 @@ public sealed class SqsServiceModule : IServiceModule
     /// differs between them: the AWS-JSON path uses
     /// <c>InvalidSignatureException</c>/<c>UnrecognizedClientException</c> at
     /// HTTP 400, while the legacy Query path keeps the XML
-    /// <c>SignatureDoesNotMatch</c>/403 shape. The module-level
-    /// <see cref="ErrorFormat"/> can't capture this — it's per-request — so we
-    /// sniff the protocol the caller used and resolve the vocabulary for that
-    /// format before rendering. See issue #241.
+    /// <c>SignatureDoesNotMatch</c>/403 shape (unknown key →
+    /// <c>InvalidClientTokenId</c> via the AWS Query front door). The
+    /// module-level <see cref="ErrorFormat"/> can't capture this — it's
+    /// per-request — so we sniff the protocol the caller used and resolve the
+    /// vocabulary for that dialect before rendering. See issues #241 and #247.
     /// </summary>
     public ValueTask EmitSigV4FailureAsync(HttpContext context, SigV4ValidationStatus status, string reason)
     {
-        var format = SqsWireProtocolParser.Sniff(context) == SqsWireProtocol.AwsJson
-            ? AwsErrorFormat.Json
-            : AwsErrorFormat.Xml;
-        var (statusCode, code) = AuthErrorVocabulary.Resolve(format, status);
+        var dialect = SqsWireProtocolParser.Sniff(context) == SqsWireProtocol.AwsJson
+            ? AwsAuthErrorDialect.Json
+            : AwsAuthErrorDialect.QueryXml;
+        var (statusCode, code) = AuthErrorVocabulary.Resolve(dialect, status);
         return EmitAuthErrorAsync(context, statusCode, code,
             string.IsNullOrEmpty(reason) ? code : reason);
     }
