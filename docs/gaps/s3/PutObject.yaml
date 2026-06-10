@@ -11,6 +11,9 @@ sub_features:
   - name: aws-chunked payloads (STREAMING-AWS4-HMAC-SHA256-PAYLOAD)
     status: implemented
     gap: "Proxy decodes the AWS chunk framing and verifies each chunk signature before forwarding the raw payload to Azure Blob. x-amz-decoded-content-length is used for Content-Length."
+  - name: aws-chunked trailer / unsigned payloads (STREAMING-*-PAYLOAD-TRAILER, STREAMING-UNSIGNED-PAYLOAD)
+    status: implemented
+    gap: "Decodes the signed and unsigned trailer framings emitted by modern AWS SDKs when flexible checksums are enabled (the AWSSDK.S3 4.x / recent boto3 default). The trailing checksum / x-amz-trailer-signature section is consumed and discarded — Azure Blob validates content integrity independently; the proxy does not re-validate the x-amz-checksum-* trailer. The -ECDSA-* (SigV4a) streaming variants are not recognized."
   - name: server-side encryption (SSE-S3, SSE-KMS, SSE-C)
     status: unsupported
     gap: "Azure manages encryption at the storage-account level; SSE headers are ignored."
