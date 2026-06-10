@@ -32,6 +32,12 @@ public sealed class S3ServiceModule : IServiceModule
     public string ServiceName => "s3";
     public bool RequiresSigV4 => true;
     public AwsErrorFormat ErrorFormat => AwsErrorFormat.Xml;
+
+    // S3 is the documented exception to the XML auth vocabulary: an unknown
+    // access key returns the bespoke InvalidAccessKeyId/403 rather than the
+    // AWS Query front door's InvalidClientTokenId. See issue #247.
+    public AwsAuthErrorDialect AuthErrorDialect => AwsAuthErrorDialect.S3Xml;
+
     public CapabilityMatrix Capabilities { get; }
 
     public bool MatchesHost(string host)

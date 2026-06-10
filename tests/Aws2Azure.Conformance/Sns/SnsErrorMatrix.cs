@@ -10,8 +10,9 @@ namespace Aws2Azure.Conformance.Sns;
 /// AWS <c>&lt;ErrorResponse&gt;&lt;Error&gt;…&lt;/Error&gt;&lt;RequestId/&gt;&lt;/ErrorResponse&gt;</c>
 /// envelope (the same wrapper SQS Query uses, unwrapped uniformly by the
 /// canonicalizer). It uses the <em>default</em> <c>EmitSigV4FailureAsync</c>, so
-/// its SigV4 auth vocabulary is the REST-XML one: <c>SignatureDoesNotMatch</c> /
-/// <c>InvalidAccessKeyId</c> at HTTP 403. Unlike SQS, SNS enforces
+/// its SigV4 auth vocabulary is the AWS Query XML one: <c>SignatureDoesNotMatch</c>
+/// / <c>InvalidClientTokenId</c> at HTTP 403 (issue #247 — S3 is the only XML
+/// service that answers <c>InvalidAccessKeyId</c>). Unlike SQS, SNS enforces
 /// <c>RequiredSignedHeaders = ["content-type"]</c>, so the parser-stage case must
 /// sign <c>content-type</c> to clear the signed-header check before reaching the
 /// wire-protocol parser. Each case is paired with the AWS-contract outcome (HTTP
@@ -83,13 +84,16 @@ public static class SnsErrorMatrix
             Body: "Action=ListTopics&Version=2010-03-31",
             SecretOverride: "this-is-not-the-configured-secret-000000000"),
 
-        // NOTE: the unknown-access-key case is intentionally omitted pending
-        // issue #247. Real SNS answers UnrecognizedClientException / 403 for an
-        // unknown key, but the proxy currently returns the S3-specific
-        // InvalidAccessKeyId (AuthErrorVocabulary.ResolveXml is shared across all
-        // XML services). Asserting either here would bless the proxy's incorrect
-        // code or commit a guaranteed-red test, so it is deferred to the
-        // per-service fix tracked in #247 (which also corrects the SQS-Query
-        // case shipped in #245).
+        // A Query request signed with an unknown access key. The shared AWS Query
+        // auth front door answers InvalidClientTokenId / 403 (issue #247) — not
+        // S3's bespoke InvalidAccessKeyId. NOTE: oracle is per-AWS docs; pending
+        // a real-AWS spot-check (see #247).
+        new SnsErrorCase(
+            "sns-unrecognized-client",
+            403,
+            "InvalidClientTokenId",
+            Body: "Action=ListTopics&Version=2010-03-31",
+            AccessKeyOverride: "AKIACONFORMANCEUNKNOWN",
+            SecretOverride: "any-secret-since-the-key-is-unknown-00000000"),
     };
 }

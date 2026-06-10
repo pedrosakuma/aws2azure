@@ -11,7 +11,7 @@ namespace Aws2Azure.Conformance.Sns;
 /// Query <c>&lt;ErrorResponse&gt;&lt;Error&gt;…</c> XML envelope through the
 /// canonicalizer's unwrap path — the second service to do so after SQS, this time
 /// via a module that uses the <em>default</em> <c>EmitSigV4FailureAsync</c> (the
-/// REST-XML 403 vocabulary, no per-request override). It completes the #234
+/// AWS Query XML 403 vocabulary, no per-request override). It completes the #234
 /// "templatize the error matrix" checklist. For each proxy-side rejection it:
 /// <list type="number">
 ///   <item>asserts the proxy's response matches the AWS SNS <em>contract</em>
