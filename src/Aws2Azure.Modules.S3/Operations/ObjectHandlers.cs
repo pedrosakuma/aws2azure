@@ -27,9 +27,9 @@ internal static class ObjectHandlers
         var bucket = route.Bucket!;
         var key = route.Key!;
 
-        if (!BlobClient.IsValidContainerName(bucket))
+        if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
-            await EmitErrorAsync(context, S3ErrorMapping.InvalidBucketName(), route.Operation).ConfigureAwait(false);
+            await EmitErrorAsync(context, bucketError, route.Operation).ConfigureAwait(false);
             return;
         }
         if (!S3ObjectKey.IsValid(key))

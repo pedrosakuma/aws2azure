@@ -30,9 +30,9 @@ internal static class ObjectListHandlers
         CancellationToken cancellationToken)
     {
         var bucket = route.Bucket!;
-        if (!BlobClient.IsValidContainerName(bucket))
+        if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.InvalidBucketName()).ConfigureAwait(false);
+            await WriteErrorAsync(context, bucketError).ConfigureAwait(false);
             return;
         }
 

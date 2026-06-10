@@ -50,9 +50,9 @@ internal static class MultipartHandlers
 
     private static async Task CreateAsync(HttpContext ctx, BlobClient blob, string bucket, string key, CancellationToken ct)
     {
-        if (!BlobClient.IsValidContainerName(bucket))
+        if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
-            await WriteErrorAsync(ctx, S3ErrorMapping.InvalidBucketName()).ConfigureAwait(false);
+            await WriteErrorAsync(ctx, bucketError).ConfigureAwait(false);
             return;
         }
         if (!S3ObjectKey.IsValid(key))
@@ -79,6 +79,11 @@ internal static class MultipartHandlers
 
     private static async Task UploadPartAsync(HttpContext ctx, BlobClient blob, string bucket, string key, CancellationToken ct)
     {
+        if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
+        {
+            await WriteErrorAsync(ctx, bucketError).ConfigureAwait(false);
+            return;
+        }
         var uploadId = ctx.Request.Query["uploadId"].ToString();
         var partRaw  = ctx.Request.Query["partNumber"].ToString();
         if (!int.TryParse(partRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var partNumber) ||
@@ -161,6 +166,11 @@ internal static class MultipartHandlers
     /// </summary>
     private static async Task UploadPartCopyAsync(HttpContext ctx, BlobClient blob, string destBucket, string destKey, CancellationToken ct)
     {
+        if (S3ErrorMapping.ClassifyLookupBucketName(destBucket) is { } destBucketError)
+        {
+            await WriteErrorAsync(ctx, destBucketError).ConfigureAwait(false);
+            return;
+        }
         var uploadId = ctx.Request.Query["uploadId"].ToString();
         var partRaw  = ctx.Request.Query["partNumber"].ToString();
         if (!int.TryParse(partRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var partNumber) ||
@@ -358,6 +368,11 @@ internal static class MultipartHandlers
 
     private static async Task CompleteAsync(HttpContext ctx, BlobClient blob, string bucket, string key, CancellationToken ct)
     {
+        if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
+        {
+            await WriteErrorAsync(ctx, bucketError).ConfigureAwait(false);
+            return;
+        }
         var uploadId = ctx.Request.Query["uploadId"].ToString();
         var token = UploadIdCodec.TryDecode(uploadId, blob.AccountName, bucket, key, blob.AccountKeyBytes);
         if (token is null)
@@ -433,6 +448,11 @@ internal static class MultipartHandlers
 
     private static async Task AbortAsync(HttpContext ctx, BlobClient blob, string bucket, string key, CancellationToken ct)
     {
+        if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
+        {
+            await WriteErrorAsync(ctx, bucketError).ConfigureAwait(false);
+            return;
+        }
         var uploadId = ctx.Request.Query["uploadId"].ToString();
         var token = UploadIdCodec.TryDecode(uploadId, blob.AccountName, bucket, key, blob.AccountKeyBytes);
         if (token is null)
@@ -463,6 +483,11 @@ internal static class MultipartHandlers
 
     private static async Task ListPartsAsync(HttpContext ctx, BlobClient blob, string bucket, string key, CancellationToken ct)
     {
+        if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
+        {
+            await WriteErrorAsync(ctx, bucketError).ConfigureAwait(false);
+            return;
+        }
         var uploadId = ctx.Request.Query["uploadId"].ToString();
         var token = UploadIdCodec.TryDecode(uploadId, blob.AccountName, bucket, key, blob.AccountKeyBytes);
         if (token is null)
@@ -546,9 +571,9 @@ internal static class MultipartHandlers
 
     private static async Task ListMultipartUploadsAsync(HttpContext ctx, BlobClient blob, string bucket, CancellationToken ct)
     {
-        if (!BlobClient.IsValidContainerName(bucket))
+        if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
-            await WriteErrorAsync(ctx, S3ErrorMapping.InvalidBucketName()).ConfigureAwait(false);
+            await WriteErrorAsync(ctx, bucketError).ConfigureAwait(false);
             return;
         }
 

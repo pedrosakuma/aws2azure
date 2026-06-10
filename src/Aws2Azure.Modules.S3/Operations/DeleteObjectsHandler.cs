@@ -27,9 +27,9 @@ internal static class DeleteObjectsHandler
     public static async Task HandleAsync(HttpContext context, S3RouteResult route, BlobClient blob, CancellationToken ct)
     {
         var bucket = route.Bucket ?? string.Empty;
-        if (!BlobClient.IsValidContainerName(bucket))
+        if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.InvalidBucketName()).ConfigureAwait(false);
+            await WriteErrorAsync(context, bucketError).ConfigureAwait(false);
             return;
         }
 

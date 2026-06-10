@@ -102,9 +102,9 @@ internal static class BucketLifecycleHandlers
 
     private static async Task DeleteBucketAsync(HttpContext context, BlobClient blob, string bucket, CancellationToken cancellationToken)
     {
-        if (!BlobClient.IsValidContainerName(bucket))
+        if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.InvalidBucketName()).ConfigureAwait(false);
+            await WriteErrorAsync(context, bucketError).ConfigureAwait(false);
             return;
         }
 
@@ -121,11 +121,11 @@ internal static class BucketLifecycleHandlers
 
     private static async Task HeadBucketAsync(HttpContext context, BlobClient blob, string bucket, CancellationToken cancellationToken)
     {
-        if (!BlobClient.IsValidContainerName(bucket))
+        if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
             // HEAD must never carry a body — use the header-only emitter even
             // for local validation failures so SDKs can still see x-amz-error-code.
-            await EmitHeadErrorAsync(context, S3ErrorMapping.InvalidBucketName()).ConfigureAwait(false);
+            await EmitHeadErrorAsync(context, bucketError).ConfigureAwait(false);
             return;
         }
 

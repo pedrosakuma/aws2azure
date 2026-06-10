@@ -78,13 +78,11 @@ public static class S3ErrorMatrix
 
         // Validly signed (passes SigV4) but targets a syntactically invalid
         // bucket name. The proxy rejects it in the request-validation stage
-        // (BlobClient.IsValidContainerName) before any Azure call. A 2-char
-        // name violates the 3-63 length rule shared by S3 and Azure container
-        // names, so both the proxy and real S3 answer 400 InvalidBucketName.
-        // (Note: real S3 only classifies length / a narrow set of syntax
-        // violations as InvalidBucketName for a path-style GET — underscore /
-        // uppercase / dotted names return 404 NoSuchBucket — so the oracle must
-        // use a name S3 itself rejects, verified against live s3.us-east-1.)
+        // before any Azure call. A 2-char name violates the 3-63 length rule
+        // shared by S3 and Azure container names, so both the proxy and real S3
+        // answer 400 InvalidBucketName. (Real S3's path-style lookup only
+        // classifies the length rule as InvalidBucketName; other Azure-illegal
+        // shapes resolve to 404 NoSuchBucket — see the next case.)
         new S3ErrorCase(
             "invalid-bucket-name",
             "s3:InvalidBucketName",
@@ -95,5 +93,53 @@ public static class S3ErrorMatrix
                 ConformanceProxyFixture.AccessKeyId,
                 ConformanceProxyFixture.Secret),
             Path: "/ab/key.txt"),
+
+        // Validly signed GET against a bucket name that is length-legal (3-63)
+        // but not an Azure container name (underscore). Real us-east-1 path-style
+        // S3 treats this as a perfectly addressable *legacy* bucket name that
+        // simply doesn't exist → 404 NoSuchBucket, NOT 400 InvalidBucketName.
+        // The proxy short-circuits to NoSuchBucket before any Azure call because
+        // no such container can exist (issue #237). Verified against live
+        // s3.us-east-1.amazonaws.com.
+        new S3ErrorCase(
+            "azure-illegal-bucket-name-is-nosuchbucket",
+            "s3:NoSuchBucket",
+            404,
+            "NoSuchBucket",
+            req => ConformanceSigV4Signer.SignHeader(
+                req, EmptyBody,
+                ConformanceProxyFixture.AccessKeyId,
+                ConformanceProxyFixture.Secret),
+            Path: "/conformance_invalid_bucket/key.txt"),
+
+        // Multipart lookup paths classify the destination bucket BEFORE decoding
+        // the uploadId, so the same path-style rules apply: a length-illegal
+        // bucket is 400 InvalidBucketName even with an uploadId present, rather
+        // than leaking a 404 NoSuchUpload (issue #237 review follow-up). A GET
+        // carrying ?uploadId routes to ListParts.
+        new S3ErrorCase(
+            "multipart-invalid-bucket-name",
+            "s3:InvalidBucketName",
+            400,
+            "InvalidBucketName",
+            req => ConformanceSigV4Signer.SignHeader(
+                req, EmptyBody,
+                ConformanceProxyFixture.AccessKeyId,
+                ConformanceProxyFixture.Secret),
+            Path: "/ab/key.txt?uploadId=nonexistent"),
+
+        // Same multipart lookup path, Azure-illegal (length-legal) bucket name:
+        // resolves to 404 NoSuchBucket before the uploadId is examined, not
+        // NoSuchUpload.
+        new S3ErrorCase(
+            "multipart-azure-illegal-bucket-name-is-nosuchbucket",
+            "s3:NoSuchBucket",
+            404,
+            "NoSuchBucket",
+            req => ConformanceSigV4Signer.SignHeader(
+                req, EmptyBody,
+                ConformanceProxyFixture.AccessKeyId,
+                ConformanceProxyFixture.Secret),
+            Path: "/conformance_invalid_bucket/key.txt?uploadId=nonexistent"),
     };
 }
