@@ -5,6 +5,7 @@ using Aws2Azure.Core;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
+using Aws2Azure.Core.SigV4;
 using Aws2Azure.Modules.Sqs.Errors;
 using Aws2Azure.Modules.Sqs.Internal;
 using Aws2Azure.Modules.Sqs.WireProtocol;
@@ -85,6 +86,26 @@ public sealed class SqsServiceModule : IServiceModule
         await SqsErrorResponse.WriteAsync(context, protocol, statusCode, code, message,
             statusCode >= 500 ? SqsErrorResponse.FaultType.Receiver : SqsErrorResponse.FaultType.Sender)
             .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// SQS speaks two wire protocols, and the SigV4 auth-error vocabulary
+    /// differs between them: the AWS-JSON path uses
+    /// <c>InvalidSignatureException</c>/<c>UnrecognizedClientException</c> at
+    /// HTTP 400, while the legacy Query path keeps the XML
+    /// <c>SignatureDoesNotMatch</c>/403 shape. The module-level
+    /// <see cref="ErrorFormat"/> can't capture this — it's per-request — so we
+    /// sniff the protocol the caller used and resolve the vocabulary for that
+    /// format before rendering. See issue #241.
+    /// </summary>
+    public ValueTask EmitSigV4FailureAsync(HttpContext context, SigV4ValidationStatus status, string reason)
+    {
+        var format = SqsWireProtocolParser.Sniff(context) == SqsWireProtocol.AwsJson
+            ? AwsErrorFormat.Json
+            : AwsErrorFormat.Xml;
+        var (statusCode, code) = AuthErrorVocabulary.Resolve(format, status);
+        return EmitAuthErrorAsync(context, statusCode, code,
+            string.IsNullOrEmpty(reason) ? code : reason);
     }
 
     public bool MatchesHost(string host)

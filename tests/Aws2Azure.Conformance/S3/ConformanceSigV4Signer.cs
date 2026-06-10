@@ -8,9 +8,14 @@ namespace Aws2Azure.Conformance.S3;
 /// <summary>
 /// Minimal SigV4 signer for crafting valid- and invalid-auth requests in the
 /// conformance error matrix. Mirrors the integration-test signer; test-only —
-/// the proxy never signs. Signing with a wrong secret yields
-/// SignatureDoesNotMatch; an unknown key yields InvalidAccessKeyId; an old
-/// timestamp yields RequestTimeTooSkewed.
+/// the proxy never signs. The resulting SigV4 failure is rendered in the
+/// caller's wire vocabulary by the module: REST-XML services (S3) answer with
+/// SignatureDoesNotMatch / InvalidAccessKeyId / RequestTimeTooSkewed at HTTP
+/// 403, while AWS-JSON services (DynamoDB, Kinesis) answer with
+/// InvalidSignatureException / UnrecognizedClientException at HTTP 400 (see
+/// issue #241). Signing with a wrong secret yields the invalid-signature case;
+/// an unknown key yields the unrecognized-client case; an old timestamp yields
+/// the clock-skew case.
 /// </summary>
 internal static class ConformanceSigV4Signer
 {

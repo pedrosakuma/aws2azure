@@ -26,6 +26,6 @@ public sealed class KinesisAuthTests
         {
             StreamName = KinesisEmulatorProxyFixture.StreamName,
         })).ConfigureAwait(false);
-        Assert.Contains(ex.ErrorCode, new[] { "MissingAuthenticationTokenException", "AccessDeniedException", "InvalidAccessKeyId" });
+        Assert.Contains(ex.ErrorCode, new[] { "MissingAuthenticationTokenException", "AccessDeniedException", "InvalidAccessKeyId", "UnrecognizedClientException" });
     }
 }

@@ -19,10 +19,14 @@ public sealed record DynamoDbErrorCase(
     int ExpectedStatus,
     string ExpectedCode,
     string Target,
-    string Body)
+    string Body,
+    string? AccessKeyOverride = null,
+    string? SecretOverride = null)
 {
     public HttpRequestMessage BuildRequest(string accessKey, string secret)
     {
+        var signKey = AccessKeyOverride ?? accessKey;
+        var signSecret = SecretOverride ?? secret;
         var bytes = Encoding.UTF8.GetBytes(Body);
         var request = new HttpRequestMessage(
             HttpMethod.Post, new Uri("http://dynamodb.us-east-1.amazonaws.com/"))
@@ -33,14 +37,16 @@ public sealed record DynamoDbErrorCase(
             new MediaTypeHeaderValue("application/x-amz-json-1.0");
         request.Headers.TryAddWithoutValidation("X-Amz-Target", Target);
 
-        // Sign with a valid key/secret and the dynamodb service so the request
-        // clears SigV4; the rejection we assert comes from the wire-protocol
-        // parser. X-Amz-Target is part of the signed-header set because the proxy
-        // (faithfully to real DynamoDB, where SDKs always sign it) enforces it
-        // via RequiredSignedHeaders — an unsigned target would be rejected with
-        // SignatureDoesNotMatch before the parser runs.
+        // Sign with the (possibly overridden) key/secret and the dynamodb
+        // service. Parser-stage cases sign with the fixture's valid key/secret
+        // so the request clears SigV4 and the rejection comes from the
+        // wire-protocol parser. Auth-stage cases deliberately sign with a wrong
+        // secret (→ InvalidSignature) or an unconfigured key (→ UnknownAccessKey)
+        // so the registry's SigV4 stage rejects first. X-Amz-Target is part of
+        // the signed-header set because the proxy (faithfully to real DynamoDB,
+        // where SDKs always sign it) enforces it via RequiredSignedHeaders.
         ConformanceSigV4Signer.SignHeader(
-            request, bytes, accessKey, secret, service: "dynamodb",
+            request, bytes, signKey, signSecret, service: "dynamodb",
             extraSignedHeaders: new[] { "x-amz-target" });
         return request;
     }
@@ -78,5 +84,36 @@ public static class DynamoDbErrorMatrix
             "SerializationException",
             Target: "DynamoDB_20120810.GetItem",
             Body: "this is not json"),
+
+        // SigV4 auth-stage rejections. Unlike S3 (REST-XML, 403 + S3 codes),
+        // AWS-JSON services answer SigV4 failures with HTTP 400 and the JSON
+        // exception vocabulary emitted by the shared AWS front door. These pin
+        // the issue #241 fix — the proxy previously mis-rendered the S3 codes at
+        // 403 for every module. Tier-1-only: LocalStack can't be the oracle for
+        // these (it ignores signatures), so the expected outcome is taken from
+        // the AWS JSON-protocol contract, not from a backend.
+
+        // A well-formed request signed with the WRONG secret: the proxy
+        // recomputes the signature from the configured secret, mismatches, and
+        // must answer InvalidSignatureException / 400.
+        new DynamoDbErrorCase(
+            "invalid-signature",
+            400,
+            "InvalidSignatureException",
+            Target: "DynamoDB_20120810.GetItem",
+            Body: "{\"TableName\":\"t\",\"Key\":{}}",
+            SecretOverride: "this-is-not-the-configured-secret-000000000"),
+
+        // A well-formed request signed with an access key the proxy doesn't
+        // know: the credential lookup fails before signature verification, and
+        // the faithful JSON answer is UnrecognizedClientException / 400.
+        new DynamoDbErrorCase(
+            "unrecognized-client",
+            400,
+            "UnrecognizedClientException",
+            Target: "DynamoDB_20120810.GetItem",
+            Body: "{\"TableName\":\"t\",\"Key\":{}}",
+            AccessKeyOverride: "AKIACONFORMANCEUNKNOWN",
+            SecretOverride: "any-secret-since-the-key-is-unknown-00000000"),
     };
 }

@@ -130,10 +130,15 @@ public sealed class ServiceModuleRegistry
                     }
                     if (!found)
                     {
-                        await module.EmitAuthErrorAsync(context,
-                            StatusCodes.Status403Forbidden,
-                            code: "SignatureDoesNotMatch",
-                            message: $"Required header '{name}' must be included in SignedHeaders.");
+                        // A required header missing from SignedHeaders is a
+                        // signature-coverage failure — surface it with the same
+                        // protocol-aware vocabulary as a signature mismatch
+                        // (S3: SignatureDoesNotMatch/403; AWS-JSON:
+                        // InvalidSignatureException/400) rather than hard-coding
+                        // the S3 shape for every module.
+                        await module.EmitSigV4FailureAsync(context,
+                            SigV4ValidationStatus.InvalidSignature,
+                            $"Required header '{name}' must be included in SignedHeaders.");
                         RecordEndMetrics(metricsCtx, context.Response.StatusCode, 0, translationStart, null);
                         return;
                     }
@@ -281,18 +286,7 @@ public sealed class ServiceModuleRegistry
     }
 
     private static ValueTask EmitAuthError(HttpContext context, IServiceModule module, SigV4ValidationResult result)
-    {
-        var (status, code) = result.Status switch
-        {
-            SigV4ValidationStatus.InvalidSignature   => (StatusCodes.Status403Forbidden,   "SignatureDoesNotMatch"),
-            SigV4ValidationStatus.UnknownAccessKey   => (StatusCodes.Status403Forbidden,   "InvalidAccessKeyId"),
-            SigV4ValidationStatus.Expired            => (StatusCodes.Status403Forbidden,   "AccessDenied"),
-            SigV4ValidationStatus.ClockSkewTooLarge  => (StatusCodes.Status403Forbidden,   "RequestTimeTooSkewed"),
-            _                                        => (StatusCodes.Status400BadRequest,  "InvalidRequest"),
-        };
-
-        return module.EmitAuthErrorAsync(context, status, code, result.Reason ?? code);
-    }
+        => module.EmitSigV4FailureAsync(context, result.Status, result.Reason ?? string.Empty);
     
     /// <summary>
     /// Extracts the operation name for metrics. Service-specific: DynamoDB/Kinesis
