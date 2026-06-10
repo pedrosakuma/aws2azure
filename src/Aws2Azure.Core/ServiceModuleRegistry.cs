@@ -147,6 +147,12 @@ public sealed class ServiceModuleRegistry
 
             // Surface the authenticated identity for downstream consumers.
             context.Items["aws2azure.accessKeyId"] = result.AccessKeyId;
+            // Surface the signed region so modules can reproduce region-sensitive
+            // AWS behaviors (e.g. S3 CreateBucket idempotency in us-east-1).
+            if (result.Region is not null)
+            {
+                context.Items["aws2azure.region"] = result.Region;
+            }
         }
 
         // Mark end of SigV4 phase. Set up timing context for backend calls.

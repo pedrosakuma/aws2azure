@@ -14,7 +14,7 @@ sub_features:
 behavior_differences:
   - "Bucket name == container name; Azure container naming is stricter than S3 (3–63 lowercase, digits, single hyphens, no leading/trailing hyphen)."
   - "Location response header is host-relative ('/{bucket}') since the proxy doesn't know its public hostname."
-  - "ContainerAlreadyExists maps to BucketAlreadyOwnedByYou; Azure does not expose 'owned by someone else' separately."
+  - "Region-sensitive idempotency is reproduced from the signed credential scope: in us-east-1 re-creating a bucket you already own returns 200 OK (idempotent), matching real S3; other regions return 409 BucketAlreadyOwnedByYou. Azure's ContainerAlreadyExists drives this; Azure does not expose 'owned by someone else' separately, so BucketAlreadyExists (foreign owner) cannot be distinguished and is always treated as owned-by-you."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateBucket.html
   - https://learn.microsoft.com/rest/api/storageservices/create-container
