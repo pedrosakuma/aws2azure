@@ -1,0 +1,25 @@
+<Project>
+
+  <!--
+    Local Directory.Build.props for the throwaway Cosmos transport spike (issue #265).
+
+    MSBuild stops at the FIRST Directory.Build.props found walking up the tree,
+    so this file fully SHADOWS the repository-root one. That is deliberate: the
+    spike references the official Microsoft.Azure.Cosmos SDK purely as a
+    measuring stick, and the SDK is neither Native-AOT-compatible nor clean
+    under TreatWarningsAsErrors. We must NOT let the root AOT/warnings-as-errors
+    settings leak in here, and we must NOT let the SDK dependency leak into the
+    production solution. This project is intentionally absent from aws2azure.slnx,
+    so `dotnet build` / CI never compile it.
+  -->
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <IsAotCompatible>false</IsAotCompatible>
+    <PublishAot>false</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+</Project>

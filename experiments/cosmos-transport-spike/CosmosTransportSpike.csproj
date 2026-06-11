@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Throwaway local experiment for issue #265: measure the latency / throughput
+    delta between Cosmos DB Direct (TCP/rntbd) mode and REST/Gateway mode, using
+    the official Azure Cosmos SDK as the ruler.
+
+    NOT part of aws2azure.slnx. NOT referenced by any production project. The
+    SDK dependency lives ONLY here and is never shipped (locked decision:
+    "no Azure SDK in production code"). Run it by hand against a real Cosmos
+    account; see README.md.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>CosmosTransportSpike</RootNamespace>
+    <AssemblyName>cosmos-transport-spike</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.45.0" />
+  </ItemGroup>
+
+</Project>
