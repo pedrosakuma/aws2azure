@@ -114,7 +114,20 @@ if (lanes.Contains("gateway"))
 // --- Lane 3: Raw REST (mirrors the proxy's production CosmosClient) ----------
 if (lanes.Contains("raw"))
 {
-    using var rawHttp = new HttpClient { BaseAddress = new Uri(endpoint!.TrimEnd('/') + "/") };
+    // Use the SAME SocketsHttpHandler config as the proxy's
+    // AzureHttpClient.BuildDefaultHandler so the transport is faithful to
+    // production (64-connection cap, HTTP/2 multiplexing, 2-min pooled
+    // lifetime) rather than the bare-HttpClient defaults. The breaker/retry/
+    // timing wrapper around it is omitted (negligible on the happy path).
+    using var rawHandler = new SocketsHttpHandler
+    {
+        PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1),
+        MaxConnectionsPerServer = 64,
+        AutomaticDecompression = System.Net.DecompressionMethods.None,
+        EnableMultipleHttp2Connections = true,
+    };
+    using var rawHttp = new HttpClient(rawHandler) { BaseAddress = new Uri(endpoint!.TrimEnd('/') + "/") };
     var raw = new RawRestReader(rawHttp, dbName, containerName, key!);
     results.Add(await RunRawPointReadAsync("Raw REST", raw, ids, iterations));
     results.Add(await RunRawThroughputAsync("Raw REST", raw, ids, concurrency, durationSec));

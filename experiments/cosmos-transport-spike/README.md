@@ -23,11 +23,19 @@ Three lanes, same account / container / dataset:
 |------|-----------|---------|
 | **SDK Direct**  | `ConnectionMode.Direct` (TCP/rntbd) | the ceiling Direct could buy |
 | **SDK Gateway** | `ConnectionMode.Gateway` (HTTPS REST) | apples-to-apples REST via same SDK |
-| **Raw REST**    | `HttpClient` + master-key HMAC | mirrors the proxy's production `CosmosClient` |
+| **Raw REST**    | `HttpClient` + master-key HMAC, using the **same `SocketsHttpHandler` config as the proxy's `AzureHttpClient.BuildDefaultHandler`** (64-conn cap, HTTP/2 multiplexing, 2-min pooled lifetime) | faithfully mirrors the proxy's production Cosmos transport |
 
 `SDK Direct` vs `SDK Gateway` isolates **only** the transport (identical
 serializer, auth, client overhead) → the honest Direct-vs-REST delta. `Raw REST`
-confirms our hand-rolled production path tracks the SDK gateway lane.
+mirrors the proxy's production Cosmos transport: it reuses the exact
+`SocketsHttpHandler` tuning from `AzureHttpClient.BuildDefaultHandler`
+(`MaxConnectionsPerServer=64`, `EnableMultipleHttp2Connections`,
+`PooledConnectionLifetime=2min`) so its numbers reflect the proxy's
+**Cosmos-side** call. It measures only the Cosmos round-trip — it does **not**
+include the proxy's per-request SigV4 validation, payload parse, table-metadata
+lookup, Cosmos→DynamoDB response translation, Kestrel pipeline, or the app→proxy
+hop. Those are orthogonal to Direct-vs-Gateway and are measured separately by
+`tests/Aws2Azure.PerfTests`.
 
 Operations: sequential point-read latency (p50/p95/p99), single-partition query
 latency (SDK lanes), and concurrent point-read throughput (ops/sec + p99 under
