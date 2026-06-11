@@ -17,13 +17,14 @@ The proxy's DynamoDB→Cosmos module talks to Cosmos in **Gateway/REST mode only
 we can decide — with data, not vibes — whether a Direct/rntbd implementation
 would be worth the (large, ongoing) cost.
 
-Three lanes, same account / container / dataset:
+Four lanes, same account / container / dataset:
 
 | Lane | Transport | Purpose |
 |------|-----------|---------|
 | **SDK Direct**  | `ConnectionMode.Direct` (TCP/rntbd) | the ceiling Direct could buy |
 | **SDK Gateway** | `ConnectionMode.Gateway` (HTTPS REST) | apples-to-apples REST via same SDK |
 | **Raw REST**    | `HttpClient` + master-key HMAC, using the **same `SocketsHttpHandler` config as the proxy's `AzureHttpClient.BuildDefaultHandler`** (2-min pooled lifetime, HTTP/2 multiplexing) with `MaxConnectionsPerServer` pinned to the shared `SPIKE_CONN_LIMIT` | faithfully mirrors the proxy's production Cosmos transport |
+| **Raw bin**     | identical to **Raw REST** but adds the `x-ms-cosmos-supported-serialization-formats: CosmosBinary` request header so the gateway returns the **binary document body** | quantifies the bytes-on-wire / latency effect of the binary-body lever (the *one* binary-transport idea that survives the AOT + no-Azure-SDK constraints, because it negotiates over plain REST and its format is open source) |
 
 `SDK Direct` vs `SDK Gateway` isolates **only** the transport (identical
 serializer, auth, client overhead) → the honest Direct-vs-REST delta. `Raw REST`
@@ -85,8 +86,24 @@ dotnet run -c Release --project experiments/cosmos-transport-spike
 | `SPIKE_CONN_LIMIT` | `max(64, concurrency)` | shared connection cap: gateway `GatewayModeMaxConnectionLimit` + raw `MaxConnectionsPerServer`. Lower it to study the cap effect |
 | `SPIKE_RAW_HTTP_VERSION` | `1.1` | HTTP version the raw lane requests (production default is `1.1`; try `2.0`) |
 | `SPIKE_PAYLOAD_BYTES` | `256` | per-item payload size |
-| `SPIKE_LANES` | `direct,gateway,raw` | comma-separated subset of lanes to run (e.g. `gateway,raw` to skip Direct) |
+| `SPIKE_LANES` | `direct,gateway,raw,raw-binary` | comma-separated subset of lanes to run (e.g. `raw,raw-binary` for the binary-body comparison only) |
+| `SPIKE_RAW_API_VERSION` | `2018-12-31` | `x-ms-version` the Raw REST (text) lane sends |
+| `SPIKE_BINARY_API_VERSION` | = `SPIKE_RAW_API_VERSION` | `x-ms-version` the Raw bin lane sends. Bump it (e.g. `2020-07-15`) if the wire-size probe reports the server returned TEXT instead of binary |
+| `SPIKE_VERIFY_DECODE` | `1` | when the Raw bin lane is enabled, decode the binary body with the from-scratch `CosmosBinaryDecoder` and assert it round-trips to the same JSON as the text body. Set `0` to skip |
 | `SPIKE_PREFERRED_REGION` | account default | `ApplicationPreferredRegions[0]` for the SDK lanes |
+
+### The binary-body lever (`Raw bin`)
+
+Before the measured runs, the spike does a **one-off wire-size probe**: it reads
+one document on both the text and binary raw lanes, prints the body sizes + the
+binary/text ratio, and (when `SPIKE_VERIFY_DECODE=1`) decodes the binary body
+with `CosmosBinaryDecoder` — a **from-scratch** port of the Cosmos binary-JSON
+format (`JsonBinaryEncoding.*` in `azure-cosmos-dotnet-v3`, MIT) — and
+semantically diffs it against the text body. A `PASS` proves the binary format
+is decodable from the open-source spec **without** the closed rntbd protocol,
+which is the decisive difference from a Direct-mode implementation: this lever
+rides the same Gateway/REST transport the proxy already uses and stays
+AOT-compatible.
 
 The container is left in place between runs (seeding is idempotent upserts).
 Delete `COSMOS_DB` manually when done.

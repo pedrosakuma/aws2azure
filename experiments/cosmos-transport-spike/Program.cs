@@ -65,7 +65,10 @@ var connLimit = EnvInt("SPIKE_CONN_LIMIT", Math.Max(64, concurrency));
 var rawHttpVersion = Env("SPIKE_RAW_HTTP_VERSION", "1.1");
 var preferredRegion = Environment.GetEnvironmentVariable("SPIKE_PREFERRED_REGION");
 var payloadBytes = EnvInt("SPIKE_PAYLOAD_BYTES", 256);
-var lanes = Env("SPIKE_LANES", "direct,gateway,raw")
+var rawApiVersion = Env("SPIKE_RAW_API_VERSION", "2018-12-31");
+var binaryApiVersion = Env("SPIKE_BINARY_API_VERSION", rawApiVersion);
+var verifyDecode = Env("SPIKE_VERIFY_DECODE", "1") != "0";
+var lanes = Env("SPIKE_LANES", "direct,gateway,raw,raw-binary")
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
     .Select(s => s.ToLowerInvariant())
     .ToHashSet();
@@ -80,6 +83,7 @@ Console.WriteLine($"""
       throughput run  : {concurrency} workers x {durationSec}s x {tputReps} rep(s) / lane
       conn limit      : {connLimit} (gateway GatewayModeMaxConnectionLimit + raw MaxConnectionsPerServer)
       raw http version: {rawHttpVersion}
+      raw api-version : {rawApiVersion}  (binary lane: {binaryApiVersion})
       lanes           : {string.Join(", ", lanes)}
       preferred region: {preferredRegion ?? "(account default)"}
     """);
@@ -133,11 +137,15 @@ if (lanes.Contains("gateway"))
     throughputLanes.Add(("SDK Gateway", SdkRead(c)));
 }
 
-if (lanes.Contains("raw"))
+RawRestReader? rawTextReader = null;
+RawRestReader? rawBinaryReader = null;
+if (lanes.Contains("raw") || lanes.Contains("raw-binary"))
 {
     // SAME SocketsHttpHandler config as the proxy's AzureHttpClient.BuildDefaultHandler,
     // with MaxConnectionsPerServer pinned to the shared SPIKE_CONN_LIMIT so the raw and
-    // SDK-gateway HTTP lanes are compared at identical connection parametrization.
+    // SDK-gateway HTTP lanes are compared at identical connection parametrization. Both
+    // the text and binary raw lanes share this client so they differ ONLY by the
+    // x-ms-cosmos-supported-serialization-formats header.
     var rawHandler = new SocketsHttpHandler
     {
         PooledConnectionLifetime = TimeSpan.FromMinutes(2),
@@ -149,10 +157,74 @@ if (lanes.Contains("raw"))
     var rawHttp = new HttpClient(rawHandler) { BaseAddress = new Uri(endpoint!.TrimEnd('/') + "/") };
     disposables.Add(rawHttp);
     disposables.Add(rawHandler);
-    var reader = new RawRestReader(rawHttp, dbName, containerName, key!, Version.Parse(rawHttpVersion));
-    ReadDelegate rawRead = (id, pk, ct) => reader.ReadAsync(id, pk, ct);
-    pointReadLanes.Add(("Raw REST", rawRead));
-    throughputLanes.Add(("Raw REST", rawRead));
+    var ver = Version.Parse(rawHttpVersion);
+
+    if (lanes.Contains("raw"))
+    {
+        rawTextReader = new RawRestReader(rawHttp, dbName, containerName, key!, ver, rawApiVersion);
+        ReadDelegate rawRead = (id, pk, ct) => rawTextReader.ReadAsync(id, pk, ct);
+        pointReadLanes.Add(("Raw REST", rawRead));
+        throughputLanes.Add(("Raw REST", rawRead));
+    }
+
+    if (lanes.Contains("raw-binary"))
+    {
+        rawBinaryReader = new RawRestReader(
+            rawHttp, dbName, containerName, key!, ver, binaryApiVersion, serializationFormat: "CosmosBinary");
+        ReadDelegate rawBinRead = (id, pk, ct) => rawBinaryReader.ReadAsync(id, pk, ct);
+        pointReadLanes.Add(("Raw bin", rawBinRead));
+        throughputLanes.Add(("Raw bin", rawBinRead));
+    }
+}
+
+// --- Wire-size probe + binary-decode verification (one-off, not measured) ----
+if (rawTextReader is not null || rawBinaryReader is not null)
+{
+    Console.WriteLine();
+    Console.WriteLine("Wire-size probe (single point read of the same document):");
+    var (probeId, probePk) = ids[0];
+
+    byte[]? textBody = null;
+    if (rawTextReader is not null)
+    {
+        var (body, _, _) = await rawTextReader.ProbeAsync(probeId, probePk, default);
+        textBody = body;
+        Console.WriteLine($"  Raw REST  (text  ): {body.Length,6} B on the wire");
+    }
+
+    if (rawBinaryReader is not null)
+    {
+        var (body, _, wasBinary) = await rawBinaryReader.ProbeAsync(probeId, probePk, default);
+        var tag = wasBinary ? "binary" : "TEXT (server did not honour the header!)";
+        Console.WriteLine($"  Raw bin   ({tag}): {body.Length,6} B on the wire");
+        if (textBody is not null && body.Length > 0)
+        {
+            var ratio = 100.0 * body.Length / textBody.Length;
+            Console.WriteLine($"  -> binary body is {ratio:F1}% of the text body ({textBody.Length - body.Length:+0;-0} B)");
+        }
+
+        if (verifyDecode && wasBinary)
+        {
+            try
+            {
+                var decoded = CosmosBinaryDecoder.DecodeToJsonUtf8(body);
+                var ok = textBody is not null && JsonSemanticEquals(textBody, decoded);
+                Console.WriteLine(textBody is null
+                    ? $"  -> decoder produced {decoded.Length} B of JSON (no text body to diff against)"
+                    : $"  -> decode round-trip vs text body: {(ok ? "PASS (semantically identical)" : "FAIL (mismatch)")}");
+                if (!ok && textBody is not null)
+                {
+                    Console.WriteLine($"     text   : {Truncate(System.Text.Encoding.UTF8.GetString(textBody), 200)}");
+                    Console.WriteLine($"     decoded: {Truncate(System.Text.Encoding.UTF8.GetString(decoded), 200)}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  -> decode FAILED: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+    }
+    Console.WriteLine();
 }
 
 // --- Measure -----------------------------------------------------------------
@@ -250,6 +322,62 @@ static void Shuffle(int[] a, Random r)
     {
         var j = r.Next(i + 1);
         (a[i], a[j]) = (a[j], a[i]);
+    }
+}
+
+static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "...";
+
+// Structural JSON equality (ignores property order / number formatting) used to
+// prove the binary-decoded document matches the text-format document.
+static bool JsonSemanticEquals(byte[] a, byte[] b)
+{
+    using var da = System.Text.Json.JsonDocument.Parse(a);
+    using var db2 = System.Text.Json.JsonDocument.Parse(b);
+    return JsonElementEquals(da.RootElement, db2.RootElement);
+}
+
+static bool JsonElementEquals(System.Text.Json.JsonElement x, System.Text.Json.JsonElement y)
+{
+    if (x.ValueKind != y.ValueKind)
+    {
+        return false;
+    }
+    switch (x.ValueKind)
+    {
+        case System.Text.Json.JsonValueKind.Object:
+            var xc = 0;
+            foreach (var p in x.EnumerateObject())
+            {
+                xc++;
+                if (!y.TryGetProperty(p.Name, out var yv) || !JsonElementEquals(p.Value, yv))
+                {
+                    return false;
+                }
+            }
+            return xc == y.EnumerateObject().Count();
+        case System.Text.Json.JsonValueKind.Array:
+            if (x.GetArrayLength() != y.GetArrayLength())
+            {
+                return false;
+            }
+            using (var ex = x.EnumerateArray())
+            using (var ey = y.EnumerateArray())
+            {
+                while (ex.MoveNext() && ey.MoveNext())
+                {
+                    if (!JsonElementEquals(ex.Current, ey.Current))
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        case System.Text.Json.JsonValueKind.String:
+            return x.GetString() == y.GetString();
+        case System.Text.Json.JsonValueKind.Number:
+            return x.GetDouble() == y.GetDouble();
+        default:
+            return true; // true / false / null already matched by ValueKind
     }
 }
 
@@ -471,12 +599,24 @@ internal sealed record LaneResult(
 /// (production uses the framework default 1.1) so the negotiated protocol can be
 /// compared against the SDK gateway lane. Returns the RU charge.
 /// </summary>
-internal sealed class RawRestReader(HttpClient http, string db, string coll, string masterKey, Version httpVersion)
+internal sealed class RawRestReader(
+    HttpClient http, string db, string coll, string masterKey, Version httpVersion,
+    string apiVersion = "2018-12-31", string? serializationFormat = null)
 {
-    private const string ApiVersion = "2018-12-31";
     private readonly byte[] _keyBytes = Convert.FromBase64String(masterKey);
 
     public async Task<double> ReadAsync(string id, string pk, CancellationToken ct)
+    {
+        var (_, charge, _) = await SendAsync(id, pk, readBody: true, ct);
+        return charge;
+    }
+
+    /// <summary>One-off read that returns the full response body for wire-size /
+    /// decode verification (not on the measured hot path).</summary>
+    public async Task<(byte[] Body, double Charge, bool WasBinary)> ProbeAsync(string id, string pk, CancellationToken ct) =>
+        await SendAsync(id, pk, readBody: true, ct);
+
+    private async Task<(byte[] Body, double Charge, bool WasBinary)> SendAsync(string id, string pk, bool readBody, CancellationToken ct)
     {
         var resourceLink = $"dbs/{db}/colls/{coll}/docs/{id}";
 
@@ -492,8 +632,14 @@ internal sealed class RawRestReader(HttpClient http, string db, string coll, str
             };
             req.Headers.TryAddWithoutValidation("authorization", BuildAuth("get", "docs", resourceLink, date));
             req.Headers.TryAddWithoutValidation("x-ms-date", date);
-            req.Headers.TryAddWithoutValidation("x-ms-version", ApiVersion);
+            req.Headers.TryAddWithoutValidation("x-ms-version", apiVersion);
             req.Headers.TryAddWithoutValidation("x-ms-documentdb-partitionkey", $"[\"{pk}\"]");
+            if (serializationFormat is not null)
+            {
+                // Negotiate a binary document body. The gateway honours this on the
+                // REST path for point ops the same way the SDK does in Direct/Gateway.
+                req.Headers.TryAddWithoutValidation("x-ms-cosmos-supported-serialization-formats", serializationFormat);
+            }
 
             using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
             if (resp.StatusCode == System.Net.HttpStatusCode.TooManyRequests && attempt < 10)
@@ -504,9 +650,11 @@ internal sealed class RawRestReader(HttpClient http, string db, string coll, str
                 continue;
             }
             resp.EnsureSuccessStatusCode();
-            await resp.Content.ReadAsByteArrayAsync(ct);
-            return resp.Headers.TryGetValues("x-ms-request-charge", out var ru)
-                && double.TryParse(ru.FirstOrDefault(), out var charge) ? charge : 0;
+            var body = await resp.Content.ReadAsByteArrayAsync(ct);
+            var charge = resp.Headers.TryGetValues("x-ms-request-charge", out var ru)
+                && double.TryParse(ru.FirstOrDefault(), out var c) ? c : 0;
+            var wasBinary = body.Length > 0 && body[0] == 0x80;
+            return (body, charge, wasBinary);
         }
     }
 
