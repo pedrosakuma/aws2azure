@@ -227,12 +227,15 @@ the probe was unreachable):
 > ruler.
 
 The high-risk scenarios (`DynamoDb Scan/Query/Batch`, `SQS`/`SNS` publish,
-`S3` put/get) carry the memory fields wired to the harness but start at `0`.
-**Operator follow-up:** populate real ceilings from the first nightly perf
-run's observed numbers (`baseline-latest.md`), exactly like the throughput
-floors above — the values can't be set responsibly without measured data, and
-the numbers here are emulator-bound JIT-build figures (via `dotnet run`), not
-AOT.
+`S3` put/get) carry **generous catastrophe ceilings** seeded from the first
+CI perf run: `maxAllocBytesPerOp` ≈ 2.5–3× the observed per-op churn, plus a
+wide `maxPeakWorkingSetMb` of 400 (vs ~100–154 MB observed). They are sized
+to trip a genuine regression — a per-op allocation doubling, a lost buffer
+pool, a working-set leak — without flapping on run-to-run jitter. **Operator
+follow-up:** tighten these deliberately as more runs accumulate (same workflow
+as the throughput floors above); the numbers are emulator-bound JIT-build
+figures (the proxy runs via `dotnet run`, not AOT), so treat them as relative
+regression rulers, not absolute prod memory.
 
 
 
