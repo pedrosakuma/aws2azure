@@ -12,8 +12,12 @@ equivalent calls against **Azure REST APIs**. Apps using the official AWS SDK
 in any language point `endpoint_url` at the proxy and run against Azure with
 no code changes. Direction is AWS → Azure only.
 
-It is designed as a **reusable translation library for diverse deployment
-scenarios**, not a single fixed topology. Do **not** bake deployment
+It is meant to be **reusable across diverse deployment scenarios**, not tied to
+a single fixed topology. Note it is deliberately **not** an in-process,
+per-language library: doing that would mean building and maintaining bindings
+for every language. Instead it translates **over the wire** (the AWS SDK
+already speaks the wire protocol in every language), so a single sidecar serves
+any workload with zero per-language code. Do **not** bake deployment
 assumptions (e.g. proxy/backend co-location, a specific Azure region, who
 operates it). Questions like "is the proxy co-located with the backend?" have
 no single answer — the design response is **configurability + documentation**,
@@ -21,12 +25,22 @@ and any capability whose value depends on topology ships **opt-in** with the
 tradeoff documented per scenario (see e.g. #267 region-awareness, #268
 CosmosBinary).
 
+Because it sits in the request path, the expected deployment shape is a
+**sidecar alongside any workload**. That makes **resource efficiency a
+first-class premise, not an afterthought**: a large footprint (memory, CPU,
+startup time, image size) is a potential adoption blocker. Weigh every new
+dependency, cache, buffer, or background thread against the sidecar budget —
+small idle memory and fast cold start win over throughput-at-any-cost. This is
+the *why* behind the Native AOT / no-Azure-SDK / no-reflection-DI / pooled-buffer
+decisions below; uphold them with that intent.
+
 ## Locked decisions (do not relitigate without an issue)
 
 | Topic | Decision |
 |---|---|
 | Direction | AWS → Azure only |
-| Deployment model | **Translation library for diverse scenarios — no single assumed topology.** Never bake topology assumptions (co-location, region, operator). Topology-dependent behavior is opt-in + documented per scenario |
+| Deployment model | **Wire-protocol translator, sidecar-deployed — language-agnostic by design.** Deliberately *not* an in-process per-language library (avoids per-language bindings); translates over the wire. No single assumed topology; never bake topology assumptions (co-location, region, operator). Topology-dependent behavior is opt-in + documented per scenario |
+| Resource footprint | **Sidecar-first: efficiency is a premise, not an afterthought.** Small idle memory, fast cold start, small image. A large footprint is an adoption blocker — weigh every dependency / cache / buffer / background thread against the sidecar budget |
 | Runtime | **.NET, Native AOT** |
 | Process model | Single binary; services multiplexed by Host header / path |
 | Azure integration | **Direct REST calls — no Azure SDK** dependency |
