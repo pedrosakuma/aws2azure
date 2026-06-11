@@ -12,11 +12,21 @@ equivalent calls against **Azure REST APIs**. Apps using the official AWS SDK
 in any language point `endpoint_url` at the proxy and run against Azure with
 no code changes. Direction is AWS → Azure only.
 
+It is designed as a **reusable translation library for diverse deployment
+scenarios**, not a single fixed topology. Do **not** bake deployment
+assumptions (e.g. proxy/backend co-location, a specific Azure region, who
+operates it). Questions like "is the proxy co-located with the backend?" have
+no single answer — the design response is **configurability + documentation**,
+and any capability whose value depends on topology ships **opt-in** with the
+tradeoff documented per scenario (see e.g. #267 region-awareness, #268
+CosmosBinary).
+
 ## Locked decisions (do not relitigate without an issue)
 
 | Topic | Decision |
 |---|---|
 | Direction | AWS → Azure only |
+| Deployment model | **Translation library for diverse scenarios — no single assumed topology.** Never bake topology assumptions (co-location, region, operator). Topology-dependent behavior is opt-in + documented per scenario |
 | Runtime | **.NET, Native AOT** |
 | Process model | Single binary; services multiplexed by Host header / path |
 | Azure integration | **Direct REST calls — no Azure SDK** dependency |
