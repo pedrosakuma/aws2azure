@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
-using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Azure.Cosmos;
@@ -9,15 +8,27 @@ using Microsoft.Azure.Cosmos;
 // =============================================================================
 // Cosmos transport spike (issue #265)
 //
-// Measures the latency / throughput delta between:
+// Measures the latency / throughput delta between three point-read transports:
 //   1. SDK  Direct  (ConnectionMode.Direct  -> TCP/rntbd to the replica)
 //   2. SDK  Gateway (ConnectionMode.Gateway -> HTTPS REST to the gateway)
 //   3. Raw  REST    (HttpClient + master-key HMAC, mirroring the proxy's
 //                    hand-rolled Aws2Azure.Modules.DynamoDb CosmosClient)
 //
-// Lanes 1 vs 2 isolate exactly the transport (same SDK, serializer, auth) =>
-// the ceiling of what a Direct/rntbd implementation could buy us. Lane 3
-// confirms our production REST path tracks the SDK gateway lane.
+// Methodology (so we measure the *transport method*, not incidental client
+// defaults that happen to ship with each lane):
+//   * Connection parametrization is EQUALIZED across the HTTP lanes. The SDK
+//     gateway lane's GatewayModeMaxConnectionLimit (default 50!) and the raw
+//     lane's MaxConnectionsPerServer are both pinned to SPIKE_CONN_LIMIT
+//     (default max(64, concurrency)) so neither HTTP lane is artificially
+//     capped below the offered concurrency. Set SPIKE_CONN_LIMIT lower to
+//     deliberately study the connection-cap effect.
+//   * Latency is measured INTERLEAVED: every iteration hits all enabled lanes
+//     against the same document id in randomized lane order, so all lanes see
+//     the same network window sample-by-sample. This removes the cross-lane
+//     jitter that made the old run-one-lane-then-the-next metric noisy.
+//   * Each measurement runs SPIKE_REPS times; the table reports the aggregate
+//     percentiles plus the stddev of the per-rep p50 (latency) / per-rep ops/s
+//     (throughput) so the noise floor is explicit.
 //
 // This is a throwaway experiment. It is NOT in aws2azure.slnx and pulls in the
 // Azure SDK only as a measuring stick. Run it by hand; see README.md.
@@ -47,6 +58,11 @@ var seedCount = EnvInt("SPIKE_ITEMS", 500);
 var iterations = EnvInt("SPIKE_ITERATIONS", 1000);
 var concurrency = EnvInt("SPIKE_CONCURRENCY", 32);
 var durationSec = EnvInt("SPIKE_DURATION_SEC", 10);
+var warmup = EnvInt("SPIKE_WARMUP", 100);
+var reps = Math.Max(1, EnvInt("SPIKE_REPS", 3));
+var tputReps = Math.Max(1, EnvInt("SPIKE_TPUT_REPS", 1));
+var connLimit = EnvInt("SPIKE_CONN_LIMIT", Math.Max(64, concurrency));
+var rawHttpVersion = Env("SPIKE_RAW_HTTP_VERSION", "1.1");
 var preferredRegion = Environment.GetEnvironmentVariable("SPIKE_PREFERRED_REGION");
 var payloadBytes = EnvInt("SPIKE_PAYLOAD_BYTES", 256);
 var lanes = Env("SPIKE_LANES", "direct,gateway,raw")
@@ -60,8 +76,10 @@ Console.WriteLine($"""
       database        : {dbName}
       container       : {containerName} (partition key /pk, {ru} RU manual)
       seed items      : {seedCount}  (payload ~{payloadBytes} B)
-      latency run     : {iterations} sequential point reads / lane
-      throughput run  : {concurrency} workers x {durationSec}s / lane
+      latency run     : {iterations} interleaved point reads x {reps} rep(s) / lane (warmup {warmup})
+      throughput run  : {concurrency} workers x {durationSec}s x {tputReps} rep(s) / lane
+      conn limit      : {connLimit} (gateway GatewayModeMaxConnectionLimit + raw MaxConnectionsPerServer)
+      raw http version: {rawHttpVersion}
       lanes           : {string.Join(", ", lanes)}
       preferred region: {preferredRegion ?? "(account default)"}
     """);
@@ -89,66 +107,126 @@ using (var bootstrap = new CosmosClient(endpoint, key, new CosmosClientOptions
     Console.WriteLine("Seed complete.\n");
 }
 
-var results = new List<LaneResult>();
+// --- Build lane registries ---------------------------------------------------
+var disposables = new List<IDisposable>();
+var pointReadLanes = new List<(string Name, ReadDelegate Read)>();
+var queryLanes = new List<(string Name, ReadDelegate Read)>();
+var throughputLanes = new List<(string Name, ReadDelegate Read)>();
 
-// --- Lane 1: SDK Direct ------------------------------------------------------
 if (lanes.Contains("direct"))
 {
-    using var direct = MakeSdkClient(endpoint!, key!, ConnectionMode.Direct, preferredRegion);
-    var c = direct.GetContainer(dbName, containerName);
-    results.Add(await RunSdkPointReadAsync("SDK Direct", c, ids, iterations));
-    results.Add(await RunSdkQueryAsync("SDK Direct", c, ids, Math.Min(iterations, 500)));
-    results.Add(await RunSdkThroughputAsync("SDK Direct", c, ids, concurrency, durationSec));
+    var client = MakeSdkClient(endpoint!, key!, ConnectionMode.Direct, preferredRegion, connLimit);
+    disposables.Add(client);
+    var c = client.GetContainer(dbName, containerName);
+    pointReadLanes.Add(("SDK Direct", SdkRead(c)));
+    queryLanes.Add(("SDK Direct", SdkQuery(c)));
+    throughputLanes.Add(("SDK Direct", SdkRead(c)));
 }
 
-// --- Lane 2: SDK Gateway -----------------------------------------------------
 if (lanes.Contains("gateway"))
 {
-    using var gateway = MakeSdkClient(endpoint!, key!, ConnectionMode.Gateway, preferredRegion);
-    var c = gateway.GetContainer(dbName, containerName);
-    results.Add(await RunSdkPointReadAsync("SDK Gateway", c, ids, iterations));
-    results.Add(await RunSdkQueryAsync("SDK Gateway", c, ids, Math.Min(iterations, 500)));
-    results.Add(await RunSdkThroughputAsync("SDK Gateway", c, ids, concurrency, durationSec));
+    var client = MakeSdkClient(endpoint!, key!, ConnectionMode.Gateway, preferredRegion, connLimit);
+    disposables.Add(client);
+    var c = client.GetContainer(dbName, containerName);
+    pointReadLanes.Add(("SDK Gateway", SdkRead(c)));
+    queryLanes.Add(("SDK Gateway", SdkQuery(c)));
+    throughputLanes.Add(("SDK Gateway", SdkRead(c)));
 }
 
-// --- Lane 3: Raw REST (mirrors the proxy's production CosmosClient) ----------
 if (lanes.Contains("raw"))
 {
-    // Use the SAME SocketsHttpHandler config as the proxy's
-    // AzureHttpClient.BuildDefaultHandler so the transport is faithful to
-    // production (64-connection cap, HTTP/2 multiplexing, 2-min pooled
-    // lifetime) rather than the bare-HttpClient defaults. The breaker/retry/
-    // timing wrapper around it is omitted (negligible on the happy path).
-    using var rawHandler = new SocketsHttpHandler
+    // SAME SocketsHttpHandler config as the proxy's AzureHttpClient.BuildDefaultHandler,
+    // with MaxConnectionsPerServer pinned to the shared SPIKE_CONN_LIMIT so the raw and
+    // SDK-gateway HTTP lanes are compared at identical connection parametrization.
+    var rawHandler = new SocketsHttpHandler
     {
         PooledConnectionLifetime = TimeSpan.FromMinutes(2),
         PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1),
-        MaxConnectionsPerServer = 64,
+        MaxConnectionsPerServer = connLimit,
         AutomaticDecompression = System.Net.DecompressionMethods.None,
         EnableMultipleHttp2Connections = true,
     };
-    using var rawHttp = new HttpClient(rawHandler) { BaseAddress = new Uri(endpoint!.TrimEnd('/') + "/") };
-    var raw = new RawRestReader(rawHttp, dbName, containerName, key!);
-    results.Add(await RunRawPointReadAsync("Raw REST", raw, ids, iterations));
-    results.Add(await RunRawThroughputAsync("Raw REST", raw, ids, concurrency, durationSec));
+    var rawHttp = new HttpClient(rawHandler) { BaseAddress = new Uri(endpoint!.TrimEnd('/') + "/") };
+    disposables.Add(rawHttp);
+    disposables.Add(rawHandler);
+    var reader = new RawRestReader(rawHttp, dbName, containerName, key!, Version.Parse(rawHttpVersion));
+    ReadDelegate rawRead = (id, pk, ct) => reader.ReadAsync(id, pk, ct);
+    pointReadLanes.Add(("Raw REST", rawRead));
+    throughputLanes.Add(("Raw REST", rawRead));
+}
+
+// --- Measure -----------------------------------------------------------------
+var results = new List<LaneResult>();
+try
+{
+    if (pointReadLanes.Count > 0)
+    {
+        results.AddRange(await RunInterleavedLatencyAsync(
+            "point-read (seq)", pointReadLanes, ids, iterations, warmup, reps));
+    }
+    if (queryLanes.Count > 0)
+    {
+        results.AddRange(await RunInterleavedLatencyAsync(
+            "query 1-partition (seq)", queryLanes, ids, Math.Min(iterations, 500), warmup, reps));
+    }
+    foreach (var lane in throughputLanes)
+    {
+        results.Add(await RunThroughputAsync(lane.Name, lane.Read, ids, concurrency, durationSec, tputReps, warmup));
+    }
+}
+finally
+{
+    foreach (var d in disposables)
+    {
+        d.Dispose();
+    }
 }
 
 // --- Report ------------------------------------------------------------------
 PrintTable(results);
-PrintDirectVsGateway(results);
+PrintDeltasVsGateway(results);
 return 0;
 
 // ============================ helpers ========================================
 
-static CosmosClient MakeSdkClient(string endpoint, string key, ConnectionMode mode, string? region)
+static CosmosClient MakeSdkClient(string endpoint, string key, ConnectionMode mode, string? region, int gatewayConnLimit)
 {
     var opts = new CosmosClientOptions { ConnectionMode = mode };
+    if (mode == ConnectionMode.Gateway)
+    {
+        // Default is 50; raise it so the gateway lane is not capped below the
+        // offered concurrency. This is the knob that otherwise makes "gateway"
+        // look slow and conflates client config with the transport method.
+        opts.GatewayModeMaxConnectionLimit = gatewayConnLimit;
+    }
     if (!string.IsNullOrWhiteSpace(region))
     {
         opts.ApplicationPreferredRegions = new List<string> { region };
     }
     return new CosmosClient(endpoint, key, opts);
 }
+
+static ReadDelegate SdkRead(Container c) => async (id, pk, ct) =>
+{
+    var resp = await c.ReadItemAsync<SpikeItem>(id, new PartitionKey(pk), cancellationToken: ct);
+    return resp.RequestCharge;
+};
+
+static ReadDelegate SdkQuery(Container c) => async (id, pk, ct) =>
+{
+    var q = new QueryDefinition("SELECT * FROM c WHERE c.pk = @pk").WithParameter("@pk", pk);
+    double ruTotal = 0;
+    using var it = c.GetItemQueryIterator<SpikeItem>(q, requestOptions: new QueryRequestOptions
+    {
+        PartitionKey = new PartitionKey(pk),
+    });
+    while (it.HasMoreResults)
+    {
+        var page = await it.ReadNextAsync(ct);
+        ruTotal += page.RequestCharge;
+    }
+    return ruTotal;
+};
 
 static async Task UpsertWithRetryAsync(Container c, SpikeItem item)
 {
@@ -166,183 +244,190 @@ static async Task UpsertWithRetryAsync(Container c, SpikeItem item)
     }
 }
 
-static async Task<LaneResult> RunSdkPointReadAsync(string lane, Container c, List<(string id, string pk)> ids, int iterations)
+static void Shuffle(int[] a, Random r)
 {
-    var rng = new Random(1);
-    // warmup
-    for (var i = 0; i < Math.Min(50, ids.Count); i++)
+    for (var i = a.Length - 1; i > 0; i--)
     {
-        var (id, pk) = ids[rng.Next(ids.Count)];
-        await c.ReadItemAsync<SpikeItem>(id, new PartitionKey(pk));
+        var j = r.Next(i + 1);
+        (a[i], a[j]) = (a[j], a[i]);
     }
-
-    var lat = new double[iterations];
-    double ruTotal = 0;
-    var sw = new Stopwatch();
-    for (var i = 0; i < iterations; i++)
-    {
-        var (id, pk) = ids[rng.Next(ids.Count)];
-        sw.Restart();
-        var resp = await c.ReadItemAsync<SpikeItem>(id, new PartitionKey(pk));
-        sw.Stop();
-        lat[i] = sw.Elapsed.TotalMilliseconds;
-        ruTotal += resp.RequestCharge;
-    }
-    return LaneResult.FromLatencies(lane, "point-read (seq)", lat, ruTotal / iterations);
 }
 
-static async Task<LaneResult> RunSdkQueryAsync(string lane, Container c, List<(string id, string pk)> ids, int iterations)
+static double StdDev(IReadOnlyList<double> v)
 {
-    var rng = new Random(2);
-    var lat = new double[iterations];
-    double ruTotal = 0;
-    var sw = new Stopwatch();
-    for (var i = 0; i < iterations; i++)
+    if (v.Count < 2)
     {
-        var (_, pk) = ids[rng.Next(ids.Count)];
-        var q = new QueryDefinition("SELECT * FROM c WHERE c.pk = @pk").WithParameter("@pk", pk);
-        sw.Restart();
-        using var it = c.GetItemQueryIterator<SpikeItem>(q, requestOptions: new QueryRequestOptions
+        return 0;
+    }
+    var mean = v.Average();
+    var sumSq = 0.0;
+    foreach (var x in v)
+    {
+        var d = x - mean;
+        sumSq += d * d;
+    }
+    return Math.Sqrt(sumSq / (v.Count - 1));
+}
+
+static async Task<List<LaneResult>> RunInterleavedLatencyAsync(
+    string operation,
+    List<(string Name, ReadDelegate Read)> lanes,
+    List<(string id, string pk)> ids,
+    int iterations, int warmup, int reps)
+{
+    var agg = lanes.ToDictionary(l => l.Name, _ => new List<double>(reps * iterations));
+    var ruSum = lanes.ToDictionary(l => l.Name, _ => 0.0);
+    var ruCount = lanes.ToDictionary(l => l.Name, _ => 0L);
+    var p50PerRep = lanes.ToDictionary(l => l.Name, _ => new List<double>(reps));
+
+    for (var rep = 0; rep < reps; rep++)
+    {
+        var wrng = new Random(500 + rep);
+        foreach (var lane in lanes)
         {
-            PartitionKey = new PartitionKey(pk),
-        });
-        while (it.HasMoreResults)
-        {
-            var page = await it.ReadNextAsync();
-            ruTotal += page.RequestCharge;
+            for (var w = 0; w < warmup; w++)
+            {
+                var (id, pk) = ids[wrng.Next(ids.Count)];
+                await lane.Read(id, pk, default);
+            }
         }
-        sw.Stop();
-        lat[i] = sw.Elapsed.TotalMilliseconds;
-    }
-    return LaneResult.FromLatencies(lane, "query 1-partition (seq)", lat, ruTotal / iterations);
-}
 
-static async Task<LaneResult> RunSdkThroughputAsync(string lane, Container c, List<(string id, string pk)> ids, int concurrency, int durationSec)
-{
-    var deadline = Stopwatch.GetTimestamp() + (long)(durationSec * Stopwatch.Frequency);
-    long ops = 0;
-    var perWorker = new ConcurrentBag<double>();
-    var workers = new Task[concurrency];
-    var runStart = Stopwatch.GetTimestamp();
-    for (var w = 0; w < concurrency; w++)
-    {
-        var seed = w + 100;
-        workers[w] = Task.Run(async () =>
+        var repLat = lanes.ToDictionary(l => l.Name, _ => new double[iterations]);
+        var rng = new Random(1000 + rep);
+        var order = Enumerable.Range(0, lanes.Count).ToArray();
+        var sw = new Stopwatch();
+        for (var i = 0; i < iterations; i++)
         {
-            var rng = new Random(seed);
-            var sw = new Stopwatch();
-            while (Stopwatch.GetTimestamp() < deadline)
+            var (id, pk) = ids[rng.Next(ids.Count)];
+            Shuffle(order, rng);
+            foreach (var idx in order)
             {
-                var (id, pk) = ids[rng.Next(ids.Count)];
+                var lane = lanes[idx];
                 sw.Restart();
-                await c.ReadItemAsync<SpikeItem>(id, new PartitionKey(pk));
+                var charge = await lane.Read(id, pk, default);
                 sw.Stop();
-                perWorker.Add(sw.Elapsed.TotalMilliseconds);
-                Interlocked.Increment(ref ops);
+                repLat[lane.Name][i] = sw.Elapsed.TotalMilliseconds;
+                ruSum[lane.Name] += charge;
+                ruCount[lane.Name]++;
             }
-        });
-    }
-    await Task.WhenAll(workers);
-    // Divide by ACTUAL elapsed, not the nominal window: the last in-flight op
-    // per worker overshoots the deadline, and slower lanes overshoot more, so
-    // dividing by durationSec would inflate (and unfairly favour) slow lanes.
-    var elapsedSec = Stopwatch.GetElapsedTime(runStart).TotalSeconds;
-    var lat = perWorker.ToArray();
-    return LaneResult.FromThroughput(lane, $"point-read ({concurrency}x)", lat, ops / elapsedSec);
-}
+        }
 
-static async Task<LaneResult> RunRawPointReadAsync(string lane, RawRestReader raw, List<(string id, string pk)> ids, int iterations)
-{
-    var rng = new Random(3);
-    for (var i = 0; i < Math.Min(50, ids.Count); i++)
-    {
-        var (id, pk) = ids[rng.Next(ids.Count)];
-        await raw.ReadAsync(id, pk, default);
-    }
-
-    var lat = new double[iterations];
-    double ruTotal = 0;
-    var sw = new Stopwatch();
-    for (var i = 0; i < iterations; i++)
-    {
-        var (id, pk) = ids[rng.Next(ids.Count)];
-        sw.Restart();
-        var ruCharge = await raw.ReadAsync(id, pk, default);
-        sw.Stop();
-        lat[i] = sw.Elapsed.TotalMilliseconds;
-        ruTotal += ruCharge;
-    }
-    return LaneResult.FromLatencies(lane, "point-read (seq)", lat, ruTotal / iterations);
-}
-
-static async Task<LaneResult> RunRawThroughputAsync(string lane, RawRestReader raw, List<(string id, string pk)> ids, int concurrency, int durationSec)
-{
-    var deadline = Stopwatch.GetTimestamp() + (long)(durationSec * Stopwatch.Frequency);
-    long ops = 0;
-    var perWorker = new ConcurrentBag<double>();
-    var workers = new Task[concurrency];
-    var runStart = Stopwatch.GetTimestamp();
-    for (var w = 0; w < concurrency; w++)
-    {
-        var seed = w + 200;
-        workers[w] = Task.Run(async () =>
+        foreach (var lane in lanes)
         {
-            var rng = new Random(seed);
-            var sw = new Stopwatch();
-            while (Stopwatch.GetTimestamp() < deadline)
-            {
-                var (id, pk) = ids[rng.Next(ids.Count)];
-                sw.Restart();
-                await raw.ReadAsync(id, pk, default);
-                sw.Stop();
-                perWorker.Add(sw.Elapsed.TotalMilliseconds);
-                Interlocked.Increment(ref ops);
-            }
-        });
+            agg[lane.Name].AddRange(repLat[lane.Name]);
+            p50PerRep[lane.Name].Add(LaneResult.Percentile(repLat[lane.Name], 50));
+        }
     }
-    await Task.WhenAll(workers);
-    var elapsedSec = Stopwatch.GetElapsedTime(runStart).TotalSeconds;
-    var lat = perWorker.ToArray();
-    return LaneResult.FromThroughput(lane, $"point-read ({concurrency}x)", lat, ops / elapsedSec);
+
+    var results = new List<LaneResult>();
+    foreach (var lane in lanes)
+    {
+        var arr = agg[lane.Name].ToArray();
+        var avgRu = ruCount[lane.Name] > 0 ? ruSum[lane.Name] / ruCount[lane.Name] : 0;
+        results.Add(LaneResult.FromLatencies(lane.Name, operation, arr, avgRu, reps, StdDev(p50PerRep[lane.Name])));
+    }
+    return results;
+}
+
+static async Task<LaneResult> RunThroughputAsync(
+    string lane, ReadDelegate read, List<(string id, string pk)> ids,
+    int concurrency, int durationSec, int reps, int warmup)
+{
+    // brief warmup (open connections / JIT) before the first measured rep
+    {
+        var wrng = new Random(700);
+        for (var w = 0; w < warmup; w++)
+        {
+            var (id, pk) = ids[wrng.Next(ids.Count)];
+            await read(id, pk, default);
+        }
+    }
+
+    var perSecReps = new List<double>(reps);
+    double[] lastLat = Array.Empty<double>();
+    for (var rep = 0; rep < reps; rep++)
+    {
+        var deadline = Stopwatch.GetTimestamp() + (long)(durationSec * Stopwatch.Frequency);
+        long ops = 0;
+        var perWorker = new ConcurrentBag<double>();
+        var workers = new Task[concurrency];
+        var runStart = Stopwatch.GetTimestamp();
+        for (var w = 0; w < concurrency; w++)
+        {
+            var seed = w + 100 + rep * 1000;
+            workers[w] = Task.Run(async () =>
+            {
+                var rng = new Random(seed);
+                var sw = new Stopwatch();
+                while (Stopwatch.GetTimestamp() < deadline)
+                {
+                    var (id, pk) = ids[rng.Next(ids.Count)];
+                    sw.Restart();
+                    await read(id, pk, default);
+                    sw.Stop();
+                    perWorker.Add(sw.Elapsed.TotalMilliseconds);
+                    Interlocked.Increment(ref ops);
+                }
+            });
+        }
+        await Task.WhenAll(workers);
+        // Divide by ACTUAL elapsed, not the nominal window: the last in-flight op
+        // per worker overshoots the deadline, and slower lanes overshoot more, so
+        // dividing by durationSec would inflate (and unfairly favour) slow lanes.
+        var elapsedSec = Stopwatch.GetElapsedTime(runStart).TotalSeconds;
+        perSecReps.Add(ops / elapsedSec);
+        lastLat = perWorker.ToArray();
+    }
+
+    return LaneResult.FromThroughput(
+        lane, $"point-read ({concurrency}x)", lastLat, perSecReps.Average(), reps, StdDev(perSecReps));
 }
 
 static void PrintTable(List<LaneResult> results)
 {
     Console.WriteLine();
-    Console.WriteLine("{0,-12} {1,-26} {2,8} {3,8} {4,8} {5,8} {6,10} {7,8}",
-        "lane", "operation", "p50ms", "p95ms", "p99ms", "avgms", "ops/sec", "avgRU");
-    Console.WriteLine(new string('-', 96));
+    Console.WriteLine("{0,-12} {1,-26} {2,8} {3,8} {4,8} {5,8} {6,12} {7,8} {8,5} {9,11}",
+        "lane", "operation", "p50ms", "p95ms", "p99ms", "avgms", "ops/sec", "avgRU", "reps", "stddev");
+    Console.WriteLine(new string('-', 118));
     foreach (var r in results)
     {
-        Console.WriteLine("{0,-12} {1,-26} {2,8:F2} {3,8:F2} {4,8:F2} {5,8:F2} {6,10} {7,8}",
+        var stddev = r.ThroughputPerSec is not null
+            ? (r.ThroughputStdDev is { } ts ? ts.ToString("F0") + " op/s" : "-")
+            : (r.P50StdDev is { } ps ? ps.ToString("F2") + " ms" : "-");
+        Console.WriteLine("{0,-12} {1,-26} {2,8:F2} {3,8:F2} {4,8:F2} {5,8:F2} {6,12} {7,8} {8,5} {9,11}",
             r.Lane, r.Operation, r.P50, r.P95, r.P99, r.Avg,
             r.ThroughputPerSec is { } t ? t.ToString("F0") : "-",
-            r.AvgRu is { } ru ? ru.ToString("F2") : "-");
+            r.AvgRu is { } ru ? ru.ToString("F2") : "-",
+            r.Reps, stddev);
     }
 }
 
-static void PrintDirectVsGateway(List<LaneResult> results)
+static void PrintDeltasVsGateway(List<LaneResult> results)
 {
     Console.WriteLine();
-    Console.WriteLine("Direct vs Gateway delta (negative p99 / positive throughput = Direct wins):");
+    Console.WriteLine("Deltas vs SDK Gateway baseline (negative p-latency / positive throughput = faster than gateway):");
     foreach (var op in results.Select(r => r.Operation).Distinct())
     {
-        var d = results.FirstOrDefault(r => r.Lane == "SDK Direct" && r.Operation == op);
         var g = results.FirstOrDefault(r => r.Lane == "SDK Gateway" && r.Operation == op);
-        if (d is null || g is null)
+        if (g is null)
         {
             continue;
         }
-        var p99Delta = g.P99 > 0 ? (d.P99 - g.P99) / g.P99 * 100 : 0;
-        var p50Delta = g.P50 > 0 ? (d.P50 - g.P50) / g.P50 * 100 : 0;
-        var tput = (d.ThroughputPerSec is { } dt && g.ThroughputPerSec is { } gt && gt > 0)
-            ? $", throughput {(dt - gt) / gt * 100:+0.0;-0.0}%"
-            : "";
-        Console.WriteLine($"  {op,-26} p50 {p50Delta,+6:F1}%  p99 {p99Delta,+6:F1}%{tput}");
+        foreach (var other in results.Where(r => r.Operation == op && r.Lane != "SDK Gateway"))
+        {
+            var p50Delta = g.P50 > 0 ? (other.P50 - g.P50) / g.P50 * 100 : 0;
+            var p99Delta = g.P99 > 0 ? (other.P99 - g.P99) / g.P99 * 100 : 0;
+            var tput = (other.ThroughputPerSec is { } ot && g.ThroughputPerSec is { } gt && gt > 0)
+                ? $", throughput {(ot - gt) / gt * 100:+0.0;-0.0}%"
+                : "";
+            Console.WriteLine($"  {other.Lane,-12} {op,-26} p50 {p50Delta,+6:F1}%  p99 {p99Delta,+6:F1}%{tput}");
+        }
     }
 }
 
 // ============================ types ==========================================
+
+internal delegate Task<double> ReadDelegate(string id, string pk, CancellationToken ct);
 
 // Lowercase members so the default (Newtonsoft) Cosmos serializer emits "id"
 // (required by Cosmos) / "pk" / "payload" without attribute plumbing.
@@ -355,17 +440,17 @@ internal sealed class SpikeItem
 
 internal sealed record LaneResult(
     string Lane, string Operation, double P50, double P95, double P99, double Avg,
-    double? ThroughputPerSec, double? AvgRu)
+    double? ThroughputPerSec, double? AvgRu, int Reps, double? P50StdDev, double? ThroughputStdDev)
 {
-    public static LaneResult FromLatencies(string lane, string op, double[] lat, double avgRu) =>
-        new(lane, op, Pct(lat, 50), Pct(lat, 95), Pct(lat, 99), Mean(lat), null, avgRu);
+    public static LaneResult FromLatencies(string lane, string op, double[] lat, double avgRu, int reps, double p50StdDev) =>
+        new(lane, op, Percentile(lat, 50), Percentile(lat, 95), Percentile(lat, 99), Mean(lat), null, avgRu, reps, p50StdDev, null);
 
-    public static LaneResult FromThroughput(string lane, string op, double[] lat, double perSec) =>
-        new(lane, op, Pct(lat, 50), Pct(lat, 95), Pct(lat, 99), Mean(lat), perSec, null);
+    public static LaneResult FromThroughput(string lane, string op, double[] lat, double perSec, int reps, double tputStdDev) =>
+        new(lane, op, Percentile(lat, 50), Percentile(lat, 95), Percentile(lat, 99), Mean(lat), perSec, null, reps, null, tputStdDev);
 
     private static double Mean(double[] v) => v.Length == 0 ? 0 : v.Average();
 
-    private static double Pct(double[] v, double p)
+    public static double Percentile(double[] v, double p)
     {
         if (v.Length == 0)
         {
@@ -382,9 +467,11 @@ internal sealed record LaneResult(
 /// Hand-rolled REST point-reader that mirrors the proxy's production
 /// <c>Aws2Azure.Modules.DynamoDb.Internal.CosmosClient</c>: master-key HMAC
 /// signing, <c>x-ms-version: 2018-12-31</c>, <c>x-ms-date</c>, and the
-/// <c>x-ms-documentdb-partitionkey</c> header. Returns the RU charge.
+/// <c>x-ms-documentdb-partitionkey</c> header. The HTTP version is configurable
+/// (production uses the framework default 1.1) so the negotiated protocol can be
+/// compared against the SDK gateway lane. Returns the RU charge.
 /// </summary>
-internal sealed class RawRestReader(HttpClient http, string db, string coll, string masterKey)
+internal sealed class RawRestReader(HttpClient http, string db, string coll, string masterKey, Version httpVersion)
 {
     private const string ApiVersion = "2018-12-31";
     private readonly byte[] _keyBytes = Convert.FromBase64String(masterKey);
@@ -398,7 +485,11 @@ internal sealed class RawRestReader(HttpClient http, string db, string coll, str
             // An HttpRequestMessage can only be sent once, so rebuild (and
             // re-sign with a fresh date) on every retry attempt.
             var date = DateTime.UtcNow.ToString("R", CultureInfo.InvariantCulture).ToLowerInvariant();
-            using var req = new HttpRequestMessage(HttpMethod.Get, resourceLink);
+            using var req = new HttpRequestMessage(HttpMethod.Get, resourceLink)
+            {
+                Version = httpVersion,
+                VersionPolicy = HttpVersionPolicy.RequestVersionOrLower,
+            };
             req.Headers.TryAddWithoutValidation("authorization", BuildAuth("get", "docs", resourceLink, date));
             req.Headers.TryAddWithoutValidation("x-ms-date", date);
             req.Headers.TryAddWithoutValidation("x-ms-version", ApiVersion);
