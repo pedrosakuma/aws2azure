@@ -183,6 +183,61 @@ only when a code change is an understood, accepted trade-off. The guard
 tests in `KnownPerfScenariosTests` fail the build if a pairing references an
 unknown scenario.
 
+### 3. Under-load memory ceiling (#274) — `AssertNoRegression`
+
+The harness also characterizes the proxy's **memory under sustained load**,
+the operationally-relevant figure for a sidecar replicated across every app
+pod (idle RSS / static footprint is tracked separately under #271/#273). The
+proxy self-reports its runtime memory via gauges on `/_aws2azure/metrics`:
+
+| Gauge | Meaning |
+|---|---|
+| `aws2azure_process_working_set_bytes` | proxy process resident set |
+| `aws2azure_dotnet_gc_heap_size_bytes` | managed heap size |
+| `aws2azure_dotnet_gc_allocated_bytes_total` | cumulative managed allocations (monotonic) |
+| `aws2azure_dotnet_gc_gen2_collections_total` | cumulative gen2 collections (monotonic) |
+
+`ProxyMemoryProbe` scrapes these from inside the (out-of-process) proxy —
+the test process's own working set would measure the wrong thing. During the
+measure window `PerfRunner` samples the working set every 200 ms (recording
+the **peak**) and diffs the cumulative allocated-bytes / gen2 counters across
+the window. The result surfaces in the `RSS MB`, `GCheap MB`, `B/op`, and
+`g2` columns of `baseline-latest.md` and `history.csv`, and as
+`peakWorkingSetMb` / `allocBytesPerOp` / `gen2Collections` in
+`baseline-latest.json`.
+
+Two optional ceilings in `baseline-reference.json` gate it (both `0` =
+opt-out, and both no-op when the run did not actually measure memory, e.g.
+the probe was unreachable):
+
+```jsonc
+"dynamodb.Scan (pushable filter)": {
+  "minThroughputPerSec": 40.0, "maxP99Ms": 700.0,
+  "maxPeakWorkingSetMb": 0.0,   // peak proxy RSS over the window
+  "maxAllocBytesPerOp":  0.0    // mean managed bytes allocated per completed op
+}
+```
+
+> **Choosing the metric.** `maxAllocBytesPerOp` is the
+> **scenario-attributable** churn signal — it is measured as a delta over the
+> window, so it isolates *this* scenario's allocation behavior and is the
+> better leak/regression detector. `maxPeakWorkingSetMb` is a **cumulative
+> high-water mark** across every scenario sharing one proxy process (working
+> set rarely shrinks), so treat it as a wide catastrophe ceiling, not a tight
+> ruler.
+
+The high-risk scenarios (`DynamoDb Scan/Query/Batch`, `SQS`/`SNS` publish,
+`S3` put/get) carry **generous catastrophe ceilings** seeded from the first
+CI perf run: `maxAllocBytesPerOp` ≈ 2.5–3× the observed per-op churn, plus a
+wide `maxPeakWorkingSetMb` of 400 (vs ~100–154 MB observed). They are sized
+to trip a genuine regression — a per-op allocation doubling, a lost buffer
+pool, a working-set leak — without flapping on run-to-run jitter. **Operator
+follow-up:** tighten these deliberately as more runs accumulate (same workflow
+as the throughput floors above); the numbers are emulator-bound JIT-build
+figures (the proxy runs via `dotnet run`, not AOT), so treat them as relative
+regression rulers, not absolute prod memory.
+
+
 
 
 - Workload matrix per module (small / medium / large payload, 1 / 16 / 64

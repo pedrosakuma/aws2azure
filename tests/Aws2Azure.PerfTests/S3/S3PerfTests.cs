@@ -15,11 +15,13 @@ public sealed class S3PerfTests(S3PerfFixture fixture)
         var payload = new byte[4 * 1024];
         Random.Shared.NextBytes(payload);
 
+        using var memProbe = fixture.CreateMemoryProbe();
         var result = await PerfRunner.RunAsync(
             scenario: "s3.PutObject (4 KiB)",
             concurrency: 16,
             duration: TimeSpan.FromSeconds(20),
             warmup: TimeSpan.FromSeconds(3),
+            memoryProbe: memProbe,
             action: async (workerId, ct) =>
             {
                 using var ms = new MemoryStream(payload, writable: false);
@@ -64,11 +66,13 @@ public sealed class S3PerfTests(S3PerfFixture fixture)
             }).ConfigureAwait(false);
         }
 
+        using var memProbe = fixture.CreateMemoryProbe();
         var result = await PerfRunner.RunAsync(
             scenario: "s3.GetObject (64 KiB)",
             concurrency: 16,
             duration: TimeSpan.FromSeconds(20),
             warmup: TimeSpan.FromSeconds(3),
+            memoryProbe: memProbe,
             action: async (workerId, ct) =>
             {
                 var key = keys[Random.Shared.Next(keys.Length)];

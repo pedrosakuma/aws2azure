@@ -79,6 +79,24 @@ internal sealed class PerfBaselineEntry
 
     [JsonPropertyName("maxP99Ms")]
     public double MaxP99Ms { get; set; }
+
+    /// <summary>
+    /// Under-load peak working-set ceiling in MB for the proxy process (#274).
+    /// 0 (default / absent) opts out — newly added scenarios stay non-gated on
+    /// memory until an operator records a number. Only enforced when the run
+    /// actually measured memory (perf probe reachable).
+    /// </summary>
+    [JsonPropertyName("maxPeakWorkingSetMb")]
+    public double MaxPeakWorkingSetMb { get; set; }
+
+    /// <summary>
+    /// Optional ceiling on mean managed bytes allocated by the proxy per
+    /// completed op over the measure window (#274). 0 opts out. This is the
+    /// scenario-attributable allocation-churn signal (peak working set is a
+    /// cumulative high-water mark across all scenarios in a shared proxy).
+    /// </summary>
+    [JsonPropertyName("maxAllocBytesPerOp")]
+    public double MaxAllocBytesPerOp { get; set; }
 }
 
 /// <summary>

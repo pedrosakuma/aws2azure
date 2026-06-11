@@ -21,6 +21,7 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
     public string? SkipReason { get; private set; }
     public string ServiceUrl => _proxy.ServiceUrlForHost("dynamodb");
     public string ProxyOutput => _proxy.Output;
+    public ProxyMemoryProbe CreateMemoryProbe() => _proxy.CreateMemoryProbe();
     public string TableName { get; } = "perftbl" + Guid.NewGuid().ToString("N")[..8];
     public string QueryTableName { get; } = "perfqry" + Guid.NewGuid().ToString("N")[..8];
     public int SeededPartitions => 10;
@@ -262,11 +263,13 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
 
         using var client = fixture.CreateClient();
 
+        using var memProbe = fixture.CreateMemoryProbe();
         var result = await PerfRunner.RunAsync(
             scenario: "dynamodb.Query (pushable filter)",
             concurrency: 8,
             duration: TimeSpan.FromSeconds(20),
             warmup: TimeSpan.FromSeconds(3),
+            memoryProbe: memProbe,
             action: async (workerId, ct) =>
             {
                 var pk = $"p{workerId % fixture.SeededPartitions:D2}";
@@ -300,11 +303,13 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
 
         using var client = fixture.CreateClient();
 
+        using var memProbe = fixture.CreateMemoryProbe();
         var result = await PerfRunner.RunAsync(
             scenario: "dynamodb.Scan (pushable filter)",
             concurrency: 4,
             duration: TimeSpan.FromSeconds(20),
             warmup: TimeSpan.FromSeconds(3),
+            memoryProbe: memProbe,
             action: async (workerId, ct) =>
             {
                 // Ordered numeric BETWEEN — pushable; envelope branch uses IS_DEFINED.
@@ -375,11 +380,13 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
 
         using var client = fixture.CreateClient();
 
+        using var memProbe = fixture.CreateMemoryProbe();
         var result = await PerfRunner.RunAsync(
             scenario: "dynamodb.BatchGetItem (25 items)",
             concurrency: 8,
             duration: TimeSpan.FromSeconds(20),
             warmup: TimeSpan.FromSeconds(3),
+            memoryProbe: memProbe,
             action: async (workerId, ct) =>
             {
                 // Pin to one partition per call (Cosmos read-many is most
@@ -429,11 +436,13 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
 
         using var client = fixture.CreateClient();
 
+        using var memProbe = fixture.CreateMemoryProbe();
         var result = await PerfRunner.RunAsync(
             scenario: "dynamodb.BatchWriteItem (25 items)",
             concurrency: 8,
             duration: TimeSpan.FromSeconds(20),
             warmup: TimeSpan.FromSeconds(3),
+            memoryProbe: memProbe,
             action: async (workerId, ct) =>
             {
                 var batch = new List<WriteRequest>(25);

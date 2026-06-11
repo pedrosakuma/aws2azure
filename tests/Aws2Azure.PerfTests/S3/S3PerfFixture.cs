@@ -18,6 +18,7 @@ public sealed class S3PerfFixture : IAsyncLifetime
     public string? SkipReason { get; private set; }
     public string ServiceUrl => _proxy.ServiceUrlForHost("s3");
     public string ProxyOutput => _proxy.Output;
+    public ProxyMemoryProbe CreateMemoryProbe() => _proxy.CreateMemoryProbe();
     public string Bucket { get; } = "perf-bkt-" + Guid.NewGuid().ToString("N")[..8];
 
     /// <summary>

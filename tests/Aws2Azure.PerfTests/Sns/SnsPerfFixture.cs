@@ -17,6 +17,7 @@ public sealed class SnsPerfFixture : IAsyncLifetime
     public string? SkipReason { get; private set; }
     public string ServiceUrl => _proxy.ServiceUrlForHost("sns");
     public string ProxyOutput => _proxy.Output;
+    public ProxyMemoryProbe CreateMemoryProbe() => _proxy.CreateMemoryProbe();
     public string TopicArn { get; private set; } = string.Empty;
     public string TopicName { get; private set; } = string.Empty;
 

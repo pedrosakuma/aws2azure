@@ -26,8 +26,13 @@ internal static class PerfReport
         Directory.CreateDirectory(Path.GetDirectoryName(mdPath)!);
 
         var inv = CultureInfo.InvariantCulture;
+        var memCells = result.MemoryMeasured
+            ? string.Format(inv, " {0,8:0.0} | {1,9:0.0} | {2,11:0} | {3,5} |",
+                result.PeakWorkingSetMb, result.PeakGcHeapBytes / (1024.0 * 1024.0),
+                result.AllocBytesPerOp, result.Gen2Collections)
+            : "      --- |       --- |         --- |   --- |";
         var row = string.Format(inv,
-            "| {0,-32} | {1,3} | {2,6:0.0} | {3,8} | {4,7} | {5,12:0.0} | {6,9:0.0} | {7,9:0.0} | {8,9:0.0} | {9,9:0.0} | {10} |",
+            "| {0,-32} | {1,3} | {2,6:0.0} | {3,8} | {4,7} | {5,12:0.0} | {6,9:0.0} | {7,9:0.0} | {8,9:0.0} | {9,9:0.0} |{10} {11} |",
             result.Scenario,
             result.Concurrency,
             result.ElapsedSeconds,
@@ -38,6 +43,7 @@ internal static class PerfReport
             result.P95Us / 1000.0,
             result.P99Us / 1000.0,
             result.MaxUs / 1000.0,
+            memCells,
             notes ?? string.Empty);
 
         lock (_lock)
@@ -63,6 +69,11 @@ internal static class PerfReport
             P95Ms = result.P95Us / 1000.0,
             P99Ms = result.P99Us / 1000.0,
             MaxMs = result.MaxUs / 1000.0,
+            MemoryMeasured = result.MemoryMeasured,
+            PeakWorkingSetMb = result.MemoryMeasured ? result.PeakWorkingSetMb : 0,
+            PeakGcHeapMb = result.MemoryMeasured ? result.PeakGcHeapBytes / (1024.0 * 1024.0) : 0,
+            AllocBytesPerOp = result.MemoryMeasured ? result.AllocBytesPerOp : 0,
+            Gen2Collections = result.MemoryMeasured ? result.Gen2Collections : 0,
             CapturedAtUtc = DateTime.UtcNow,
             Notes = notes,
         };
@@ -161,10 +172,10 @@ internal static class PerfReport
         using var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         if (isNew)
         {
-            writer.WriteLine("timestamp_utc,scenario,concurrency,elapsed_seconds,completed,failures,throughput_per_sec,p50_ms,p95_ms,p99_ms,max_ms,notes");
+            writer.WriteLine("timestamp_utc,scenario,concurrency,elapsed_seconds,completed,failures,throughput_per_sec,p50_ms,p95_ms,p99_ms,max_ms,peak_working_set_mb,peak_gc_heap_mb,alloc_bytes_per_op,gen2_collections,notes");
         }
         writer.WriteLine(string.Format(inv,
-            "{0},{1},{2},{3:0.0},{4},{5},{6:0.0},{7:0.0},{8:0.0},{9:0.0},{10:0.0},{11}",
+            "{0},{1},{2},{3:0.0},{4},{5},{6:0.0},{7:0.0},{8:0.0},{9:0.0},{10:0.0},{11},{12},{13},{14},{15}",
             DateTime.UtcNow.ToString("O", inv),
             EscapeCsv(result.Scenario),
             result.Concurrency,
@@ -176,6 +187,10 @@ internal static class PerfReport
             result.P95Us / 1000.0,
             result.P99Us / 1000.0,
             result.MaxUs / 1000.0,
+            result.MemoryMeasured ? result.PeakWorkingSetMb.ToString("0.0", inv) : string.Empty,
+            result.MemoryMeasured ? (result.PeakGcHeapBytes / (1024.0 * 1024.0)).ToString("0.0", inv) : string.Empty,
+            result.MemoryMeasured ? result.AllocBytesPerOp.ToString("0", inv) : string.Empty,
+            result.MemoryMeasured ? result.Gen2Collections.ToString(inv) : string.Empty,
             EscapeCsv(notes ?? string.Empty)));
     }
 
@@ -226,8 +241,8 @@ internal static class PerfReport
         sb.AppendLine("reruns refresh the matching row without wiping the rest. The cumulative");
         sb.AppendLine("append-only history lives at `history.csv` alongside this file.");
         sb.AppendLine();
-        sb.AppendLine("| Scenario                         | Cnc | Elap s |  Cmpltd | Failed | Throughput/s |  p50 ms  |  p95 ms  |  p99 ms  |  max ms  | Notes |");
-        sb.AppendLine("|----------------------------------|----:|-------:|--------:|-------:|-------------:|---------:|---------:|---------:|---------:|-------|");
+        sb.AppendLine("| Scenario                         | Cnc | Elap s |  Cmpltd | Failed | Throughput/s |  p50 ms  |  p95 ms  |  p99 ms  |  max ms  |  RSS MB  | GCheap MB |   B/op    |  g2  | Notes |");
+        sb.AppendLine("|----------------------------------|----:|-------:|--------:|-------:|-------------:|---------:|---------:|---------:|---------:|---------:|----------:|----------:|-----:|-------|");
         return sb.ToString();
     }
 }

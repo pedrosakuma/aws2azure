@@ -145,7 +145,56 @@ public sealed class PerfRegressionGateTests
     }
 
     private static PerfResult MakeResult(string scenario, double throughput, long p99Us) =>
-        new(scenario, 1, 10.0, 100, 0, throughput, 100, 200, p99Us, p99Us + 100, null);
+        new(scenario, 1, 10.0, 100, 0, throughput, 100, 200, p99Us, p99Us + 100);
+
+    [Fact]
+    public void Throws_when_peak_working_set_above_ceiling()
+    {
+        using var ovr = new ReferenceOverride(new Dictionary<string, PerfBaselineEntry>
+        {
+            ["memScenario"] = new() { MaxPeakWorkingSetMb = 100.0 },
+        });
+        var result = MakeResult("memScenario", throughput: 200.0, p99Us: 1000) with
+        {
+            MemoryMeasured = true,
+            PeakWorkingSetBytes = 150L * 1024 * 1024, // 150 MB > 100 MB
+        };
+        var ex = Assert.Throws<Xunit.Sdk.XunitException>(result.AssertNoRegression);
+        Assert.Contains("working set", ex.Message);
+    }
+
+    [Fact]
+    public void Throws_when_alloc_per_op_above_ceiling()
+    {
+        using var ovr = new ReferenceOverride(new Dictionary<string, PerfBaselineEntry>
+        {
+            ["allocScenario"] = new() { MaxAllocBytesPerOp = 1000.0 },
+        });
+        var result = MakeResult("allocScenario", throughput: 200.0, p99Us: 1000) with
+        {
+            MemoryMeasured = true,
+            Completed = 100,
+            AllocatedBytesDelta = 500_000, // 5000 B/op > 1000 B/op
+        };
+        var ex = Assert.Throws<Xunit.Sdk.XunitException>(result.AssertNoRegression);
+        Assert.Contains("alloc", ex.Message);
+    }
+
+    [Fact]
+    public void Memory_ceiling_skipped_when_memory_not_measured()
+    {
+        using var ovr = new ReferenceOverride(new Dictionary<string, PerfBaselineEntry>
+        {
+            ["unmeasured"] = new() { MaxPeakWorkingSetMb = 1.0, MaxAllocBytesPerOp = 1.0 },
+        });
+        var result = MakeResult("unmeasured", throughput: 200.0, p99Us: 1000) with
+        {
+            MemoryMeasured = false,
+            PeakWorkingSetBytes = long.MaxValue,
+            AllocatedBytesDelta = long.MaxValue,
+        };
+        result.AssertNoRegression(); // no throw — memory dimension opted out
+    }
 
     /// <summary>
     /// Writes a temporary baseline-reference.json under a probed perf dir and
@@ -158,22 +207,36 @@ public sealed class PerfRegressionGateTests
         private readonly string? _previousEnv;
 
         public ReferenceOverride(IReadOnlyDictionary<string, (double Floor, double Ceiling)> entries)
+            : this(ToEntries(entries))
+        {
+        }
+
+        public ReferenceOverride(IReadOnlyDictionary<string, PerfBaselineEntry> entries)
         {
             _tempDir = Path.Combine(Path.GetTempPath(), "perfref-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_tempDir);
             _previousEnv = Environment.GetEnvironmentVariable("AWS2AZURE_PERF_DIR");
             Environment.SetEnvironmentVariable("AWS2AZURE_PERF_DIR", _tempDir);
 
+            var doc = new PerfBaselineDocument
+            {
+                Scenarios = new Dictionary<string, PerfBaselineEntry>(entries),
+            };
+            var json = JsonSerializer.Serialize(doc, PerfBaselineJsonContext.Default.PerfBaselineDocument);
+            File.WriteAllText(Path.Combine(_tempDir, "baseline-reference.json"), json);
+
+            PerfReferenceBaseline.ResetForTests();
+        }
+
+        private static Dictionary<string, PerfBaselineEntry> ToEntries(
+            IReadOnlyDictionary<string, (double Floor, double Ceiling)> entries)
+        {
             var dict = new Dictionary<string, PerfBaselineEntry>();
             foreach (var (k, v) in entries)
             {
                 dict[k] = new PerfBaselineEntry { MinThroughputPerSec = v.Floor, MaxP99Ms = v.Ceiling };
             }
-            var doc = new PerfBaselineDocument { Scenarios = dict };
-            var json = JsonSerializer.Serialize(doc, PerfBaselineJsonContext.Default.PerfBaselineDocument);
-            File.WriteAllText(Path.Combine(_tempDir, "baseline-reference.json"), json);
-
-            PerfReferenceBaseline.ResetForTests();
+            return dict;
         }
 
         public void Dispose()
