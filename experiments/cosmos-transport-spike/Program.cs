@@ -210,6 +210,7 @@ static async Task<LaneResult> RunSdkThroughputAsync(string lane, Container c, Li
     long ops = 0;
     var perWorker = new ConcurrentBag<double>();
     var workers = new Task[concurrency];
+    var runStart = Stopwatch.GetTimestamp();
     for (var w = 0; w < concurrency; w++)
     {
         var seed = w + 100;
@@ -229,8 +230,12 @@ static async Task<LaneResult> RunSdkThroughputAsync(string lane, Container c, Li
         });
     }
     await Task.WhenAll(workers);
+    // Divide by ACTUAL elapsed, not the nominal window: the last in-flight op
+    // per worker overshoots the deadline, and slower lanes overshoot more, so
+    // dividing by durationSec would inflate (and unfairly favour) slow lanes.
+    var elapsedSec = Stopwatch.GetElapsedTime(runStart).TotalSeconds;
     var lat = perWorker.ToArray();
-    return LaneResult.FromThroughput(lane, $"point-read ({concurrency}x)", lat, ops / (double)durationSec);
+    return LaneResult.FromThroughput(lane, $"point-read ({concurrency}x)", lat, ops / elapsedSec);
 }
 
 static async Task<LaneResult> RunRawPointReadAsync(string lane, RawRestReader raw, List<(string id, string pk)> ids, int iterations)
@@ -263,6 +268,7 @@ static async Task<LaneResult> RunRawThroughputAsync(string lane, RawRestReader r
     long ops = 0;
     var perWorker = new ConcurrentBag<double>();
     var workers = new Task[concurrency];
+    var runStart = Stopwatch.GetTimestamp();
     for (var w = 0; w < concurrency; w++)
     {
         var seed = w + 200;
@@ -282,8 +288,9 @@ static async Task<LaneResult> RunRawThroughputAsync(string lane, RawRestReader r
         });
     }
     await Task.WhenAll(workers);
+    var elapsedSec = Stopwatch.GetElapsedTime(runStart).TotalSeconds;
     var lat = perWorker.ToArray();
-    return LaneResult.FromThroughput(lane, $"point-read ({concurrency}x)", lat, ops / (double)durationSec);
+    return LaneResult.FromThroughput(lane, $"point-read ({concurrency}x)", lat, ops / elapsedSec);
 }
 
 static void PrintTable(List<LaneResult> results)
