@@ -14,11 +14,13 @@ public sealed class SnsPerfTests(SnsPerfFixture fixture)
         using var client = fixture.CreateClient();
         var payload = new string('x', 256);
 
+        using var memProbe = fixture.CreateMemoryProbe();
         var result = await PerfRunner.RunAsync(
             scenario: "sns.Publish (256 B)",
             concurrency: 16,
             duration: TimeSpan.FromSeconds(20),
             warmup: TimeSpan.FromSeconds(3),
+            memoryProbe: memProbe,
             action: async (_, ct) =>
             {
                 await client.PublishAsync(new PublishRequest

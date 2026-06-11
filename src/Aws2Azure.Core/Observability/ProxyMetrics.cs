@@ -77,6 +77,39 @@ public sealed class ProxyMetrics
             () => Interlocked.Read(ref _activeRequests),
             unit: "{request}",
             description: "Number of requests currently being processed");
+
+        // Runtime / process memory gauges. Evaluated lazily at scrape time
+        // (PrometheusExporter.RecordObservableInstruments) so they add no
+        // steady-state overhead. These let an operator — and the perf harness
+        // (tests/Aws2Azure.PerfTests, issue #274) — characterize the proxy's
+        // under-load memory without an out-of-band diagnostics session.
+        _meter.CreateObservableGauge(
+            "aws2azure_process_working_set_bytes",
+            () => Environment.WorkingSet,
+            unit: "By",
+            description: "Resident working set of the proxy process in bytes");
+
+        _meter.CreateObservableGauge(
+            "aws2azure_dotnet_gc_heap_size_bytes",
+            () => GC.GetTotalMemory(forceFullCollection: false),
+            unit: "By",
+            description: "Bytes currently thought to be allocated on the managed GC heap");
+
+        // Monotonic counters surfaced as gauges: the AOT-safe PrometheusExporter
+        // only renders ObservableGauge for observable instruments. Consumers that
+        // need a rate diff the cumulative value across two scrapes (the perf
+        // harness does exactly this across its measure window).
+        _meter.CreateObservableGauge(
+            "aws2azure_dotnet_gc_allocated_bytes_total",
+            () => GC.GetTotalAllocatedBytes(precise: false),
+            unit: "By",
+            description: "Cumulative bytes allocated on the managed heap since process start (monotonic)");
+
+        _meter.CreateObservableGauge(
+            "aws2azure_dotnet_gc_gen2_collections_total",
+            () => (long)GC.CollectionCount(2),
+            unit: "{collection}",
+            description: "Cumulative number of gen2 garbage collections since process start (monotonic)");
     }
     
     /// <summary>

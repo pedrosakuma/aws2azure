@@ -28,6 +28,7 @@ public sealed class SqsPerfFixture : IAsyncLifetime
             : string.Empty;
 
     public string ProxyOutput => _proxy.Output;
+    public ProxyMemoryProbe CreateMemoryProbe() => _proxy.CreateMemoryProbe();
 
     public AmazonSQSClient CreateClient() => new(
         AwsAccessKey,

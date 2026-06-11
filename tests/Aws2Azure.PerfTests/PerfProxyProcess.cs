@@ -31,6 +31,14 @@ internal sealed class PerfProxyProcess : IAsyncDisposable
     public string ServiceUrlForHost(string hostPrefix)
         => ServiceUrl.Replace("127.0.0.1", $"{hostPrefix}.127.0.0.1.nip.io", StringComparison.Ordinal);
 
+    /// <summary>
+    /// Creates a memory probe bound to this proxy's loopback base URL (#274).
+    /// The runtime gauges are served from a host-agnostic top-level endpoint, so
+    /// the raw <see cref="ServiceUrl"/> is used rather than a nip.io host alias.
+    /// Caller owns disposal.
+    /// </summary>
+    public ProxyMemoryProbe CreateMemoryProbe() => new(ServiceUrl);
+
     public async Task StartAsync(string configJson, TimeSpan readinessTimeout)
     {
         var port = GetFreePort();

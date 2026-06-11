@@ -74,6 +74,21 @@ internal sealed class PerfResultRow
     [JsonPropertyName("maxMs")]
     public double MaxMs { get; set; }
 
+    [JsonPropertyName("memoryMeasured")]
+    public bool MemoryMeasured { get; set; }
+
+    [JsonPropertyName("peakWorkingSetMb")]
+    public double PeakWorkingSetMb { get; set; }
+
+    [JsonPropertyName("peakGcHeapMb")]
+    public double PeakGcHeapMb { get; set; }
+
+    [JsonPropertyName("allocBytesPerOp")]
+    public double AllocBytesPerOp { get; set; }
+
+    [JsonPropertyName("gen2Collections")]
+    public long Gen2Collections { get; set; }
+
     [JsonPropertyName("capturedAtUtc")]
     public DateTime CapturedAtUtc { get; set; }
 

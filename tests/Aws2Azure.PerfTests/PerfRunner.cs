@@ -22,6 +22,7 @@ internal static class PerfRunner
         Func<int, CancellationToken, Task> action,
         TimeSpan? warmup = null,
         int? maxOps = null,
+        ProxyMemoryProbe? memoryProbe = null,
         CancellationToken cancellationToken = default)
     {
         // Warmup — closed-loop at concurrency 1 (enough to JIT hot paths and
@@ -47,10 +48,47 @@ internal static class PerfRunner
         long completed = 0;
         long failures = 0;
         Exception? firstFailure = null;
+
+        // Memory characterization (#274). Capture a baseline snapshot of the
+        // proxy's self-reported runtime gauges, sample its working set during the
+        // measure window, then a final snapshot to diff cumulative allocated bytes
+        // and gen2 collections. Best-effort: if the probe is absent or the scrape
+        // fails the scenario still runs, with memory simply marked unmeasured.
+        var baselineSnapshot = memoryProbe is null
+            ? null
+            : await memoryProbe.SampleAsync(cancellationToken).ConfigureAwait(false);
+        long peakWorkingSet = baselineSnapshot?.WorkingSetBytes ?? 0;
+        long peakGcHeap = baselineSnapshot?.GcHeapBytes ?? 0;
+        var sampleLock = new object();
+
         var stopwatch = Stopwatch.StartNew();
 
         using var runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         runCts.CancelAfter(duration);
+
+        Task? sampler = null;
+        using var samplerCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        if (memoryProbe is not null && baselineSnapshot is not null)
+        {
+            var probe = memoryProbe;
+            sampler = Task.Run(async () =>
+            {
+                while (!samplerCts.IsCancellationRequested)
+                {
+                    try { await Task.Delay(TimeSpan.FromMilliseconds(200), samplerCts.Token).ConfigureAwait(false); }
+                    catch (OperationCanceledException) { break; }
+                    var snap = await probe.SampleAsync(samplerCts.Token).ConfigureAwait(false);
+                    if (snap is { } s)
+                    {
+                        lock (sampleLock)
+                        {
+                            if (s.WorkingSetBytes > peakWorkingSet) peakWorkingSet = s.WorkingSetBytes;
+                            if (s.GcHeapBytes > peakGcHeap) peakGcHeap = s.GcHeapBytes;
+                        }
+                    }
+                }
+            }, samplerCts.Token);
+        }
 
         var workers = Enumerable.Range(0, concurrency).Select(workerId => Task.Run(async () =>
         {
@@ -85,21 +123,51 @@ internal static class PerfRunner
         catch (OperationCanceledException) { }
         stopwatch.Stop();
 
+        // Stop sampling and take a final snapshot to diff cumulative counters.
+        samplerCts.Cancel();
+        if (sampler is not null)
+        {
+            try { await sampler.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+        }
+
+        bool memoryMeasured = false;
+        long allocatedBytesDelta = 0;
+        long gen2Collections = 0;
+        if (baselineSnapshot is { } baseline && memoryProbe is not null)
+        {
+            var finalSnapshot = await memoryProbe.SampleAsync(cancellationToken).ConfigureAwait(false);
+            if (finalSnapshot is { } final)
+            {
+                memoryMeasured = true;
+                if (final.WorkingSetBytes > peakWorkingSet) peakWorkingSet = final.WorkingSetBytes;
+                if (final.GcHeapBytes > peakGcHeap) peakGcHeap = final.GcHeapBytes;
+                allocatedBytesDelta = Math.Max(0, final.AllocatedBytesTotal - baseline.AllocatedBytesTotal);
+                gen2Collections = Math.Max(0, final.Gen2Collections - baseline.Gen2Collections);
+            }
+        }
+
         var samples = latenciesUs.ToArray();
         Array.Sort(samples);
+        var completedCount = Interlocked.Read(ref completed);
         return new PerfResult(
             Scenario: scenario,
             Concurrency: concurrency,
             ElapsedSeconds: stopwatch.Elapsed.TotalSeconds,
-            Completed: Interlocked.Read(ref completed),
+            Completed: completedCount,
             Failures: Interlocked.Read(ref failures),
             ThroughputPerSec: stopwatch.Elapsed.TotalSeconds > 0
-                ? Interlocked.Read(ref completed) / stopwatch.Elapsed.TotalSeconds
+                ? completedCount / stopwatch.Elapsed.TotalSeconds
                 : 0,
             P50Us: Percentile(samples, 0.50),
             P95Us: Percentile(samples, 0.95),
             P99Us: Percentile(samples, 0.99),
             MaxUs: samples.Length == 0 ? 0 : samples[^1],
+            MemoryMeasured: memoryMeasured,
+            PeakWorkingSetBytes: memoryMeasured ? peakWorkingSet : 0,
+            PeakGcHeapBytes: memoryMeasured ? peakGcHeap : 0,
+            AllocatedBytesDelta: allocatedBytesDelta,
+            Gen2Collections: gen2Collections,
             FirstFailure: firstFailure);
     }
 
@@ -122,9 +190,19 @@ internal sealed record PerfResult(
     long P95Us,
     long P99Us,
     long MaxUs,
+    bool MemoryMeasured = false,
+    long PeakWorkingSetBytes = 0,
+    long PeakGcHeapBytes = 0,
+    long AllocatedBytesDelta = 0,
+    long Gen2Collections = 0,
     Exception? FirstFailure = null)
 {
     public double FailureRate => Completed + Failures == 0 ? 0 : (double)Failures / (Completed + Failures);
+
+    public double PeakWorkingSetMb => PeakWorkingSetBytes / (1024.0 * 1024.0);
+
+    /// <summary>Mean managed bytes allocated by the proxy per completed op over the measure window.</summary>
+    public double AllocBytesPerOp => Completed > 0 ? (double)AllocatedBytesDelta / Completed : 0;
 
     public void AssertHealthy(double maxFailureRate = 0.10, string? proxyOutput = null)
     {
@@ -142,10 +220,13 @@ internal sealed record PerfResult(
     }
 
     /// <summary>
-    /// Compares throughput and p99 against the committed reference in
-    /// <c>docs/perf/baseline-reference.json</c>. No-op when the scenario is
-    /// not listed there (newly added scenarios stay non-gated until an
-    /// operator records a reference number).
+    /// Compares throughput, p99, and under-load memory against the committed
+    /// reference in <c>docs/perf/baseline-reference.json</c>. No-op when the
+    /// scenario is not listed there (newly added scenarios stay non-gated until
+    /// an operator records a reference number). Each individual ceiling/floor
+    /// is also independently opt-out: a value of 0 disables that dimension, and
+    /// the memory ceilings additionally no-op when memory was not measured for
+    /// the run (probe absent or unreachable).
     /// </summary>
     public void AssertNoRegression()
     {
@@ -166,6 +247,18 @@ internal sealed record PerfResult(
             problems.Add(string.Format(inv,
                 "p99 {0:0.0} ms > ceiling {1:0.0} ms",
                 p99Ms, entry.MaxP99Ms));
+        }
+        if (MemoryMeasured && entry.MaxPeakWorkingSetMb > 0 && PeakWorkingSetMb > entry.MaxPeakWorkingSetMb)
+        {
+            problems.Add(string.Format(inv,
+                "peak working set {0:0.0} MB > ceiling {1:0.0} MB",
+                PeakWorkingSetMb, entry.MaxPeakWorkingSetMb));
+        }
+        if (MemoryMeasured && entry.MaxAllocBytesPerOp > 0 && AllocBytesPerOp > entry.MaxAllocBytesPerOp)
+        {
+            problems.Add(string.Format(inv,
+                "alloc {0:0} B/op > ceiling {1:0} B/op",
+                AllocBytesPerOp, entry.MaxAllocBytesPerOp));
         }
         if (problems.Count > 0)
         {
