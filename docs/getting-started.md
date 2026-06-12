@@ -216,8 +216,10 @@ docker run --rm -p 8080:8080 \
 ```
 
 The image is a Native-AOT build on a chiseled (distroless) base, runs as a
-non-root user, and ships a `HEALTHCHECK` that calls the binary's built-in
-`--health-check` probe.
+non-root user, ships a `HEALTHCHECK` that calls the binary's built-in
+`--health-check` probe, and is published as a multi-arch manifest
+(`linux/amd64` + `linux/arm64`) so the right architecture is pulled
+automatically.
 
 ---
 
