@@ -113,11 +113,15 @@ jobs:
       contents: read
       packages: write
     steps:
-      - name: Prepare platform pair
+      - name: Prepare platform vars
         id: prep
         env:
           PLATFORM: ${{ matrix.platform }}
-        run: echo "pair=${PLATFORM//\//-}" >> "$GITHUB_OUTPUT"
+        run: |
+          {
+            echo "pair=${PLATFORM//\//-}"
+            echo "arch=${PLATFORM##*/}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -145,6 +149,15 @@ jobs:
           context: .
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
+          # The Dockerfile resolves the .NET RID from TARGETARCH. buildx does not
+          # auto-populate it because the Dockerfile gives `ARG TARGETARCH` a
+          # default (which short-circuits the predefined platform arg), so pass
+          # it explicitly per matrix leg. provenance:false keeps push-by-digest
+          # producing a single clean image-manifest digest per arch (no extra
+          # attestation entry to pollute the merged manifest list).
+          build-args: |
+            TARGETARCH=${{ steps.prep.outputs.arch }}
+          provenance: false
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ steps.prep.outputs.pair }}
           cache-to: type=gha,mode=max,scope=${{ steps.prep.outputs.pair }}
