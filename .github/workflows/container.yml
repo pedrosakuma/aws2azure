@@ -1,5 +1,9 @@
-# aws2azure container image build and publish
-# Triggers on main push and releases. Publishes to GHCR.
+# aws2azure container image build and publish.
+#
+# Pull requests that touch the Dockerfile, sources, or this workflow build the
+# image and run a smoke test WITHOUT pushing — so a broken Dockerfile is caught
+# before merge. Pushes to main, releases, and manual dispatch additionally
+# publish the image to GHCR.
 
 name: Container Image
 
@@ -9,6 +13,13 @@ on:
     paths:
       - 'src/**'
       - 'Dockerfile'
+      - '.dockerignore'
+      - '.github/workflows/container.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'Dockerfile'
+      - '.dockerignore'
       - '.github/workflows/container.yml'
   release:
     types: [published]
@@ -19,12 +30,75 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-and-push:
+  # ---------------------------------------------------------------------------
+  # Build the image (amd64) and smoke-test it locally. Runs on every trigger,
+  # including pull requests, and never pushes — this is the pre-merge gate.
+  # ---------------------------------------------------------------------------
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (load locally, no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: aws2azure:ci
+          build-args: |
+            TARGETARCH=amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: |
+          cat > /tmp/config.json << 'EOF'
+          {
+            "services": { "s3": { "enabled": true } },
+            "credentials": [{
+              "awsAccessKeyId": "test",
+              "awsSecretAccessKey": "test",
+              "azure": { "blob": { "accountName": "test", "accountKey": "dGVzdA==" } }
+            }]
+          }
+          EOF
+
+          docker run -d --name aws2azure-test \
+            -p 8080:8080 \
+            -v /tmp/config.json:/app/config.json:ro \
+            -e AWS2AZURE_CONFIG_FILE=/app/config.json \
+            aws2azure:ci
+
+          # Poll the health endpoint until ready (max ~30s).
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8080/_aws2azure/health > /dev/null; then
+              echo "✅ Smoke test passed"
+              docker rm -f aws2azure-test
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "❌ Health endpoint never became ready"
+          docker logs aws2azure-test || true
+          docker rm -f aws2azure-test
+          exit 1
+
+  # ---------------------------------------------------------------------------
+  # Publish to GHCR. Skipped on pull requests; runs after a successful build on
+  # main pushes, releases, and manual dispatch.
+  # ---------------------------------------------------------------------------
+  publish:
+    needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -63,77 +137,5 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # ARM64 build (optional, uncomment when needed)
-      # - name: Build and push (arm64)
-      #   uses: docker/build-push-action@v6
-      #   with:
-      #     context: .
-      #     push: true
-      #     tags: ${{ steps.meta.outputs.tags }}-arm64
-      #     labels: ${{ steps.meta.outputs.labels }}
-      #     build-args: |
-      #       TARGETARCH=arm64
-      #     platforms: linux/arm64
-      #     cache-from: type=gha
-      #     cache-to: type=gha,mode=max
-
       - name: Image digest
         run: echo "Image pushed with digest ${{ steps.meta.outputs.digest }}"
-
-  # Verify the image runs correctly
-  smoke-test:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    permissions:
-      packages: read
-
-    steps:
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull and run smoke test
-        run: |
-          # Pull the image
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          
-          # Create minimal config
-          cat > /tmp/config.json << 'EOF'
-          {
-            "services": {
-              "s3": { "enabled": true }
-            },
-            "credentials": [{
-              "awsAccessKeyId": "test",
-              "awsSecretAccessKey": "test",
-              "azure": {
-                "blob": {
-                  "accountName": "test",
-                  "accountKey": "dGVzdA=="
-                }
-              }
-            }]
-          }
-          EOF
-          
-          # Run container and check health
-          docker run -d --name aws2azure-test \
-            -p 8080:8080 \
-            -v /tmp/config.json:/app/config.json:ro \
-            -e AWS2AZURE_CONFIG_FILE=/app/config.json \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          
-          # Wait for startup
-          sleep 5
-          
-          # Check health endpoint
-          curl -f http://localhost:8080/_aws2azure/health || exit 1
-          
-          # Cleanup
-          docker stop aws2azure-test
-          docker rm aws2azure-test
-          
-          echo "✅ Smoke test passed"
