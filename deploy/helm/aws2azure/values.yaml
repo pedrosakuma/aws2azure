@@ -1,0 +1,165 @@
+# Default values for the aws2azure chart.
+# This is a YAML-formatted file; override any of these with `--set` or `-f`.
+
+# -- Number of proxy replicas (ignored when autoscaling.enabled=true).
+replicaCount: 1
+
+image:
+  # -- Container image repository.
+  repository: ghcr.io/pedrosakuma/aws2azure
+  # -- Image pull policy.
+  pullPolicy: IfNotPresent
+  # -- Image tag. Defaults to the chart's appVersion when empty.
+  tag: ""
+
+# -- Image pull secrets for private registries.
+imagePullSecrets: []
+# -- Override the chart name used in resource names.
+nameOverride: ""
+# -- Override the fully-qualified release name.
+fullnameOverride: ""
+
+# Proxy configuration (the AWS2AZURE_CONFIG_FILE JSON). It contains Azure
+# account keys / secrets, so it is always rendered into a Kubernetes Secret.
+config:
+  # -- When true, render `config.content` into a chart-managed Secret.
+  # Set to false and use `config.existingSecret` to supply your own Secret.
+  create: true
+  # -- Name of a pre-existing Secret holding the config file (used when
+  # create=false). The chart mounts `config.existingSecretKey` from it.
+  existingSecret: ""
+  # -- Key within the Secret that holds the JSON config file.
+  existingSecretKey: config.json
+  # -- The proxy configuration object, serialized to JSON and stored in the
+  # chart-managed Secret. Replace the credentials with your real Azure values.
+  # See https://github.com/pedrosakuma/aws2azure/blob/main/docs/getting-started.md#configuration
+  content:
+    services:
+      s3:
+        enabled: true
+    credentials:
+      - awsAccessKeyId: AKIADEVEXAMPLE
+        awsSecretAccessKey: change-me
+        azure:
+          blob:
+            accountName: ""
+            accountKey: ""
+
+# -- Extra environment variables for the proxy container.
+extraEnv: []
+#  - name: AWS2AZURE_SB_SESSION_IDLE_SECONDS
+#    value: "300"
+
+serviceAccount:
+  # -- Create a ServiceAccount.
+  create: true
+  # -- Annotations for the ServiceAccount (e.g. Azure Workload Identity).
+  annotations: {}
+  # -- Name of the ServiceAccount. Generated from the fullname when empty.
+  name: ""
+
+# -- Extra annotations for the proxy pods.
+podAnnotations: {}
+# -- Extra labels for the proxy pods.
+podLabels: {}
+
+# -- Pod-level security context.
+podSecurityContext:
+  runAsNonRoot: true
+  # Matches $APP_UID baked into the chiseled .NET runtime-deps image.
+  runAsUser: 1654
+  runAsGroup: 1654
+  fsGroup: 1654
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container-level security context. The proxy writes nothing to disk.
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  # -- Service type.
+  type: ClusterIP
+  # -- Service port.
+  port: 8080
+
+ingress:
+  # -- Enable an Ingress for the proxy. AWS SDKs route by Host header, so each
+  # service needs a host that starts with its name (e.g. s3.example.com).
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: s3.aws2azure.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: aws2azure-tls
+  #    hosts:
+  #      - s3.aws2azure.example.com
+
+# -- Container resource requests/limits.
+resources:
+  requests:
+    cpu: 100m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+autoscaling:
+  # -- Enable a HorizontalPodAutoscaler.
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+  # -- Target memory utilization (omitted when null).
+  targetMemoryUtilizationPercentage: null
+
+# Liveness/readiness probes hit the proxy's built-in health endpoints.
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: http
+  initialDelaySeconds: 3
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# Prometheus Operator ServiceMonitor scraping /_aws2azure/metrics.
+serviceMonitor:
+  # -- Create a ServiceMonitor (requires the Prometheus Operator CRDs).
+  enabled: false
+  # -- Scrape interval.
+  interval: 30s
+  # -- Scrape timeout.
+  scrapeTimeout: 10s
+  # -- Extra labels for the ServiceMonitor (e.g. release: kube-prometheus-stack).
+  labels: {}
+
+# -- Pod disruption budget.
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+  # maxUnavailable: 1
+
+# -- Node selector.
+nodeSelector: {}
+# -- Tolerations.
+tolerations: []
+# -- Affinity rules.
+affinity: {}
+# -- Topology spread constraints.
+topologySpreadConstraints: []

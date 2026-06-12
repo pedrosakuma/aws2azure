@@ -246,6 +246,26 @@ edit, the README, and the license. No .NET runtime install is required.
 
 ---
 
+## Deploying to Kubernetes (Helm)
+
+A Helm chart lives at [`deploy/helm/aws2azure`](../deploy/helm/aws2azure). It
+deploys the proxy with production-friendly defaults: non-root chiseled image,
+read-only root filesystem, `/health` + `/ready` probes, the config sourced from
+a `Secret` (chart-managed or your own), and optional Ingress, HPA, PodDisruption
+Budget, and a Prometheus-Operator `ServiceMonitor` scraping `/_aws2azure/metrics`.
+
+```bash
+helm install aws2azure ./deploy/helm/aws2azure -f my-values.yaml
+helm test aws2azure
+```
+
+Because AWS SDKs route by `Host` header, expose each service on a host that
+starts with its name (`s3.*`, `sqs.*`, …). See the
+[chart README](../deploy/helm/aws2azure/README.md) for the full values reference,
+the config-as-Secret options, and Ingress host routing.
+
+---
+
 ## Building and running from source
 
 ```bash

@@ -1,0 +1,51 @@
+aws2azure has been deployed.
+
+Release:   {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+Image:     {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
+
+{{- if .Values.config.create }}
+
+⚠  The proxy config was rendered into Secret {{ include "aws2azure.configSecretName" . }}
+   from `config.content` in your values. Make sure you supplied REAL Azure
+   credentials (the chart default ships an empty blob accountName/accountKey).
+{{- else }}
+
+The proxy reads its config from the existing Secret "{{ .Values.config.existingSecret }}"
+(key "{{ .Values.config.existingSecretKey }}").
+{{- end }}
+
+Check rollout:
+  kubectl --namespace {{ .Release.Namespace }} rollout status deployment/{{ include "aws2azure.fullname" . }}
+
+{{- if .Values.ingress.enabled }}
+
+The proxy is exposed via Ingress on:
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+
+AWS SDKs route by Host header — each service needs a host that starts with its
+name (s3.*, sqs.*, …). Point your client's endpoint URL at the matching host.
+{{- else if contains "NodePort" .Values.service.type }}
+
+Get the proxy URL:
+  export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "aws2azure.fullname" . }})
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo "http://$NODE_IP:$NODE_PORT"
+{{- else if contains "LoadBalancer" .Values.service.type }}
+
+Get the proxy URL (the LoadBalancer may take a moment to provision):
+  kubectl get --namespace {{ .Release.Namespace }} svc -w {{ include "aws2azure.fullname" . }}
+{{- else }}
+
+The Service is ClusterIP. Reach it from inside the cluster at:
+  {{ include "aws2azure.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+
+Or port-forward for a quick local test:
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "aws2azure.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+  curl -fsS http://localhost:{{ .Values.service.port }}/health
+{{- end }}
+
+Operational endpoints: /health (liveness), /ready (readiness),
+/_aws2azure/metrics (Prometheus), /_aws2azure/modules, /_aws2azure/capabilities.

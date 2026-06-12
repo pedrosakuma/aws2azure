@@ -1,0 +1,23 @@
+apiVersion: v2
+name: aws2azure
+description: >-
+  Transparent HTTP proxy that speaks the AWS wire protocol (SigV4 + service
+  payloads) and translates requests into Azure REST API calls. Point any AWS
+  SDK at it and run against Azure with no code changes.
+type: application
+# Chart version — bump on chart changes (SemVer).
+version: 0.1.0
+# Default application image tag when image.tag is unset. Track the proxy release.
+appVersion: "latest"
+home: https://github.com/pedrosakuma/aws2azure
+sources:
+  - https://github.com/pedrosakuma/aws2azure
+keywords:
+  - aws
+  - azure
+  - proxy
+  - s3
+  - migration
+maintainers:
+  - name: pedrosakuma
+    url: https://github.com/pedrosakuma
