@@ -249,7 +249,7 @@ public sealed class PrometheusExporter : IDisposable
         const double MaxExactInteger = 9.007199254740992e15; // 2^53
         if (value >= -MaxExactInteger && value <= MaxExactInteger && value == Math.Floor(value))
         {
-            sb.Append((long)value);
+            sb.Append(((long)value).ToString(CultureInfo.InvariantCulture));
         }
         else
         {
