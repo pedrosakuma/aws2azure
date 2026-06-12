@@ -632,6 +632,11 @@ public static class ProxyConfigValidator
         block.TenantId = identity.TenantId;
         block.ClientId = identity.ClientId;
         block.ClientSecret = identity.ClientSecret;
+
+        // Consume the reference so resolution is idempotent: a second Validate()
+        // on the same config must not see Identity set alongside the now-applied
+        // non-default AuthMode and misfire the inline-ambiguity check.
+        block.Identity = null;
     }
 
     private static bool HasWorkloadIdentityEnvironment()

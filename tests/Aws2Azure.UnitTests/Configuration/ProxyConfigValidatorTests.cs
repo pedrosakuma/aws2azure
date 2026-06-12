@@ -671,6 +671,29 @@ public class ProxyConfigValidatorTests
     }
 
     [Fact]
+    public void Validate_is_idempotent_for_resolved_identity_reference()
+    {
+        var config = ValidBase();
+        config.AzureIdentities = new Dictionary<string, AzureIdentity>
+        {
+            ["prod-mi"] = new() { AuthMode = AzureAuthMode.ManagedIdentity, ClientId = "user-mi-client" },
+        };
+        config.Credentials[0].Azure.Cosmos = new CosmosCredentials
+        {
+            Endpoint = "https://acct.documents.azure.com",
+            DatabaseName = "orders",
+            Identity = "prod-mi",
+        };
+
+        ProxyConfigValidator.Validate(config);
+        var ex = Record.Exception(() => ProxyConfigValidator.Validate(config));
+
+        Assert.Null(ex);
+        Assert.Null(config.Credentials[0].Azure.Cosmos!.Identity);
+        Assert.Equal(AzureAuthMode.ManagedIdentity, config.Credentials[0].Azure.Cosmos!.AuthMode);
+    }
+
+    [Fact]
     public void Rejects_dangling_identity_reference()
     {
         var config = ValidBase();
