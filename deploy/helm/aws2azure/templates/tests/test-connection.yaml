@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "aws2azure.fullname" . }}-test-connection"
+  labels:
+    {{- include "aws2azure.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  containers:
+    - name: health
+      image: curlimages/curl:8.10.1
+      command: ["curl"]
+      args:
+        - "--fail"
+        - "--silent"
+        - "--show-error"
+        - "http://{{ include "aws2azure.fullname" . }}:{{ .Values.service.port }}/_aws2azure/health"
