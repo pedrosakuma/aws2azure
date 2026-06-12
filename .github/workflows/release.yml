@@ -1,0 +1,144 @@
+# aws2azure release workflow.
+#
+# Tagging a commit with a semver tag (e.g. `v0.1.0`) builds the self-contained
+# Native-AOT proxy binary for linux-x64 and linux-arm64, packages each as a
+# tarball with a SHA-256 checksum, and publishes a GitHub Release with the
+# archives attached.
+#
+# arm64 is built natively on a `ubuntu-24.04-arm` runner (free for public
+# repos) rather than cross-compiled, so the Native-AOT toolchain just needs
+# clang + zlib on each runner.
+#
+# Creating the Release fires the `release: published` trigger in
+# container.yml, which pushes the matching semver-tagged image to GHCR — so a
+# single tag produces both the binaries and the container image.
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# `workflow_dispatch` rebuilds and re-uploads assets for an existing tag.
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to (re)build, e.g. v0.1.0'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build + package the AOT binary per RID. linux-x64 on the x64 runner,
+  # linux-arm64 natively on the arm64 runner (no cross-compilation).
+  # ---------------------------------------------------------------------------
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: linux-x64
+            runner: ubuntu-latest
+          - rid: linux-arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install Native-AOT toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang zlib1g-dev
+
+      - name: Resolve version
+        id: ver
+        run: |
+          REF="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${REF#v}"
+          echo "tag=$REF" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: AOT publish (${{ matrix.rid }})
+        run: |
+          dotnet publish src/Aws2Azure.Proxy -c Release -r ${{ matrix.rid }} \
+            -p:Version=${{ steps.ver.outputs.version }} \
+            -o publish/${{ matrix.rid }} --nologo
+
+      - name: Package tarball
+        id: pkg
+        run: |
+          set -euo pipefail
+          BIN="publish/${{ matrix.rid }}/Aws2Azure.Proxy"
+          test -f "$BIN"
+          NAME="aws2azure-${{ steps.ver.outputs.tag }}-${{ matrix.rid }}"
+          install -Dm755 "$BIN"                 "stage/$NAME/aws2azure"
+          install -Dm644 docker/config.json     "stage/$NAME/config.example.json"
+          install -Dm644 LICENSE                "stage/$NAME/LICENSE"
+          install -Dm644 README.md              "stage/$NAME/README.md"
+          mkdir -p dist
+          tar -C stage -czf "dist/$NAME.tar.gz" "$NAME"
+          ( cd dist && sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256" )
+          ls -l dist
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.rid }}
+          path: dist/*
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Collect every RID's archive and publish the GitHub Release. Creating the
+  # release triggers container.yml to push the GHCR image for the same tag.
+  # ---------------------------------------------------------------------------
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          # 0.x or any tag carrying a pre-release suffix (-rc1, -beta) → prerelease.
+          PRERELEASE=""
+          case "$TAG" in
+            *-*)        PRERELEASE="--prerelease" ;;
+            v0.*)       PRERELEASE="--prerelease" ;;
+          esac
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --title "$TAG" \
+              --generate-notes \
+              --verify-tag \
+              $PRERELEASE
+          fi
