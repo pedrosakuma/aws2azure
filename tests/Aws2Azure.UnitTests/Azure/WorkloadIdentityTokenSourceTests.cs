@@ -169,6 +169,32 @@ public class WorkloadIdentityTokenSourceTests
     }
 
     [Fact]
+    public async Task GetTokenAsync_TransportFailureSurfacesAsTransientEntraIdTokenException()
+    {
+        var tokenFile = CreateTokenFile("jwt-assertion");
+        try
+        {
+            var handler = new ThrowingHandler(() => new HttpRequestException("connection refused"));
+            var http = new AzureHttpClient(handler, ownsHandler: true);
+            var source = new WorkloadIdentityTokenSource(
+                http,
+                "tenant",
+                "client-id",
+                tokenFile,
+                authority: new Uri("https://login.test/"));
+
+            var ex = await Assert.ThrowsAsync<EntraIdTokenException>(() =>
+                source.GetTokenAsync("https://storage.azure.com/.default").AsTask());
+
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, ex.BackendStatus);
+        }
+        finally
+        {
+            DeleteTokenFile(tokenFile);
+        }
+    }
+
+    [Fact]
     public void FromEnvironment_MissingRequiredValuesListsVariables()
     {
         using var http = new AzureHttpClient(new CapturingScriptedHandler(), ownsHandler: true);
@@ -227,8 +253,7 @@ public class WorkloadIdentityTokenSourceTests
         => Uri.UnescapeDataString(value.Replace("+", " ", StringComparison.Ordinal));
 
     private sealed class CapturingScriptedHandler : HttpMessageHandler
-    {
-        private readonly Queue<HttpResponseMessage> _queue = new();
+    {        private readonly Queue<HttpResponseMessage> _queue = new();
         private readonly List<string> _requestBodies = new();
         private int _callCount;
 
@@ -244,5 +269,11 @@ public class WorkloadIdentityTokenSourceTests
                 : await request.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false));
             return _queue.Dequeue();
         }
+    }
+
+    private sealed class ThrowingHandler(Func<Exception> factory) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromException<HttpResponseMessage>(factory());
     }
 }

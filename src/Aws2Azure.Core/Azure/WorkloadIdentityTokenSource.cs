@@ -28,6 +28,16 @@ public sealed class WorkloadIdentityTokenSource : CachedTokenSource, IEntraToken
     private readonly string _clientId;
     private readonly string _federatedTokenFilePath;
 
+    // Single-slot memo so repeated cache-hit calls with the same scope reuse the
+    // precomputed cache-key string instead of re-allocating per call.
+    private volatile ScopeBinding? _lastScope;
+
+    private sealed class ScopeBinding(string scope, string cacheKey)
+    {
+        public readonly string Scope = scope;
+        public readonly string CacheKey = cacheKey;
+    }
+
     public WorkloadIdentityTokenSource(
         AzureHttpClient http,
         string tenantId,
@@ -62,8 +72,14 @@ public sealed class WorkloadIdentityTokenSource : CachedTokenSource, IEntraToken
     public ValueTask<string> GetTokenAsync(string scope, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(scope);
-        var cacheKey = "wi|" + _clientId + "|" + scope;
-        return GetOrRefreshAsync(cacheKey, scope, _fetch, cancellationToken);
+        var binding = _lastScope;
+        if (binding is null || !string.Equals(binding.Scope, scope, StringComparison.Ordinal))
+        {
+            binding = new ScopeBinding(scope, "wi|" + _clientId + "|" + scope);
+            _lastScope = binding;
+        }
+
+        return GetOrRefreshAsync(binding.CacheKey, scope, _fetch, cancellationToken);
     }
 
     internal static WorkloadIdentityTokenSource FromEnvironmentValues(
