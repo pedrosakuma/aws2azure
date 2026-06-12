@@ -568,6 +568,35 @@ public class ProxyConfigValidatorTests
     }
 
     [Fact]
+    public void Accepts_per_topic_event_grid_access_key_override_when_global_event_grid_uses_managed_identity()
+    {
+        var config = ValidBase();
+        config.Credentials[0].Azure.EventGrid = new EventGridCredentials
+        {
+            Endpoint = "https://global.westus2-1.eventgrid.azure.net/api/events",
+            AuthMode = AzureAuthMode.ManagedIdentity,
+        };
+        config.Credentials[0].Azure.ServiceBusTopics = new ServiceBusTopicsCredentials
+        {
+            Namespace = "myns",
+            SasKeyName = "Root",
+            SasKey = "key",
+            Topics = new Dictionary<string, SnsTopicSettings>
+            {
+                ["orders"] = new()
+                {
+                    Backend = SnsTopicBackend.EventGrid,
+                    EventGridTopicEndpoint = "https://override.westus2-1.eventgrid.azure.net/api/events",
+                    EventGridAccessKey = "per-topic-key",
+                },
+            },
+        };
+
+        var ex = Record.Exception(() => ProxyConfigValidator.Validate(config));
+        Assert.Null(ex);
+    }
+
+    [Fact]
     public void Accepts_managed_identity_system_assigned_without_aad_fields()
     {
         var config = ValidBase();

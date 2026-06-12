@@ -337,7 +337,8 @@ public static class ProxyConfigValidator
             errors.Add($"{prefix}: EventGrid backend requires either eventGridTopicEndpoint or azure.eventGrid endpoint/(namespace+topicName).");
         }
 
-        var hasAccessKey = !string.IsNullOrWhiteSpace(accessKeyOverride)
+        var hasOverrideKey = !string.IsNullOrWhiteSpace(accessKeyOverride);
+        var hasAccessKey = hasOverrideKey
             || !string.IsNullOrWhiteSpace(credentials?.AccessKey);
         var mode = credentials?.AuthMode ?? AzureAuthMode.ClientSecret;
         var hasTenant = !string.IsNullOrWhiteSpace(credentials?.TenantId);
@@ -353,6 +354,14 @@ public static class ProxyConfigValidator
         if (!hasAccessKey && !hasCompleteAad)
         {
             errors.Add($"{prefix}: EventGrid backend requires either eventGridAccessKey or azure.eventGrid accessKey/(tenantId+clientId+clientSecret).");
+        }
+
+        // A per-topic eventGridAccessKey override is pure key-auth at runtime
+        // (SnsTopicRouting prefers it and EventGridPublisher short-circuits before AAD),
+        // so it is independent of the global azure.eventGrid authMode/AAD shape.
+        if (hasOverrideKey)
+        {
+            return;
         }
         if (!hasAccessKey)
         {

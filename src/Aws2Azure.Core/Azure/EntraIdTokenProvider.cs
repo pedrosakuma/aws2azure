@@ -77,10 +77,15 @@ public sealed class EntraIdTokenProvider : CachedTokenSource
     }
 
     private IEntraTokenSource ResolveManagedIdentity(string? clientId)
-        => _modeSources.GetOrAdd(
+    {
+        // A blank/whitespace clientId means system-assigned identity (the validator
+        // treats it as absent too); normalize so the cache key and ImdsTokenSource agree.
+        clientId = string.IsNullOrWhiteSpace(clientId) ? null : clientId;
+        return _modeSources.GetOrAdd(
             "mi|" + (clientId ?? "system"),
             static (_, s) => new ImdsTokenSource(s.Http, s.ClientId, clock: s.Clock),
             (Http: _http, ClientId: clientId, Clock: _clock));
+    }
 
     private IEntraTokenSource ResolveWorkloadIdentity()
         => _modeSources.GetOrAdd(

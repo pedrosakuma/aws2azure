@@ -497,6 +497,22 @@ public class EntraIdTokenProviderTests
     }
 
     [Fact]
+    public async Task GetTokenAsync_WithAadAuthSettings_ManagedIdentityBlankClientIdTreatedAsSystemAssigned()
+    {
+        var handler = new ScriptedHandler();
+        var http = new AzureHttpClient(handler, ownsHandler: true);
+        var provider = new EntraIdTokenProvider(http);
+        handler.Enqueue(MakeImdsToken("system-token", expiresIn: 3600));
+
+        var auth = new AadAuthSettings(AzureAuthMode.ManagedIdentity, TenantId: null, ClientId: "   ", ClientSecret: null);
+        var token = await provider.GetTokenAsync(auth, "https://eventhubs.azure.net/.default");
+
+        Assert.Equal("system-token", token);
+        Assert.Equal("169.254.169.254", handler.LastRequest!.RequestUri!.Host);
+        Assert.DoesNotContain("client_id=", handler.LastRequest.RequestUri.Query, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task GetTokenAsync_WithAadAuthSettings_WorkloadIdentityPostsFederatedAssertion()
     {
         var tokenFile = CreateFederatedTokenFile("federated-jwt");

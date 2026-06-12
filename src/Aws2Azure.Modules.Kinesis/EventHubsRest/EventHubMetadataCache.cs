@@ -104,7 +104,8 @@ internal sealed class EventHubMetadataCache : IEventHubMetadataCache
         }
         else if (credentials.AuthMode == AzureAuthMode.ManagedIdentity)
         {
-            credentialMarker = "managedIdentity|" + (credentials.ClientId ?? "system");
+            credentialMarker = "managedIdentity|"
+                + (string.IsNullOrWhiteSpace(credentials.ClientId) ? "system" : credentials.ClientId);
         }
         else if (credentials.AuthMode == AzureAuthMode.WorkloadIdentity)
         {
