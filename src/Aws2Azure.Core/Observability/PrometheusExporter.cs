@@ -107,7 +107,7 @@ public sealed class PrometheusExporter : IDisposable
                     counter = new CounterState { Name = instrument.Name, Tags = tagDict, Description = instrument.Description };
                     _counters[key] = counter;
                 }
-                counter.Value += (long)value;
+                counter.Value += value;
             }
             else if (instrument is Histogram<double>)
             {
@@ -126,7 +126,7 @@ public sealed class PrometheusExporter : IDisposable
                     gauge = new GaugeState { Name = instrument.Name, Tags = tagDict, Description = instrument.Description };
                     _gauges[key] = gauge;
                 }
-                gauge.Value = (long)value;
+                gauge.Value = value;
             }
             else if (instrument is ObservableCounter<double>)
             {
@@ -135,7 +135,7 @@ public sealed class PrometheusExporter : IDisposable
                     oc = new CounterState { Name = instrument.Name, Tags = tagDict, Description = instrument.Description };
                     _observableCounters[key] = oc;
                 }
-                oc.Value = (long)value;
+                oc.Value = value;
             }
         }
     }
@@ -166,7 +166,7 @@ public sealed class PrometheusExporter : IDisposable
                 sb.Append(counter.Name);
                 WriteTags(sb, counter.Tags);
                 sb.Append(' ');
-                sb.Append(counter.Value);
+                AppendMetricValue(sb, counter.Value);
                 sb.AppendLine();
             }
             
@@ -177,7 +177,7 @@ public sealed class PrometheusExporter : IDisposable
                 sb.Append(counter.Name);
                 WriteTags(sb, counter.Tags);
                 sb.Append(' ');
-                sb.Append(counter.Value);
+                AppendMetricValue(sb, counter.Value);
                 sb.AppendLine();
             }
             
@@ -230,7 +230,7 @@ public sealed class PrometheusExporter : IDisposable
                 sb.Append(gauge.Name);
                 WriteTags(sb, gauge.Tags);
                 sb.Append(' ');
-                sb.Append(gauge.Value);
+                AppendMetricValue(sb, gauge.Value);
                 sb.AppendLine();
             }
         }
@@ -238,6 +238,25 @@ public sealed class PrometheusExporter : IDisposable
         return sb.ToString();
     }
     
+    /// <summary>
+    /// Appends a metric value culture-invariantly. Whole numbers within the
+    /// exact-integer range render as plain integers (no scientific notation, no
+    /// precision loss, parseable by integer consumers like the perf harness);
+    /// genuinely fractional values use the round-trippable G17 form.
+    /// </summary>
+    private static void AppendMetricValue(StringBuilder sb, double value)
+    {
+        const double MaxExactInteger = 9.007199254740992e15; // 2^53
+        if (value >= -MaxExactInteger && value <= MaxExactInteger && value == Math.Floor(value))
+        {
+            sb.Append((long)value);
+        }
+        else
+        {
+            sb.Append(value.ToString("G17", CultureInfo.InvariantCulture));
+        }
+    }
+
     private static void WriteHelp(StringBuilder sb, string name, string type, string? description, HashSet<string> written)
     {
         if (written.Add(name))
@@ -331,7 +350,7 @@ public sealed class PrometheusExporter : IDisposable
         public required string Name { get; init; }
         public required Dictionary<string, string> Tags { get; init; }
         public string? Description { get; init; }
-        public long Value;
+        public double Value;
     }
     
     private sealed class HistogramState
@@ -375,6 +394,6 @@ public sealed class PrometheusExporter : IDisposable
         public required string Name { get; init; }
         public required Dictionary<string, string> Tags { get; init; }
         public string? Description { get; init; }
-        public long Value;
+        public double Value;
     }
 }
