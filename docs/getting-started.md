@@ -221,6 +221,31 @@ non-root user, and ships a `HEALTHCHECK` that calls the binary's built-in
 
 ---
 
+## Prebuilt release binaries
+
+Each tagged release attaches a self-contained Native-AOT binary for
+`linux-x64` and `linux-arm64` (plus a SHA-256 checksum) to the
+[GitHub Releases page](https://github.com/pedrosakuma/aws2azure/releases):
+
+```bash
+VERSION=v0.1.0   # pick a release tag
+ARCH=linux-x64   # or linux-arm64
+curl -fsSL -O "https://github.com/pedrosakuma/aws2azure/releases/download/${VERSION}/aws2azure-${VERSION}-${ARCH}.tar.gz"
+curl -fsSL -O "https://github.com/pedrosakuma/aws2azure/releases/download/${VERSION}/aws2azure-${VERSION}-${ARCH}.tar.gz.sha256"
+sha256sum -c "aws2azure-${VERSION}-${ARCH}.tar.gz.sha256"
+tar -xzf "aws2azure-${VERSION}-${ARCH}.tar.gz"
+cd "aws2azure-${VERSION}-${ARCH}"
+
+AWS2AZURE_CONFIG_FILE=config.example.json \
+ASPNETCORE_URLS=http://localhost:8080 \
+./aws2azure
+```
+
+The archive bundles the `aws2azure` binary, a `config.example.json` to copy and
+edit, the README, and the license. No .NET runtime install is required.
+
+---
+
 ## Building and running from source
 
 ```bash
