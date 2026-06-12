@@ -2,6 +2,7 @@ using Aws2Azure.Core.Configuration;
 
 namespace Aws2Azure.UnitTests.Configuration;
 
+[Collection("EnvironmentVariables")]
 public class ProxyConfigValidatorTests
 {
     private static ProxyConfig ValidBase() => new()
@@ -549,5 +550,142 @@ public class ProxyConfigValidatorTests
 
         var ex = Record.Exception(() => ProxyConfigValidator.Validate(config));
         Assert.Null(ex);
+    }
+
+    [Fact]
+    public void Rejects_managed_identity_with_client_secret()
+    {
+        var config = ValidBase();
+        config.Credentials[0].Azure.EventHubs = new EventHubsCredentials
+        {
+            Namespace = "myns",
+            AuthMode = AzureAuthMode.ManagedIdentity,
+            ClientSecret = "secret",
+        };
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+        Assert.Contains("eventHubs: authMode 'ManagedIdentity' must not specify clientSecret.", ex.Message);
+    }
+
+    [Fact]
+    public void Accepts_managed_identity_system_assigned_without_aad_fields()
+    {
+        var config = ValidBase();
+        config.Credentials[0].Azure.EventHubs = new EventHubsCredentials
+        {
+            Namespace = "myns",
+            AuthMode = AzureAuthMode.ManagedIdentity,
+        };
+
+        var ex = Record.Exception(() => ProxyConfigValidator.Validate(config));
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void Accepts_workload_identity_when_environment_is_configured()
+    {
+        var old = ClearAndSetWorkloadIdentityEnvironment("tenant", "client", "token-file");
+        try
+        {
+            var config = ValidBase();
+            config.Credentials[0].Azure.KeyVault = new KeyVaultCredentials
+            {
+                VaultUrl = "https://example.vault.azure.net/",
+                AuthMode = AzureAuthMode.WorkloadIdentity,
+            };
+
+            var ex = Record.Exception(() => ProxyConfigValidator.Validate(config));
+            Assert.Null(ex);
+        }
+        finally
+        {
+            RestoreWorkloadIdentityEnvironment(old);
+        }
+    }
+
+    [Fact]
+    public void Rejects_workload_identity_with_configured_client_secret()
+    {
+        var old = ClearAndSetWorkloadIdentityEnvironment("tenant", "client", "token-file");
+        try
+        {
+            var config = ValidBase();
+            config.Credentials[0].Azure.KeyVault = new KeyVaultCredentials
+            {
+                VaultUrl = "https://example.vault.azure.net/",
+                AuthMode = AzureAuthMode.WorkloadIdentity,
+                ClientSecret = "secret",
+            };
+
+            var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+            Assert.Contains("keyVault: authMode 'WorkloadIdentity' takes tenant/client/token from AZURE_* environment variables", ex.Message);
+        }
+        finally
+        {
+            RestoreWorkloadIdentityEnvironment(old);
+        }
+    }
+
+    [Fact]
+    public void Rejects_workload_identity_when_environment_is_missing()
+    {
+        var old = ClearAndSetWorkloadIdentityEnvironment(null, null, null);
+        try
+        {
+            var config = ValidBase();
+            config.Credentials[0].Azure.KeyVault = new KeyVaultCredentials
+            {
+                VaultUrl = "https://example.vault.azure.net/",
+                AuthMode = AzureAuthMode.WorkloadIdentity,
+            };
+
+            var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+            Assert.Contains("keyVault: authMode 'WorkloadIdentity' requires the AZURE_TENANT_ID, AZURE_CLIENT_ID and AZURE_FEDERATED_TOKEN_FILE environment variables.", ex.Message);
+            Assert.Contains("AZURE_TENANT_ID", ex.Message);
+            Assert.Contains("AZURE_CLIENT_ID", ex.Message);
+            Assert.Contains("AZURE_FEDERATED_TOKEN_FILE", ex.Message);
+        }
+        finally
+        {
+            RestoreWorkloadIdentityEnvironment(old);
+        }
+    }
+
+    [Fact]
+    public void Rejects_key_shape_with_non_default_auth_mode()
+    {
+        var config = ValidBase();
+        config.Credentials[0].Azure.EventHubs = new EventHubsCredentials
+        {
+            Namespace = "myns",
+            SasKeyName = "Root",
+            SasKey = "key",
+            AuthMode = AzureAuthMode.ManagedIdentity,
+        };
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+        Assert.Contains("eventHubs: authMode 'ManagedIdentity' cannot be combined with SAS auth", ex.Message);
+    }
+
+    private static (string? Tenant, string? Client, string? TokenFile) ClearAndSetWorkloadIdentityEnvironment(
+        string? tenant,
+        string? client,
+        string? tokenFile)
+    {
+        var old = (
+            Environment.GetEnvironmentVariable("AZURE_TENANT_ID"),
+            Environment.GetEnvironmentVariable("AZURE_CLIENT_ID"),
+            Environment.GetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE"));
+        Environment.SetEnvironmentVariable("AZURE_TENANT_ID", tenant);
+        Environment.SetEnvironmentVariable("AZURE_CLIENT_ID", client);
+        Environment.SetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE", tokenFile);
+        return old;
+    }
+
+    private static void RestoreWorkloadIdentityEnvironment((string? Tenant, string? Client, string? TokenFile) old)
+    {
+        Environment.SetEnvironmentVariable("AZURE_TENANT_ID", old.Tenant);
+        Environment.SetEnvironmentVariable("AZURE_CLIENT_ID", old.Client);
+        Environment.SetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE", old.TokenFile);
     }
 }

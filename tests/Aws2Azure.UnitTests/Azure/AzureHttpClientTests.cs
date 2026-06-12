@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -8,6 +9,7 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Aws2Azure.Core.Azure;
+using Aws2Azure.Core.Configuration;
 using Xunit;
 
 namespace Aws2Azure.UnitTests.Azure;
@@ -237,6 +239,7 @@ public class AzureHttpClientTests
     }
 }
 
+[Collection("EnvironmentVariables")]
 public class EntraIdTokenProviderTests
 {
     [Fact]
@@ -455,6 +458,86 @@ public class EntraIdTokenProviderTests
         Assert.Equal(2, handler.CallCount);
     }
 
+    [Fact]
+    public async Task GetTokenAsync_WithAadAuthSettings_ClientSecretPostsToTokenEndpoint()
+    {
+        var handler = new ScriptedHandler();
+        var http = new AzureHttpClient(handler, ownsHandler: true);
+        var provider = new EntraIdTokenProvider(http, authority: new Uri("https://login.test/"));
+        handler.Enqueue(MakeToken("client-secret-token", expiresIn: 3600));
+
+        var auth = new AadAuthSettings(AzureAuthMode.ClientSecret, "tenant", "client", "secret");
+        var token = await provider.GetTokenAsync(auth, "https://storage.azure.com/.default");
+
+        Assert.Equal("client-secret-token", token);
+        Assert.Equal(HttpMethod.Post, handler.LastRequest!.Method);
+        Assert.Equal("https://login.test/tenant/oauth2/v2.0/token", handler.LastRequest.RequestUri!.ToString());
+        Assert.Contains("grant_type=client_credentials", handler.LastBody, StringComparison.Ordinal);
+        Assert.Contains("client_secret=secret", handler.LastBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetTokenAsync_WithAadAuthSettings_ManagedIdentityRequestsImds()
+    {
+        var handler = new ScriptedHandler();
+        var http = new AzureHttpClient(handler, ownsHandler: true);
+        var provider = new EntraIdTokenProvider(http);
+        handler.Enqueue(MakeImdsToken("managed-identity-token", expiresIn: 3600));
+
+        var auth = new AadAuthSettings(AzureAuthMode.ManagedIdentity, TenantId: null, ClientId: "user-client", ClientSecret: null);
+        var token = await provider.GetTokenAsync(auth, "https://eventhubs.azure.net/.default");
+
+        Assert.Equal("managed-identity-token", token);
+        Assert.Equal(HttpMethod.Get, handler.LastRequest!.Method);
+        Assert.Equal("169.254.169.254", handler.LastRequest.RequestUri!.Host);
+        Assert.Equal("true", string.Join(",", handler.LastRequest.Headers.GetValues("Metadata")));
+        Assert.Contains("resource=https%3A%2F%2Feventhubs.azure.net%2F", handler.LastRequest.RequestUri.Query, StringComparison.Ordinal);
+        Assert.Contains("client_id=user-client", handler.LastRequest.RequestUri.Query, StringComparison.Ordinal);
+        Assert.DoesNotContain("client_credentials", handler.LastBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetTokenAsync_WithAadAuthSettings_WorkloadIdentityPostsFederatedAssertion()
+    {
+        var tokenFile = CreateFederatedTokenFile("federated-jwt");
+        var oldTenant = Environment.GetEnvironmentVariable("AZURE_TENANT_ID");
+        var oldClient = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
+        var oldTokenFile = Environment.GetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE");
+        var oldAuthority = Environment.GetEnvironmentVariable("AZURE_AUTHORITY_HOST");
+        try
+        {
+            Environment.SetEnvironmentVariable("AZURE_TENANT_ID", "tenant");
+            Environment.SetEnvironmentVariable("AZURE_CLIENT_ID", "client");
+            Environment.SetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE", tokenFile);
+            Environment.SetEnvironmentVariable("AZURE_AUTHORITY_HOST", "https://login.test/");
+
+            var handler = new ScriptedHandler();
+            var http = new AzureHttpClient(handler, ownsHandler: true);
+            var provider = new EntraIdTokenProvider(http);
+            handler.Enqueue(MakeToken("workload-token", expiresIn: 3600));
+
+            var auth = new AadAuthSettings(AzureAuthMode.WorkloadIdentity, TenantId: null, ClientId: null, ClientSecret: null);
+            var token = await provider.GetTokenAsync(auth, "https://servicebus.azure.net/.default");
+
+            Assert.Equal("workload-token", token);
+            Assert.Equal(HttpMethod.Post, handler.LastRequest!.Method);
+            Assert.Equal("https://login.test/tenant/oauth2/v2.0/token", handler.LastRequest.RequestUri!.ToString());
+            Assert.Contains("client_assertion=federated-jwt", handler.LastBody, StringComparison.Ordinal);
+            Assert.DoesNotContain("client_secret=", handler.LastBody, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("AZURE_TENANT_ID", oldTenant);
+            Environment.SetEnvironmentVariable("AZURE_CLIENT_ID", oldClient);
+            Environment.SetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE", oldTokenFile);
+            Environment.SetEnvironmentVariable("AZURE_AUTHORITY_HOST", oldAuthority);
+            if (File.Exists(tokenFile))
+            {
+                File.Delete(tokenFile);
+            }
+        }
+    }
+
     private static async Task SpinUntilAsync(Func<Task<bool>> condition, TimeSpan timeout)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -478,16 +561,40 @@ public class EntraIdTokenProviderTests
         };
     }
 
+    private static HttpResponseMessage MakeImdsToken(string token, int expiresIn)
+    {
+        var payload = "{\"access_token\":\"" + token + "\",\"expires_in\":\"" + expiresIn + "\",\"token_type\":\"Bearer\",\"resource\":\"https://x/\"}";
+        return new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(payload, Encoding.UTF8, "application/json")
+        };
+    }
+
+    private static string CreateFederatedTokenFile(string contents)
+    {
+        var directory = Path.Combine(AppContext.BaseDirectory, "entra-provider-dispatch-tests");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "token-" + Guid.NewGuid().ToString("N") + ".txt");
+        File.WriteAllText(path, contents);
+        return path;
+    }
+
     private sealed class ScriptedHandler : HttpMessageHandler
     {
         private readonly Queue<HttpResponseMessage> _queue = new();
         private int _callCount;
         public int CallCount => Volatile.Read(ref _callCount);
+        public HttpRequestMessage? LastRequest { get; private set; }
+        public string LastBody { get; private set; } = string.Empty;
         public void Enqueue(HttpResponseMessage r) => _queue.Enqueue(r);
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref _callCount);
-            return Task.FromResult(_queue.Dequeue());
+            LastRequest = request;
+            LastBody = request.Content is null
+                ? string.Empty
+                : await request.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            return _queue.Dequeue();
         }
     }
 

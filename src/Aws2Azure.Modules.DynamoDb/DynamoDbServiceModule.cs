@@ -294,9 +294,6 @@ public sealed class DynamoDbServiceModule : IServiceModule
         }
         return new AadCosmosAuthenticator(
             _tokenProvider,
-            creds.TenantId!,
-            creds.ClientId!,
-            creds.ClientSecret!);
+            new AadAuthSettings(creds.AuthMode, creds.TenantId, creds.ClientId, creds.ClientSecret));
     }
 }
-

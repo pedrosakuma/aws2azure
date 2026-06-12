@@ -38,7 +38,13 @@ internal static class SnsTopicRouting
         var accessKey = !string.IsNullOrWhiteSpace(route.EventGridAccessKey)
             ? route.EventGridAccessKey
             : credentials?.AccessKey;
-        return new EventGridPublishDestination(endpoint, accessKey, credentials?.TenantId, credentials?.ClientId, credentials?.ClientSecret);
+        return new EventGridPublishDestination(
+            endpoint,
+            accessKey,
+            credentials?.AuthMode ?? AzureAuthMode.ClientSecret,
+            credentials?.TenantId,
+            credentials?.ClientId,
+            credentials?.ClientSecret);
     }
 
     private static SnsTopicSettings? ResolveTopicSettings(IReadOnlyDictionary<string, SnsTopicSettings>? topics, string topicName)

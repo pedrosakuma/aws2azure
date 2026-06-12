@@ -248,9 +248,22 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
         => "amqps://" + namespaceFqdn.Trim().TrimEnd('/') + "/" + entityPath.Trim().TrimStart('/');
 
     private static string BuildCredentialMarker(ServiceBusTopicsCredentials credentials)
-        => !string.IsNullOrWhiteSpace(credentials.SasKeyName)
-            ? "sas|" + credentials.SasKeyName.Trim()
-            : "aad|" + credentials.TenantId + "|" + credentials.ClientId;
+    {
+        if (!string.IsNullOrWhiteSpace(credentials.SasKeyName))
+        {
+            return "sas|" + credentials.SasKeyName.Trim();
+        }
+
+        return credentials.AuthMode switch
+        {
+            AzureAuthMode.ManagedIdentity => "managedIdentity|" + (credentials.ClientId ?? "system"),
+            AzureAuthMode.WorkloadIdentity => "workloadIdentity|"
+                + Environment.GetEnvironmentVariable("AZURE_TENANT_ID")
+                + "|"
+                + Environment.GetEnvironmentVariable("AZURE_CLIENT_ID"),
+            _ => "clientSecret|" + credentials.TenantId + "|" + credentials.ClientId,
+        };
+    }
 
     internal static SnsBatchSendOutcome CreateBatchOutcome(SnsAmqpException exception)
         => exception.Kind == SnsAmqpFailureKind.Throttled
@@ -467,11 +480,10 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
             public AmqpToken GetToken(string audience)
             {
                 _ = audience;
+                var auth = new AadAuthSettings(_credentials.AuthMode, _credentials.TenantId, _credentials.ClientId, _credentials.ClientSecret);
                 var token = _tokenProvider
                     .GetTokenAsync(
-                        _credentials.TenantId!,
-                        _credentials.ClientId!,
-                        _credentials.ClientSecret!,
+                        auth,
                         "https://servicebus.azure.net/.default")
                     .AsTask()
                     .GetAwaiter()

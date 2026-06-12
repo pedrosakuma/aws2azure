@@ -3,6 +3,7 @@ using Aws2Azure.Modules.Kinesis.EventHubsRest;
 
 namespace Aws2Azure.UnitTests.Kinesis;
 
+[Collection("EnvironmentVariables")]
 public sealed class EventHubMetadataCacheTests
 {
     [Fact]
@@ -79,6 +80,54 @@ public sealed class EventHubMetadataCacheTests
 
         Assert.Equal(1, callCount);
         Assert.All(results, result => Assert.Equal(4, result.PartitionCount));
+    }
+
+    [Fact]
+    public async Task GetEventHubAsync_separates_cache_entries_by_token_auth_mode()
+    {
+        var oldTenant = Environment.GetEnvironmentVariable("AZURE_TENANT_ID");
+        var oldClient = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
+        var oldTokenFile = Environment.GetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE");
+        try
+        {
+            Environment.SetEnvironmentVariable("AZURE_TENANT_ID", "tenant");
+            Environment.SetEnvironmentVariable("AZURE_CLIENT_ID", "workload-client");
+            Environment.SetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE", "token-file");
+
+            var clock = new ManualTimeProvider(new DateTimeOffset(2024, 6, 20, 8, 45, 0, TimeSpan.Zero));
+            var callCount = 0;
+            var cache = new EventHubMetadataCache(
+                new FakeManagementClient((_, _, _, _) =>
+                {
+                    callCount++;
+                    return ValueTask.FromResult(new EventHubDescription(callCount, [callCount.ToString()], 7, clock.GetUtcNow()));
+                }),
+                clock,
+                TimeSpan.FromMinutes(5));
+
+            var managedIdentity = new EventHubsCredentials
+            {
+                Namespace = "myns",
+                AuthMode = AzureAuthMode.ManagedIdentity,
+            };
+            var workloadIdentity = new EventHubsCredentials
+            {
+                Namespace = "myns",
+                AuthMode = AzureAuthMode.WorkloadIdentity,
+            };
+
+            var first = await cache.GetEventHubAsync(managedIdentity, "myns.servicebus.windows.net", "orders", CancellationToken.None);
+            var second = await cache.GetEventHubAsync(workloadIdentity, "myns.servicebus.windows.net", "orders", CancellationToken.None);
+
+            Assert.Equal(2, callCount);
+            Assert.NotEqual(first.PartitionCount, second.PartitionCount);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("AZURE_TENANT_ID", oldTenant);
+            Environment.SetEnvironmentVariable("AZURE_CLIENT_ID", oldClient);
+            Environment.SetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE", oldTokenFile);
+        }
     }
 
     private static EventHubsCredentials NewCredentials() => new()

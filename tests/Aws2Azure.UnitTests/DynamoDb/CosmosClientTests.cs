@@ -261,7 +261,10 @@ public class CosmosClientAadTokenFailureTests
             ClientId = "client",
             ClientSecret = "secret",
         };
-        var client = new CosmosClient(cosmosHttp, creds, new AadCosmosAuthenticator(tokenProvider, "tenant", "client", "secret"));
+        var client = new CosmosClient(
+            cosmosHttp,
+            creds,
+            new AadCosmosAuthenticator(tokenProvider, new AadAuthSettings(AzureAuthMode.ClientSecret, "tenant", "client", "secret")));
 
         using var resp = await client.SendAsync(
             HttpMethod.Get, "docs", "dbs/main/colls/c/docs/1", "/dbs/main/colls/c/docs/1",

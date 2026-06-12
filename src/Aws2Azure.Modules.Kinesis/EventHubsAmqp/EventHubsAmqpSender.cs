@@ -330,7 +330,15 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
             return "sas|" + credentials.SasKeyName.Trim();
         }
 
-        return "aad|" + credentials.TenantId + "|" + credentials.ClientId;
+        return credentials.AuthMode switch
+        {
+            AzureAuthMode.ManagedIdentity => "managedIdentity|" + (credentials.ClientId ?? "system"),
+            AzureAuthMode.WorkloadIdentity => "workloadIdentity|"
+                + Environment.GetEnvironmentVariable("AZURE_TENANT_ID")
+                + "|"
+                + Environment.GetEnvironmentVariable("AZURE_CLIENT_ID"),
+            _ => "clientSecret|" + credentials.TenantId + "|" + credentials.ClientId,
+        };
     }
 
     private static AmqpMessageAnnotations? CreateAnnotations(IReadOnlyDictionary<string, object>? annotations)
@@ -760,11 +768,10 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
         public AmqpToken GetToken(string audience)
         {
             _ = audience;
+            var auth = new AadAuthSettings(_credentials.AuthMode, _credentials.TenantId, _credentials.ClientId, _credentials.ClientSecret);
             var token = _tokenProvider
                 .GetTokenAsync(
-                    _credentials.TenantId!,
-                    _credentials.ClientId!,
-                    _credentials.ClientSecret!,
+                    auth,
                     EventHubsAuthenticator.EventHubsScope)
                 .AsTask()
                 .GetAwaiter()

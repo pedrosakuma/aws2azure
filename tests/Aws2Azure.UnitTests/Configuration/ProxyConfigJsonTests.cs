@@ -54,4 +54,29 @@ public class ProxyConfigJsonTests
         var config = JsonSerializer.Deserialize(json, ProxyConfigJsonContext.Default.ProxyConfig);
         Assert.Equal("AKIA", Assert.Single(config!.Credentials).AwsAccessKeyId);
     }
+
+    [Fact]
+    public void Deserializes_auth_mode_with_camel_case_enum_value()
+    {
+        const string json = """
+        {
+          "credentials": [
+            {
+              "awsAccessKeyId": "AKIA",
+              "awsSecretAccessKey": "secret",
+              "azure": {
+                "eventHubs": {
+                  "namespace": "myns",
+                  "authMode": "managedIdentity"
+                }
+              }
+            }
+          ]
+        }
+        """;
+
+        var config = JsonSerializer.Deserialize(json, ProxyConfigJsonContext.Default.ProxyConfig);
+
+        Assert.Equal(AzureAuthMode.ManagedIdentity, Assert.Single(config!.Credentials).Azure.EventHubs!.AuthMode);
+    }
 }

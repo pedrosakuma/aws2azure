@@ -195,6 +195,14 @@ public sealed class ServiceBusTopicsCredentials
 
     public string SasKeyName { get; set; } = string.Empty;
     public string SasKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Entra token auth mode. Defaults to client-secret credentials; set to
+    /// managed identity or workload identity to replace the secret-based AAD
+    /// flow while leaving SAS auth as a separate mutually-exclusive shape.
+    /// </summary>
+    public AzureAuthMode AuthMode { get; set; } = AzureAuthMode.ClientSecret;
+
     public string? TenantId { get; set; }
     public string? ClientId { get; set; }
     public string? ClientSecret { get; set; }
@@ -230,6 +238,14 @@ public sealed class SnsTopicSettings
 public sealed class KeyVaultCredentials
 {
     public string VaultUrl { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Entra token auth mode. Defaults to client-secret credentials; set to
+    /// managed identity or workload identity to acquire the Key Vault token
+    /// without storing a client secret in proxy configuration.
+    /// </summary>
+    public AzureAuthMode AuthMode { get; set; } = AzureAuthMode.ClientSecret;
+
     public string? TenantId { get; set; }
     public string? ClientId { get; set; }
     public string? ClientSecret { get; set; }
@@ -257,6 +273,14 @@ public sealed class EventGridCredentials
     public string? TopicName { get; set; }
 
     public string? AccessKey { get; set; }
+
+    /// <summary>
+    /// Entra token auth mode. Defaults to client-secret credentials; set to
+    /// managed identity or workload identity to replace the secret-based AAD
+    /// flow when no Event Grid access key is configured.
+    /// </summary>
+    public AzureAuthMode AuthMode { get; set; } = AzureAuthMode.ClientSecret;
+
     public string? TenantId { get; set; }
     public string? ClientId { get; set; }
     public string? ClientSecret { get; set; }
@@ -272,6 +296,13 @@ public sealed class CosmosCredentials
     /// signing; when left empty the AAD fields are consulted instead.
     /// </summary>
     public string PrimaryKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Entra token auth mode. Defaults to client-secret credentials; set to
+    /// managed identity or workload identity to replace the secret-based AAD
+    /// flow when no Cosmos primary key is configured.
+    /// </summary>
+    public AzureAuthMode AuthMode { get; set; } = AzureAuthMode.ClientSecret;
 
     /// <summary>
     /// Logical Cosmos database that maps 1:1 to the AWS account's
@@ -334,6 +365,13 @@ public sealed class EventHubsCredentials
     /// the AAD shape.
     /// </summary>
     public string SasKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Entra token auth mode. Defaults to client-secret credentials; set to
+    /// managed identity or workload identity to replace the secret-based AAD
+    /// flow when no Event Hubs SAS key is configured.
+    /// </summary>
+    public AzureAuthMode AuthMode { get; set; } = AzureAuthMode.ClientSecret;
 
     /// <summary>
     /// Entra tenant id for AAD auth. Required when SAS fields are

@@ -226,10 +226,9 @@ internal sealed class EventGridPublisher : IEventGridPublisher
             return;
         }
 
+        var auth = new AadAuthSettings(destination.AuthMode, destination.TenantId, destination.ClientId, destination.ClientSecret);
         var token = await _tokenProvider.GetTokenAsync(
-            destination.TenantId!,
-            destination.ClientId!,
-            destination.ClientSecret!,
+            auth,
             "https://eventgrid.azure.net/.default",
             cancellationToken).ConfigureAwait(false);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
