@@ -9,13 +9,16 @@
 # repos) rather than cross-compiled, so the Native-AOT toolchain just needs
 # clang + zlib on each runner.
 #
-# Creating the Release fires the `release: published` trigger in
-# container.yml, which pushes the matching semver-tagged image to GHCR — so a
-# single tag produces both the binaries and the container image.
+# After the release is published, the `container` job calls container.yml as a
+# reusable workflow to build and push the matching semver-tagged image to GHCR —
+# so a single tag produces both the binaries and the container image. The call
+# is used instead of container.yml's `release: published` trigger because a
+# release created with the default GITHUB_TOKEN does not cascade workflow events.
 #
 #   git tag v0.1.0 && git push origin v0.1.0
 #
-# `workflow_dispatch` rebuilds and re-uploads assets for an existing tag.
+# `workflow_dispatch` rebuilds and re-uploads assets for an existing tag; run it
+# with `--ref <tag>` so the container image is stamped from the tag ref.
 
 name: release
 
@@ -142,3 +145,18 @@ jobs:
               --verify-tag \
               $PRERELEASE
           fi
+
+  # ---------------------------------------------------------------------------
+  # Build and push the GHCR image for the same tag by calling container.yml as a
+  # reusable workflow. The called workflow inherits github.ref (the pushed tag),
+  # so docker/metadata-action stamps the matching semver image tags. This
+  # replaces container.yml's `release: published` trigger, which does not fire
+  # for a release created with the default GITHUB_TOKEN.
+  # ---------------------------------------------------------------------------
+  container:
+    needs: release
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/container.yml
+    secrets: inherit

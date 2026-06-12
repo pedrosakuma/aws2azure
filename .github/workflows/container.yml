@@ -2,8 +2,8 @@
 #
 # Pull requests that touch the Dockerfile, sources, or this workflow build the
 # image and run a smoke test WITHOUT pushing — so a broken Dockerfile is caught
-# before merge. Pushes to main, releases, and manual dispatch additionally
-# publish the image to GHCR.
+# before merge. Pushes to main, manual dispatch, and calls from release.yml
+# (workflow_call) additionally publish the image to GHCR.
 
 name: Container Image
 
@@ -23,6 +23,7 @@ on:
       - '.github/workflows/container.yml'
   release:
     types: [published]
+  workflow_call:
   workflow_dispatch:
 
 env:
@@ -126,6 +127,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push (amd64)
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -138,4 +140,4 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Image digest
-        run: echo "Image pushed with digest ${{ steps.meta.outputs.digest }}"
+        run: echo "Image pushed with digest ${{ steps.build.outputs.digest }}"
