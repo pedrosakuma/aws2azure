@@ -18,6 +18,10 @@ public sealed class PrometheusExporter : IDisposable
     private readonly Dictionary<MetricKey, CounterState> _counters = new();
     private readonly Dictionary<MetricKey, HistogramState> _histograms = new();
     private readonly Dictionary<MetricKey, GaugeState> _gauges = new();
+    // Observable counters report their cumulative total each scrape, so they are
+    // SET (not accumulated like Counter.Add) but still rendered as Prometheus
+    // counters. Kept separate from _counters to avoid summing cumulative totals.
+    private readonly Dictionary<MetricKey, CounterState> _observableCounters = new();
     
     // Duration histogram buckets (seconds) - Prometheus defaults
     private static readonly double[] DurationBuckets = 
@@ -78,6 +82,15 @@ public sealed class PrometheusExporter : IDisposable
                 }
                 gauge.Value = value;
             }
+            else if (instrument is ObservableCounter<long>)
+            {
+                if (!_observableCounters.TryGetValue(key, out var oc))
+                {
+                    oc = new CounterState { Name = instrument.Name, Tags = tagDict, Description = instrument.Description };
+                    _observableCounters[key] = oc;
+                }
+                oc.Value = value;
+            }
         }
     }
     
@@ -115,6 +128,15 @@ public sealed class PrometheusExporter : IDisposable
                 }
                 gauge.Value = (long)value;
             }
+            else if (instrument is ObservableCounter<double>)
+            {
+                if (!_observableCounters.TryGetValue(key, out var oc))
+                {
+                    oc = new CounterState { Name = instrument.Name, Tags = tagDict, Description = instrument.Description };
+                    _observableCounters[key] = oc;
+                }
+                oc.Value = (long)value;
+            }
         }
     }
     
@@ -139,6 +161,17 @@ public sealed class PrometheusExporter : IDisposable
         {
             // Counters
             foreach (var (key, counter) in _counters.OrderBy(kv => kv.Key.Name).ThenBy(kv => kv.Key.TagsKey))
+            {
+                WriteHelp(sb, counter.Name, "counter", counter.Description, writtenHelp);
+                sb.Append(counter.Name);
+                WriteTags(sb, counter.Tags);
+                sb.Append(' ');
+                sb.Append(counter.Value);
+                sb.AppendLine();
+            }
+            
+            // Observable counters (cumulative totals, set at scrape time)
+            foreach (var (key, counter) in _observableCounters.OrderBy(kv => kv.Key.Name).ThenBy(kv => kv.Key.TagsKey))
             {
                 WriteHelp(sb, counter.Name, "counter", counter.Description, writtenHelp);
                 sb.Append(counter.Name);
