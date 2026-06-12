@@ -30,6 +30,8 @@ public static class ProxyConfigValidator
             errors.Add($"dynamoDb.consistencyCheck: unknown value '{(int)config.DynamoDb.ConsistencyCheck}'.");
         }
 
+        ResolveAzureIdentities(config, errors);
+
         var seen = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 0; i < config.Credentials.Count; i++)
         {
@@ -508,7 +510,8 @@ public static class ProxyConfigValidator
         bool hasClientId,
         bool hasClientSecret,
         List<string> errors,
-        string? clientSecretRequirementMessage = null)
+        string? clientSecretRequirementMessage = null,
+        bool checkWorkloadEnvironment = true)
     {
         if (!Enum.IsDefined(typeof(AzureAuthMode), mode))
         {
@@ -539,9 +542,96 @@ public static class ProxyConfigValidator
                 {
                     errors.Add($"{prefix}: authMode 'WorkloadIdentity' takes tenant/client/token from AZURE_* environment variables; do not set tenantId/clientId/clientSecret.");
                 }
-                ValidateWorkloadIdentityEnvironment(prefix, errors);
+                if (checkWorkloadEnvironment)
+                {
+                    ValidateWorkloadIdentityEnvironment(prefix, errors);
+                }
                 break;
         }
+    }
+
+    /// <summary>
+    /// Resolves every AAD-capable backend block's optional <c>identity</c>
+    /// reference against the top-level <c>azureIdentities</c> pool, mutating the
+    /// block's effective AAD fields in place so all downstream validation and
+    /// token dispatch read the resolved shape. Runs once at startup. Dangling
+    /// references, ambiguous inline+reference combinations, and malformed named
+    /// identities all fail loud.
+    /// </summary>
+    private static void ResolveAzureIdentities(ProxyConfig config, List<string> errors)
+    {
+        var identities = config.AzureIdentities;
+        if (identities is not null)
+        {
+            foreach (var (name, identity) in identities)
+            {
+                if (identity is null)
+                {
+                    errors.Add($"azureIdentities.{name}: entry is null.");
+                    continue;
+                }
+
+                // The named identity's own shape is validated without the
+                // WorkloadIdentity environment check: an unreferenced WI identity
+                // must not fail startup on a host that simply isn't using it. The
+                // env check runs at the consuming block once the reference is applied.
+                ValidateAadShape(
+                    $"azureIdentities.{name}",
+                    identity.AuthMode,
+                    !string.IsNullOrWhiteSpace(identity.TenantId),
+                    !string.IsNullOrWhiteSpace(identity.ClientId),
+                    !string.IsNullOrWhiteSpace(identity.ClientSecret),
+                    errors,
+                    checkWorkloadEnvironment: false);
+            }
+        }
+
+        for (var i = 0; i < config.Credentials.Count; i++)
+        {
+            var azure = config.Credentials[i].Azure;
+            var prefix = $"credentials[{i}].azure";
+            ResolveBlockIdentity(identities, azure.Cosmos, prefix + ".cosmos", errors);
+            ResolveBlockIdentity(identities, azure.EventHubs, prefix + ".eventHubs", errors);
+            ResolveBlockIdentity(identities, azure.ServiceBusTopics, prefix + ".serviceBusTopics", errors);
+            ResolveBlockIdentity(identities, azure.EventGrid, prefix + ".eventGrid", errors);
+            ResolveBlockIdentity(identities, azure.KeyVault, prefix + ".keyVault", errors);
+        }
+    }
+
+    private static void ResolveBlockIdentity(
+        Dictionary<string, AzureIdentity>? identities,
+        IAadAuthCredentials? block,
+        string prefix,
+        List<string> errors)
+    {
+        if (block is null || string.IsNullOrWhiteSpace(block.Identity))
+        {
+            return;
+        }
+
+        var name = block.Identity;
+
+        // A named reference replaces the inline AAD shape wholesale; allowing both
+        // is ambiguous, so fail loud rather than silently letting one win.
+        if (block.AuthMode != AzureAuthMode.ClientSecret
+            || !string.IsNullOrWhiteSpace(block.TenantId)
+            || !string.IsNullOrWhiteSpace(block.ClientId)
+            || !string.IsNullOrWhiteSpace(block.ClientSecret))
+        {
+            errors.Add($"{prefix}: identity reference '{name}' cannot be combined with inline authMode/tenantId/clientId/clientSecret fields.");
+            return;
+        }
+
+        if (identities is null || !identities.TryGetValue(name, out var identity) || identity is null)
+        {
+            errors.Add($"{prefix}: identity reference '{name}' was not found in azureIdentities.");
+            return;
+        }
+
+        block.AuthMode = identity.AuthMode;
+        block.TenantId = identity.TenantId;
+        block.ClientId = identity.ClientId;
+        block.ClientSecret = identity.ClientSecret;
     }
 
     private static bool HasWorkloadIdentityEnvironment()
