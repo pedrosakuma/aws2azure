@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
+using Aws2Azure.Core.Configuration;
 
 namespace Aws2Azure.Core.Azure;
 
@@ -29,6 +31,8 @@ public sealed class EntraIdTokenProvider : CachedTokenSource
 
     private readonly AzureHttpClient _http;
     private readonly Uri _authority;
+    private readonly TimeProvider _clock;
+    private readonly ConcurrentDictionary<string, IEntraTokenSource> _modeSources = new(StringComparer.Ordinal);
 
     public EntraIdTokenProvider(AzureHttpClient http, Uri? authority = null, TimeProvider? clock = null)
         : base(clock)
@@ -36,6 +40,7 @@ public sealed class EntraIdTokenProvider : CachedTokenSource
         ArgumentNullException.ThrowIfNull(http);
         _http = http;
         _authority = authority ?? new Uri("https://login.microsoftonline.com/");
+        _clock = clock ?? TimeProvider.System;
     }
 
     public ValueTask<string> GetTokenAsync(
@@ -54,6 +59,39 @@ public sealed class EntraIdTokenProvider : CachedTokenSource
         var state = new RequestState(_http, _authority, tenantId, clientId, clientSecret, scope);
         return GetOrRefreshAsync(cacheKey, state, Fetch, cancellationToken);
     }
+
+    public ValueTask<string> GetTokenAsync(in AadAuthSettings auth, string scope, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(scope);
+        switch (auth.Mode)
+        {
+            case AzureAuthMode.ClientSecret:
+                return GetTokenAsync(auth.TenantId!, auth.ClientId!, auth.ClientSecret!, scope, cancellationToken);
+            case AzureAuthMode.ManagedIdentity:
+                return ResolveManagedIdentity(auth.ClientId).GetTokenAsync(scope, cancellationToken);
+            case AzureAuthMode.WorkloadIdentity:
+                return ResolveWorkloadIdentity().GetTokenAsync(scope, cancellationToken);
+            default:
+                throw new ArgumentOutOfRangeException(nameof(auth));
+        }
+    }
+
+    private IEntraTokenSource ResolveManagedIdentity(string? clientId)
+    {
+        // A blank/whitespace clientId means system-assigned identity (the validator
+        // treats it as absent too); normalize so the cache key and ImdsTokenSource agree.
+        clientId = string.IsNullOrWhiteSpace(clientId) ? null : clientId;
+        return _modeSources.GetOrAdd(
+            "mi|" + (clientId ?? "system"),
+            static (_, s) => new ImdsTokenSource(s.Http, s.ClientId, clock: s.Clock),
+            (Http: _http, ClientId: clientId, Clock: _clock));
+    }
+
+    private IEntraTokenSource ResolveWorkloadIdentity()
+        => _modeSources.GetOrAdd(
+            "wi",
+            static (_, s) => WorkloadIdentityTokenSource.FromEnvironment(s.Http, s.Clock),
+            (Http: _http, Clock: _clock));
 
     private readonly record struct RequestState(
         AzureHttpClient Http,

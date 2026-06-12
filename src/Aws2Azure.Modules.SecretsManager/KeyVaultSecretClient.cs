@@ -28,12 +28,13 @@ internal sealed class KeyVaultSecretClient
         => await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
 
     public async Task<string> GetAccessTokenAsync(CancellationToken cancellationToken)
-        => await _tokenProvider.GetTokenAsync(
-            _credentials.TenantId ?? throw new InvalidOperationException("Key Vault tenantId is required."),
-            _credentials.ClientId ?? throw new InvalidOperationException("Key Vault clientId is required."),
-            _credentials.ClientSecret ?? throw new InvalidOperationException("Key Vault clientSecret is required."),
+    {
+        var auth = new AadAuthSettings(_credentials.AuthMode, _credentials.TenantId, _credentials.ClientId, _credentials.ClientSecret);
+        return await _tokenProvider.GetTokenAsync(
+            auth,
             "https://vault.azure.net/.default",
             cancellationToken).ConfigureAwait(false);
+    }
 
     public string BuildVaultUri(string path)
     {

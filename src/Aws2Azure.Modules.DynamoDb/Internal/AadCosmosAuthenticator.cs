@@ -24,27 +24,18 @@ internal sealed class AadCosmosAuthenticator : ICosmosAuthenticator
     public const string CosmosScope = "https://cosmos.azure.com/.default";
 
     private readonly EntraIdTokenProvider _tokenProvider;
-    private readonly string _tenantId;
-    private readonly string _clientId;
-    private readonly string _clientSecret;
+    private readonly AadAuthSettings _auth;
     private readonly Func<DateTimeOffset> _clock;
 
     public AadCosmosAuthenticator(
         EntraIdTokenProvider tokenProvider,
-        string tenantId,
-        string clientId,
-        string clientSecret,
+        AadAuthSettings auth,
         Func<DateTimeOffset>? clock = null)
     {
         ArgumentNullException.ThrowIfNull(tokenProvider);
-        ArgumentException.ThrowIfNullOrEmpty(tenantId);
-        ArgumentException.ThrowIfNullOrEmpty(clientId);
-        ArgumentException.ThrowIfNullOrEmpty(clientSecret);
 
         _tokenProvider = tokenProvider;
-        _tenantId = tenantId;
-        _clientId = clientId;
-        _clientSecret = clientSecret;
+        _auth = auth;
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
     }
 
@@ -55,7 +46,7 @@ internal sealed class AadCosmosAuthenticator : ICosmosAuthenticator
         CancellationToken ct)
     {
         var token = await _tokenProvider.GetTokenAsync(
-            _tenantId, _clientId, _clientSecret, CosmosScope, ct).ConfigureAwait(false);
+            _auth, CosmosScope, ct).ConfigureAwait(false);
 
         // Cosmos AAD requires the literal string "type=aad&ver=1.0&sig=<token>"
         // URL-encoded, NOT a bare bearer header. The token itself is appended

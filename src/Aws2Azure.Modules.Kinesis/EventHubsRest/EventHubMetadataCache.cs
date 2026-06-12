@@ -102,9 +102,21 @@ internal sealed class EventHubMetadataCache : IEventHubMetadataCache
         {
             credentialMarker = "sas|" + credentials.SasKeyName.Trim();
         }
+        else if (credentials.AuthMode == AzureAuthMode.ManagedIdentity)
+        {
+            credentialMarker = "managedIdentity|"
+                + (string.IsNullOrWhiteSpace(credentials.ClientId) ? "system" : credentials.ClientId);
+        }
+        else if (credentials.AuthMode == AzureAuthMode.WorkloadIdentity)
+        {
+            credentialMarker = "workloadIdentity|"
+                + Environment.GetEnvironmentVariable("AZURE_TENANT_ID")
+                + "|"
+                + Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
+        }
         else
         {
-            credentialMarker = "aad|" + credentials.TenantId + "|" + credentials.ClientId;
+            credentialMarker = "clientSecret|" + credentials.TenantId + "|" + credentials.ClientId;
         }
 
         return namespaceFqdn.Trim().ToLowerInvariant()

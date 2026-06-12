@@ -151,13 +151,15 @@ public static class ProxyConfigValidator
                 prefix + ".cosmos",
                 errors,
                 sasLabel: "primaryKey",
+                authShapeLabel: "PrimaryKey",
                 hasSasPart1: !string.IsNullOrWhiteSpace(cosmos.PrimaryKey),
                 hasSasPart2: !string.IsNullOrWhiteSpace(cosmos.PrimaryKey),
                 sasRequirementMessage: "either primaryKey OR (tenantId+clientId+clientSecret) is required.",
                 sasPairRequirementMessage: null,
                 hasTenant: !string.IsNullOrWhiteSpace(cosmos.TenantId),
                 hasClientId: !string.IsNullOrWhiteSpace(cosmos.ClientId),
-                hasClientSecret: !string.IsNullOrWhiteSpace(cosmos.ClientSecret));
+                hasClientSecret: !string.IsNullOrWhiteSpace(cosmos.ClientSecret),
+                mode: cosmos.AuthMode);
         }
 
         if (azure.EventHubs is { } eh)
@@ -177,13 +179,15 @@ public static class ProxyConfigValidator
                 prefix + ".eventHubs",
                 errors,
                 sasLabel: "SAS",
+                authShapeLabel: "SAS",
                 hasSasPart1: !string.IsNullOrWhiteSpace(eh.SasKeyName),
                 hasSasPart2: !string.IsNullOrWhiteSpace(eh.SasKey),
                 sasRequirementMessage: "either (sasKeyName+sasKey) OR (tenantId+clientId+clientSecret) is required.",
                 sasPairRequirementMessage: "SAS auth requires both sasKeyName and sasKey.",
                 hasTenant: !string.IsNullOrWhiteSpace(eh.TenantId),
                 hasClientId: !string.IsNullOrWhiteSpace(eh.ClientId),
-                hasClientSecret: !string.IsNullOrWhiteSpace(eh.ClientSecret));
+                hasClientSecret: !string.IsNullOrWhiteSpace(eh.ClientSecret),
+                mode: eh.AuthMode);
 
             if (eh.Streams is { } streams)
             {
@@ -227,10 +231,14 @@ public static class ProxyConfigValidator
             var hasTenant = !string.IsNullOrWhiteSpace(keyVault.TenantId);
             var hasClientId = !string.IsNullOrWhiteSpace(keyVault.ClientId);
             var hasClientSecret = !string.IsNullOrWhiteSpace(keyVault.ClientSecret);
-            if (!hasTenant || !hasClientId || !hasClientSecret)
-            {
-                errors.Add($"{prefix}.keyVault: tenantId, clientId, and clientSecret are required together for Key Vault AAD auth.");
-            }
+            ValidateAadShape(
+                prefix + ".keyVault",
+                keyVault.AuthMode,
+                hasTenant,
+                hasClientId,
+                hasClientSecret,
+                errors,
+                clientSecretRequirementMessage: "tenantId, clientId, and clientSecret are required together for Key Vault AAD auth.");
         }
     }
 
@@ -262,13 +270,15 @@ public static class ProxyConfigValidator
             prefix,
             errors,
             sasLabel: "SAS",
+            authShapeLabel: "SAS",
             hasSasPart1: !string.IsNullOrWhiteSpace(credentials.SasKeyName),
             hasSasPart2: !string.IsNullOrWhiteSpace(credentials.SasKey),
             sasRequirementMessage: "either (sasKeyName+sasKey) OR (tenantId+clientId+clientSecret) is required.",
             sasPairRequirementMessage: "SAS auth requires both sasKeyName and sasKey.",
             hasTenant: !string.IsNullOrWhiteSpace(credentials.TenantId),
             hasClientId: !string.IsNullOrWhiteSpace(credentials.ClientId),
-            hasClientSecret: !string.IsNullOrWhiteSpace(credentials.ClientSecret));
+            hasClientSecret: !string.IsNullOrWhiteSpace(credentials.ClientSecret),
+            mode: credentials.AuthMode);
 
         if (snsSettings.DefaultBackend == SnsTopicBackend.EventGrid)
         {
@@ -327,14 +337,39 @@ public static class ProxyConfigValidator
             errors.Add($"{prefix}: EventGrid backend requires either eventGridTopicEndpoint or azure.eventGrid endpoint/(namespace+topicName).");
         }
 
-        var hasAccessKey = !string.IsNullOrWhiteSpace(accessKeyOverride)
+        var hasOverrideKey = !string.IsNullOrWhiteSpace(accessKeyOverride);
+        var hasAccessKey = hasOverrideKey
             || !string.IsNullOrWhiteSpace(credentials?.AccessKey);
-        var hasAad = !string.IsNullOrWhiteSpace(credentials?.TenantId)
-            && !string.IsNullOrWhiteSpace(credentials?.ClientId)
-            && !string.IsNullOrWhiteSpace(credentials?.ClientSecret);
-        if (!hasAccessKey && !hasAad)
+        var mode = credentials?.AuthMode ?? AzureAuthMode.ClientSecret;
+        var hasTenant = !string.IsNullOrWhiteSpace(credentials?.TenantId);
+        var hasClientId = !string.IsNullOrWhiteSpace(credentials?.ClientId);
+        var hasClientSecret = !string.IsNullOrWhiteSpace(credentials?.ClientSecret);
+        var hasCompleteAad = mode switch
+        {
+            AzureAuthMode.ClientSecret => hasTenant && hasClientId && hasClientSecret,
+            AzureAuthMode.ManagedIdentity => !hasTenant && !hasClientSecret,
+            AzureAuthMode.WorkloadIdentity => !hasTenant && !hasClientId && !hasClientSecret && HasWorkloadIdentityEnvironment(),
+            _ => false,
+        };
+        if (!hasAccessKey && !hasCompleteAad)
         {
             errors.Add($"{prefix}: EventGrid backend requires either eventGridAccessKey or azure.eventGrid accessKey/(tenantId+clientId+clientSecret).");
+        }
+
+        // A per-topic eventGridAccessKey override is pure key-auth at runtime
+        // (SnsTopicRouting prefers it and EventGridPublisher short-circuits before AAD),
+        // so it is independent of the global azure.eventGrid authMode/AAD shape.
+        if (hasOverrideKey)
+        {
+            return;
+        }
+        if (!hasAccessKey)
+        {
+            ValidateAadShape(prefix, mode, hasTenant, hasClientId, hasClientSecret, errors);
+        }
+        else
+        {
+            ValidateKeyShape(prefix, errors, "accessKey", mode, hasTenant || hasClientId || hasClientSecret, "AccessKey");
         }
     }
 
@@ -362,13 +397,15 @@ public static class ProxyConfigValidator
             prefix,
             errors,
             sasLabel: "AccessKey",
+            authShapeLabel: "accessKey",
             hasSasPart1: !string.IsNullOrWhiteSpace(credentials.AccessKey),
             hasSasPart2: !string.IsNullOrWhiteSpace(credentials.AccessKey),
             sasRequirementMessage: "either accessKey OR (tenantId+clientId+clientSecret) is required.",
             sasPairRequirementMessage: null,
             hasTenant: !string.IsNullOrWhiteSpace(credentials.TenantId),
             hasClientId: !string.IsNullOrWhiteSpace(credentials.ClientId),
-            hasClientSecret: !string.IsNullOrWhiteSpace(credentials.ClientSecret));
+            hasClientSecret: !string.IsNullOrWhiteSpace(credentials.ClientSecret),
+            mode: credentials.AuthMode);
     }
 
     private static bool HasEventGridEndpoint(EventGridCredentials? credentials)
@@ -381,20 +418,43 @@ public static class ProxyConfigValidator
         string prefix,
         List<string> errors,
         string sasLabel,
+        string authShapeLabel,
         bool hasSasPart1,
         bool hasSasPart2,
         string sasRequirementMessage,
         string? sasPairRequirementMessage,
         bool hasTenant,
         bool hasClientId,
-        bool hasClientSecret)
+        bool hasClientSecret,
+        AzureAuthMode mode)
     {
         var hasAnySas = hasSasPart1 || hasSasPart2;
         var hasCompleteSas = hasSasPart1 && hasSasPart2;
         var hasAnyAad = hasTenant || hasClientId || hasClientSecret;
         var hasCompleteAad = hasTenant && hasClientId && hasClientSecret;
 
-        if (!hasCompleteSas && !hasCompleteAad)
+        if (hasCompleteSas)
+        {
+            ValidateKeyShape(prefix, errors, authShapeLabel, mode, hasAnyAad, sasLabel);
+            return;
+        }
+
+        if (mode != AzureAuthMode.ClientSecret)
+        {
+            if (hasAnySas && sasPairRequirementMessage is not null)
+            {
+                errors.Add($"{prefix}: {sasPairRequirementMessage}");
+            }
+
+            ValidateAadShape(prefix, mode, hasTenant, hasClientId, hasClientSecret, errors);
+            if (hasAnySas && hasAnyAad)
+            {
+                errors.Add($"{prefix}: {sasLabel} and AAD fields are mutually exclusive — supply one shape.");
+            }
+            return;
+        }
+
+        if (!hasCompleteAad)
         {
             if (hasAnySas && !hasCompleteSas && sasPairRequirementMessage is not null)
             {
@@ -413,6 +473,91 @@ public static class ProxyConfigValidator
         if (hasAnySas && hasAnyAad)
         {
             errors.Add($"{prefix}: {sasLabel} and AAD fields are mutually exclusive — supply one shape.");
+        }
+    }
+
+    private static void ValidateKeyShape(
+        string prefix,
+        List<string> errors,
+        string authShapeLabel,
+        AzureAuthMode mode,
+        bool hasAnyAad,
+        string mutualExclusionLabel)
+    {
+        if (!Enum.IsDefined(typeof(AzureAuthMode), mode))
+        {
+            errors.Add($"{prefix}.authMode: unknown value '{(int)mode}'.");
+            return;
+        }
+
+        if (mode != AzureAuthMode.ClientSecret)
+        {
+            errors.Add($"{prefix}: authMode '{mode}' cannot be combined with {authShapeLabel} auth — managed/workload identity replaces the secret, not the key.");
+        }
+
+        if (hasAnyAad)
+        {
+            errors.Add($"{prefix}: {mutualExclusionLabel} and AAD fields are mutually exclusive — supply one shape.");
+        }
+    }
+
+    private static void ValidateAadShape(
+        string prefix,
+        AzureAuthMode mode,
+        bool hasTenant,
+        bool hasClientId,
+        bool hasClientSecret,
+        List<string> errors,
+        string? clientSecretRequirementMessage = null)
+    {
+        if (!Enum.IsDefined(typeof(AzureAuthMode), mode))
+        {
+            errors.Add($"{prefix}.authMode: unknown value '{(int)mode}'.");
+            return;
+        }
+
+        switch (mode)
+        {
+            case AzureAuthMode.ClientSecret:
+                if (!hasTenant || !hasClientId || !hasClientSecret)
+                {
+                    errors.Add($"{prefix}: {clientSecretRequirementMessage ?? "AAD requires tenantId, clientId, and clientSecret together."}");
+                }
+                break;
+            case AzureAuthMode.ManagedIdentity:
+                if (hasClientSecret)
+                {
+                    errors.Add($"{prefix}: authMode 'ManagedIdentity' must not specify clientSecret.");
+                }
+                if (hasTenant)
+                {
+                    errors.Add($"{prefix}: authMode 'ManagedIdentity' must not specify tenantId.");
+                }
+                break;
+            case AzureAuthMode.WorkloadIdentity:
+                if (hasTenant || hasClientId || hasClientSecret)
+                {
+                    errors.Add($"{prefix}: authMode 'WorkloadIdentity' takes tenant/client/token from AZURE_* environment variables; do not set tenantId/clientId/clientSecret.");
+                }
+                ValidateWorkloadIdentityEnvironment(prefix, errors);
+                break;
+        }
+    }
+
+    private static bool HasWorkloadIdentityEnvironment()
+        => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("AZURE_TENANT_ID"))
+            && !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("AZURE_CLIENT_ID"))
+            && !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE"));
+
+    private static void ValidateWorkloadIdentityEnvironment(string prefix, List<string> errors)
+    {
+        var missing = new List<string>(3);
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("AZURE_TENANT_ID"))) missing.Add("AZURE_TENANT_ID");
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("AZURE_CLIENT_ID"))) missing.Add("AZURE_CLIENT_ID");
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE"))) missing.Add("AZURE_FEDERATED_TOKEN_FILE");
+        if (missing.Count > 0)
+        {
+            errors.Add($"{prefix}: authMode 'WorkloadIdentity' requires the AZURE_TENANT_ID, AZURE_CLIENT_ID and AZURE_FEDERATED_TOKEN_FILE environment variables. Missing: {string.Join(", ", missing)}.");
         }
     }
 

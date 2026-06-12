@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Aws2Azure.Core.Azure;
+using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.DynamoDb.Internal;
 using Xunit;
 
@@ -45,7 +46,8 @@ public class CosmosAuthenticatorTests
         var provider = new EntraIdTokenProvider(http);
 
         var auth = new AadCosmosAuthenticator(
-            provider, "tenant", "client", "secret",
+            provider,
+            new AadAuthSettings(AzureAuthMode.ClientSecret, "tenant", "client", "secret"),
             clock: () => new DateTimeOffset(2024, 1, 2, 3, 4, 5, TimeSpan.Zero));
 
         var req = new HttpRequestMessage(HttpMethod.Get, "https://example/dbs");
@@ -70,7 +72,7 @@ public class CosmosAuthenticatorTests
             });
         var http = new AzureHttpClient(tokenHandler, ownsHandler: false);
         var provider = new EntraIdTokenProvider(http);
-        var auth = new AadCosmosAuthenticator(provider, "t", "c", "s");
+        var auth = new AadCosmosAuthenticator(provider, new AadAuthSettings(AzureAuthMode.ClientSecret, "t", "c", "s"));
 
         for (int i = 0; i < 3; i++)
         {

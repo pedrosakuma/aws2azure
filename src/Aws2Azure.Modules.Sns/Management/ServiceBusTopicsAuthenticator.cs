@@ -58,10 +58,9 @@ public sealed class ServiceBusTopicsAuthenticator : IServiceBusTopicsAuthenticat
 
         try
         {
+            var auth = new AadAuthSettings(credentials.AuthMode, credentials.TenantId, credentials.ClientId, credentials.ClientSecret);
             var token = await _tokenProvider.GetTokenAsync(
-                credentials.TenantId!,
-                credentials.ClientId!,
-                credentials.ClientSecret!,
+                auth,
                 ServiceBusScope,
                 cancellationToken).ConfigureAwait(false);
             request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + token);
