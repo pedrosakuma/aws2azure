@@ -9,9 +9,6 @@
   "sns": {
     "defaultBackend": "ServiceBusTopics"
   },
-  "s3": {
-    "virtualHostedStyle": true
-  },
   "credentials": [
     {
       "awsAccessKeyId": "AKIADEVEXAMPLE",
