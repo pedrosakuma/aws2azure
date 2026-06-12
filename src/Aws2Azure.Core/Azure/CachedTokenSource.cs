@@ -7,16 +7,21 @@ using System.Threading.Tasks;
 namespace Aws2Azure.Core.Azure;
 
 /// <summary>
-/// Base for an <see cref="IEntraTokenSource"/> that caches tokens per scope and
-/// refreshes them when inside a safety window before expiry. Inside that window
-/// — but while the cached token still has comfortable life left — refresh happens
-/// off the caller's critical path (stale-while-revalidate): the still-valid token
-/// is returned immediately and a single-flight refresh runs in the background.
-/// Subclasses supply only the token-fetch origin via <see cref="RequestTokenAsync"/>;
-/// the cache / single-flight / fallback state machine lives here and is shared by
-/// every identity flavour (service principal, managed identity, workload identity).
+/// Reusable token-cache primitive shared by every Entra ID token flow. It caches
+/// tokens per cache key and refreshes them when inside a safety window before
+/// expiry. Inside that window — but while the cached token still has comfortable
+/// life left — refresh happens off the caller's critical path
+/// (stale-while-revalidate): the still-valid token is returned immediately and a
+/// single-flight refresh runs in the background.
+///
+/// <para>Subclasses funnel every request through <see cref="GetOrRefreshAsync{TState}"/>,
+/// supplying only the cache key and the identity-specific token fetch (via a state
+/// value + a static delegate, so the hot cache-hit path stays allocation-free). The
+/// concurrency state machine — single-flight coalescing, the stale-serve band, the
+/// last-resort fallback that re-reads the clock, and unobserved-fault swallowing —
+/// lives here once.</para>
 /// </summary>
-public abstract class CachedTokenSource : IEntraTokenSource
+public abstract class CachedTokenSource
 {
     // Below this remaining lifetime a (single-flight) refresh is started. While the
     // token still has more than the blocking floor left, that refresh runs in the
@@ -40,27 +45,19 @@ public abstract class CachedTokenSource : IEntraTokenSource
     }
 
     /// <summary>
-    /// The cache key for a given scope within this source. A source is bound to a
-    /// single identity, so the scope alone disambiguates entries by default;
-    /// subclasses may override to canonicalise (e.g. mapping a v2.0 scope to a v1
-    /// resource) so multiple scope spellings share one entry.
+    /// Returns a valid token for <paramref name="cacheKey"/>, serving the cached one
+    /// when it is fresh, serving it while a background single-flight refresh runs when
+    /// it is inside the safety window but above the blocking floor, and otherwise
+    /// awaiting a fresh fetch. <paramref name="requestToken"/> is invoked (with
+    /// <paramref name="state"/>) only when a fetch is actually needed; pass a static
+    /// delegate plus a value-type state so the cache-hit path allocates nothing.
     /// </summary>
-    protected virtual string CacheKey(string scope) => scope;
-
-    /// <summary>
-    /// Fetches a fresh token for <paramref name="scope"/> from the identity-specific
-    /// origin. Must throw <see cref="EntraIdTokenException"/> (carrying the
-    /// originating HTTP status) on a non-success token response so the shared
-    /// fallback / wire-faithful status mapping below behaves identically across
-    /// every source flavour.
-    /// </summary>
-    protected abstract ValueTask<AccessToken> RequestTokenAsync(string scope, CancellationToken cancellationToken);
-
-    public async ValueTask<string> GetTokenAsync(string scope, CancellationToken cancellationToken = default)
+    protected async ValueTask<string> GetOrRefreshAsync<TState>(
+        string cacheKey,
+        TState state,
+        Func<TState, CancellationToken, ValueTask<AccessToken>> requestToken,
+        CancellationToken cancellationToken)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(scope);
-
-        var cacheKey = CacheKey(scope);
         var now = _clock.GetUtcNow();
 
         CacheEntry? cached = null;
@@ -97,7 +94,7 @@ public abstract class CachedTokenSource : IEntraTokenSource
             // refresh once another leader has already repopulated the cache.
             if (!_inflight.TryGetValue(cacheKey, out refresh!))
             {
-                refresh = RefreshAndCacheAsync(cacheKey, scope);
+                refresh = RefreshAndCacheAsync(cacheKey, state, requestToken);
                 _inflight[cacheKey] = refresh;
                 createdRefresh = true;
             }
@@ -164,7 +161,10 @@ public abstract class CachedTokenSource : IEntraTokenSource
             TaskScheduler.Default);
     }
 
-    private async Task<string> RefreshAndCacheAsync(string cacheKey, string scope)
+    private async Task<string> RefreshAndCacheAsync<TState>(
+        string cacheKey,
+        TState state,
+        Func<TState, CancellationToken, ValueTask<AccessToken>> requestToken)
     {
         // Yield before touching the network so the refresh body never runs on the
         // caller's stack while the dictionary lock is held (the leader starts this
@@ -173,7 +173,7 @@ public abstract class CachedTokenSource : IEntraTokenSource
         try
         {
             var issuedAt = _clock.GetUtcNow();
-            var token = await RequestTokenAsync(scope, CancellationToken.None).ConfigureAwait(false);
+            var token = await requestToken(state, CancellationToken.None).ConfigureAwait(false);
 
             lock (_lock)
             {
@@ -190,18 +190,18 @@ public abstract class CachedTokenSource : IEntraTokenSource
         }
     }
 
-    /// <summary>A freshly-fetched token plus its lifetime, as reported by the token endpoint.</summary>
-    protected readonly record struct AccessToken(string Token, int ExpiresInSeconds);
-
     private readonly record struct CacheEntry(string Token, DateTimeOffset ExpiresAt);
 }
 
+/// <summary>A freshly-fetched token plus its lifetime in seconds, as reported by the token endpoint.</summary>
+public readonly record struct AccessToken(string Token, int ExpiresInSeconds);
+
 /// <summary>
-/// Thrown by an <see cref="IEntraTokenSource"/> when the Entra ID token endpoint
-/// returns a non-success status. Carries the originating HTTP status so consuming
-/// modules can render the AWS-service-native error shape (a token 429 becomes the
-/// service's retryable throttle, a token 5xx its transient error, an auth /
-/// bad-request its access-denied error) instead of a bare HTTP 500.
+/// Thrown by a token source when the Entra ID token endpoint returns a non-success
+/// status. Carries the originating HTTP status so consuming modules can render the
+/// AWS-service-native error shape (a token 429 becomes the service's retryable
+/// throttle, a token 5xx its transient error, an auth / bad-request its access-denied
+/// error) instead of a bare HTTP 500.
 /// </summary>
 public sealed class EntraIdTokenException : Exception
 {

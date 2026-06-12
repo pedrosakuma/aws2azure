@@ -12,12 +12,13 @@ namespace Aws2Azure.Core.Azure;
 /// An <see cref="IEntraTokenSource"/> backed by the OAuth 2.0 client-credentials
 /// flow: it posts a service-principal <c>client_id</c> + <c>client_secret</c> to
 /// the Entra ID v2.0 token endpoint (no Azure.Identity dependency). One instance
-/// is bound to a single (tenant, clientId, clientSecret) identity; the shared
-/// cache / single-flight / stale-while-revalidate machinery lives in
+/// is bound to a single (tenant, clientId, clientSecret) identity; the cache /
+/// single-flight / stale-while-revalidate machinery lives in
 /// <see cref="CachedTokenSource"/>.
 /// </summary>
-public sealed class ClientCredentialsTokenSource : CachedTokenSource
+public sealed class ClientCredentialsTokenSource : CachedTokenSource, IEntraTokenSource
 {
+    private readonly Func<string, CancellationToken, ValueTask<AccessToken>> _fetch;
     private readonly AzureHttpClient _http;
     private readonly Uri _authority;
     private readonly string _tenantId;
@@ -42,16 +43,41 @@ public sealed class ClientCredentialsTokenSource : CachedTokenSource
         _tenantId = tenantId;
         _clientId = clientId;
         _clientSecret = clientSecret;
+        // Bound once per source so the cache-hit path never allocates a delegate.
+        _fetch = RequestTokenAsync;
     }
 
-    protected override async ValueTask<AccessToken> RequestTokenAsync(string scope, CancellationToken cancellationToken)
+    public ValueTask<string> GetTokenAsync(string scope, CancellationToken cancellationToken = default)
     {
-        var url = new Uri(_authority, _tenantId + "/oauth2/v2.0/token");
+        ArgumentException.ThrowIfNullOrWhiteSpace(scope);
+        return GetOrRefreshAsync(scope, scope, _fetch, cancellationToken);
+    }
+
+    private ValueTask<AccessToken> RequestTokenAsync(string scope, CancellationToken cancellationToken)
+        => RequestClientCredentialsTokenAsync(_http, _authority, _tenantId, _clientId, _clientSecret, scope, cancellationToken);
+
+    /// <summary>
+    /// Posts a <c>client_credentials</c> grant to the Entra ID v2.0 token endpoint and
+    /// returns the access token plus its lifetime. Throws <see cref="EntraIdTokenException"/>
+    /// (carrying the originating HTTP status) on a non-success response. Shared with
+    /// the multi-identity <see cref="EntraIdTokenProvider"/> facade so both paths emit
+    /// identical wire-faithful errors.
+    /// </summary>
+    internal static async ValueTask<AccessToken> RequestClientCredentialsTokenAsync(
+        AzureHttpClient http,
+        Uri authority,
+        string tenantId,
+        string clientId,
+        string clientSecret,
+        string scope,
+        CancellationToken cancellationToken)
+    {
+        var url = new Uri(authority, tenantId + "/oauth2/v2.0/token");
         var form = new List<KeyValuePair<string, string>>(4)
         {
             new("grant_type", "client_credentials"),
-            new("client_id", _clientId),
-            new("client_secret", _clientSecret),
+            new("client_id", clientId),
+            new("client_secret", clientSecret),
             new("scope", scope)
         };
 
@@ -60,7 +86,7 @@ public sealed class ClientCredentialsTokenSource : CachedTokenSource
             Content = new FormUrlEncodedContent(form)
         };
 
-        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken).ConfigureAwait(false);
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken).ConfigureAwait(false);
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
