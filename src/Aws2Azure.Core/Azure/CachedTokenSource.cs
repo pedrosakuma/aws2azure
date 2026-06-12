@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -173,7 +174,7 @@ public abstract class CachedTokenSource
         try
         {
             var issuedAt = _clock.GetUtcNow();
-            var token = await requestToken(state, CancellationToken.None).ConfigureAwait(false);
+            var token = await RequestTokenFaithfullyAsync(state, requestToken).ConfigureAwait(false);
 
             lock (_lock)
             {
@@ -187,6 +188,34 @@ public abstract class CachedTokenSource
             {
                 _inflight.Remove(cacheKey);
             }
+        }
+    }
+
+    private static async ValueTask<AccessToken> RequestTokenFaithfullyAsync<TState>(
+        TState state,
+        Func<TState, CancellationToken, ValueTask<AccessToken>> requestToken)
+    {
+        // The refresh always runs under CancellationToken.None (callers cancel only
+        // their await of the shared task, never the fetch itself), so any transport
+        // failure or cancellation surfacing here is an upstream token-endpoint problem,
+        // never the caller giving up. A terminal transport fault (DNS, connection
+        // refused, TLS) or AzureHttpClient's internal request-timeout is — to the AWS
+        // client — indistinguishable from the backend being unavailable, so it must be
+        // surfaced as a transient 503 via EntraIdTokenException (which the consuming
+        // module renders as its service-native retryable error). Leaking the raw
+        // HttpRequestException / TaskCanceledException would escape every module's
+        // EntraIdTokenException catch and degrade to a bare, wire-unfaithful HTTP 500.
+        try
+        {
+            return await requestToken(state, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new EntraIdTokenException(HttpStatusCode.ServiceUnavailable, ex.Message);
+        }
+        catch (TaskCanceledException ex)
+        {
+            throw new EntraIdTokenException(HttpStatusCode.ServiceUnavailable, ex.Message);
         }
     }
 
