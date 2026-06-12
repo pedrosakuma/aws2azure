@@ -1,20 +1,27 @@
-# aws2azure local development stack
-# 
-# Starts the proxy with all Azure emulators for local testing.
-# Usage: docker compose up -d
+# aws2azure — local development stack.
 #
-# Endpoints:
-#   - Proxy:    http://localhost:8080 (S3: s3.localhost:8080)
-#   - Azurite:  http://localhost:10000 (blob), :10001 (queue), :10002 (table)
-#   - Cosmos:   https://localhost:8081
-#   - SB Emu:   amqp://localhost:5672
+# Default `docker compose up` starts the proxy plus Azurite, giving a fully
+# working S3 → Azure Blob experience out of the box (Azurite creates containers
+# and blobs dynamically — no pre-provisioning).
+#
+# Heavier emulators are opt-in via profiles so the default start stays fast:
+#   docker compose --profile dynamodb up   # adds the Cosmos DB emulator
+#   docker compose --profile messaging up  # adds SQL Edge + Service Bus emulator
+#   docker compose --profile full up        # adds everything
+#
+# Kinesis → Event Hubs has no local emulator; point AWS2AZURE at a real
+# Event Hubs namespace to exercise it.
+#
+# Emulators are NOT behavior-equivalent to real Azure — treat green here as
+# necessary, not sufficient. See docs/getting-started.md.
 
 services:
-  # ─────────────────────────────────────────────────────────────────────────────
-  # aws2azure proxy
-  # ─────────────────────────────────────────────────────────────────────────────
+  # ───────────────────────────────────────────────────────────────────────────
+  # aws2azure proxy (always on)
+  # ───────────────────────────────────────────────────────────────────────────
   proxy:
     build: .
+    image: aws2azure:local
     ports:
       - "8080:8080"
     environment:
@@ -23,52 +30,70 @@ services:
     volumes:
       - ./docker/config.json:/app/config.json:ro
     depends_on:
-      azurite:
-        condition: service_healthy
-      cosmos:
-        condition: service_started
+      - azurite
     healthcheck:
       test: ["CMD", "/app/Aws2Azure.Proxy", "--health-check"]
-      interval: 30s
+      interval: 10s
       timeout: 3s
-      retries: 3
+      retries: 5
+      start_period: 5s
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Azurite (Blob, Queue, Table storage emulator)
-  # ─────────────────────────────────────────────────────────────────────────────
+  # ───────────────────────────────────────────────────────────────────────────
+  # Azurite — Blob/Queue/Table emulator (always on; backs S3 → Blob)
+  # ───────────────────────────────────────────────────────────────────────────
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite:latest
+    command: ["azurite", "--loose", "--skipApiVersionCheck", "--blobHost", "0.0.0.0", "--queueHost", "0.0.0.0", "--tableHost", "0.0.0.0"]
     ports:
       - "10000:10000"  # Blob
       - "10001:10001"  # Queue
       - "10002:10002"  # Table
-    command: azurite --loose --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0
-    healthcheck:
-      test: ["CMD", "nc", "-z", "127.0.0.1", "10000"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Cosmos DB Emulator (Linux)
-  # ─────────────────────────────────────────────────────────────────────────────
+  # ───────────────────────────────────────────────────────────────────────────
+  # Cosmos DB emulator — backs DynamoDB → Cosmos (profile: dynamodb / full)
+  # Note: ~1-2 min to start, needs ~3 GB RAM, and serves a self-signed TLS cert.
+  # The target database must be created before use (see docs/getting-started.md).
+  # ───────────────────────────────────────────────────────────────────────────
   cosmos:
     image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:latest
+    profiles: ["dynamodb", "full"]
+    tty: true
+    mem_limit: 3g
+    environment:
+      AZURE_COSMOS_EMULATOR_PARTITION_COUNT: "3"
+      AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE: "false"
     ports:
       - "8081:8081"
-      - "10251-10254:10251-10254"
+      - "10250-10255:10250-10255"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # SQL Edge — backing store for the Service Bus emulator (profile: messaging / full)
+  # ───────────────────────────────────────────────────────────────────────────
+  mssql:
+    image: mcr.microsoft.com/azure-sql-edge:latest
+    profiles: ["messaging", "full"]
     environment:
-      AZURE_COSMOS_EMULATOR_PARTITION_COUNT: 2
-      AZURE_COSMOS_EMULATOR_IP_ADDRESS_OVERRIDE: 127.0.0.1
-      AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE: "false"
-    # Note: Cosmos emulator takes 1-2 minutes to start
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Aws2AzureLocalDev!"
+    ports:
+      - "1433:1433"
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Service Bus Emulator (for SQS/SNS)
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Note: Official SB emulator requires custom setup. For development, 
-  # configure the proxy to use Azurite queues or run SB emulator separately.
-  # See: https://learn.microsoft.com/en-us/azure/service-bus-messaging/overview-emulator
-
-volumes:
-  azurite-data:
+  # ───────────────────────────────────────────────────────────────────────────
+  # Service Bus emulator — backs SQS/SNS → Service Bus (profile: messaging / full)
+  # Queues/topics must be declared up front in deploy/emulators/servicebus/Config.json;
+  # the emulator does not create them dynamically.
+  # ───────────────────────────────────────────────────────────────────────────
+  servicebus-emulator:
+    build:
+      context: ./deploy/emulators/servicebus
+    image: aws2azure/servicebus-emulator:local
+    profiles: ["messaging", "full"]
+    depends_on:
+      - mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      SQL_SERVER: mssql
+      MSSQL_SA_PASSWORD: "Aws2AzureLocalDev!"
+    ports:
+      - "5672:5672"
+      - "5300:5300"
