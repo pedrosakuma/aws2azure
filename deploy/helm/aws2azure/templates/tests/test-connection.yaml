@@ -17,4 +17,4 @@ spec:
         - "--fail"
         - "--silent"
         - "--show-error"
-        - "http://{{ include "aws2azure.fullname" . }}:{{ .Values.service.port }}/health"
+        - "http://{{ include "aws2azure.fullname" . }}:{{ .Values.service.port }}/_aws2azure/health"
