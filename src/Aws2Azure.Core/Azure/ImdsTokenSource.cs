@@ -31,6 +31,17 @@ public sealed class ImdsTokenSource : CachedTokenSource, IEntraTokenSource
     private readonly string? _identityHeaderName;
     private readonly string? _identityHeaderValue;
 
+    // Single-slot memo so repeated cache-hit calls with the same scope reuse the
+    // precomputed (resource, cacheKey) strings instead of re-allocating per call.
+    private volatile ScopeBinding? _lastScope;
+
+    private sealed class ScopeBinding(string scope, string resource, string cacheKey)
+    {
+        public readonly string Scope = scope;
+        public readonly string Resource = resource;
+        public readonly string CacheKey = cacheKey;
+    }
+
     public ImdsTokenSource(
         AzureHttpClient http,
         string? clientId = null,
@@ -58,9 +69,16 @@ public sealed class ImdsTokenSource : CachedTokenSource, IEntraTokenSource
 
     public ValueTask<string> GetTokenAsync(string scope, CancellationToken cancellationToken = default)
     {
-        var resource = ScopeToResource(scope);
-        var cacheKey = string.Concat("mi|", _clientId ?? "system", "|", resource);
-        return GetOrRefreshAsync(cacheKey, resource, _fetch, cancellationToken);
+        var binding = _lastScope;
+        if (binding is null || !string.Equals(binding.Scope, scope, StringComparison.Ordinal))
+        {
+            var resource = ScopeToResource(scope);
+            var cacheKey = string.Concat("mi|", _clientId ?? "system", "|", resource);
+            binding = new ScopeBinding(scope, resource, cacheKey);
+            _lastScope = binding;
+        }
+
+        return GetOrRefreshAsync(binding.CacheKey, binding.Resource, _fetch, cancellationToken);
     }
 
     internal static string ScopeToResource(string scope)
