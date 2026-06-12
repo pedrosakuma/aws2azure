@@ -138,4 +138,47 @@ public class PrometheusExporterTests
         var third = exporter.Export();
         Assert.Contains("aws2azure_test_obs_total 175", third);
     }
+
+    [Fact]
+    public void Export_renders_fractional_observable_gauge_with_invariant_decimal()
+    {
+        // Double-valued metrics must render culture-invariantly with a '.' decimal
+        // separator and no precision loss (issue #278).
+        using var meter = new Meter(ProxyMetrics.MeterName);
+        meter.CreateObservableGauge("aws2azure_test_ratio", () => 1.75, description: "test");
+
+        using var exporter = new PrometheusExporter();
+
+        var output = exporter.Export();
+        Assert.Contains("# TYPE aws2azure_test_ratio gauge", output);
+        Assert.Contains("aws2azure_test_ratio 1.75", output);
+    }
+
+    [Fact]
+    public void Export_renders_fractional_observable_counter_with_invariant_decimal()
+    {
+        using var meter = new Meter(ProxyMetrics.MeterName);
+        meter.CreateObservableCounter("aws2azure_test_seconds_total", () => 2.5, description: "test");
+
+        using var exporter = new PrometheusExporter();
+
+        var output = exporter.Export();
+        Assert.Contains("# TYPE aws2azure_test_seconds_total counter", output);
+        Assert.Contains("aws2azure_test_seconds_total 2.5", output);
+    }
+
+    [Fact]
+    public void Export_renders_whole_valued_double_as_integer_no_fractional_suffix()
+    {
+        // A whole-number double must render as a plain integer ("42", not "42.0"
+        // or "4.2E+01") so integer consumers like the perf harness keep parsing it.
+        using var meter = new Meter(ProxyMetrics.MeterName);
+        meter.CreateObservableGauge("aws2azure_test_whole", () => 42.0, description: "test");
+
+        using var exporter = new PrometheusExporter();
+
+        var output = exporter.Export();
+        Assert.Contains("aws2azure_test_whole 42\n", output.Replace("\r\n", "\n"));
+        Assert.DoesNotContain("aws2azure_test_whole 42.0", output);
+    }
 }
