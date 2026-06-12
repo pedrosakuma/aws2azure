@@ -611,6 +611,161 @@ public class ProxyConfigValidatorTests
     }
 
     [Fact]
+    public void Resolves_named_managed_identity_reference_into_block()
+    {
+        var config = ValidBase();
+        config.AzureIdentities = new Dictionary<string, AzureIdentity>
+        {
+            ["prod-mi"] = new() { AuthMode = AzureAuthMode.ManagedIdentity, ClientId = "user-mi-client" },
+        };
+        config.Credentials[0].Azure.Cosmos = new CosmosCredentials
+        {
+            Endpoint = "https://acct.documents.azure.com",
+            DatabaseName = "orders",
+            Identity = "prod-mi",
+        };
+
+        var ex = Record.Exception(() => ProxyConfigValidator.Validate(config));
+
+        Assert.Null(ex);
+        var cosmos = config.Credentials[0].Azure.Cosmos!;
+        Assert.Equal(AzureAuthMode.ManagedIdentity, cosmos.AuthMode);
+        Assert.Equal("user-mi-client", cosmos.ClientId);
+    }
+
+    [Fact]
+    public void Resolves_one_named_identity_across_multiple_backends_and_access_keys()
+    {
+        var config = ValidBase();
+        config.AzureIdentities = new Dictionary<string, AzureIdentity>
+        {
+            ["prod-mi"] = new() { AuthMode = AzureAuthMode.ManagedIdentity, ClientId = "shared-mi" },
+        };
+        config.Credentials[0].Azure.Cosmos = new CosmosCredentials
+        {
+            Endpoint = "https://acct.documents.azure.com",
+            DatabaseName = "orders",
+            Identity = "prod-mi",
+        };
+        config.Credentials[0].Azure.KeyVault = new KeyVaultCredentials
+        {
+            VaultUrl = "https://example.vault.azure.net/",
+            Identity = "prod-mi",
+        };
+        config.Credentials.Add(new CredentialEntry
+        {
+            AwsAccessKeyId = "AKIA2",
+            AwsSecretAccessKey = "secret2",
+            Azure = new AzureCredentials
+            {
+                EventHubs = new EventHubsCredentials { Namespace = "myns", Identity = "prod-mi" },
+            },
+        });
+
+        var ex = Record.Exception(() => ProxyConfigValidator.Validate(config));
+
+        Assert.Null(ex);
+        Assert.Equal(AzureAuthMode.ManagedIdentity, config.Credentials[0].Azure.Cosmos!.AuthMode);
+        Assert.Equal(AzureAuthMode.ManagedIdentity, config.Credentials[0].Azure.KeyVault!.AuthMode);
+        Assert.Equal("shared-mi", config.Credentials[1].Azure.EventHubs!.ClientId);
+    }
+
+    [Fact]
+    public void Validate_is_idempotent_for_resolved_identity_reference()
+    {
+        var config = ValidBase();
+        config.AzureIdentities = new Dictionary<string, AzureIdentity>
+        {
+            ["prod-mi"] = new() { AuthMode = AzureAuthMode.ManagedIdentity, ClientId = "user-mi-client" },
+        };
+        config.Credentials[0].Azure.Cosmos = new CosmosCredentials
+        {
+            Endpoint = "https://acct.documents.azure.com",
+            DatabaseName = "orders",
+            Identity = "prod-mi",
+        };
+
+        ProxyConfigValidator.Validate(config);
+        var ex = Record.Exception(() => ProxyConfigValidator.Validate(config));
+
+        Assert.Null(ex);
+        Assert.Null(config.Credentials[0].Azure.Cosmos!.Identity);
+        Assert.Equal(AzureAuthMode.ManagedIdentity, config.Credentials[0].Azure.Cosmos!.AuthMode);
+    }
+
+    [Fact]
+    public void Rejects_dangling_identity_reference()
+    {
+        var config = ValidBase();
+        config.Credentials[0].Azure.KeyVault = new KeyVaultCredentials
+        {
+            VaultUrl = "https://example.vault.azure.net/",
+            Identity = "missing",
+        };
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+        Assert.Contains("keyVault: identity reference 'missing' was not found in azureIdentities.", ex.Message);
+    }
+
+    [Fact]
+    public void Rejects_identity_reference_combined_with_inline_aad_fields()
+    {
+        var config = ValidBase();
+        config.AzureIdentities = new Dictionary<string, AzureIdentity>
+        {
+            ["prod-mi"] = new() { AuthMode = AzureAuthMode.ManagedIdentity },
+        };
+        config.Credentials[0].Azure.KeyVault = new KeyVaultCredentials
+        {
+            VaultUrl = "https://example.vault.azure.net/",
+            Identity = "prod-mi",
+            ClientSecret = "inline-secret",
+        };
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+        Assert.Contains("keyVault: identity reference 'prod-mi' cannot be combined with inline authMode/tenantId/clientId/clientSecret fields.", ex.Message);
+    }
+
+    [Fact]
+    public void Rejects_malformed_named_identity()
+    {
+        var config = ValidBase();
+        config.AzureIdentities = new Dictionary<string, AzureIdentity>
+        {
+            ["bad-mi"] = new() { AuthMode = AzureAuthMode.ManagedIdentity, ClientSecret = "secret" },
+        };
+        config.Credentials[0].Azure.KeyVault = new KeyVaultCredentials
+        {
+            VaultUrl = "https://example.vault.azure.net/",
+            Identity = "bad-mi",
+        };
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+        Assert.Contains("azureIdentities.bad-mi: authMode 'ManagedIdentity' must not specify clientSecret.", ex.Message);
+    }
+
+    [Fact]
+    public void Accepts_unreferenced_workload_identity_named_entry_without_environment()
+    {
+        var old = ClearAndSetWorkloadIdentityEnvironment(null, null, null);
+        try
+        {
+            var config = ValidBase();
+            config.AzureIdentities = new Dictionary<string, AzureIdentity>
+            {
+                ["wi"] = new() { AuthMode = AzureAuthMode.WorkloadIdentity },
+            };
+
+            var ex = Record.Exception(() => ProxyConfigValidator.Validate(config));
+            Assert.Null(ex);
+        }
+        finally
+        {
+            RestoreWorkloadIdentityEnvironment(old);
+        }
+    }
+
+    [Fact]
     public void Accepts_workload_identity_when_environment_is_configured()
     {
         var old = ClearAndSetWorkloadIdentityEnvironment("tenant", "client", "token-file");

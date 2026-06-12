@@ -79,4 +79,36 @@ public class ProxyConfigJsonTests
 
         Assert.Equal(AzureAuthMode.ManagedIdentity, Assert.Single(config!.Credentials).Azure.EventHubs!.AuthMode);
     }
+
+    [Fact]
+    public void Deserializes_azure_identities_pool_and_identity_reference()
+    {
+        const string json = """
+        {
+          "azureIdentities": {
+            "prod-mi": { "authMode": "managedIdentity", "clientId": "user-mi-client" }
+          },
+          "credentials": [
+            {
+              "awsAccessKeyId": "AKIA",
+              "awsSecretAccessKey": "secret",
+              "azure": {
+                "cosmos": {
+                  "endpoint": "https://acct.documents.azure.com",
+                  "databaseName": "orders",
+                  "identity": "prod-mi"
+                }
+              }
+            }
+          ]
+        }
+        """;
+
+        var config = JsonSerializer.Deserialize(json, ProxyConfigJsonContext.Default.ProxyConfig);
+
+        var identity = Assert.Contains("prod-mi", config!.AzureIdentities!);
+        Assert.Equal(AzureAuthMode.ManagedIdentity, identity.AuthMode);
+        Assert.Equal("user-mi-client", identity.ClientId);
+        Assert.Equal("prod-mi", Assert.Single(config.Credentials).Azure.Cosmos!.Identity);
+    }
 }

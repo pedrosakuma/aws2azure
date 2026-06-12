@@ -12,6 +12,52 @@ public sealed class ProxyConfig
     public SnsSettings Sns { get; set; } = new();
     public DynamoDbSettings DynamoDb { get; set; } = new();
     public List<CredentialEntry> Credentials { get; set; } = new();
+
+    /// <summary>
+    /// Optional named Azure AD identity pool. AAD-capable backend blocks
+    /// (cosmos, eventHubs, serviceBusTopics, eventGrid, keyVault) may reference
+    /// an entry by name via their <c>identity</c> field instead of repeating the
+    /// same <c>authMode</c>/<c>clientId</c> inline. References are resolved once
+    /// at startup; a dangling reference fails startup validation. Lookup is
+    /// case-sensitive.
+    /// </summary>
+    public Dictionary<string, AzureIdentity>? AzureIdentities { get; set; }
+}
+
+/// <summary>
+/// A named Azure AD identity that AAD-capable backend blocks reference by name
+/// through <see cref="IAadAuthCredentials.Identity"/>. Carries exactly the AAD
+/// auth shape (mode + service-principal fields) and nothing backend-specific, so
+/// one managed-identity <c>clientId</c> can be shared across Cosmos, Key Vault,
+/// Event Hubs and more without duplication.
+/// </summary>
+public sealed class AzureIdentity
+{
+    public AzureAuthMode AuthMode { get; set; } = AzureAuthMode.ClientSecret;
+    public string? TenantId { get; set; }
+    public string? ClientId { get; set; }
+    public string? ClientSecret { get; set; }
+}
+
+/// <summary>
+/// Shared contract for the AAD-capable credential blocks. Lets the startup
+/// resolver apply a named <see cref="AzureIdentity"/> uniformly without
+/// reflection. The non-AAD fields (endpoints, SAS keys, etc.) stay on the
+/// concrete blocks.
+/// </summary>
+public interface IAadAuthCredentials
+{
+    /// <summary>
+    /// Optional reference into <see cref="ProxyConfig.AzureIdentities"/>. When
+    /// set, the named identity supplies the AAD auth shape and the inline
+    /// <see cref="AuthMode"/>/<see cref="TenantId"/>/<see cref="ClientId"/>/
+    /// <see cref="ClientSecret"/> fields must be left at their defaults.
+    /// </summary>
+    string? Identity { get; set; }
+    AzureAuthMode AuthMode { get; set; }
+    string? TenantId { get; set; }
+    string? ClientId { get; set; }
+    string? ClientSecret { get; set; }
 }
 
 public sealed class ServiceToggle
@@ -176,7 +222,7 @@ public sealed class SqsQueueSettings
 /// Kept separate from <see cref="ServiceBusCredentials"/> so queue- and
 /// topic-specific settings can evolve independently.
 /// </summary>
-public sealed class ServiceBusTopicsCredentials
+public sealed class ServiceBusTopicsCredentials : IAadAuthCredentials
 {
     public string Namespace { get; set; } = string.Empty;
 
@@ -206,6 +252,7 @@ public sealed class ServiceBusTopicsCredentials
     public string? TenantId { get; set; }
     public string? ClientId { get; set; }
     public string? ClientSecret { get; set; }
+    public string? Identity { get; set; }
     public Dictionary<string, SnsTopicSettings>? Topics { get; set; }
 }
 
@@ -235,7 +282,7 @@ public sealed class SnsTopicSettings
     public string? EventGridAccessKey { get; set; }
 }
 
-public sealed class KeyVaultCredentials
+public sealed class KeyVaultCredentials : IAadAuthCredentials
 {
     public string VaultUrl { get; set; } = string.Empty;
 
@@ -249,9 +296,10 @@ public sealed class KeyVaultCredentials
     public string? TenantId { get; set; }
     public string? ClientId { get; set; }
     public string? ClientSecret { get; set; }
+    public string? Identity { get; set; }
 }
 
-public sealed class EventGridCredentials
+public sealed class EventGridCredentials : IAadAuthCredentials
 {
     /// <summary>
     /// Optional absolute Event Grid publish endpoint. When empty, the proxy
@@ -284,9 +332,10 @@ public sealed class EventGridCredentials
     public string? TenantId { get; set; }
     public string? ClientId { get; set; }
     public string? ClientSecret { get; set; }
+    public string? Identity { get; set; }
 }
 
-public sealed class CosmosCredentials
+public sealed class CosmosCredentials : IAadAuthCredentials
 {
     public string Endpoint { get; set; } = string.Empty;
 
@@ -328,6 +377,12 @@ public sealed class CosmosCredentials
     /// support can drop this in favour of a token-source abstraction.
     /// </summary>
     public string? ClientSecret { get; set; }
+
+    /// <summary>
+    /// Optional reference into <c>azureIdentities</c>. Mutually exclusive with
+    /// inline AAD fields; resolved at startup.
+    /// </summary>
+    public string? Identity { get; set; }
 }
 
 /// <summary>
@@ -337,7 +392,7 @@ public sealed class CosmosCredentials
 /// (per Event Hubs namespace) or AAD for managed identity / SP auth.
 /// Exactly one shape must be populated.
 /// </summary>
-public sealed class EventHubsCredentials
+public sealed class EventHubsCredentials : IAadAuthCredentials
 {
     /// <summary>
     /// Event Hubs namespace short name (e.g. <c>mynamespace</c>). The
@@ -388,6 +443,12 @@ public sealed class EventHubsCredentials
     /// Entra client secret for AAD auth.
     /// </summary>
     public string? ClientSecret { get; set; }
+
+    /// <summary>
+    /// Optional reference into <c>azureIdentities</c>. Mutually exclusive with
+    /// inline AAD fields; resolved at startup.
+    /// </summary>
+    public string? Identity { get; set; }
 
     /// <summary>
     /// Signing secret used to HMAC the opaque shard-iterator tokens
