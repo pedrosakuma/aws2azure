@@ -95,4 +95,47 @@ public class PrometheusExporterTests
         Assert.Contains("aws2azure_errors_total{", output);
         Assert.Contains("status_code=\"500\"", output);
     }
+
+    [Fact]
+    public void Export_renders_runtime_total_metrics_as_counters_and_memory_as_gauges()
+    {
+        var metrics = new ProxyMetrics();
+        using var exporter = new PrometheusExporter();
+
+        var output = exporter.Export();
+
+        // Monotonic _total runtime metrics must advertise the counter type so
+        Assert.Contains("# TYPE aws2azure_dotnet_gc_allocated_bytes_total counter", output);
+        Assert.Contains("# TYPE aws2azure_dotnet_gc_gen2_collections_total counter", output);
+
+        // Point-in-time runtime metrics stay gauges.
+        Assert.Contains("# TYPE aws2azure_process_working_set_bytes gauge", output);
+        Assert.Contains("# TYPE aws2azure_dotnet_gc_heap_size_bytes gauge", output);
+    }
+
+    [Fact]
+    public void Export_observable_counter_uses_set_semantics_not_accumulation()
+    {
+        // An ObservableCounter reports its cumulative total on each scrape, so the
+        // exporter must SET it — not accumulate like Counter.Add would (issue #276).
+        using var meter = new Meter(ProxyMetrics.MeterName);
+        long total = 100;
+        meter.CreateObservableCounter("aws2azure_test_obs_total", () => total, description: "test");
+
+        using var exporter = new PrometheusExporter();
+
+        var first = exporter.Export();
+        Assert.Contains("# TYPE aws2azure_test_obs_total counter", first);
+        Assert.Contains("aws2azure_test_obs_total 100", first);
+
+        // Re-scraping the same cumulative value must not double it to 200.
+        var second = exporter.Export();
+        Assert.Contains("aws2azure_test_obs_total 100", second);
+        Assert.DoesNotContain("aws2azure_test_obs_total 200", second);
+
+        // When the cumulative total advances, the new value is reflected exactly.
+        total = 175;
+        var third = exporter.Export();
+        Assert.Contains("aws2azure_test_obs_total 175", third);
+    }
 }

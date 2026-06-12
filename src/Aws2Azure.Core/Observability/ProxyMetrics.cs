@@ -95,17 +95,18 @@ public sealed class ProxyMetrics
             unit: "By",
             description: "Bytes currently thought to be allocated on the managed GC heap");
 
-        // Monotonic counters surfaced as gauges: the AOT-safe PrometheusExporter
-        // only renders ObservableGauge for observable instruments. Consumers that
-        // need a rate diff the cumulative value across two scrapes (the perf
-        // harness does exactly this across its measure window).
-        _meter.CreateObservableGauge(
+        // Monotonic runtime counters. The AOT-safe PrometheusExporter renders
+        // ObservableCounter with set (not accumulate) semantics, so these carry
+        // their honest `# TYPE … counter` type and the `_total` suffix is real.
+        // Consumers compute a rate via rate(); the perf harness (#274) instead
+        // diffs the cumulative value across two scrapes over its measure window.
+        _meter.CreateObservableCounter(
             "aws2azure_dotnet_gc_allocated_bytes_total",
             () => GC.GetTotalAllocatedBytes(precise: false),
             unit: "By",
             description: "Cumulative bytes allocated on the managed heap since process start (monotonic)");
 
-        _meter.CreateObservableGauge(
+        _meter.CreateObservableCounter(
             "aws2azure_dotnet_gc_gen2_collections_total",
             () => (long)GC.CollectionCount(2),
             unit: "{collection}",
