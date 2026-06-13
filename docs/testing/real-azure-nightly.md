@@ -54,6 +54,8 @@ proxy ([`RealAzureProxyFixture`](../../tests/Aws2Azure.IntegrationTests/Fixtures
 | SQS | Service Bus | CreateQueue → Send/Receive/Delete → DeleteQueue | Ephemeral (Bicep); the proxy creates the queue |
 | Kinesis | Event Hubs | PutRecord | Ephemeral (Bicep) namespace + **hub** (`CreateStream` is not implemented) |
 | Secrets Manager | Key Vault | secret lifecycle | **Standing** — runs only when `AZURE_KEYVAULT_*` secrets are set (see below) |
+| DynamoDB *(Workload Identity)* | Cosmos DB | CreateTable → Put/Get/Delete item → DeleteTable | Ephemeral (Bicep) + data-plane RBAC; authenticates via a **federated token**, no shared key (issue #307) |
+| Kinesis *(Workload Identity)* | Event Hubs | PutRecord | Ephemeral (Bicep) + data-plane RBAC; authenticates via a **federated token**, no SAS key (issue #307) |
 
 Every backend is gated **independently** on its environment: a backend whose
 values are absent **skips** (it does not fail), so fork PRs, local
@@ -143,10 +145,14 @@ check they cannot run.
 The shared-key smoke matrix proves the **translation** layer, but it never
 exercises the **AAD token** auth flows shipped for #290 — emulators don't
 validate bearer tokens and the shared-key path bypasses Entra entirely. The
-nightly therefore also runs the AAD-data-plane-capable backends (Cosmos, Event
-Hubs, Service Bus topics) under `authMode: workloadIdentity`, so the proxy's
+nightly therefore also runs the AAD-data-plane-capable backends in this fixture
+(Cosmos for DynamoDB, Event Hubs for Kinesis) under `authMode: workloadIdentity`
+via a **second AWS credential entry** in the same proxy, so the proxy's
 `WorkloadIdentityTokenSource` mints a **real** Entra token that **real Azure
-RBAC** must accept.
+RBAC** must accept. The shared-key and federated-token smokes run side by side
+against the same live backends
+([`DynamoDbRealAzureWorkloadIdentityTests`](../../tests/Aws2Azure.IntegrationTests/DynamoDb/DynamoDbRealAzureWorkloadIdentityTests.cs),
+[`KinesisRealAzureWorkloadIdentityTests`](../../tests/Aws2Azure.IntegrationTests/Kinesis/KinesisRealAzureWorkloadIdentityTests.cs)).
 
 This reuses the workload-identity federation the job already relies on for
 `azure/login` — no extra Entra setup beyond the two prerequisites:
