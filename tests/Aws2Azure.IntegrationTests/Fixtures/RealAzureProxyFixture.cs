@@ -39,6 +39,13 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     public const string AwsAccessKey = "AKIA-REAL-AZURE-NIGHTLY";
     public const string AwsSecret = "real-azure-nightly-secret";
 
+    // A second AWS identity whose AAD-capable backends authenticate via Workload
+    // Identity instead of shared keys (issue #307). It lives in the same proxy
+    // config as a separate credential entry, so one proxy process serves both the
+    // shared-key and the Workload-Identity smoke side by side.
+    public const string WiAwsAccessKey = "AKIA-REAL-AZURE-NIGHTLY-WI";
+    public const string WiAwsSecret = "real-azure-nightly-wi-secret";
+
     private const string AuthRegion = "us-east-1";
 
     private readonly StringBuilder _proxyOutput = new();
@@ -63,6 +70,14 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     private string? _ehSasKeyName;
     private string? _ehSasKey;
 
+    // Workload Identity (issue #307): the GitHub Actions OIDC token is minted to
+    // a file and these env vars point the proxy's WorkloadIdentityTokenSource at
+    // it. AAD-capable backends (Cosmos, Event Hubs) can then authenticate without
+    // shared keys.
+    private string? _federatedTokenFile;
+    private string? _aadTenantId;
+    private string? _aadClientId;
+
     /// <summary>True when at least one backend was configured and the proxy started.</summary>
     public bool ProxyStarted { get; private set; }
 
@@ -77,6 +92,26 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
 
     /// <summary>Kinesis → Event Hubs backend configured.</summary>
     public bool EventHubsConfigured { get; private set; }
+
+    /// <summary>
+    /// Workload Identity federation is available (the OIDC token file plus
+    /// tenant/client ids are present). Gates the Workload-Identity E2E smoke,
+    /// which is testable on GitHub-hosted runners (unlike Managed Identity, which
+    /// needs IMDS).
+    /// </summary>
+    public bool WorkloadIdentityConfigured { get; private set; }
+
+    /// <summary>
+    /// DynamoDB → Cosmos DB reachable via the Workload-Identity credential entry
+    /// (Cosmos endpoint/database present and federation configured).
+    /// </summary>
+    public bool CosmosWorkloadIdentityConfigured { get; private set; }
+
+    /// <summary>
+    /// Kinesis → Event Hubs reachable via the Workload-Identity credential entry
+    /// (namespace + stream present and federation configured).
+    /// </summary>
+    public bool EventHubsWorkloadIdentityConfigured { get; private set; }
 
     /// <summary>
     /// Pre-existing Cosmos database (the DynamoDB module creates containers but
@@ -106,7 +141,15 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         EventHubsConfigured = !string.IsNullOrWhiteSpace(_ehNamespace) && !string.IsNullOrWhiteSpace(_ehSasKeyName)
             && !string.IsNullOrWhiteSpace(_ehSasKey) && !string.IsNullOrWhiteSpace(EventHubStream);
 
-        if (!BlobConfigured && !CosmosConfigured && !ServiceBusConfigured && !EventHubsConfigured)
+        WorkloadIdentityConfigured = !string.IsNullOrWhiteSpace(_federatedTokenFile)
+            && !string.IsNullOrWhiteSpace(_aadTenantId) && !string.IsNullOrWhiteSpace(_aadClientId);
+        CosmosWorkloadIdentityConfigured = WorkloadIdentityConfigured
+            && !string.IsNullOrWhiteSpace(_cosmosEndpoint) && !string.IsNullOrWhiteSpace(_cosmosDatabase);
+        EventHubsWorkloadIdentityConfigured = WorkloadIdentityConfigured
+            && !string.IsNullOrWhiteSpace(_ehNamespace) && !string.IsNullOrWhiteSpace(EventHubStream);
+
+        if (!BlobConfigured && !CosmosConfigured && !ServiceBusConfigured && !EventHubsConfigured
+            && !CosmosWorkloadIdentityConfigured && !EventHubsWorkloadIdentityConfigured)
         {
             // No real-Azure backend configured — every tagged test skips.
             return;
@@ -163,6 +206,34 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
 
     public AmazonKinesisClient CreateKinesisClient() => new(
         AwsAccessKey, AwsSecret,
+        new AmazonKinesisConfig
+        {
+            ServiceURL = ServiceUrlFor("kinesis"),
+            UseHttp = true,
+            AuthenticationRegion = AuthRegion,
+        });
+
+    /// <summary>
+    /// DynamoDB client signing with the Workload-Identity AWS credential, so its
+    /// requests resolve to the Cosmos backend that authenticates via federated
+    /// token instead of a shared key.
+    /// </summary>
+    public AmazonDynamoDBClient CreateDynamoDbClientWorkloadIdentity() => new(
+        WiAwsAccessKey, WiAwsSecret,
+        new AmazonDynamoDBConfig
+        {
+            ServiceURL = ServiceUrlFor("dynamodb"),
+            UseHttp = true,
+            AuthenticationRegion = AuthRegion,
+        });
+
+    /// <summary>
+    /// Kinesis client signing with the Workload-Identity AWS credential, so its
+    /// requests resolve to the Event Hubs backend that authenticates via
+    /// federated token instead of a SAS key.
+    /// </summary>
+    public AmazonKinesisClient CreateKinesisClientWorkloadIdentity() => new(
+        WiAwsAccessKey, WiAwsSecret,
         new AmazonKinesisConfig
         {
             ServiceURL = ServiceUrlFor("kinesis"),
@@ -235,6 +306,10 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         }
 
         EventHubStream = Env("AZURE_EVENTHUBS_STREAM") ?? string.Empty;
+
+        _federatedTokenFile = Env("AZURE_FEDERATED_TOKEN_FILE");
+        _aadTenantId = Env("AZURE_TENANT_ID");
+        _aadClientId = Env("AZURE_CLIENT_ID");
     }
 
     private string BuildConfigJson()
@@ -242,9 +317,9 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         var services = new StringBuilder();
         var azure = new StringBuilder();
         AppendService(services, "s3", BlobConfigured);
-        AppendService(services, "dynamodb", CosmosConfigured);
+        AppendService(services, "dynamodb", CosmosConfigured || CosmosWorkloadIdentityConfigured);
         AppendService(services, "sqs", ServiceBusConfigured);
-        AppendService(services, "kinesis", EventHubsConfigured);
+        AppendService(services, "kinesis", EventHubsConfigured || EventHubsWorkloadIdentityConfigured);
 
         if (BlobConfigured)
         {
@@ -277,22 +352,62 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
                 """);
         }
 
+        // Second credential entry: AAD-capable backends authenticated via Workload
+        // Identity (no shared key/SAS — the proxy reads the federated token file).
+        var wiAzure = new StringBuilder();
+        if (CosmosWorkloadIdentityConfigured)
+        {
+            AppendAzure(wiAzure, $$"""
+                "cosmos": { "endpoint": "{{JsonEscape(_cosmosEndpoint!)}}", "databaseName": "{{JsonEscape(_cosmosDatabase!)}}", "authMode": "workloadIdentity" }
+                """);
+        }
+
+        if (EventHubsWorkloadIdentityConfigured)
+        {
+            AppendAzure(wiAzure, $$"""
+                "eventHubs": { "namespace": "{{JsonEscape(_ehNamespace!)}}", "authMode": "workloadIdentity" }
+                """);
+        }
+
+        var credentials = new StringBuilder();
+        if (azure.Length > 0)
+        {
+            AppendCredential(credentials, AwsAccessKey, AwsSecret, azure.ToString());
+        }
+
+        if (wiAzure.Length > 0)
+        {
+            AppendCredential(credentials, WiAwsAccessKey, WiAwsSecret, wiAzure.ToString());
+        }
+
         return $$"""
             {
               "services": {
             {{services}}
               },
               "credentials": [
-                {
-                  "awsAccessKeyId": "{{AwsAccessKey}}",
-                  "awsSecretAccessKey": "{{AwsSecret}}",
-                  "azure": {
-            {{azure}}
-                  }
-                }
+            {{credentials}}
               ]
             }
             """;
+    }
+
+    private static void AppendCredential(StringBuilder sb, string accessKey, string secret, string azureBlock)
+    {
+        if (sb.Length > 0)
+        {
+            sb.Append(",\n");
+        }
+
+        sb.Append($$"""
+                {
+                  "awsAccessKeyId": "{{accessKey}}",
+                  "awsSecretAccessKey": "{{secret}}",
+                  "azure": {
+            {{azureBlock}}
+                  }
+                }
+            """);
     }
 
     private static void AppendService(StringBuilder sb, string name, bool enabled)
