@@ -99,6 +99,12 @@ jobs:
 
       - name: Provision ephemeral Azure backends
         if: steps.gate.outputs.enabled == 'true'
+        env:
+          # Object id of the OIDC service principal, for the data-plane RBAC role
+          # assignments the WorkloadIdentity E2E scenario needs (issue #307). When
+          # unset the Bicep skips every role assignment, so the shared-key smoke
+          # matrix is unaffected and the job stays green.
+          AZURE_CLIENT_OBJECT_ID: ${{ secrets.AZURE_CLIENT_OBJECT_ID }}
         run: |
           set -euo pipefail
           az group create -n "$RG_NAME" -l "$AZURE_LOCATION" \
@@ -110,6 +116,7 @@ jobs:
             -f deploy/realazure/main.bicep \
             -p cosmosDatabaseName="$AZURE_COSMOS_DATABASE" \
                eventHubName="$AZURE_EVENTHUBS_STREAM" \
+               principalId="${AZURE_CLIENT_OBJECT_ID:-}" \
             -o none
 
       - name: Export connection info
