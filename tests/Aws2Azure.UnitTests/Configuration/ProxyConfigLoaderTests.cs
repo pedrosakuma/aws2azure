@@ -109,6 +109,24 @@ public class ProxyConfigLoaderTests : IDisposable
     }
 
     [Fact]
+    public void Env_vars_can_set_cosmos_preferred_regions()
+    {
+        var env = new Dictionary<string, string?>
+        {
+            ["AWS2AZURE__CREDENTIALS__0__AZURE__COSMOS__ENDPOINT"] = "https://acct.documents.azure.com/",
+            ["AWS2AZURE__CREDENTIALS__0__AZURE__COSMOS__DATABASENAME"] = "main",
+            ["AWS2AZURE__CREDENTIALS__0__AZURE__COSMOS__PRIMARYKEY"] = "key",
+            ["AWS2AZURE__CREDENTIALS__0__AZURE__COSMOS__PREFERREDREGIONS__0"] = "West US",
+            ["AWS2AZURE__CREDENTIALS__0__AZURE__COSMOS__PREFERREDREGIONS__1"] = "East US",
+        };
+
+        var config = ProxyConfigLoader.Load(jsonFilePath: null, env);
+
+        var regions = Assert.Single(config.Credentials).Azure.Cosmos!.PreferredRegions;
+        Assert.Equal(new[] { "West US", "East US" }, regions);
+    }
+
+    [Fact]
     public void Env_var_ignores_invalid_dynamodb_consistency_check()
     {
         var env = new Dictionary<string, string?>

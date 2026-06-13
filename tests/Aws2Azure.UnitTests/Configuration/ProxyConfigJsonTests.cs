@@ -22,7 +22,7 @@ public class ProxyConfigJsonTests
               "azure": {
                 "blob":       { "accountName": "acc1", "accountKey": "key1" },
                 "serviceBus": { "namespace": "ns1",   "sasKeyName": "RootManageSharedAccessKey", "sasKey": "sb1" },
-                "cosmos":     { "endpoint":  "https://x.documents.azure.com", "primaryKey": "cosmos1" }
+                "cosmos":     { "endpoint":  "https://x.documents.azure.com", "primaryKey": "cosmos1", "preferredRegions": [ "West US", "East US" ] }
               }
             }
           ]
@@ -42,6 +42,7 @@ public class ProxyConfigJsonTests
         Assert.Equal("acc1", entry.Azure.Blob!.AccountName);
         Assert.Equal("ns1", entry.Azure.ServiceBus!.Namespace);
         Assert.Equal("https://x.documents.azure.com", entry.Azure.Cosmos!.Endpoint);
+        Assert.Equal(new[] { "West US", "East US" }, entry.Azure.Cosmos.PreferredRegions);
     }
 
     [Fact]

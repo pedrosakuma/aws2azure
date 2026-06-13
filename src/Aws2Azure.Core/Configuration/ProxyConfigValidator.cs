@@ -148,6 +148,16 @@ public static class ProxyConfigValidator
             {
                 errors.Add($"{prefix}.cosmos.databaseName: required.");
             }
+            if (cosmos.PreferredRegions is { } preferredRegions)
+            {
+                for (var r = 0; r < preferredRegions.Count; r++)
+                {
+                    if (string.IsNullOrWhiteSpace(preferredRegions[r]))
+                    {
+                        errors.Add($"{prefix}.cosmos.preferredRegions[{r}]: region name must be non-empty.");
+                    }
+                }
+            }
 
             ValidateDualAuth(
                 prefix + ".cosmos",
