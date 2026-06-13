@@ -70,6 +70,22 @@ schema.
 - `GET /ready` — readiness probe.
 - `GET /_aws2azure/metrics` — Prometheus metrics.
 
+## Sidecar footprint
+
+aws2azure is meant to run as a **sidecar**, so its resource cost is a
+first-class concern. On a `linux-x64` runner the all-modules Native-AOT build
+measures roughly:
+
+| AOT binary | Idle RSS | Cold start |
+|------------|----------|------------|
+| ~22 MB     | ~34 MB   | ~70 ms     |
+
+These are **measured and regression-gated** in CI — see
+[`docs/perf/README.md` (footprint budget)](./docs/perf/README.md#footprint-budget-271)
+for the harness, the live numbers, and the per-metric budget. Footprint numbers
+are runner-bound; binary size is deterministic while cold start scales with
+runner core count.
+
 ## Non-Goals
 
 - Not a 100% feature-compatible reimplementation. Gaps are **documented

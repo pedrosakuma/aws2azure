@@ -1,0 +1,18 @@
+{
+  "//": "Footprint ceilings for the sidecar budget gate (#271). Mirrors the perf",
+  "//1": "baseline: a metric ceiling of 0 opts out, an absent scenario is not gated.",
+  "//2": "Numbers are runner-bound (binary size is deterministic; idle RSS is fairly",
+  "//3": "stable; cold start varies with runner core count, so its ceiling is loose",
+  "//4": "and only catches gross regressions). Ceilings carry headroom over the",
+  "//5": "measured baseline in docs/perf/footprint-latest.md.",
+  "//6": "The image ceiling only applies when AWS2AZURE_FOOTPRINT_IMAGE is set; it",
+  "//7": "stays 0 (silent passthrough) until a CI run captures the first number.",
+  "scenarios": {
+    "aws2azure (all modules)": {
+      "maxBinarySizeMb": 28,
+      "maxIdleRssMb": 48,
+      "maxColdStartMs": 750,
+      "maxImageSizeMb": 0
+    }
+  }
+}

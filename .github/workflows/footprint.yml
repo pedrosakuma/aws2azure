@@ -1,0 +1,69 @@
+name: footprint
+
+on:
+  schedule:
+    # Nightly at 06:00 UTC — staggered from integration.yml (04:00) and
+    # perf.yml (05:30) so the three jobs don't fight for runner pool slots.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize, reopened]
+
+jobs:
+  footprint:
+    # Runs on nightly schedule, manual dispatch, or PRs carrying `run-footprint`
+    # (or `run-perf`). Default PRs do NOT trigger it — apply a label when
+    # touching startup, DI composition, the module registry, or the build
+    # graph to surface footprint regressions before merge.
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       (contains(github.event.pull_request.labels.*.name, 'run-footprint') ||
+        contains(github.event.pull_request.labels.*.name, 'run-perf')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      AWS2AZURE_FOOTPRINT: "1"
+      # Persist the AOT publish across the test so a re-run in the same job is
+      # a cache hit rather than a second multi-minute link.
+      AWS2AZURE_FOOTPRINT_PUBLISH_DIR: ${{ github.workspace }}/.footprint-publish
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # Native-AOT toolchain: `dotnet publish` shells out to clang + the
+      # platform linker and links against zlib.
+      - name: Install AOT toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang zlib1g-dev
+
+      # Build the chiseled container image so the footprint harness can record
+      # its size via `docker image inspect`. This is the same Dockerfile that
+      # ships the sidecar, so the number is the real published image size.
+      - name: Build container image (for image-size metric)
+        run: docker build -t aws2azure:footprint .
+
+      - name: Build footprint tests
+        run: dotnet build tests/Aws2Azure.FootprintTests -c Release --nologo
+
+      - name: Measure footprint + enforce budget
+        env:
+          AWS2AZURE_FOOTPRINT_IMAGE: aws2azure:footprint
+        run: >-
+          dotnet test tests/Aws2Azure.FootprintTests -c Release --no-build --nologo
+          --logger "console;verbosity=normal"
+
+      - name: Upload footprint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: footprint-results
+          path: |
+            docs/perf/footprint-latest.md
+            docs/perf/footprint-history.csv
+          if-no-files-found: warn
+          retention-days: 90

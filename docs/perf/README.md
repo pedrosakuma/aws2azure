@@ -246,3 +246,77 @@ regression rulers, not absolute prod memory.
   real-Azure smoke pattern).
 - Allocation / CPU profile via `dotnet-counters` collect during the run.
 
+
+---
+
+## Footprint budget (#271)
+
+Throughput/latency is only half of a sidecar's cost. As a sidecar, aws2azure
+is also judged on **idle memory, cold start, and image/binary size** — the
+numbers a prospective adopter checks first. These are measured by
+`tests/Aws2Azure.FootprintTests` and gated exactly like the perf baseline.
+
+### What it measures
+
+| Metric          | How                                                            |
+|-----------------|---------------------------------------------------------------|
+| AOT binary size | published `Aws2Azure.Proxy` file length                       |
+| Idle RSS        | boot the binary, settle, sample steady-state `VmRSS`          |
+| Cold start      | process start → first `/_aws2azure/health` 200 (median of 7)  |
+| Image size      | `docker image inspect` (opt-in, see below)                    |
+
+The harness publishes the proxy as a **real Native-AOT binary** and drives it
+out-of-process, so the numbers reflect the shipped artifact — not a `dotnet
+test` host or a `dotnet run` JIT build.
+
+### Baseline (runner-bound)
+
+Latest snapshot lives in [`footprint-latest.md`](./footprint-latest.md); the
+cumulative trend is [`footprint-history.csv`](./footprint-history.csv). On a
+GitHub-hosted `linux-x64` runner the all-modules build measures roughly:
+
+| Binary | Idle RSS | Cold start |
+|--------|----------|------------|
+| ~22 MB | ~34 MB   | ~70 ms     |
+
+> Footprint numbers are **runner-bound**. Binary size is deterministic; idle
+> RSS is fairly stable; cold start scales with runner core count, so its
+> ceiling is deliberately loose and only catches gross regressions. Every row
+> records the RID.
+
+### The gate
+
+`FootprintResult.AssertWithinBudget()` reads
+[`footprint-reference.json`](./footprint-reference.json) — per-metric ceilings
+keyed by scenario. The convention mirrors the perf baseline:
+
+- a ceiling of **0 opts out** of that dimension;
+- a scenario **absent** from the JSON is **not gated** (newly added scenarios
+  pass silently until an operator records a ceiling);
+- `KnownFootprintScenariosTests` is a drift guard — every scenario must appear
+  in the reference JSON and vice versa, so a missing ceiling fails a fast unit
+  test instead of silently skipping the budget gate.
+
+### How to run
+
+```bash
+# Multi-minute (it AOT-publishes the proxy):
+AWS2AZURE_FOOTPRINT=1 dotnet test tests/Aws2Azure.FootprintTests -c Release
+
+# Reuse a previous publish (cache by module selection):
+AWS2AZURE_FOOTPRINT=1 \
+AWS2AZURE_FOOTPRINT_PUBLISH_DIR=/tmp/aws2azure-footprint \
+  dotnet test tests/Aws2Azure.FootprintTests -c Release
+
+# Also capture container image size (requires a built image):
+docker build -t aws2azure:footprint .
+AWS2AZURE_FOOTPRINT=1 AWS2AZURE_FOOTPRINT_IMAGE=aws2azure:footprint \
+  dotnet test tests/Aws2Azure.FootprintTests -c Release
+```
+
+CI runs this on the perf cadence — nightly, `workflow_dispatch`, and PRs that
+carry the **`run-footprint`** (or **`run-perf`**) label — via
+[`.github/workflows/footprint.yml`](../../.github/workflows/footprint.yml).
+The image-size ceiling stays at 0 (silent passthrough) until the first CI run
+records the number; tighten it deliberately afterwards, same as the perf
+floors.
