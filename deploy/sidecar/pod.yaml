@@ -1,0 +1,81 @@
+# aws2azure sidecar — minimal raw Pod (the simplest illustration).
+#
+# Two containers in one pod share the network namespace, so the app reaches the
+# proxy over loopback at a service-prefixed host (AWS SDKs route by Host header),
+# mapped via hostAliases — e.g. http://s3.localhost:8080. This is the smallest
+# possible example; for a real workload use deploy/sidecar/deployment.yaml
+# (native sidecar + ordering).
+#
+# Prereqs: kubectl apply -f deploy/sidecar/secret.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app
+  labels:
+    app.kubernetes.io/name: my-app
+spec:
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  # S3 routes by Host header and needs a host starting with "s3."; map it to
+  # loopback. Add one entry per service the app uses.
+  hostAliases:
+    - ip: "127.0.0.1"
+      hostnames:
+        - s3.localhost
+  containers:
+    - name: app
+      image: your-app:latest
+      env:
+        # The proxy supports S3 path-style only; configure path-style addressing
+        # in the app. For multiple services use AWS_ENDPOINT_URL_<SERVICE> and
+        # add matching hostAliases entries.
+        - name: AWS_ENDPOINT_URL
+          value: http://s3.localhost:8080
+        - name: AWS_ACCESS_KEY_ID
+          value: AKIADEVEXAMPLE
+        - name: AWS_SECRET_ACCESS_KEY
+          value: change-me
+        - name: AWS_REGION
+          value: us-east-1
+    - name: aws2azure
+      image: ghcr.io/pedrosakuma/aws2azure:latest
+      env:
+        - name: ASPNETCORE_URLS
+          value: http://+:8080
+        - name: AWS2AZURE_CONFIG_FILE
+          value: /etc/aws2azure/config.json
+      ports:
+        - name: aws2azure
+          containerPort: 8080
+      readinessProbe:
+        httpGet:
+          path: /ready
+          port: aws2azure
+        periodSeconds: 5
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: aws2azure
+        periodSeconds: 10
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        capabilities:
+          drop: ["ALL"]
+      volumeMounts:
+        - name: aws2azure-config
+          mountPath: /etc/aws2azure
+          readOnly: true
+  volumes:
+    - name: aws2azure-config
+      secret:
+        secretName: aws2azure-config

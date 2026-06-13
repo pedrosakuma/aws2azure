@@ -268,6 +268,32 @@ the config-as-Secret options, and Ingress host routing.
 
 ---
 
+## Running as a sidecar
+
+The first-class deployment shape is a **sidecar**: aws2azure runs as an extra
+container in your app's pod, and the app reaches it over the pod's shared
+loopback. AWS SDKs route by `Host` header, so the app sets `AWS_ENDPOINT_URL` to
+a service-prefixed host mapped to loopback via `hostAliases` (e.g.
+`http://s3.localhost:8080`). No standalone Service, no per-language library.
+
+Try the self-contained end-to-end demo (app + sidecar + Azurite, no Azure
+account needed):
+
+```bash
+kubectl apply -f deploy/sidecar/demo-azurite.yaml
+kubectl logs -f pod/aws2azure-sidecar-demo -c demo   # watch an S3 round-trip via Azure Blob
+kubectl delete -f deploy/sidecar/demo-azurite.yaml
+```
+
+For real workloads, the [`deploy/sidecar/`](../deploy/sidecar) manifests cover a
+production Deployment (native sidecar + startup ordering), a minimal Pod, and
+the credential `Secret`. The **[sidecar deployment guide](./deployment/sidecar.md)**
+documents resource requests/limits (justified by the measured footprint),
+minimal images via [module selection](./deployment/module-selection.md),
+readiness/restart semantics, and secret delivery.
+
+---
+
 ## Building and running from source
 
 ```bash

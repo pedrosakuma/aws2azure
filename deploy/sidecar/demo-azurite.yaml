@@ -1,0 +1,130 @@
+# End-to-end sidecar demo against the Azurite storage emulator.
+#
+# A single self-contained pod with three containers sharing localhost:
+#   - azurite    : the Azure Blob storage emulator (no real Azure needed)
+#   - aws2azure  : the sidecar proxy (native sidecar; S3 -> Azure Blob)
+#   - demo       : an AWS CLI container that does an S3 round-trip via the proxy
+#
+# Run it:
+#   kubectl apply -f deploy/sidecar/demo-azurite.yaml
+#   kubectl logs -f pod/aws2azure-sidecar-demo -c demo
+#
+# Expect the demo logs to show a bucket created, an object uploaded, listed, and
+# downloaded — all AWS S3 calls, served from Azurite via the sidecar.
+#
+# Clean up:
+#   kubectl delete -f deploy/sidecar/demo-azurite.yaml
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws2azure-demo-config
+type: Opaque
+stringData:
+  # Points at the in-pod Azurite over loopback. The accountName/accountKey are
+  # Azurite's well-known development credentials (safe to commit; emulator only).
+  config.json: |
+    {
+      "services": { "s3": { "enabled": true } },
+      "credentials": [
+        {
+          "awsAccessKeyId": "AKIADEVEXAMPLE",
+          "awsSecretAccessKey": "dev-secret-key-change-me",
+          "azure": {
+            "blob": {
+              "accountName": "devstoreaccount1",
+              "accountKey": "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
+              "serviceEndpoint": "http://localhost:10000/devstoreaccount1"
+            }
+          }
+        }
+      ]
+    }
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: aws2azure-sidecar-demo
+  labels:
+    app.kubernetes.io/name: aws2azure-sidecar-demo
+spec:
+  restartPolicy: Never
+  # AWS SDKs route by Host header (S3 needs a host starting with "s3."), and the
+  # proxy supports path-style only. Map s3.localhost to loopback so the in-pod
+  # client reaches the sidecar with a routable Host.
+  hostAliases:
+    - ip: "127.0.0.1"
+      hostnames:
+        - s3.localhost
+  initContainers:
+    - name: aws2azure
+      image: ghcr.io/pedrosakuma/aws2azure:latest
+      restartPolicy: Always
+      env:
+        - name: ASPNETCORE_URLS
+          value: http://+:8080
+        - name: AWS2AZURE_CONFIG_FILE
+          value: /etc/aws2azure/config.json
+        # Azurite serves blob over plain HTTP, so no insecure-TLS flag is needed.
+      ports:
+        - name: aws2azure
+          containerPort: 8080
+      startupProbe:
+        httpGet:
+          path: /ready
+          port: aws2azure
+        periodSeconds: 1
+        failureThreshold: 30
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
+      volumeMounts:
+        - name: config
+          mountPath: /etc/aws2azure
+          readOnly: true
+  containers:
+    - name: azurite
+      image: mcr.microsoft.com/azure-storage/azurite:latest
+      args: ["azurite-blob", "--blobHost", "0.0.0.0", "--skipApiVersionCheck", "--loose"]
+      ports:
+        - name: blob
+          containerPort: 10000
+    - name: demo
+      image: amazon/aws-cli:latest
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          set -e
+          # S3 virtual-hosted style is unsupported by the proxy, so force
+          # path-style addressing (otherwise the SDK targets <bucket>.s3.localhost).
+          aws configure set default.s3.addressing_style path
+          echo "demo: waiting for the sidecar + azurite to serve S3..."
+          for i in $(seq 1 30); do
+            if aws s3 mb s3://demo-bucket 2>/dev/null; then break; fi
+            sleep 2
+          done
+          echo "hello from the aws2azure sidecar" > /tmp/hello.txt
+          aws s3 cp /tmp/hello.txt s3://demo-bucket/hello.txt
+          echo "demo: listing the bucket ----------------------------------"
+          aws s3 ls s3://demo-bucket/
+          echo "demo: downloading the object ------------------------------"
+          aws s3 cp s3://demo-bucket/hello.txt -
+          echo "demo: round-trip OK. AWS S3 in, Azure Blob out."
+      env:
+        # All AWS S3 calls go to the sidecar over loopback (s3.localhost is
+        # mapped to 127.0.0.1 by the pod's hostAliases above).
+        - name: AWS_ENDPOINT_URL
+          value: http://s3.localhost:8080
+        - name: AWS_ACCESS_KEY_ID
+          value: AKIADEVEXAMPLE
+        - name: AWS_SECRET_ACCESS_KEY
+          value: dev-secret-key-change-me
+        - name: AWS_REGION
+          value: us-east-1
+  volumes:
+    - name: config
+      secret:
+        secretName: aws2azure-demo-config
