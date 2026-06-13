@@ -26,6 +26,7 @@ public sealed class DynamoDbServiceModule : IServiceModule
     private readonly EntraIdTokenProvider _tokenProvider;
     private readonly ILogger? _scanLogger;
     private readonly ILogger? _consistencyLogger;
+    private readonly ILogger? _regionLogger;
     private readonly DynamoDbSettings _settings;
     private readonly SprocManager? _sprocManager;
 
@@ -51,6 +52,7 @@ public sealed class DynamoDbServiceModule : IServiceModule
         // tests construct the module without a factory.
         _scanLogger = loggerFactory?.CreateLogger("Aws2Azure.Modules.DynamoDb.Scan");
         _consistencyLogger = loggerFactory?.CreateLogger("Aws2Azure.Modules.DynamoDb.Consistency");
+        _regionLogger = loggerFactory?.CreateLogger("Aws2Azure.Modules.DynamoDb.CosmosRegions");
         Capabilities = capabilities;
 
         // Create SprocManager if sprocs are enabled
@@ -118,7 +120,7 @@ public sealed class DynamoDbServiceModule : IServiceModule
         }
 
         var auth = CreateAuthenticator(cosmosCreds);
-        var cosmos = new CosmosClient(_http, cosmosCreds, auth);
+        var cosmos = new CosmosClient(_http, cosmosCreds, auth, _regionLogger);
 
         switch (parsed.Operation)
         {
@@ -222,7 +224,7 @@ public sealed class DynamoDbServiceModule : IServiceModule
             try
             {
                 var auth = CreateAuthenticator(creds);
-                var cosmos = new CosmosClient(_http, creds, auth);
+                var cosmos = new CosmosClient(_http, creds, auth, _regionLogger);
                 level = await cosmos.ReadAccountConsistencyAsync(ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)

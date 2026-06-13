@@ -340,6 +340,16 @@ public sealed class CosmosCredentials : IAadAuthCredentials
     public string Endpoint { get; set; } = string.Empty;
 
     /// <summary>
+    /// Optional ordered Cosmos region preference list (for example
+    /// <c>["West US", "East US"]</c>). Reads route to the first available
+    /// readable location in this order, then fall back through remaining
+    /// readable locations and finally the configured account endpoint. Writes
+    /// use the account's writable location, or the preferred writable location
+    /// when Cosmos reports multi-write support.
+    /// </summary>
+    public List<string>? PreferredRegions { get; set; }
+
+    /// <summary>
     /// Cosmos master key (primary or secondary). Mutually exclusive with
     /// the AAD shape: when populated the proxy uses master-key HMAC
     /// signing; when left empty the AAD fields are consulted instead.

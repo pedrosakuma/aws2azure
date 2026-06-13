@@ -203,6 +203,17 @@ public static class ProxyConfigLoader
                 else if (fieldSegment == "TENANTID") azure.Cosmos.TenantId = value;
                 else if (fieldSegment == "CLIENTID") azure.Cosmos.ClientId = value;
                 else if (fieldSegment == "CLIENTSECRET") azure.Cosmos.ClientSecret = value;
+                else if (fieldSegment == "PREFERREDREGIONS"
+                    && path.Length == 6
+                    && int.TryParse(path[5], out var regionIndex))
+                {
+                    azure.Cosmos.PreferredRegions ??= new List<string>();
+                    while (azure.Cosmos.PreferredRegions.Count <= regionIndex)
+                    {
+                        azure.Cosmos.PreferredRegions.Add(string.Empty);
+                    }
+                    azure.Cosmos.PreferredRegions[regionIndex] = value ?? string.Empty;
+                }
                 return;
         }
     }
