@@ -29,11 +29,24 @@ param cosmosDatabaseName string = 'dynamodb'
 @description('Event Hub entity the Kinesis module targets. CreateStream is unimplemented, so the hub must pre-exist.')
 param eventHubName string = 'kinesis-smoke'
 
+@description('Object (principal) id of the service principal that the proxy authenticates as when a backend block uses AAD/Workload-Identity auth (the OIDC SP the workflow logs in with). When empty, no data-plane role assignments are created and the WorkloadIdentity E2E scenario is skipped — the shared-key/SAS smoke matrix is unaffected.')
+param principalId string = ''
+
 var suffix = uniqueString(resourceGroup().id)
 var storageAccountName = toLower('${baseName}st${suffix}')
 var serviceBusNamespaceName = '${baseName}-sb-${suffix}'
 var cosmosAccountName = toLower('${baseName}-cosmos-${suffix}')
 var eventHubsNamespaceName = '${baseName}-eh-${suffix}'
+
+// Built-in role definition ids for the AAD data-plane roles the proxy needs when a
+// backend block authenticates with Workload Identity (issue #307). Event Hubs /
+// Service Bus use Azure RBAC; Cosmos uses its own SQL RBAC plane (see below).
+var eventHubsDataOwnerRoleId = 'f526a384-b230-433a-b45c-95f59c4a2dec' // Azure Event Hubs Data Owner
+var serviceBusDataOwnerRoleId = '090c5cfd-751d-490a-894a-3ce6f1109419' // Azure Service Bus Data Owner
+// Cosmos DB Built-in Data Contributor — a SQL-plane role assigned via
+// sqlRoleAssignments, NOT an Azure RBAC roleAssignment.
+var cosmosDataContributorRoleId = '00000000-0000-0000-0000-000000000002'
+var assignDataPlaneRoles = !empty(principalId)
 
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: storageAccountName
@@ -113,6 +126,40 @@ resource eventHub 'Microsoft.EventHub/namespaces/eventhubs@2024-01-01' = {
   properties: {
     partitionCount: 1
     messageRetentionInDays: 1
+  }
+}
+
+// --- Data-plane RBAC for the Workload-Identity E2E scenario (issue #307) ---
+// Each is created only when principalId is supplied, so the default shared-key
+// provisioning path (and any deploy without the OIDC SP) is unchanged.
+
+resource eventHubsDataOwner 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignDataPlaneRoles) {
+  name: guid(eventHubs.id, principalId, eventHubsDataOwnerRoleId)
+  scope: eventHubs
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataOwnerRoleId)
+    principalId: principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource serviceBusDataOwner 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignDataPlaneRoles) {
+  name: guid(serviceBus.id, principalId, serviceBusDataOwnerRoleId)
+  scope: serviceBus
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', serviceBusDataOwnerRoleId)
+    principalId: principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource cosmosDataContributor 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-05-15' = if (assignDataPlaneRoles) {
+  parent: cosmos
+  name: guid(cosmos.id, principalId, cosmosDataContributorRoleId)
+  properties: {
+    roleDefinitionId: '${cosmos.id}/sqlRoleDefinitions/${cosmosDataContributorRoleId}'
+    principalId: principalId
+    scope: cosmos.id
   }
 }
 

@@ -105,10 +105,27 @@ az role assignment create --assignee-object-id "$SP_ID" \
   --assignee-principal-type ServicePrincipal \
   --role Contributor --scope "/subscriptions/$SUB"
 
+# 3b. (Only for the Workload-Identity E2E scenario, issue #307.) Contributor
+#     EXCLUDES Microsoft.Authorization/*/Write, so it cannot create the Event
+#     Hubs / Service Bus data-plane role assignments the Bicep emits. Grant the
+#     SP role-assignment-management rights too. (Cosmos uses its own SQL RBAC
+#     plane, which Contributor can already write — this is only needed for the
+#     Azure-RBAC namespaces.) Skip this if you leave AZURE_CLIENT_OBJECT_ID unset.
+az role assignment create --assignee-object-id "$SP_ID" \
+  --assignee-principal-type ServicePrincipal \
+  --role "Role Based Access Control Administrator" --scope "/subscriptions/$SUB"
+
 # 4. Repo secrets consumed by azure/login.
 gh secret set AZURE_CLIENT_ID --body "$APP_ID"
 gh secret set AZURE_TENANT_ID --body "$TENANT"
 gh secret set AZURE_SUBSCRIPTION_ID --body "$SUB"
+
+# 5. (Optional) Object id of the SP, for the Workload-Identity E2E scenario
+#    (issue #307): Bicep grants this principal the AAD data-plane roles
+#    (Cosmos / Event Hubs / Service Bus) the proxy needs when a backend block
+#    uses `authMode: workloadIdentity`. Leave unset to keep the shared-key
+#    smoke matrix only — the data-plane role assignments are then skipped.
+gh secret set AZURE_CLIENT_OBJECT_ID --body "$SP_ID"
 ```
 
 The federated-credential subjects above cover scheduled / `workflow_dispatch`
