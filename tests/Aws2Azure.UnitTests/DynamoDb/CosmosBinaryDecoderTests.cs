@@ -119,6 +119,51 @@ public sealed class CosmosBinaryDecoderTests
         Assert.Equal(textResponse, binaryResponse);
     }
 
+    [Fact]
+    public void Decode_rejects_excessive_nesting_without_stack_overflow()
+    {
+        // A long chain of single-item array (0xE1) markers must surface as a
+        // JsonException from the depth guard, never an uncatchable
+        // StackOverflowException that would terminate the sidecar.
+        var body = new byte[1 + 5000 + 1];
+        body[0] = 0x80;
+        for (int i = 1; i <= 5000; i++) body[i] = 0xE1;
+        body[^1] = 0x00; // innermost scalar
+
+        Assert.IsType<JsonException>(Record.Exception(() => Decode(body)));
+    }
+
+    [Fact]
+    public void Decode_rejects_oversized_length_as_json_error_not_overflow()
+    {
+        // ArrL4 (0xE4) declaring 0xFFFFFFFF payload bytes. Must be a
+        // JsonException (malformed body), not an OverflowException leaking from
+        // a checked int cast.
+        byte[] body = [0x80, 0xE4, 0xFF, 0xFF, 0xFF, 0xFF];
+
+        Assert.IsType<JsonException>(Record.Exception(() => Decode(body)));
+    }
+
+    [Fact]
+    public void Decode_rejects_child_value_exceeding_container_bounds()
+    {
+        // ArrL1 (0xE2) declaring a 1-byte payload but whose single element is a
+        // 2-byte fixed number (0xC8 + value). The element must not be allowed to
+        // read past the container's declared payload.
+        byte[] body = [0x80, 0xE2, 0x01, 0xC8, 0x05];
+
+        Assert.IsType<JsonException>(Record.Exception(() => Decode(body)));
+    }
+
+    [Fact]
+    public void Decode_rejects_truncated_body()
+    {
+        // ArrL1 (0xE2) declaring 4 payload bytes but the buffer ends early.
+        byte[] body = [0x80, 0xE2, 0x04, 0xC8];
+
+        Assert.IsType<JsonException>(Record.Exception(() => Decode(body)));
+    }
+
     private static string Decode(byte[] body)
     {
         using var output = new PooledByteBufferWriter(256);

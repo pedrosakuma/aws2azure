@@ -297,15 +297,17 @@ internal static class CosmosOpsShared
 
         ReadOnlyMemory<byte> cosmosJson = input.WrittenMemory;
         PooledByteBufferWriter? decoded = null;
-        if (CosmosBinaryDecoder.IsBinary(cosmosJson.Span))
+        try
         {
-            decoded = new PooledByteBufferWriter(Math.Max(4096, cosmosJson.Length));
-            CosmosBinaryDecoder.Decode(cosmosJson.Span, decoded);
-            cosmosJson = decoded.WrittenMemory;
-        }
+            if (CosmosBinaryDecoder.IsBinary(cosmosJson.Span))
+            {
+                decoded = new PooledByteBufferWriter(Math.Max(4096, cosmosJson.Length));
+                // Decode may throw on a malformed binary body; the catch below
+                // returns the rented buffer to the pool before rethrowing.
+                CosmosBinaryDecoder.Decode(cosmosJson.Span, decoded);
+                cosmosJson = decoded.WrittenMemory;
+            }
 
-        using (decoded)
-        {
             using var scratch = new PooledByteBufferWriter(1024);
             using (var writer = new Utf8JsonWriter(scratch))
             {
@@ -319,6 +321,10 @@ internal static class CosmosOpsShared
             ctx.Response.ContentType = "application/x-amz-json-1.0";
             await ctx.Response.BodyWriter.WriteAsync(scratch.WrittenMemory, cancellationToken)
                 .ConfigureAwait(false);
+        }
+        finally
+        {
+            decoded?.Dispose();
         }
     }
 }

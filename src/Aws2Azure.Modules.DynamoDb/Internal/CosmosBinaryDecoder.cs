@@ -200,13 +200,21 @@ internal static class CosmosBinaryDecoder
         if (marker != 0xE0)
         {
             int dataStart = offset + ContainerPrefixLength(marker);
-            int dataEnd = checked(offset + (int)GetValueLength(full, offset));
+            int dataEnd = offset + BoundedLength(full, offset, depth);
             EnsureBounds(full, dataStart, dataEnd);
             int current = dataStart;
             while (current < dataEnd)
             {
+                // Validate the child fits inside the container's declared payload
+                // BEFORE decoding it, so a malformed container cannot consume
+                // bytes past dataEnd from the surrounding buffer.
+                int childLength = BoundedLength(full, current, depth);
+                if (childLength > dataEnd - current)
+                {
+                    throw new JsonException("Cosmos binary JSON array element exceeds container bounds.");
+                }
                 WriteValue(writer, full, current, dictionary, depth);
-                current = checked(current + (int)GetValueLength(full, current));
+                current += childLength;
             }
         }
         writer.WriteEndArray();
@@ -225,7 +233,7 @@ internal static class CosmosBinaryDecoder
         if (marker != 0xE8)
         {
             int dataStart = offset + ContainerPrefixLength(marker);
-            int dataEnd = checked(offset + (int)GetValueLength(full, offset));
+            int dataEnd = offset + BoundedLength(full, offset, depth);
             EnsureBounds(full, dataStart, dataEnd);
             int current = dataStart;
             while (current < dataEnd)
@@ -234,10 +242,27 @@ internal static class CosmosBinaryDecoder
                 {
                     throw new JsonException("Cosmos binary JSON object property name is not a string.");
                 }
+                // Bound the property name within the container payload first.
+                int nameLength = BoundedLength(full, current, depth);
+                if (nameLength > dataEnd - current)
+                {
+                    throw new JsonException("Cosmos binary JSON object property name exceeds container bounds.");
+                }
                 WriteStringToken(writer, full, current, dictionary, propertyName: true, depth);
-                current = checked(current + (int)GetValueLength(full, current));
+                current += nameLength;
+
+                if (current >= dataEnd)
+                {
+                    throw new JsonException("Cosmos binary JSON object property is missing its value.");
+                }
+                // Bound the property value within the remaining container payload.
+                int valueLength = BoundedLength(full, current, depth);
+                if (valueLength > dataEnd - current)
+                {
+                    throw new JsonException("Cosmos binary JSON object property value exceeds container bounds.");
+                }
                 WriteValue(writer, full, current, dictionary, depth);
-                current = checked(current + (int)GetValueLength(full, current));
+                current += valueLength;
             }
         }
         writer.WriteEndObject();
@@ -705,8 +730,9 @@ internal static class CosmosBinaryDecoder
         _ => throw new JsonException($"Invalid Cosmos binary JSON container marker 0x{marker:X2}."),
     };
 
-    private static long GetValueLength(ReadOnlySpan<byte> full, int offset)
+    private static long GetValueLength(ReadOnlySpan<byte> full, int offset, int depth)
     {
+        EnsureDepth(depth);
         EnsureAvailable(full, offset, 1);
         ReadOnlySpan<byte> buffer = full.Slice(offset);
         long length = Lookup[buffer[0]];
@@ -741,14 +767,20 @@ internal static class CosmosBinaryDecoder
                 return 9L + BinaryPrimitives.ReadUInt32LittleEndian(buffer.Slice(1));
             case Arr1:
             {
-                long item = GetValueLength(full, offset + 1);
-                return item == 0 ? 0 : 1 + item;
+                // Single-item array: 1 marker byte + the (validated) item. Routed
+                // through BoundedLength at depth+1 so a chain of 0xE1 markers
+                // cannot recurse past MaxDepth (no stack overflow) and an
+                // out-of-range item length surfaces as JsonException.
+                int item = BoundedLength(full, offset + 1, depth + 1);
+                return 1L + item;
             }
             case Obj1:
             {
-                long name = GetValueLength(full, offset + 1);
-                long value = GetValueLength(full, checked(offset + 1 + (int)name));
-                return 1 + name + value;
+                // Single-property object: 1 marker byte + name + value, each
+                // bounded against the buffer at depth+1.
+                int name = BoundedLength(full, offset + 1, depth + 1);
+                int value = BoundedLength(full, offset + 1 + name, depth + 1);
+                return 1L + name + value;
             }
             case B64L1:
                 EnsureAvailable(buffer, 0, 3);
@@ -789,6 +821,26 @@ internal static class CosmosBinaryDecoder
             default:
                 throw new JsonException($"Invalid Cosmos binary JSON length sentinel {length}.");
         }
+    }
+
+    /// <summary>
+    /// Returns the byte length of the value at <paramref name="offset"/>,
+    /// validated to be strictly positive and to fit inside the remaining buffer.
+    /// Converts oversized/overflowing length fields (e.g. an <c>ArrL4</c>
+    /// claiming <c>0xFFFFFFFF</c> bytes) into a <see cref="JsonException"/>
+    /// rather than an <see cref="OverflowException"/>, and guarantees the
+    /// returned <see cref="int"/> can be added to <paramref name="offset"/>
+    /// without overflow (since the buffer length is itself an <see cref="int"/>).
+    /// </summary>
+    private static int BoundedLength(ReadOnlySpan<byte> full, int offset, int depth)
+    {
+        long length = GetValueLength(full, offset, depth);
+        if (length <= 0 || offset < 0 || offset > full.Length || length > full.Length - offset)
+        {
+            throw new JsonException("Cosmos binary JSON value length is out of range.");
+        }
+
+        return (int)length;
     }
 
     private static int CompressedLength(int length, int bits)
