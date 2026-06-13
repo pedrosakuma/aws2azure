@@ -86,6 +86,11 @@ for the harness, the live numbers, and the per-metric budget. Footprint numbers
 are runner-bound; binary size is deterministic while cold start scales with
 runner core count.
 
+For an even leaner sidecar you can compile in only the service modules a
+workload needs (e.g. `-p:Modules=s3`), trimming ~20–27% off the binary and idle
+RSS — see
+[**build-time module selection**](./docs/deployment/module-selection.md).
+
 ## Non-Goals
 
 - Not a 100% feature-compatible reimplementation. Gaps are **documented

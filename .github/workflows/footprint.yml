@@ -53,6 +53,10 @@ jobs:
       - name: Measure footprint + enforce budget
         env:
           AWS2AZURE_FOOTPRINT_IMAGE: aws2azure:footprint
+          # Measure per-tier (build-time module selection, #273) footprint only
+          # on the nightly run — each tier is a separate multi-minute AOT
+          # publish, so PR-label / dispatch runs stay lean (all-modules only).
+          AWS2AZURE_FOOTPRINT_TIERS: ${{ github.event_name == 'schedule' && '1' || '0' }}
         run: >-
           dotnet test tests/Aws2Azure.FootprintTests -c Release --no-build --nologo
           --logger "console;verbosity=normal"

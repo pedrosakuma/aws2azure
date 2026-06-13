@@ -25,9 +25,18 @@ public sealed class FootprintTests
     public static readonly IReadOnlyList<string> AllScenarios = new[]
     {
         "aws2azure (all modules)",
+        "aws2azure (s3 only)",
     };
 
     public const string AllModulesScenario = "aws2azure (all modules)";
+
+    /// <summary>
+    /// Representative single-module tier (#273): the leanest realistic sidecar.
+    /// Quantifies the build-time-module-selection delta against the all-modules
+    /// binary and gates it so a tier regression (e.g. an unselected module
+    /// leaking back into the trim graph) surfaces in the budget gate.
+    /// </summary>
+    public const string S3OnlyScenario = "aws2azure (s3 only)";
 
     [SkippableFact]
     public async Task All_modules_binary_is_within_footprint_budget()
@@ -41,6 +50,25 @@ public sealed class FootprintTests
         FootprintReport.Append(result, notes: "all 6 modules");
 
         // Sanity: the harness actually measured something.
+        Assert.True(result.BinarySizeBytes > 0, "binary size not measured");
+        Assert.True(result.IdleRssBytes > 0, "idle RSS not measured");
+        Assert.True(result.ColdStartMedianMs > 0, "cold start not measured");
+
+        result.AssertWithinBudget();
+    }
+
+    [SkippableFact]
+    public async Task S3_only_tier_binary_is_within_footprint_budget()
+    {
+        Skip.IfNot(FootprintGate.Enabled, "AWS2AZURE_FOOTPRINT=1 not set.");
+        Skip.IfNot(FootprintGate.TiersEnabled, "AWS2AZURE_FOOTPRINT_TIERS=1 not set.");
+
+        var binary = ProxyPublisher.Publish(modules: "s3");
+        var result = await FootprintMeasurement.MeasureAsync(
+            S3OnlyScenario, binary, FootprintConfig.AllModulesJson);
+
+        FootprintReport.Append(result, notes: "build-time module selection: s3 only");
+
         Assert.True(result.BinarySizeBytes > 0, "binary size not measured");
         Assert.True(result.IdleRssBytes > 0, "idle RSS not measured");
         Assert.True(result.ColdStartMedianMs > 0, "cold start not measured");

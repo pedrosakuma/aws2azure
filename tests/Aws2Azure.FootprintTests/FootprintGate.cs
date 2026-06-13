@@ -11,4 +11,15 @@ internal static class FootprintGate
     public static bool Enabled =>
         string.Equals(Environment.GetEnvironmentVariable("AWS2AZURE_FOOTPRINT"), "1",
             StringComparison.Ordinal);
+
+    /// <summary>
+    /// Per-tier (build-time module selection, #273) footprint scenarios are
+    /// additionally gated by <c>AWS2AZURE_FOOTPRINT_TIERS=1</c>: each tier is a
+    /// separate multi-minute AOT publish, so a default footprint run (and the
+    /// PR-label CI leg) measures only the all-modules binary. The nightly
+    /// footprint job opts in to quantify the per-tier delta.
+    /// </summary>
+    public static bool TiersEnabled =>
+        string.Equals(Environment.GetEnvironmentVariable("AWS2AZURE_FOOTPRINT_TIERS"), "1",
+            StringComparison.Ordinal);
 }

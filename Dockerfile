@@ -18,7 +18,6 @@ RUN apt-get update \
 # Resolve it once and persist for both the restore and publish layers.
 ARG TARGETARCH=amd64
 RUN echo "linux-$(echo "${TARGETARCH}" | sed -e 's/amd64/x64/')" > /tmp/dotnet-rid
-
 # Copy the solution, shared build props, and every project file first so the
 # restore layer is cached independently of source changes.
 COPY aws2azure.slnx Directory.Build.props ./
@@ -36,10 +35,19 @@ RUN dotnet restore src/Aws2Azure.Proxy/Aws2Azure.Proxy.csproj -r "$(cat /tmp/dot
 
 # Copy everything else and publish. PublishAot already emits a single native
 # binary, so no PublishSingleFile is needed.
+#
+# MODULES selects which service modules are compiled into the binary
+# (build-time module selection, see docs/deployment/module-selection.md). The
+# default `all` links every module; e.g. `--build-arg MODULES=s3` produces a
+# leaner, single-service sidecar image. Separate multiple ids with '+' (the
+# MSBuild CLI eats ',' / ';'), e.g. `--build-arg MODULES=sqs+sns`. Unselected
+# module code is never seen by the AOT trimmer, so it is excluded entirely.
+ARG MODULES=all
 COPY . .
 RUN dotnet publish src/Aws2Azure.Proxy \
     -c Release \
     -r "$(cat /tmp/dotnet-rid)" \
+    -p:Modules="${MODULES}" \
     --no-restore \
     -o /app
 
