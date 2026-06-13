@@ -49,6 +49,8 @@ public sealed class KnownPerfScenariosTests
         "dynamodb.Scan (pushable filter)",
         "dynamodb.BatchWriteItem (25 items)",
         "dynamodb.BatchGetItem (25 items)",
+        "dynamodb.CosmosJsonParse (synthetic page)",
+        "dynamodb.CosmosBinaryDecode (synthetic page)",
         "azure-sdk.Cosmos.UpsertItem (small)",
         "azure-sdk.Cosmos.ReadItem (small)",
         "azure-sdk.Cosmos.ReadManyItems (25 keys)",

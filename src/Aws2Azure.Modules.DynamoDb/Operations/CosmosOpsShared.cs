@@ -105,8 +105,10 @@ internal static class CosmosOpsShared
         }
         try
         {
-            await using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-            var meta = JsonSerializer.Deserialize(stream, TableMetadataJsonContext.Default.TableMetadata);
+            using var body = await ReadCosmosJsonBodyAsync(resp.Content, ct).ConfigureAwait(false);
+            var meta = JsonSerializer.Deserialize(
+                body.WrittenMemory.Span,
+                TableMetadataJsonContext.Default.TableMetadata);
             resp.Dispose();
             if (meta is null) return new TableMetadataReadResult { Status = TableMetadataReadStatus.NotFound };
             
@@ -163,6 +165,60 @@ internal static class CosmosOpsShared
 
     public static Task WriteErrorAsync(HttpContext ctx, int status, string code, string message)
         => DynamoDbErrorResponse.WriteAsync(ctx, status, code, message);
+
+    /// <summary>
+    /// Reads a Cosmos response body into a pooled contiguous buffer. Text JSON
+    /// is returned unchanged; Cosmos binary JSON (<c>0x80</c> first byte) is
+    /// decoded into canonical UTF-8 JSON before existing parsers see it.
+    /// </summary>
+    public static async Task<PooledByteBufferWriter> ReadCosmosJsonBodyAsync(
+        HttpContent content,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+
+        int initialCapacity = 4096;
+        if (content.Headers.ContentLength is > 0 and <= int.MaxValue)
+        {
+            initialCapacity = (int)content.Headers.ContentLength;
+        }
+
+        var input = new PooledByteBufferWriter(initialCapacity);
+        try
+        {
+            await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            while (true)
+            {
+                Memory<byte> memory = input.GetMemory(4096);
+                int read = await stream.ReadAsync(memory, cancellationToken).ConfigureAwait(false);
+                if (read == 0) break;
+                input.Advance(read);
+            }
+
+            if (!CosmosBinaryDecoder.IsBinary(input.WrittenMemory.Span))
+            {
+                return input;
+            }
+
+            var output = new PooledByteBufferWriter(Math.Max(4096, input.WrittenMemory.Length));
+            try
+            {
+                CosmosBinaryDecoder.Decode(input.WrittenMemory.Span, output);
+                input.Dispose();
+                return output;
+            }
+            catch
+            {
+                output.Dispose();
+                throw;
+            }
+        }
+        catch
+        {
+            input.Dispose();
+            throw;
+        }
+    }
 
     public static async Task WriteJsonAsync<T>(
         HttpContext ctx, int status, T payload, JsonTypeInfo<T> typeInfo)
@@ -239,19 +295,37 @@ internal static class CosmosOpsShared
             input.Advance(read);
         }
 
-        using var scratch = new PooledByteBufferWriter(1024);
-        using (var writer = new Utf8JsonWriter(scratch))
+        ReadOnlyMemory<byte> cosmosJson = input.WrittenMemory;
+        PooledByteBufferWriter? decoded = null;
+        try
         {
-            // The reader lives entirely within this synchronous call; the
-            // pooled input buffer stays valid for its whole lifetime.
-            Persistence.InferredAttributeStorage.WriteGetItemEnvelope(writer, input.WrittenMemory.Span);
-            writer.Flush();
-        }
+            if (CosmosBinaryDecoder.IsBinary(cosmosJson.Span))
+            {
+                decoded = new PooledByteBufferWriter(Math.Max(4096, cosmosJson.Length));
+                // Decode may throw on a malformed binary body; the catch below
+                // returns the rented buffer to the pool before rethrowing.
+                CosmosBinaryDecoder.Decode(cosmosJson.Span, decoded);
+                cosmosJson = decoded.WrittenMemory;
+            }
 
-        ctx.Response.StatusCode = 200;
-        ctx.Response.ContentType = "application/x-amz-json-1.0";
-        await ctx.Response.BodyWriter.WriteAsync(scratch.WrittenMemory, cancellationToken)
-            .ConfigureAwait(false);
+            using var scratch = new PooledByteBufferWriter(1024);
+            using (var writer = new Utf8JsonWriter(scratch))
+            {
+                // The reader lives entirely within this synchronous call; the
+                // pooled input buffer stays valid for its whole lifetime.
+                Persistence.InferredAttributeStorage.WriteGetItemEnvelope(writer, cosmosJson.Span);
+                writer.Flush();
+            }
+
+            ctx.Response.StatusCode = 200;
+            ctx.Response.ContentType = "application/x-amz-json-1.0";
+            await ctx.Response.BodyWriter.WriteAsync(scratch.WrittenMemory, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            decoded?.Dispose();
+        }
     }
 }
 

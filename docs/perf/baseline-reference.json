@@ -23,6 +23,8 @@
     "dynamodb.Scan (pushable filter)":                             { "minThroughputPerSec":  40.0, "maxP99Ms":  700.0, "maxPeakWorkingSetMb": 400.0, "maxAllocBytesPerOp": 1300000.0 },
     "dynamodb.BatchWriteItem (25 items)":                          { "minThroughputPerSec":   3.0, "maxP99Ms": 3500.0, "maxPeakWorkingSetMb": 400.0, "maxAllocBytesPerOp": 2000000.0 },
     "dynamodb.BatchGetItem (25 items)":                            { "minThroughputPerSec":   0.0, "maxP99Ms":  700.0, "maxPeakWorkingSetMb": 400.0, "maxAllocBytesPerOp": 700000.0 },
+    "dynamodb.CosmosJsonParse (synthetic page)":                   { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
+    "dynamodb.CosmosBinaryDecode (synthetic page)":                { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
     "azure-sdk.Cosmos.UpsertItem (small)":                         { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
     "azure-sdk.Cosmos.ReadItem (small)":                           { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
     "azure-sdk.Cosmos.ReadManyItems (25 keys)":                    { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },

@@ -100,6 +100,14 @@ public sealed class DynamoDbSettings
     /// </list>
     /// </summary>
     public ConsistencyCheckMode ConsistencyCheck { get; set; } = ConsistencyCheckMode.Disabled;
+
+    /// <summary>
+    /// Opts DynamoDB read paths into Cosmos DB binary JSON response bodies by
+    /// sending <c>x-ms-cosmos-supported-serialization-formats: CosmosBinary</c>
+    /// on document reads and queries. Disabled by default; when Cosmos returns
+    /// text JSON despite the hint, the normal text path is used unchanged.
+    /// </summary>
+    public bool CosmosBinaryResponses { get; set; }
 }
 
 /// <summary>

@@ -253,8 +253,8 @@ internal static class UpdateItemHandler
                 else
                 {
                     etag = ExtractETag(getResp);
-                    await using var s = await getResp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-                    existingItem = ItemHandlers.ExtractItemFromCosmosDoc(s);
+                    using var cosmosBody = await CosmosOpsShared.ReadCosmosJsonBodyAsync(getResp.Content, ct).ConfigureAwait(false);
+                    existingItem = ItemHandlers.ExtractItemFromCosmosDoc(cosmosBody.WrittenMemory);
                     // ExtractItem returns null only when the envelope is
                     // missing; treat as "empty item" rather than failing
                     // so docs migrated by hand still work.
