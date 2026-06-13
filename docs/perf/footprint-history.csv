@@ -1,0 +1,2 @@
+timestamp,scenario,modules,rid,binary_mb,idle_rss_mb,cold_start_median_ms,cold_start_min_ms,image_mb,notes
+2026-06-13T18:19:05.0978287Z,aws2azure (all modules),all,linux-x64,22.244,34.047,67.3,60.1,,all 6 modules
