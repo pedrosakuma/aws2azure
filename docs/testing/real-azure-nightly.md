@@ -54,7 +54,7 @@ proxy ([`RealAzureProxyFixture`](../../tests/Aws2Azure.IntegrationTests/Fixtures
 | SQS | Service Bus | CreateQueue → Send/Receive/Delete → DeleteQueue | Ephemeral (Bicep); the proxy creates the queue |
 | Kinesis | Event Hubs | PutRecord | Ephemeral (Bicep) namespace + **hub** (`CreateStream` is not implemented) |
 | Secrets Manager | Key Vault | secret lifecycle | **Standing** — runs only when `AZURE_KEYVAULT_*` secrets are set (see below) |
-| DynamoDB *(Workload Identity)* | Cosmos DB | CreateTable → Put/Get/Delete item → DeleteTable | Ephemeral (Bicep) + data-plane RBAC; authenticates via a **federated token**, no shared key (issue #307) |
+| DynamoDB *(Workload Identity)* | Cosmos DB | Put/Get/Delete item (table provisioned with the shared key — Cosmos rejects container DDL over an AAD token) | Ephemeral (Bicep) + data-plane RBAC; item CRUD via a **federated token** (issue #307) |
 | Kinesis *(Workload Identity)* | Event Hubs | PutRecord | Ephemeral (Bicep) + data-plane RBAC; authenticates via a **federated token**, no SAS key (issue #307) |
 
 Every backend is gated **independently** on its environment: a backend whose
@@ -153,6 +153,16 @@ RBAC** must accept. The shared-key and federated-token smokes run side by side
 against the same live backends
 ([`DynamoDbRealAzureWorkloadIdentityTests`](../../tests/Aws2Azure.IntegrationTests/DynamoDb/DynamoDbRealAzureWorkloadIdentityTests.cs),
 [`KinesisRealAzureWorkloadIdentityTests`](../../tests/Aws2Azure.IntegrationTests/Kinesis/KinesisRealAzureWorkloadIdentityTests.cs)).
+
+> **Cosmos: only the data path goes through Workload Identity.** Cosmos native
+> RBAC authorizes only *data-plane* actions over an AAD token; creating/deleting
+> containers (what `CreateTable`/`DeleteTable` map to) is *control-plane* and is
+> rejected with `cannot be authorized by AAD token in data plane`
+> (https://aka.ms/cosmos-native-rbac). The DynamoDB WI smoke therefore provisions
+> the table with the shared-key client and exercises only the item CRUD
+> (Put/Get/Delete) — the actual AAD flow a migrated workload runs — through the
+> federated-token client. Event Hubs has no such split: PutRecord (send) is a
+> data-plane action the AAD token authorizes directly.
 
 This reuses the workload-identity federation the job already relies on for
 `azure/login` — no extra Entra setup beyond the two prerequisites:
