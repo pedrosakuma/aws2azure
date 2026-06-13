@@ -27,7 +27,10 @@ aws --endpoint-url http://s3.localhost:8080 s3 ls s3://demo/
 ```
 
 See the **[Getting Started guide](./docs/getting-started.md)** for configuration,
-enabling the other services, running from source, and pointing at real Azure.
+enabling the other services, running from source, and pointing at real Azure. On
+Azure compute you can authenticate without a stored secret via Managed Identity
+or Workload Identity — see
+[Azure authentication](./docs/azure-authentication.md).
 
 ## Scope
 

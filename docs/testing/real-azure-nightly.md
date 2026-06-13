@@ -159,3 +159,70 @@ Backends without exported environment values skip; with none exported, every
 real-Azure test skips. Each test also deletes the bucket / queue / table it
 creates in a `finally` block, so the ephemeral resource group is the only
 cleanup the harness itself does not perform.
+
+## Managed / Workload Identity validation (manual)
+
+The nightly job authenticates the proxy to the data-plane backends with
+**account keys / SAS / a service-principal secret** — shapes that work from any
+runner. It does **not** cover the secret-less
+[`managedIdentity` / `workloadIdentity` auth modes](../azure-authentication.md),
+and deliberately so:
+
+- **Emulators have no IMDS / federation.** Azurite and the Service Bus / Cosmos
+  emulators can't issue Managed Identity tokens, so the emulator `integration`
+  job can't exercise these modes at all.
+- **The CI runner's identity is the wrong principal.** GitHub-hosted runners are
+  themselves Azure VMs, so IMDS at `169.254.169.254` *exists* — but the token it
+  returns is the runner's identity, which is **not** our provisioned identity and
+  has **no RBAC** on the test resources. A Managed Identity smoke launched from
+  the nightly job would either fail authorization or silently authenticate as the
+  wrong principal, so an automated assertion there would be misleading. We
+  therefore do **not** ship an always-skipping CI harness for it.
+
+Instead, validate these modes with the following **manual procedure on real Azure
+compute** whenever the token-source or auth-mode wiring changes
+(`EntraIdTokenProvider`, `ImdsTokenSource`, `WorkloadIdentityTokenSource`,
+`ProxyConfigValidator` identity resolution).
+
+### Managed Identity (VM / VMSS / App Service / Container Apps)
+
+1. Provision a target backend (e.g. a Cosmos DB account + database) and a piece
+   of Azure compute with a Managed Identity — system-assigned, or a user-assigned
+   identity attached to it.
+2. Grant the identity the data-plane role for that backend (see the RBAC table in
+   [Azure authentication](../azure-authentication.md#required-azure-rbac)). For
+   Cosmos, assign the SQL `Cosmos DB Built-in Data Contributor` data role to the
+   identity's principal id.
+3. On that compute, run the proxy (the published AOT binary or the container)
+   with a config whose backend block uses Managed Identity and **no secret**:
+
+   ```jsonc
+   "cosmos": {
+     "endpoint": "https://<acct>.documents.azure.com:443/",
+     "databaseName": "aws2azure",
+     "authMode": "managedIdentity"
+     // add "clientId": "<user-assigned-client-id>" for a user-assigned identity
+   }
+   ```
+
+4. Drive it with the AWS SDK, e.g. a DynamoDB `PutItem` + `GetItem` round-trip
+   against the proxy's Host-routed endpoint, and confirm the item lands in
+   Cosmos. Success proves the proxy acquired a token from IMDS and called Azure
+   with **no `clientSecret` in config** — the #290 acceptance criterion.
+
+### Workload Identity (AKS)
+
+1. On an AKS cluster with the Workload Identity webhook enabled, create an Entra
+   app registration with a **federated credential** trusting the cluster's OIDC
+   issuer + the pod's service-account subject.
+2. Grant that app registration the data-plane role on the target backend.
+3. Label the pod's service account for Workload Identity and annotate it with the
+   app's client id; deploy the proxy with a backend block using
+   `"authMode": "workloadIdentity"` (no inline tenant/client/secret — they come
+   from the injected `AZURE_*` env vars).
+4. Drive it with the AWS SDK as above and confirm the round-trip. Success proves
+   the federated service-account token was exchanged for an Entra token and used
+   against Azure with **no stored secret**.
+
+Record any real-Azure divergence from emulator behaviour in the relevant gap doc
+or here, per the project's emulator caveat.

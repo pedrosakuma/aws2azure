@@ -299,6 +299,16 @@ The AWS-facing `awsAccessKeyId` / `awsSecretAccessKey` are arbitrary values you
 choose — they are the identity your clients sign with and are independent of any
 real AWS account.
 
+### Authenticating without a stored secret
+
+On Azure compute you can drop the long-lived `clientSecret` and let the proxy
+acquire short-lived tokens via **Managed Identity** (IMDS) or **AKS Workload
+Identity** instead. Each AAD-capable backend block takes an `authMode`
+(`clientSecret` / `managedIdentity` / `workloadIdentity`), and a shared identity
+can be named once in a top-level `azureIdentities` pool. See
+[Azure authentication: Managed Identity & Workload Identity](./azure-authentication.md)
+for per-scenario config, required RBAC roles, and the startup-validation rules.
+
 ---
 
 ## Operational endpoints
