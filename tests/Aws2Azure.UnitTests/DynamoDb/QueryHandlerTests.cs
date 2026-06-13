@@ -95,6 +95,9 @@ public class QueryHandlerTests
         return r;
     }
 
+    private static HttpResponseMessage CosmosOkBytes(byte[] body)
+        => new(HttpStatusCode.OK) { Content = new ByteArrayContent(body) };
+
     private static string DocWithItem(string pk, string id, string itemJson)
     {
         using var d = JsonDocument.Parse(itemJson);
@@ -156,6 +159,35 @@ public class QueryHandlerTests
         var pkHex = Convert.ToHexStringLower(Encoding.UTF8.GetBytes("a"));
         Assert.Equal($"[\"{pkHex}\"]", countReq.Headers["x-ms-documentdb-partitionkey"]);
         Assert.False(countReq.Headers.ContainsKey("x-ms-documentdb-query-enablecrosspartition"));
+    }
+
+    [Fact]
+    public async Task Query_accepts_cosmos_binary_query_pages()
+    {
+        var (ctx, body) = NewCtx();
+        string page = QueryEnvelope(
+            DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"9\"}}"));
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataHashOnly),
+                CosmosOkBytes(CosmosBinaryTestEncoder.Encode(page)),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
+        Assert.Equal("a", resp.RootElement.GetProperty("Items")[0].GetProperty("pk").GetProperty("S").GetString());
+        Assert.Equal("9", resp.RootElement.GetProperty("Items")[0].GetProperty("v").GetProperty("N").GetString());
     }
 
     [Fact]

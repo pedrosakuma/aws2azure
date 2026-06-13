@@ -234,8 +234,8 @@ internal static class ScanHandler
                 return;
             }
 
-            using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
+            using var cosmosBody = await CosmosOpsShared.ReadCosmosJsonBodyAsync(resp.Content, ct).ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(cosmosBody.WrittenMemory);
 
             if (doc.RootElement.TryGetProperty("Documents", out var docsEl)
                 && docsEl.ValueKind == JsonValueKind.Array)

@@ -33,8 +33,11 @@ internal sealed class CosmosClient
     private readonly IReadOnlyList<string>? _preferredRegions;
     private readonly ILogger? _regionLogger;
     private readonly CosmosAccountCacheEntry _accountCache;
+    private readonly bool _cosmosBinaryResponses;
 
     public const string ApiVersion = "2018-12-31";
+    internal const string CosmosBinarySerializationHeader = "x-ms-cosmos-supported-serialization-formats";
+    internal const string CosmosBinarySerializationValue = "CosmosBinary";
     private static readonly TimeSpan AccountRefreshTtl = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan EndpointUnavailableTtl = TimeSpan.FromSeconds(30);
     private static readonly ConcurrentDictionary<string, CosmosAccountCacheEntry> AccountCache =
@@ -51,7 +54,8 @@ internal sealed class CosmosClient
         AzureHttpClient http,
         CosmosCredentials credentials,
         ICosmosAuthenticator authenticator,
-        ILogger? regionLogger = null)
+        ILogger? regionLogger = null,
+        bool cosmosBinaryResponses = false)
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(credentials);
@@ -71,6 +75,7 @@ internal sealed class CosmosClient
         _preferredRegions = credentials.PreferredRegions;
         _regionLogger = regionLogger;
         _accountCache = AccountCache.GetOrAdd(_baseUri.AbsoluteUri, _ => new CosmosAccountCacheEntry());
+        _cosmosBinaryResponses = cosmosBinaryResponses;
         DatabaseName = credentials.DatabaseName;
     }
 
@@ -300,6 +305,17 @@ internal sealed class CosmosClient
                 request.Headers.TryAddWithoutValidation(kv.Key, kv.Value);
             }
         }
+
+        // Opt-in CosmosBinary response negotiation (#268): request binary bodies
+        // for read ops on documents. Applied per attempt so every failover
+        // target carries the header; the response path falls back to text
+        // transparently if the server ignores it.
+        if (_cosmosBinaryResponses
+            && ShouldRequestBinaryResponse(request.Method, resourceType, extraHeaders)
+            && !request.Headers.Contains(CosmosBinarySerializationHeader))
+        {
+            request.Headers.TryAddWithoutValidation(CosmosBinarySerializationHeader, CosmosBinarySerializationValue);
+        }
     }
 
     private async Task<CosmosAccountInfo> GetAccountInfoForRoutingAsync(CancellationToken ct)
@@ -467,6 +483,39 @@ internal sealed class CosmosClient
             RequestMessage = new HttpRequestMessage(method, new Uri(endpoint, requestUri.TrimStart('/'))),
             Content = new ByteArrayContent([]),
         };
+    }
+
+    private static bool ShouldRequestBinaryResponse(
+        HttpMethod method,
+        string resourceType,
+        System.Collections.Generic.IReadOnlyList<KeyValuePair<string, string>>? extraHeaders)
+    {
+        if (!string.Equals(resourceType, "docs", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (method == HttpMethod.Get)
+        {
+            return true;
+        }
+
+        if (method != HttpMethod.Post || extraHeaders is null)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < extraHeaders.Count; i++)
+        {
+            var kv = extraHeaders[i];
+            if (string.Equals(kv.Key, "x-ms-documentdb-isquery", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(kv.Value, "true", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

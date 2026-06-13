@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Threading;
@@ -217,6 +218,63 @@ public class CosmosClientTests
 
         var oracle = new Uri(new Uri(endpoint.TrimEnd('/') + "/", UriKind.Absolute), requestUri.TrimStart('/'));
         Assert.Equal(oracle.AbsoluteUri, captured.Last!.RequestUri!.AbsoluteUri);
+    }
+
+    [Fact]
+    public async Task SendAsync_adds_cosmos_binary_header_only_when_opted_in_for_doc_reads()
+    {
+        var captured = new RecordingHandler();
+        using var http = new AzureHttpClient(captured, ownsHandler: false);
+        var creds = new CosmosCredentials
+        {
+            Endpoint = "https://example.documents.azure.com/",
+            PrimaryKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+            DatabaseName = "main",
+        };
+
+        var disabled = new CosmosClient(http, creds, new MasterKeyCosmosAuthenticator(creds.PrimaryKey));
+        using (await disabled.SendAsync(HttpMethod.Get, "docs", "dbs/main/colls/c/docs/1",
+            "/dbs/main/colls/c/docs/1", content: null, extraHeaders: null, CancellationToken.None))
+        {
+        }
+        Assert.False(captured.Last!.Headers.Contains(CosmosClient.CosmosBinarySerializationHeader));
+
+        var enabled = new CosmosClient(http, creds, new MasterKeyCosmosAuthenticator(creds.PrimaryKey), cosmosBinaryResponses: true);
+        using (await enabled.SendAsync(HttpMethod.Get, "docs", "dbs/main/colls/c/docs/1",
+            "/dbs/main/colls/c/docs/1", content: null, extraHeaders: null, CancellationToken.None))
+        {
+        }
+        Assert.Equal(CosmosClient.CosmosBinarySerializationValue,
+            captured.Last!.Headers.GetValues(CosmosClient.CosmosBinarySerializationHeader).Single());
+
+        using (await enabled.SendAsync(HttpMethod.Put, "docs", "dbs/main/colls/c/docs/1",
+            "/dbs/main/colls/c/docs/1", content: new StringContent("{}"), extraHeaders: null, CancellationToken.None))
+        {
+        }
+        Assert.False(captured.Last!.Headers.Contains(CosmosClient.CosmosBinarySerializationHeader));
+    }
+
+    [Fact]
+    public async Task SendAsync_adds_cosmos_binary_header_for_doc_queries_when_opted_in()
+    {
+        var captured = new RecordingHandler();
+        using var http = new AzureHttpClient(captured, ownsHandler: false);
+        var creds = new CosmosCredentials
+        {
+            Endpoint = "https://example.documents.azure.com/",
+            PrimaryKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+            DatabaseName = "main",
+        };
+        var client = new CosmosClient(http, creds, new MasterKeyCosmosAuthenticator(creds.PrimaryKey), cosmosBinaryResponses: true);
+        var headers = new[] { new KeyValuePair<string, string>("x-ms-documentdb-isquery", "true") };
+
+        using (await client.SendAsync(HttpMethod.Post, "docs", "dbs/main/colls/c",
+            "/dbs/main/colls/c/docs", content: new StringContent("{}"), extraHeaders: headers, CancellationToken.None))
+        {
+        }
+
+        Assert.Equal(CosmosClient.CosmosBinarySerializationValue,
+            captured.Last!.Headers.GetValues(CosmosClient.CosmosBinarySerializationHeader).Single());
     }
 
     private sealed class RecordingHandler : HttpMessageHandler

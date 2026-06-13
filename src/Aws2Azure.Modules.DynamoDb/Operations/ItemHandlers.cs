@@ -263,8 +263,8 @@ internal static class ItemHandlers
                 else
                 {
                     etag = ExtractETag(getResp);
-                    await using var s = await getResp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-                    existingItem = ExtractItemFromCosmosDoc(s);
+                    using var cosmosBody = await CosmosOpsShared.ReadCosmosJsonBodyAsync(getResp.Content, ct).ConfigureAwait(false);
+                    existingItem = ExtractItemFromCosmosDoc(cosmosBody.WrittenMemory);
                 }
             }
 
@@ -657,8 +657,8 @@ internal static class ItemHandlers
                 else
                 {
                     etag = ExtractETag(getResp);
-                    await using var s = await getResp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-                    existingItem = ExtractItemFromCosmosDoc(s);
+                    using var cosmosBody = await CosmosOpsShared.ReadCosmosJsonBodyAsync(getResp.Content, ct).ConfigureAwait(false);
+                    existingItem = ExtractItemFromCosmosDoc(cosmosBody.WrittenMemory);
                 }
             }
 
@@ -920,6 +920,12 @@ internal static class ItemHandlers
     /// </summary>
     internal static Dictionary<string, JsonElement>? ExtractItemFromCosmosDoc(Stream cosmosDocBody)
         => InferredAttributeStorage.ExtractItem(cosmosDocBody);
+
+    internal static Dictionary<string, JsonElement>? ExtractItemFromCosmosDoc(ReadOnlyMemory<byte> cosmosDocBody)
+    {
+        using var doc = JsonDocument.Parse(cosmosDocBody);
+        return InferredAttributeStorage.ExtractItem(doc.RootElement);
+    }
 
     private static bool HasContent(string? s) => !string.IsNullOrEmpty(s);
     private static bool HasContent(JsonElement? el)
