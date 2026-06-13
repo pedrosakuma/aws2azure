@@ -13,6 +13,12 @@
       "maxIdleRssMb": 48,
       "maxColdStartMs": 750,
       "maxImageSizeMb": 0
+    },
+    "aws2azure (s3 only)": {
+      "maxBinarySizeMb": 21,
+      "maxIdleRssMb": 40,
+      "maxColdStartMs": 750,
+      "maxImageSizeMb": 0
     }
   }
 }

@@ -63,7 +63,12 @@ internal sealed class ProxyPublisher
         };
         if (!string.IsNullOrWhiteSpace(modules))
         {
-            args.Add($"-p:Modules={modules}");
+            // The dotnet/MSBuild property parser treats ',' and ';' as
+            // property-assignment separators even when passed as a single argv
+            // element, so a multi-module selection must use '+' on the command
+            // line. The csproj normalizes '+' back to the canonical separator.
+            var cliModules = modules.Replace(';', '+').Replace(',', '+');
+            args.Add($"-p:Modules={cliModules}");
         }
 
         var startInfo = new ProcessStartInfo("dotnet")
@@ -102,6 +107,7 @@ internal sealed class ProxyPublisher
         if (string.IsNullOrWhiteSpace(modules)) return DefaultModulesKey;
         var parts = modules
             .Replace(',', ';')
+            .Replace('+', ';')
             .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(p => p.ToLowerInvariant())
             .OrderBy(p => p, StringComparer.Ordinal);

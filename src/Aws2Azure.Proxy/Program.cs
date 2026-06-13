@@ -1,25 +1,39 @@
 using System.Text.Json.Serialization;
+#if USE_AMQP
 using Aws2Azure.Amqp.Connection;
 using Aws2Azure.Amqp.ServiceBus;
+#endif
 using Aws2Azure.Core;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Core.Observability;
 using Aws2Azure.Core.SigV4;
+#if MOD_S3
 using Aws2Azure.Modules.S3;
+#endif
+#if MOD_SQS
 using Aws2Azure.Modules.Sqs;
+#endif
+#if MOD_DYNAMODB
 using Aws2Azure.Modules.DynamoDb;
+#endif
+#if MOD_KINESIS
 using Aws2Azure.Modules.Kinesis;
-using Aws2Azure.Modules.Sns;
-using Aws2Azure.Modules.SecretsManager;
 using Aws2Azure.Modules.Kinesis.EventHubsAmqp;
 using Aws2Azure.Modules.Kinesis.EventHubsRest;
 using Aws2Azure.Modules.Kinesis.Operations;
 using Aws2Azure.Modules.Kinesis.ShardIterators;
+#endif
+#if MOD_SNS
+using Aws2Azure.Modules.Sns;
 using Aws2Azure.Modules.Sns.Amqp;
 using Aws2Azure.Modules.Sns.EventGrid;
 using Aws2Azure.Modules.Sns.Management;
+#endif
+#if MOD_SECRETSMANAGER
+using Aws2Azure.Modules.SecretsManager;
+#endif
 using Aws2Azure.Proxy;
 using Microsoft.AspNetCore.Http;
 
@@ -110,7 +124,10 @@ builder.Services.AddSingleton<PrometheusExporter>();
 var azureHttpClient = BuildAzureHttpClient();
 builder.Services.AddSingleton(azureHttpClient);
 
+#if USE_ENTRAID
 builder.Services.AddSingleton(new EntraIdTokenProvider(azureHttpClient));
+#endif
+#if USE_EVENTHUBS
 builder.Services.AddSingleton<IEventHubsAuthenticator>(sp =>
     new EventHubsAuthenticator(sp.GetRequiredService<EntraIdTokenProvider>()));
 builder.Services.AddSingleton<IEventHubsManagementClient>(sp =>
@@ -124,6 +141,8 @@ builder.Services.AddSingleton<ListShardsCursorCodecFactory>(sp =>
     new ListShardsCursorCodecFactory(sp.GetRequiredService<ILogger<ListShardsCursorCodecFactory>>()));
 builder.Services.AddSingleton<ShardIteratorTokenCodecFactory>(sp =>
     new ShardIteratorTokenCodecFactory(sp.GetRequiredService<ILogger<ShardIteratorTokenCodecFactory>>()));
+#endif
+#if USE_SBTOPICS
 builder.Services.AddSingleton<IServiceBusTopicsAuthenticator>(sp =>
     new ServiceBusTopicsAuthenticator(sp.GetRequiredService<EntraIdTokenProvider>()));
 builder.Services.AddSingleton<IServiceBusTopicsManagementClient>(sp =>
@@ -131,6 +150,7 @@ builder.Services.AddSingleton<IServiceBusTopicsManagementClient>(sp =>
         azureHttpClient,
         sp.GetRequiredService<IServiceBusTopicsAuthenticator>(),
         sp.GetRequiredService<ILogger<ServiceBusTopicsManagementClient>>()));
+#endif
 
 static AzureHttpClient BuildAzureHttpClient()
 {
@@ -159,6 +179,7 @@ static AzureHttpClient BuildAzureHttpClient()
     return new AzureHttpClient();
 }
 
+#if USE_AMQP
 // Resolves the FIFO session-receiver idle-TTL for the AMQP pool (#262).
 // AWS2AZURE_SB_SESSION_IDLE_SECONDS overrides the default; a value <= 0
 // disables the background sweeper (session receivers then live until
@@ -202,6 +223,7 @@ var amqpFactory = new ServiceBusAmqpConnectionFactory(amqpConnectionSettings);
 var sessionIdleTimeout = ResolveSessionReceiverIdleTimeout();
 var amqpPool = new ServiceBusAmqpPool(amqpFactory, sessionIdleTimeout);
 builder.Services.AddSingleton(amqpPool);
+#if USE_EVENTHUBS
 builder.Services.AddSingleton<IEventHubsAmqpSender>(sp =>
     new EventHubsAmqpSender(
         sp.GetRequiredService<EntraIdTokenProvider>(),
@@ -210,60 +232,82 @@ builder.Services.AddSingleton<IEventHubsAmqpReceiver>(sp =>
     new EventHubsAmqpReceiver(
         sp.GetRequiredService<EntraIdTokenProvider>(),
         amqpConnectionSettings));
+#endif
+#if MOD_SNS
 builder.Services.AddSingleton<ISnsAmqpSender>(sp =>
     new SnsAmqpSender(
         sp.GetRequiredService<EntraIdTokenProvider>(),
         amqpConnectionSettings));
+#endif
+#endif // USE_AMQP
+#if USE_EVENTGRID
 builder.Services.AddSingleton<IEventGridPublisher>(sp =>
     new EventGridPublisher(
         azureHttpClient,
         sp.GetRequiredService<EntraIdTokenProvider>(),
         sp.GetRequiredService<ILogger<EventGridPublisher>>()));
+#endif // USE_EVENTGRID
 
 // Manual, reflection-free module registration. Capability matrices come from
 // the generated registry (single source of truth: docs/gaps/**/*.yaml). The
 // S3 module is real as of Phase-1 slice 1 (bucket lifecycle); the rest stay
 // stubbed until their respective phases.
 //
+// Which modules are compiled in is fixed at build time by the `Modules`
+// MSBuild property (#273); the #if guards below drop the unselected modules'
+// construction so the AOT trimmer removes their code entirely.
+//
 // Registered via factory so modules that need the host's ILoggerFactory
 // (e.g. DynamoDB Scan cost-warning telemetry) can resolve it from DI
 // without us duplicating a separate factory.
 builder.Services.AddSingleton<ServiceModuleRegistry>(sp =>
 {
+#if MOD_DYNAMODB || MOD_KINESIS || MOD_SNS || MOD_SECRETSMANAGER
     var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
     var tokenProvider = sp.GetRequiredService<EntraIdTokenProvider>();
-    IServiceModule[] modules =
-    [
-        new S3ServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.S3),
-        new SqsServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.Sqs, amqpPool),
-        new DynamoDbServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.Dynamodb,
-            settings: proxyConfig.DynamoDb,
-            loggerFactory: loggerFactory,
-            tokenProvider: tokenProvider),
-        new KinesisServiceModule(
-            credentialResolver,
-            sp.GetRequiredService<IEventHubsManagementClient>(),
-            sp.GetRequiredService<IEventHubMetadataCache>(),
-            sp.GetRequiredService<IEventHubsAmqpSender>(),
-            sp.GetRequiredService<IEventHubsAmqpReceiver>(),
-            sp.GetRequiredService<ListShardsCursorCodecFactory>(),
-            sp.GetRequiredService<ShardIteratorTokenCodecFactory>(),
-            CapabilityRegistry.Kinesis),
-        new SnsServiceModule(
-            credentialResolver,
-            proxyConfig.Sns,
-            sp.GetRequiredService<IServiceBusTopicsManagementClient>(),
-            sp.GetRequiredService<ISnsAmqpSender>(),
-            sp.GetRequiredService<IEventGridPublisher>(),
-            sp.GetRequiredService<ILogger<SnsServiceModule>>(),
-            CapabilityRegistry.Sns),
-        new SecretsManagerServiceModule(
-            azureHttpClient,
-            credentialResolver,
-            CapabilityRegistry.Secretsmanager,
-            tokenProvider),
-    ];
-    return new ServiceModuleRegistry(modules, sigV4Validator, sp.GetRequiredService<ProxyMetrics>());
+#endif
+    var modules = new List<IServiceModule>();
+#if MOD_S3
+    modules.Add(new S3ServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.S3));
+#endif
+#if MOD_SQS
+    modules.Add(new SqsServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.Sqs, amqpPool));
+#endif
+#if MOD_DYNAMODB
+    modules.Add(new DynamoDbServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.Dynamodb,
+        settings: proxyConfig.DynamoDb,
+        loggerFactory: loggerFactory,
+        tokenProvider: tokenProvider));
+#endif
+#if MOD_KINESIS
+    modules.Add(new KinesisServiceModule(
+        credentialResolver,
+        sp.GetRequiredService<IEventHubsManagementClient>(),
+        sp.GetRequiredService<IEventHubMetadataCache>(),
+        sp.GetRequiredService<IEventHubsAmqpSender>(),
+        sp.GetRequiredService<IEventHubsAmqpReceiver>(),
+        sp.GetRequiredService<ListShardsCursorCodecFactory>(),
+        sp.GetRequiredService<ShardIteratorTokenCodecFactory>(),
+        CapabilityRegistry.Kinesis));
+#endif
+#if MOD_SNS
+    modules.Add(new SnsServiceModule(
+        credentialResolver,
+        proxyConfig.Sns,
+        sp.GetRequiredService<IServiceBusTopicsManagementClient>(),
+        sp.GetRequiredService<ISnsAmqpSender>(),
+        sp.GetRequiredService<IEventGridPublisher>(),
+        sp.GetRequiredService<ILogger<SnsServiceModule>>(),
+        CapabilityRegistry.Sns));
+#endif
+#if MOD_SECRETSMANAGER
+    modules.Add(new SecretsManagerServiceModule(
+        azureHttpClient,
+        credentialResolver,
+        CapabilityRegistry.Secretsmanager,
+        tokenProvider));
+#endif
+    return new ServiceModuleRegistry(modules.ToArray(), sigV4Validator, sp.GetRequiredService<ProxyMetrics>());
 });
 
 var app = builder.Build();
@@ -274,6 +318,7 @@ var startupLogger = app.Services.GetRequiredService<ILoggerFactory>()
     .CreateLogger("Aws2Azure.Proxy");
 ProxyLog.HostStarting(startupLogger, registry.Modules.Count, proxyConfig.Credentials.Count);
 
+#if MOD_DYNAMODB
 // #204: startup probe of each Cosmos account's default consistency level
 // (opt-in via DynamoDb.ConsistencyCheck). Under Required, an account that
 // cannot honor ConsistentRead fails startup; under Warn it only logs.
@@ -298,6 +343,7 @@ if (proxyConfig.DynamoDb.ConsistencyCheck != ConsistencyCheckMode.Disabled)
         }
     }
 }
+#endif
 
 // Kubernetes-style health probes (standard paths)
 // Only respond if Host is not an AWS service (avoids intercepting proxied requests)

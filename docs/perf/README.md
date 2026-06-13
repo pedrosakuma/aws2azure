@@ -312,7 +312,17 @@ AWS2AZURE_FOOTPRINT_PUBLISH_DIR=/tmp/aws2azure-footprint \
 docker build -t aws2azure:footprint .
 AWS2AZURE_FOOTPRINT=1 AWS2AZURE_FOOTPRINT_IMAGE=aws2azure:footprint \
   dotnet test tests/Aws2Azure.FootprintTests -c Release
+
+# Also measure per-tier (build-time module selection, #273) footprint. Each
+# tier is a separate AOT publish, so this is opt-in and runs only on the
+# nightly footprint job by default:
+AWS2AZURE_FOOTPRINT=1 AWS2AZURE_FOOTPRINT_TIERS=1 \
+  dotnet test tests/Aws2Azure.FootprintTests -c Release
 ```
+
+The per-tier scenarios quantify and gate the
+[build-time module selection](../deployment/module-selection.md) delta (e.g.
+`aws2azure (s3 only)`).
 
 CI runs this on the perf cadence — nightly, `workflow_dispatch`, and PRs that
 carry the **`run-footprint`** (or **`run-perf`**) label — via

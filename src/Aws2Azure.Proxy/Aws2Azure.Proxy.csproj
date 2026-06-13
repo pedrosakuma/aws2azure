@@ -6,15 +6,89 @@
     <RootNamespace>Aws2Azure.Proxy</RootNamespace>
   </PropertyGroup>
 
+  <!--
+    Build-time service-module selection (#273).
+
+    `Modules` selects which service modules are compiled into the binary.
+    Default (empty or "all") = every module (the fat, all-in-one binary). A
+    tailored sidecar image is produced by overriding it at publish time, e.g.
+
+        dotnet publish src/Aws2Azure.Proxy -c Release -r linux-x64 -p:Modules=s3
+        dotnet publish src/Aws2Azure.Proxy -c Release -r linux-x64 -p:Modules=sqs+sns+kinesis
+
+    Separator note: the MSBuild/`dotnet` command-line property parser treats
+    BOTH ',' and ';' as property-assignment separators, so a multi-module list
+    on the command line must use '+' (or a space). All of '+', ',', ';' and ' '
+    are accepted and normalized to ';' here, so a project/response-file value
+    may still use the conventional ';'.
+
+    Each selected module defines a MOD_<NAME> compilation constant consumed by
+    the Program.cs #if guards, and its ProjectReference is added conditionally
+    so the AOT trimmer never sees the unselected modules' code. Shared-infra
+    constants (USE_AMQP / USE_ENTRAID / ...) are derived from the selection and
+    gate the corresponding DI wiring.
+  -->
+  <PropertyGroup>
+    <!--
+      `Modules` may arrive as a global (command-line) property, which a project
+      PropertyGroup cannot reassign — so we compute an internal effective list
+      instead of rewriting `Modules` (rewriting silently no-ops under `-p:`,
+      which would ship a module-less proxy for `-p:Modules=all`). `_Effective`
+      is a normal property, so the empty/"all" expansion below takes effect.
+    -->
+    <_ModulesEffective>$(Modules)</_ModulesEffective>
+    <_ModulesEffective Condition="'$(_ModulesEffective)' == '' or '$(_ModulesEffective.ToLowerInvariant())' == 'all'">s3;sqs;dynamodb;kinesis;sns;secretsmanager</_ModulesEffective>
+    <_Mods>;$(_ModulesEffective.Replace('+', ';').Replace(',', ';').Replace(' ', ';').ToLowerInvariant());</_Mods>
+
+    <_HasS3 Condition="$(_Mods.Contains(';s3;'))">true</_HasS3>
+    <_HasSqs Condition="$(_Mods.Contains(';sqs;'))">true</_HasSqs>
+    <_HasDynamoDb Condition="$(_Mods.Contains(';dynamodb;'))">true</_HasDynamoDb>
+    <_HasKinesis Condition="$(_Mods.Contains(';kinesis;'))">true</_HasKinesis>
+    <_HasSns Condition="$(_Mods.Contains(';sns;'))">true</_HasSns>
+    <_HasSecretsManager Condition="$(_Mods.Contains(';secretsmanager;'))">true</_HasSecretsManager>
+
+    <!-- True when at least one known module matched (typo / empty guard). -->
+    <_HasAnyModule Condition="'$(_HasS3)$(_HasSqs)$(_HasDynamoDb)$(_HasKinesis)$(_HasSns)$(_HasSecretsManager)' != ''">true</_HasAnyModule>
+
+    <!-- Derived shared-infrastructure flags. -->
+    <_UseAmqp Condition="'$(_HasSqs)' == 'true' or '$(_HasKinesis)' == 'true' or '$(_HasSns)' == 'true'">true</_UseAmqp>
+    <_UseEntraId Condition="'$(_HasDynamoDb)' == 'true' or '$(_HasSecretsManager)' == 'true' or '$(_HasKinesis)' == 'true' or '$(_HasSns)' == 'true'">true</_UseEntraId>
+    <_UseEventHubs Condition="'$(_HasKinesis)' == 'true'">true</_UseEventHubs>
+    <_UseSbTopics Condition="'$(_HasSns)' == 'true'">true</_UseSbTopics>
+    <_UseEventGrid Condition="'$(_HasSns)' == 'true'">true</_UseEventGrid>
+  </PropertyGroup>
+
+  <!-- Fail loud on a selection that resolves to no known modules (e.g. a typo
+       like `-p:Modules=s33`, or a value the CLI parser mangled). Shipping a
+       module-less proxy silently would be far worse. -->
+  <Target Name="_ValidateModuleSelection" BeforeTargets="BeforeBuild;BeforeCompile">
+    <Error Condition="'$(_HasAnyModule)' != 'true'"
+           Text="Modules='$(Modules)' resolved to no known service modules. Valid ids: s3, sqs, dynamodb, kinesis, sns, secretsmanager (empty or 'all' = every module). Separate multiple ids on the command line with '+' (',' and ';' are eaten by the CLI property parser)." />
+  </Target>
+
+  <PropertyGroup>
+    <DefineConstants Condition="'$(_HasS3)' == 'true'">$(DefineConstants);MOD_S3</DefineConstants>
+    <DefineConstants Condition="'$(_HasSqs)' == 'true'">$(DefineConstants);MOD_SQS</DefineConstants>
+    <DefineConstants Condition="'$(_HasDynamoDb)' == 'true'">$(DefineConstants);MOD_DYNAMODB</DefineConstants>
+    <DefineConstants Condition="'$(_HasKinesis)' == 'true'">$(DefineConstants);MOD_KINESIS</DefineConstants>
+    <DefineConstants Condition="'$(_HasSns)' == 'true'">$(DefineConstants);MOD_SNS</DefineConstants>
+    <DefineConstants Condition="'$(_HasSecretsManager)' == 'true'">$(DefineConstants);MOD_SECRETSMANAGER</DefineConstants>
+    <DefineConstants Condition="'$(_UseAmqp)' == 'true'">$(DefineConstants);USE_AMQP</DefineConstants>
+    <DefineConstants Condition="'$(_UseEntraId)' == 'true'">$(DefineConstants);USE_ENTRAID</DefineConstants>
+    <DefineConstants Condition="'$(_UseEventHubs)' == 'true'">$(DefineConstants);USE_EVENTHUBS</DefineConstants>
+    <DefineConstants Condition="'$(_UseSbTopics)' == 'true'">$(DefineConstants);USE_SBTOPICS</DefineConstants>
+    <DefineConstants Condition="'$(_UseEventGrid)' == 'true'">$(DefineConstants);USE_EVENTGRID</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Aws2Azure.Core\Aws2Azure.Core.csproj" />
-    <ProjectReference Include="..\Aws2Azure.Amqp\Aws2Azure.Amqp.csproj" />
-    <ProjectReference Include="..\Aws2Azure.Modules.S3\Aws2Azure.Modules.S3.csproj" />
-    <ProjectReference Include="..\Aws2Azure.Modules.Sqs\Aws2Azure.Modules.Sqs.csproj" />
-    <ProjectReference Include="..\Aws2Azure.Modules.DynamoDb\Aws2Azure.Modules.DynamoDb.csproj" />
-    <ProjectReference Include="..\Aws2Azure.Modules.Kinesis\Aws2Azure.Modules.Kinesis.csproj" />
-    <ProjectReference Include="..\Aws2Azure.Modules.Sns\Aws2Azure.Modules.Sns.csproj" />
-    <ProjectReference Include="..\Aws2Azure.Modules.SecretsManager\Aws2Azure.Modules.SecretsManager.csproj" />
+    <ProjectReference Include="..\Aws2Azure.Amqp\Aws2Azure.Amqp.csproj" Condition="'$(_UseAmqp)' == 'true'" />
+    <ProjectReference Include="..\Aws2Azure.Modules.S3\Aws2Azure.Modules.S3.csproj" Condition="'$(_HasS3)' == 'true'" />
+    <ProjectReference Include="..\Aws2Azure.Modules.Sqs\Aws2Azure.Modules.Sqs.csproj" Condition="'$(_HasSqs)' == 'true'" />
+    <ProjectReference Include="..\Aws2Azure.Modules.DynamoDb\Aws2Azure.Modules.DynamoDb.csproj" Condition="'$(_HasDynamoDb)' == 'true'" />
+    <ProjectReference Include="..\Aws2Azure.Modules.Kinesis\Aws2Azure.Modules.Kinesis.csproj" Condition="'$(_HasKinesis)' == 'true'" />
+    <ProjectReference Include="..\Aws2Azure.Modules.Sns\Aws2Azure.Modules.Sns.csproj" Condition="'$(_HasSns)' == 'true'" />
+    <ProjectReference Include="..\Aws2Azure.Modules.SecretsManager\Aws2Azure.Modules.SecretsManager.csproj" Condition="'$(_HasSecretsManager)' == 'true'" />
   </ItemGroup>
 
 </Project>
