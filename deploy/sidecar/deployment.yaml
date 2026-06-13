@@ -1,0 +1,135 @@
+# aws2azure as a native Kubernetes sidecar (Deployment).
+#
+# aws2azure runs as a sidecar container in the SAME pod as your application, so
+# the app reaches it over the pod's shared loopback. AWS SDKs route by Host
+# header, so the endpoint is a service-prefixed host mapped to loopback via
+# hostAliases (e.g. AWS_ENDPOINT_URL=http://s3.localhost:8080) — no application
+# code changes, the data lives in Azure.
+#
+# This template uses a NATIVE sidecar: an initContainer with
+# `restartPolicy: Always` (Kubernetes >= 1.29, GA in 1.33). Native sidecars
+# start BEFORE the app containers and are torn down AFTER them, which removes
+# the classic "app starts before the proxy is ready" and "proxy killed while
+# the app is still draining" races. The app's startupProbe additionally blocks
+# until the proxy answers /ready.
+#
+# Older clusters (< 1.29): move the aws2azure container from `initContainers`
+# to `containers` (a plain second container) and keep the startupProbe on the
+# app — you then accept best-effort ordering instead of guaranteed ordering.
+#
+# Prereqs: kubectl apply -f deploy/sidecar/secret.yaml  (the credential map).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  labels:
+    app.kubernetes.io/name: my-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: my-app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: my-app
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      # AWS SDKs route by Host header (S3 needs a host starting with "s3."), so
+      # map the service host(s) to loopback. Add one entry per service the app
+      # uses (sqs.localhost, dynamodb.localhost, ...).
+      hostAliases:
+        - ip: "127.0.0.1"
+          hostnames:
+            - s3.localhost
+      initContainers:
+        # Native sidecar: restartPolicy:Always promotes this initContainer to a
+        # sidecar that stays running for the pod's lifetime.
+        - name: aws2azure
+          image: ghcr.io/pedrosakuma/aws2azure:latest
+          restartPolicy: Always
+          env:
+            - name: ASPNETCORE_URLS
+              value: http://+:8080
+            - name: AWS2AZURE_CONFIG_FILE
+              value: /etc/aws2azure/config.json
+          ports:
+            - name: aws2azure
+              containerPort: 8080
+          # Native AOT cold start is ~70ms, so the proxy is ready almost
+          # immediately; the startupProbe still gates the app on /ready
+          # (which returns 503 until at least one service is enabled AND a
+          # credential is configured).
+          startupProbe:
+            httpGet:
+              path: /ready
+              port: aws2azure
+            periodSeconds: 1
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: aws2azure
+            periodSeconds: 10
+          # Footprint-derived budget (see docs/deployment/sidecar.md). Idle RSS
+          # of the all-modules AOT build is ~34 MB; requests cover idle, the
+          # limit leaves burst headroom. Compile a single-module image
+          # (--build-arg MODULES=s3) to shrink both further.
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: aws2azure-config
+              mountPath: /etc/aws2azure
+              readOnly: true
+      containers:
+        - name: app
+          # Replace with your application image. It talks AWS APIs to the
+          # sidecar over loopback; the proxy translates to Azure.
+          image: your-app:latest
+          env:
+            # Point every AWS SDK / the AWS CLI at the sidecar. AWS SDKs honor
+            # AWS_ENDPOINT_URL (SDK v2 / botocore >= 1.31). The host must start
+            # with the service name ("s3.") to route, and is mapped to loopback
+            # by hostAliases above. The proxy supports S3 path-style only, so
+            # configure path-style addressing in the app (e.g. boto3
+            # addressing_style=path / `aws configure set
+            # default.s3.addressing_style path`).
+            #
+            # Multiple services: use the per-service variable for each, e.g.
+            #   AWS_ENDPOINT_URL_S3:  http://s3.localhost:8080
+            #   AWS_ENDPOINT_URL_SQS: http://sqs.localhost:8080
+            # and add the matching hostAliases entries.
+            - name: AWS_ENDPOINT_URL
+              value: http://s3.localhost:8080
+            # The proxy validates SigV4 against the credential map, so the app
+            # still needs AWS creds — they map to Azure inside the proxy.
+            - name: AWS_ACCESS_KEY_ID
+              value: AKIADEVEXAMPLE
+            - name: AWS_SECRET_ACCESS_KEY
+              value: change-me
+            - name: AWS_REGION
+              value: us-east-1
+          # Block the app from starting requests until the sidecar is ready.
+          startupProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            periodSeconds: 1
+            failureThreshold: 30
+      volumes:
+        - name: aws2azure-config
+          secret:
+            secretName: aws2azure-config

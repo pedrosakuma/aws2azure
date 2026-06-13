@@ -91,6 +91,11 @@ workload needs (e.g. `-p:Modules=s3`), trimming ~20–27% off the binary and idl
 RSS — see
 [**build-time module selection**](./docs/deployment/module-selection.md).
 
+Ready-to-use sidecar manifests (native-sidecar Deployment, minimal Pod, and an
+end-to-end Azurite demo) live in [`deploy/sidecar/`](./deploy/sidecar); the
+[**sidecar deployment guide**](./docs/deployment/sidecar.md) covers resource
+limits, readiness/ordering, and secret delivery.
+
 ## Non-Goals
 
 - Not a 100% feature-compatible reimplementation. Gaps are **documented
