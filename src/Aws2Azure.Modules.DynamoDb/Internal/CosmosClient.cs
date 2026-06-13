@@ -152,12 +152,22 @@ internal sealed class CosmosClient
 
                     if (CosmosRegionRouting.IsFailoverStatus(response, !isRead))
                     {
-                        MarkEndpointUnavailable(endpoint);
-                        if (!isRead && response.StatusCode == HttpStatusCode.Forbidden)
+                        if (!isRead)
                         {
+                            // Write 403 substatus 3: this region is not the
+                            // current write region. It is still perfectly
+                            // readable, so do NOT mark it unavailable (that would
+                            // evict it from read routing for the whole TTL).
+                            // Re-discover the write region and rebuild candidates.
                             account = await RefreshAccountInfoForRoutingAsync(ct).ConfigureAwait(false);
                             candidates = CosmosRegionRouting.BuildCandidateEndpoints(
                                 account, _preferredRegions, isRead, IsEndpointAvailable);
+                        }
+                        else
+                        {
+                            // Read 503/408: the region is genuinely impaired —
+                            // evict it so subsequent reads route elsewhere.
+                            MarkEndpointUnavailable(endpoint);
                         }
 
                         var next = SelectNextCandidate(candidates, attemptedEndpoints);
@@ -203,6 +213,15 @@ internal sealed class CosmosClient
             catch (HttpRequestException)
             {
                 MarkEndpointUnavailable(endpoint);
+                if (!isRead)
+                {
+                    // Ambiguous write transport failure: the write may have
+                    // committed. Do not replay to another region — return a
+                    // synthetic 503 and let the AWS SDK own the retry.
+                    lastFailoverResponse?.Dispose();
+                    return BuildSyntheticServiceUnavailable(method, endpoint, requestUri);
+                }
+
                 var next = SelectNextCandidate(candidates, attemptedEndpoints);
                 if (next is null)
                 {
@@ -218,6 +237,15 @@ internal sealed class CosmosClient
             catch (TaskCanceledException) when (!ct.IsCancellationRequested)
             {
                 MarkEndpointUnavailable(endpoint);
+                if (!isRead)
+                {
+                    // Ambiguous write timeout: the write may have committed.
+                    // Do not replay to another region — return a synthetic 503
+                    // and let the AWS SDK own the retry.
+                    lastFailoverResponse?.Dispose();
+                    return BuildSyntheticServiceUnavailable(method, endpoint, requestUri);
+                }
+
                 var next = SelectNextCandidate(candidates, attemptedEndpoints);
                 if (next is null)
                 {
@@ -324,27 +352,28 @@ internal sealed class CosmosClient
         CancellationToken ct)
     {
         var now = DateTimeOffset.UtcNow;
+        var snapshot = _accountCache.Snapshot;
         if (!forceRefresh
-            && _accountCache.Info is { } cached
-            && _accountCache.ExpiresAt > now)
+            && snapshot is { } cached
+            && cached.ExpiresAt > now)
         {
-            return cached;
+            return cached.Info;
         }
 
         await _accountCache.RefreshGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             now = DateTimeOffset.UtcNow;
+            snapshot = _accountCache.Snapshot;
             if (!forceRefresh
-                && _accountCache.Info is { } cachedAfterWait
-                && _accountCache.ExpiresAt > now)
+                && snapshot is { } cachedAfterWait
+                && cachedAfterWait.ExpiresAt > now)
             {
-                return cachedAfterWait;
+                return cachedAfterWait.Info;
             }
 
             var refreshed = await ReadAccountInfoDirectAsync(ct).ConfigureAwait(false);
-            _accountCache.Info = refreshed;
-            _accountCache.ExpiresAt = now + AccountRefreshTtl;
+            _accountCache.Snapshot = new AccountSnapshot(refreshed, now + AccountRefreshTtl);
             if (_regionLogger is not null)
             {
                 CosmosRegionLog.DiscoveredRegions(
@@ -358,14 +387,14 @@ internal sealed class CosmosClient
         }
         catch (Exception ex) when (!strict && ex is not OperationCanceledException)
         {
-            if (_accountCache.Info is { } cachedOnFailure)
+            if (_accountCache.Snapshot is { } cachedOnFailure)
             {
-                return cachedOnFailure;
+                return cachedOnFailure.Info;
             }
 
             var fallback = CosmosAccountInfo.Fallback(_baseUri);
-            _accountCache.Info = fallback;
-            _accountCache.ExpiresAt = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(30);
+            _accountCache.Snapshot = new AccountSnapshot(
+                fallback, DateTimeOffset.UtcNow + TimeSpan.FromSeconds(30));
             return fallback;
         }
         finally
@@ -459,7 +488,28 @@ internal sealed class CosmosClient
         public SemaphoreSlim RefreshGate { get; } = new(1, 1);
         public ConcurrentDictionary<string, DateTimeOffset> UnavailableUntil { get; } =
             new(StringComparer.OrdinalIgnoreCase);
-        public CosmosAccountInfo? Info;
-        public DateTimeOffset ExpiresAt;
+
+        // Info + expiry are published together as one immutable reference so the
+        // unsynchronised fast-path read can never observe a torn pair (fresh
+        // info with a stale expiry, or vice versa). The volatile reference gives
+        // atomic publication and acquire/release ordering.
+        private volatile AccountSnapshot? _snapshot;
+        public AccountSnapshot? Snapshot
+        {
+            get => _snapshot;
+            set => _snapshot = value;
+        }
+    }
+
+    private sealed class AccountSnapshot
+    {
+        public AccountSnapshot(CosmosAccountInfo info, DateTimeOffset expiresAt)
+        {
+            Info = info;
+            ExpiresAt = expiresAt;
+        }
+
+        public CosmosAccountInfo Info { get; }
+        public DateTimeOffset ExpiresAt { get; }
     }
 }

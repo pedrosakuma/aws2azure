@@ -105,7 +105,12 @@ public class CosmosRegionRoutingTests
         Assert.True(CosmosRegionRouting.IsFailoverStatus(unavailable, isWrite: false));
 
         using var timeout = new HttpResponseMessage(HttpStatusCode.RequestTimeout);
-        Assert.True(CosmosRegionRouting.IsFailoverStatus(timeout, isWrite: true));
+        Assert.True(CosmosRegionRouting.IsFailoverStatus(timeout, isWrite: false));
+
+        // Writes are ambiguous on 503/408 (the write may have committed), so
+        // they must NOT auto-fail over on those — only reads do.
+        Assert.False(CosmosRegionRouting.IsFailoverStatus(unavailable, isWrite: true));
+        Assert.False(CosmosRegionRouting.IsFailoverStatus(timeout, isWrite: true));
 
         using var writeForbidden = new HttpResponseMessage(HttpStatusCode.Forbidden);
         writeForbidden.Headers.TryAddWithoutValidation("x-ms-substatus", "3");

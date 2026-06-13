@@ -200,19 +200,35 @@ internal static class CosmosRegionRouting
         return candidates.ToArray();
     }
 
+    /// <summary>
+    /// Decides whether a Cosmos response should trigger a cross-region failover
+    /// retry. Reads and writes are treated differently on purpose:
+    /// <list type="bullet">
+    ///   <item><b>Reads</b> may safely fail over on any transient impairment
+    ///   (503 / 408) — re-issuing a read against another region has no
+    ///   side effects.</item>
+    ///   <item><b>Writes</b> are <em>ambiguous</em> on 503 / 408: the first
+    ///   write may have committed before the failure surfaced, so transparently
+    ///   replaying it against another region risks a duplicate mutation (e.g.
+    ///   a non-idempotent <c>UpdateItem</c>). Writes therefore only fail over on
+    ///   a guaranteed <em>pre-commit</em> rejection — 403 substatus 3
+    ///   (write-region-not-writable) — where Cosmos is certain the write did
+    ///   not happen. Every other write failure is returned to the caller so the
+    ///   AWS SDK owns the (idempotent-from-its-view) retry.</item>
+    /// </list>
+    /// </summary>
     public static bool IsFailoverStatus(HttpResponseMessage response, bool isWrite)
     {
         ArgumentNullException.ThrowIfNull(response);
 
-        if (response.StatusCode == HttpStatusCode.ServiceUnavailable
-            || response.StatusCode == HttpStatusCode.RequestTimeout)
+        if (isWrite)
         {
-            return true;
+            return response.StatusCode == HttpStatusCode.Forbidden
+                && HasSubStatus(response, "3");
         }
 
-        return isWrite
-            && response.StatusCode == HttpStatusCode.Forbidden
-            && HasSubStatus(response, "3");
+        return response.StatusCode == HttpStatusCode.ServiceUnavailable
+            || response.StatusCode == HttpStatusCode.RequestTimeout;
     }
 
     public static string BuildLocationSummary(CosmosAccountLocation[] locations)
