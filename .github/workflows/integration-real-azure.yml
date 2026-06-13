@@ -78,12 +78,22 @@ jobs:
         id: gate
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_OBJECT_ID: ${{ secrets.AZURE_CLIENT_OBJECT_ID }}
         run: |
           if [ -n "$AZURE_CLIENT_ID" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             echo "::notice::AZURE_CLIENT_ID not set — real-Azure provisioning skipped; RealAzure tests will skip."
+          fi
+          # The Workload-Identity E2E scenario (#307) requires the SP object id so
+          # the Bicep grants data-plane RBAC; without it the WI proxy variant and
+          # its tests skip, leaving the shared-key matrix untouched.
+          if [ -n "$AZURE_CLIENT_ID" ] && [ -n "$AZURE_CLIENT_OBJECT_ID" ]; then
+            echo "wi_enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "wi_enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::AZURE_CLIENT_OBJECT_ID not set — WorkloadIdentity E2E scenario skipped."
           fi
 
       - name: Restore + build
@@ -156,6 +166,37 @@ jobs:
             echo "AZURE_SB_CONNSTR=$SB_CONN"
             echo "AZURE_EVENTHUBS_CONNSTR=$EH_CONN"
             echo "AZURE_EVENTHUBS_STREAM=$AZURE_EVENTHUBS_STREAM"
+          } >> "$GITHUB_ENV"
+
+      - name: Mint federated token for the Workload Identity scenario
+        if: steps.gate.outputs.wi_enabled == 'true'
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          # Request a GitHub Actions OIDC token for the Azure AD exchange audience
+          # and write it to a file the proxy's WorkloadIdentityTokenSource reads
+          # (mirroring the AKS projected service-account token contract). The
+          # token's `sub` claim matches the same federated credentials
+          # azure/login already uses, so no extra Entra federation is needed. The
+          # ACTIONS_ID_TOKEN_REQUEST_* vars are injected because the job has
+          # `id-token: write`.
+          TOKEN_FILE="$RUNNER_TEMP/azure-federated-token.jwt"
+          RESPONSE="$(curl -sS \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange")"
+          ASSERTION="$(printf '%s' "$RESPONSE" | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])')"
+          if [ -z "$ASSERTION" ]; then
+            echo "::error::Failed to obtain a GitHub OIDC token for the Workload Identity scenario."
+            exit 1
+          fi
+          echo "::add-mask::$ASSERTION"
+          ( umask 077; printf '%s' "$ASSERTION" > "$TOKEN_FILE" )
+          {
+            echo "AZURE_FEDERATED_TOKEN_FILE=$TOKEN_FILE"
+            echo "AZURE_TENANT_ID=$AZURE_TENANT_ID"
+            echo "AZURE_CLIENT_ID=$AZURE_CLIENT_ID"
           } >> "$GITHUB_ENV"
 
       - name: Run real-Azure integration tests

@@ -138,6 +138,39 @@ check they cannot run.
 > email/action-group alert. Ephemeral resources only exist for the duration of a
 > run, but the budget catches a stuck teardown or a misbehaving reaper.
 
+## Workload Identity end-to-end (issue #307)
+
+The shared-key smoke matrix proves the **translation** layer, but it never
+exercises the **AAD token** auth flows shipped for #290 — emulators don't
+validate bearer tokens and the shared-key path bypasses Entra entirely. The
+nightly therefore also runs the AAD-data-plane-capable backends (Cosmos, Event
+Hubs, Service Bus topics) under `authMode: workloadIdentity`, so the proxy's
+`WorkloadIdentityTokenSource` mints a **real** Entra token that **real Azure
+RBAC** must accept.
+
+This reuses the workload-identity federation the job already relies on for
+`azure/login` — no extra Entra setup beyond the two prerequisites:
+
+1. **`AZURE_CLIENT_OBJECT_ID`** secret set (step 5 above) → the Bicep grants the
+   OIDC SP the data-plane roles (Event Hubs / Service Bus Data Owner, Cosmos DB
+   Built-in Data Contributor), and the SP holds **Role Based Access Control
+   Administrator** so it can create those assignments.
+2. The job requests a **second** GitHub OIDC token (audience
+   `api://AzureADTokenExchange`, same `sub` as the login token, so the existing
+   federated credentials validate it), writes it to
+   `$RUNNER_TEMP/azure-federated-token.jwt`, and exports
+   `AZURE_FEDERATED_TOKEN_FILE` / `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` — exactly
+   the projected-token contract `WorkloadIdentityTokenSource` reads.
+
+Both are gated: when `AZURE_CLIENT_OBJECT_ID` is unset the
+`steps.gate.outputs.wi_enabled` flag is false, the token file is never minted,
+and the Workload-Identity tests skip — the shared-key matrix is unchanged.
+
+> **Managed Identity is out of scope here.** `authMode: managedIdentity` needs a
+> real IMDS endpoint (an Azure VM/AKS pod), which a GitHub-hosted runner does
+> not have. Covering it would require a self-hosted Azure runner; tracked
+> separately.
+
 ## Secrets Manager (Key Vault) — standing secrets
 
 Unlike the four data-plane backends, the proxy authenticates to Key Vault with a
