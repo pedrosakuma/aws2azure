@@ -7,6 +7,7 @@ using System.IO;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using Aws2Azure.Modules.DynamoDb.Internal;
 using Aws2Azure.Modules.DynamoDb.Operations;
 
 namespace Aws2Azure.Modules.DynamoDb.Persistence;
@@ -821,6 +822,11 @@ internal static class InferredAttributeStorage
     private static ReadOnlySpan<byte> IdNameU8 => "id"u8;
     private static ReadOnlySpan<byte> DiscriminatorPrefixU8 => "_a2a"u8;
     private static ReadOnlySpan<byte> EnvelopeTagPrefixU8 => "_a2a:"u8;
+    private static ReadOnlySpan<byte> EnvelopeTagNU8 => "_a2a:N"u8;
+    private static ReadOnlySpan<byte> EnvelopeTagBU8 => "_a2a:B"u8;
+    private static ReadOnlySpan<byte> EnvelopeTagSSU8 => "_a2a:SS"u8;
+    private static ReadOnlySpan<byte> EnvelopeTagNSU8 => "_a2a:NS"u8;
+    private static ReadOnlySpan<byte> EnvelopeTagBSU8 => "_a2a:BS"u8;
 
     /// <summary>
     /// Streaming equivalent of <see cref="WriteGetItemEnvelope(Utf8JsonWriter, JsonElement)"/>
@@ -830,8 +836,19 @@ internal static class InferredAttributeStorage
     /// </summary>
     public static void WriteGetItemEnvelope(Utf8JsonWriter writer, ReadOnlySpan<byte> cosmosDocUtf8)
     {
-        var reader = new Utf8JsonReader(cosmosDocUtf8);
+        var reader = new Utf8JsonTokenReader(cosmosDocUtf8);
+        WriteGetItemEnvelope(writer, ref reader);
+    }
 
+    /// <summary>
+    /// Reader-agnostic GetItem envelope transform. Driven by any
+    /// <see cref="ITokenReader"/> — <see cref="Utf8JsonTokenReader"/> for the
+    /// text path, <c>CosmosBinaryReader</c> for the fused binary path — so the
+    /// transform is written once and serves both encodings.
+    /// </summary>
+    public static void WriteGetItemEnvelope<TReader>(Utf8JsonWriter writer, scoped ref TReader reader)
+        where TReader : ITokenReader, allows ref struct
+    {
         writer.WriteStartObject();
         if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
         {
@@ -871,7 +888,8 @@ internal static class InferredAttributeStorage
 
     /// <summary>Reserved top-level name check over the reader's current
     /// PropertyName token (shadow-id is handled separately by the caller).</summary>
-    private static bool IsReservedTopLevelNameToken(ref Utf8JsonReader reader)
+    private static bool IsReservedTopLevelNameToken<TReader>(scoped ref TReader reader)
+        where TReader : ITokenReader, allows ref struct
     {
         if (reader.ValueTextEquals(IdNameU8)) return true;
         // Proxy metadata names (_a2a, _a2a_pk, ...) are always emitted
@@ -884,7 +902,8 @@ internal static class InferredAttributeStorage
     /// the reader's current PropertyName token. Must stay in sync with that
     /// switch. <see cref="Utf8JsonReader.ValueTextEquals(ReadOnlySpan{byte})"/>
     /// transparently handles escaped names, so no escape guard is needed.</summary>
-    private static bool IsCosmosSystemFieldToken(ref Utf8JsonReader reader)
+    private static bool IsCosmosSystemFieldToken<TReader>(scoped ref TReader reader)
+        where TReader : ITokenReader, allows ref struct
         => reader.ValueTextEquals("_rid"u8)
         || reader.ValueTextEquals("_self"u8)
         || reader.ValueTextEquals("_etag"u8)
@@ -898,7 +917,8 @@ internal static class InferredAttributeStorage
     /// currently positioned on. On entry the reader is on the value's first
     /// token; on return it is on the value's last token (Skip contract).
     /// </summary>
-    private static void WriteAttributeValue(Utf8JsonWriter writer, ref Utf8JsonReader reader)
+    private static void WriteAttributeValue<TReader>(Utf8JsonWriter writer, scoped ref TReader reader)
+        where TReader : ITokenReader, allows ref struct
     {
         switch (reader.TokenType)
         {
@@ -957,7 +977,8 @@ internal static class InferredAttributeStorage
     /// encoder invariant above) and either unwraps an envelope or emits an M.
     /// On return the reader is on the matching EndObject.
     /// </summary>
-    private static void WriteObjectAsAttributeValue(Utf8JsonWriter writer, ref Utf8JsonReader reader)
+    private static void WriteObjectAsAttributeValue<TReader>(Utf8JsonWriter writer, scoped ref TReader reader)
+        where TReader : ITokenReader, allows ref struct
     {
         if (!reader.Read())
             throw new InvalidOperationException("Truncated Cosmos object.");
@@ -977,7 +998,7 @@ internal static class InferredAttributeStorage
         if (!reader.ValueIsEscaped && !reader.HasValueSequence &&
             reader.ValueSpan.StartsWith(EnvelopeTagPrefixU8))
         {
-            if (reader.ValueTextEquals(EnvelopeTagN))
+            if (reader.ValueTextEquals(EnvelopeTagNU8))
             {
                 reader.Read();
                 if (reader.TokenType != JsonTokenType.String)
@@ -989,7 +1010,7 @@ internal static class InferredAttributeStorage
                 reader.Read(); // consume wrapper EndObject
                 return;
             }
-            if (reader.ValueTextEquals(EnvelopeTagB))
+            if (reader.ValueTextEquals(EnvelopeTagBU8))
             {
                 reader.Read();
                 if (reader.TokenType != JsonTokenType.String)
@@ -1001,9 +1022,9 @@ internal static class InferredAttributeStorage
                 reader.Read();
                 return;
             }
-            if (reader.ValueTextEquals(EnvelopeTagSS)) { WriteUnwrappedSet(writer, TagSS, ref reader); reader.Read(); return; }
-            if (reader.ValueTextEquals(EnvelopeTagNS)) { WriteUnwrappedSet(writer, TagNS, ref reader); reader.Read(); return; }
-            if (reader.ValueTextEquals(EnvelopeTagBS)) { WriteUnwrappedSet(writer, TagBS, ref reader); reader.Read(); return; }
+            if (reader.ValueTextEquals(EnvelopeTagSSU8)) { WriteUnwrappedSet(writer, TagSS, ref reader); reader.Read(); return; }
+            if (reader.ValueTextEquals(EnvelopeTagNSU8)) { WriteUnwrappedSet(writer, TagNS, ref reader); reader.Read(); return; }
+            if (reader.ValueTextEquals(EnvelopeTagBSU8)) { WriteUnwrappedSet(writer, TagBS, ref reader); reader.Read(); return; }
 
             throw new InvalidOperationException("Unknown '_a2a:' envelope tag in Cosmos document.");
         }
@@ -1027,7 +1048,8 @@ internal static class InferredAttributeStorage
     /// <summary>Reader is on the envelope's PropertyName; reads the array
     /// payload and writes the unwrapped set. On return the reader is on the
     /// array's EndArray token.</summary>
-    private static void WriteUnwrappedSet(Utf8JsonWriter writer, JsonEncodedText tag, ref Utf8JsonReader reader)
+    private static void WriteUnwrappedSet<TReader>(Utf8JsonWriter writer, JsonEncodedText tag, scoped ref TReader reader)
+        where TReader : ITokenReader, allows ref struct
     {
         reader.Read();
         if (reader.TokenType != JsonTokenType.StartArray)
@@ -1049,7 +1071,8 @@ internal static class InferredAttributeStorage
     /// <summary>Copies the current String/PropertyName token's value to the
     /// writer as a JSON string value, raw-UTF-8 when unescaped, otherwise via
     /// a pooled unescape buffer. Never allocates a System.String.</summary>
-    private static void WriteStringTokenValue(Utf8JsonWriter writer, ref Utf8JsonReader reader)
+    private static void WriteStringTokenValue<TReader>(Utf8JsonWriter writer, scoped ref TReader reader)
+        where TReader : ITokenReader, allows ref struct
     {
         if (!reader.ValueIsEscaped && !reader.HasValueSequence)
         {
@@ -1067,7 +1090,8 @@ internal static class InferredAttributeStorage
 
     /// <summary>Writes the current PropertyName token as a property name,
     /// raw-UTF-8 when unescaped, otherwise via a pooled unescape buffer.</summary>
-    private static void WriteCurrentPropertyName(Utf8JsonWriter writer, ref Utf8JsonReader reader)
+    private static void WriteCurrentPropertyName<TReader>(Utf8JsonWriter writer, scoped ref TReader reader)
+        where TReader : ITokenReader, allows ref struct
     {
         if (!reader.ValueIsEscaped && !reader.HasValueSequence)
         {
@@ -1085,7 +1109,8 @@ internal static class InferredAttributeStorage
 
     /// <summary>Writes the current Number token as a DDB N string value
     /// (<c>{"N":"&lt;digits&gt;"}</c>). Number tokens never carry escapes.</summary>
-    private static void WriteNumberTokenAsString(Utf8JsonWriter writer, ref Utf8JsonReader reader)
+    private static void WriteNumberTokenAsString<TReader>(Utf8JsonWriter writer, scoped ref TReader reader)
+        where TReader : ITokenReader, allows ref struct
     {
         if (!reader.HasValueSequence)
         {
