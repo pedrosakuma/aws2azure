@@ -29,6 +29,7 @@ Thumbs.db
 *.log
 .tools/
 TestResults/
+BenchmarkDotNet.Artifacts/
 
 # Perf — locally-generated cumulative history (artifact uploaded by perf workflow; not committed)
 docs/perf/history.csv
