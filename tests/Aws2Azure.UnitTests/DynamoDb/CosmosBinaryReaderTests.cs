@@ -224,6 +224,60 @@ public class CosmosBinaryReaderTests
     }
 
     [Fact]
+    public void NonFiniteFloats_AreRejected_LikeDecoder()
+    {
+        // The decoder formats numbers via Utf8JsonWriter.WriteNumberValue, which
+        // throws on NaN/Infinity. The fused reader must NOT silently emit "NaN"/
+        // "Infinity" — it must throw so the GetItem path falls back to (and matches)
+        // the decode-to-text behaviour rather than producing a non-numeric token.
+        foreach (byte[] body in new[]
+        {
+            new Bin().U8(0xCC).F64(double.NaN).Done(),
+            new Bin().U8(0xCC).F64(double.PositiveInfinity).Done(),
+            new Bin().U8(0xCE).F64(double.NegativeInfinity).Done(),
+            new Bin().U8(0xCD).F32(float.NaN).Done(),
+            new Bin().U8(0xCF).F16(Half.PositiveInfinity).Done(),
+        })
+        {
+            Assert.Throws<JsonException>(() => Echo(body));   // reader rejects
+            Assert.ThrowsAny<System.Exception>(() => Decode(body)); // decoder rejects too
+        }
+    }
+
+    [Fact]
+    public void ContainerChildExceedingBounds_ThrowsJsonException_LikeDecoder()
+    {
+        // Length-prefixed array (0xE2) declaring a 1-byte payload, but the single
+        // child is a 9-byte double whose bytes are physically present (so the read
+        // would otherwise succeed reading past the container's declared end). The
+        // recursive decoder rejects this via its EnsureBounds check; the streaming
+        // reader must do the same instead of silently reading sibling/trailing bytes.
+        byte[] body = new Bin().U8(0xE2).U8(1).U8(0xCC).F64(3.14).Done();
+        Assert.Throws<JsonException>(() => Echo(body));
+        Assert.ThrowsAny<System.Exception>(() => Decode(body));
+    }
+
+    [Fact]
+    public void TruncatedBody_ThrowsFallbackCatchableException()
+    {
+        // The reader does direct span slicing for speed, so a truncated body can
+        // raise IndexOutOfRange/ArgumentOutOfRange rather than JsonException. The
+        // GetItem fused path catches exactly those so it falls back to the decoder
+        // (which surfaces the canonical JsonException) instead of leaking a 500.
+        // Truncated GUID: 0xD3 promises 16 bytes, only 2 present.
+        byte[] truncatedGuid = new Bin().U8(0xD3).Bytes(0x01, 0x02).Done();
+        // Truncated length-prefixed string: 0xC0 promises 5 bytes, only 1 present.
+        byte[] truncatedString = new Bin().U8(0xC0).U8(5).Bytes((byte)'a').Done();
+        foreach (byte[] body in new[] { truncatedGuid, truncatedString })
+        {
+            System.Exception ex = Assert.ThrowsAny<System.Exception>(() => Echo(body));
+            Assert.True(
+                ex is JsonException or System.IndexOutOfRangeException or System.ArgumentOutOfRangeException,
+                $"reader threw {ex.GetType().Name}, which the fused fallback does not catch");
+        }
+    }
+
+    [Fact]
     public void Containers_Empty()
     {
         AssertReaderMatchesDecoder(new Bin().U8(0xE0).Done()); // []

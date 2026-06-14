@@ -147,6 +147,14 @@ internal ref struct CosmosBinaryReader : ITokenReader, IDisposable
                 {
                     return PopContainer(ref top);
                 }
+                // Reject a child whose declared length runs past this container's
+                // bounds, matching the recursive decoder's EnsureBounds check; the
+                // streaming walk would otherwise read sibling/trailing bytes and
+                // silently produce an envelope the decode-to-text path rejects.
+                if (CosmosBinaryDecoder.ValueLength(_data, _offset) > top.End - _offset)
+                {
+                    throw new JsonException("Cosmos binary JSON container element exceeds container bounds.");
+                }
                 if (top.IsObject && top.NextIsName)
                 {
                     ReadStringToken(_offset, depth: 0);
@@ -445,14 +453,29 @@ internal ref struct CosmosBinaryReader : ITokenReader, IDisposable
                 break;
             case 0xCC:
             case 0xCE:
-                ok = Utf8Formatter.TryFormat(BinaryPrimitives.ReadDoubleLittleEndian(p), dst, out written);
+            {
+                double d = BinaryPrimitives.ReadDoubleLittleEndian(p);
+                // The decoder formats via Utf8JsonWriter.WriteNumberValue, which
+                // rejects NaN/Infinity; reject here too so the fused path never
+                // emits a non-numeric token the decode-to-text path would refuse.
+                if (!double.IsFinite(d)) throw new JsonException("Cosmos binary JSON number is not finite.");
+                ok = Utf8Formatter.TryFormat(d, dst, out written);
                 break;
+            }
             case 0xCD:
-                ok = Utf8Formatter.TryFormat(BinaryPrimitives.ReadSingleLittleEndian(p), dst, out written);
+            {
+                float f = BinaryPrimitives.ReadSingleLittleEndian(p);
+                if (!float.IsFinite(f)) throw new JsonException("Cosmos binary JSON number is not finite.");
+                ok = Utf8Formatter.TryFormat(f, dst, out written);
                 break;
+            }
             default: // 0xCF half — decoder casts to double before formatting
-                ok = Utf8Formatter.TryFormat((double)BinaryPrimitives.ReadHalfLittleEndian(p), dst, out written);
+            {
+                double h = (double)BinaryPrimitives.ReadHalfLittleEndian(p);
+                if (!double.IsFinite(h)) throw new JsonException("Cosmos binary JSON number is not finite.");
+                ok = Utf8Formatter.TryFormat(h, dst, out written);
                 break;
+            }
         }
         if (!ok) throw new JsonException("Cosmos binary JSON number could not be formatted.");
         _scratchLen = written;

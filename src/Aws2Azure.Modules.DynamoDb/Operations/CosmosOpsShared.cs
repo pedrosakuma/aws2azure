@@ -374,11 +374,17 @@ internal static class CosmosOpsShared
             envelope = scratch;
             return true;
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException or IndexOutOfRangeException or ArgumentOutOfRangeException)
         {
-            // Malformed or not-yet-fast-pathed binary: fall back to decode-to-text,
-            // which surfaces the same error (or decodes a marker the streaming
-            // reader does not cover) without emitting a partial response.
+            // Malformed/truncated or not-yet-fast-pathed binary: fall back to
+            // decode-to-text, which surfaces the canonical error (or decodes a
+            // marker the streaming reader does not cover) without emitting a
+            // partial response. The reader does direct span slicing for speed, so
+            // a truncated body can raise an index/range error rather than a
+            // JsonException; both mean "the streaming walk cannot trust this body"
+            // and must defer to the authoritative decoder. InvalidOperationException
+            // (the transform's malformed-envelope signal) is intentionally NOT
+            // caught — the fallback path would throw the identical exception.
             scratch.Dispose();
             envelope = null;
             return false;
