@@ -120,6 +120,20 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     /// </summary>
     public string CosmosDatabase => _cosmosDatabase ?? string.Empty;
 
+    /// <summary>Live Cosmos DB account endpoint (<c>AZURE_COSMOS_ENDPOINT</c>),
+    /// exposed so tests can issue raw authenticated REST probes (e.g. asserting
+    /// real Azure emits CosmosBinary bodies, which the CI emulator does not).</summary>
+    public string CosmosEndpoint => _cosmosEndpoint ?? string.Empty;
+
+    /// <summary>Cosmos DB account master key (<c>AZURE_COSMOS_KEY</c>) for raw
+    /// REST probes. Empty under Workload-Identity-only runs.</summary>
+    public string CosmosMasterKey => _cosmosKey ?? string.Empty;
+
+    /// <summary>Prometheus metrics scrape URL for the running proxy
+    /// (<c>/_aws2azure/metrics</c>, path-routed, not host-routed). Lets tests
+    /// assert production counters such as the GetItem decode-path metric.</summary>
+    public string MetricsUrl => $"http://127.0.0.1:{_proxyPort}/_aws2azure/metrics";
+
     /// <summary>
     /// Pre-existing Event Hubs entity backing the Kinesis stream (CreateStream
     /// is not implemented; the hub must already exist). The PutRecord smoke
@@ -380,12 +394,20 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
             AppendCredential(credentials, WiAwsAccessKey, WiAwsSecret, wiAzure.ToString());
         }
 
+        // Exercise the opt-in CosmosBinary response path (#268/#321) end-to-end
+        // against real Azure Cosmos DB, which (unlike the CI Linux emulator) does
+        // emit 0x80 CosmosBinary bodies — so the fused GetItem reader is actually
+        // driven here rather than silently falling back to the text path.
+        var dynamoDbBlock = (CosmosConfigured || CosmosWorkloadIdentityConfigured)
+            ? "  \"dynamodb\": { \"cosmosBinaryResponses\": true },\n"
+            : string.Empty;
+
         return $$"""
             {
               "services": {
             {{services}}
               },
-              "credentials": [
+            {{dynamoDbBlock}}  "credentials": [
             {{credentials}}
               ]
             }

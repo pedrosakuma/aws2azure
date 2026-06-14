@@ -340,6 +340,56 @@ public class ItemHandlersTests
     }
 
     [Fact]
+    public async Task GetItem_text_response_records_decode_path_text_metric()
+    {
+        // A text (non-CosmosBinary) Cosmos response must tag the production
+        // decode-path counter path="text". The fused/binary path is proven
+        // against real Azure (the CI emulator never emits CosmosBinary).
+        using var exporter = new Aws2Azure.Core.Observability.PrometheusExporter();
+        long before = ReadDecodePathCount(exporter, "text");
+
+        var (ctx, _) = NewCtx();
+        var docJson = DocWithItem("customer-1", "order-42",
+            "{\"pk\":{\"S\":\"customer-1\"},\"total\":{\"N\":\"1\"}}");
+        var handler = new ScriptedHandler { Responses = { CosmosOk(MetadataDoc), CosmosOk(docJson) } };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"customer-1\"},\"sk\":{\"S\":\"order-42\"}}}";
+        await ItemHandlers.HandleGetItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        // Counter is process-global; assert a positive delta so the test is
+        // robust to other collections emitting concurrently.
+        Assert.True(ReadDecodePathCount(exporter, "text") > before);
+    }
+
+    private static long ReadDecodePathCount(Aws2Azure.Core.Observability.PrometheusExporter exporter, string path)
+    {
+        string output = exporter.Export();
+        long total = 0;
+        foreach (var raw in output.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.Length == 0 || line[0] == '#'
+                || !line.StartsWith("aws2azure_dynamodb_getitem_decode_path_total", StringComparison.Ordinal)
+                || line.IndexOf("path=\"" + path + "\"", StringComparison.Ordinal) < 0)
+            {
+                continue;
+            }
+
+            int sp = line.LastIndexOf(' ');
+            if (sp >= 0 && double.TryParse(
+                    line.AsSpan(sp + 1), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out double value))
+            {
+                total += (long)value;
+            }
+        }
+
+        return total;
+    }
+
+    [Fact]
     public async Task GetItem_consistent_read_adds_strong_consistency_header()
     {
         var (ctx, _) = NewCtx();

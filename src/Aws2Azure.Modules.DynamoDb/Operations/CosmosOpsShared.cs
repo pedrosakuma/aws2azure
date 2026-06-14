@@ -296,11 +296,13 @@ internal static class CosmosOpsShared
         }
 
         ReadOnlyMemory<byte> cosmosJson = input.WrittenMemory;
-        if (CosmosBinaryDecoder.IsBinary(cosmosJson.Span)
+        bool isBinary = CosmosBinaryDecoder.IsBinary(cosmosJson.Span);
+        if (isBinary
             && TryWriteFusedBinaryEnvelope(cosmosJson.Span, out PooledByteBufferWriter? fused))
         {
             // Fast path: stream the envelope straight off the binary body via
             // CosmosBinaryReader, skipping the decode-to-text materialization.
+            DynamoDbMetrics.RecordGetItemDecodePath(DynamoDbMetrics.PathFused);
             using (fused)
             {
                 ctx.Response.StatusCode = 200;
@@ -311,10 +313,15 @@ internal static class CosmosOpsShared
             return;
         }
 
+        // A binary body that reaches here means the fused reader declined a
+        // marker, so we decode to text; otherwise Cosmos returned text JSON.
+        DynamoDbMetrics.RecordGetItemDecodePath(
+            isBinary ? DynamoDbMetrics.PathFallback : DynamoDbMetrics.PathText);
+
         PooledByteBufferWriter? decoded = null;
         try
         {
-            if (CosmosBinaryDecoder.IsBinary(cosmosJson.Span))
+            if (isBinary)
             {
                 decoded = new PooledByteBufferWriter(Math.Max(4096, cosmosJson.Length));
                 // Decode may throw on a malformed binary body; the catch below
