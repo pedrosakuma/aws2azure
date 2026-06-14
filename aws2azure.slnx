@@ -15,6 +15,7 @@
     <Project Path="tests/Aws2Azure.Conformance/Aws2Azure.Conformance.csproj" />
     <Project Path="tests/Aws2Azure.IntegrationTests/Aws2Azure.IntegrationTests.csproj" />
     <Project Path="tests/Aws2Azure.PerfTests/Aws2Azure.PerfTests.csproj" />
+    <Project Path="tests/Aws2Azure.Benchmarks/Aws2Azure.Benchmarks.csproj" />
     <Project Path="tests/Aws2Azure.FootprintTests/Aws2Azure.FootprintTests.csproj" />
   </Folder>
   <Folder Name="/tools/">

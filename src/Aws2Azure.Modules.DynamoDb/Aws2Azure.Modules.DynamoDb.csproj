@@ -11,6 +11,7 @@
     <InternalsVisibleTo Include="Aws2Azure.UnitTests" />
     <InternalsVisibleTo Include="Aws2Azure.IntegrationTests" />
     <InternalsVisibleTo Include="Aws2Azure.PerfTests" />
+    <InternalsVisibleTo Include="Aws2Azure.Benchmarks" />
     <InternalsVisibleTo Include="Aws2Azure.Proxy" />
   </ItemGroup>
 
