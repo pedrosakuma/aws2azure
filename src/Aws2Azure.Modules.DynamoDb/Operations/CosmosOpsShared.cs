@@ -296,6 +296,21 @@ internal static class CosmosOpsShared
         }
 
         ReadOnlyMemory<byte> cosmosJson = input.WrittenMemory;
+        if (CosmosBinaryDecoder.IsBinary(cosmosJson.Span)
+            && TryWriteFusedBinaryEnvelope(cosmosJson.Span, out PooledByteBufferWriter? fused))
+        {
+            // Fast path: stream the envelope straight off the binary body via
+            // CosmosBinaryReader, skipping the decode-to-text materialization.
+            using (fused)
+            {
+                ctx.Response.StatusCode = 200;
+                ctx.Response.ContentType = "application/x-amz-json-1.0";
+                await ctx.Response.BodyWriter.WriteAsync(fused!.WrittenMemory, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            return;
+        }
+
         PooledByteBufferWriter? decoded = null;
         try
         {
@@ -325,6 +340,54 @@ internal static class CosmosOpsShared
         finally
         {
             decoded?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Builds the GetItem envelope straight off the binary body via
+    /// <see cref="CosmosBinaryReader"/> (no decode-to-text pass), into a pooled
+    /// buffer. Returns <c>true</c> with the (caller-owned) buffer on success;
+    /// returns <c>false</c> (having disposed the buffer) if the fused reader hits
+    /// a marker it does not fast-path, so the caller can fall back to the proven
+    /// decode-to-text path. The buffer is committed only after the whole envelope
+    /// is built, so a fallback never emits a partial response.
+    /// </summary>
+    private static bool TryWriteFusedBinaryEnvelope(
+        ReadOnlySpan<byte> binaryBody, out PooledByteBufferWriter? envelope)
+    {
+        var scratch = new PooledByteBufferWriter(1024);
+        try
+        {
+            using (var writer = new Utf8JsonWriter(scratch))
+            {
+                var reader = new CosmosBinaryReader(binaryBody);
+                try
+                {
+                    Persistence.InferredAttributeStorage.WriteGetItemEnvelope(writer, ref reader);
+                }
+                finally
+                {
+                    reader.Dispose();
+                }
+                writer.Flush();
+            }
+            envelope = scratch;
+            return true;
+        }
+        catch (Exception ex) when (ex is JsonException or IndexOutOfRangeException or ArgumentOutOfRangeException)
+        {
+            // Malformed/truncated or not-yet-fast-pathed binary: fall back to
+            // decode-to-text, which surfaces the canonical error (or decodes a
+            // marker the streaming reader does not cover) without emitting a
+            // partial response. The reader does direct span slicing for speed, so
+            // a truncated body can raise an index/range error rather than a
+            // JsonException; both mean "the streaming walk cannot trust this body"
+            // and must defer to the authoritative decoder. InvalidOperationException
+            // (the transform's malformed-envelope signal) is intentionally NOT
+            // caught — the fallback path would throw the identical exception.
+            scratch.Dispose();
+            envelope = null;
+            return false;
         }
     }
 }

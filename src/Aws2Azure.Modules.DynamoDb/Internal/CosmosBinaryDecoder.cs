@@ -41,6 +41,41 @@ internal static class CosmosBinaryDecoder
     public static bool IsBinary(ReadOnlySpan<byte> body)
         => body.Length > 0 && body[0] == BinaryFormatMarker;
 
+    /// <summary>The first data byte (root value) offset, immediately after the
+    /// <c>0x80</c> binary-format marker. Shared with the streaming
+    /// <see cref="CosmosBinaryReader"/>.</summary>
+    internal const int RootOffset = 1;
+
+    /// <summary>System-string dictionary as UTF-8 (all entries are ASCII), so the
+    /// streaming reader can surface a dictionary-referenced name/value without a
+    /// per-token <see cref="string"/> allocation. Index range is [0, 32).</summary>
+    private static readonly byte[][] SystemStringsUtf8 = BuildSystemStringsUtf8();
+
+    private static byte[][] BuildSystemStringsUtf8()
+    {
+        var table = new byte[SystemStrings.Length][];
+        for (int i = 0; i < SystemStrings.Length; i++)
+        {
+            table[i] = Encoding.UTF8.GetBytes(SystemStrings[i]);
+        }
+        return table;
+    }
+
+    internal static ReadOnlySpan<byte> SystemStringUtf8(int index) => SystemStringsUtf8[index];
+
+    internal static bool IsStringMarkerInternal(byte marker) => IsStringMarker(marker);
+
+    internal static int ContainerPrefixLengthInternal(byte marker) => ContainerPrefixLength(marker);
+
+    internal static int UniformNumberItemSizeInternal(byte marker) => UniformNumberItemSize(marker);
+
+    /// <summary>Byte length of the value at <paramref name="offset"/>, bounds-
+    /// validated against <paramref name="full"/> (depth 0). Shared with
+    /// <see cref="CosmosBinaryReader"/> so the streaming walk uses the exact same
+    /// length authority as the recursive decoder.</summary>
+    internal static int ValueLength(ReadOnlySpan<byte> full, int offset)
+        => BoundedLength(full, offset, 0);
+
     public static void Decode(ReadOnlySpan<byte> body, IBufferWriter<byte> output)
         => Decode(body, output, default);
 
