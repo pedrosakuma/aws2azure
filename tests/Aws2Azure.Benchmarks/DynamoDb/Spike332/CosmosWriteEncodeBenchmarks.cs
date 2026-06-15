@@ -51,6 +51,7 @@ public class CosmosWriteEncodeBenchmarks
 
     private JsonDocument _document = null!;
     private JsonElement _item;
+    private byte[] _itemUtf8 = null!;
     private ArrayBufferWriter<byte> _buffer = null!;
 
     [GlobalSetup]
@@ -59,6 +60,7 @@ public class CosmosWriteEncodeBenchmarks
         string json = SyntheticDdbItem.Build(Doc.StringAttrs, Doc.NumberAttrs, Doc.PayloadBytes);
         _document = JsonDocument.Parse(json);
         _item = _document.RootElement;
+        _itemUtf8 = Encoding.UTF8.GetBytes(json);
         _buffer = new ArrayBufferWriter<byte>(Math.Max(1024, json.Length * 2));
 
         // Correctness gate: decode(binary) must equal the text output rendered
@@ -73,6 +75,33 @@ public class CosmosWriteEncodeBenchmarks
                 $"binary encode round-trip diverged from text for '{Doc.Name}':\n" +
                 $"  text:    {Encoding.UTF8.GetString(text)}\n" +
                 $"  decoded: {Encoding.UTF8.GetString(decoded.WrittenSpan)}");
+        }
+
+        // Single-pass gate (#342): the wire (Utf8JsonReader) encoders must be
+        // byte-identical to the JsonElement encoders they replace, both arms.
+        AssertWireMatchesJsonElement(textArm: true);
+        AssertWireMatchesJsonElement(textArm: false);
+    }
+
+    private void AssertWireMatchesJsonElement(bool textArm)
+    {
+        var fromElement = new ArrayBufferWriter<byte>(1024);
+        var fromWire = new ArrayBufferWriter<byte>(1024);
+        if (textArm)
+        {
+            InferredAttributeStorage.WriteCosmosDocument(fromElement, Id, Pk, _item);
+            InferredAttributeStorage.WriteCosmosDocument(fromWire, Id, Pk, _itemUtf8);
+        }
+        else
+        {
+            InferredAttributeStorage.WriteCosmosDocumentBinary(fromElement, Id, Pk, _item);
+            InferredAttributeStorage.WriteCosmosDocumentBinary(fromWire, Id, Pk, _itemUtf8);
+        }
+
+        if (!fromWire.WrittenSpan.SequenceEqual(fromElement.WrittenSpan))
+        {
+            throw new InvalidOperationException(
+                $"wire encode diverged from JsonElement encode for '{Doc.Name}' ({(textArm ? "text" : "binary")}).");
         }
     }
 
@@ -92,6 +121,32 @@ public class CosmosWriteEncodeBenchmarks
     {
         _buffer.Clear();
         InferredAttributeStorage.WriteCosmosDocumentBinary(_buffer, Id, Pk, _item);
+        return _buffer.WrittenCount;
+    }
+
+    /// <summary>
+    /// #342 single-pass: encode the JSON-text body straight from the raw item
+    /// UTF-8 wire bytes via <see cref="System.Text.Json.Utf8JsonReader"/> — no
+    /// <see cref="JsonElement"/> traversal, no per-attribute <c>GetString()</c>.
+    /// Delta vs <see cref="Text"/> is the honest end-to-end single-pass gain.
+    /// </summary>
+    [Benchmark]
+    public int TextWire()
+    {
+        _buffer.Clear();
+        InferredAttributeStorage.WriteCosmosDocument(_buffer, Id, Pk, _itemUtf8);
+        return _buffer.WrittenCount;
+    }
+
+    /// <summary>
+    /// #342 single-pass: encode the CosmosBinary body straight from the raw item
+    /// UTF-8 wire bytes. Delta vs <see cref="Binary"/> is the single-pass gain.
+    /// </summary>
+    [Benchmark]
+    public int BinaryWire()
+    {
+        _buffer.Clear();
+        InferredAttributeStorage.WriteCosmosDocumentBinary(_buffer, Id, Pk, _itemUtf8);
         return _buffer.WrittenCount;
     }
 

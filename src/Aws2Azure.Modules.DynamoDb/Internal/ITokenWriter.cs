@@ -48,11 +48,23 @@ internal interface ITokenWriter
 
     void WritePropertyName(string name);
 
+    /// <summary>Writes a property name from its <b>unescaped</b> UTF-8 bytes —
+    /// the single-pass wire path (#342) hands the reader's value span straight
+    /// through. The text back-end re-escapes per its encoder; the binary
+    /// back-end writes the bytes verbatim.</summary>
+    void WritePropertyName(ReadOnlySpan<byte> utf8Unescaped);
+
     void WriteString(in TokenName name, string? value);
 
     void WriteString(in TokenName name, in TokenName value);
 
     void WriteStringValue(string? value);
+
+    /// <summary>Writes a string value from its <b>unescaped</b> UTF-8 bytes —
+    /// the single-pass wire path (#342) hands the reader's value span straight
+    /// through. The text back-end re-escapes per its encoder; the binary
+    /// back-end writes the bytes verbatim.</summary>
+    void WriteStringValue(ReadOnlySpan<byte> utf8Unescaped);
 
     void WriteBooleanValue(bool value);
 

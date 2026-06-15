@@ -108,6 +108,12 @@ internal sealed class CosmosBinaryWriter : ITokenWriter, IDisposable
         WriteStringToken(name);
     }
 
+    public void WritePropertyName(ReadOnlySpan<byte> utf8Unescaped)
+    {
+        CountProperty();
+        WriteStringToken(utf8Unescaped);
+    }
+
     public void WriteString(in TokenName name, string? value)
     {
         WritePropertyName(name);
@@ -125,6 +131,12 @@ internal sealed class CosmosBinaryWriter : ITokenWriter, IDisposable
     {
         OnBeforeValue();
         WriteStringToken(value ?? string.Empty);
+    }
+
+    public void WriteStringValue(ReadOnlySpan<byte> utf8Unescaped)
+    {
+        OnBeforeValue();
+        WriteStringToken(utf8Unescaped);
     }
 
     public void WriteBooleanValue(bool value)
