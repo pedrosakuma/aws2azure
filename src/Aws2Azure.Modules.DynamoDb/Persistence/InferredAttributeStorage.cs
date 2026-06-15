@@ -954,6 +954,71 @@ internal static class InferredAttributeStorage
     }
 
     /// <summary>
+    /// Streams the <c>Documents</c> array of a Cosmos query/feed response into
+    /// per-document AttributeValue maps, appending each
+    /// <c>Dictionary&lt;string, JsonElement&gt;</c> (element-for-element
+    /// identical to <see cref="ExtractItem(JsonElement)"/>) to
+    /// <paramref name="sink"/> in document order. Reader-agnostic, so a Cosmos
+    /// page can be materialized straight off a <c>CosmosBinaryReader</c> with no
+    /// binary→text page decode and no full-page <see cref="JsonDocument"/> DOM —
+    /// only the same small per-document re-serialize-and-parse the map itself
+    /// requires (shared with <see cref="ExtractItemFused"/>). Non-object array
+    /// elements terminate the walk (Cosmos feeds only ever contain objects),
+    /// matching <see cref="WriteTransformedDocuments"/>. Returns the number of
+    /// documents appended.
+    /// </summary>
+    public static int ExtractItemsFused<TReader>(
+        scoped ref TReader reader, List<Dictionary<string, JsonElement>> sink)
+        where TReader : ITokenReader, allows ref struct
+    {
+        if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+        {
+            return 0;
+        }
+
+        while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+        {
+            if (reader.ValueTextEquals(DocumentsNameU8))
+            {
+                if (!reader.Read() || reader.TokenType != JsonTokenType.StartArray)
+                {
+                    reader.Skip();
+                    return 0;
+                }
+
+                int count = 0;
+                var bw = new ArrayBufferWriter<byte>(1024);
+                while (reader.Read() && reader.TokenType == JsonTokenType.StartObject)
+                {
+                    bw.ResetWrittenCount();
+                    using (var writer = new Utf8JsonWriter(bw, WriterOptions))
+                    {
+                        WriteTransformedItem(writer, ref reader);
+                        writer.Flush();
+                    }
+
+                    var map = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+                    using (var batch = JsonDocument.Parse(bw.WrittenMemory))
+                    {
+                        foreach (var prop in batch.RootElement.EnumerateObject())
+                        {
+                            map[prop.Name] = prop.Value.Clone();
+                        }
+                    }
+                    sink.Add(map);
+                    count++;
+                }
+                return count;
+            }
+
+            reader.Read();
+            reader.Skip();
+        }
+
+        return 0;
+    }
+
+    /// <summary>
     /// Streams the <c>Documents</c> array of a Cosmos query/feed response
     /// (<c>{"_rid":…,"Documents":[ {doc}, … ],"_count":N}</c>) into
     /// <paramref name="writer"/> as transformed DynamoDB item objects, writing

@@ -95,6 +95,17 @@ public class ScanHandlerTests
         return Aws2Azure.Modules.DynamoDb.Persistence.InferredAttributeStorage.BuildCosmosDocument(id, pk, d.RootElement);
     }
 
+    private static HttpResponseMessage CosmosOkBinary(string body, string? continuation = null)
+    {
+        var r = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(CosmosBinaryTestEncoder.Encode(body)),
+        };
+        if (continuation is not null)
+            r.Headers.TryAddWithoutValidation("x-ms-continuation", continuation);
+        return r;
+    }
+
     private static string QueryEnvelope(params string[] docs)
     {
         var sb = new StringBuilder("{\"_rid\":\"x\",\"Documents\":[");
@@ -245,6 +256,47 @@ public class ScanHandlerTests
         await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
 
         using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
+        Assert.Equal(2, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+    }
+
+    [Fact]
+    public async Task Scan_filtered_binary_page_byte_identical_to_text()
+    {
+        // A non-pushable FilterExpression (size()) forces in-process evaluation
+        // over the materialized per-document maps — the binary-direct page-walk
+        // path. A CosmosBinary page must yield a byte-identical response to a
+        // text page, rich corpus (escaping/N/B/SS/nested M/L) + a filtered-out row.
+        string d1 = DocWithItem("a", "a",
+            "{\"pk\":{\"S\":\"a\"},\"v\":{\"S\":\"longer\"},\"n\":{\"N\":\"99\"},"
+            + "\"name\":{\"S\":\"\\\"héllo\\\" <b>&</b> \\uD83D\\uDE00\"},"
+            + "\"bin\":{\"B\":\"AQID\"},\"ss\":{\"SS\":[\"a\",\"b\"]},"
+            + "\"nested\":{\"M\":{\"inner\":{\"L\":[{\"S\":\"z\"},{\"NULL\":true}]}}}}");
+        string d2 = DocWithItem("b", "b", "{\"pk\":{\"S\":\"b\"},\"v\":{\"S\":\"x\"}}");
+        string page = QueryEnvelope(d1, d2);
+        string req = "{\"TableName\":\"orders\","
+                     + "\"FilterExpression\":\"size(v) > :min\","
+                     + "\"ExpressionAttributeValues\":{\":min\":{\"N\":\"3\"}}}";
+
+        async Task<string> Run(Func<string, HttpResponseMessage> wrap)
+        {
+            CosmosOpsShared.MetadataCache.Clear();
+            var (ctx, body) = NewCtx();
+            var handler = new ScriptedHandler
+            {
+                Responses = { CosmosOk(Metadata), wrap(page) },
+            };
+            var cosmos = BuildClient(handler);
+            await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+            Assert.Equal(200, ctx.Response.StatusCode);
+            return ReadResponse(body);
+        }
+
+        string textResp = await Run(p => CosmosOk(p));
+        string binaryResp = await Run(p => CosmosOkBinary(p));
+
+        Assert.Equal(textResp, binaryResp);
+        using var resp = JsonDocument.Parse(textResp);
         Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
         Assert.Equal(2, resp.RootElement.GetProperty("ScannedCount").GetInt32());
     }

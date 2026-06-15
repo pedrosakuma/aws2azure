@@ -332,6 +332,95 @@ internal static class CosmosOpsShared
         }
     }
 
+    /// <summary>
+    /// Materializes every document of a Cosmos query/feed page into an ordered
+    /// list of DynamoDB AttributeValue maps, preferring a binary-direct walk
+    /// (<c>CosmosBinaryReader</c> →
+    /// <see cref="Persistence.InferredAttributeStorage.ExtractItemsFused"/>) over
+    /// the binary→text page decode + full-page <see cref="JsonDocument"/> DOM
+    /// when Cosmos returned a CosmosBinary body and the streaming reader can
+    /// fast-path it. The whole-page fallback is atomic: a mid-page reader
+    /// decline discards the partially-built list and re-materializes the page
+    /// via decode-to-text. Records
+    /// <c>aws2azure_dynamodb_read_decode_path_total{op,path}</c>.
+    /// </summary>
+    public static async Task<List<Dictionary<string, JsonElement>>> ReadAndExtractItemsAsync(
+        HttpContent content, string op, CancellationToken cancellationToken)
+    {
+        using var raw = await ReadCosmosRawBodyAsync(content, cancellationToken).ConfigureAwait(false);
+        ReadOnlyMemory<byte> body = raw.WrittenMemory;
+        var items = new List<Dictionary<string, JsonElement>>();
+
+        // Everything below is synchronous, so the binary reader's span never
+        // crosses an await and the pooled buffer stays valid for its lifetime.
+        if (CosmosBinaryDecoder.IsBinary(body.Span))
+        {
+            if (TryExtractItemsBinary(body.Span, items))
+            {
+                DynamoDbMetrics.RecordReadDecodePath(op, DynamoDbMetrics.DecodeBinary);
+                return items;
+            }
+
+            // Streaming reader declined a marker mid-page: discard the partial
+            // list and re-materialize the whole page via decode-to-text.
+            items.Clear();
+            DynamoDbMetrics.RecordReadDecodePath(op, DynamoDbMetrics.DecodeFallback);
+            using var decoded = new PooledByteBufferWriter(Math.Max(4096, body.Length));
+            CosmosBinaryDecoder.Decode(body.Span, decoded);
+            ExtractItemsText(decoded.WrittenMemory, items);
+            return items;
+        }
+
+        DynamoDbMetrics.RecordReadDecodePath(op, DynamoDbMetrics.DecodeText);
+        ExtractItemsText(body, items);
+        return items;
+    }
+
+    private static void ExtractItemsText(
+        ReadOnlyMemory<byte> json, List<Dictionary<string, JsonElement>> sink)
+    {
+        using var doc = JsonDocument.Parse(json);
+        if (doc.RootElement.TryGetProperty("Documents", out var docsEl)
+            && docsEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var docEl in docsEl.EnumerateArray())
+            {
+                var item = Persistence.InferredAttributeStorage.ExtractItem(docEl);
+                if (item is not null) sink.Add(item);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Materializes a Cosmos query/feed page straight off the binary body via
+    /// <see cref="CosmosBinaryReader"/> (no decode-to-text), appending each
+    /// document's map to <paramref name="sink"/>. Returns <c>true</c> on
+    /// success; returns <c>false</c> if the streaming reader hits a marker it
+    /// does not fast-path (the caller must discard <paramref name="sink"/> and
+    /// fall back). Mirrors <see cref="TryExtractItemBinary"/>.
+    /// </summary>
+    private static bool TryExtractItemsBinary(
+        ReadOnlySpan<byte> binaryBody, List<Dictionary<string, JsonElement>> sink)
+    {
+        try
+        {
+            var reader = new CosmosBinaryReader(binaryBody);
+            try
+            {
+                Persistence.InferredAttributeStorage.ExtractItemsFused(ref reader, sink);
+            }
+            finally
+            {
+                reader.Dispose();
+            }
+            return true;
+        }
+        catch (Exception ex) when (ex is JsonException or IndexOutOfRangeException or ArgumentOutOfRangeException)
+        {
+            return false;
+        }
+    }
+
     public static async Task WriteJsonAsync<T>(
         HttpContext ctx, int status, T payload, JsonTypeInfo<T> typeInfo)
     {
