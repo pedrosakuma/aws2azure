@@ -187,6 +187,21 @@ internal static class ScanHandler
         var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + req.TableName;
         var collUri = "/" + collLink + "/docs";
 
+        // Fused fast path: with no client-side filtering (nothing pushed to
+        // Cosmos AND no residual), no projection, and a full item select, each
+        // Cosmos document can be pumped straight into the response Items array
+        // with no JsonDocument DOM, no AttributeValue map, and no per-item model
+        // re-serialization. ScannedCount == Count (no pre-filter), so the
+        // server-side count fixup below is moot. Anything that needs to inspect
+        // an item (filter/projection/COUNT) falls through to the materialized
+        // path.
+        if (!countOnly && filter is null && projection is null && pushdown.Sql is null)
+        {
+            await ExecuteScanFusedAsync(
+                ctx, req, continuationIn, queryBody, collLink, collUri, cosmos, ct).ConfigureAwait(false);
+            return;
+        }
+
         int wantedScanned = req.Limit ?? int.MaxValue;
         var items = new List<Dictionary<string, JsonElement>>();
         int scanned = 0;
@@ -316,9 +331,126 @@ internal static class ScanHandler
             ScannedCount = scanned,
             LastEvaluatedKey = string.IsNullOrEmpty(continuationOut) ? null : BuildContinuationKey(continuationOut),
         };
+        DynamoDbMetrics.RecordReadTransformPath(DynamoDbMetrics.OpScan, DynamoDbMetrics.PathMaterialized);
         await CosmosOpsShared.WriteJsonAsync(ctx, 200, response, ScanJsonContext.Default.ScanResponse)
             .ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Streams a no-filter / no-projection Scan straight to the wire: each
+    /// Cosmos page's <c>Documents</c> are transformed into the response
+    /// <c>Items</c> array via <see cref="Persistence.InferredAttributeStorage.WriteTransformedDocuments"/>
+    /// with no JsonDocument DOM, no AttributeValue map, and no per-item model
+    /// re-serialization. The whole response is built into a pooled scratch
+    /// buffer and only handed to the socket once, so an error on any page (or a
+    /// malformed document) still surfaces a clean error response — nothing has
+    /// reached <see cref="HttpResponse.Body"/> until the final write. Output is
+    /// byte-identical to the materialized
+    /// <c>ExtractItem → ScanResponse → SerializeAsync</c> path (pinned by the
+    /// golden corpus).
+    /// </summary>
+    private static async Task ExecuteScanFusedAsync(
+        HttpContext ctx, ScanRequest req, string? continuationIn,
+        string queryBody, string collLink, string collUri,
+        CosmosClient cosmos, CancellationToken ct)
+    {
+        int wantedScanned = req.Limit ?? int.MaxValue;
+        int count = 0;
+        string? continuationOut = continuationIn;
+
+        using var outBuf = new PooledByteBufferWriter(8192);
+        using var writer = new Utf8JsonWriter(outBuf);
+        writer.WriteStartObject();
+        writer.WritePropertyName(ItemsNameU8);
+        writer.WriteStartArray();
+
+        while (true)
+        {
+            int remaining = wantedScanned == int.MaxValue
+                ? MaxBatchSize
+                : Math.Max(1, wantedScanned - count);
+            int pageSize = Math.Min(MaxBatchSize, remaining);
+
+            using var content = new StringContent(queryBody, Encoding.UTF8);
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/query+json");
+
+            var headers = new List<KeyValuePair<string, string>>
+            {
+                new("x-ms-documentdb-isquery", "true"),
+                new("x-ms-documentdb-query-enablecrosspartition", "true"),
+                new("x-ms-max-item-count", pageSize.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+            };
+            if (req.ConsistentRead == true)
+            {
+                headers.Add(new KeyValuePair<string, string>("x-ms-consistency-level", "Strong"));
+            }
+            if (!string.IsNullOrEmpty(continuationOut))
+            {
+                headers.Add(new KeyValuePair<string, string>("x-ms-continuation", continuationOut));
+            }
+
+            using var resp = await cosmos.SendAsync(
+                HttpMethod.Post, "docs", collLink, collUri,
+                content, headers, ct).ConfigureAwait(false);
+
+            // Nothing has been written to ctx.Response yet (the envelope lives
+            // in outBuf), so an error here can still emit a clean response.
+            if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
+                    $"Table not found: {req.TableName}").ConfigureAwait(false);
+                return;
+            }
+            if (!resp.IsSuccessStatusCode)
+            {
+                await CosmosOpsShared.WriteCosmosErrorAsync(ctx, resp, ct).ConfigureAwait(false);
+                return;
+            }
+
+            using var page = await CosmosOpsShared.ReadCosmosJsonBodyAsync(resp.Content, ct).ConfigureAwait(false);
+            var reader = new Internal.Utf8JsonTokenReader(page.WrittenMemory.Span);
+            count += Persistence.InferredAttributeStorage.WriteTransformedDocuments(writer, ref reader);
+
+            continuationOut = null;
+            if (resp.Headers.TryGetValues("x-ms-continuation", out var ctValues))
+            {
+                foreach (var v in ctValues) { continuationOut = v; break; }
+            }
+
+            if (count >= wantedScanned) break;
+            if (string.IsNullOrEmpty(continuationOut)) break;
+        }
+
+        writer.WriteEndArray();
+        writer.WriteNumber(CountNameU8, count);
+        writer.WriteNumber(ScannedCountNameU8, count);
+        if (!string.IsNullOrEmpty(continuationOut))
+        {
+            // LastEvaluatedKey: {"__a2a_continuation":{"S":"<base64(continuation)>"}}
+            writer.WritePropertyName(LastEvaluatedKeyNameU8);
+            writer.WriteStartObject();
+            writer.WritePropertyName(ContinuationSentinelAttr);
+            writer.WriteStartObject();
+            writer.WriteString(TypedStringNameU8,
+                Convert.ToBase64String(Encoding.UTF8.GetBytes(continuationOut)));
+            writer.WriteEndObject();
+            writer.WriteEndObject();
+        }
+        writer.WriteEndObject();
+        writer.Flush();
+
+        DynamoDbMetrics.RecordReadTransformPath(DynamoDbMetrics.OpScan, DynamoDbMetrics.PathFused);
+
+        ctx.Response.StatusCode = 200;
+        ctx.Response.ContentType = "application/x-amz-json-1.0";
+        await ctx.Response.BodyWriter.WriteAsync(outBuf.WrittenMemory, ct).ConfigureAwait(false);
+    }
+
+    private static ReadOnlySpan<byte> ItemsNameU8 => "Items"u8;
+    private static ReadOnlySpan<byte> CountNameU8 => "Count"u8;
+    private static ReadOnlySpan<byte> ScannedCountNameU8 => "ScannedCount"u8;
+    private static ReadOnlySpan<byte> LastEvaluatedKeyNameU8 => "LastEvaluatedKey"u8;
+    private static ReadOnlySpan<byte> TypedStringNameU8 => "S"u8;
 
     // ----- helpers (mirror QueryHandler) ------------------------------
 

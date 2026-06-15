@@ -858,6 +858,28 @@ internal static class InferredAttributeStorage
         }
 
         writer.WritePropertyName(ItemPropEncoded);
+        WriteTransformedItem(writer, ref reader);
+        writer.WriteEndObject();
+    }
+
+    /// <summary>
+    /// Writes the transformed DynamoDB attribute-map object for the Cosmos
+    /// document the reader is currently positioned on (its
+    /// <see cref="JsonTokenType.StartObject"/> token). On entry the reader is on
+    /// that StartObject; on return it is on the matching EndObject. The emitted
+    /// object is byte-identical to serializing
+    /// <see cref="ExtractItem(JsonElement)"/> — routing/discriminator/Cosmos
+    /// system fields stripped, the shadow-encoded <c>id</c> attribute
+    /// unmangled, every value rendered as its typed AttributeValue. This is the
+    /// shared per-item core behind the GetItem <c>{"Item":{…}}</c> envelope and
+    /// the Query/Scan <c>"Items":[…]</c> array elements, so the transform is
+    /// written once and serves single- and multi-item read paths over either
+    /// the text (<see cref="Utf8JsonTokenReader"/>) or fused binary
+    /// (<c>CosmosBinaryReader</c>) encoding.
+    /// </summary>
+    public static void WriteTransformedItem<TReader>(Utf8JsonWriter writer, scoped ref TReader reader)
+        where TReader : ITokenReader, allows ref struct
+    {
         writer.WriteStartObject();
         while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
         {
@@ -883,7 +905,63 @@ internal static class InferredAttributeStorage
             }
         }
         writer.WriteEndObject();
-        writer.WriteEndObject();
+    }
+
+    private static ReadOnlySpan<byte> DocumentsNameU8 => "Documents"u8;
+
+    /// <summary>
+    /// Streams the <c>Documents</c> array of a Cosmos query/feed response
+    /// (<c>{"_rid":…,"Documents":[ {doc}, … ],"_count":N}</c>) into
+    /// <paramref name="writer"/> as transformed DynamoDB item objects, writing
+    /// each array element via <see cref="WriteTransformedItem{TReader}"/>.
+    /// <paramref name="writer"/> must already be positioned inside an open JSON
+    /// array (the response's <c>Items</c> array); this method writes only the
+    /// element objects, never the surrounding <c>[</c>/<c>]</c>. Returns the
+    /// number of documents emitted.
+    ///
+    /// <para>Reader-agnostic (text <see cref="Utf8JsonTokenReader"/> or fused
+    /// <c>CosmosBinaryReader</c>), so a no-FilterExpression / no-ProjectionExpression
+    /// Query or Scan page can be pumped straight to the wire with no
+    /// JsonDocument DOM, no AttributeValue map, and no per-item model
+    /// re-serialization. The reader is consumed through the end of the
+    /// <c>Documents</c> array; trailing properties (e.g. <c>_count</c>) are left
+    /// unread.</para>
+    /// </summary>
+    public static int WriteTransformedDocuments<TReader>(Utf8JsonWriter writer, scoped ref TReader reader)
+        where TReader : ITokenReader, allows ref struct
+    {
+        if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+        {
+            return 0;
+        }
+
+        while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+        {
+            if (reader.ValueTextEquals(DocumentsNameU8))
+            {
+                if (!reader.Read() || reader.TokenType != JsonTokenType.StartArray)
+                {
+                    // "Documents" present but not an array — nothing to emit.
+                    reader.Skip();
+                    return 0;
+                }
+
+                int count = 0;
+                while (reader.Read() && reader.TokenType == JsonTokenType.StartObject)
+                {
+                    WriteTransformedItem(writer, ref reader);
+                    count++;
+                }
+                // reader is now on the array's EndArray token.
+                return count;
+            }
+
+            // Any other top-level property (_rid, _count, ...): skip its value.
+            reader.Read();
+            reader.Skip();
+        }
+
+        return 0;
     }
 
     /// <summary>Reserved top-level name check over the reader's current

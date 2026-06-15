@@ -120,6 +120,73 @@ public class ScanHandlerTests
         return sb.ToString();
     }
 
+    // Materialized oracle: rebuild the ScanResponse exactly as the
+    // legacy (non-fused) path would and serialize it via the same
+    // source-gen context. The fused handler output must be byte-identical.
+    private static byte[] MaterializedScan(string? continuation, params string[] cosmosDocs)
+    {
+        var items = new List<Dictionary<string, JsonElement>>();
+        foreach (var d in cosmosDocs)
+        {
+            using var doc = JsonDocument.Parse(d);
+            items.Add(Aws2Azure.Modules.DynamoDb.Persistence.InferredAttributeStorage.ExtractItem(doc.RootElement)!);
+        }
+        var resp = new ScanResponse
+        {
+            Items = items,
+            Count = items.Count,
+            ScannedCount = items.Count,
+        };
+        if (continuation is not null)
+        {
+            var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(continuation));
+            using var keyDoc = JsonDocument.Parse("{\"__a2a_continuation\":{\"S\":" + JsonSerializer.Serialize(b64) + "}}");
+            var key = new Dictionary<string, JsonElement>();
+            foreach (var p in keyDoc.RootElement.EnumerateObject())
+                key[p.Name] = p.Value.Clone();
+            resp.LastEvaluatedKey = key;
+        }
+        return JsonSerializer.SerializeToUtf8Bytes(resp, ScanJsonContext.Default.ScanResponse);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("page-token-/+=")]
+    public async Task Scan_fused_is_byte_identical_to_materialized(string? continuation)
+    {
+        // Rich corpus: escaping surface, number, binary, sets, nested
+        // map/list, bool, null — the same drift surface the GetItem
+        // golden pins, now across the multi-item envelope.
+        string d1 = DocWithItem("a", "a",
+            "{\"pk\":{\"S\":\"a\"},\"name\":{\"S\":\"\\\"héllo\\\" <b>&</b> \\uD83D\\uDE00\\tend\"}}");
+        string d2 = DocWithItem("b", "b",
+            "{\"pk\":{\"S\":\"b\"},\"n\":{\"N\":\"123.45\"},\"bin\":{\"B\":\"AQID\"},"
+            + "\"ss\":{\"SS\":[\"x\",\"y\"]},\"ns\":{\"NS\":[\"1\",\"2\"]},\"flag\":{\"BOOL\":true}}");
+        string d3 = DocWithItem("c", "c",
+            "{\"pk\":{\"S\":\"c\"},\"nested\":{\"M\":{\"inner\":{\"L\":[{\"S\":\"z\"},{\"NULL\":true}]}}}}");
+
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(Metadata),
+                CosmosOk(QueryEnvelope(d1, d2, d3), continuation),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Limit\":3}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.Equal("application/x-amz-json-1.0", ctx.Response.ContentType);
+        body.Position = 0;
+        var actual = body.ToArray();
+        var expected = MaterializedScan(continuation, d1, d2, d3);
+        Assert.Equal(Encoding.UTF8.GetString(expected), Encoding.UTF8.GetString(actual));
+    }
+
     [Fact]
     public async Task Scan_returns_all_items_with_cross_partition_header()
     {
