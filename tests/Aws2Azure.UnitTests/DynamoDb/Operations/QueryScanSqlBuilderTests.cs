@@ -88,9 +88,9 @@ public sealed class QueryHandlerSqlBuilderTests
         var pd = Pushdown(
             "age > :v",
             new Dictionary<string, JsonElement> { [":v"] = V("{\"N\":\"30\"}") });
-        var body = CosmosQueryBody.Build("SELECT * FROM c WHERE " + pd.Sql, pd.Parameters);
+        using var body = CosmosQueryBody.Build("SELECT * FROM c WHERE " + pd.Sql, pd.Parameters);
 
-        using var doc = JsonDocument.Parse(body);
+        using var doc = JsonDocument.Parse(body.WrittenMemory);
         var paramsArr = doc.RootElement.GetProperty("parameters");
         Assert.Equal(1, paramsArr.GetArrayLength());
         var first = paramsArr[0];
@@ -110,9 +110,9 @@ public sealed class QueryHandlerSqlBuilderTests
                 [":a"] = V("{\"BOOL\":true}"),
                 [":d"] = V("{\"NULL\":true}"),
             });
-        var body = CosmosQueryBody.Build("SELECT *", pd.Parameters);
+        using var body = CosmosQueryBody.Build("SELECT *", pd.Parameters);
 
-        using var doc = JsonDocument.Parse(body);
+        using var doc = JsonDocument.Parse(body.WrittenMemory);
         var p = doc.RootElement.GetProperty("parameters");
         Assert.Equal(JsonValueKind.True, p[0].GetProperty("value").ValueKind);
         Assert.Equal(JsonValueKind.Null, p[1].GetProperty("value").ValueKind);
@@ -130,9 +130,9 @@ public sealed class ScanHandlerSqlBuilderTests
     [Fact]
     public void Empty_pushdown_emits_base_scan_sql()
     {
-        var body = ScanHandler.BuildScanQueryBody(
+        using var body = ScanHandler.BuildScanQueryBody(
             new FilterPushdownResult(null, System.Array.Empty<CosmosSqlParameter>(), null));
-        using var doc = JsonDocument.Parse(body);
+        using var doc = JsonDocument.Parse(body.WrittenMemory);
         Assert.Equal(
             "SELECT * FROM c WHERE c._a2a = 'item'",
             doc.RootElement.GetProperty("query").GetString());
@@ -146,8 +146,8 @@ public sealed class ScanHandlerSqlBuilderTests
         var ast = ConditionExpressionParser.Parse("name = :v", null, values);
         var pd = FilterPushdownVisitor.Translate(ast);
 
-        var body = ScanHandler.BuildScanQueryBody(pd);
-        using var doc = JsonDocument.Parse(body);
+        using var body = ScanHandler.BuildScanQueryBody(pd);
+        using var doc = JsonDocument.Parse(body.WrittenMemory);
         Assert.Equal(
             "SELECT * FROM c WHERE c._a2a = 'item' AND c[\"name\"] = @fp0",
             doc.RootElement.GetProperty("query").GetString());

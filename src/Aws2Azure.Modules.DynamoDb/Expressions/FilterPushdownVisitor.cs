@@ -10,11 +10,78 @@ namespace Aws2Azure.Modules.DynamoDb.Expressions;
 
 /// <summary>
 /// A single Cosmos SQL parameter binding (e.g. <c>@fp0</c> bound to a
-/// JSON value). Stays a <see cref="JsonElement"/> so the SQL body
-/// builder can emit numbers, strings, bools, and null with their
-/// original JSON kind.
+/// JSON value). Carries either a <see cref="JsonElement"/> (so the SQL body
+/// builder can emit numbers, strings, bools, and null with their original
+/// JSON kind) or a raw <see cref="string"/> — the latter avoids the
+/// <c>JsonElement</c> materialization round-trip for KeyCondition / id
+/// values that are always plain strings.
 /// </summary>
-internal sealed record CosmosSqlParameter(string Name, JsonElement Value);
+internal sealed record CosmosSqlParameter
+{
+    public string Name { get; }
+
+    private readonly JsonElement _element;
+    private readonly string? _rawString;
+
+    /// <summary>Binds <paramref name="name"/> to a typed JSON value.</summary>
+    public CosmosSqlParameter(string name, JsonElement value)
+    {
+        Name = name;
+        _element = value;
+        _rawString = null;
+    }
+
+    /// <summary>
+    /// Binds <paramref name="name"/> to a plain string, emitted straight to
+    /// the writer with no <see cref="JsonElement"/> round-trip.
+    /// </summary>
+    public CosmosSqlParameter(string name, string stringValue)
+    {
+        Name = name;
+        _rawString = stringValue;
+        _element = default;
+    }
+
+    /// <summary>Writes this parameter's value to the Cosmos query body.</summary>
+    public void WriteValueTo(Utf8JsonWriter writer)
+    {
+        if (_rawString is not null)
+        {
+            writer.WriteStringValue(_rawString);
+        }
+        else
+        {
+            _element.WriteTo(writer);
+        }
+    }
+
+    /// <summary>
+    /// Diagnostic / test accessor that materializes the value as a
+    /// <see cref="JsonElement"/>. For element-backed parameters this is free;
+    /// for string-backed parameters it round-trips through
+    /// <see cref="JsonDocument"/>. <b>Production code must emit via
+    /// <see cref="WriteValueTo"/></b> (no round-trip) — this exists only so
+    /// callers/tests can inspect the bound value.
+    /// </summary>
+    public JsonElement Value
+    {
+        get
+        {
+            if (_rawString is null)
+            {
+                return _element;
+            }
+
+            var buffer = new System.Buffers.ArrayBufferWriter<byte>(_rawString.Length + 2);
+            using (var writer = new Utf8JsonWriter(buffer))
+            {
+                writer.WriteStringValue(_rawString);
+            }
+            using var doc = JsonDocument.Parse(buffer.WrittenMemory);
+            return doc.RootElement.Clone();
+        }
+    }
+}
 
 /// <summary>
 /// Output of <see cref="FilterPushdownVisitor.Translate"/>.

@@ -1,6 +1,6 @@
+using System;
+using System.Buffers;
 using System.Collections.Generic;
-using System.IO;
-using System.Text;
 using System.Text.Json;
 using Aws2Azure.Modules.DynamoDb.Expressions;
 
@@ -14,15 +14,24 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 /// </summary>
 internal static class CosmosQueryBody
 {
-    public static string Build(string sql, IReadOnlyList<CosmosSqlParameter> parameters)
+    private static readonly JsonWriterOptions WriterOptions = new()
     {
-        using var ms = new MemoryStream();
-        var options = new JsonWriterOptions
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    /// <summary>
+    /// Encodes the query body straight into a pooled UTF-8 buffer the caller
+    /// owns and sends zero-copy (no <c>bytes → string → StringContent</c>
+    /// round-trip). The caller MUST dispose the returned writer once the body
+    /// has been sent (its <see cref="PooledByteBufferWriter.WrittenMemory"/> is
+    /// read once per attempt across retries / pagination).
+    /// </summary>
+    public static PooledByteBufferWriter Build(string sql, IReadOnlyList<CosmosSqlParameter> parameters)
+    {
+        var buffer = new PooledByteBufferWriter(Math.Max(256, sql.Length + (parameters.Count * 24) + 64));
+        try
         {
-            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        };
-        using (var writer = new Utf8JsonWriter(ms, options))
-        {
+            using var writer = new Utf8JsonWriter(buffer, WriterOptions);
             writer.WriteStartObject();
             writer.WriteString("query", sql);
             writer.WritePropertyName("parameters");
@@ -32,32 +41,18 @@ internal static class CosmosQueryBody
                 writer.WriteStartObject();
                 writer.WriteString("name", p.Name);
                 writer.WritePropertyName("value");
-                p.Value.WriteTo(writer);
+                p.WriteValueTo(writer);
                 writer.WriteEndObject();
             }
             writer.WriteEndArray();
             writer.WriteEndObject();
         }
-        return Encoding.UTF8.GetString(ms.ToArray());
-    }
-
-    /// <summary>
-    /// Wraps a plain string as a <see cref="JsonElement"/> for use as a
-    /// Cosmos SQL parameter value — KeyCondition values (HASH/RANGE
-    /// formatted strings) all flow through this helper.
-    /// </summary>
-    public static JsonElement StringValue(string s)
-    {
-        // System.Text.Json doesn't expose a JsonElement factory for raw
-        // strings; round-trip through Utf8JsonWriter (AOT-safe — no
-        // reflection-based JsonSerializer).
-        using var ms = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(ms))
+        catch
         {
-            writer.WriteStringValue(s);
+            buffer.Dispose();
+            throw;
         }
-        var doc = JsonDocument.Parse(ms.ToArray());
-        try { return doc.RootElement.Clone(); }
-        finally { doc.Dispose(); }
+
+        return buffer;
     }
 }
