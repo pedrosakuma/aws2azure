@@ -400,8 +400,8 @@ internal static class BatchGetItemHandler
             return;
         }
 
-        using var cosmosBody = await CosmosOpsShared.ReadCosmosJsonBodyAsync(resp.Content, ct).ConfigureAwait(false);
-        var item = ItemHandlers.ExtractItemFromCosmosDoc(cosmosBody.WrittenMemory);
+        var item = await CosmosOpsShared.ReadAndExtractItemAsync(
+            resp.Content, DynamoDbMetrics.OpBatchGet, ct).ConfigureAwait(false);
         results[idx] = new PerItemResult(item, false, null);
     }
 

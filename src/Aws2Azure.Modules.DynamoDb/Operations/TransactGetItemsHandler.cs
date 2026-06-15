@@ -270,8 +270,8 @@ internal static class TransactGetItemsHandler
                 return;
             }
 
-            using var cosmosBody = await CosmosOpsShared.ReadCosmosJsonBodyAsync(resp.Content, ct).ConfigureAwait(false);
-            var item = ItemHandlers.ExtractItemFromCosmosDoc(cosmosBody.WrittenMemory);
+            var item = await CosmosOpsShared.ReadAndExtractItemAsync(
+                resp.Content, DynamoDbMetrics.OpTransactGet, ct).ConfigureAwait(false);
             results[idx] = new PerItemResult { Item = item };
         }
         catch (OperationCanceledException) { throw; }
