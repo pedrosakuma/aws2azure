@@ -231,6 +231,47 @@ public class QueryHandlerTests
     }
 
     [Fact]
+    public async Task Query_filtered_binary_page_byte_identical_to_text()
+    {
+        // A non-pushable FilterExpression (size()) forces in-process evaluation
+        // over the materialized per-document maps — the binary-direct page-walk
+        // path. A CosmosBinary page must yield a byte-identical response to a
+        // text page, rich corpus + a filtered-out row.
+        string d1 = DocWithItem("a", "a",
+            "{\"pk\":{\"S\":\"a\"},\"v\":{\"S\":\"longer\"},\"n\":{\"N\":\"99\"},"
+            + "\"name\":{\"S\":\"\\\"héllo\\\" <b>&</b> \\uD83D\\uDE00\"},"
+            + "\"bin\":{\"B\":\"AQID\"},\"ss\":{\"SS\":[\"a\",\"b\"]},"
+            + "\"nested\":{\"M\":{\"inner\":{\"L\":[{\"S\":\"z\"},{\"NULL\":true}]}}}}");
+        string d2 = DocWithItem("a", "a2", "{\"pk\":{\"S\":\"a\"},\"v\":{\"S\":\"x\"}}");
+        string page = QueryEnvelope(d1, d2);
+        string req = "{\"TableName\":\"orders\","
+                     + "\"KeyConditionExpression\":\"pk = :p\","
+                     + "\"FilterExpression\":\"size(v) > :min\","
+                     + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":min\":{\"N\":\"3\"}}}";
+
+        async Task<string> Run(Func<string, HttpResponseMessage> wrap)
+        {
+            CosmosOpsShared.MetadataCache.Clear();
+            var (ctx, body) = NewCtx();
+            var handler = new ScriptedHandler
+            {
+                Responses = { CosmosOk(MetadataHashOnly), wrap(page) },
+            };
+            var cosmos = BuildClient(handler);
+            await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+            Assert.Equal(200, ctx.Response.StatusCode);
+            return ReadResponse(body);
+        }
+
+        string textResp = await Run(p => CosmosOk(p));
+        string binaryResp = await Run(p => CosmosOkBytes(CosmosBinaryTestEncoder.Encode(p)));
+
+        Assert.Equal(textResp, binaryResp);
+        using var resp = JsonDocument.Parse(textResp);
+        Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
+    }
+
+    [Fact]
     public async Task Query_accepts_cosmos_binary_query_pages()
     {
         var (ctx, body) = NewCtx();

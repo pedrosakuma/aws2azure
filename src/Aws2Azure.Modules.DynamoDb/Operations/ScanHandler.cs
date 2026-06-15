@@ -249,34 +249,28 @@ internal static class ScanHandler
                 return;
             }
 
-            using var cosmosBody = await CosmosOpsShared.ReadCosmosJsonBodyAsync(resp.Content, ct).ConfigureAwait(false);
-            using var doc = JsonDocument.Parse(cosmosBody.WrittenMemory);
+            var pageItems = await CosmosOpsShared.ReadAndExtractItemsAsync(
+                resp.Content, DynamoDbMetrics.OpScan, ct).ConfigureAwait(false);
 
-            if (doc.RootElement.TryGetProperty("Documents", out var docsEl)
-                && docsEl.ValueKind == JsonValueKind.Array)
+            foreach (var itemMap in pageItems)
             {
-                foreach (var docEl in docsEl.EnumerateArray())
-                {
-                    var itemMap = ExtractItemEnvelope(docEl);
-                    if (itemMap is null) continue;
-                    scanned++;
+                scanned++;
 
-                    if (filter is not null)
+                if (filter is not null)
+                {
+                    bool keep;
+                    try { keep = ConditionEvaluator.Evaluate(filter, itemMap); }
+                    catch (ConditionEvaluationException ex)
                     {
-                        bool keep;
-                        try { keep = ConditionEvaluator.Evaluate(filter, itemMap); }
-                        catch (ConditionEvaluationException ex)
-                        {
-                            await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", ex.Message).ConfigureAwait(false);
-                            return;
-                        }
-                        if (!keep) continue;
+                        await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", ex.Message).ConfigureAwait(false);
+                        return;
                     }
-                    matched++;
-                    if (!countOnly)
-                    {
-                        items.Add(projection is null ? itemMap : Project(itemMap, projection));
-                    }
+                    if (!keep) continue;
+                }
+                matched++;
+                if (!countOnly)
+                {
+                    items.Add(projection is null ? itemMap : Project(itemMap, projection));
                 }
             }
 
@@ -475,9 +469,6 @@ internal static class ScanHandler
     /// </summary>
     internal static string BuildScanCountSql()
         => "SELECT VALUE COUNT(1) FROM c WHERE c._a2a = 'item'";
-
-    private static Dictionary<string, JsonElement>? ExtractItemEnvelope(JsonElement docEl)
-        => Persistence.InferredAttributeStorage.ExtractItem(docEl);
 
     private static Dictionary<string, JsonElement> Project(
         Dictionary<string, JsonElement> item, IReadOnlyList<string> paths)
