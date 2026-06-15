@@ -171,7 +171,7 @@ internal static class BatchWriteItemHandler
                     // every early-return path) is preferred over a pooled
                     // buffer here. Still removes the string / StringContent
                     // re-encode the previous BuildItemDocument path incurred.
-                    var doc = ItemHandlers.BuildItemDocumentBytes(id, pk, itemEl);
+                    var doc = ItemHandlers.BuildItemDocumentBytes(id, pk, itemEl, cosmos.CosmosBinaryRequests);
                     work.Add(new WriteWorkUnit(tableName, pk, id, WriteKind.Put, doc, entry.Clone()));
                 }
                 else

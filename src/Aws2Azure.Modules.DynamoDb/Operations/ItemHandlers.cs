@@ -159,8 +159,7 @@ internal static class ItemHandlers
             // when the caller doesn't care about prior state). Zero-copy:
             // the doc is written straight into a pooled UTF-8 buffer handed
             // to the HTTP layer, with no string / StringContent round-trip.
-            using var docBuf = new PooledByteBufferWriter();
-            WriteItemDocument(docBuf, id, pk, req.Item);
+            using var docBuf = ItemDocumentBody.Create(id, pk, req.Item, cosmos.CosmosBinaryRequests);
             var headers = new[]
             {
                 new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
@@ -168,7 +167,7 @@ internal static class ItemHandlers
             };
             using var resp = await cosmos.SendAsync(
                 HttpMethod.Post, "docs", collLink, "/" + collLink + "/docs",
-                docBuf.WrittenMemory, "application/json", headers, ct).ConfigureAwait(false);
+                docBuf.Memory, "application/json", headers, ct).ConfigureAwait(false);
 
             if (resp.StatusCode == HttpStatusCode.NotFound)
             {
@@ -243,9 +242,8 @@ internal static class ItemHandlers
         // with bounded retry on 412/409 so concurrent writers replay. The doc
         // is written once into a pooled UTF-8 buffer and re-sent zero-copy on
         // each attempt (no string / StringContent round-trip).
-        using var fallbackDoc = new PooledByteBufferWriter();
-        WriteItemDocument(fallbackDoc, id, pk, req.Item);
-        var docBody = fallbackDoc.WrittenMemory;
+        using var fallbackDoc = ItemDocumentBody.Create(id, pk, req.Item, cosmos.CosmosBinaryRequests);
+        var docBody = fallbackDoc.Memory;
         const int MaxRetries = 4;
         for (int attempt = 0; attempt < MaxRetries; attempt++)
         {
@@ -919,22 +917,12 @@ internal static class ItemHandlers
     /// Composes the Cosmos doc shape used for item writes. Thin wrapper
     /// over <see cref="InferredAttributeStorage.BuildCosmosDocument"/>;
     /// kept for call-site stability across the DynamoDb module. Prefer
-    /// <see cref="WriteItemDocument"/> for the HTTP write body — it avoids the
+    /// <see cref="ItemDocumentBody"/> for the HTTP write body — it avoids the
     /// <c>byte[] → string → byte[]</c> round-trip this overload incurs and is
     /// only retained for the sproc path that embeds the doc as a JSON string.
     /// </summary>
     internal static string BuildItemDocument(string id, string pk, JsonElement item)
         => InferredAttributeStorage.BuildCosmosDocument(id, pk, item);
-
-    /// <summary>
-    /// Writes the Cosmos doc shape for an item write straight into a pooled
-    /// UTF-8 buffer, whose bytes can be handed to the HTTP layer with no
-    /// intermediate <see cref="string"/> / <see cref="StringContent"/> copy.
-    /// </summary>
-    internal static void WriteItemDocument(
-        PooledByteBufferWriter output,
-        string id, string pk, JsonElement item)
-        => InferredAttributeStorage.WriteCosmosDocument(output, id, pk, item);
 
     /// <summary>
     /// Builds the Cosmos doc shape as a UTF-8 <see cref="byte"/> array (no
@@ -944,10 +932,88 @@ internal static class ItemHandlers
     /// representation.
     /// </summary>
     internal static byte[] BuildItemDocumentBytes(string id, string pk, JsonElement item)
+        => BuildItemDocumentBytes(id, pk, item, binary: false);
+
+    /// <summary>
+    /// Builds the Cosmos doc shape as a UTF-8 <see cref="byte"/> array, choosing
+    /// the CosmosBinary (<c>0x80</c>) encoding when <paramref name="binary"/> is
+    /// set (#336), else JSON text. Used by <c>BatchWriteItem</c>, where each
+    /// unit's standalone document body is built upfront and held live across
+    /// parallel sends, so a GC-managed array is the leak-safe representation.
+    /// </summary>
+    internal static byte[] BuildItemDocumentBytes(string id, string pk, JsonElement item, bool binary)
     {
+        if (binary)
+        {
+            using var writer = InferredAttributeStorage.WriteCosmosDocumentBinary(id, pk, item);
+            return writer.WrittenMemory.ToArray();
+        }
+
         var bw = new System.Buffers.ArrayBufferWriter<byte>(1024);
         InferredAttributeStorage.WriteCosmosDocument(bw, id, pk, item);
         return bw.WrittenSpan.ToArray();
+    }
+
+    /// <summary>
+    /// Owns the encoded body for a standalone Cosmos document write (PutItem
+    /// upsert/replace, UpdateItem create/replace), selecting the CosmosBinary
+    /// (<c>0x80</c>) encoding when enabled (#336) or JSON text otherwise, behind
+    /// a uniform <see cref="Memory"/>. Single-pass for both: text writes straight
+    /// into a pooled buffer; binary assembles into its own pooled buffer whose
+    /// <see cref="CosmosBinaryWriter.WrittenMemory"/> is sent without a further
+    /// copy. The same <see cref="Memory"/> may be re-sent across retry attempts;
+    /// dispose once all sends complete. Paths that embed the document as a JSON
+    /// value (sproc conditional writes, TransactWriteItems) cannot use binary and
+    /// keep text.
+    /// </summary>
+    internal readonly struct ItemDocumentBody : IDisposable
+    {
+        private readonly PooledByteBufferWriter? _text;
+        private readonly CosmosBinaryWriter? _binary;
+
+        /// <summary>The encoded body, valid until <see cref="Dispose"/>.</summary>
+        public ReadOnlyMemory<byte> Memory { get; }
+
+        private ItemDocumentBody(PooledByteBufferWriter text)
+        {
+            _text = text;
+            _binary = null;
+            Memory = text.WrittenMemory;
+        }
+
+        private ItemDocumentBody(CosmosBinaryWriter binary)
+        {
+            _binary = binary;
+            _text = null;
+            Memory = binary.WrittenMemory;
+        }
+
+        public static ItemDocumentBody Create(string id, string pk, JsonElement item, bool binary)
+        {
+            if (binary)
+            {
+                return new ItemDocumentBody(InferredAttributeStorage.WriteCosmosDocumentBinary(id, pk, item));
+            }
+
+            var text = new PooledByteBufferWriter();
+            try
+            {
+                InferredAttributeStorage.WriteCosmosDocument(text, id, pk, item);
+            }
+            catch
+            {
+                text.Dispose();
+                throw;
+            }
+
+            return new ItemDocumentBody(text);
+        }
+
+        public void Dispose()
+        {
+            _text?.Dispose();
+            _binary?.Dispose();
+        }
     }
 
     /// <summary>
