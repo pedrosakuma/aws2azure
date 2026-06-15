@@ -943,6 +943,7 @@ internal static class ItemHandlers
     /// </summary>
     internal static byte[] BuildItemDocumentBytes(string id, string pk, JsonElement item, bool binary)
     {
+        DynamoDbMetrics.RecordWriteBodyFormat(binary);
         if (binary)
         {
             using var writer = InferredAttributeStorage.WriteCosmosDocumentBinary(id, pk, item);
@@ -990,6 +991,7 @@ internal static class ItemHandlers
 
         public static ItemDocumentBody Create(string id, string pk, JsonElement item, bool binary)
         {
+            DynamoDbMetrics.RecordWriteBodyFormat(binary);
             if (binary)
             {
                 return new ItemDocumentBody(InferredAttributeStorage.WriteCosmosDocumentBinary(id, pk, item));
