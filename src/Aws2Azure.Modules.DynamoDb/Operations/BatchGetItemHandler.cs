@@ -427,10 +427,10 @@ internal static class BatchGetItemHandler
             if (i > 0) sb.Append(',');
             var name = "@id" + i.ToString(CultureInfo.InvariantCulture);
             sb.Append(name);
-            parameters.Add(new CosmosSqlParameter(name, CosmosQueryBody.StringValue(group.Ids[i])));
+            parameters.Add(new CosmosSqlParameter(name, group.Ids[i]));
         }
         sb.Append(')');
-        var queryBody = CosmosQueryBody.Build(sb.ToString(), parameters);
+        using var queryBody = CosmosQueryBody.Build(sb.ToString(), parameters);
 
         var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + group.Table;
         var collUri = "/" + collLink + "/docs";
@@ -440,9 +440,6 @@ internal static class BatchGetItemHandler
         string? continuation = null;
         while (true)
         {
-            using var content = new StringContent(queryBody, Encoding.UTF8);
-            content.Headers.ContentType = new MediaTypeHeaderValue("application/query+json");
-
             var headers = new List<KeyValuePair<string, string>>
             {
                 new("x-ms-documentdb-partitionkey", pkHeader),
@@ -460,7 +457,7 @@ internal static class BatchGetItemHandler
 
             using var resp = await cosmos.SendAsync(
                 HttpMethod.Post, "docs", collLink, collUri,
-                content, headers, ct).ConfigureAwait(false);
+                queryBody.WrittenMemory, "application/query+json", headers, ct).ConfigureAwait(false);
 
             if (resp.StatusCode == HttpStatusCode.NotFound)
             {

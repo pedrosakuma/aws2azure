@@ -47,15 +47,12 @@ internal static class ScannedCountQuery
         long total = 0;
         bool sawNumber = false;
         string? continuation = null;
-        var body = CosmosQueryBody.Build(countSql, parameters);
+        using var body = CosmosQueryBody.Build(countSql, parameters);
 
         try
         {
             do
             {
-                using var content = new StringContent(body, Encoding.UTF8);
-                content.Headers.ContentType = new MediaTypeHeaderValue("application/query+json");
-
                 var headers = new List<KeyValuePair<string, string>>
                 {
                     new("x-ms-documentdb-isquery", "true"),
@@ -79,7 +76,8 @@ internal static class ScannedCountQuery
                 }
 
                 using var resp = await cosmos.SendAsync(
-                    HttpMethod.Post, "docs", collLink, collUri, content, headers, ct).ConfigureAwait(false);
+                    HttpMethod.Post, "docs", collLink, collUri,
+                    body.WrittenMemory, "application/query+json", headers, ct).ConfigureAwait(false);
                 if (!resp.IsSuccessStatusCode)
                 {
                     return null;

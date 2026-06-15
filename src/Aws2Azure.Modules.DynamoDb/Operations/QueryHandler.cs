@@ -198,7 +198,7 @@ internal static class QueryHandler
         // evaluate what could not be translated.
         filter = pushdown.Residual;
 
-        var queryBody = CosmosQueryBody.Build(sql, sqlParams);
+        using var queryBody = CosmosQueryBody.Build(sql, sqlParams);
         var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + req.TableName;
         var collUri = "/" + collLink + "/docs";
         var pkHeader = CosmosOpsShared.BuildPartitionKeyHeader(keyCond.HashValue);
@@ -211,7 +211,7 @@ internal static class QueryHandler
         if (!countOnly && filter is null && projection is null && pushdown.Sql is null)
         {
             await ExecuteQueryFusedAsync(
-                ctx, req, continuationIn, queryBody, collLink, collUri, pkHeader, cosmos, ct)
+                ctx, req, continuationIn, queryBody.WrittenMemory, collLink, collUri, pkHeader, cosmos, ct)
                 .ConfigureAwait(false);
             return;
         }
@@ -234,9 +234,6 @@ internal static class QueryHandler
                 : Math.Max(1, wantedScanned - scanned);
             int pageSize = Math.Min(MaxBatchSize, remaining);
 
-            using var content = new StringContent(queryBody, Encoding.UTF8);
-            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/query+json");
-
             var headers = new List<KeyValuePair<string, string>>
             {
                 new("x-ms-documentdb-partitionkey", pkHeader),
@@ -254,7 +251,7 @@ internal static class QueryHandler
 
             using var resp = await cosmos.SendAsync(
                 HttpMethod.Post, "docs", collLink, collUri,
-                content, headers, ct).ConfigureAwait(false);
+                queryBody.WrittenMemory, "application/query+json", headers, ct).ConfigureAwait(false);
 
             if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
@@ -352,7 +349,7 @@ internal static class QueryHandler
 
     private static async Task ExecuteQueryFusedAsync(
         HttpContext ctx, QueryRequest req, string? continuationIn,
-        string queryBody, string collLink, string collUri, string pkHeader,
+        ReadOnlyMemory<byte> queryBody, string collLink, string collUri, string pkHeader,
         CosmosClient cosmos, CancellationToken ct)
     {
         int wantedScanned = req.Limit ?? int.MaxValue;
@@ -372,9 +369,6 @@ internal static class QueryHandler
                 : Math.Max(1, wantedScanned - count);
             int pageSize = Math.Min(MaxBatchSize, remaining);
 
-            using var content = new StringContent(queryBody, Encoding.UTF8);
-            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/query+json");
-
             var headers = new List<KeyValuePair<string, string>>
             {
                 new("x-ms-documentdb-partitionkey", pkHeader),
@@ -392,7 +386,7 @@ internal static class QueryHandler
 
             using var resp = await cosmos.SendAsync(
                 HttpMethod.Post, "docs", collLink, collUri,
-                content, headers, ct).ConfigureAwait(false);
+                queryBody, "application/query+json", headers, ct).ConfigureAwait(false);
 
             // Nothing has been written to ctx.Response yet (the envelope lives
             // in outBuf), so an error here can still emit a clean response.
@@ -519,16 +513,16 @@ internal static class QueryHandler
             {
                 case KeyConditionAnalyser.SkCompare cmp:
                     sb.Append(" AND c.id ").Append(cmp.Op).Append(" @sk0");
-                    parameters.Add(new("@sk0", CosmosQueryBody.StringValue(cmp.Value)));
+                    parameters.Add(new("@sk0", cmp.Value));
                     break;
                 case KeyConditionAnalyser.SkBetween bt:
                     sb.Append(" AND c.id >= @skLo AND c.id <= @skHi");
-                    parameters.Add(new("@skLo", CosmosQueryBody.StringValue(bt.Lo)));
-                    parameters.Add(new("@skHi", CosmosQueryBody.StringValue(bt.Hi)));
+                    parameters.Add(new("@skLo", bt.Lo));
+                    parameters.Add(new("@skHi", bt.Hi));
                     break;
                 case KeyConditionAnalyser.SkBeginsWith bw:
                     sb.Append(" AND STARTSWITH(c.id, @sk0)");
-                    parameters.Add(new("@sk0", CosmosQueryBody.StringValue(bw.Prefix)));
+                    parameters.Add(new("@sk0", bw.Prefix));
                     break;
             }
         }

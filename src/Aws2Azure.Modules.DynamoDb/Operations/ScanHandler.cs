@@ -183,7 +183,7 @@ internal static class ScanHandler
         // is already enforced by Cosmos so only the leftover needs
         // client-side evaluation.
         filter = pushdown.Residual;
-        var queryBody = BuildScanQueryBody(pushdown);
+        using var queryBody = BuildScanQueryBody(pushdown);
         var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + req.TableName;
         var collUri = "/" + collLink + "/docs";
 
@@ -198,7 +198,7 @@ internal static class ScanHandler
         if (!countOnly && filter is null && projection is null && pushdown.Sql is null)
         {
             await ExecuteScanFusedAsync(
-                ctx, req, continuationIn, queryBody, collLink, collUri, cosmos, ct).ConfigureAwait(false);
+                ctx, req, continuationIn, queryBody.WrittenMemory, collLink, collUri, cosmos, ct).ConfigureAwait(false);
             return;
         }
 
@@ -214,9 +214,6 @@ internal static class ScanHandler
                 ? MaxBatchSize
                 : Math.Max(1, wantedScanned - scanned);
             int pageSize = Math.Min(MaxBatchSize, remaining);
-
-            using var content = new StringContent(queryBody, Encoding.UTF8);
-            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/query+json");
 
             var headers = new List<KeyValuePair<string, string>>
             {
@@ -235,7 +232,7 @@ internal static class ScanHandler
 
             using var resp = await cosmos.SendAsync(
                 HttpMethod.Post, "docs", collLink, collUri,
-                content, headers, ct).ConfigureAwait(false);
+                queryBody.WrittenMemory, "application/query+json", headers, ct).ConfigureAwait(false);
 
             if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
@@ -345,7 +342,7 @@ internal static class ScanHandler
     /// </summary>
     private static async Task ExecuteScanFusedAsync(
         HttpContext ctx, ScanRequest req, string? continuationIn,
-        string queryBody, string collLink, string collUri,
+        ReadOnlyMemory<byte> queryBody, string collLink, string collUri,
         CosmosClient cosmos, CancellationToken ct)
     {
         int wantedScanned = req.Limit ?? int.MaxValue;
@@ -365,9 +362,6 @@ internal static class ScanHandler
                 : Math.Max(1, wantedScanned - count);
             int pageSize = Math.Min(MaxBatchSize, remaining);
 
-            using var content = new StringContent(queryBody, Encoding.UTF8);
-            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/query+json");
-
             var headers = new List<KeyValuePair<string, string>>
             {
                 new("x-ms-documentdb-isquery", "true"),
@@ -385,7 +379,7 @@ internal static class ScanHandler
 
             using var resp = await cosmos.SendAsync(
                 HttpMethod.Post, "docs", collLink, collUri,
-                content, headers, ct).ConfigureAwait(false);
+                queryBody, "application/query+json", headers, ct).ConfigureAwait(false);
 
             // Nothing has been written to ctx.Response yet (the envelope lives
             // in outBuf), so an error here can still emit a clean response.
@@ -474,7 +468,7 @@ internal static class ScanHandler
     /// fragment pushed down by <see cref="FilterPushdownVisitor"/>.
     /// Everything else is evaluated in-process.
     /// </summary>
-    internal static string BuildScanQueryBody(FilterPushdownResult pushdown)
+    internal static PooledByteBufferWriter BuildScanQueryBody(FilterPushdownResult pushdown)
     {
         var sql = pushdown.Sql is { } f
             ? "SELECT * FROM c WHERE c._a2a = 'item' AND " + f
