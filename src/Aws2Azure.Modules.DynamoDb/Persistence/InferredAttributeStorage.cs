@@ -101,12 +101,10 @@ internal static class InferredAttributeStorage
     public const string EnvelopeTagBS = "_a2a:BS";
 
     // Pre-encoded property names — avoids JS-escape work and per-call
-    // allocations on the hot path.
+    // allocations on the hot path. IdPropEncoded is still consumed by the
+    // read path (Cosmos → DDB); the remaining write-path names moved to the
+    // dual-back-end TokenName block below.
     private static readonly JsonEncodedText IdPropEncoded = JsonEncodedText.Encode(IdProperty);
-    private static readonly JsonEncodedText PkPropEncoded = JsonEncodedText.Encode(PkProperty);
-    private static readonly JsonEncodedText DiscPropEncoded = JsonEncodedText.Encode(DiscriminatorProperty);
-    private static readonly JsonEncodedText DiscValueItemEncoded = JsonEncodedText.Encode(DiscriminatorValueItem);
-    private static readonly JsonEncodedText ShadowIdPropEncoded = JsonEncodedText.Encode(ShadowEncodedIdName);
     private static readonly JsonEncodedText ItemPropEncoded = JsonEncodedText.Encode("Item");
     private static readonly JsonEncodedText TagS = JsonEncodedText.Encode(AttributeValueTypes.String);
     private static readonly JsonEncodedText TagN = JsonEncodedText.Encode(AttributeValueTypes.Number);
@@ -118,11 +116,20 @@ internal static class InferredAttributeStorage
     private static readonly JsonEncodedText TagSS = JsonEncodedText.Encode(AttributeValueTypes.StringSet);
     private static readonly JsonEncodedText TagNS = JsonEncodedText.Encode(AttributeValueTypes.NumberSet);
     private static readonly JsonEncodedText TagBS = JsonEncodedText.Encode(AttributeValueTypes.BinarySet);
-    private static readonly JsonEncodedText EnvelopeNEncoded = JsonEncodedText.Encode(EnvelopeTagN);
-    private static readonly JsonEncodedText EnvelopeBEncoded = JsonEncodedText.Encode(EnvelopeTagB);
-    private static readonly JsonEncodedText EnvelopeSSEncoded = JsonEncodedText.Encode(EnvelopeTagSS);
-    private static readonly JsonEncodedText EnvelopeNSEncoded = JsonEncodedText.Encode(EnvelopeTagNS);
-    private static readonly JsonEncodedText EnvelopeBSEncoded = JsonEncodedText.Encode(EnvelopeTagBS);
+
+    // Write-path constant names/values, pre-encoded for BOTH back-ends
+    // (escaped JSON text + verbatim UTF-8) so the shared ITokenWriter walk can
+    // target either the JSON-text or the CosmosBinary writer (#332/#335).
+    private static readonly TokenName IdPropName = new(IdProperty);
+    private static readonly TokenName PkPropName = new(PkProperty);
+    private static readonly TokenName DiscPropName = new(DiscriminatorProperty);
+    private static readonly TokenName DiscValueItemName = new(DiscriminatorValueItem);
+    private static readonly TokenName ShadowIdPropName = new(ShadowEncodedIdName);
+    private static readonly TokenName EnvelopeNName = new(EnvelopeTagN);
+    private static readonly TokenName EnvelopeBName = new(EnvelopeTagB);
+    private static readonly TokenName EnvelopeSSName = new(EnvelopeTagSS);
+    private static readonly TokenName EnvelopeNSName = new(EnvelopeTagNS);
+    private static readonly TokenName EnvelopeBSName = new(EnvelopeTagBS);
 
     private static readonly JsonWriterOptions WriterOptions = new()
     {
@@ -197,14 +204,34 @@ internal static class InferredAttributeStorage
     public static void WriteCosmosDocument(IBufferWriter<byte> output, string id, string pk, JsonElement item)
     {
         ArgumentNullException.ThrowIfNull(output);
+        using var writer = new Utf8JsonWriter(output, WriterOptions);
+        WriteCosmosDocumentCore(new Utf8JsonTokenWriter(writer), id, pk, item);
+    }
+
+    /// <summary>
+    /// Builds the Cosmos document as <b>CosmosBinary</b> JSON (the <c>0x80</c>
+    /// format), the opt-in write-body encoding of the #332 GO. Drives the exact
+    /// same token walk as <see cref="WriteCosmosDocument"/>, differing only in
+    /// the <see cref="ITokenWriter"/> back-end, so the two are semantically
+    /// symmetric (verified by the decode round-trip golden corpus).
+    /// </summary>
+    public static void WriteCosmosDocumentBinary(IBufferWriter<byte> output, string id, string pk, JsonElement item)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        using var writer = new CosmosBinaryWriter(output);
+        WriteCosmosDocumentCore(writer, id, pk, item);
+    }
+
+    private static void WriteCosmosDocumentCore<TWriter>(TWriter writer, string id, string pk, JsonElement item)
+        where TWriter : ITokenWriter
+    {
         if (item.ValueKind != JsonValueKind.Object)
             throw new ArgumentException("Item must be a JSON object.", nameof(item));
 
-        using var writer = new Utf8JsonWriter(output, WriterOptions);
         writer.WriteStartObject();
-        writer.WriteString(IdPropEncoded, id);
-        writer.WriteString(PkPropEncoded, pk);
-        writer.WriteString(DiscPropEncoded, DiscValueItemEncoded);
+        writer.WriteString(IdPropName, id);
+        writer.WriteString(PkPropName, pk);
+        writer.WriteString(DiscPropName, DiscValueItemName);
 
         foreach (var prop in item.EnumerateObject())
         {
@@ -212,7 +239,7 @@ internal static class InferredAttributeStorage
             {
                 // Shadow-encode the rare DDB attr that collides with
                 // Cosmos's required "id" field; decoder unmangles.
-                writer.WritePropertyName(ShadowIdPropEncoded);
+                writer.WritePropertyName(ShadowIdPropName);
             }
             else if (IsReservedTopLevelName(prop.Name))
             {
@@ -257,6 +284,10 @@ internal static class InferredAttributeStorage
     /// the full doc builder.
     /// </summary>
     public static void EncodeAttributeValue(Utf8JsonWriter writer, JsonElement ddbAttr)
+        => EncodeAttributeValue(new Utf8JsonTokenWriter(writer), ddbAttr);
+
+    private static void EncodeAttributeValue<TWriter>(TWriter writer, JsonElement ddbAttr)
+        where TWriter : ITokenWriter
     {
         if (!ParsedAttributeValue.TryParse(ddbAttr, out var parsed))
             throw new ArgumentException(
@@ -291,20 +322,20 @@ internal static class InferredAttributeStorage
 
             case AttributeValueTypes.Binary:
                 writer.WriteStartObject();
-                writer.WriteString(EnvelopeBEncoded, parsed.Value.GetString());
+                writer.WriteString(EnvelopeBName, parsed.Value.GetString());
                 writer.WriteEndObject();
                 break;
 
             case AttributeValueTypes.StringSet:
-                WriteSetEnvelope(writer, EnvelopeSSEncoded, parsed.Value);
+                WriteSetEnvelope(writer, EnvelopeSSName, parsed.Value);
                 break;
 
             case AttributeValueTypes.NumberSet:
-                WriteSetEnvelope(writer, EnvelopeNSEncoded, parsed.Value);
+                WriteSetEnvelope(writer, EnvelopeNSName, parsed.Value);
                 break;
 
             case AttributeValueTypes.BinarySet:
-                WriteSetEnvelope(writer, EnvelopeBSEncoded, parsed.Value);
+                WriteSetEnvelope(writer, EnvelopeBSName, parsed.Value);
                 break;
 
             default:
@@ -313,7 +344,8 @@ internal static class InferredAttributeStorage
         }
     }
 
-    private static void EncodeMap(Utf8JsonWriter writer, JsonElement mapEl)
+    private static void EncodeMap<TWriter>(TWriter writer, JsonElement mapEl)
+        where TWriter : ITokenWriter
     {
         if (mapEl.ValueKind != JsonValueKind.Object)
             throw new ArgumentException("M must be a JSON object.", nameof(mapEl));
@@ -337,7 +369,8 @@ internal static class InferredAttributeStorage
         writer.WriteEndObject();
     }
 
-    private static void EncodeList(Utf8JsonWriter writer, JsonElement listEl)
+    private static void EncodeList<TWriter>(TWriter writer, JsonElement listEl)
+        where TWriter : ITokenWriter
     {
         if (listEl.ValueKind != JsonValueKind.Array)
             throw new ArgumentException("L must be a JSON array.", nameof(listEl));
@@ -350,7 +383,8 @@ internal static class InferredAttributeStorage
         writer.WriteEndArray();
     }
 
-    private static void WriteSetEnvelope(Utf8JsonWriter writer, JsonEncodedText tag, JsonElement setEl)
+    private static void WriteSetEnvelope<TWriter>(TWriter writer, TokenName tag, JsonElement setEl)
+        where TWriter : ITokenWriter
     {
         if (setEl.ValueKind != JsonValueKind.Array)
             throw new ArgumentException("Set value must be a JSON array.", nameof(setEl));
@@ -398,7 +432,8 @@ internal static class InferredAttributeStorage
     /// values survive the Cosmos round-trip as a string. Throws
     /// <see cref="ArgumentException"/> on inputs outside DDB's range.
     /// </summary>
-    private static void EncodeNumber(Utf8JsonWriter writer, JsonElement numberAttrValue)
+    private static void EncodeNumber<TWriter>(TWriter writer, JsonElement numberAttrValue)
+        where TWriter : ITokenWriter
     {
         if (numberAttrValue.ValueKind != JsonValueKind.String)
             throw new ArgumentException(
@@ -413,7 +448,7 @@ internal static class InferredAttributeStorage
         {
             // Bare: normalised form survives Cosmos's JSON-number
             // double conversion byte-identical.
-            writer.WriteRawValue(normalised, skipInputValidation: false);
+            writer.WriteNumberRaw(normalised);
             return;
         }
 
@@ -421,7 +456,7 @@ internal static class InferredAttributeStorage
         // truncate / renormalise via double on bare storage. String
         // preserves digits.
         writer.WriteStartObject();
-        writer.WriteString(EnvelopeNEncoded, normalised);
+        writer.WriteString(EnvelopeNName, normalised);
         writer.WriteEndObject();
     }
 

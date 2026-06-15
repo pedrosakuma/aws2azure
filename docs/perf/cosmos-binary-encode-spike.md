@@ -315,11 +315,45 @@ the binary path would re-introduce the 608–1656 B/write allocation it is meant
 avoid. Land this first, then the binary writer captures the ~2.4× format-step CPU
 win on top of a zero-allocation body.
 
-## How to run the encode benchmark
+## Step 2 — production writer landed (#335): end-to-end validation
+
+Step 2 ships the production `ITokenWriter` abstraction with two implementations
+over **one** token walk (`InferredAttributeStorage.WriteCosmosDocumentCore`):
+`Utf8JsonTokenWriter` (text, byte-identical to the prior path) and
+`CosmosBinaryWriter` (the `0x80` encoder). Correctness is gated by a byte-identity
+golden corpus plus a `decode(encode(x)) == text(x)` round-trip through the
+production `CosmosBinaryDecoder` (`CosmosBinaryWriterTests`).
+
+A second benchmark, `CosmosWriteEncodeBenchmarks`, measures the **shipping entry
+points** end to end (`WriteCosmosDocument` vs `WriteCosmosDocumentBinary` over a
+parsed DynamoDB item) rather than the isolated formatter of §2:
+
+| Doc          | Text    | Binary  | Ratio | Alloc ratio |
+|--------------|--------:|--------:|------:|------------:|
+| lean         | 2.62 µs | 2.57 µs | 0.98  | 0.95        |
+| payload_512  | 3.51 µs | 3.43 µs | 0.98  | 0.97        |
+| wide_20s_20n | 18.6 µs | 17.9 µs | 0.96  | 0.99        |
+
+The isolated **format step is ~2.4× cheaper** (§2), but end to end the two
+encoders are within a few percent because the per-attribute `JsonElement`
+traversal + `ParsedAttributeValue` parse + `GetString` materialization — shared
+identically by both arms — dominates, and the formatter is only a small slice of
+total encode cost. `CosmosBinaryWriter` additionally assembles into a pooled
+scratch buffer (backpatching the `LC4` length/count prefixes needs random access)
+and copies to the body writer on flush. **None of this changes the GO**: the
+format-step CPU win is real and the infrastructure is correct and gated. It does
+mean **step 3 should integrate the binary writer single-pass** — write directly
+into the send buffer and avoid the redundant string materialization — to surface
+more of the formatter advantage at the request boundary.
+
+## How to run the encode benchmarks
 
 ```bash
 dotnet run -c Release --project tests/Aws2Azure.Benchmarks -- \
-  --filter '*CosmosEncodeBenchmarks*'        # add --job short for a fast pass
+  --filter '*CosmosEncodeBenchmarks*'        # §2 isolated formatter (~2.4×)
+dotnet run -c Release --project tests/Aws2Azure.Benchmarks -- \
+  --filter '*CosmosWriteEncodeBenchmarks*'   # production entry points, end to end
+# add --job short for a fast pass
 ```
 
 Numbers are in-process micro-benchmark CPU/allocation figures (emulator- and
