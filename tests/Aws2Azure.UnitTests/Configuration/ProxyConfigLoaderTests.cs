@@ -140,6 +140,27 @@ public class ProxyConfigLoaderTests : IDisposable
     }
 
     [Fact]
+    public void Env_var_overrides_dynamodb_cosmos_binary_requests()
+    {
+        var env = new Dictionary<string, string?>
+        {
+            ["AWS2AZURE__DYNAMODB__COSMOSBINARYREQUESTS"] = "true",
+        };
+
+        var config = ProxyConfigLoader.Load(jsonFilePath: null, env);
+
+        Assert.True(config.DynamoDb.CosmosBinaryRequests);
+    }
+
+    [Fact]
+    public void Cosmos_binary_requests_defaults_off()
+    {
+        var config = ProxyConfigLoader.Load(jsonFilePath: null, envVars: new Dictionary<string, string?>());
+
+        Assert.False(config.DynamoDb.CosmosBinaryRequests);
+    }
+
+    [Fact]
     public void Throws_on_malformed_json()
     {
         File.WriteAllText(_tempFile, "{ this is not valid json");

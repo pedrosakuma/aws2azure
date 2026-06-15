@@ -24,15 +24,17 @@ namespace Aws2Azure.Modules.DynamoDb.Internal;
 /// (<c>0xCA</c> int32 / <c>0xCB</c> int64 / <c>0xCC</c> double).</para>
 ///
 /// <para>The document is assembled in a pooled scratch buffer (backpatching
-/// needs random access) and copied to the destination
-/// <see cref="IBufferWriter{T}"/> on <see cref="Flush"/>; <see cref="Dispose"/>
+/// needs random access). In output-backed mode it is copied to the destination
+/// <see cref="IBufferWriter{T}"/> on <see cref="Flush"/>; in self-owned mode
+/// the body stays in the pooled buffer and is exposed via
+/// <see cref="WrittenMemory"/> for a zero-copy send. <see cref="Dispose"/>
 /// returns the pooled arrays.</para>
 /// </summary>
 internal sealed class CosmosBinaryWriter : ITokenWriter, IDisposable
 {
     private const byte BinaryFormatMarker = 0x80;
 
-    private readonly IBufferWriter<byte> _output;
+    private readonly IBufferWriter<byte>? _output;
     private byte[] _buffer;
     private int _position;
 
@@ -40,6 +42,11 @@ internal sealed class CosmosBinaryWriter : ITokenWriter, IDisposable
     private int _depth;
     private bool _disposed;
 
+    /// <summary>
+    /// Writes into a destination <see cref="IBufferWriter{T}"/> on
+    /// <see cref="Flush"/> (copying the assembled body). Use this overload when
+    /// the caller already owns an output buffer.
+    /// </summary>
     public CosmosBinaryWriter(IBufferWriter<byte> output, int initialCapacity = 256)
     {
         ArgumentNullException.ThrowIfNull(output);
@@ -48,6 +55,28 @@ internal sealed class CosmosBinaryWriter : ITokenWriter, IDisposable
         _frames = ArrayPool<Frame>.Shared.Rent(16);
         WriteByte(BinaryFormatMarker);
     }
+
+    /// <summary>
+    /// Self-owned mode: the assembled body lives in this writer's pooled buffer
+    /// and is exposed via <see cref="WrittenMemory"/> for a zero-copy send
+    /// (no intermediate output buffer). The memory is valid until
+    /// <see cref="Dispose"/>; the caller must keep the writer alive for the
+    /// duration of the send and dispose it afterwards.
+    /// </summary>
+    public CosmosBinaryWriter(int initialCapacity = 256)
+    {
+        _output = null;
+        _buffer = ArrayPool<byte>.Shared.Rent(Math.Max(initialCapacity, 16));
+        _frames = ArrayPool<Frame>.Shared.Rent(16);
+        WriteByte(BinaryFormatMarker);
+    }
+
+    /// <summary>
+    /// The assembled binary body. Only valid after <see cref="Flush"/> and
+    /// before <see cref="Dispose"/>, and only meaningful for the self-owned
+    /// (parameterless-constructor) mode.
+    /// </summary>
+    public ReadOnlyMemory<byte> WrittenMemory => _buffer.AsMemory(0, _position);
 
     public void WriteStartObject()
     {
@@ -146,7 +175,9 @@ internal sealed class CosmosBinaryWriter : ITokenWriter, IDisposable
             throw new InvalidOperationException("CosmosBinaryWriter flushed with unbalanced containers.");
         }
 
-        _output.Write(_buffer.AsSpan(0, _position));
+        // Self-owned mode keeps the body in _buffer (exposed via WrittenMemory)
+        // for a zero-copy send; only the output-backed mode copies out here.
+        _output?.Write(_buffer.AsSpan(0, _position));
     }
 
     public void Dispose()

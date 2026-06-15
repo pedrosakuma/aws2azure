@@ -120,7 +120,7 @@ public sealed class DynamoDbServiceModule : IServiceModule
         }
 
         var auth = CreateAuthenticator(cosmosCreds);
-        var cosmos = new CosmosClient(_http, cosmosCreds, auth, _regionLogger, _settings.CosmosBinaryResponses);
+        var cosmos = new CosmosClient(_http, cosmosCreds, auth, _regionLogger, _settings.CosmosBinaryResponses, _settings.CosmosBinaryRequests);
 
         switch (parsed.Operation)
         {

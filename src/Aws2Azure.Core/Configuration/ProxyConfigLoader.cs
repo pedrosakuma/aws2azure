@@ -116,6 +116,10 @@ public static class ProxyConfigLoader
             {
                 config.DynamoDb.CosmosBinaryResponses = cosmosBinaryResponses;
             }
+            else if (field == "COSMOSBINARYREQUESTS" && bool.TryParse(value, out var cosmosBinaryRequests))
+            {
+                config.DynamoDb.CosmosBinaryRequests = cosmosBinaryRequests;
+            }
             return;
         }
 

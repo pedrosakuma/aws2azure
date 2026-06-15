@@ -34,7 +34,6 @@ internal sealed class CosmosClient
     private readonly ILogger? _regionLogger;
     private readonly CosmosAccountCacheEntry _accountCache;
     private readonly bool _cosmosBinaryResponses;
-
     public const string ApiVersion = "2018-12-31";
     internal const string CosmosBinarySerializationHeader = "x-ms-cosmos-supported-serialization-formats";
     internal const string CosmosBinarySerializationValue = "CosmosBinary";
@@ -44,6 +43,13 @@ internal sealed class CosmosClient
         new(StringComparer.OrdinalIgnoreCase);
 
     public string DatabaseName { get; }
+
+    /// <summary>
+    /// When <see langword="true"/>, standalone document write bodies are sent in
+    /// the Cosmos binary JSON (<c>0x80</c>) format (#336). Fixed per client
+    /// (per AWS access key) at module composition time.
+    /// </summary>
+    public bool CosmosBinaryRequests { get; }
     
     /// <summary>
     /// Returns the Cosmos account endpoint URL (for cache keying).
@@ -55,7 +61,8 @@ internal sealed class CosmosClient
         CosmosCredentials credentials,
         ICosmosAuthenticator authenticator,
         ILogger? regionLogger = null,
-        bool cosmosBinaryResponses = false)
+        bool cosmosBinaryResponses = false,
+        bool cosmosBinaryRequests = false)
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(credentials);
@@ -76,6 +83,7 @@ internal sealed class CosmosClient
         _regionLogger = regionLogger;
         _accountCache = AccountCache.GetOrAdd(_baseUri.AbsoluteUri, _ => new CosmosAccountCacheEntry());
         _cosmosBinaryResponses = cosmosBinaryResponses;
+        CosmosBinaryRequests = cosmosBinaryRequests;
         DatabaseName = credentials.DatabaseName;
     }
 

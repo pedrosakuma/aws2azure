@@ -108,6 +108,18 @@ public sealed class DynamoDbSettings
     /// text JSON despite the hint, the normal text path is used unchanged.
     /// </summary>
     public bool CosmosBinaryResponses { get; set; }
+
+    /// <summary>
+    /// Opts DynamoDB write paths into Cosmos DB binary JSON <b>request</b> bodies
+    /// (the <c>0x80</c> format) for standalone document upserts/replaces
+    /// (PutItem, UpdateItem, BatchWriteItem). Disabled by default. The Cosmos
+    /// gateway auto-detects the binary marker, so no negotiation header or
+    /// special <c>Content-Type</c> is needed; paths that embed the document as a
+    /// JSON value (stored-procedure conditional writes, TransactWriteItems)
+    /// always use text. Requires a gateway that accepts binary bodies — keep
+    /// this off unless validated against the target Cosmos account (see #337).
+    /// </summary>
+    public bool CosmosBinaryRequests { get; set; }
 }
 
 /// <summary>

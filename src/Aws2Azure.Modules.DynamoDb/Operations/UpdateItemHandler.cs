@@ -314,9 +314,8 @@ internal static class UpdateItemHandler
             // Build the Cosmos doc envelope from the mutated item map,
             // straight into a pooled UTF-8 buffer (no string / StringContent
             // round-trip on the write body).
-            using var docBuf = new PooledByteBufferWriter();
-            ItemHandlers.WriteItemDocument(docBuf, id, pk, newItemJson);
-            var docBody = docBuf.WrittenMemory;
+            using var docBuf = ItemHandlers.ItemDocumentBody.Create(id, pk, newItemJson, cosmos.CosmosBinaryRequests);
+            var docBody = docBuf.Memory;
 
             HttpResponseMessage writeResp;
             if (execResult.ItemExistedBefore && etag is not null)

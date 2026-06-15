@@ -222,6 +222,29 @@ internal static class InferredAttributeStorage
         WriteCosmosDocumentCore(writer, id, pk, item);
     }
 
+    /// <summary>
+    /// Single-pass variant of <see cref="WriteCosmosDocumentBinary(IBufferWriter{byte},string,string,JsonElement)"/>:
+    /// assembles the CosmosBinary body into a self-owned pooled buffer and
+    /// returns the writer so the caller can send <see cref="CosmosBinaryWriter.WrittenMemory"/>
+    /// directly (no copy into a second buffer). The caller <b>owns the returned
+    /// writer</b> and must dispose it once the send completes.
+    /// </summary>
+    public static CosmosBinaryWriter WriteCosmosDocumentBinary(string id, string pk, JsonElement item)
+    {
+        var writer = new CosmosBinaryWriter();
+        try
+        {
+            WriteCosmosDocumentCore(writer, id, pk, item);
+        }
+        catch
+        {
+            writer.Dispose();
+            throw;
+        }
+
+        return writer;
+    }
+
     private static void WriteCosmosDocumentCore<TWriter>(TWriter writer, string id, string pk, JsonElement item)
         where TWriter : ITokenWriter
     {
