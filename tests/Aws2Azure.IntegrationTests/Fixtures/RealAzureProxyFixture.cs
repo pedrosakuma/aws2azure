@@ -394,12 +394,13 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
             AppendCredential(credentials, WiAwsAccessKey, WiAwsSecret, wiAzure.ToString());
         }
 
-        // Exercise the opt-in CosmosBinary response path (#268/#321) end-to-end
-        // against real Azure Cosmos DB, which (unlike the CI Linux emulator) does
-        // emit 0x80 CosmosBinary bodies — so the fused GetItem reader is actually
-        // driven here rather than silently falling back to the text path.
+        // Exercise BOTH opt-in CosmosBinary paths end-to-end against real Azure
+        // Cosmos DB (the CI Linux emulator neither emits nor reliably accepts
+        // CosmosBinary): responses (#268/#321) drive the fused GetItem reader,
+        // and requests (#336/#337) send 0x80 write bodies the gateway must parse
+        // + index. Both are response-/request-only opt-ins, default-off in prod.
         var dynamoDbBlock = (CosmosConfigured || CosmosWorkloadIdentityConfigured)
-            ? "  \"dynamodb\": { \"cosmosBinaryResponses\": true },\n"
+            ? "  \"dynamodb\": { \"cosmosBinaryResponses\": true, \"cosmosBinaryRequests\": true },\n"
             : string.Empty;
 
         return $$"""

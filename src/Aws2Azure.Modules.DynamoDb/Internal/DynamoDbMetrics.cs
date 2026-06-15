@@ -110,4 +110,32 @@ internal static class DynamoDbMetrics
     public const string OpUpdate = "update";
     public const string OpBatchGet = "batchget";
     public const string OpTransactGet = "transactget";
+
+    /// <summary>
+    /// Counts DynamoDB→Cosmos standalone document write bodies by the wire
+    /// format used, tagged <c>format</c>:
+    /// <list type="bullet">
+    ///   <item><c>binary</c> — the body was encoded as CosmosBinary (the
+    ///   <c>0x80</c> format) because the opt-in <c>DynamoDb.CosmosBinaryRequests</c>
+    ///   is enabled (#336).</item>
+    ///   <item><c>text</c> — the body was encoded as JSON text (the default, or a
+    ///   path that cannot use binary such as the sproc-embedded conditional
+    ///   write / TransactWriteItems).</item>
+    /// </list>
+    /// Lets an operator confirm the opt-in binary write path is actually active
+    /// in their topology, and lets the real-Azure acceptance test prove a given
+    /// write went out as binary rather than silently using text (#337).
+    /// </summary>
+    private static readonly Counter<long> WriteBodyFormat = Meter.CreateCounter<long>(
+        "aws2azure_dynamodb_write_body_total",
+        unit: "{request}",
+        description: "DDB→Cosmos document write bodies by wire format (binary / text).");
+
+    public const string FormatBinary = "binary";
+    public const string FormatText = "text";
+
+    public static void RecordWriteBodyFormat(bool binary)
+        => WriteBodyFormat.Add(
+            1,
+            new KeyValuePair<string, object?>("format", binary ? FormatBinary : FormatText));
 }

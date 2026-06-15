@@ -34,5 +34,6 @@ behavior_differences:
   - "Cosmos 429 maps to `UnprocessedItems` rather than `ProvisionedThroughputExceededException`; matches DDB SDK retry behaviour."
   - "Order is preserved within a table when echoing into `UnprocessedItems`, but Cosmos calls execute in parallel — no guarantee that writes within a table commit in the order they were submitted."
   - "Only validated against scripted Cosmos REST fakes; not yet exercised against real Azure Cosmos."
+  - "Each Put unit's standalone document body is sent as CosmosBinary (the `0x80` format) when the opt-in `DynamoDb.CosmosBinaryRequests` is enabled (default off); each unit is its own `POST /docs` upsert, so the gateway auto-detects the marker (no negotiation header or special Content-Type). Delete units carry no body. The chosen format is observable on `aws2azure_dynamodb_write_body_total{format=binary|text}`. The Cosmos DB Linux emulator neither emits nor reliably accepts CosmosBinary, so the binary write path is validated against real Azure only — confirmed parsed + indexed by the nightly acceptance test."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_BatchWriteItem.html
