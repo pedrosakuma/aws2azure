@@ -39,14 +39,14 @@ internal static class TransactWriteItemsHandler
 {
     private const int MaxItemsPerCall = 100;
 
-    private enum OpKind
+    internal enum OpKind
     {
         Put,
         Delete,
         Check,
     }
 
-    private readonly record struct PreparedOp(OpKind Kind, string Id, byte[]? DocBytes, string? ConditionJson);
+    internal readonly record struct PreparedOp(OpKind Kind, string Id, byte[]? DocBytes, string? ConditionJson);
 
     public static async Task HandleTransactWriteItemsAsync(
         HttpContext ctx, byte[] body, CosmosClient cosmos, SprocContext? sprocCtx, CancellationToken ct)
@@ -282,10 +282,10 @@ internal static class TransactWriteItemsHandler
                 id, docBytes, conditionJson);
         }
 
-        string opsJson;
+        PooledByteBufferWriter paramsBuf;
         try
         {
-            opsJson = BuildOperationsJson(prepared);
+            paramsBuf = BuildTransactParamsBody(prepared);
         }
         catch (JsonException)
         {
@@ -297,15 +297,20 @@ internal static class TransactWriteItemsHandler
             return;
         }
 
-        var ready = await sprocCtx.Manager.EnsureTransactSprocAsync(cosmos, table!, ct).ConfigureAwait(false);
-        if (!ready)
+        SprocTransactResult result;
+        using (paramsBuf)
         {
-            await CosmosOpsShared.WriteErrorAsync(ctx, 500, "InternalServerError",
-                "TransactWriteItems stored procedure could not be provisioned.").ConfigureAwait(false);
-            return;
-        }
+            var ready = await sprocCtx.Manager.EnsureTransactSprocAsync(cosmos, table!, ct).ConfigureAwait(false);
+            if (!ready)
+            {
+                await CosmosOpsShared.WriteErrorAsync(ctx, 500, "InternalServerError",
+                    "TransactWriteItems stored procedure could not be provisioned.").ConfigureAwait(false);
+                return;
+            }
 
-        var result = await sprocCtx.Manager.ExecuteTransactAsync(cosmos, table!, partitionKey!, opsJson, ct).ConfigureAwait(false);
+            result = await sprocCtx.Manager.ExecuteTransactAsync(
+                cosmos, table!, partitionKey!, paramsBuf.WrittenMemory, ct).ConfigureAwait(false);
+        }
 
         if (result.Success)
         {
@@ -397,39 +402,77 @@ internal static class TransactWriteItemsHandler
         return ConditionGate.TryParse(expr, expected: null, conditionalOperator: null, names, values);
     }
 
-    private static string BuildOperationsJson(PreparedOp[] ops)
+    /// <summary>
+    /// Assembles the full <c>atomicTransactWrite</c> sproc parameter list
+    /// <c>[ [ &lt;ops&gt; ] ]</c> in a single <see cref="Utf8JsonWriter"/> pass
+    /// straight into a pooled UTF-8 buffer. The sproc takes one parameter (the
+    /// operations array), so the outer array wraps it. Each Put's pre-encoded
+    /// document and each serialized condition AST are spliced as raw JSON via
+    /// <see cref="Utf8JsonWriter.WriteRawValue(System.ReadOnlySpan{byte})"/> /
+    /// the string overload — no <c>byte[] → string → byte[]</c> round-trip and
+    /// no <c>StringContent</c> re-encode. Output is byte-identical to
+    /// <c>"[" + <see cref="BuildOperationsJson"/> + "]"</c> (verified by tests).
+    /// </summary>
+    internal static PooledByteBufferWriter BuildTransactParamsBody(PreparedOp[] ops)
+    {
+        var buf = new PooledByteBufferWriter(512);
+        try
+        {
+            using var w = new Utf8JsonWriter(buf);
+            w.WriteStartArray();      // sproc parameter list
+            WriteOperationsArray(w, ops);
+            w.WriteEndArray();
+            w.Flush();
+        }
+        catch
+        {
+            buf.Dispose();
+            throw;
+        }
+        return buf;
+    }
+
+    private static void WriteOperationsArray(Utf8JsonWriter w, PreparedOp[] ops)
+    {
+        w.WriteStartArray();
+        foreach (var op in ops)
+        {
+            w.WriteStartObject();
+            w.WriteString("type", op.Kind switch
+            {
+                OpKind.Put => "PUT",
+                OpKind.Delete => "DELETE",
+                _ => "CHECK",
+            });
+            w.WriteString("id", op.Id);
+            if (op.DocBytes is not null)
+            {
+                w.WritePropertyName("doc");
+                w.WriteRawValue(op.DocBytes);
+            }
+            w.WritePropertyName("condition");
+            if (op.ConditionJson is not null)
+            {
+                w.WriteRawValue(op.ConditionJson);
+            }
+            else
+            {
+                w.WriteNullValue();
+            }
+            w.WriteEndObject();
+        }
+        w.WriteEndArray();
+    }
+
+    // Legacy string encoder for just the operations array, retained as the
+    // byte-identity reference for <see cref="BuildTransactParamsBody"/> tests.
+    // Not used on the request path (which is now single-pass / zero-copy).
+    internal static string BuildOperationsJson(PreparedOp[] ops)
     {
         using var ms = new MemoryStream();
         using (var w = new Utf8JsonWriter(ms))
         {
-            w.WriteStartArray();
-            foreach (var op in ops)
-            {
-                w.WriteStartObject();
-                w.WriteString("type", op.Kind switch
-                {
-                    OpKind.Put => "PUT",
-                    OpKind.Delete => "DELETE",
-                    _ => "CHECK",
-                });
-                w.WriteString("id", op.Id);
-                if (op.DocBytes is not null)
-                {
-                    w.WritePropertyName("doc");
-                    w.WriteRawValue(op.DocBytes);
-                }
-                w.WritePropertyName("condition");
-                if (op.ConditionJson is not null)
-                {
-                    w.WriteRawValue(op.ConditionJson);
-                }
-                else
-                {
-                    w.WriteNullValue();
-                }
-                w.WriteEndObject();
-            }
-            w.WriteEndArray();
+            WriteOperationsArray(w, ops);
         }
         return Encoding.UTF8.GetString(ms.ToArray());
     }

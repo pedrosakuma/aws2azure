@@ -79,7 +79,7 @@ internal static class SprocDispatcher
         string containerName,
         string partitionKey,
         string docId,
-        string cosmosDocJson,
+        ReadOnlyMemory<byte> cosmosDocJson,
         ConditionNode? condition,
         CancellationToken ct)
     {
@@ -143,7 +143,7 @@ internal static class SprocDispatcher
         string containerName,
         string partitionKey,
         string docId,
-        string keyAttributesJson,
+        ReadOnlyMemory<byte> keyAttributesJson,
         ConditionNode? condition,
         UpdateExpressionAst? updateAst,
         string returnValues,
