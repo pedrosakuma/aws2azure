@@ -78,10 +78,64 @@ public class UpdateItemHandlerTests
         return r;
     }
 
+    private static HttpResponseMessage CosmosOkBinary(string body, string? etag = null)
+    {
+        var r = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(CosmosBinaryTestEncoder.Encode(body)),
+        };
+        if (etag is not null) r.Headers.TryAddWithoutValidation("etag", etag);
+        return r;
+    }
+
     private static string DocWithItem(string pk, string id, string itemJson)
     {
         using var d = JsonDocument.Parse(itemJson);
         return Aws2Azure.Modules.DynamoDb.Persistence.InferredAttributeStorage.BuildCosmosDocument(id, pk, d.RootElement);
+    }
+
+    [Fact]
+    public async Task UpdateItem_all_old_image_byte_identical_for_binary_and_text_get_body()
+    {
+        // ReturnValues=ALL_OLD surfaces the materialized existing item straight
+        // from the GET extraction. The response must be byte-identical whether
+        // the GET body came back as CosmosBinary (binary-direct extraction) or
+        // text. Rich corpus: escaping, number, binary, sets, nested map/list.
+        string itemJson =
+            "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"99\"},"
+            + "\"name\":{\"S\":\"\\\"héllo\\\" <b>&</b> \\uD83D\\uDE00\"},"
+            + "\"bin\":{\"B\":\"AQID\"},\"ss\":{\"SS\":[\"a\",\"b\"]},"
+            + "\"nested\":{\"M\":{\"inner\":{\"L\":[{\"S\":\"z\"},{\"NULL\":true}]}}}}";
+        string doc = DocWithItem("a", "a", itemJson);
+        string req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}},"
+                     + "\"UpdateExpression\":\"SET v = :v\","
+                     + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"100\"}},"
+                     + "\"ReturnValues\":\"ALL_OLD\"}";
+
+        async Task<string> Run(HttpResponseMessage getResp)
+        {
+            CosmosOpsShared.MetadataCache.Clear();
+            var (ctx, body) = NewCtx();
+            var handler = new ScriptedHandler
+            {
+                Responses =
+                {
+                    CosmosOk(MetadataDocHashOnly),
+                    getResp,
+                    CosmosOk("{}"),
+                },
+            };
+            var cosmos = BuildClient(handler);
+            await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, default);
+            Assert.Equal(200, ctx.Response.StatusCode);
+            return ReadResponse(body);
+        }
+
+        string textResp = await Run(CosmosOk(doc, etag: "\"e1\""));
+        string binaryResp = await Run(CosmosOkBinary(doc, etag: "\"e1\""));
+
+        Assert.Equal(textResp, binaryResp);
+        Assert.Contains("Attributes", textResp);
     }
 
     [Fact]

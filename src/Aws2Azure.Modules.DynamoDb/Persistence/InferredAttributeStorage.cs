@@ -910,6 +910,50 @@ internal static class InferredAttributeStorage
     private static ReadOnlySpan<byte> DocumentsNameU8 => "Documents"u8;
 
     /// <summary>
+    /// Reader-agnostic single-document map extraction: materializes the same
+    /// <c>Dictionary&lt;string, JsonElement&gt;</c> AttributeValue map as
+    /// <see cref="ExtractItem(JsonElement)"/>, but driven straight off any
+    /// <see cref="ITokenReader"/> — in particular <c>CosmosBinaryReader</c> over
+    /// a binary Cosmos body — so callers that still need a materialized map
+    /// (condition evaluation, projection, update application, response grouping)
+    /// can skip the redundant binary→text page decode + <see cref="JsonDocument"/>
+    /// DOM build. The small re-serialize-and-parse the map itself requires (the
+    /// typed AttributeValue values must be <see cref="JsonElement"/>) is shared
+    /// with the <see cref="JsonElement"/> overload, so the returned map is
+    /// element-for-element identical to <see cref="ExtractItem(JsonElement)"/>.
+    ///
+    /// <para>On entry the reader is positioned before the document (the first
+    /// <see cref="reader.Read()"/> must land on its <see cref="JsonTokenType.StartObject"/>);
+    /// a non-object root returns <c>null</c>, matching the <see cref="JsonElement"/>
+    /// overload.</para>
+    /// </summary>
+    public static Dictionary<string, JsonElement>? ExtractItemFused<TReader>(scoped ref TReader reader)
+        where TReader : ITokenReader, allows ref struct
+    {
+        if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+        {
+            return null;
+        }
+
+        // Re-emit the transformed item into a single batch buffer, parse once,
+        // then clone children — identical tail to ExtractItem(JsonElement).
+        var bw = new ArrayBufferWriter<byte>(1024);
+        using (var writer = new Utf8JsonWriter(bw, WriterOptions))
+        {
+            WriteTransformedItem(writer, ref reader);
+            writer.Flush();
+        }
+
+        var result = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        using var batch = JsonDocument.Parse(bw.WrittenMemory);
+        foreach (var prop in batch.RootElement.EnumerateObject())
+        {
+            result[prop.Name] = prop.Value.Clone();
+        }
+        return result;
+    }
+
+    /// <summary>
     /// Streams the <c>Documents</c> array of a Cosmos query/feed response
     /// (<c>{"_rid":…,"Documents":[ {doc}, … ],"_count":N}</c>) into
     /// <paramref name="writer"/> as transformed DynamoDB item objects, writing

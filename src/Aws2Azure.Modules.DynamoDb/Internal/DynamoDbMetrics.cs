@@ -73,4 +73,41 @@ internal static class DynamoDbMetrics
 
     public const string OpScan = "scan";
     public const string OpQuery = "query";
+
+    /// <summary>
+    /// Counts materialized read responses by the Cosmos decode path taken,
+    /// tagged <c>op</c> (which operation materialized a map) and <c>path</c>:
+    /// <list type="bullet">
+    ///   <item><c>binary</c> — the AttributeValue map was built straight off the
+    ///   CosmosBinary body via <c>CosmosBinaryReader</c> (<c>ExtractItemFused</c>),
+    ///   skipping the binary→text page decode + JsonDocument DOM.</item>
+    ///   <item><c>fallback</c> — a binary body whose streaming reader declined a
+    ///   marker, so the map was built via decode-to-text + JsonDocument.</item>
+    ///   <item><c>text</c> — Cosmos returned ordinary text JSON (binary not
+    ///   negotiated or not honored, e.g. against the emulator).</item>
+    /// </list>
+    /// Complements <see cref="GetItemDecodePath"/> (which covers the fused
+    /// GetItem envelope) for the paths that must still materialize a map
+    /// (ReturnValues, BatchGet/TransactGet, filtered/projected Query/Scan).
+    /// </summary>
+    private static readonly Counter<long> ReadDecodePath = Meter.CreateCounter<long>(
+        "aws2azure_dynamodb_read_decode_path_total",
+        unit: "{response}",
+        description: "Materialized read responses by Cosmos decode path (binary / fallback / text).");
+
+    public const string DecodeBinary = "binary";
+    public const string DecodeFallback = "fallback";
+    public const string DecodeText = "text";
+
+    public static void RecordReadDecodePath(string op, string path)
+        => ReadDecodePath.Add(
+            1,
+            new KeyValuePair<string, object?>("op", op),
+            new KeyValuePair<string, object?>("path", path));
+
+    public const string OpPut = "put";
+    public const string OpDelete = "delete";
+    public const string OpUpdate = "update";
+    public const string OpBatchGet = "batchget";
+    public const string OpTransactGet = "transactget";
 }

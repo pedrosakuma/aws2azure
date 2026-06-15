@@ -220,6 +220,118 @@ internal static class CosmosOpsShared
         }
     }
 
+    /// <summary>
+    /// Reads the Cosmos response body into a single contiguous pooled buffer
+    /// <b>without</b> decoding a CosmosBinary payload. Lets a caller attempt a
+    /// binary-direct transform (via <c>CosmosBinaryReader</c>) and decode to text
+    /// only on fallback, instead of always paying the binary→text page decode.
+    /// </summary>
+    public static async Task<PooledByteBufferWriter> ReadCosmosRawBodyAsync(
+        HttpContent content,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+
+        int initialCapacity = 4096;
+        if (content.Headers.ContentLength is > 0 and <= int.MaxValue)
+        {
+            initialCapacity = (int)content.Headers.ContentLength;
+        }
+
+        var input = new PooledByteBufferWriter(initialCapacity);
+        try
+        {
+            await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            while (true)
+            {
+                Memory<byte> memory = input.GetMemory(4096);
+                int read = await stream.ReadAsync(memory, cancellationToken).ConfigureAwait(false);
+                if (read == 0) break;
+                input.Advance(read);
+            }
+
+            return input;
+        }
+        catch
+        {
+            input.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Materializes a single Cosmos document into a DynamoDB AttributeValue map,
+    /// preferring a binary-direct walk (<c>CosmosBinaryReader</c> →
+    /// <see cref="Persistence.InferredAttributeStorage.ExtractItemFused"/>) over
+    /// the binary→text decode + <see cref="JsonDocument"/> path when Cosmos
+    /// returned a CosmosBinary body and the streaming reader can fast-path it.
+    /// Records <c>aws2azure_dynamodb_read_decode_path_total{op,path}</c>.
+    /// </summary>
+    public static async Task<Dictionary<string, JsonElement>?> ReadAndExtractItemAsync(
+        HttpContent content, string op, CancellationToken cancellationToken)
+    {
+        using var raw = await ReadCosmosRawBodyAsync(content, cancellationToken).ConfigureAwait(false);
+        ReadOnlyMemory<byte> body = raw.WrittenMemory;
+
+        // Everything below is synchronous, so the binary reader's span never
+        // crosses an await and the pooled buffer stays valid for its lifetime.
+        if (CosmosBinaryDecoder.IsBinary(body.Span))
+        {
+            if (TryExtractItemBinary(body.Span, out Dictionary<string, JsonElement>? item))
+            {
+                DynamoDbMetrics.RecordReadDecodePath(op, DynamoDbMetrics.DecodeBinary);
+                return item;
+            }
+
+            // Streaming reader declined a marker: decode to text and materialize.
+            DynamoDbMetrics.RecordReadDecodePath(op, DynamoDbMetrics.DecodeFallback);
+            using var decoded = new PooledByteBufferWriter(Math.Max(4096, body.Length));
+            CosmosBinaryDecoder.Decode(body.Span, decoded);
+            using var fallbackDoc = JsonDocument.Parse(decoded.WrittenMemory);
+            return Persistence.InferredAttributeStorage.ExtractItem(fallbackDoc.RootElement);
+        }
+
+        DynamoDbMetrics.RecordReadDecodePath(op, DynamoDbMetrics.DecodeText);
+        using var doc = JsonDocument.Parse(body);
+        return Persistence.InferredAttributeStorage.ExtractItem(doc.RootElement);
+    }
+
+    /// <summary>
+    /// Builds the AttributeValue map for a single Cosmos document straight off
+    /// the binary body via <see cref="CosmosBinaryReader"/> (no decode-to-text
+    /// pass). Returns <c>true</c> with the map on success; returns <c>false</c>
+    /// (map <c>null</c>) if the streaming reader hits a marker it does not
+    /// fast-path, so the caller can fall back to the proven decode-to-text path.
+    /// Mirrors <see cref="TryWriteFusedBinaryEnvelope"/>.
+    /// </summary>
+    private static bool TryExtractItemBinary(
+        ReadOnlySpan<byte> binaryBody, out Dictionary<string, JsonElement>? item)
+    {
+        try
+        {
+            var reader = new CosmosBinaryReader(binaryBody);
+            try
+            {
+                item = Persistence.InferredAttributeStorage.ExtractItemFused(ref reader);
+            }
+            finally
+            {
+                reader.Dispose();
+            }
+            return true;
+        }
+        catch (Exception ex) when (ex is JsonException or IndexOutOfRangeException or ArgumentOutOfRangeException)
+        {
+            // Malformed/truncated or not-yet-fast-pathed binary: defer to the
+            // authoritative decode-to-text path. Nothing has been written to the
+            // response, so the fallback is clean. InvalidOperationException (the
+            // transform's malformed-envelope signal) is intentionally NOT caught —
+            // the fallback would throw the identical exception.
+            item = null;
+            return false;
+        }
+    }
+
     public static async Task WriteJsonAsync<T>(
         HttpContext ctx, int status, T payload, JsonTypeInfo<T> typeInfo)
     {
