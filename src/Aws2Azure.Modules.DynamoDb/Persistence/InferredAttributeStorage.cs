@@ -194,46 +194,58 @@ internal static class InferredAttributeStorage
     /// validated key-attribute presence/type and reserved-name conflicts
     /// (via <see cref="IsReservedTopLevelName"/>).
     /// </summary>
-    public static string BuildCosmosDocument(string id, string pk, JsonElement item)
+    public static void WriteCosmosDocument(IBufferWriter<byte> output, string id, string pk, JsonElement item)
     {
+        ArgumentNullException.ThrowIfNull(output);
         if (item.ValueKind != JsonValueKind.Object)
             throw new ArgumentException("Item must be a JSON object.", nameof(item));
 
-        var bw = new ArrayBufferWriter<byte>(1024);
-        using (var writer = new Utf8JsonWriter(bw, WriterOptions))
+        using var writer = new Utf8JsonWriter(output, WriterOptions);
+        writer.WriteStartObject();
+        writer.WriteString(IdPropEncoded, id);
+        writer.WriteString(PkPropEncoded, pk);
+        writer.WriteString(DiscPropEncoded, DiscValueItemEncoded);
+
+        foreach (var prop in item.EnumerateObject())
         {
-            writer.WriteStartObject();
-            writer.WriteString(IdPropEncoded, id);
-            writer.WriteString(PkPropEncoded, pk);
-            writer.WriteString(DiscPropEncoded, DiscValueItemEncoded);
-
-            foreach (var prop in item.EnumerateObject())
+            if (IsShadowEncodableName(prop.Name))
             {
-                if (IsShadowEncodableName(prop.Name))
-                {
-                    // Shadow-encode the rare DDB attr that collides with
-                    // Cosmos's required "id" field; decoder unmangles.
-                    writer.WritePropertyName(ShadowIdPropEncoded);
-                }
-                else if (IsReservedTopLevelName(prop.Name))
-                {
-                    // Names inside the _a2a namespace (other than the
-                    // shadow-encodable ones) are reserved for proxy use
-                    // and must be rejected — encoder can't disambiguate
-                    // a user "_a2a:foo" from an envelope tag.
-                    throw new ArgumentException(
-                        $"Attribute '{prop.Name}' uses a reserved name and would collide with proxy metadata.",
-                        nameof(item));
-                }
-                else
-                {
-                    writer.WritePropertyName(prop.Name);
-                }
-                EncodeAttributeValue(writer, prop.Value);
+                // Shadow-encode the rare DDB attr that collides with
+                // Cosmos's required "id" field; decoder unmangles.
+                writer.WritePropertyName(ShadowIdPropEncoded);
             }
-
-            writer.WriteEndObject();
+            else if (IsReservedTopLevelName(prop.Name))
+            {
+                // Names inside the _a2a namespace (other than the
+                // shadow-encodable ones) are reserved for proxy use
+                // and must be rejected — encoder can't disambiguate
+                // a user "_a2a:foo" from an envelope tag.
+                throw new ArgumentException(
+                    $"Attribute '{prop.Name}' uses a reserved name and would collide with proxy metadata.",
+                    nameof(item));
+            }
+            else
+            {
+                writer.WritePropertyName(prop.Name);
+            }
+            EncodeAttributeValue(writer, prop.Value);
         }
+
+        writer.WriteEndObject();
+        writer.Flush();
+    }
+
+    /// <summary>
+    /// String-producing convenience over <see cref="WriteCosmosDocument"/>,
+    /// retained for the stored-procedure path that embeds the document as a
+    /// JSON string inside a sproc parameter array. The hot HTTP write paths
+    /// use <see cref="WriteCosmosDocument"/> directly and never materialize
+    /// this string.
+    /// </summary>
+    public static string BuildCosmosDocument(string id, string pk, JsonElement item)
+    {
+        var bw = new ArrayBufferWriter<byte>(1024);
+        WriteCosmosDocument(bw, id, pk, item);
         return Encoding.UTF8.GetString(bw.WrittenSpan);
     }
 

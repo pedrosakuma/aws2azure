@@ -311,14 +311,17 @@ internal static class UpdateItemHandler
                 return;
             }
 
-            // Build the Cosmos doc envelope from the mutated item map.
-            var docJson = ItemHandlers.BuildItemDocument(id, pk, newItemJson);
+            // Build the Cosmos doc envelope from the mutated item map,
+            // straight into a pooled UTF-8 buffer (no string / StringContent
+            // round-trip on the write body).
+            using var docBuf = new PooledByteBufferWriter();
+            ItemHandlers.WriteItemDocument(docBuf, id, pk, newItemJson);
+            var docBody = docBuf.WrittenMemory;
 
             HttpResponseMessage writeResp;
             if (execResult.ItemExistedBefore && etag is not null)
             {
                 // Optimistic replace: PUT with If-Match.
-                using var content = new StringContent(docJson, Encoding.UTF8, "application/json");
                 var headers = new[]
                 {
                     new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
@@ -326,7 +329,7 @@ internal static class UpdateItemHandler
                 };
                 writeResp = await cosmos.SendAsync(
                     HttpMethod.Put, "docs", docLink, "/" + docLink,
-                    content, headers, ct).ConfigureAwait(false);
+                    docBody, "application/json", headers, ct).ConfigureAwait(false);
             }
             else
             {
@@ -334,7 +337,6 @@ internal static class UpdateItemHandler
                 // so a concurrent UpdateItem cannot race us and lose the
                 // other writer's mutation. On 409/412 the loop re-reads
                 // and replays the update against the winner's state.
-                using var content = new StringContent(docJson, Encoding.UTF8, "application/json");
                 var headers = new[]
                 {
                     new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
@@ -342,7 +344,7 @@ internal static class UpdateItemHandler
                 };
                 writeResp = await cosmos.SendAsync(
                     HttpMethod.Post, "docs", collLink, "/" + collLink + "/docs",
-                    content, headers, ct).ConfigureAwait(false);
+                    docBody, "application/json", headers, ct).ConfigureAwait(false);
             }
 
             using (writeResp)

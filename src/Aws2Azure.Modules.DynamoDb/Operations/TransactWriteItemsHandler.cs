@@ -46,7 +46,7 @@ internal static class TransactWriteItemsHandler
         Check,
     }
 
-    private readonly record struct PreparedOp(OpKind Kind, string Id, string? DocJson, string? ConditionJson);
+    private readonly record struct PreparedOp(OpKind Kind, string Id, byte[]? DocBytes, string? ConditionJson);
 
     public static async Task HandleTransactWriteItemsAsync(
         HttpContext ctx, byte[] body, CosmosClient cosmos, SprocContext? sprocCtx, CancellationToken ct)
@@ -256,7 +256,7 @@ internal static class TransactWriteItemsHandler
 
             string? conditionJson = SprocAstSerializer.SerializeCondition(condition);
 
-            string? docJson = null;
+            byte[]? docBytes = null;
             if (hasPut)
             {
                 if (!ItemHandlers.ValidateItemShape(keyBearer, out var shapeError))
@@ -266,7 +266,9 @@ internal static class TransactWriteItemsHandler
                 }
                 try
                 {
-                    docJson = ItemHandlers.BuildItemDocument(id, pk, keyBearer);
+                    // Embedded into the sproc params JSON via WriteRawValue
+                    // (bytes overload) — no string round-trip.
+                    docBytes = ItemHandlers.BuildItemDocumentBytes(id, pk, keyBearer);
                 }
                 catch (ArgumentException ex)
                 {
@@ -277,7 +279,7 @@ internal static class TransactWriteItemsHandler
 
             prepared[i] = new PreparedOp(
                 hasPut ? OpKind.Put : hasDelete ? OpKind.Delete : OpKind.Check,
-                id, docJson, conditionJson);
+                id, docBytes, conditionJson);
         }
 
         string opsJson;
@@ -411,10 +413,10 @@ internal static class TransactWriteItemsHandler
                     _ => "CHECK",
                 });
                 w.WriteString("id", op.Id);
-                if (op.DocJson is not null)
+                if (op.DocBytes is not null)
                 {
                     w.WritePropertyName("doc");
-                    w.WriteRawValue(op.DocJson);
+                    w.WriteRawValue(op.DocBytes);
                 }
                 w.WritePropertyName("condition");
                 if (op.ConditionJson is not null)
