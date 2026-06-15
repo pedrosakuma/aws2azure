@@ -95,6 +95,56 @@ internal sealed class CosmosClient
         System.Collections.Generic.IReadOnlyList<KeyValuePair<string, string>>? extraHeaders,
         CancellationToken ct)
     {
+        ReadOnlyMemory<byte>? bufferedContent = null;
+        HttpContentHeaders? bufferedContentHeaders = null;
+        if (content is not null)
+        {
+            bufferedContent = await content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+            bufferedContentHeaders = content.Headers;
+        }
+
+        return await SendBufferedAsync(
+            method, resourceType, resourceLink, requestUri,
+            bufferedContent, bufferedContentHeaders, contentType: null,
+            extraHeaders, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Zero-copy request-body overload: sends <paramref name="body"/> as the raw
+    /// request payload without the <c>byte[] → string → byte[]</c> round-trip a
+    /// <see cref="StringContent"/> would incur. The caller owns
+    /// <paramref name="body"/> (typically a pooled
+    /// <see cref="PooledByteBufferWriter"/>) and MUST keep it valid until this
+    /// call completes — the bytes are read once per attempt (retries / failover).
+    /// </summary>
+    public Task<HttpResponseMessage> SendAsync(
+        HttpMethod method,
+        string resourceType,
+        string resourceLink,
+        string requestUri,
+        ReadOnlyMemory<byte> body,
+        string contentType,
+        System.Collections.Generic.IReadOnlyList<KeyValuePair<string, string>>? extraHeaders,
+        CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(contentType);
+        return SendBufferedAsync(
+            method, resourceType, resourceLink, requestUri,
+            body, bufferedContentHeaders: null, contentType,
+            extraHeaders, ct);
+    }
+
+    private async Task<HttpResponseMessage> SendBufferedAsync(
+        HttpMethod method,
+        string resourceType,
+        string resourceLink,
+        string requestUri,
+        ReadOnlyMemory<byte>? bufferedContent,
+        HttpContentHeaders? bufferedContentHeaders,
+        string? contentType,
+        System.Collections.Generic.IReadOnlyList<KeyValuePair<string, string>>? extraHeaders,
+        CancellationToken ct)
+    {
         ArgumentNullException.ThrowIfNull(method);
         ArgumentNullException.ThrowIfNull(resourceType);
         ArgumentNullException.ThrowIfNull(resourceLink);
@@ -117,14 +167,6 @@ internal sealed class CosmosClient
                 candidates[0].AbsoluteUri);
         }
 
-        byte[]? bufferedContent = null;
-        HttpContentHeaders? bufferedContentHeaders = null;
-        if (content is not null)
-        {
-            bufferedContent = await content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
-            bufferedContentHeaders = content.Headers;
-        }
-
         HttpResponseMessage? lastFailoverResponse = null;
         var attemptedEndpoints = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         while (true)
@@ -142,9 +184,9 @@ internal sealed class CosmosClient
                 HttpContent? attemptContent = null;
                 try
                 {
-                    if (bufferedContent is not null)
+                    if (bufferedContent.HasValue)
                     {
-                        attemptContent = CreateBufferedContent(bufferedContent, bufferedContentHeaders);
+                        attemptContent = CreateBufferedContent(bufferedContent.Value, bufferedContentHeaders, contentType);
                         request.Content = attemptContent;
                     }
 
@@ -460,15 +502,20 @@ internal sealed class CosmosClient
         _accountCache.UnavailableUntil[endpoint.AbsoluteUri] = DateTimeOffset.UtcNow + EndpointUnavailableTtl;
     }
 
-    private static HttpContent CreateBufferedContent(byte[] bytes, HttpContentHeaders? headers)
+    private static HttpContent CreateBufferedContent(
+        ReadOnlyMemory<byte> bytes, HttpContentHeaders? headers, string? contentType)
     {
-        var content = new ByteArrayContent(bytes);
+        var content = new ReadOnlyMemoryContent(bytes);
         if (headers is not null)
         {
             foreach (var header in headers)
             {
                 content.Headers.TryAddWithoutValidation(header.Key, header.Value);
             }
+        }
+        else if (!string.IsNullOrEmpty(contentType))
+        {
+            content.Headers.TryAddWithoutValidation("Content-Type", contentType);
         }
         return content;
     }

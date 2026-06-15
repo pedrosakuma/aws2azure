@@ -612,7 +612,7 @@ internal sealed class PooledByteBufferWriter : IBufferWriter<byte>, IDisposable
     private byte[] _buffer;
     private int _index;
 
-    public PooledByteBufferWriter(int initialCapacity)
+    public PooledByteBufferWriter(int initialCapacity = 1024)
     {
         _buffer = ArrayPool<byte>.Shared.Rent(Math.Max(initialCapacity, 256));
         _index = 0;

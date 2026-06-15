@@ -148,7 +148,6 @@ internal static class ItemHandlers
             return;
         }
 
-        var docJson = BuildItemDocument(id, pk, req.Item);
         var pkHeader = CosmosOpsShared.BuildPartitionKeyHeader(pk);
         var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + req.TableName;
         var docLink = collLink + "/docs/" + id;
@@ -157,8 +156,11 @@ internal static class ItemHandlers
         {
             // Fast path: no condition → unconditional upsert (existing
             // behaviour, preserves the property that PutItem is idempotent
-            // when the caller doesn't care about prior state).
-            using var content = new StringContent(docJson, Encoding.UTF8, "application/json");
+            // when the caller doesn't care about prior state). Zero-copy:
+            // the doc is written straight into a pooled UTF-8 buffer handed
+            // to the HTTP layer, with no string / StringContent round-trip.
+            using var docBuf = new PooledByteBufferWriter();
+            WriteItemDocument(docBuf, id, pk, req.Item);
             var headers = new[]
             {
                 new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
@@ -166,7 +168,7 @@ internal static class ItemHandlers
             };
             using var resp = await cosmos.SendAsync(
                 HttpMethod.Post, "docs", collLink, "/" + collLink + "/docs",
-                content, headers, ct).ConfigureAwait(false);
+                docBuf.WrittenMemory, "application/json", headers, ct).ConfigureAwait(false);
 
             if (resp.StatusCode == HttpStatusCode.NotFound)
             {
@@ -190,6 +192,10 @@ internal static class ItemHandlers
         // Sproc path: single atomic call if enabled
         if (sprocCtx is { IsSprocEnabled: true })
         {
+            // The sproc embeds the document as a JSON string inside its
+            // parameter array, so this path materializes the string form
+            // (only reached on the rarer conditional + sproc-enabled path).
+            var docJson = BuildItemDocument(id, pk, req.Item);
             var sprocResult = await SprocDispatcher.TryPutItemAsync(
                 sprocCtx,
                 cosmos,
@@ -234,7 +240,12 @@ internal static class ItemHandlers
         }
 
         // Fallback: GET → evaluate → PUT(If-Match) or POST(If-None-Match: *),
-        // with bounded retry on 412/409 so concurrent writers replay.
+        // with bounded retry on 412/409 so concurrent writers replay. The doc
+        // is written once into a pooled UTF-8 buffer and re-sent zero-copy on
+        // each attempt (no string / StringContent round-trip).
+        using var fallbackDoc = new PooledByteBufferWriter();
+        WriteItemDocument(fallbackDoc, id, pk, req.Item);
+        var docBody = fallbackDoc.WrittenMemory;
         const int MaxRetries = 4;
         for (int attempt = 0; attempt < MaxRetries; attempt++)
         {
@@ -282,7 +293,6 @@ internal static class ItemHandlers
             }
 
             HttpResponseMessage writeResp;
-            using (var content = new StringContent(docJson, Encoding.UTF8, "application/json"))
             {
                 if (existingItem is not null && etag is not null)
                 {
@@ -293,7 +303,7 @@ internal static class ItemHandlers
                     };
                     writeResp = await cosmos.SendAsync(
                         HttpMethod.Put, "docs", docLink, "/" + docLink,
-                        content, headers, ct).ConfigureAwait(false);
+                        docBody, "application/json", headers, ct).ConfigureAwait(false);
                 }
                 else
                 {
@@ -304,7 +314,7 @@ internal static class ItemHandlers
                     };
                     writeResp = await cosmos.SendAsync(
                         HttpMethod.Post, "docs", collLink, "/" + collLink + "/docs",
-                        content, headers, ct).ConfigureAwait(false);
+                        docBody, "application/json", headers, ct).ConfigureAwait(false);
                 }
             }
 
@@ -908,10 +918,37 @@ internal static class ItemHandlers
     /// <summary>
     /// Composes the Cosmos doc shape used for item writes. Thin wrapper
     /// over <see cref="InferredAttributeStorage.BuildCosmosDocument"/>;
-    /// kept for call-site stability across the DynamoDb module.
+    /// kept for call-site stability across the DynamoDb module. Prefer
+    /// <see cref="WriteItemDocument"/> for the HTTP write body — it avoids the
+    /// <c>byte[] → string → byte[]</c> round-trip this overload incurs and is
+    /// only retained for the sproc path that embeds the doc as a JSON string.
     /// </summary>
     internal static string BuildItemDocument(string id, string pk, JsonElement item)
         => InferredAttributeStorage.BuildCosmosDocument(id, pk, item);
+
+    /// <summary>
+    /// Writes the Cosmos doc shape for an item write straight into a pooled
+    /// UTF-8 buffer, whose bytes can be handed to the HTTP layer with no
+    /// intermediate <see cref="string"/> / <see cref="StringContent"/> copy.
+    /// </summary>
+    internal static void WriteItemDocument(
+        PooledByteBufferWriter output,
+        string id, string pk, JsonElement item)
+        => InferredAttributeStorage.WriteCosmosDocument(output, id, pk, item);
+
+    /// <summary>
+    /// Builds the Cosmos doc shape as a UTF-8 <see cref="byte"/> array (no
+    /// <see cref="string"/> / <see cref="StringContent"/> re-encode). Used by
+    /// <c>BatchWriteItem</c>, where every unit's body is built upfront and held
+    /// live across parallel sends, so a GC-managed array is the leak-safe
+    /// representation.
+    /// </summary>
+    internal static byte[] BuildItemDocumentBytes(string id, string pk, JsonElement item)
+    {
+        var bw = new System.Buffers.ArrayBufferWriter<byte>(1024);
+        InferredAttributeStorage.WriteCosmosDocument(bw, id, pk, item);
+        return bw.WrittenSpan.ToArray();
+    }
 
     /// <summary>
     /// Extracts the DDB attribute map from a Cosmos doc, projecting

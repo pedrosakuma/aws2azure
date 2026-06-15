@@ -166,8 +166,13 @@ internal static class BatchWriteItemHandler
                             $"BatchWriteItem contains duplicate write targeting the same key in table '{tableName}'.").ConfigureAwait(false);
                         return;
                     }
-                    var docJson = ItemHandlers.BuildItemDocument(id, pk, itemEl);
-                    work.Add(new WriteWorkUnit(tableName, pk, id, WriteKind.Put, docJson, entry.Clone()));
+                    // Batch units are built upfront and live across all
+                    // parallel sends, so a GC-managed byte[] (leak-safe on
+                    // every early-return path) is preferred over a pooled
+                    // buffer here. Still removes the string / StringContent
+                    // re-encode the previous BuildItemDocument path incurred.
+                    var doc = ItemHandlers.BuildItemDocumentBytes(id, pk, itemEl);
+                    work.Add(new WriteWorkUnit(tableName, pk, id, WriteKind.Put, doc, entry.Clone()));
                 }
                 else
                 {
@@ -261,36 +266,27 @@ internal static class BatchWriteItemHandler
             var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + unit.Table;
             var pkHeader = CosmosOpsShared.BuildPartitionKeyHeader(unit.Pk);
             HttpResponseMessage resp;
-            StringContent? content = null;
-            try
+            if (unit.Kind == WriteKind.Put)
             {
-                if (unit.Kind == WriteKind.Put)
+                var headers = new[]
                 {
-                    content = new StringContent(unit.DocJson!, Encoding.UTF8, "application/json");
-                    var headers = new[]
-                    {
-                        new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
-                        new KeyValuePair<string, string>("x-ms-documentdb-is-upsert", "true"),
-                    };
-                    resp = await cosmos.SendAsync(
-                        HttpMethod.Post, "docs", collLink, "/" + collLink + "/docs",
-                        content, headers, ct).ConfigureAwait(false);
-                }
-                else
-                {
-                    var docLink = collLink + "/docs/" + unit.Id;
-                    var headers = new[]
-                    {
-                        new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
-                    };
-                    resp = await cosmos.SendAsync(
-                        HttpMethod.Delete, "docs", docLink, "/" + docLink,
-                        content: null, headers, ct).ConfigureAwait(false);
-                }
+                    new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
+                    new KeyValuePair<string, string>("x-ms-documentdb-is-upsert", "true"),
+                };
+                resp = await cosmos.SendAsync(
+                    HttpMethod.Post, "docs", collLink, "/" + collLink + "/docs",
+                    unit.Doc!, "application/json", headers, ct).ConfigureAwait(false);
             }
-            finally
+            else
             {
-                content?.Dispose();
+                var docLink = collLink + "/docs/" + unit.Id;
+                var headers = new[]
+                {
+                    new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
+                };
+                resp = await cosmos.SendAsync(
+                    HttpMethod.Delete, "docs", docLink, "/" + docLink,
+                    content: null, headers, ct).ConfigureAwait(false);
             }
 
             try
@@ -351,7 +347,7 @@ internal static class BatchWriteItemHandler
 
     private sealed record WriteWorkUnit(
         string Table, string Pk, string Id, WriteKind Kind,
-        string? DocJson, JsonElement OriginalEntry);
+        byte[]? Doc, JsonElement OriginalEntry);
 
     private readonly record struct WriteResult(bool Throttled, HardError? HardError);
 
