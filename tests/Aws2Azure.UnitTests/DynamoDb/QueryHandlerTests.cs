@@ -95,8 +95,13 @@ public class QueryHandlerTests
         return r;
     }
 
-    private static HttpResponseMessage CosmosOkBytes(byte[] body)
-        => new(HttpStatusCode.OK) { Content = new ByteArrayContent(body) };
+    private static HttpResponseMessage CosmosOkBytes(byte[] body, string? continuation = null)
+    {
+        var r = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(body) };
+        if (continuation is not null)
+            r.Headers.TryAddWithoutValidation("x-ms-continuation", continuation);
+        return r;
+    }
 
     private static string DocWithItem(string pk, string id, string itemJson)
     {
@@ -186,6 +191,48 @@ public class QueryHandlerTests
         var actual = body.ToArray();
         var expected = MaterializedQuery(continuation, d1, d2, d3);
         Assert.Equal(Encoding.UTF8.GetString(expected), Encoding.UTF8.GetString(actual));
+    }
+
+    [Fact]
+    public async Task Query_fused_binary_page_byte_identical_to_text()
+    {
+        // No FilterExpression / ProjectionExpression → the fused fast path
+        // (pure binary-direct streaming transform, no decode-to-text, no fallback).
+        // A CosmosBinary page must yield a byte-identical response to a text
+        // page: rich corpus, multi-doc (comma splice), continuation (LEK tail).
+        string d1 = DocWithItem("a", "a",
+            "{\"pk\":{\"S\":\"a\"},\"v\":{\"S\":\"longer\"},\"n\":{\"N\":\"99\"},"
+            + "\"name\":{\"S\":\"\\\"héllo\\\" <b>&</b> \\uD83D\\uDE00\"},"
+            + "\"bin\":{\"B\":\"AQID\"},\"ss\":{\"SS\":[\"a\",\"b\"]},"
+            + "\"nested\":{\"M\":{\"inner\":{\"L\":[{\"S\":\"z\"},{\"NULL\":true}]}}}}");
+        string d2 = DocWithItem("a", "b", "{\"pk\":{\"S\":\"a\"},\"v\":{\"S\":\"x\"}}");
+        string page = QueryEnvelope(d1, d2);
+        string req = "{\"TableName\":\"orders\","
+                     + "\"KeyConditionExpression\":\"pk = :p\","
+                     + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}},"
+                     + "\"Limit\":2}";
+
+        async Task<string> Run(Func<string, HttpResponseMessage> wrap)
+        {
+            CosmosOpsShared.MetadataCache.Clear();
+            var (ctx, body) = NewCtx();
+            var handler = new ScriptedHandler
+            {
+                Responses = { CosmosOk(MetadataHashOnly), wrap(page) },
+            };
+            var cosmos = BuildClient(handler);
+            await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+            Assert.Equal(200, ctx.Response.StatusCode);
+            return ReadResponse(body);
+        }
+
+        string textResp = await Run(p => CosmosOk(p, continuation: "next-page-token"));
+        string binaryResp = await Run(p => CosmosOkBytes(CosmosBinaryTestEncoder.Encode(p), continuation: "next-page-token"));
+
+        Assert.Equal(textResp, binaryResp);
+        using var resp = JsonDocument.Parse(textResp);
+        Assert.Equal(2, resp.RootElement.GetProperty("Count").GetInt32());
+        Assert.True(resp.RootElement.TryGetProperty("LastEvaluatedKey", out _));
     }
 
     [Fact]

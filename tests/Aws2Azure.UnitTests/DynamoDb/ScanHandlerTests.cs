@@ -302,6 +302,49 @@ public class ScanHandlerTests
     }
 
     [Fact]
+    public async Task Scan_fused_binary_page_byte_identical_to_text()
+    {
+        // No FilterExpression / ProjectionExpression → the fused fast path
+        // (pure binary-direct streaming transform, no decode-to-text, no fallback).
+        // A CosmosBinary page must yield a byte-identical response to a text
+        // page across a rich corpus, a multi-doc page (comma splice), and a
+        // continuation (LastEvaluatedKey tail, base64 sentinel).
+        string d1 = DocWithItem("a", "a",
+            "{\"pk\":{\"S\":\"a\"},\"v\":{\"S\":\"longer\"},\"n\":{\"N\":\"99\"},"
+            + "\"name\":{\"S\":\"\\\"héllo\\\" <b>&</b> \\uD83D\\uDE00\"},"
+            + "\"bin\":{\"B\":\"AQID\"},\"ss\":{\"SS\":[\"a\",\"b\"]},"
+            + "\"nested\":{\"M\":{\"inner\":{\"L\":[{\"S\":\"z\"},{\"NULL\":true}]}}}}");
+        string d2 = DocWithItem("b", "b", "{\"pk\":{\"S\":\"b\"},\"v\":{\"S\":\"x\"}}");
+        string page = QueryEnvelope(d1, d2);
+        // Limit stops the loop after one page; the continuation surfaces as
+        // LastEvaluatedKey, exercising the manual base64 sentinel tail.
+        string req = "{\"TableName\":\"orders\",\"Limit\":2}";
+
+        async Task<string> Run(Func<string, HttpResponseMessage> wrap)
+        {
+            CosmosOpsShared.MetadataCache.Clear();
+            var (ctx, body) = NewCtx();
+            var handler = new ScriptedHandler
+            {
+                Responses = { CosmosOk(Metadata), wrap(page) },
+            };
+            var cosmos = BuildClient(handler);
+            await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+            Assert.Equal(200, ctx.Response.StatusCode);
+            return ReadResponse(body);
+        }
+
+        string textResp = await Run(p => CosmosOk(p, continuation: "next-page-token"));
+        string binaryResp = await Run(p => CosmosOkBinary(p, continuation: "next-page-token"));
+
+        Assert.Equal(textResp, binaryResp);
+        using var resp = JsonDocument.Parse(textResp);
+        Assert.Equal(2, resp.RootElement.GetProperty("Count").GetInt32());
+        Assert.Equal(2, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+        Assert.True(resp.RootElement.TryGetProperty("LastEvaluatedKey", out _));
+    }
+
+    [Fact]
     public async Task Scan_filter_expression_pushdown_appends_clause_to_cosmos_sql()
     {
         // A pushable predicate (v = :v over a string) must arrive at

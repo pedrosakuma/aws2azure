@@ -401,9 +401,29 @@ internal static class ScanHandler
                 return;
             }
 
-            using var page = await CosmosOpsShared.ReadCosmosJsonBodyAsync(resp.Content, ct).ConfigureAwait(false);
-            var reader = new Internal.Utf8JsonTokenReader(page.WrittenMemory.Span);
-            count += Persistence.InferredAttributeStorage.WriteTransformedDocuments(writer, ref reader);
+            using var page = await CosmosOpsShared.ReadCosmosRawBodyAsync(resp.Content, ct).ConfigureAwait(false);
+            // Pure binary-direct streaming transform: stream Cosmos documents straight
+            // into the DDB envelope. No decode-to-text step and no fallback — a reader
+            // decline propagates as an error, exactly like a malformed text page would.
+            if (Internal.CosmosBinaryDecoder.IsBinary(page.WrittenMemory.Span))
+            {
+                DynamoDbMetrics.RecordReadDecodePath(DynamoDbMetrics.OpScan, DynamoDbMetrics.DecodeBinary);
+                var reader = new Internal.CosmosBinaryReader(page.WrittenMemory.Span);
+                try
+                {
+                    count += Persistence.InferredAttributeStorage.WriteTransformedDocuments(writer, ref reader);
+                }
+                finally
+                {
+                    reader.Dispose();
+                }
+            }
+            else
+            {
+                DynamoDbMetrics.RecordReadDecodePath(DynamoDbMetrics.OpScan, DynamoDbMetrics.DecodeText);
+                var reader = new Internal.Utf8JsonTokenReader(page.WrittenMemory.Span);
+                count += Persistence.InferredAttributeStorage.WriteTransformedDocuments(writer, ref reader);
+            }
 
             continuationOut = null;
             if (resp.Headers.TryGetValues("x-ms-continuation", out var ctValues))
