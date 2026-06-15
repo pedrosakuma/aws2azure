@@ -119,6 +119,75 @@ public class QueryHandlerTests
     private static string CountEnvelope(long n)
         => "{\"_rid\":\"x\",\"Documents\":[" + n.ToString(System.Globalization.CultureInfo.InvariantCulture) + "],\"_count\":1}";
 
+    // Materialized oracle: rebuild the QueryResponse exactly as the
+    // legacy (non-fused) path would and serialize it via the same
+    // source-gen context. The fused handler output must be byte-identical.
+    private static byte[] MaterializedQuery(string? continuation, params string[] cosmosDocs)
+    {
+        var items = new List<Dictionary<string, JsonElement>>();
+        foreach (var d in cosmosDocs)
+        {
+            using var doc = JsonDocument.Parse(d);
+            items.Add(Aws2Azure.Modules.DynamoDb.Persistence.InferredAttributeStorage.ExtractItem(doc.RootElement)!);
+        }
+        var resp = new QueryResponse
+        {
+            Items = items,
+            Count = items.Count,
+            ScannedCount = items.Count,
+        };
+        if (continuation is not null)
+        {
+            var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(continuation));
+            using var keyDoc = JsonDocument.Parse("{\"__a2a_continuation\":{\"S\":" + JsonSerializer.Serialize(b64) + "}}");
+            var key = new Dictionary<string, JsonElement>();
+            foreach (var p in keyDoc.RootElement.EnumerateObject())
+                key[p.Name] = p.Value.Clone();
+            resp.LastEvaluatedKey = key;
+        }
+        return JsonSerializer.SerializeToUtf8Bytes(resp, QueryJsonContext.Default.QueryResponse);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("page-token-/+=")]
+    public async Task Query_fused_is_byte_identical_to_materialized(string? continuation)
+    {
+        // Rich corpus over a single partition (pk = "a"): escaping
+        // surface, number, binary, sets, nested map/list, bool, null.
+        string d1 = DocWithItem("a", "a",
+            "{\"pk\":{\"S\":\"a\"},\"name\":{\"S\":\"\\\"héllo\\\" <b>&</b> \\uD83D\\uDE00\\tend\"}}");
+        string d2 = DocWithItem("a", "b",
+            "{\"pk\":{\"S\":\"a\"},\"n\":{\"N\":\"123.45\"},\"bin\":{\"B\":\"AQID\"},"
+            + "\"ss\":{\"SS\":[\"x\",\"y\"]},\"ns\":{\"NS\":[\"1\",\"2\"]},\"flag\":{\"BOOL\":true}}");
+        string d3 = DocWithItem("a", "c",
+            "{\"pk\":{\"S\":\"a\"},\"nested\":{\"M\":{\"inner\":{\"L\":[{\"S\":\"z\"},{\"NULL\":true}]}}}}");
+
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataHashOnly),
+                CosmosOk(QueryEnvelope(d1, d2, d3), continuation),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}},"
+                  + "\"Limit\":3}";
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.Equal("application/x-amz-json-1.0", ctx.Response.ContentType);
+        body.Position = 0;
+        var actual = body.ToArray();
+        var expected = MaterializedQuery(continuation, d1, d2, d3);
+        Assert.Equal(Encoding.UTF8.GetString(expected), Encoding.UTF8.GetString(actual));
+    }
+
     [Fact]
     public async Task Query_pushed_filter_recovers_scanned_count_via_partition_scoped_aggregate()
     {

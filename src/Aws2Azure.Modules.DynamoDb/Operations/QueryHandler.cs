@@ -203,6 +203,19 @@ internal static class QueryHandler
         var collUri = "/" + collLink + "/docs";
         var pkHeader = CosmosOpsShared.BuildPartitionKeyHeader(keyCond.HashValue);
 
+        // Fast path: no in-process per-item work (no residual filter, no
+        // projection) and nothing pushed to Cosmos (so ScannedCount ==
+        // Count). Stream Cosmos documents straight into the DynamoDB
+        // response envelope without materializing an AttributeValue map
+        // per item. Mirrors ScanHandler.ExecuteScanFusedAsync.
+        if (!countOnly && filter is null && projection is null && pushdown.Sql is null)
+        {
+            await ExecuteQueryFusedAsync(
+                ctx, req, continuationIn, queryBody, collLink, collUri, pkHeader, cosmos, ct)
+                .ConfigureAwait(false);
+            return;
+        }
+
         int wantedScanned = req.Limit ?? int.MaxValue;
         var items = new List<Dictionary<string, JsonElement>>();
         int scanned = 0;
@@ -331,6 +344,7 @@ internal static class QueryHandler
             }
         }
 
+        DynamoDbMetrics.RecordReadTransformPath(DynamoDbMetrics.OpQuery, DynamoDbMetrics.PathMaterialized);
         var response = new QueryResponse
         {
             Items = countOnly ? null : items,
@@ -341,6 +355,109 @@ internal static class QueryHandler
         await CosmosOpsShared.WriteJsonAsync(ctx, 200, response, QueryJsonContext.Default.QueryResponse)
             .ConfigureAwait(false);
     }
+
+    private static async Task ExecuteQueryFusedAsync(
+        HttpContext ctx, QueryRequest req, string? continuationIn,
+        string queryBody, string collLink, string collUri, string pkHeader,
+        CosmosClient cosmos, CancellationToken ct)
+    {
+        int wantedScanned = req.Limit ?? int.MaxValue;
+        int count = 0;
+        string? continuationOut = continuationIn;
+
+        using var outBuf = new PooledByteBufferWriter(8192);
+        using var writer = new Utf8JsonWriter(outBuf);
+        writer.WriteStartObject();
+        writer.WritePropertyName(ItemsNameU8);
+        writer.WriteStartArray();
+
+        while (true)
+        {
+            int remaining = wantedScanned == int.MaxValue
+                ? MaxBatchSize
+                : Math.Max(1, wantedScanned - count);
+            int pageSize = Math.Min(MaxBatchSize, remaining);
+
+            using var content = new StringContent(queryBody, Encoding.UTF8);
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/query+json");
+
+            var headers = new List<KeyValuePair<string, string>>
+            {
+                new("x-ms-documentdb-partitionkey", pkHeader),
+                new("x-ms-documentdb-isquery", "true"),
+                new("x-ms-max-item-count", pageSize.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+            };
+            if (req.ConsistentRead == true)
+            {
+                headers.Add(new KeyValuePair<string, string>("x-ms-consistency-level", "Strong"));
+            }
+            if (!string.IsNullOrEmpty(continuationOut))
+            {
+                headers.Add(new KeyValuePair<string, string>("x-ms-continuation", continuationOut));
+            }
+
+            using var resp = await cosmos.SendAsync(
+                HttpMethod.Post, "docs", collLink, collUri,
+                content, headers, ct).ConfigureAwait(false);
+
+            // Nothing has been written to ctx.Response yet (the envelope lives
+            // in outBuf), so an error here can still emit a clean response.
+            if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
+                    $"Table not found: {req.TableName}").ConfigureAwait(false);
+                return;
+            }
+            if (!resp.IsSuccessStatusCode)
+            {
+                await CosmosOpsShared.WriteCosmosErrorAsync(ctx, resp, ct).ConfigureAwait(false);
+                return;
+            }
+
+            using var page = await CosmosOpsShared.ReadCosmosJsonBodyAsync(resp.Content, ct).ConfigureAwait(false);
+            var reader = new Internal.Utf8JsonTokenReader(page.WrittenMemory.Span);
+            count += Persistence.InferredAttributeStorage.WriteTransformedDocuments(writer, ref reader);
+
+            continuationOut = null;
+            if (resp.Headers.TryGetValues("x-ms-continuation", out var ctValues))
+            {
+                foreach (var v in ctValues) { continuationOut = v; break; }
+            }
+
+            if (count >= wantedScanned) break;
+            if (string.IsNullOrEmpty(continuationOut)) break;
+        }
+
+        writer.WriteEndArray();
+        writer.WriteNumber(CountNameU8, count);
+        writer.WriteNumber(ScannedCountNameU8, count);
+        if (!string.IsNullOrEmpty(continuationOut))
+        {
+            // LastEvaluatedKey: {"__a2a_continuation":{"S":"<base64(continuation)>"}}
+            writer.WritePropertyName(LastEvaluatedKeyNameU8);
+            writer.WriteStartObject();
+            writer.WritePropertyName(ContinuationSentinelAttr);
+            writer.WriteStartObject();
+            writer.WriteString(TypedStringNameU8,
+                Convert.ToBase64String(Encoding.UTF8.GetBytes(continuationOut)));
+            writer.WriteEndObject();
+            writer.WriteEndObject();
+        }
+        writer.WriteEndObject();
+        writer.Flush();
+
+        DynamoDbMetrics.RecordReadTransformPath(DynamoDbMetrics.OpQuery, DynamoDbMetrics.PathFused);
+
+        ctx.Response.StatusCode = 200;
+        ctx.Response.ContentType = "application/x-amz-json-1.0";
+        await ctx.Response.BodyWriter.WriteAsync(outBuf.WrittenMemory, ct).ConfigureAwait(false);
+    }
+
+    private static ReadOnlySpan<byte> ItemsNameU8 => "Items"u8;
+    private static ReadOnlySpan<byte> CountNameU8 => "Count"u8;
+    private static ReadOnlySpan<byte> ScannedCountNameU8 => "ScannedCount"u8;
+    private static ReadOnlySpan<byte> LastEvaluatedKeyNameU8 => "LastEvaluatedKey"u8;
+    private static ReadOnlySpan<byte> TypedStringNameU8 => "S"u8;
 
     // -------- helpers ------------------------------------------------
 

@@ -42,4 +42,35 @@ internal static class DynamoDbMetrics
 
     public static void RecordGetItemDecodePath(string path)
         => GetItemDecodePath.Add(1, new KeyValuePair<string, object?>("path", path));
+
+    /// <summary>
+    /// Counts multi-item read responses (Query / Scan) by the transform path
+    /// taken, tagged <c>op</c> (<c>scan</c>/<c>query</c>) and <c>path</c>:
+    /// <list type="bullet">
+    ///   <item><c>fused</c> — no FilterExpression and no ProjectionExpression,
+    ///   so each Cosmos document was pumped straight into the response
+    ///   <c>Items</c> array via <c>WriteTransformedItem</c> with no JsonDocument
+    ///   DOM, no AttributeValue map, and no per-item model re-serialization.</item>
+    ///   <item><c>materialized</c> — a FilterExpression or ProjectionExpression
+    ///   (or <c>Select=COUNT</c>) forced per-item materialization into a map for
+    ///   evaluation/projection before serialization.</item>
+    /// </list>
+    /// Lets an operator confirm the fused fast path is engaged for their
+    /// filter-free scans/queries rather than silently materializing.
+    /// </summary>
+    private static readonly Counter<long> ReadTransformPath = Meter.CreateCounter<long>(
+        "aws2azure_dynamodb_read_transform_path_total",
+        unit: "{response}",
+        description: "Query/Scan responses by transform path (fused / materialized).");
+
+    public const string PathMaterialized = "materialized";
+
+    public static void RecordReadTransformPath(string op, string path)
+        => ReadTransformPath.Add(
+            1,
+            new KeyValuePair<string, object?>("op", op),
+            new KeyValuePair<string, object?>("path", path));
+
+    public const string OpScan = "scan";
+    public const string OpQuery = "query";
 }
