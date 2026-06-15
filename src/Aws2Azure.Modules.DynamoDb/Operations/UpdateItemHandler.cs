@@ -168,16 +168,18 @@ internal static class UpdateItemHandler
         // Sproc path: single atomic call if enabled
         if (sprocCtx is { IsSprocEnabled: true })
         {
-            // For UpdateItem upsert case, pass the key attributes so sproc can build a new item
-            // Build JSON manually to avoid AOT issues
-            var keyAttrsJson = BuildKeyAttributesJson(id, pk);
+            // For UpdateItem upsert case, pass the key attributes so sproc can
+            // build a new item. Written straight into a pooled UTF-8 buffer (no
+            // string / StringContent round-trip) and spliced into the sproc
+            // params as raw bytes.
+            using var keyAttrsBuf = BuildKeyAttributesBytes(id, pk);
             var sprocResult = await SprocDispatcher.TryUpdateItemAsync(
                 sprocCtx,
                 cosmos,
                 req.TableName!,
                 pk,
                 id,
-                keyAttrsJson,
+                keyAttrsBuf.WrittenMemory,
                 condition,
                 ast,
                 returnValues,
@@ -603,6 +605,31 @@ internal static class UpdateItemHandler
             JsonValueKind.Null or JsonValueKind.Undefined => false,
             _ => true,
         };
+    }
+
+    /// <summary>
+    /// Builds the Cosmos envelope key attributes (<c>id</c>, <c>_a2a_pk</c>,
+    /// <c>_a2a</c>) as a pooled UTF-8 buffer for the sproc upsert case. The
+    /// object is fixed-shape and small; building it as bytes lets the sproc
+    /// parameter list be assembled and sent without a <c>StringContent</c>
+    /// re-encode of the whole body. Output is byte-identical to
+    /// <see cref="BuildKeyAttributesJson"/>.
+    /// </summary>
+    private static PooledByteBufferWriter BuildKeyAttributesBytes(string id, string pk)
+    {
+        var json = BuildKeyAttributesJson(id, pk);
+        var buf = new PooledByteBufferWriter(128);
+        try
+        {
+            var span = buf.GetSpan(Encoding.UTF8.GetMaxByteCount(json.Length));
+            buf.Advance(Encoding.UTF8.GetBytes(json, span));
+        }
+        catch
+        {
+            buf.Dispose();
+            throw;
+        }
+        return buf;
     }
 
     /// <summary>

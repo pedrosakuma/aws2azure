@@ -192,17 +192,19 @@ internal static class ItemHandlers
         // Sproc path: single atomic call if enabled
         if (sprocCtx is { IsSprocEnabled: true })
         {
-            // The sproc embeds the document as a JSON string inside its
-            // parameter array, so this path materializes the string form
-            // (only reached on the rarer conditional + sproc-enabled path).
-            var docJson = BuildItemDocument(id, pk, req.Item);
+            // The sproc embeds the document as a raw JSON value inside its
+            // parameter array. Build it once into a pooled UTF-8 buffer (no
+            // string / StringContent round-trip) and splice those bytes into
+            // the sproc params. Sproc bodies are always text (CosmosBinary does
+            // not apply to stored-procedure input), so force the text encoder.
+            using var docBuf = ItemDocumentBody.CreateText(id, pk, body, req.Item);
             var sprocResult = await SprocDispatcher.TryPutItemAsync(
                 sprocCtx,
                 cosmos,
                 req.TableName!,
                 pk,
                 id,
-                docJson,
+                docBuf.Memory,
                 condition,
                 ct).ConfigureAwait(false);
 
@@ -915,12 +917,12 @@ internal static class ItemHandlers
     }
 
     /// <summary>
-    /// Composes the Cosmos doc shape used for item writes. Thin wrapper
-    /// over <see cref="InferredAttributeStorage.BuildCosmosDocument"/>;
-    /// kept for call-site stability across the DynamoDb module. Prefer
-    /// <see cref="ItemDocumentBody"/> for the HTTP write body — it avoids the
-    /// <c>byte[] → string → byte[]</c> round-trip this overload incurs and is
-    /// only retained for the sproc path that embeds the doc as a JSON string.
+    /// Composes the Cosmos doc shape used for item writes as a <see cref="string"/>.
+    /// Thin wrapper over <see cref="InferredAttributeStorage.BuildCosmosDocument"/>.
+    /// Production write paths use the single-pass <see cref="ItemDocumentBody"/>
+    /// (HTTP upsert/replace) or <see cref="ItemDocumentBody.CreateText"/> (sproc
+    /// params) instead — both avoid the <c>byte[] → string → byte[]</c> round-trip
+    /// this overload incurs. Retained for tests.
     /// </summary>
     internal static string BuildItemDocument(string id, string pk, JsonElement item)
         => InferredAttributeStorage.BuildCosmosDocument(id, pk, item);
@@ -1039,6 +1041,39 @@ internal static class ItemHandlers
             try
             {
                 InferredAttributeStorage.WriteCosmosDocument(text, id, pk, itemUtf8);
+            }
+            catch
+            {
+                text.Dispose();
+                throw;
+            }
+
+            return new ItemDocumentBody(text);
+        }
+
+        /// <summary>
+        /// Text-only single-pass overload for the stored-procedure write paths,
+        /// where the document is embedded as a raw JSON value in the sproc
+        /// parameter list (CosmosBinary does not apply to sproc input). Encodes
+        /// straight from the item's wire bytes when recoverable from
+        /// <paramref name="body"/> (else the <see cref="JsonElement"/> path),
+        /// byte-identical either way. Does not emit the write-body-format metric,
+        /// which tracks only standalone-document writes (#336), not sproc params.
+        /// </summary>
+        public static ItemDocumentBody CreateText(
+            string id, string pk, ReadOnlySpan<byte> body, JsonElement item)
+        {
+            var text = new PooledByteBufferWriter();
+            try
+            {
+                if (TryLocateItemBytes(body, out int start, out int length))
+                {
+                    InferredAttributeStorage.WriteCosmosDocument(text, id, pk, body.Slice(start, length));
+                }
+                else
+                {
+                    InferredAttributeStorage.WriteCosmosDocument(text, id, pk, item);
+                }
             }
             catch
             {
