@@ -263,8 +263,8 @@ internal static class ItemHandlers
                 else
                 {
                     etag = ExtractETag(getResp);
-                    using var cosmosBody = await CosmosOpsShared.ReadCosmosJsonBodyAsync(getResp.Content, ct).ConfigureAwait(false);
-                    existingItem = ExtractItemFromCosmosDoc(cosmosBody.WrittenMemory);
+                    existingItem = await CosmosOpsShared.ReadAndExtractItemAsync(
+                        getResp.Content, DynamoDbMetrics.OpPut, ct).ConfigureAwait(false);
                 }
             }
 
@@ -657,8 +657,8 @@ internal static class ItemHandlers
                 else
                 {
                     etag = ExtractETag(getResp);
-                    using var cosmosBody = await CosmosOpsShared.ReadCosmosJsonBodyAsync(getResp.Content, ct).ConfigureAwait(false);
-                    existingItem = ExtractItemFromCosmosDoc(cosmosBody.WrittenMemory);
+                    existingItem = await CosmosOpsShared.ReadAndExtractItemAsync(
+                        getResp.Content, DynamoDbMetrics.OpDelete, ct).ConfigureAwait(false);
                 }
             }
 

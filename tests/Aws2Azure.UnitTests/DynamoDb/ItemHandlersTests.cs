@@ -94,6 +94,16 @@ public class ItemHandlersTests
         return r;
     }
 
+    private static HttpResponseMessage CosmosOkBinary(string body, string etag)
+    {
+        var r = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(CosmosBinaryTestEncoder.Encode(body)),
+        };
+        r.Headers.TryAddWithoutValidation("etag", etag);
+        return r;
+    }
+
     private static string DocWithItem(string pk, string id, string itemJson)
     {
         using var d = JsonDocument.Parse(itemJson);
@@ -387,6 +397,111 @@ public class ItemHandlersTests
         }
 
         return total;
+    }
+
+    // Sums the read_decode_path counter (the materialized-read decode metric,
+    // distinct from the GetItem-envelope decode metric) for a given op+path.
+    private static long ReadMaterializedDecodePathCount(
+        Aws2Azure.Core.Observability.PrometheusExporter exporter, string op, string path)
+    {
+        string output = exporter.Export();
+        long total = 0;
+        foreach (var raw in output.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.Length == 0 || line[0] == '#'
+                || !line.StartsWith("aws2azure_dynamodb_read_decode_path_total", StringComparison.Ordinal)
+                || line.IndexOf("op=\"" + op + "\"", StringComparison.Ordinal) < 0
+                || line.IndexOf("path=\"" + path + "\"", StringComparison.Ordinal) < 0)
+            {
+                continue;
+            }
+
+            int sp = line.LastIndexOf(' ');
+            if (sp >= 0 && double.TryParse(
+                    line.AsSpan(sp + 1), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out double value))
+            {
+                total += (long)value;
+            }
+        }
+
+        return total;
+    }
+
+    [Fact]
+    public async Task DeleteItem_binary_get_body_records_decode_path_binary()
+    {
+        // A CosmosBinary GET body (the existing-item condition/ReturnValues read)
+        // must materialize the map straight off CosmosBinaryReader and tag the
+        // read_decode_path counter op="delete" path="binary".
+        using var exporter = new Aws2Azure.Core.Observability.PrometheusExporter();
+        long before = ReadMaterializedDecodePathCount(exporter, "delete", "binary");
+
+        var (ctx, _) = NewCtx();
+        string doc = DocWithItem("x", "x", "{\"pk\":{\"S\":\"x\"},\"v\":{\"N\":\"9\"}}");
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDocHashOnly),
+                CosmosOkBinary(doc, etag: "\"e1\""),
+                new HttpResponseMessage(HttpStatusCode.NoContent),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"x\"}},"
+                  + "\"ConditionExpression\":\"attribute_exists(pk)\"}";
+        await ItemHandlers.HandleDeleteItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.True(ReadMaterializedDecodePathCount(exporter, "delete", "binary") > before);
+    }
+
+    [Fact]
+    public async Task DeleteItem_condition_eval_identical_for_binary_and_text_get_body()
+    {
+        // The existing-item map drives ConditionExpression evaluation. A
+        // CosmosBinary GET body (binary-direct extraction) and a text GET body
+        // must produce byte-identical responses for the same rich-corpus item:
+        // escaping, number, binary, sets, nested map/list.
+        string itemJson =
+            "{\"pk\":{\"S\":\"x\"},\"v\":{\"N\":\"99\"},"
+            + "\"name\":{\"S\":\"\\\"héllo\\\" <b>&</b> \\uD83D\\uDE00\"},"
+            + "\"bin\":{\"B\":\"AQID\"},\"ss\":{\"SS\":[\"a\",\"b\"]},"
+            + "\"nested\":{\"M\":{\"inner\":{\"L\":[{\"S\":\"z\"},{\"NULL\":true}]}}}}";
+        string doc = DocWithItem("x", "x", itemJson);
+        // Condition references typed attributes so a mis-extracted map would
+        // change the truth value (and thus the response).
+        string req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"x\"}},"
+                     + "\"ConditionExpression\":\"v = :v AND attribute_exists(nested) AND attribute_exists(ss)\","
+                     + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"99\"}}}";
+
+        async Task<(int status, string body)> Run(HttpResponseMessage getResp)
+        {
+            CosmosOpsShared.MetadataCache.Clear();
+            var (ctx, body) = NewCtx();
+            var handler = new ScriptedHandler
+            {
+                Responses =
+                {
+                    CosmosOk(MetadataDocHashOnly),
+                    getResp,
+                    new HttpResponseMessage(HttpStatusCode.NoContent),
+                },
+            };
+            var cosmos = BuildClient(handler);
+            await ItemHandlers.HandleDeleteItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, CancellationToken.None);
+            return (ctx.Response.StatusCode, ReadResponse(body));
+        }
+
+        var textResult = await Run(CosmosOk(doc, etag: "\"e1\""));
+        var binaryResult = await Run(CosmosOkBinary(doc, etag: "\"e1\""));
+
+        Assert.Equal(200, textResult.status);
+        Assert.Equal(textResult.status, binaryResult.status);
+        Assert.Equal(textResult.body, binaryResult.body);
     }
 
     [Fact]

@@ -253,8 +253,8 @@ internal static class UpdateItemHandler
                 else
                 {
                     etag = ExtractETag(getResp);
-                    using var cosmosBody = await CosmosOpsShared.ReadCosmosJsonBodyAsync(getResp.Content, ct).ConfigureAwait(false);
-                    existingItem = ItemHandlers.ExtractItemFromCosmosDoc(cosmosBody.WrittenMemory);
+                    existingItem = await CosmosOpsShared.ReadAndExtractItemAsync(
+                        getResp.Content, DynamoDbMetrics.OpUpdate, ct).ConfigureAwait(false);
                     // ExtractItem returns null only when the envelope is
                     // missing; treat as "empty item" rather than failing
                     // so docs migrated by hand still work.
