@@ -76,10 +76,51 @@ public class TransactGetItemsHandlerTests
     private static HttpResponseMessage CosmosStatus(HttpStatusCode code, string body = "{}")
         => new(code) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
+    private static HttpResponseMessage CosmosOkBinary(string body)
+        => new(HttpStatusCode.OK) { Content = new ByteArrayContent(CosmosBinaryTestEncoder.Encode(body)) };
+
     private static string ItemDoc(string id, string pk, string itemJson)
     {
         using var d = JsonDocument.Parse(itemJson);
         return Aws2Azure.Modules.DynamoDb.Persistence.InferredAttributeStorage.BuildCosmosDocument(id, pk, d.RootElement);
+    }
+
+    [Fact]
+    public async Task TransactGet_binary_body_byte_identical_to_text()
+    {
+        // Each Get is a single-doc point read (binary-direct ExtractItemFused).
+        // A CosmosBinary GET body must produce a byte-identical response to a
+        // text GET body for a rich-corpus item.
+        string itemA =
+            "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"99\"},"
+            + "\"name\":{\"S\":\"\\\"héllo\\\" <b>&</b> \\uD83D\\uDE00\"},"
+            + "\"bin\":{\"B\":\"AQID\"},\"ss\":{\"SS\":[\"a\",\"b\"]},"
+            + "\"nested\":{\"M\":{\"inner\":{\"L\":[{\"S\":\"z\"},{\"NULL\":true}]}}}}";
+        string docA = ItemDoc("a", "a", itemA);
+        string docB = ItemDoc("b", "b", "{\"pk\":{\"S\":\"b\"},\"v\":{\"N\":\"2\"}}");
+        string req = "{\"TransactItems\":[" +
+            "{\"Get\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}}}}," +
+            "{\"Get\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"b\"}}}}" +
+            "]}";
+
+        async Task<string> Run(Func<string, HttpResponseMessage> wrap)
+        {
+            CosmosOpsShared.MetadataCache.Clear();
+            var (ctx, body) = NewCtx();
+            var handler = new ScriptedHandler
+            {
+                Responses = { CosmosOk(MetaHashOnly), wrap(docA), wrap(docB) },
+            };
+            var cosmos = BuildClient(handler);
+            await TransactGetItemsHandler.HandleTransactGetItemsAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+            Assert.Equal(200, ctx.Response.StatusCode);
+            return ReadResponse(body);
+        }
+
+        string textResp = await Run(d => CosmosOk(d));
+        string binaryResp = await Run(d => CosmosOkBinary(d));
+
+        Assert.Equal(textResp, binaryResp);
     }
 
     [Fact]

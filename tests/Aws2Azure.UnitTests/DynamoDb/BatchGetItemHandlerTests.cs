@@ -99,6 +99,12 @@ public class BatchGetItemHandlerTests
             Content = new StringContent(body, Encoding.UTF8, "application/json"),
         };
 
+    private static HttpResponseMessage CosmosOkBinary(string body)
+        => new(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(CosmosBinaryTestEncoder.Encode(body)),
+        };
+
     private static string ItemDoc(string id, string pk, string itemJson)
     {
         using var d = JsonDocument.Parse(itemJson);
@@ -130,6 +136,42 @@ public class BatchGetItemHandlerTests
             }
         }
         return n;
+    }
+
+    [Fact]
+    public async Task BatchGet_point_read_binary_body_byte_identical_to_text()
+    {
+        // Two distinct partition keys → two singleton groups → two point
+        // reads (the binary-direct ExtractItemFused path). A CosmosBinary GET
+        // body must produce a byte-identical response to a text GET body, even
+        // for a rich-corpus item: escaping, number, binary, sets, nested M/L.
+        string itemA =
+            "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"99\"},"
+            + "\"name\":{\"S\":\"\\\"héllo\\\" <b>&</b> \\uD83D\\uDE00\"},"
+            + "\"bin\":{\"B\":\"AQID\"},\"ss\":{\"SS\":[\"a\",\"b\"]},"
+            + "\"nested\":{\"M\":{\"inner\":{\"L\":[{\"S\":\"z\"},{\"NULL\":true}]}}}}";
+        string docA = ItemDoc("a", "a", itemA);
+        string docB = ItemDoc("b", "b", "{\"pk\":{\"S\":\"b\"},\"v\":{\"N\":\"2\"}}");
+        string req = "{\"RequestItems\":{\"orders\":{\"Keys\":[{\"pk\":{\"S\":\"a\"}},{\"pk\":{\"S\":\"b\"}}]}}}";
+
+        async Task<string> Run(Func<string, HttpResponseMessage> wrap)
+        {
+            CosmosOpsShared.MetadataCache.Clear();
+            var (ctx, body) = NewCtx();
+            var handler = new ScriptedHandler
+            {
+                Responses = { CosmosOk(MetaHashOnly), wrap(docA), wrap(docB) },
+            };
+            var cosmos = BuildClient(handler);
+            await BatchGetItemHandler.HandleBatchGetItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+            Assert.Equal(200, ctx.Response.StatusCode);
+            return ReadResponse(body);
+        }
+
+        string textResp = await Run(d => CosmosOk(d));
+        string binaryResp = await Run(d => CosmosOkBinary(d));
+
+        Assert.Equal(textResp, binaryResp);
     }
 
     [Fact]
