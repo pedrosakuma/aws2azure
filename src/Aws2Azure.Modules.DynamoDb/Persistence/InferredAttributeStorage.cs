@@ -245,6 +245,409 @@ internal static class InferredAttributeStorage
         return writer;
     }
 
+    // ---------------- SINGLE-PASS WIRE WRITE PATH (#342) -------------------
+    //
+    // Encodes the Cosmos document straight from the raw UTF-8 bytes of the
+    // DynamoDB attribute-map (the request wire payload) via a Utf8JsonReader,
+    // emitting tokens directly to the shared ITokenWriter. This avoids the
+    // JsonElement traversal + per-attribute GetString() UTF-16 materialization
+    // the JsonElement overloads pay (spike #332: that materialization tax — not
+    // the formatter — dominates the per-write CPU cost). String values are
+    // forwarded as UTF-8 spans (verbatim unescaped, or unescaped once via
+    // CopyString when the wire value carried escapes), so the common
+    // string-heavy item never allocates per attribute. Numbers, a short ASCII
+    // minority, still materialize their raw text once for canonical
+    // normalisation — identical output to the JsonElement path.
+    //
+    // The JsonElement overloads above are retained for callers whose item is
+    // synthesized in memory (UpdateItem's read-modify-write) and has no backing
+    // wire bytes, and for the string-producing sproc/Transact paths.
+
+    private const int WireUnescapeStackThreshold = 256;
+
+    // The item-level request models deserialize with AllowTrailingCommas (see
+    // ItemJsonContext), so the single-pass wire readers must accept the same
+    // grammar or a body that deserialized fine could throw mid-encode. Comment
+    // handling stays at the serializer default (Disallow).
+    internal static readonly JsonReaderOptions WireReaderOptions = new()
+    {
+        AllowTrailingCommas = true,
+    };
+
+    /// <summary>
+    /// Single-pass wire variant of <see cref="WriteCosmosDocument(IBufferWriter{byte},string,string,JsonElement)"/>:
+    /// encodes the Cosmos document JSON-text body directly from the raw UTF-8
+    /// bytes of the DynamoDB attribute-map (<paramref name="itemUtf8"/>), with
+    /// no intermediate <see cref="JsonElement"/> or per-attribute string
+    /// materialization. Output is byte-identical to the JsonElement overload.
+    /// </summary>
+    public static void WriteCosmosDocument(IBufferWriter<byte> output, string id, string pk, ReadOnlySpan<byte> itemUtf8)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        using var writer = new Utf8JsonWriter(output, WriterOptions);
+        var reader = new Utf8JsonReader(itemUtf8, WireReaderOptions);
+        WriteCosmosDocumentCore(new Utf8JsonTokenWriter(writer), id, pk, ref reader);
+    }
+
+    /// <summary>
+    /// Single-pass wire variant of
+    /// <see cref="WriteCosmosDocumentBinary(IBufferWriter{byte},string,string,JsonElement)"/>:
+    /// encodes the CosmosBinary (<c>0x80</c>) body directly from the raw UTF-8
+    /// attribute-map bytes. Decode round-trip is identical to the JsonElement
+    /// overload (golden corpus).
+    /// </summary>
+    public static void WriteCosmosDocumentBinary(IBufferWriter<byte> output, string id, string pk, ReadOnlySpan<byte> itemUtf8)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        using var writer = new CosmosBinaryWriter(output);
+        var reader = new Utf8JsonReader(itemUtf8, WireReaderOptions);
+        WriteCosmosDocumentCore(writer, id, pk, ref reader);
+    }
+
+    /// <summary>
+    /// Self-owned single-pass wire variant of
+    /// <see cref="WriteCosmosDocumentBinary(string,string,JsonElement)"/>:
+    /// assembles the CosmosBinary body into a pooled buffer exposed via
+    /// <see cref="CosmosBinaryWriter.WrittenMemory"/> for a zero-copy send. The
+    /// caller owns and must dispose the returned writer once the send completes.
+    /// </summary>
+    public static CosmosBinaryWriter WriteCosmosDocumentBinary(string id, string pk, ReadOnlySpan<byte> itemUtf8)
+    {
+        var writer = new CosmosBinaryWriter();
+        try
+        {
+            var reader = new Utf8JsonReader(itemUtf8, WireReaderOptions);
+            WriteCosmosDocumentCore(writer, id, pk, ref reader);
+        }
+        catch
+        {
+            writer.Dispose();
+            throw;
+        }
+
+        return writer;
+    }
+
+    private static void WriteCosmosDocumentCore<TWriter>(TWriter writer, string id, string pk, ref Utf8JsonReader reader)
+        where TWriter : ITokenWriter
+    {
+        if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+            throw new ArgumentException("Item must be a JSON object.", nameof(reader));
+
+        writer.WriteStartObject();
+        writer.WriteString(IdPropName, id);
+        writer.WriteString(PkPropName, pk);
+        writer.WriteString(DiscPropName, DiscValueItemName);
+
+        while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+        {
+            WriteCheckedPropertyName(writer, ref reader, topLevel: true);
+            reader.Read(); // advance onto the attribute value's first token
+            EncodeAttributeValueFromReader(writer, ref reader);
+        }
+
+        writer.WriteEndObject();
+        writer.Flush();
+    }
+
+    private static void EncodeAttributeValueFromReader<TWriter>(TWriter writer, ref Utf8JsonReader reader)
+        where TWriter : ITokenWriter
+    {
+        if (reader.TokenType != JsonTokenType.StartObject
+            || !reader.Read() || reader.TokenType != JsonTokenType.PropertyName)
+        {
+            throw new ArgumentException(
+                "AttributeValue must be a single-property typed value (e.g. {\"S\":\"x\"}).",
+                nameof(reader));
+        }
+
+        // Type tags (S/N/B/BOOL/NULL/M/L/SS/NS/BS) are pure ASCII and never
+        // JSON-escaped on the wire in practice, so the raw value span is the
+        // tag — but a client may legally escape the name (e.g. {"\u0053":...}),
+        // and the JsonElement path (which sees unescaped prop.Name) accepts it,
+        // so match escape-aware to stay byte-identical.
+        AttrTag tag = MatchTag(ref reader);
+        reader.Read(); // advance onto the payload
+
+        switch (tag)
+        {
+            case AttrTag.String:
+                ExpectString(ref reader);
+                WriteStringValueFromReader(writer, ref reader);
+                break;
+
+            case AttrTag.Number:
+                ExpectString(ref reader);
+                EncodeNumberFromRaw(writer, reader.GetString() ?? string.Empty);
+                break;
+
+            case AttrTag.Binary:
+                ExpectString(ref reader);
+                writer.WriteStartObject();
+                writer.WritePropertyName(EnvelopeBName);
+                WriteStringValueFromReader(writer, ref reader);
+                writer.WriteEndObject();
+                break;
+
+            case AttrTag.Bool:
+                if (reader.TokenType is not (JsonTokenType.True or JsonTokenType.False))
+                    throw new ArgumentException("BOOL AttributeValue payload must be a JSON boolean.", nameof(reader));
+                writer.WriteBooleanValue(reader.TokenType == JsonTokenType.True);
+                break;
+
+            case AttrTag.Null:
+                if (reader.TokenType != JsonTokenType.True)
+                    throw new ArgumentException("NULL AttributeValue payload must be the literal true.", nameof(reader));
+                writer.WriteNullValue();
+                break;
+
+            case AttrTag.Map:
+                if (reader.TokenType != JsonTokenType.StartObject)
+                    throw new ArgumentException("M AttributeValue payload must be a JSON object.", nameof(reader));
+                EncodeMapFromReader(writer, ref reader);
+                break;
+
+            case AttrTag.List:
+                if (reader.TokenType != JsonTokenType.StartArray)
+                    throw new ArgumentException("L AttributeValue payload must be a JSON array.", nameof(reader));
+                EncodeListFromReader(writer, ref reader);
+                break;
+
+            case AttrTag.StringSet:
+                WriteSetEnvelopeFromReader(writer, ref reader, EnvelopeSSName);
+                break;
+
+            case AttrTag.NumberSet:
+                WriteSetEnvelopeFromReader(writer, ref reader, EnvelopeNSName);
+                break;
+
+            case AttrTag.BinarySet:
+                WriteSetEnvelopeFromReader(writer, ref reader, EnvelopeBSName);
+                break;
+
+            default:
+                throw new ArgumentException(
+                    "AttributeValue must be a single-property typed value (e.g. {\"S\":\"x\"}).",
+                    nameof(reader));
+        }
+
+        // Single-property discipline: the typed object must close right after
+        // its one payload (a second property name would be a malformed value).
+        if (!reader.Read() || reader.TokenType != JsonTokenType.EndObject)
+        {
+            throw new ArgumentException(
+                "AttributeValue must be a single-property typed value (e.g. {\"S\":\"x\"}).",
+                nameof(reader));
+        }
+    }
+
+    private static void EncodeMapFromReader<TWriter>(TWriter writer, ref Utf8JsonReader reader)
+        where TWriter : ITokenWriter
+    {
+        writer.WriteStartObject();
+        while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+        {
+            WriteCheckedPropertyName(writer, ref reader, topLevel: false);
+            reader.Read();
+            EncodeAttributeValueFromReader(writer, ref reader);
+        }
+
+        writer.WriteEndObject();
+    }
+
+    private static void EncodeListFromReader<TWriter>(TWriter writer, ref Utf8JsonReader reader)
+        where TWriter : ITokenWriter
+    {
+        writer.WriteStartArray();
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+        {
+            EncodeAttributeValueFromReader(writer, ref reader);
+        }
+
+        writer.WriteEndArray();
+    }
+
+    private static void WriteSetEnvelopeFromReader<TWriter>(TWriter writer, ref Utf8JsonReader reader, in TokenName tag)
+        where TWriter : ITokenWriter
+    {
+        if (reader.TokenType != JsonTokenType.StartArray)
+            throw new ArgumentException("Set AttributeValue payload must be a JSON array.", nameof(reader));
+
+        writer.WriteStartObject();
+        writer.WritePropertyName(tag);
+        writer.WriteStartArray();
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+        {
+            if (reader.TokenType != JsonTokenType.String)
+                throw new ArgumentException(
+                    "Set members must be JSON strings per DynamoDB wire format.", nameof(reader));
+            WriteStringValueFromReader(writer, ref reader);
+        }
+
+        writer.WriteEndArray();
+        writer.WriteEndObject();
+    }
+
+    /// <summary>
+    /// Writes the current property name, enforcing the reserved-name rules the
+    /// JsonElement walk applies: at the top level the rare <c>id</c> attribute
+    /// is shadow-encoded and any other <c>_a2a</c>-namespaced name is rejected;
+    /// inside a map any <c>_a2a:</c>-prefixed name is rejected. The unescaped
+    /// name bytes are forwarded verbatim (the writer re-escapes for text).
+    /// </summary>
+    private static void WriteCheckedPropertyName<TWriter>(TWriter writer, ref Utf8JsonReader reader, bool topLevel)
+        where TWriter : ITokenWriter
+    {
+        if (!reader.ValueIsEscaped)
+        {
+            WriteCheckedPropertyNameCore(writer, reader.ValueSpan, topLevel);
+            return;
+        }
+
+        int len = reader.ValueSpan.Length;
+        byte[]? rented = null;
+        Span<byte> buf = len <= WireUnescapeStackThreshold
+            ? stackalloc byte[WireUnescapeStackThreshold]
+            : (rented = ArrayPool<byte>.Shared.Rent(len));
+        try
+        {
+            int written = reader.CopyString(buf);
+            WriteCheckedPropertyNameCore(writer, buf[..written], topLevel);
+        }
+        finally
+        {
+            if (rented is not null)
+                ArrayPool<byte>.Shared.Return(rented);
+        }
+    }
+
+    private static void WriteCheckedPropertyNameCore<TWriter>(TWriter writer, ReadOnlySpan<byte> name, bool topLevel)
+        where TWriter : ITokenWriter
+    {
+        if (topLevel)
+        {
+            if (name.SequenceEqual("id"u8))
+            {
+                // Shadow-encode the rare DDB attr that collides with Cosmos's
+                // required "id" field; decoder unmangles.
+                writer.WritePropertyName(ShadowIdPropName);
+                return;
+            }
+
+            // Any name in the _a2a namespace (other than the shadow-encodable
+            // "id") is reserved for proxy use and must be rejected.
+            if (name.StartsWith("_a2a"u8))
+            {
+                throw new ArgumentException(
+                    $"Attribute '{Encoding.UTF8.GetString(name)}' uses a reserved name and would collide with proxy metadata.",
+                    nameof(name));
+            }
+        }
+        else if (name.StartsWith("_a2a:"u8))
+        {
+            throw new ArgumentException(
+                $"Nested attribute name '{Encoding.UTF8.GetString(name)}' uses the reserved '_a2a:' prefix.",
+                nameof(name));
+        }
+
+        writer.WritePropertyName(name);
+    }
+
+    private static void WriteStringValueFromReader<TWriter>(TWriter writer, ref Utf8JsonReader reader)
+        where TWriter : ITokenWriter
+    {
+        // Common case: the wire string carries no escapes, so its raw value
+        // span is already the unescaped UTF-8 — forward it with zero copies.
+        if (!reader.ValueIsEscaped)
+        {
+            writer.WriteStringValue(reader.ValueSpan);
+            return;
+        }
+
+        int len = reader.ValueSpan.Length;
+        byte[]? rented = null;
+        Span<byte> buf = len <= WireUnescapeStackThreshold
+            ? stackalloc byte[WireUnescapeStackThreshold]
+            : (rented = ArrayPool<byte>.Shared.Rent(len));
+        try
+        {
+            int written = reader.CopyString(buf);
+            writer.WriteStringValue(buf[..written]);
+        }
+        finally
+        {
+            if (rented is not null)
+                ArrayPool<byte>.Shared.Return(rented);
+        }
+    }
+
+    private static void ExpectString(ref Utf8JsonReader reader)
+    {
+        if (reader.TokenType != JsonTokenType.String)
+            throw new ArgumentException(
+                "AttributeValue payload must be a JSON string per DDB wire format.", nameof(reader));
+    }
+
+    private enum AttrTag
+    {
+        Unknown = 0,
+        String,
+        Number,
+        Binary,
+        Bool,
+        Null,
+        Map,
+        List,
+        StringSet,
+        NumberSet,
+        BinarySet,
+    }
+
+    private static AttrTag MatchTag(ReadOnlySpan<byte> tag) => tag.Length switch
+    {
+        1 => tag[0] switch
+        {
+            (byte)'S' => AttrTag.String,
+            (byte)'N' => AttrTag.Number,
+            (byte)'B' => AttrTag.Binary,
+            (byte)'M' => AttrTag.Map,
+            (byte)'L' => AttrTag.List,
+            _ => AttrTag.Unknown,
+        },
+        2 when tag.SequenceEqual("SS"u8) => AttrTag.StringSet,
+        2 when tag.SequenceEqual("NS"u8) => AttrTag.NumberSet,
+        2 when tag.SequenceEqual("BS"u8) => AttrTag.BinarySet,
+        4 when tag.SequenceEqual("BOOL"u8) => AttrTag.Bool,
+        4 when tag.SequenceEqual("NULL"u8) => AttrTag.Null,
+        _ => AttrTag.Unknown,
+    };
+
+    /// <summary>
+    /// Resolves the AttributeValue type tag from the current property-name
+    /// token. The unescaped fast path forwards the raw span to
+    /// <see cref="MatchTag(ReadOnlySpan{byte})"/>; the rare escaped form (a
+    /// client may write e.g. <c>{"\u0053":...}</c>) is compared escape-aware via
+    /// <see cref="Utf8JsonReader.ValueTextEquals(ReadOnlySpan{byte})"/> so the
+    /// wire path accepts exactly what the JsonElement path does.
+    /// </summary>
+    private static AttrTag MatchTag(ref Utf8JsonReader reader)
+    {
+        if (!reader.ValueIsEscaped)
+            return MatchTag(reader.ValueSpan);
+
+        if (reader.ValueTextEquals("S"u8)) return AttrTag.String;
+        if (reader.ValueTextEquals("N"u8)) return AttrTag.Number;
+        if (reader.ValueTextEquals("B"u8)) return AttrTag.Binary;
+        if (reader.ValueTextEquals("M"u8)) return AttrTag.Map;
+        if (reader.ValueTextEquals("L"u8)) return AttrTag.List;
+        if (reader.ValueTextEquals("SS"u8)) return AttrTag.StringSet;
+        if (reader.ValueTextEquals("NS"u8)) return AttrTag.NumberSet;
+        if (reader.ValueTextEquals("BS"u8)) return AttrTag.BinarySet;
+        if (reader.ValueTextEquals("BOOL"u8)) return AttrTag.Bool;
+        if (reader.ValueTextEquals("NULL"u8)) return AttrTag.Null;
+        return AttrTag.Unknown;
+    }
+
     private static void WriteCosmosDocumentCore<TWriter>(TWriter writer, string id, string pk, JsonElement item)
         where TWriter : ITokenWriter
     {
@@ -463,9 +866,22 @@ internal static class InferredAttributeStorage
                 "Number AttributeValue payload must be a JSON string per DDB wire format.",
                 nameof(numberAttrValue));
 
-        var raw = numberAttrValue.GetString() ?? string.Empty;
-        if (!TryNormalizeDdbNumber(raw, out var normalised, out var significantDigits, out var error))
-            throw new ArgumentException(error, nameof(numberAttrValue));
+        EncodeNumberFromRaw(writer, numberAttrValue.GetString() ?? string.Empty);
+    }
+
+    /// <summary>
+    /// Shared number-encoding core over the raw DDB number text — drives both
+    /// the <see cref="JsonElement"/> walk (<see cref="EncodeNumber"/>) and the
+    /// single-pass wire walk (#342). Numbers are a short ASCII minority, so the
+    /// reader path materializes the raw text once (no per-attribute string tax
+    /// in the common string-heavy case); the canonical <paramref name="raw"/>
+    /// normalisation is identical for both.
+    /// </summary>
+    private static void EncodeNumberFromRaw<TWriter>(TWriter writer, string raw)
+        where TWriter : ITokenWriter
+    {
+        if (!TryNormalizeDdbNumber(raw, out var normalised, out _, out var error))
+            throw new ArgumentException(error, nameof(raw));
 
         if (CanRoundTripAsBareJsonNumber(normalised))
         {

@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
@@ -107,11 +108,11 @@ internal static class ItemHandlers
             return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", rvccfErr);
         }
 
-        return PutItemCoreAsync(ctx, req, condition, rvccf, cosmos, sprocCtx, ct);
+        return PutItemCoreAsync(ctx, body, req, condition, rvccf, cosmos, sprocCtx, ct);
     }
 
     private static async Task PutItemCoreAsync(
-        HttpContext ctx, PutItemRequest req, ConditionNode? condition, string rvccf,
+        HttpContext ctx, byte[] body, PutItemRequest req, ConditionNode? condition, string rvccf,
         CosmosClient cosmos, SprocContext? sprocCtx, CancellationToken ct)
     {
         using var metaResult = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, req.TableName!, ct).ConfigureAwait(false);
@@ -159,7 +160,7 @@ internal static class ItemHandlers
             // when the caller doesn't care about prior state). Zero-copy:
             // the doc is written straight into a pooled UTF-8 buffer handed
             // to the HTTP layer, with no string / StringContent round-trip.
-            using var docBuf = ItemDocumentBody.Create(id, pk, req.Item, cosmos.CosmosBinaryRequests);
+            using var docBuf = ItemDocumentBody.Create(id, pk, body, req.Item, cosmos.CosmosBinaryRequests);
             var headers = new[]
             {
                 new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
@@ -242,7 +243,7 @@ internal static class ItemHandlers
         // with bounded retry on 412/409 so concurrent writers replay. The doc
         // is written once into a pooled UTF-8 buffer and re-sent zero-copy on
         // each attempt (no string / StringContent round-trip).
-        using var fallbackDoc = ItemDocumentBody.Create(id, pk, req.Item, cosmos.CosmosBinaryRequests);
+        using var fallbackDoc = ItemDocumentBody.Create(id, pk, body, req.Item, cosmos.CosmosBinaryRequests);
         var docBody = fallbackDoc.Memory;
         const int MaxRetries = 4;
         for (int attempt = 0; attempt < MaxRetries; attempt++)
@@ -1011,12 +1012,154 @@ internal static class ItemHandlers
             return new ItemDocumentBody(text);
         }
 
+        /// <summary>
+        /// Single-pass wire overload (#342): when the item's raw UTF-8 bytes are
+        /// recoverable from the original request <paramref name="body"/>, encodes
+        /// the Cosmos body straight from those bytes (no JsonElement traversal /
+        /// per-attribute GetString), else falls back to the
+        /// <see cref="JsonElement"/> overload (e.g. a synthesized item with no
+        /// backing wire bytes). Output is byte-identical either way.
+        /// </summary>
+        public static ItemDocumentBody Create(
+            string id, string pk, ReadOnlySpan<byte> body, JsonElement item, bool binary)
+        {
+            if (!TryLocateItemBytes(body, out int start, out int length))
+            {
+                return Create(id, pk, item, binary);
+            }
+
+            ReadOnlySpan<byte> itemUtf8 = body.Slice(start, length);
+            DynamoDbMetrics.RecordWriteBodyFormat(binary);
+            if (binary)
+            {
+                return new ItemDocumentBody(InferredAttributeStorage.WriteCosmosDocumentBinary(id, pk, itemUtf8));
+            }
+
+            var text = new PooledByteBufferWriter();
+            try
+            {
+                InferredAttributeStorage.WriteCosmosDocument(text, id, pk, itemUtf8);
+            }
+            catch
+            {
+                text.Dispose();
+                throw;
+            }
+
+            return new ItemDocumentBody(text);
+        }
+
         public void Dispose()
         {
             _text?.Dispose();
             _binary?.Dispose();
         }
     }
+
+    /// <summary>
+    /// Locates the byte range of the top-level <c>"Item"</c> attribute-map value
+    /// inside the raw request <paramref name="body"/> with a single no-alloc
+    /// <see cref="Utf8JsonReader"/> scan, so the write path can encode the Cosmos
+    /// document directly from those wire bytes (#342). Returns false (caller
+    /// falls back to the parsed <see cref="JsonElement"/>) when the request is
+    /// not a top-level object or carries no <c>"Item"</c> object — e.g. a
+    /// non-canonical casing the encoder need not optimize.
+    /// </summary>
+    internal static bool TryLocateItemBytes(ReadOnlySpan<byte> body, out int start, out int length)
+    {
+        start = 0;
+        length = 0;
+
+        var reader = new Utf8JsonReader(body, InferredAttributeStorage.WireReaderOptions);
+        if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+        {
+            return false;
+        }
+
+        // The request deserializes case-insensitively and last-wins, so req.Item
+        // binds to the LAST property whose name equals "Item" ignoring case. We
+        // only optimize when exactly one such property exists AND it is the
+        // canonical "Item" casing whose value object we can slice; any other
+        // shape (a different-case variant, or more than one match) falls back to
+        // the parsed JsonElement, which is always correct.
+        int caseInsensitiveItems = 0;
+        bool haveCanonical = false;
+        int canonicalStart = 0;
+        int canonicalLength = 0;
+
+        while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+        {
+            bool canonical = reader.ValueTextEquals("Item"u8);
+            bool isItem = canonical || NameEqualsItemIgnoreCase(ref reader);
+            if (!reader.Read())
+            {
+                return false;
+            }
+
+            if (isItem)
+            {
+                caseInsensitiveItems++;
+                if (canonical && reader.TokenType == JsonTokenType.StartObject)
+                {
+                    canonicalStart = (int)reader.TokenStartIndex;
+                    reader.Skip();
+                    canonicalLength = (int)reader.BytesConsumed - canonicalStart;
+                    haveCanonical = true;
+                    continue;
+                }
+            }
+
+            reader.Skip();
+        }
+
+        if (caseInsensitiveItems == 1 && haveCanonical)
+        {
+            start = canonicalStart;
+            length = canonicalLength;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Case-insensitive ASCII comparison of the current property-name token to
+    /// <c>"Item"</c> — the slow companion to the <c>ValueTextEquals("Item"u8)</c>
+    /// exact check, used only to detect non-canonical duplicates that
+    /// case-insensitive deserialization would bind <c>req.Item</c> to. Handles
+    /// escaped names via <see cref="Utf8JsonReader.CopyString(Span{byte})"/>.
+    /// </summary>
+    private static bool NameEqualsItemIgnoreCase(ref Utf8JsonReader reader)
+    {
+        if (!reader.ValueIsEscaped)
+        {
+            ReadOnlySpan<byte> name = reader.ValueSpan;
+            return name.Length == 4 && AsciiEqualsItem(name);
+        }
+
+        int raw = reader.ValueSpan.Length;
+        if (raw < 4)
+        {
+            return false;
+        }
+
+        byte[] rented = ArrayPool<byte>.Shared.Rent(raw);
+        try
+        {
+            int written = reader.CopyString(rented);
+            return written == 4 && AsciiEqualsItem(rented);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
+        }
+    }
+
+    private static bool AsciiEqualsItem(ReadOnlySpan<byte> name) =>
+        (name[0] | 0x20) == 'i'
+        && (name[1] | 0x20) == 't'
+        && (name[2] | 0x20) == 'e'
+        && (name[3] | 0x20) == 'm';
 
     /// <summary>
     /// Extracts the DDB attribute map from a Cosmos doc, projecting

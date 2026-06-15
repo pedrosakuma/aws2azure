@@ -346,6 +346,39 @@ mean **step 3 should integrate the binary writer single-pass** — write directl
 into the send buffer and avoid the redundant string materialization — to surface
 more of the formatter advantage at the request boundary.
 
+## Step 3 — single-pass wire encode landed (#342): JsonElement + GetString eliminated
+
+Step 2 noted the end-to-end win was capped by the per-attribute `JsonElement`
+traversal + `ParsedAttributeValue` parse + `GetString` materialization shared by
+both arms. #342 removes exactly that tax: a new `Utf8JsonReader`-driven
+`WriteCosmosDocumentCore` overload encodes the Cosmos body **straight from the
+raw UTF-8 wire bytes** of the DynamoDB attribute-map, forwarding string values as
+UTF-8 spans (verbatim when unescaped, unescaped once via `CopyString` otherwise)
+through new `ITokenWriter` span overloads — no intermediate DOM, no per-attribute
+string. Both back-ends share the new walk, so text and binary both benefit.
+Numbers materialize their short ASCII text once (identical output). The
+JsonElement overloads are retained for callers whose item is synthesized
+(UpdateItem's read-modify-write) or embedded as a JSON string (sproc / Transact).
+`PutItem` (fast + fallback) recovers the item byte-slice from the request body via
+a no-alloc `Utf8JsonReader` scan (`ItemHandlers.TryLocateItemBytes`).
+
+`CosmosWriteEncodeBenchmarks` gained `TextWire` / `BinaryWire` arms (production
+entry points over the raw item bytes); its `[GlobalSetup]` now also asserts each
+wire arm is byte-identical to its JsonElement counterpart. Representative
+`--job short` pass (in-process CPU/alloc micro-benchmark, Azure-independent):
+
+| Doc          | Text (base) | TextWire | Ratio | Alloc ratio | BinaryWire | Ratio | Alloc ratio |
+|--------------|------------:|---------:|------:|------------:|-----------:|------:|------------:|
+| lean         |   2.70 µs   | 2.03 µs  | 0.75  |    0.36     |  1.80 µs   | 0.67  |    0.31     |
+| payload_512  |   3.50 µs   | 2.19 µs  | 0.63  |    0.21     |  1.90 µs   | 0.54  |    0.18     |
+| wide_20s_20n |  22.9 µs    | 14.0 µs  | 0.64  |    0.47     |  12.2 µs   | 0.55  |    0.47     |
+
+So the single-pass wire encode is a **25–46 % time reduction and 53–79 %
+allocation reduction** end to end — an order of magnitude beyond the ~2–4 %
+the binary format alone bought over text (Step 2), confirming the Step 2
+diagnosis that the materialization tax, not the formatter, was the dominant
+cost. The win applies to **both** the text and binary arms.
+
 ## How to run the encode benchmarks
 
 ```bash
@@ -353,6 +386,7 @@ dotnet run -c Release --project tests/Aws2Azure.Benchmarks -- \
   --filter '*CosmosEncodeBenchmarks*'        # §2 isolated formatter (~2.4×)
 dotnet run -c Release --project tests/Aws2Azure.Benchmarks -- \
   --filter '*CosmosWriteEncodeBenchmarks*'   # production entry points, end to end
+                                             # (Text/Binary JsonElement + TextWire/BinaryWire single-pass #342)
 # add --job short for a fast pass
 ```
 
