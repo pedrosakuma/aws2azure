@@ -107,7 +107,9 @@ internal sealed class AmqpSession
             if (handle > max)
                 throw new InvalidOperationException("No link handles available under negotiated handle-max.");
 
-            link = new AmqpLink(this, handle, settings);
+            link = settings.Role == AmqpRole.Sender
+                ? new AmqpSenderLink(this, handle, settings)
+                : new AmqpReceiverLink(this, handle, settings);
             _linksByOutgoingHandle.Add(handle, link);
             _linksByName.Add(settings.Name, link);
             _nextOutgoingHandle = handle == max ? 0 : handle + 1;
