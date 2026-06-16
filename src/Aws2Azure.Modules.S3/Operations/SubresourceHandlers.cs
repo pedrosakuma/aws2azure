@@ -394,7 +394,7 @@ internal static class SubresourceHandlers
         // grant headers or any other canned ACL is rejected with
         // AccessControlListNotSupported to match the BucketOwnerEnforced
         // ownership behaviour.
-        var canned = ReadFirstHeader(context.Request, "x-amz-acl");
+        var canned = HeaderForwarding.ReadFirstHeader(context.Request, "x-amz-acl");
         var hasGrantHeader =
             HasHeader(context.Request, "x-amz-grant-read") ||
             HasHeader(context.Request, "x-amz-grant-write") ||
@@ -563,7 +563,7 @@ internal static class SubresourceHandlers
         // Content-MD5 enforcement (AWS documents it as required for
         // PutBucketTagging and PutObjectTagging). Validate only when
         // present so SDKs that send x-amz-sdk-checksum-* aren't rejected.
-        var contentMd5 = ReadFirstHeader(context.Request, "Content-MD5");
+        var contentMd5 = HeaderForwarding.ReadFirstHeader(context.Request, "Content-MD5");
         if (!string.IsNullOrEmpty(contentMd5))
         {
             var digest = System.Security.Cryptography.MD5.HashData(bodyBytes);
@@ -629,13 +629,6 @@ internal static class SubresourceHandlers
 
     private static bool HasHeader(HttpRequest request, string name) =>
         request.Headers.ContainsKey(name);
-
-    private static string? ReadFirstHeader(HttpRequest request, string name)
-    {
-        if (!request.Headers.TryGetValue(name, out var values)) return null;
-        foreach (var v in values) { if (!string.IsNullOrEmpty(v)) return v; }
-        return null;
-    }
 
     /// <summary>
     /// Reads the current container metadata so the caller can apply a

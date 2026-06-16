@@ -1,3 +1,6 @@
+using Aws2Azure.Modules.S3.Errors;
+using Microsoft.AspNetCore.Http;
+
 namespace Aws2Azure.Modules.S3.Internal;
 
 /// <summary>
@@ -85,6 +88,34 @@ internal static class CopySourceParser
         return new ParseResult(true, bucket, decodedKey, null);
     }
 
+    public readonly record struct ValidatedSource(bool Success, string? Bucket, string? Key, S3ErrorMapping.Mapping Error);
+
+    public static ValidatedSource ParseAndValidate(HttpRequest request)
+    {
+        var raw = HeaderForwarding.ReadFirstHeader(request, "x-amz-copy-source");
+        var parsed = Parse(raw);
+        if (!parsed.Success)
+        {
+            return Invalid(S3ErrorMapping.InvalidArgument(parsed.Error!));
+        }
+
+        var bucket = parsed.Bucket!;
+        var key = parsed.Key!;
+        if (!BlobClient.IsValidContainerName(bucket))
+        {
+            return Invalid(new S3ErrorMapping.Mapping(400, "InvalidBucketName",
+                "The specified copy-source bucket is not valid."));
+        }
+
+        if (!S3ObjectKey.IsValid(key))
+        {
+            return Invalid(S3ErrorMapping.InvalidArgument(
+                "The specified copy-source object key is not valid."));
+        }
+
+        return new ValidatedSource(true, bucket, key, default);
+    }
+
     private static (int Index, int Length) FindSeparator(string s)
     {
         // The separator is either a literal '/' (length 1) or a percent-encoded
@@ -129,4 +160,7 @@ internal static class CopySourceParser
 
     private static ParseResult Fail(string message) =>
         new(false, null, null, message);
+
+    private static ValidatedSource Invalid(S3ErrorMapping.Mapping error) =>
+        new(false, null, null, error);
 }

@@ -8,7 +8,7 @@ internal enum S3DispatchTarget
     DeleteObjects,
     Multipart,
     Subresource,
-    BucketLifecycle,
+    BucketCrud,
 }
 
 internal static class S3OperationDispatcher
@@ -94,7 +94,7 @@ internal static class S3OperationDispatcher
             S3Operation.ListBuckets or
             S3Operation.CreateBucket or
             S3Operation.DeleteBucket or
-            S3Operation.HeadBucket => S3DispatchTarget.BucketLifecycle,
+            S3Operation.HeadBucket => S3DispatchTarget.BucketCrud,
 
             _ => S3DispatchTarget.NotImplemented,
         };
