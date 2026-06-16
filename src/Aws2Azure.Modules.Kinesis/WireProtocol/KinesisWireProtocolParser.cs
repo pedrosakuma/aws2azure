@@ -1,7 +1,6 @@
 using System;
 using System.Buffers;
 using System.IO;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
@@ -147,23 +146,12 @@ public static class KinesisWireProtocolParser
         return ms.ToArray();
     }
 
-    private static bool LooksLikeJsonObject(byte[] body)
+    private static bool LooksLikeJsonObject(ReadOnlySpan<byte> body)
     {
         int i = 0;
         while (i < body.Length && (body[i] == (byte)' ' || body[i] == (byte)'\t'
             || body[i] == (byte)'\r' || body[i] == (byte)'\n')) i++;
-        if (i >= body.Length || body[i] != (byte)'{') return false;
-
-        try
-        {
-            var reader = new Utf8JsonReader(body, isFinalBlock: true, state: default);
-            while (reader.Read()) { /* validates as it goes */ }
-            return true;
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
+        return i < body.Length && body[i] == (byte)'{';
     }
 }
 

@@ -108,9 +108,8 @@ internal static class ListShardsHandler
             return;
         }
 
-        var mappedShards = ShardMapper.MapShards(eventHub.PartitionIds);
         if (!KinesisMetadataSupport.TryApplyShardPagination(
-                mappedShards,
+                eventHub.MappedShards,
                 startAfterShardId,
                 request?.MaxResults,
                 out var page,

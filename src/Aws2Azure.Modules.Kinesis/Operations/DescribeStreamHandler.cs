@@ -48,9 +48,8 @@ internal static class DescribeStreamHandler
             return;
         }
 
-        var mappedShards = ShardMapper.MapShards(eventHub.PartitionIds);
         if (!KinesisMetadataSupport.TryApplyShardPagination(
-                mappedShards,
+                eventHub.MappedShards,
                 request?.ExclusiveStartShardId,
                 request?.Limit,
                 out var page,

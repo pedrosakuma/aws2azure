@@ -26,13 +26,10 @@ internal sealed class EventHubsBearerTokenProvider : IAmqpTokenProvider
     {
         _ = audience;
         var auth = new AadAuthSettings(_credentials.AuthMode, _credentials.TenantId, _credentials.ClientId, _credentials.ClientSecret);
-        var token = _tokenProvider
-            .GetTokenAsync(
-                auth,
-                EventHubsAuthenticator.EventHubsScope)
-            .AsTask()
-            .GetAwaiter()
-            .GetResult();
+        var tokenTask = _tokenProvider.GetTokenAsync(auth, EventHubsAuthenticator.EventHubsScope);
+        var token = tokenTask.IsCompletedSuccessfully
+            ? tokenTask.Result
+            : tokenTask.AsTask().GetAwaiter().GetResult();
         return new AmqpToken(token, TryParseJwtExpiry(token));
     }
 

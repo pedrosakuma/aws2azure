@@ -234,7 +234,10 @@ public sealed record EventHubDescription(
     int PartitionCount,
     IReadOnlyList<string> PartitionIds,
     int MessageRetentionDays,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt)
+{
+    public IReadOnlyList<MappedShard> MappedShards { get; } = ShardMapper.MapShards(PartitionIds);
+}
 
 public sealed class EventHubsManagementException : Exception
 {

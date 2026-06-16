@@ -38,10 +38,15 @@ internal static class KinesisMetadataSupport
 
     public static Task WriteJsonAsync<T>(HttpContext context, T payload, JsonTypeInfo<T> typeInfo)
     {
+        PrepareJsonResponse(context);
+        return JsonSerializer.SerializeAsync(context.Response.Body, payload, typeInfo, context.RequestAborted);
+    }
+
+    public static void PrepareJsonResponse(HttpContext context)
+    {
         context.Response.StatusCode = StatusCodes.Status200OK;
         context.Response.ContentType = KinesisErrorResponse.ContentType;
         context.Response.Headers["x-amzn-requestid"] = context.TraceIdentifier;
-        return context.Response.WriteAsync(JsonSerializer.Serialize(payload, typeInfo));
     }
 
     public static bool TryResolveStreamName(string? streamName, string? streamArn, out string resolvedStreamName, out string? error)
@@ -234,7 +239,7 @@ internal static class KinesisMetadataSupport
         ArgumentNullException.ThrowIfNull(eventHub);
         ArgumentException.ThrowIfNullOrWhiteSpace(shardId);
 
-        var mappedShards = ShardMapper.MapShards(eventHub.PartitionIds);
+        var mappedShards = eventHub.MappedShards;
         for (var i = 0; i < mappedShards.Count; i++)
         {
             if (string.Equals(mappedShards[i].ShardId, shardId, StringComparison.Ordinal))

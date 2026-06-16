@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Globalization;
 using Aws2Azure.Amqp.Codec;
@@ -424,13 +425,32 @@ internal sealed class EventHubsAmqpReceiver : IEventHubsAmqpReceiver, IAsyncDisp
 internal static class EventHubsSelectorFilter
 {
     private const string FilterSymbol = "apache.org:selector-filter:string";
+    private const int StackallocThreshold = 1024;
 
     public static ReadOnlyMemory<byte> Encode(string expression)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(expression);
 
         var capacity = (FilterSymbol.Length * 2) + (expression.Length * 4) + 32;
-        Span<byte> elements = stackalloc byte[capacity];
+        if (capacity <= StackallocThreshold)
+        {
+            Span<byte> stackElements = stackalloc byte[capacity];
+            return Encode(expression, stackElements);
+        }
+
+        var rented = ArrayPool<byte>.Shared.Rent(capacity);
+        try
+        {
+            return Encode(expression, rented.AsSpan(0, capacity));
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
+        }
+    }
+
+    private static ReadOnlyMemory<byte> Encode(string expression, Span<byte> elements)
+    {
         var offset = 0;
 
         AmqpVariableWriter.WriteSymbol(elements[offset..], FilterSymbol, out var keyLength);
