@@ -125,7 +125,18 @@ internal sealed class EventHubsAmqpReceiver : IEventHubsAmqpReceiver, IAsyncDisp
         }
         catch (Exception ex) when (TryWrap(ex, out var wrapped))
         {
-            await InvalidateConnectionAsync(lease.Key).ConfigureAwait(false);
+            // The receiver slot is already evicted above. Tear down the SHARED
+            // Event Hubs connection only for connection-fatal classes; sender
+            // (PutRecord) links now share this connection, so a link-level /
+            // transient / throttled GetRecords failure must not drop them.
+            // Mirrors EventHubsAmqpSender.InvalidateOnFailureAsync.
+            if (wrapped.Kind is EventHubsAmqpFailureKind.Auth
+                or EventHubsAmqpFailureKind.ServerFatal
+                or EventHubsAmqpFailureKind.Redirect)
+            {
+                await InvalidateConnectionAsync(lease.Key).ConfigureAwait(false);
+            }
+
             throw wrapped;
         }
     }
