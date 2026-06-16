@@ -57,10 +57,12 @@ AWS2AZURE_PERF=1 dotnet test tests/Aws2Azure.PerfTests \
     --filter "FullyQualifiedName~SqsPerfTests"
 ```
 
-Results are appended to `docs/perf/baseline-latest.md` (overwritten on
-each invocation that writes its first row). Commit that file to record
-the baseline for the current commit, or rename it (e.g.
-`baseline-2026-05-23.md`) to keep history.
+Local results are written under `TestResults/perf/` by default so an
+ad-hoc run does not dirty tracked baseline files. Set
+`AWS2AZURE_PERF_UPDATE_DOCS=1` to opt into updating
+`docs/perf/baseline-latest.md`, `baseline-latest.json`, and `history.csv`
+(CI sets this), or set `AWS2AZURE_PERF_DIR` to an explicit output
+directory.
 
 ## Routing & DNS dependency
 
