@@ -73,11 +73,13 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
     private readonly EntraIdTokenProvider _tokenProvider;
     private readonly ServiceBusAmqpPool _pool;
     // Token providers are stateless and reusable; the pool only consumes one
-    // when it (re)creates a connection, so caching per credential marker keeps
-    // the cached-sender publish fast path allocation-free instead of building a
-    // fresh provider (and copying SAS key bytes) on every Publish.
-    private readonly ConcurrentDictionary<string, IAmqpTokenProvider> _tokenProviders =
-        new(StringComparer.Ordinal);
+    // when it (re)creates a connection, so caching keeps the cached-sender
+    // publish fast path allocation-free instead of building a fresh provider
+    // (and copying SAS key bytes) on every Publish. Keyed by (endpoint,
+    // credentialMarker) — the same identity the pool keys connections by — so a
+    // SAS key NAME shared across namespaces never aliases different key bytes.
+    private readonly ConcurrentDictionary<(ServiceBusAmqpEndpoint Endpoint, string Marker), IAmqpTokenProvider> _tokenProviders =
+        new();
     private int _disposed;
 
     public SnsAmqpSender(EntraIdTokenProvider tokenProvider, AmqpConnectionSettings connectionSettings)
@@ -213,16 +215,17 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
         return await _pool.GetSenderAsync(
                 endpoint,
                 credentialMarker,
-                GetOrCreateTokenProvider(credentialMarker, credentials),
+                GetOrCreateTokenProvider(endpoint, credentialMarker, credentials),
                 topicName,
                 BuildAudience(namespaceFqdn, topicName),
                 cancellationToken)
             .ConfigureAwait(false);
     }
 
-    private IAmqpTokenProvider GetOrCreateTokenProvider(string credentialMarker, ServiceBusTopicsCredentials credentials)
+    private IAmqpTokenProvider GetOrCreateTokenProvider(
+        ServiceBusAmqpEndpoint endpoint, string credentialMarker, ServiceBusTopicsCredentials credentials)
         => _tokenProviders.GetOrAdd(
-            credentialMarker,
+            (endpoint, credentialMarker),
             static (_, state) => CreateTokenProvider(state.tokenProvider, state.credentials),
             (tokenProvider: _tokenProvider, credentials));
 
