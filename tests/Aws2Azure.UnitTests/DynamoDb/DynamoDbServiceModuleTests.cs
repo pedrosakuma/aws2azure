@@ -87,31 +87,40 @@ public class DynamoDbServiceModuleTests
     }
 
     [Theory]
-    // Core item/table ops were always in the allowlist.
+    // Core item/table ops were always labelled.
     [InlineData("GetItem")]
     [InlineData("TransactWriteItems")]
     // Regression: these are handled by HandleAsync but previously drifted out
-    // of KnownOperations, so they were mislabelled "unknown" in metrics.
+    // of the metrics allowlist, so they were mislabelled "unknown".
     [InlineData("DescribeTimeToLive")]
     [InlineData("UpdateTimeToLive")]
     [InlineData("TagResource")]
     [InlineData("UntagResource")]
     [InlineData("ListTagsOfResource")]
-    public void ExtractOperationName_labels_every_handled_op_by_name(string op)
+    public void ExtractOperationName_labels_every_parseable_op_by_name(string op)
     {
         var module = NewModule();
         var ctx = NewCtx($"DynamoDB_20120810.{op}", body: "{}");
 
-        Assert.Equal(op, ((Aws2Azure.Core.IServiceModule)module).ExtractOperationName(ctx));
+        Assert.Equal(op, module.ExtractOperationName(ctx));
     }
 
-    [Fact]
-    public void ExtractOperationName_collapses_unrecognised_target_to_unknown()
+    [Theory]
+    // Unrecognised op name.
+    [InlineData("DynamoDB_20120810.NotARealOp")]
+    // Malformed target with extra dots: extraction must agree with the wire
+    // parser (which rejects it) and NOT label it by the first dotted segment.
+    [InlineData("DynamoDB_20120810.DescribeStream.Extra")]
+    [InlineData("DynamoDB_20120810.GetItem.tampered")]
+    // Wrong/absent service prefix.
+    [InlineData("SomethingElse.GetItem")]
+    [InlineData("")]
+    public void ExtractOperationName_collapses_unrecognised_target_to_unknown(string target)
     {
         var module = NewModule();
-        var ctx = NewCtx("DynamoDB_20120810.NotARealOp", body: "{}");
+        var ctx = NewCtx(target, body: "{}");
 
-        Assert.Equal("unknown", ((Aws2Azure.Core.IServiceModule)module).ExtractOperationName(ctx));
+        Assert.Equal("unknown", module.ExtractOperationName(ctx));
     }
 
     private static DynamoDbServiceModule NewModule(bool includeCosmos = true)
