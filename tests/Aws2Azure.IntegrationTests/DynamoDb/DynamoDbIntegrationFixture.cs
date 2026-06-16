@@ -130,7 +130,7 @@ public sealed class DynamoDbIntegrationFixture : IAsyncLifetime
     }
 }
 
-[CollectionDefinition(Name)]
+[CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class DynamoDbIntegrationCollection : ICollectionFixture<DynamoDbIntegrationFixture>
 {
     public const string Name = "dynamodb-integration";

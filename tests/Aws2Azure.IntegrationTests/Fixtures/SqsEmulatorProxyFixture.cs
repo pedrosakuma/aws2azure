@@ -134,7 +134,7 @@ public sealed class SqsEmulatorProxyFixture : IAsyncLifetime
     }
 }
 
-[CollectionDefinition(Name)]
+[CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class SqsEmulatorProxyCollection : ICollectionFixture<SqsEmulatorProxyFixture>
 {
     public const string Name = "sqs-emulator-proxy";
