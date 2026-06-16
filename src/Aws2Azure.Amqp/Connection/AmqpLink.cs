@@ -36,6 +36,10 @@ internal sealed class AmqpLink
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource<AmqpDetach> _peerDetachReceived =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _finalStateReached =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    internal static TimeSpan PeerDetachFinalizationTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
     // Captured peer error when the peer detached with one. Reads of
     // _incoming after a peer-initiated detach surface this through
@@ -814,7 +818,7 @@ internal sealed class AmqpLink
         }
         finally
         {
-            Interlocked.Exchange(ref _state, StateFinal);
+            TransitionToFinal();
             CompleteWaitersTerminal(cancelled: false);
             _session.UnregisterLink(this);
         }
@@ -1075,7 +1079,7 @@ internal sealed class AmqpLink
 
     internal void Abort()
     {
-        Interlocked.Exchange(ref _state, StateFinal);
+        TransitionToFinal();
         _peerAttachReceived.TrySetCanceled();
         _peerDetachReceived.TrySetCanceled();
         CompleteWaitersTerminal(cancelled: true);
@@ -1206,16 +1210,22 @@ internal sealed class AmqpLink
                 _peerAttachReceived.TrySetException(BuildPeerDetachException(
                     "Peer detached during attach handshake.", peerError));
             }
-            _ = Task.Run(async () =>
-            {
-                try { await SendDetachAsync(detach.Closed ?? true, error: null, CancellationToken.None).ConfigureAwait(false); }
-                catch { /* best effort */ }
-                finally
-                {
-                    Interlocked.Exchange(ref _state, StateFinal);
-                    _session.UnregisterLink(this);
-                }
-            });
+            _ = FinalizePeerDetachAsync(detach.Closed ?? true);
+        }
+    }
+
+    private async Task FinalizePeerDetachAsync(bool closed)
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(PeerDetachFinalizationTimeout);
+            await SendDetachAsync(closed, error: null, cts.Token).ConfigureAwait(false);
+        }
+        catch { /* best effort; terminal state is still published below */ }
+        finally
+        {
+            TransitionToFinal();
+            _session.UnregisterLink(this);
         }
     }
 
@@ -1299,12 +1309,17 @@ internal sealed class AmqpLink
         }
     }
 
-    private async Task WaitForFinalAsync(CancellationToken ct)
+    // Local detach, peer-detach mirror finalization, and parent abort all
+    // publish terminal state through the same signal so concurrent detach
+    // callers never poll or depend on which path won the CAS.
+    private void TransitionToFinal()
     {
-        while (Volatile.Read(ref _state) != StateFinal)
-        {
-            ct.ThrowIfCancellationRequested();
-            await Task.Delay(20, ct).ConfigureAwait(false);
-        }
+        Interlocked.Exchange(ref _state, StateFinal);
+        _finalStateReached.TrySetResult();
     }
+
+    private Task WaitForFinalAsync(CancellationToken ct)
+        => Volatile.Read(ref _state) == StateFinal
+            ? Task.CompletedTask
+            : _finalStateReached.Task.WaitAsync(ct);
 }
