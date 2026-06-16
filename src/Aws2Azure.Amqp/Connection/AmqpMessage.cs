@@ -4,14 +4,13 @@ using Aws2Azure.Amqp.Framing;
 namespace Aws2Azure.Amqp.Connection;
 
 /// <summary>
-/// Outgoing or incoming AMQP 1.0 bare message (§3.2). Slice 5c carries
-/// the three sections CBS needs: <see cref="Properties"/>,
-/// <see cref="ApplicationProperties"/>, <see cref="Body"/>. Slice 8b.1
-/// extends the inbound path to also parse <see cref="Header"/> (§3.2.1,
-/// for <c>delivery-count</c>) and <see cref="MessageAnnotations"/>
-/// (§3.2.3, for the Service Bus <c>x-opt-*</c> metadata). These two
-/// extra sections are read-only — the proxy never authors them.
-/// Other inbound sections (delivery-annotations, footer) are still
+/// Outgoing or incoming AMQP 1.0 bare message (§3.2). Carries the three
+/// sections CBS needs — <see cref="Properties"/>,
+/// <see cref="ApplicationProperties"/>, <see cref="Body"/> — plus two
+/// read-only inbound sections: <see cref="Header"/> (§3.2.1, for
+/// <c>delivery-count</c>) and <see cref="MessageAnnotations"/> (§3.2.3,
+/// for the Service Bus <c>x-opt-*</c> metadata). The proxy never authors
+/// those two. Other inbound sections (delivery-annotations, footer) are
 /// skipped opaquely.
 /// </summary>
 internal sealed class AmqpMessage

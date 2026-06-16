@@ -27,7 +27,7 @@ namespace Aws2Azure.Amqp.ServiceBus;
 /// Failure semantics: this slice does <b>not</b> attempt to detect a
 /// half-dead connection or auto-reconnect. When a handler observes a
 /// link/connection-level failure it must call
-/// <see cref="InvalidateAsync"/> to evict the entry; the next
+/// <see cref="InvalidateReceiverAsync"/> to evict the entry; the next
 /// <see cref="GetReceiverAsync"/> call will rebuild from scratch. The
 /// next slice (8b.4) wires this contract into the SQS handler's retry
 /// loop. Active reconnection is intentionally deferred.
@@ -106,7 +106,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     /// given (namespace, key, queue) tuple, creating the connection
     /// and the receiver link on first use. The returned receiver is
     /// owned by the pool — callers must <b>not</b> dispose it
-    /// directly; call <see cref="InvalidateAsync"/> instead when a
+    /// directly; call <see cref="InvalidateReceiverAsync"/> instead when a
     /// failure occurs.
     /// </summary>
     public async Task<ServiceBusReceiver> GetReceiverAsync(
@@ -164,7 +164,8 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     /// <see cref="ServiceBusAmqpConnection.OpenSessionReceiverAsync"/>
     /// directly and either own the lifecycle or hand the resulting
     /// receiver back to the pool keyed by its resolved
-    /// <see cref="ServiceBusReceiver.SessionId"/> (future slice 7c).
+    /// <see cref="ServiceBusReceiver.SessionId"/> via
+    /// <see cref="AcquireBrokerAssignedSessionReceiverAsync"/>.
     /// </para>
     /// </summary>
     public async Task<ServiceBusReceiver> GetSessionReceiverAsync(
@@ -357,7 +358,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     /// subsequent call rebuilds it from scratch; otherwise only the
     /// receiver is detached and the connection stays warm.
     /// </summary>
-    public async Task InvalidateAsync(
+    public async Task InvalidateReceiverAsync(
         ServiceBusAmqpEndpoint endpoint,
         string sasKeyName,
         string queueName,
@@ -426,7 +427,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     /// Evicts the cached sender for (namespace, key, queue). When
     /// <paramref name="closeConnection"/> is <c>true</c> the whole
     /// connection slot is dropped (mirrors
-    /// <see cref="InvalidateAsync"/>); otherwise only the sender link
+    /// <see cref="InvalidateReceiverAsync"/>); otherwise only the sender link
     /// is detached and the connection stays warm.
     /// </summary>
     public async Task InvalidateSenderAsync(

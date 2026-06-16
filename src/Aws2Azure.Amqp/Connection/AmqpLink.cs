@@ -12,8 +12,10 @@ namespace Aws2Azure.Amqp.Connection;
 /// handshake.
 /// </summary>
 /// <remarks>
-/// For Slice 5b the link is intentionally minimal: lifecycle only. The
-/// flow / transfer / disposition surface lands in Slice 5c, on top of
+/// Beyond the attach/detach lifecycle, the link carries the full
+/// transfer surface: credit-flow-controlled outgoing sends, incoming
+/// delivery reassembly, and disposition
+/// (settle / accept / release / reject / modify), all driven through
 /// the dispatch hook <see cref="DispatchIncomingFrame"/>.
 /// </remarks>
 internal sealed class AmqpLink

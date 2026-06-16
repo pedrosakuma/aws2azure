@@ -105,7 +105,7 @@ public sealed class ServiceBusAmqpPoolTests
 
         await pool.GetReceiverAsync(ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"), "Root", "k", "q1")
             .WaitAsync(TimeSpan.FromSeconds(10));
-        await pool.InvalidateAsync(ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"), "Root", "q1", closeConnection: true);
+        await pool.InvalidateReceiverAsync(ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"), "Root", "q1", closeConnection: true);
         Assert.Equal(0, pool.ConnectionCount);
 
         await pool.GetReceiverAsync(ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"), "Root", "k", "q1")
@@ -121,7 +121,7 @@ public sealed class ServiceBusAmqpPoolTests
 
         await pool.GetReceiverAsync(ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"), "Root", "k", "q1")
             .WaitAsync(TimeSpan.FromSeconds(10));
-        await pool.InvalidateAsync(ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"), "Root", "q1", closeConnection: false);
+        await pool.InvalidateReceiverAsync(ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"), "Root", "q1", closeConnection: false);
 
         Assert.Equal(1, pool.ConnectionCount);
 

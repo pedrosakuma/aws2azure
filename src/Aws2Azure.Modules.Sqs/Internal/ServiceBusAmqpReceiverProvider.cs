@@ -55,7 +55,7 @@ internal sealed class ServiceBusAmqpReceiverProvider : IAmqpReceiverProvider
         _pool.GetManagementClientAsync(_endpoint, _sasKeyName, _sasKey, queueName, cancellationToken);
 
     public Task InvalidateAsync(string queueName, bool closeConnection) =>
-        _pool.InvalidateAsync(_endpoint, _sasKeyName, queueName, closeConnection);
+        _pool.InvalidateReceiverAsync(_endpoint, _sasKeyName, queueName, closeConnection);
 
     public Task InvalidateManagementClientAsync(string queueName) =>
         _pool.InvalidateManagementClientAsync(_endpoint, _sasKeyName, queueName);
