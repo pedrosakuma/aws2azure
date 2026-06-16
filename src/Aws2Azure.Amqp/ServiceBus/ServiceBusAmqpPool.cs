@@ -1182,6 +1182,12 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     {
         private readonly ResourceSlot<ServiceBusReceiver> _slot;
         private long _lastActivityTicks;
+        // Idle-sweep state machine: None -> Tentative -> {None (back out) |
+        // Committed (dispose)}. Drives the Dekker handshake in TryGetActive /
+        // TryBeginEvict so a settle and the sweeper can never both win.
+        private const int EvictNone = 0;
+        private const int EvictTentative = 1;
+        private const int EvictCommitted = 2;
         private int _evicting;
 
         public SessionReceiverSlot()
@@ -1263,15 +1269,37 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         /// </summary>
         public ServiceBusReceiver? TryGetActive(DateTimeOffset now)
         {
-            if (Volatile.Read(ref _evicting) != 0) return null;
             var receiver = _slot.TryGetExisting();
             if (receiver is null) return null;
             Volatile.Write(ref _lastActivityTicks, now.UtcTicks);
-            // Full fence so the activity stamp is ordered before the evicting
+            // Full fence so the activity stamp is ordered before the eviction
             // re-read (store-load ordering Volatile alone does not guarantee).
             Interlocked.MemoryBarrier();
-            if (Volatile.Read(ref _evicting) != 0) return null;
-            return receiver;
+            var spin = new SpinWait();
+            while (true)
+            {
+                switch (Volatile.Read(ref _evicting))
+                {
+                    case EvictNone:
+                        // Sweeper is not evicting (or backed out after seeing our
+                        // stamp). By the Dekker argument, observing EvictNone here
+                        // guarantees the sweeper will not commit, so the receiver
+                        // is safe to hand out.
+                        return receiver;
+                    case EvictCommitted:
+                        // Sweeper committed and now owns disposal; report "no
+                        // cached receiver" so the caller opens a fresh session.
+                        return null;
+                    default:
+                        // EvictTentative: the sweeper is mid-decision and resolves
+                        // to EvictNone or EvictCommitted in a few instructions
+                        // (no I/O, no await). Spin briefly — never returning a
+                        // false null for a slot that stays live, and never busy-
+                        // waiting on the slow DisposeAsync (that follows commit).
+                        spin.SpinOnce();
+                        break;
+                }
+            }
         }
 
         /// <summary>
@@ -1285,15 +1313,18 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         public bool TryBeginEvict(DateTimeOffset now, TimeSpan idleTimeout)
         {
             if (!IsIdle(now, idleTimeout)) return false;
-            Volatile.Write(ref _evicting, 1);
-            // Full fence so the evicting flag is published before re-reading
+            Volatile.Write(ref _evicting, EvictTentative);
+            // Full fence so the tentative flag is published before re-reading
             // the activity stamp a concurrent TryGetActive may have written.
             Interlocked.MemoryBarrier();
             if (!IsIdle(now, idleTimeout))
             {
-                Volatile.Write(ref _evicting, 0);
+                // A settle stamped activity concurrently: back out so the live
+                // receiver is not detached, and release any spinning reader.
+                Volatile.Write(ref _evicting, EvictNone);
                 return false;
             }
+            Volatile.Write(ref _evicting, EvictCommitted);
             return true;
         }
 
