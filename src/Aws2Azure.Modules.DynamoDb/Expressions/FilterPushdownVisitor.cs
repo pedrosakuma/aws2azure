@@ -134,6 +134,8 @@ internal static class FilterPushdownVisitor
     /// already uses for the key condition.</summary>
     internal const string DefaultParameterPrefix = "fp";
 
+    private static readonly PushdownVisitor Visitor = new();
+
     public static FilterPushdownResult Translate(
         ConditionNode? root,
         string rootAlias = CosmosPathTranslator.DefaultRootAlias,
@@ -145,7 +147,7 @@ internal static class FilterPushdownVisitor
         }
 
         var ctx = new Context(rootAlias, parameterPrefix);
-        var result = Visit(root, ctx);
+        var result = Visitor.VisitWithRollback(root, ctx);
         return new FilterPushdownResult(result.Sql, ctx.Parameters, result.Residual);
     }
 
@@ -182,84 +184,96 @@ internal static class FilterPushdownVisitor
 
     private readonly record struct VisitResult(string? Sql, ConditionNode? Residual);
 
-    private static VisitResult Visit(ConditionNode node, Context c)
+    private sealed class PushdownVisitor : ConditionNodeVisitor<VisitResult, Context>
     {
-        int snap = c.Snapshot();
-        var r = VisitCore(node, c);
-        // Invariant: if Sql is null and the entire node is residual,
-        // discard any parameters we speculatively bound.
-        if (r.Sql is null) c.Rollback(snap);
-        return r;
-    }
-
-    private static VisitResult VisitCore(ConditionNode node, Context c) => node switch
-    {
-        AndCondition and => VisitAnd(and, c),
-        OrCondition or => VisitOr(or, c),
-        NotCondition not => VisitNot(not, c),
-        CompareCondition cc => VisitCompare(cc, c),
-        BetweenCondition bt => VisitBetween(bt, c),
-        InCondition inn => VisitIn(inn, c),
-        AttributeExistsCondition ae => VisitAttributeExists(ae, c),
-        AttributeNotExistsCondition ane => VisitAttributeNotExists(ane, c),
-        AttributeTypeCondition at => VisitAttributeType(at, c),
-        BeginsWithCondition bw => VisitBeginsWith(bw, c),
-        ContainsCondition co => VisitContains(co, c),
-        _ => new VisitResult(null, node),
-    };
-
-    // ---------------- boolean composition ---------------------------
-
-    private static VisitResult VisitAnd(AndCondition and, Context c)
-    {
-        var l = Visit(and.Left, c);
-        var r = Visit(and.Right, c);
-
-        string? sql = (l.Sql, r.Sql) switch
+        public VisitResult VisitWithRollback(ConditionNode node, Context c)
         {
-            (string ls, string rs) => $"({ls} AND {rs})",
-            (string ls, null) => ls,
-            (null, string rs) => rs,
-            _ => null,
-        };
-        ConditionNode? residual = (l.Residual, r.Residual) switch
+            int snap = c.Snapshot();
+            var r = Visit(node, c);
+            // Invariant: if Sql is null and the entire node is residual,
+            // discard any parameters we speculatively bound.
+            if (r.Sql is null) c.Rollback(snap);
+            return r;
+        }
+
+        protected override VisitResult VisitAnd(AndCondition and, Context c)
         {
-            (null, null) => null,
-            (ConditionNode lr, null) => lr,
-            (null, ConditionNode rr) => rr,
-            (ConditionNode lr, ConditionNode rr) => new AndCondition(lr, rr),
-        };
-        // If we ended up with no SQL at all, the whole AND is residual
-        // → use the original node so Sql=null, Residual=and (rolled
-        // back upstream).
-        if (sql is null) return new VisitResult(null, and);
-        return new VisitResult(sql, residual);
-    }
+            var l = VisitWithRollback(and.Left, c);
+            var r = VisitWithRollback(and.Right, c);
 
-    private static VisitResult VisitOr(OrCondition or, Context c)
-    {
-        // OR is only pushable when BOTH sides are fully pushable.
-        // Pushing one side alone over-selects (the residual side could
-        // still match items the SQL excluded), so we'd need a join with
-        // the residual semantic — not worth the complexity here.
-        var l = Visit(or.Left, c);
-        if (l.Sql is null || l.Residual is not null) return new VisitResult(null, or);
+            string? sql = (l.Sql, r.Sql) switch
+            {
+                (string ls, string rs) => $"({ls} AND {rs})",
+                (string ls, null) => ls,
+                (null, string rs) => rs,
+                _ => null,
+            };
+            ConditionNode? residual = (l.Residual, r.Residual) switch
+            {
+                (null, null) => null,
+                (ConditionNode lr, null) => lr,
+                (null, ConditionNode rr) => rr,
+                (ConditionNode lr, ConditionNode rr) => new AndCondition(lr, rr),
+            };
+            // If we ended up with no SQL at all, the whole AND is residual
+            // → use the original node so Sql=null, Residual=and (rolled
+            // back upstream).
+            if (sql is null) return new VisitResult(null, and);
+            return new VisitResult(sql, residual);
+        }
 
-        var r = Visit(or.Right, c);
-        if (r.Sql is null || r.Residual is not null) return new VisitResult(null, or);
+        protected override VisitResult VisitOr(OrCondition or, Context c)
+        {
+            // OR is only pushable when BOTH sides are fully pushable.
+            // Pushing one side alone over-selects (the residual side could
+            // still match items the SQL excluded), so we'd need a join with
+            // the residual semantic — not worth the complexity here.
+            var l = VisitWithRollback(or.Left, c);
+            if (l.Sql is null || l.Residual is not null) return new VisitResult(null, or);
 
-        return new VisitResult($"({l.Sql} OR {r.Sql})", null);
-    }
+            var r = VisitWithRollback(or.Right, c);
+            if (r.Sql is null || r.Residual is not null) return new VisitResult(null, or);
 
-    private static VisitResult VisitNot(NotCondition not, Context c)
-    {
-        var inner = Visit(not.Inner, c);
-        // NOT is only pushable when the inner subtree is fully
-        // pushable. NOT(pushed AND residual) is not equivalent to
-        // NOT(pushed) AND NOT(residual) — De Morgan'd it'd be
-        // NOT(pushed) OR NOT(residual), which fails the OR rule above.
-        if (inner.Sql is null || inner.Residual is not null) return new VisitResult(null, not);
-        return new VisitResult($"NOT({inner.Sql})", null);
+            return new VisitResult($"({l.Sql} OR {r.Sql})", null);
+        }
+
+        protected override VisitResult VisitNot(NotCondition not, Context c)
+        {
+            var inner = VisitWithRollback(not.Inner, c);
+            // NOT is only pushable when the inner subtree is fully
+            // pushable. NOT(pushed AND residual) is not equivalent to
+            // NOT(pushed) AND NOT(residual) — De Morgan'd it'd be
+            // NOT(pushed) OR NOT(residual), which fails the OR rule above.
+            if (inner.Sql is null || inner.Residual is not null) return new VisitResult(null, not);
+            return new VisitResult($"NOT({inner.Sql})", null);
+        }
+
+        protected override VisitResult VisitAttributeExists(AttributeExistsCondition node, Context c)
+            => FilterPushdownVisitor.VisitAttributeExists(node, c);
+
+        protected override VisitResult VisitAttributeNotExists(AttributeNotExistsCondition node, Context c)
+            => FilterPushdownVisitor.VisitAttributeNotExists(node, c);
+
+        protected override VisitResult VisitAttributeType(AttributeTypeCondition node, Context c)
+            => FilterPushdownVisitor.VisitAttributeType(node, c);
+
+        protected override VisitResult VisitBeginsWith(BeginsWithCondition node, Context c)
+            => FilterPushdownVisitor.VisitBeginsWith(node, c);
+
+        protected override VisitResult VisitContains(ContainsCondition node, Context c)
+            => FilterPushdownVisitor.VisitContains(node, c);
+
+        protected override VisitResult VisitCompare(CompareCondition node, Context c)
+            => FilterPushdownVisitor.VisitCompare(node, c);
+
+        protected override VisitResult VisitBetween(BetweenCondition node, Context c)
+            => FilterPushdownVisitor.VisitBetween(node, c);
+
+        protected override VisitResult VisitIn(InCondition node, Context c)
+            => FilterPushdownVisitor.VisitIn(node, c);
+
+        protected override VisitResult VisitUnsupported(ConditionNode node, Context c)
+            => new(null, node);
     }
 
     // ---------------- comparisons -----------------------------------

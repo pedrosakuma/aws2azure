@@ -22,22 +22,52 @@ namespace Aws2Azure.Modules.DynamoDb.Expressions;
 /// </summary>
 internal static class ConditionEvaluator
 {
+    private static readonly Evaluator Visitor = new();
+
     public static bool Evaluate(ConditionNode node, IReadOnlyDictionary<string, JsonElement>? item)
-        => node switch
-        {
-            AndCondition and => Evaluate(and.Left, item) && Evaluate(and.Right, item),
-            OrCondition or => Evaluate(or.Left, item) || Evaluate(or.Right, item),
-            NotCondition not => !Evaluate(not.Inner, item),
-            AttributeExistsCondition ae => TryResolvePath(ae.Path, item, out _),
-            AttributeNotExistsCondition ane => !TryResolvePath(ane.Path, item, out _),
-            AttributeTypeCondition at => EvaluateAttributeType(at, item),
-            BeginsWithCondition bw => EvaluateBeginsWith(bw, item),
-            ContainsCondition c => EvaluateContains(c, item),
-            CompareCondition cc => EvaluateCompare(cc, item),
-            BetweenCondition bt => EvaluateBetween(bt, item),
-            InCondition inn => EvaluateIn(inn, item),
-            _ => throw new ConditionEvaluationException($"Unsupported condition node: {node.GetType().Name}"),
-        };
+        => Visitor.Evaluate(node, item);
+
+    private sealed class Evaluator : ConditionNodeVisitor<bool, IReadOnlyDictionary<string, JsonElement>?>
+    {
+        public bool Evaluate(ConditionNode node, IReadOnlyDictionary<string, JsonElement>? item)
+            => Visit(node, item);
+
+        protected override bool VisitAnd(AndCondition node, IReadOnlyDictionary<string, JsonElement>? item)
+            => Visit(node.Left, item) && Visit(node.Right, item);
+
+        protected override bool VisitOr(OrCondition node, IReadOnlyDictionary<string, JsonElement>? item)
+            => Visit(node.Left, item) || Visit(node.Right, item);
+
+        protected override bool VisitNot(NotCondition node, IReadOnlyDictionary<string, JsonElement>? item)
+            => !Visit(node.Inner, item);
+
+        protected override bool VisitAttributeExists(AttributeExistsCondition node, IReadOnlyDictionary<string, JsonElement>? item)
+            => TryResolvePath(node.Path, item, out _);
+
+        protected override bool VisitAttributeNotExists(AttributeNotExistsCondition node, IReadOnlyDictionary<string, JsonElement>? item)
+            => !TryResolvePath(node.Path, item, out _);
+
+        protected override bool VisitAttributeType(AttributeTypeCondition node, IReadOnlyDictionary<string, JsonElement>? item)
+            => EvaluateAttributeType(node, item);
+
+        protected override bool VisitBeginsWith(BeginsWithCondition node, IReadOnlyDictionary<string, JsonElement>? item)
+            => EvaluateBeginsWith(node, item);
+
+        protected override bool VisitContains(ContainsCondition node, IReadOnlyDictionary<string, JsonElement>? item)
+            => EvaluateContains(node, item);
+
+        protected override bool VisitCompare(CompareCondition node, IReadOnlyDictionary<string, JsonElement>? item)
+            => EvaluateCompare(node, item);
+
+        protected override bool VisitBetween(BetweenCondition node, IReadOnlyDictionary<string, JsonElement>? item)
+            => EvaluateBetween(node, item);
+
+        protected override bool VisitIn(InCondition node, IReadOnlyDictionary<string, JsonElement>? item)
+            => EvaluateIn(node, item);
+
+        protected override bool VisitUnsupported(ConditionNode node, IReadOnlyDictionary<string, JsonElement>? item)
+            => throw new ConditionEvaluationException($"Unsupported condition node: {node.GetType().Name}");
+    }
 
     // ---------------- functions -------------------------------------
 
