@@ -5,9 +5,10 @@ on:
     branches: [main]
   pull_request:
 
-# Cancel superseded PR runs; never cancel main-branch runs.
+# Cancel superseded PR runs (grouped by PR number); non-PR runs (main pushes,
+# schedules, dispatches) get a unique run_id group so they never cancel each other.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
