@@ -433,64 +433,6 @@ internal static class S3XmlWriter
         => 512 + (objectCount * 200) + (prefixCount * 100);
 
     /// <summary>
-    /// S3 ListObjectsV2 response body. Same as WriteListObjectsV2ResultAsync but
-    /// returns a string for backwards compatibility.
-    /// </summary>
-    public static string ListObjectsV2Result(
-        string bucket,
-        string? prefix,
-        string? delimiter,
-        int maxKeys,
-        int keyCount,
-        bool isTruncated,
-        string? continuationToken,
-        string? nextContinuationToken,
-        string? startAfter,
-        bool encodeUrl,
-        IReadOnlyList<ListedObject> contents,
-        IReadOnlyList<string> commonPrefixes)
-    {
-        var sb = new StringBuilder(512);
-        using (var writer = XmlWriter.Create(sb, Settings))
-        {
-            writer.WriteStartDocument();
-            writer.WriteStartElement("ListBucketResult", S3Namespace);
-
-            writer.WriteElementString("Name", bucket);
-            writer.WriteElementString("Prefix", Encode(prefix, encodeUrl));
-            if (!string.IsNullOrEmpty(startAfter))
-            {
-                writer.WriteElementString("StartAfter", Encode(startAfter, encodeUrl));
-            }
-            if (!string.IsNullOrEmpty(continuationToken))
-            {
-                writer.WriteElementString("ContinuationToken", continuationToken);
-            }
-            if (!string.IsNullOrEmpty(nextContinuationToken))
-            {
-                writer.WriteElementString("NextContinuationToken", nextContinuationToken);
-            }
-            WriteIntElement(writer, "KeyCount", keyCount);
-            WriteIntElement(writer, "MaxKeys", maxKeys);
-            if (!string.IsNullOrEmpty(delimiter))
-            {
-                writer.WriteElementString("Delimiter", Encode(delimiter, encodeUrl));
-            }
-            writer.WriteElementString("IsTruncated", isTruncated ? "true" : "false");
-            if (encodeUrl)
-            {
-                writer.WriteElementString("EncodingType", "url");
-            }
-            WriteContentsOptimized(writer, contents, encodeUrl);
-            WriteCommonPrefixes(writer, commonPrefixes, encodeUrl);
-
-            writer.WriteEndElement();
-            writer.WriteEndDocument();
-        }
-        return sb.ToString();
-    }
-
-    /// <summary>
     /// S3 ListObjects (V1) response. V1 uses <c>Marker</c> + <c>NextMarker</c>
     /// instead of continuation tokens; NextMarker is only emitted when the
     /// listing is truncated AND a delimiter was supplied (matches S3 docs).
@@ -546,54 +488,6 @@ internal static class S3XmlWriter
         
         buffer.Position = 0;
         await buffer.CopyToAsync(output).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// S3 ListObjects (V1) response. Same as WriteListBucketResultAsync but
-    /// returns a string for backwards compatibility.
-    /// </summary>
-    public static string ListBucketResult(
-        string bucket,
-        string? prefix,
-        string? delimiter,
-        int maxKeys,
-        bool isTruncated,
-        string? marker,
-        string? nextMarker,
-        bool encodeUrl,
-        IReadOnlyList<ListedObject> contents,
-        IReadOnlyList<string> commonPrefixes)
-    {
-        var sb = new StringBuilder(512);
-        using (var writer = XmlWriter.Create(sb, Settings))
-        {
-            writer.WriteStartDocument();
-            writer.WriteStartElement("ListBucketResult", S3Namespace);
-
-            writer.WriteElementString("Name", bucket);
-            writer.WriteElementString("Prefix", Encode(prefix, encodeUrl));
-            writer.WriteElementString("Marker", Encode(marker, encodeUrl));
-            if (!string.IsNullOrEmpty(nextMarker))
-            {
-                writer.WriteElementString("NextMarker", Encode(nextMarker, encodeUrl));
-            }
-            WriteIntElement(writer, "MaxKeys", maxKeys);
-            if (!string.IsNullOrEmpty(delimiter))
-            {
-                writer.WriteElementString("Delimiter", Encode(delimiter, encodeUrl));
-            }
-            writer.WriteElementString("IsTruncated", isTruncated ? "true" : "false");
-            if (encodeUrl)
-            {
-                writer.WriteElementString("EncodingType", "url");
-            }
-            WriteContentsOptimized(writer, contents, encodeUrl);
-            WriteCommonPrefixes(writer, commonPrefixes, encodeUrl);
-
-            writer.WriteEndElement();
-            writer.WriteEndDocument();
-        }
-        return sb.ToString();
     }
 
     /// <summary>

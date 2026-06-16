@@ -47,12 +47,12 @@ internal static class SubresourceHandlers
 
         if (string.IsNullOrEmpty(bucket))
         {
-            await WriteErrorAsync(context, S3ErrorMapping.InvalidBucketName()).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidBucketName()).ConfigureAwait(false);
             return;
         }
         if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
-            await WriteErrorAsync(context, bucketError).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, bucketError).ConfigureAwait(false);
             return;
         }
 
@@ -67,7 +67,7 @@ internal static class SubresourceHandlers
             var exists = await BucketExistsAsync(blob, bucket, ct).ConfigureAwait(false);
             if (!exists)
             {
-                await WriteErrorAsync(context, new S3ErrorMapping.Mapping(
+                await S3ErrorMapping.WriteAsync(context, new S3ErrorMapping.Mapping(
                     404, "NoSuchBucket", "The specified bucket does not exist.")).ConfigureAwait(false);
                 return;
             }
@@ -80,7 +80,7 @@ internal static class SubresourceHandlers
             var (ok, err) = await ObjectExistsAsync(blob, bucket, key!, ct).ConfigureAwait(false);
             if (!ok)
             {
-                await WriteErrorAsync(context, err!.Value).ConfigureAwait(false);
+                await S3ErrorMapping.WriteAsync(context, err!.Value).ConfigureAwait(false);
                 return;
             }
         }
@@ -119,41 +119,41 @@ internal static class SubresourceHandlers
 
             // ── Bucket configuration: GET 404 NoSuch* ──
             case S3Operation.GetBucketLifecycleConfiguration:
-                await WriteErrorAsync(context, S3ErrorMapping.NoSuchConfiguration(
+                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchConfiguration(
                     "NoSuchLifecycleConfiguration", "lifecycle configuration")).ConfigureAwait(false);
                 return;
             case S3Operation.GetBucketCors:
-                await WriteErrorAsync(context, S3ErrorMapping.NoSuchConfiguration(
+                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchConfiguration(
                     "NoSuchCORSConfiguration", "CORS configuration")).ConfigureAwait(false);
                 return;
             case S3Operation.GetBucketWebsite:
-                await WriteErrorAsync(context, S3ErrorMapping.NoSuchConfiguration(
+                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchConfiguration(
                     "NoSuchWebsiteConfiguration", "website configuration")).ConfigureAwait(false);
                 return;
             case S3Operation.GetBucketReplication:
-                await WriteErrorAsync(context, S3ErrorMapping.NoSuchConfiguration(
+                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchConfiguration(
                     "ReplicationConfigurationNotFoundError", "replication configuration")).ConfigureAwait(false);
                 return;
             case S3Operation.GetBucketEncryption:
-                await WriteErrorAsync(context, S3ErrorMapping.NoSuchConfiguration(
+                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchConfiguration(
                     "ServerSideEncryptionConfigurationNotFoundError",
                     "server side encryption configuration")).ConfigureAwait(false);
                 return;
             case S3Operation.GetObjectLockConfiguration:
-                await WriteErrorAsync(context, S3ErrorMapping.NoSuchConfiguration(
+                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchConfiguration(
                     "ObjectLockConfigurationNotFoundError", "object lock configuration")).ConfigureAwait(false);
                 return;
             case S3Operation.GetPublicAccessBlock:
-                await WriteErrorAsync(context, S3ErrorMapping.NoSuchConfiguration(
+                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchConfiguration(
                     "NoSuchPublicAccessBlockConfiguration", "public access block configuration")).ConfigureAwait(false);
                 return;
             case S3Operation.GetBucketPolicy:
             case S3Operation.GetBucketPolicyStatus:
-                await WriteErrorAsync(context, S3ErrorMapping.NoSuchConfiguration(
+                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchConfiguration(
                     "NoSuchBucketPolicy", "bucket policy")).ConfigureAwait(false);
                 return;
             case S3Operation.GetBucketOwnershipControls:
-                await WriteErrorAsync(context, S3ErrorMapping.NoSuchConfiguration(
+                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchConfiguration(
                     "OwnershipControlsNotFoundError", "ownership controls configuration")).ConfigureAwait(false);
                 return;
 
@@ -189,7 +189,7 @@ internal static class SubresourceHandlers
             case S3Operation.PutBucketNotificationConfiguration:
             case S3Operation.PutBucketAccelerateConfiguration:
             case S3Operation.PutBucketOwnershipControls:
-                await WriteErrorAsync(context, S3ErrorMapping.NotImplemented(op)).ConfigureAwait(false);
+                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NotImplemented(op)).ConfigureAwait(false);
                 return;
 
             // ── Bucket configuration: DELETE 204 idempotent ──
@@ -211,11 +211,11 @@ internal static class SubresourceHandlers
             case S3Operation.PutObjectLegalHold:
             case S3Operation.GetObjectRetention:
             case S3Operation.PutObjectRetention:
-                await WriteErrorAsync(context, S3ErrorMapping.NotImplemented(op)).ConfigureAwait(false);
+                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NotImplemented(op)).ConfigureAwait(false);
                 return;
 
             default:
-                await WriteErrorAsync(context, S3ErrorMapping.NotImplemented(op)).ConfigureAwait(false);
+                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NotImplemented(op)).ConfigureAwait(false);
                 return;
         }
     }
@@ -227,14 +227,14 @@ internal static class SubresourceHandlers
     {
         if (!S3ObjectKey.IsValid(key))
         {
-            await WriteErrorAsync(context, S3ErrorMapping.InvalidObjectKey()).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidObjectKey()).ConfigureAwait(false);
             return;
         }
 
         using var response = await blob.GetBlobTagsAsync(bucket, key, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.GetObjectTagging)).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.GetObjectTagging)).ConfigureAwait(false);
             return;
         }
 
@@ -248,14 +248,14 @@ internal static class SubresourceHandlers
     {
         if (!S3ObjectKey.IsValid(key))
         {
-            await WriteErrorAsync(context, S3ErrorMapping.InvalidObjectKey()).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidObjectKey()).ConfigureAwait(false);
             return;
         }
 
         var (tags, err) = await ReadTagSetAsync(context, MaxObjectTags, ct).ConfigureAwait(false);
         if (err is not null)
         {
-            await WriteErrorAsync(context, err.Value).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, err.Value).ConfigureAwait(false);
             return;
         }
 
@@ -263,7 +263,7 @@ internal static class SubresourceHandlers
         using var response = await blob.PutBlobTagsAsync(bucket, key, body, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.PutObjectTagging)).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.PutObjectTagging)).ConfigureAwait(false);
             return;
         }
         context.Response.StatusCode = StatusCodes.Status200OK;
@@ -274,7 +274,7 @@ internal static class SubresourceHandlers
     {
         if (!S3ObjectKey.IsValid(key))
         {
-            await WriteErrorAsync(context, S3ErrorMapping.InvalidObjectKey()).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidObjectKey()).ConfigureAwait(false);
             return;
         }
 
@@ -282,7 +282,7 @@ internal static class SubresourceHandlers
         using var response = await blob.PutBlobTagsAsync(bucket, key, body, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.DeleteObjectTagging)).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.DeleteObjectTagging)).ConfigureAwait(false);
             return;
         }
         context.Response.StatusCode = StatusCodes.Status204NoContent;
@@ -296,13 +296,13 @@ internal static class SubresourceHandlers
         using var response = await blob.GetContainerMetadataAsync(bucket, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.GetBucketTagging)).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.GetBucketTagging)).ConfigureAwait(false);
             return;
         }
 
         if (!response.Headers.TryGetValues("x-ms-meta-" + BucketTagsMetadataKey, out var values))
         {
-            await WriteErrorAsync(context, S3ErrorMapping.NoSuchConfiguration(
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchConfiguration(
                 "NoSuchTagSet", "TagSet")).ConfigureAwait(false);
             return;
         }
@@ -311,7 +311,7 @@ internal static class SubresourceHandlers
         foreach (var v in values) { if (!string.IsNullOrEmpty(v)) { b64 = v; break; } }
         if (string.IsNullOrEmpty(b64))
         {
-            await WriteErrorAsync(context, S3ErrorMapping.NoSuchConfiguration("NoSuchTagSet", "TagSet")).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchConfiguration("NoSuchTagSet", "TagSet")).ConfigureAwait(false);
             return;
         }
 
@@ -323,7 +323,7 @@ internal static class SubresourceHandlers
         }
         catch
         {
-            await WriteErrorAsync(context, S3ErrorMapping.NoSuchConfiguration("NoSuchTagSet", "TagSet")).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchConfiguration("NoSuchTagSet", "TagSet")).ConfigureAwait(false);
             return;
         }
 
@@ -336,7 +336,7 @@ internal static class SubresourceHandlers
         var (tags, err) = await ReadTagSetAsync(context, MaxBucketTags, ct).ConfigureAwait(false);
         if (err is not null)
         {
-            await WriteErrorAsync(context, err.Value).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, err.Value).ConfigureAwait(false);
             return;
         }
 
@@ -356,7 +356,7 @@ internal static class SubresourceHandlers
         using var response = await blob.SetContainerMetadataAsync(bucket, metadata, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.PutBucketTagging)).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.PutBucketTagging)).ConfigureAwait(false);
             return;
         }
         context.Response.StatusCode = StatusCodes.Status204NoContent;
@@ -374,7 +374,7 @@ internal static class SubresourceHandlers
         using var response = await blob.SetContainerMetadataAsync(bucket, metadata, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.DeleteBucketTagging)).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.DeleteBucketTagging)).ConfigureAwait(false);
             return;
         }
         context.Response.StatusCode = StatusCodes.Status204NoContent;
@@ -411,7 +411,7 @@ internal static class SubresourceHandlers
 
         if (!ok)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.AccessControlListNotSupported()).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.AccessControlListNotSupported()).ConfigureAwait(false);
             return;
         }
         context.Response.StatusCode = StatusCodes.Status200OK;
@@ -649,7 +649,7 @@ internal static class SubresourceHandlers
         using var response = await blob.GetContainerPropertiesAsync(bucket, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.FromAzure(response, op)).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, op)).ConfigureAwait(false);
             return null;
         }
         var existing = BlobClient.ReadContainerMetadata(response);
@@ -716,8 +716,4 @@ internal static class SubresourceHandlers
         if (resp.IsSuccessStatusCode) return (true, null);
         return (false, S3ErrorMapping.FromAzure(resp, S3Operation.HeadObject));
     }
-
-    private static Task WriteErrorAsync(HttpContext context, S3ErrorMapping.Mapping mapping) =>
-        AwsErrorResponse.WriteAsync(
-            context, AwsErrorFormat.Xml, mapping.StatusCode, mapping.Code, mapping.Message);
 }

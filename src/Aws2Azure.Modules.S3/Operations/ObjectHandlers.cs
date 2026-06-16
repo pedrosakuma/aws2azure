@@ -69,7 +69,7 @@ internal static class ObjectHandlers
         var parsed = CopySourceParser.Parse(rawSource);
         if (!parsed.Success)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.InvalidArgument(parsed.Error!)).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidArgument(parsed.Error!)).ConfigureAwait(false);
             return;
         }
         var sourceBucket = parsed.Bucket!;
@@ -77,14 +77,14 @@ internal static class ObjectHandlers
 
         if (!BlobClient.IsValidContainerName(sourceBucket))
         {
-            await WriteErrorAsync(context,
+            await S3ErrorMapping.WriteAsync(context,
                 new S3ErrorMapping.Mapping(400, "InvalidBucketName",
                     "The specified copy-source bucket is not valid.")).ConfigureAwait(false);
             return;
         }
         if (!S3ObjectKey.IsValid(sourceKey))
         {
-            await WriteErrorAsync(context,
+            await S3ErrorMapping.WriteAsync(context,
                 S3ErrorMapping.InvalidArgument("The specified copy-source object key is not valid.")).ConfigureAwait(false);
             return;
         }
@@ -100,7 +100,7 @@ internal static class ObjectHandlers
         if (!replace && string.Equals(sourceBucket, destBucket, StringComparison.Ordinal)
             && string.Equals(sourceKey, destKey, StringComparison.Ordinal))
         {
-            await WriteErrorAsync(context, new S3ErrorMapping.Mapping(400, "InvalidRequest",
+            await S3ErrorMapping.WriteAsync(context, new S3ErrorMapping.Mapping(400, "InvalidRequest",
                 "This copy request is illegal because it is trying to copy an object to itself "
                 + "without changing the object's metadata, storage class, website redirect "
                 + "location or encryption attributes.")).ConfigureAwait(false);
@@ -108,7 +108,7 @@ internal static class ObjectHandlers
         }
         if (!replace && !string.IsNullOrEmpty(directive) && !string.Equals(directive, "COPY", StringComparison.OrdinalIgnoreCase))
         {
-            await WriteErrorAsync(context, S3ErrorMapping.InvalidArgument(
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidArgument(
                 "x-amz-metadata-directive must be COPY or REPLACE.")).ConfigureAwait(false);
             return;
         }
@@ -130,7 +130,7 @@ internal static class ObjectHandlers
         if (HasConcreteEtagPrecondition(context.Request, "x-amz-copy-source-if-match") ||
             HasConcreteEtagPrecondition(context.Request, "x-amz-copy-source-if-none-match"))
         {
-            await WriteErrorAsync(context,
+            await S3ErrorMapping.WriteAsync(context,
                 new S3ErrorMapping.Mapping(StatusCodes.Status501NotImplemented,
                     "NotImplemented",
                     "aws2azure: CopyObject with a concrete-ETag x-amz-copy-source-if-match / x-amz-copy-source-if-none-match precondition is not supported (only '*' is honored). Proxy-translated S3 ETags do not round-trip back to Azure's raw ETag space."))
@@ -156,7 +156,7 @@ internal static class ObjectHandlers
         using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
         if (!azureResp.IsSuccessStatusCode)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.FromAzure(azureResp, S3Operation.CopyObject)).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(azureResp, S3Operation.CopyObject)).ConfigureAwait(false);
             return;
         }
 
@@ -171,7 +171,7 @@ internal static class ObjectHandlers
             {
                 if (!string.Equals(s, "success", StringComparison.OrdinalIgnoreCase))
                 {
-                    await WriteErrorAsync(context, new S3ErrorMapping.Mapping(
+                    await S3ErrorMapping.WriteAsync(context, new S3ErrorMapping.Mapping(
                         StatusCodes.Status501NotImplemented, "NotImplemented",
                         $"aws2azure: only synchronous CopyObject is supported (x-ms-copy-status={s}).")).ConfigureAwait(false);
                     return;
@@ -200,7 +200,7 @@ internal static class ObjectHandlers
                 await SetDestinationPropertiesAsync(context.Request, blob, destBucket, destKey, ct).ConfigureAwait(false);
             if (err is { } mapping)
             {
-                await WriteErrorAsync(context, mapping).ConfigureAwait(false);
+                await S3ErrorMapping.WriteAsync(context, mapping).ConfigureAwait(false);
                 return;
             }
             if (propsLastModified is not null) lastModified = propsLastModified.Value;
@@ -394,7 +394,7 @@ internal static class ObjectHandlers
         if (HasConcreteEtagPrecondition(context.Request, Microsoft.Net.Http.Headers.HeaderNames.IfMatch) ||
             HasConcreteEtagPrecondition(context.Request, Microsoft.Net.Http.Headers.HeaderNames.IfNoneMatch))
         {
-            await WriteErrorAsync(context,
+            await S3ErrorMapping.WriteAsync(context,
                 new S3ErrorMapping.Mapping(StatusCodes.Status501NotImplemented,
                     "NotImplemented",
                     "aws2azure: PutObject with a concrete-ETag If-Match / If-None-Match precondition is not supported (only '*' is honored). Optimistic-concurrency support against Azure Blob requires a proxy-side HEAD-then-PUT cycle that is not yet implemented; rejecting to avoid silent stale-overwrites."))
@@ -459,7 +459,7 @@ internal static class ObjectHandlers
             using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
             if (!azureResp.IsSuccessStatusCode)
             {
-                await WriteErrorAsync(context, S3ErrorMapping.FromAzure(azureResp, S3Operation.PutObject)).ConfigureAwait(false);
+                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(azureResp, S3Operation.PutObject)).ConfigureAwait(false);
                 return;
             }
 
@@ -485,7 +485,7 @@ internal static class ObjectHandlers
         using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
         if (!azureResp.IsSuccessStatusCode && azureResp.StatusCode != System.Net.HttpStatusCode.NotModified)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.FromAzure(azureResp, S3Operation.GetObject)).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(azureResp, S3Operation.GetObject)).ConfigureAwait(false);
             return;
         }
 
@@ -516,7 +516,7 @@ internal static class ObjectHandlers
                     // headers copied from Azure's 200 so the error response
                     // doesn't leak the object's ETag / Last-Modified / etc.
                     context.Response.Headers.Clear();
-                    await WriteErrorAsync(context, new S3ErrorMapping.Mapping(
+                    await S3ErrorMapping.WriteAsync(context, new S3ErrorMapping.Mapping(
                         StatusCodes.Status412PreconditionFailed,
                         "PreconditionFailed",
                         "At least one of the pre-conditions you specified did not hold.")).ConfigureAwait(false);
@@ -616,25 +616,17 @@ internal static class ObjectHandlers
                 context.Response.ContentLength = 0;
                 return;
             }
-            await WriteErrorAsync(context, mapping).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, mapping).ConfigureAwait(false);
             return;
         }
 
-        await WriteErrorAsync(context, S3ErrorMapping.FromAzure(azureResp, S3Operation.DeleteObject)).ConfigureAwait(false);
+        await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(azureResp, S3Operation.DeleteObject)).ConfigureAwait(false);
     }
 
     private static Task EmitErrorAsync(HttpContext context, S3ErrorMapping.Mapping mapping, S3Operation op) =>
         op == S3Operation.HeadObject
             ? EmitHeadErrorAsync(context, mapping)
-            : WriteErrorAsync(context, mapping);
-
-    private static Task WriteErrorAsync(HttpContext context, S3ErrorMapping.Mapping mapping) =>
-        AwsErrorResponse.WriteAsync(
-            context,
-            AwsErrorFormat.Xml,
-            mapping.StatusCode,
-            mapping.Code,
-            mapping.Message);
+            : S3ErrorMapping.WriteAsync(context, mapping);
 
     private static Task EmitHeadErrorAsync(HttpContext context, S3ErrorMapping.Mapping mapping)
     {

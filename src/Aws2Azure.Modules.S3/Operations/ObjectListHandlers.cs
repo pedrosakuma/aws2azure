@@ -32,7 +32,7 @@ internal static class ObjectListHandlers
         var bucket = route.Bucket!;
         if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
-            await WriteErrorAsync(context, bucketError).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, bucketError).ConfigureAwait(false);
             return;
         }
 
@@ -46,14 +46,14 @@ internal static class ObjectListHandlers
 
         if (!string.IsNullOrEmpty(encodingType) && !encodeUrl)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.InvalidArgument(
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidArgument(
                 "Invalid Encoding Method specified in Request")).ConfigureAwait(false);
             return;
         }
 
         if (!TryParseMaxKeys(query, out var maxKeys, out var maxKeysError))
         {
-            await WriteErrorAsync(context, S3ErrorMapping.InvalidArgument(maxKeysError!)).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidArgument(maxKeysError!)).ConfigureAwait(false);
             return;
         }
 
@@ -74,7 +74,7 @@ internal static class ObjectListHandlers
                 var decoded = ContinuationTokenCodec.TryDecode(requestContinuationToken);
                 if (decoded is null)
                 {
-                    await WriteErrorAsync(context, S3ErrorMapping.InvalidArgument(
+                    await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidArgument(
                         "The continuation token provided is incorrect")).ConfigureAwait(false);
                     return;
                 }
@@ -122,7 +122,7 @@ internal static class ObjectListHandlers
                 bucket, prefix, delimiter, azureMarker, azureMax, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                await WriteErrorAsync(context,
+                await S3ErrorMapping.WriteAsync(context,
                     S3ErrorMapping.FromAzure(response, route.Operation)).ConfigureAwait(false);
                 return;
             }
@@ -259,12 +259,4 @@ internal static class ObjectListHandlers
         var v = values[0];
         return string.IsNullOrEmpty(v) ? null : v;
     }
-
-    private static Task WriteErrorAsync(HttpContext context, S3ErrorMapping.Mapping mapping) =>
-        AwsErrorResponse.WriteAsync(
-            context,
-            AwsErrorFormat.Xml,
-            mapping.StatusCode,
-            mapping.Code,
-            mapping.Message);
 }
