@@ -6,6 +6,7 @@ using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Modules.SecretsManager;
+using Aws2Azure.Modules.SecretsManager.WireProtocol;
 using Microsoft.AspNetCore.Http;
 
 namespace Aws2Azure.UnitTests.SecretsManager;
@@ -461,6 +462,160 @@ public sealed class SecretsManagerServiceModuleTests
         Assert.Equal(StatusCodes.Status501NotImplemented, context.Response.StatusCode);
         var body = await ReadBodyAsync(context);
         Assert.Contains("NotImplementedException", body);
+    }
+
+    [Fact]
+    public void KnownOperations_is_derived_from_the_wire_protocol_action_table()
+    {
+        using var http = new AzureHttpClient(new ScriptedHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK))), ownsHandler: false);
+
+        var module = CreateModule(http);
+
+        Assert.Equal(
+            SecretsManagerOperationNames.Names.OrderBy(name => name, StringComparer.Ordinal),
+            module.KnownOperations.OrderBy(name => name, StringComparer.Ordinal));
+        Assert.Contains("PutSecretValue", module.KnownOperations);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound, StatusCodes.Status404NotFound, "ResourceNotFoundException")]
+    [InlineData(HttpStatusCode.Conflict, StatusCodes.Status409Conflict, "ResourceExistsException")]
+    [InlineData(HttpStatusCode.BadRequest, StatusCodes.Status400BadRequest, "InvalidParameterException")]
+    [InlineData(HttpStatusCode.Unauthorized, StatusCodes.Status403Forbidden, "AccessDeniedException")]
+    [InlineData(HttpStatusCode.Forbidden, StatusCodes.Status403Forbidden, "AccessDeniedException")]
+    [InlineData(HttpStatusCode.TooManyRequests, StatusCodes.Status429TooManyRequests, "ThrottlingException")]
+    [InlineData(HttpStatusCode.InternalServerError, StatusCodes.Status503ServiceUnavailable, "InternalServiceError")]
+    [InlineData(HttpStatusCode.Accepted, StatusCodes.Status400BadRequest, "InvalidParameterException")]
+    public void KeyVault_error_mapping_matches_aws_error_shape(HttpStatusCode backendStatus, int expectedStatus, string expectedCode)
+    {
+        Assert.Equal(expectedStatus, SecretsManagerServiceModule.MapStatusCode(backendStatus));
+        Assert.Equal(expectedCode, SecretsManagerServiceModule.MapErrorCode(backendStatus));
+    }
+
+    [Fact]
+    public void EpochDateTimeOffsetConverter_round_trips_epoch_seconds()
+    {
+        var options = new JsonSerializerOptions();
+        options.Converters.Add(new EpochDateTimeOffsetConverter());
+        var expected = DateTimeOffset.FromUnixTimeMilliseconds(1_710_000_000_123);
+
+        var json = JsonSerializer.Serialize(expected, options);
+        var actual = JsonSerializer.Deserialize<DateTimeOffset>(json, options);
+
+        Assert.DoesNotContain('"', json);
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public void NormalizeSecretName_accepts_secret_arn_paths()
+    {
+        var name = KeyVaultSecretClient.NormalizeSecretName("arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/db/password-AbCdEf");
+
+        Assert.Equal("prod/db/password-AbCdEf", name);
+    }
+
+    [Fact]
+    public async Task HandleAsync_PutSecretValue_returns_aws_shape_for_new_version()
+    {
+        string? requestedUri = null;
+        string? requestBody = null;
+        using var http = new AzureHttpClient(new ScriptedHandler(async (request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                };
+            }
+
+            if (request.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"id\":\"https://example.vault.azure.net/secrets/demo\",\"attributes\":{\"created\":1710000000}}", Encoding.UTF8, "application/json"),
+                };
+            }
+
+            requestedUri = request.RequestUri.ToString();
+            requestBody = await request.Content!.ReadAsStringAsync();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/put789\",\"attributes\":{\"created\":1710000000}}", Encoding.UTF8, "application/json"),
+            };
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.PutSecretValue", "{\"SecretId\":\"demo\",\"SecretString\":\"new-secret\"}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.NotNull(requestedUri);
+        Assert.Contains("/secrets/demo?api-version=7.4", requestedUri);
+        Assert.NotNull(requestBody);
+        Assert.Contains("\"value\":\"new-secret\"", requestBody);
+        var body = await ReadBodyAsync(context);
+        using var document = JsonDocument.Parse(body);
+        Assert.Equal("demo", document.RootElement.GetProperty("Name").GetString());
+        Assert.Equal("put789", document.RootElement.GetProperty("VersionId").GetString());
+        Assert.Equal("AWSCURRENT", document.RootElement.GetProperty("VersionStages")[0].GetString());
+    }
+
+    [Theory]
+    [InlineData("SecretsManager.UpdateSecret", "{\"SecretId\":\"demo\",\"SecretString\":\"new-secret\"}")]
+    [InlineData("SecretsManager.PutSecretValue", "{\"SecretId\":\"demo\",\"SecretString\":\"new-secret\"}")]
+    public async Task HandleAsync_write_operations_preserve_key_vault_created_timestamp(string target, string requestJson)
+    {
+        const long originalCreated = 1_710_000_000;
+        long currentCreated = originalCreated;
+        string? putBody = null;
+        using var http = new AzureHttpClient(new ScriptedHandler(async (request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                };
+            }
+
+            if (request.Method == HttpMethod.Put)
+            {
+                putBody = await request.Content!.ReadAsStringAsync();
+                if (putBody.Contains("\"created\"", StringComparison.Ordinal))
+                {
+                    currentCreated = 1_710_009_999;
+                }
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent($"{{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/def456\",\"attributes\":{{\"created\":{currentCreated},\"updated\":1710001000}}}}", Encoding.UTF8, "application/json"),
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent($"{{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/def456\",\"name\":\"demo\",\"attributes\":{{\"created\":{currentCreated},\"updated\":1710001000}}}}", Encoding.UTF8, "application/json"),
+            };
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var writeContext = CreateContext(target, requestJson);
+        await module.HandleAsync(writeContext);
+
+        Assert.Equal(StatusCodes.Status200OK, writeContext.Response.StatusCode);
+        Assert.NotNull(putBody);
+        Assert.DoesNotContain("\"created\"", putBody);
+
+        var describeContext = CreateContext("SecretsManager.DescribeSecret", "{\"SecretId\":\"demo\"}");
+        await module.HandleAsync(describeContext);
+
+        Assert.Equal(StatusCodes.Status200OK, describeContext.Response.StatusCode);
+        var describeBody = await ReadBodyAsync(describeContext);
+        using var document = JsonDocument.Parse(describeBody);
+        Assert.Equal(originalCreated, (long)document.RootElement.GetProperty("CreatedDate").GetDouble());
     }
 
     private static SecretsManagerServiceModule CreateModule(AzureHttpClient http)

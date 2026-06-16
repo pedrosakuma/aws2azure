@@ -106,6 +106,7 @@
 | secretsmanager | [DescribeSecret](secretsmanager.md#describesecret) | ✅ implemented | `GET https://{vault}.vault.azure.net/secrets/{name}?api-version=7.4` |
 | secretsmanager | [GetSecretValue](secretsmanager.md#getsecretvalue) | ✅ implemented | `GET https://{vault}.vault.azure.net/secrets/{name}/versions/{version?}` |
 | secretsmanager | [ListSecrets](secretsmanager.md#listsecrets) | ✅ implemented | `GET https://{vault}.vault.azure.net/secrets?api-version=7.4` |
+| secretsmanager | [PutSecretValue](secretsmanager.md#putsecretvalue) | 🟡 partial | `PUT https://{vault}.vault.azure.net/secrets/{name}` |
 | secretsmanager | [UpdateSecret](secretsmanager.md#updatesecret) | ✅ implemented | `PUT https://{vault}.vault.azure.net/secrets/{name}/versions` |
 | sns | [ConfirmSubscription](sns.md#confirmsubscription) | 🟡 partial | `Azure Service Bus topic subscriptions` |
 | sns | [CreateTopic](sns.md#createtopic) | 🟡 partial | `Azure Service Bus Topics management REST API` |

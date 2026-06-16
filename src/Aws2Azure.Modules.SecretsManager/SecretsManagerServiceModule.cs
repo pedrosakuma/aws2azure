@@ -1,6 +1,6 @@
-using System.Net;
 using System.Collections.Frozen;
 using System.Linq;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -8,6 +8,7 @@ using Aws2Azure.Core;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
+using Aws2Azure.Modules.SecretsManager.WireProtocol;
 using Microsoft.AspNetCore.Http;
 
 namespace Aws2Azure.Modules.SecretsManager;
@@ -43,11 +44,10 @@ public sealed class SecretsManagerServiceModule : IServiceModule
     public IReadOnlyList<string> RequiredSignedHeaders { get; } = ["x-amz-target"];
     public AwsErrorFormat ErrorFormat => AwsErrorFormat.Json;
     public IReadOnlySet<string> KnownOperations => _knownOperations;
-    private static readonly FrozenSet<string> _knownOperations = new[]
-    {
-        "GetSecretValue", "CreateSecret", "DeleteSecret",
-        "DescribeSecret", "ListSecrets", "UpdateSecret",
-    }.ToFrozenSet();
+    // Derived from the wire-protocol target table (single source of truth) so
+    // the metrics allowlist cannot drift from the support/dispatch gate.
+    private static readonly FrozenSet<string> _knownOperations =
+        SecretsManagerOperationNames.Names.ToFrozenSet(StringComparer.Ordinal);
     public CapabilityMatrix Capabilities { get; }
 
     public bool MatchesHost(string host)
@@ -105,6 +105,9 @@ public sealed class SecretsManagerServiceModule : IServiceModule
                     return;
                 case "UpdateSecret":
                     await HandleUpdateSecretAsync(context, client, document, context.RequestAborted).ConfigureAwait(false);
+                    return;
+                case "PutSecretValue":
+                    await HandlePutSecretValueAsync(context, client, document, context.RequestAborted).ConfigureAwait(false);
                     return;
                 case "DeleteSecret":
                     await HandleDeleteSecretAsync(context, client, document, context.RequestAborted).ConfigureAwait(false);
@@ -329,6 +332,53 @@ public sealed class SecretsManagerServiceModule : IServiceModule
         await WriteJsonAsync(context, payload, SecretsManagerJsonContext.Default.UpdateSecretResponse).ConfigureAwait(false);
     }
 
+    private async Task HandlePutSecretValueAsync(HttpContext context, KeyVaultSecretClient client, JsonDocument document, CancellationToken cancellationToken)
+    {
+        var name = KeyVaultSecretClient.NormalizeSecretName(ReadString(document, "SecretId") ?? string.Empty);
+        var token = await client.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
+
+        var exists = await SecretExistsAsync(context, client, token, name, cancellationToken).ConfigureAwait(false);
+        if (exists is null)
+        {
+            return;
+        }
+
+        if (!exists.Value)
+        {
+            await WriteAwsErrorAsync(context, StatusCodes.Status404NotFound, "ResourceNotFoundException", $"Secrets Manager can't find the specified secret '{name}'.").ConfigureAwait(false);
+            return;
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, client.BuildVaultUri(KeyVaultSecretClient.BuildSecretPath(name)));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = new StringContent(KeyVaultSecretClient.BuildJsonBody(
+            ReadString(document, "SecretString"),
+            ReadString(document, "SecretBinary"),
+            null,
+            null), Encoding.UTF8, "application/json");
+
+        using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            await WriteAwsErrorAsync(context, MapStatusCode(response.StatusCode), MapErrorCode(response.StatusCode), "Key Vault request failed.").ConfigureAwait(false);
+            return;
+        }
+
+        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        using var secretDocument = JsonDocument.Parse(body);
+        var id = secretDocument.RootElement.TryGetProperty("id", out var idElement) && idElement.ValueKind == JsonValueKind.String
+            ? idElement.GetString() ?? string.Empty
+            : string.Empty;
+
+        var payload = new PutSecretValueResponse(
+            Arn: KeyVaultSecretClient.BuildArn(name),
+            Name: name,
+            VersionId: KeyVaultSecretClient.GetVersionId(id),
+            VersionStages: ["AWSCURRENT"]);
+
+        await WriteJsonAsync(context, payload, SecretsManagerJsonContext.Default.PutSecretValueResponse).ConfigureAwait(false);
+    }
+
     private async Task HandleDeleteSecretAsync(HttpContext context, KeyVaultSecretClient client, JsonDocument document, CancellationToken cancellationToken)
     {
         var name = KeyVaultSecretClient.NormalizeSecretName(ReadString(document, "SecretId") ?? string.Empty);
@@ -492,7 +542,7 @@ public sealed class SecretsManagerServiceModule : IServiceModule
         return true;
     }
 
-    private static int MapStatusCode(HttpStatusCode statusCode)
+    internal static int MapStatusCode(HttpStatusCode statusCode)
         => statusCode switch
         {
             HttpStatusCode.NotFound => StatusCodes.Status404NotFound,
@@ -504,7 +554,7 @@ public sealed class SecretsManagerServiceModule : IServiceModule
             _ => StatusCodes.Status400BadRequest,
         };
 
-    private static string MapErrorCode(HttpStatusCode statusCode)
+    internal static string MapErrorCode(HttpStatusCode statusCode)
         => statusCode switch
         {
             HttpStatusCode.NotFound => "ResourceNotFoundException",

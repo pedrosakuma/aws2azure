@@ -67,11 +67,18 @@ internal sealed record UpdateSecretResponse(
     [property: JsonPropertyName("VersionStages")] IReadOnlyList<string> VersionStages,
     [property: JsonPropertyName("CreatedDate")][property: JsonConverter(typeof(EpochDateTimeOffsetConverter))] DateTimeOffset CreatedDate);
 
+internal sealed record PutSecretValueResponse(
+    [property: JsonPropertyName("ARN")] string Arn,
+    [property: JsonPropertyName("Name")] string Name,
+    [property: JsonPropertyName("VersionId")] string VersionId,
+    [property: JsonPropertyName("VersionStages")] IReadOnlyList<string> VersionStages);
+
 internal sealed record KeyVaultSecretAttributes(
     [property: JsonPropertyName("enabled")] bool Enabled,
     [property: JsonPropertyName("exp")] long? Exp,
     [property: JsonPropertyName("nbf")] long? Nbf,
-    [property: JsonPropertyName("created")] long Created);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [property: JsonPropertyName("created")] long? Created);
 
 internal sealed record KeyVaultSecretRequest(
     [property: JsonPropertyName("value")] string? Value,
@@ -88,6 +95,7 @@ internal sealed record KeyVaultSecretRequest(
 [JsonSerializable(typeof(ListSecretsItem))]
 [JsonSerializable(typeof(SecretsManagerTag))]
 [JsonSerializable(typeof(UpdateSecretResponse))]
+[JsonSerializable(typeof(PutSecretValueResponse))]
 [JsonSerializable(typeof(KeyVaultSecretRequest))]
 [JsonSerializable(typeof(KeyVaultSecretAttributes))]
 internal sealed partial class SecretsManagerJsonContext : JsonSerializerContext
