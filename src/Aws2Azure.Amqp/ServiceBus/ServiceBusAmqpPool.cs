@@ -621,13 +621,13 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     {
         private readonly TimeProvider _timeProvider;
         private readonly SemaphoreSlim _connectionLock = new(1, 1);
-        private readonly ConcurrentDictionary<string, ReceiverSlot> _receivers
+        private readonly ConcurrentDictionary<string, ResourceSlot<ServiceBusReceiver>> _receivers
             = new(StringComparer.OrdinalIgnoreCase);
-        private readonly ConcurrentDictionary<string, SenderSlot> _senders
+        private readonly ConcurrentDictionary<string, ResourceSlot<ServiceBusAmqpSender>> _senders
             = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<SessionReceiverKey, SessionReceiverSlot> _sessionReceivers
             = new();
-        private readonly ConcurrentDictionary<string, ManagementSlot> _managementClients
+        private readonly ConcurrentDictionary<string, ResourceSlot<ServiceBusManagementClient>> _managementClients
             = new(StringComparer.OrdinalIgnoreCase);
         private ServiceBusAmqpConnection? _connection;
         private int _disposed;
@@ -680,38 +680,10 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
 
         private async Task EvictAllSlotsAsync()
         {
-            foreach (var key in _receivers.Keys.ToArray())
-            {
-                if (_receivers.TryRemove(key, out var slot))
-                {
-                    try { await slot.DisposeAsync().ConfigureAwait(false); }
-                    catch { /* swallow during eviction */ }
-                }
-            }
-            foreach (var key in _senders.Keys.ToArray())
-            {
-                if (_senders.TryRemove(key, out var slot))
-                {
-                    try { await slot.DisposeAsync().ConfigureAwait(false); }
-                    catch { /* swallow during eviction */ }
-                }
-            }
-            foreach (var key in _sessionReceivers.Keys.ToArray())
-            {
-                if (_sessionReceivers.TryRemove(key, out var slot))
-                {
-                    try { await slot.DisposeAsync().ConfigureAwait(false); }
-                    catch { /* swallow during eviction */ }
-                }
-            }
-            foreach (var key in _managementClients.Keys.ToArray())
-            {
-                if (_managementClients.TryRemove(key, out var slot))
-                {
-                    try { await slot.DisposeAsync().ConfigureAwait(false); }
-                    catch { /* swallow during eviction */ }
-                }
-            }
+            await EvictSlotsBestEffortAsync(_receivers).ConfigureAwait(false);
+            await EvictSlotsBestEffortAsync(_senders).ConfigureAwait(false);
+            await EvictSlotsBestEffortAsync(_sessionReceivers).ConfigureAwait(false);
+            await EvictSlotsBestEffortAsync(_managementClients).ConfigureAwait(false);
         }
 
         public async Task<ServiceBusReceiver> GetOrCreateReceiverAsync(
@@ -721,29 +693,13 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             CancellationToken cancellationToken)
         {
             ThrowIfDisposed();
-            var slot = await GetOrPublishReceiverSlotAsync(queueName).ConfigureAwait(false);
+            var slot = await GetOrPublishSlotAsync(_receivers, queueName, CreateReceiverSlot).ConfigureAwait(false);
             return await slot
-                .GetOrCreateAsync(connection, key.Endpoint, queueName, cancellationToken)
+                .GetOrCreateAsync(
+                    new ReceiverOpenRequest(connection, key.Endpoint, queueName),
+                    OpenReceiverResourceAsync,
+                    cancellationToken)
                 .ConfigureAwait(false);
-        }
-
-        private async ValueTask<ReceiverSlot> GetOrPublishReceiverSlotAsync(string queueName)
-        {
-            if (_receivers.TryGetValue(queueName, out var existing))
-            {
-                if (Volatile.Read(ref _disposed) != 0)
-                    throw new ObjectDisposedException(nameof(ConnectionSlot));
-                return existing;
-            }
-            var fresh = new ReceiverSlot();
-            var slot = _receivers.GetOrAdd(queueName, fresh);
-            if (ReferenceEquals(slot, fresh) && Volatile.Read(ref _disposed) != 0)
-            {
-                _receivers.TryRemove(KeyValuePair.Create(queueName, slot));
-                await slot.DisposeAsync().ConfigureAwait(false);
-                throw new ObjectDisposedException(nameof(ConnectionSlot));
-            }
-            return slot;
         }
 
         public async Task InvalidateReceiverAsync(string queueName)
@@ -759,29 +715,13 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             CancellationToken cancellationToken)
         {
             ThrowIfDisposed();
-            var slot = await GetOrPublishSenderSlotAsync(queueName).ConfigureAwait(false);
+            var slot = await GetOrPublishSlotAsync(_senders, queueName, CreateSenderSlot).ConfigureAwait(false);
             return await slot
-                .GetOrCreateAsync(connection, key.Endpoint, queueName, cancellationToken)
+                .GetOrCreateAsync(
+                    new SenderOpenRequest(connection, key.Endpoint, queueName),
+                    OpenSenderResourceAsync,
+                    cancellationToken)
                 .ConfigureAwait(false);
-        }
-
-        private async ValueTask<SenderSlot> GetOrPublishSenderSlotAsync(string queueName)
-        {
-            if (_senders.TryGetValue(queueName, out var existing))
-            {
-                if (Volatile.Read(ref _disposed) != 0)
-                    throw new ObjectDisposedException(nameof(ConnectionSlot));
-                return existing;
-            }
-            var fresh = new SenderSlot();
-            var slot = _senders.GetOrAdd(queueName, fresh);
-            if (ReferenceEquals(slot, fresh) && Volatile.Read(ref _disposed) != 0)
-            {
-                _senders.TryRemove(KeyValuePair.Create(queueName, slot));
-                await slot.DisposeAsync().ConfigureAwait(false);
-                throw new ObjectDisposedException(nameof(ConnectionSlot));
-            }
-            return slot;
         }
 
         public async Task InvalidateSenderAsync(string queueName)
@@ -801,7 +741,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             var slotKey = new SessionReceiverKey(queueName, sessionId);
             while (true)
             {
-                var slot = await GetOrPublishSessionReceiverSlotAsync(slotKey, static () => new SessionReceiverSlot())
+                var slot = await GetOrPublishSlotAsync(_sessionReceivers, slotKey, CreateSessionReceiverSlot)
                     .ConfigureAwait(false);
                 try
                 {
@@ -832,27 +772,6 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                     _sessionReceivers.TryRemove(KeyValuePair.Create(slotKey, slot));
                 }
             }
-        }
-
-        private async ValueTask<SessionReceiverSlot> GetOrPublishSessionReceiverSlotAsync(
-            SessionReceiverKey slotKey,
-            Func<SessionReceiverSlot> factory)
-        {
-            if (_sessionReceivers.TryGetValue(slotKey, out var existing))
-            {
-                if (Volatile.Read(ref _disposed) != 0)
-                    throw new ObjectDisposedException(nameof(ConnectionSlot));
-                return existing;
-            }
-            var fresh = factory();
-            var slot = _sessionReceivers.GetOrAdd(slotKey, fresh);
-            if (ReferenceEquals(slot, fresh) && Volatile.Read(ref _disposed) != 0)
-            {
-                _sessionReceivers.TryRemove(KeyValuePair.Create(slotKey, slot));
-                await slot.DisposeAsync().ConfigureAwait(false);
-                throw new ObjectDisposedException(nameof(ConnectionSlot));
-            }
-            return slot;
         }
 
         public async Task<ServiceBusReceiver> AcquireBrokerAssignedSessionReceiverAsync(
@@ -974,29 +893,13 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             CancellationToken cancellationToken)
         {
             ThrowIfDisposed();
-            var slot = await GetOrPublishManagementSlotAsync(queueName).ConfigureAwait(false);
+            var slot = await GetOrPublishSlotAsync(_managementClients, queueName, CreateManagementSlot).ConfigureAwait(false);
             return await slot
-                .GetOrCreateAsync(connection, key.Endpoint, queueName, cancellationToken)
+                .GetOrCreateAsync(
+                    new ManagementOpenRequest(connection, key.Endpoint, queueName),
+                    OpenManagementResourceAsync,
+                    cancellationToken)
                 .ConfigureAwait(false);
-        }
-
-        private async ValueTask<ManagementSlot> GetOrPublishManagementSlotAsync(string queueName)
-        {
-            if (_managementClients.TryGetValue(queueName, out var existing))
-            {
-                if (Volatile.Read(ref _disposed) != 0)
-                    throw new ObjectDisposedException(nameof(ConnectionSlot));
-                return existing;
-            }
-            var fresh = new ManagementSlot();
-            var slot = _managementClients.GetOrAdd(queueName, fresh);
-            if (ReferenceEquals(slot, fresh) && Volatile.Read(ref _disposed) != 0)
-            {
-                _managementClients.TryRemove(KeyValuePair.Create(queueName, slot));
-                await slot.DisposeAsync().ConfigureAwait(false);
-                throw new ObjectDisposedException(nameof(ConnectionSlot));
-            }
-            return slot;
         }
 
         public async Task InvalidateManagementClientAsync(string queueName)
@@ -1004,6 +907,109 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             if (_managementClients.TryRemove(queueName, out var slot))
                 await slot.DisposeAsync().ConfigureAwait(false);
         }
+
+        private static async Task EvictSlotsBestEffortAsync<TKey, TSlot>(
+            ConcurrentDictionary<TKey, TSlot> slots)
+            where TKey : notnull
+            where TSlot : IAsyncDisposable
+        {
+            foreach (var key in slots.Keys.ToArray())
+            {
+                if (!slots.TryRemove(key, out var slot)) continue;
+                try { await slot.DisposeAsync().ConfigureAwait(false); }
+                catch { /* swallow during eviction */ }
+            }
+        }
+
+        private static async Task DrainSlotsAsync<TKey, TSlot>(ConcurrentDictionary<TKey, TSlot> slots)
+            where TKey : notnull
+            where TSlot : IAsyncDisposable
+        {
+            while (!slots.IsEmpty)
+            {
+                foreach (var entry in slots.ToArray())
+                {
+                    if (slots.TryRemove(entry))
+                        await entry.Value.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+        }
+
+        private async ValueTask<TSlot> GetOrPublishSlotAsync<TKey, TSlot>(
+            ConcurrentDictionary<TKey, TSlot> slots,
+            TKey key,
+            Func<TSlot> factory)
+            where TKey : notnull
+            where TSlot : IAsyncDisposable
+        {
+            if (slots.TryGetValue(key, out var existing))
+            {
+                if (Volatile.Read(ref _disposed) != 0)
+                    throw new ObjectDisposedException(nameof(ConnectionSlot));
+                return existing;
+            }
+
+            var fresh = factory();
+            var slot = slots.GetOrAdd(key, fresh);
+            if (ReferenceEquals(slot, fresh) && Volatile.Read(ref _disposed) != 0)
+            {
+                slots.TryRemove(KeyValuePair.Create(key, slot));
+                await slot.DisposeAsync().ConfigureAwait(false);
+                throw new ObjectDisposedException(nameof(ConnectionSlot));
+            }
+            return slot;
+        }
+
+        private static ResourceSlot<ServiceBusReceiver> CreateReceiverSlot()
+            => new("ReceiverSlot", static receiver => receiver.IsClosed);
+
+        private static ResourceSlot<ServiceBusAmqpSender> CreateSenderSlot()
+            => new("SenderSlot", static sender => sender.IsClosed);
+
+        private static ResourceSlot<ServiceBusManagementClient> CreateManagementSlot()
+            => new("ManagementSlot", static client => client.IsClosed);
+
+        private static SessionReceiverSlot CreateSessionReceiverSlot() => new();
+
+        private static Task<ServiceBusReceiver> OpenReceiverResourceAsync(
+            ReceiverOpenRequest request,
+            CancellationToken cancellationToken)
+        {
+            var audience = ServiceBusEndpoint.BuildQueueAudience(request.Endpoint.LogicalNamespace, request.QueueName);
+            return request.Connection.OpenReceiverAsync(
+                request.QueueName, audience, prefetchCredit: 0, cancellationToken);
+        }
+
+        private static Task<ServiceBusAmqpSender> OpenSenderResourceAsync(
+            SenderOpenRequest request,
+            CancellationToken cancellationToken)
+        {
+            var audience = ServiceBusEndpoint.BuildQueueAudience(request.Endpoint.LogicalNamespace, request.QueueName);
+            return request.Connection.OpenSenderAsync(request.QueueName, audience, cancellationToken);
+        }
+
+        private static Task<ServiceBusManagementClient> OpenManagementResourceAsync(
+            ManagementOpenRequest request,
+            CancellationToken cancellationToken)
+        {
+            var audience = ServiceBusEndpoint.BuildQueueAudience(request.Endpoint.LogicalNamespace, request.QueueName);
+            return request.Connection.OpenManagementClientAsync(audience, cancellationToken);
+        }
+
+        private readonly record struct ReceiverOpenRequest(
+            ServiceBusAmqpConnection Connection,
+            ServiceBusAmqpEndpoint Endpoint,
+            string QueueName);
+
+        private readonly record struct SenderOpenRequest(
+            ServiceBusAmqpConnection Connection,
+            ServiceBusAmqpEndpoint Endpoint,
+            string QueueName);
+
+        private readonly record struct ManagementOpenRequest(
+            ServiceBusAmqpConnection Connection,
+            ServiceBusAmqpEndpoint Endpoint,
+            string QueueName);
 
         public int ReceiverCount => _receivers.Count;
         public int SenderCount => _senders.Count;
@@ -1042,41 +1048,10 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                 // disposed-check yet at our first snapshot. Receivers
                 // first — they're owned by this slot's connection and
                 // SB tears links down cleanly before we close it.
-                while (!_receivers.IsEmpty)
-                {
-                    foreach (var entry in _receivers.ToArray())
-                    {
-                        if (_receivers.TryRemove(entry))
-                            await entry.Value.DisposeAsync().ConfigureAwait(false);
-                    }
-                }
-
-                while (!_senders.IsEmpty)
-                {
-                    foreach (var entry in _senders.ToArray())
-                    {
-                        if (_senders.TryRemove(entry))
-                            await entry.Value.DisposeAsync().ConfigureAwait(false);
-                    }
-                }
-
-                while (!_sessionReceivers.IsEmpty)
-                {
-                    foreach (var entry in _sessionReceivers.ToArray())
-                    {
-                        if (_sessionReceivers.TryRemove(entry))
-                            await entry.Value.DisposeAsync().ConfigureAwait(false);
-                    }
-                }
-
-                while (!_managementClients.IsEmpty)
-                {
-                    foreach (var entry in _managementClients.ToArray())
-                    {
-                        if (_managementClients.TryRemove(entry))
-                            await entry.Value.DisposeAsync().ConfigureAwait(false);
-                    }
-                }
+                await DrainSlotsAsync(_receivers).ConfigureAwait(false);
+                await DrainSlotsAsync(_senders).ConfigureAwait(false);
+                await DrainSlotsAsync(_sessionReceivers).ConfigureAwait(false);
+                await DrainSlotsAsync(_managementClients).ConfigureAwait(false);
 
                 var connection = Interlocked.Exchange(ref _connection, null);
                 if (connection is not null)
@@ -1090,41 +1065,48 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         }
     }
 
-    private sealed class ReceiverSlot : IAsyncDisposable
+    private sealed class ResourceSlot<T> : IAsyncDisposable where T : class, IAsyncDisposable
     {
         private readonly SemaphoreSlim _lock = new(1, 1);
-        private ServiceBusReceiver? _receiver;
+        private readonly string _objectName;
+        private readonly Func<T, bool> _isClosed;
+        private T? _resource;
         private int _disposed;
 
-        public async Task<ServiceBusReceiver> GetOrCreateAsync(
-            ServiceBusAmqpConnection connection,
-            ServiceBusAmqpEndpoint endpoint,
-            string queueName,
+        public ResourceSlot(string objectName, Func<T, bool> isClosed, T? initialResource = null)
+        {
+            _objectName = objectName;
+            _isClosed = isClosed;
+            _resource = initialResource;
+        }
+
+        public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
+
+        public async Task<T> GetOrCreateAsync<TState>(
+            TState state,
+            Func<TState, CancellationToken, Task<T>> createAsync,
             CancellationToken cancellationToken)
         {
-            var existing = Volatile.Read(ref _receiver);
-            if (existing is not null && !existing.IsClosed) return existing;
+            var existing = Volatile.Read(ref _resource);
+            if (existing is not null && !_isClosed(existing)) return existing;
             ThrowIfDisposed();
 
             await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
                 ThrowIfDisposed();
-                existing = _receiver;
-                if (existing is not null && !existing.IsClosed) return existing;
+                existing = _resource;
+                if (existing is not null && !_isClosed(existing)) return existing;
 
                 if (existing is not null)
                 {
                     try { await existing.DisposeAsync().ConfigureAwait(false); }
                     catch { /* swallow during eviction */ }
-                    Volatile.Write(ref _receiver, null);
+                    Volatile.Write(ref _resource, null);
                 }
 
-                var audience = ServiceBusEndpoint.BuildQueueAudience(endpoint.LogicalNamespace, queueName);
-                var created = await connection
-                    .OpenReceiverAsync(queueName, audience, prefetchCredit: 0, cancellationToken)
-                    .ConfigureAwait(false);
-                Volatile.Write(ref _receiver, created);
+                var created = await createAsync(state, cancellationToken).ConfigureAwait(false);
+                Volatile.Write(ref _resource, created);
                 return created;
             }
             finally
@@ -1133,10 +1115,16 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             }
         }
 
+        public T? TryGetExisting()
+        {
+            if (Volatile.Read(ref _disposed) != 0) return null;
+            return Volatile.Read(ref _resource);
+        }
+
         private void ThrowIfDisposed()
         {
             if (Volatile.Read(ref _disposed) != 0)
-                throw new ObjectDisposedException(nameof(ReceiverSlot));
+                throw new ObjectDisposedException(_objectName);
         }
 
         public async ValueTask DisposeAsync()
@@ -1152,154 +1140,9 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             }
             try
             {
-                var receiver = Interlocked.Exchange(ref _receiver, null);
-                if (receiver is not null)
-                    await receiver.DisposeAsync().ConfigureAwait(false);
-            }
-            finally
-            {
-                _lock.Release();
-                _lock.Dispose();
-            }
-        }
-    }
-
-    private sealed class SenderSlot : IAsyncDisposable
-    {
-        private readonly SemaphoreSlim _lock = new(1, 1);
-        private ServiceBusAmqpSender? _sender;
-        private int _disposed;
-
-        public async Task<ServiceBusAmqpSender> GetOrCreateAsync(
-            ServiceBusAmqpConnection connection,
-            ServiceBusAmqpEndpoint endpoint,
-            string queueName,
-            CancellationToken cancellationToken)
-        {
-            var existing = Volatile.Read(ref _sender);
-            if (existing is not null && !existing.IsClosed) return existing;
-            ThrowIfDisposed();
-
-            await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                ThrowIfDisposed();
-                existing = _sender;
-                if (existing is not null && !existing.IsClosed) return existing;
-
-                // Stale sender (link detached by broker / network / prior
-                // failure) — dispose it and re-open under the lock so
-                // concurrent callers don't race on the cached slot.
-                if (existing is not null)
-                {
-                    try { await existing.DisposeAsync().ConfigureAwait(false); }
-                    catch { /* swallow during eviction */ }
-                    Volatile.Write(ref _sender, null);
-                }
-
-                var audience = ServiceBusEndpoint.BuildQueueAudience(endpoint.LogicalNamespace, queueName);
-                var created = await connection
-                    .OpenSenderAsync(queueName, audience, cancellationToken)
-                    .ConfigureAwait(false);
-                Volatile.Write(ref _sender, created);
-                return created;
-            }
-            finally
-            {
-                _lock.Release();
-            }
-        }
-
-        private void ThrowIfDisposed()
-        {
-            if (Volatile.Read(ref _disposed) != 0)
-                throw new ObjectDisposedException(nameof(SenderSlot));
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-            try { await _lock.WaitAsync().ConfigureAwait(false); }
-            catch (ObjectDisposedException) { return; }
-            try
-            {
-                var sender = Interlocked.Exchange(ref _sender, null);
-                if (sender is not null)
-                    await sender.DisposeAsync().ConfigureAwait(false);
-            }
-            finally
-            {
-                _lock.Release();
-                _lock.Dispose();
-            }
-        }
-    }
-
-    private sealed class ManagementSlot : IAsyncDisposable
-    {
-        private readonly SemaphoreSlim _lock = new(1, 1);
-        private ServiceBusManagementClient? _client;
-        private int _disposed;
-
-        public async Task<ServiceBusManagementClient> GetOrCreateAsync(
-            ServiceBusAmqpConnection connection,
-            ServiceBusAmqpEndpoint endpoint,
-            string queueName,
-            CancellationToken cancellationToken)
-        {
-            var existing = Volatile.Read(ref _client);
-            if (existing is not null && !existing.IsClosed) return existing;
-            ThrowIfDisposed();
-
-            await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                ThrowIfDisposed();
-                existing = _client;
-                if (existing is not null && !existing.IsClosed) return existing;
-
-                if (existing is not null)
-                {
-                    try { await existing.DisposeAsync().ConfigureAwait(false); }
-                    catch { /* swallow during eviction */ }
-                    Volatile.Write(ref _client, null);
-                }
-
-                var audience = ServiceBusEndpoint.BuildQueueAudience(endpoint.LogicalNamespace, queueName);
-                var created = await connection
-                    .OpenManagementClientAsync(audience, cancellationToken)
-                    .ConfigureAwait(false);
-                Volatile.Write(ref _client, created);
-                return created;
-            }
-            finally
-            {
-                _lock.Release();
-            }
-        }
-
-        private void ThrowIfDisposed()
-        {
-            if (Volatile.Read(ref _disposed) != 0)
-                throw new ObjectDisposedException(nameof(ManagementSlot));
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-            try
-            {
-                await _lock.WaitAsync().ConfigureAwait(false);
-            }
-            catch (ObjectDisposedException)
-            {
-                return;
-            }
-            try
-            {
-                var client = Interlocked.Exchange(ref _client, null);
-                if (client is not null)
-                    await client.DisposeAsync().ConfigureAwait(false);
+                var resource = Interlocked.Exchange(ref _resource, null);
+                if (resource is not null)
+                    await resource.DisposeAsync().ConfigureAwait(false);
             }
             finally
             {
@@ -1328,10 +1171,19 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
 
     private sealed class SessionReceiverSlot : IAsyncDisposable
     {
-        private readonly SemaphoreSlim _lock = new(1, 1);
-        private ServiceBusReceiver? _receiver;
+        private readonly ResourceSlot<ServiceBusReceiver> _slot;
         private long _lastActivityTicks;
-        private int _disposed;
+
+        public SessionReceiverSlot()
+            : this(initialReceiver: null)
+        {
+        }
+
+        private SessionReceiverSlot(ServiceBusReceiver? initialReceiver)
+            => _slot = new ResourceSlot<ServiceBusReceiver>(
+                nameof(SessionReceiverSlot),
+                static receiver => receiver.IsClosed,
+                initialReceiver);
 
         /// <summary>
         /// Records receive/settle activity for the idle-TTL sweeper
@@ -1348,7 +1200,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         /// <see cref="ConnectionSlot.GetOrCreateSessionReceiverAsync"/>
         /// retry filter (#262 Fix A).
         /// </summary>
-        public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
+        public bool IsDisposed => _slot.IsDisposed;
 
         /// <summary>
         /// True when the slot has recorded at least one activity and has
@@ -1358,7 +1210,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         /// </summary>
         public bool IsIdle(DateTimeOffset now, TimeSpan idleTimeout)
         {
-            if (Volatile.Read(ref _disposed) != 0) return false;
+            if (_slot.IsDisposed) return false;
             var ticks = Volatile.Read(ref _lastActivityTicks);
             if (ticks == 0) return false;
             return now - new DateTimeOffset(ticks, TimeSpan.Zero) >= idleTimeout;
@@ -1374,48 +1226,19 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         public static SessionReceiverSlot FromExisting(ServiceBusReceiver receiver)
         {
             ArgumentNullException.ThrowIfNull(receiver);
-            var slot = new SessionReceiverSlot();
-            slot._receiver = receiver;
-            return slot;
+            return new SessionReceiverSlot(receiver);
         }
 
-        public async Task<ServiceBusReceiver> GetOrCreateAsync(
+        public Task<ServiceBusReceiver> GetOrCreateAsync(
             ServiceBusAmqpConnection connection,
             ServiceBusAmqpEndpoint endpoint,
             string queueName,
             string sessionId,
             CancellationToken cancellationToken)
-        {
-            var existing = Volatile.Read(ref _receiver);
-            if (existing is not null && !existing.IsClosed) return existing;
-            ThrowIfDisposed();
-
-            await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                ThrowIfDisposed();
-                existing = _receiver;
-                if (existing is not null && !existing.IsClosed) return existing;
-
-                if (existing is not null)
-                {
-                    try { await existing.DisposeAsync().ConfigureAwait(false); }
-                    catch { /* swallow during eviction */ }
-                    Volatile.Write(ref _receiver, null);
-                }
-
-                var audience = ServiceBusEndpoint.BuildQueueAudience(endpoint.LogicalNamespace, queueName);
-                var created = await connection
-                    .OpenSessionReceiverAsync(queueName, audience, sessionId, prefetchCredit: 0, cancellationToken)
-                    .ConfigureAwait(false);
-                Volatile.Write(ref _receiver, created);
-                return created;
-            }
-            finally
-            {
-                _lock.Release();
-            }
-        }
+            => _slot.GetOrCreateAsync(
+                new SessionReceiverOpenRequest(connection, endpoint, queueName, sessionId),
+                OpenSessionReceiverResourceAsync,
+                cancellationToken);
 
         /// <summary>
         /// Returns the cached receiver if one has already been opened
@@ -1426,40 +1249,27 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         /// just to immediately fail the lock-token lookup would starve
         /// the message group.
         /// </summary>
-        public ServiceBusReceiver? TryGetExisting()
+        public ServiceBusReceiver? TryGetExisting() => _slot.TryGetExisting();
+
+        public ValueTask DisposeAsync() => _slot.DisposeAsync();
+
+        private static Task<ServiceBusReceiver> OpenSessionReceiverResourceAsync(
+            SessionReceiverOpenRequest request,
+            CancellationToken cancellationToken)
         {
-            if (Volatile.Read(ref _disposed) != 0) return null;
-            return Volatile.Read(ref _receiver);
+            var audience = ServiceBusEndpoint.BuildQueueAudience(request.Endpoint.LogicalNamespace, request.QueueName);
+            return request.Connection.OpenSessionReceiverAsync(
+                request.QueueName,
+                audience,
+                request.SessionId,
+                prefetchCredit: 0,
+                cancellationToken);
         }
 
-        private void ThrowIfDisposed()
-        {
-            if (Volatile.Read(ref _disposed) != 0)
-                throw new ObjectDisposedException(nameof(SessionReceiverSlot));
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-            try
-            {
-                await _lock.WaitAsync().ConfigureAwait(false);
-            }
-            catch (ObjectDisposedException)
-            {
-                return;
-            }
-            try
-            {
-                var receiver = Interlocked.Exchange(ref _receiver, null);
-                if (receiver is not null)
-                    await receiver.DisposeAsync().ConfigureAwait(false);
-            }
-            finally
-            {
-                _lock.Release();
-                _lock.Dispose();
-            }
-        }
+        private readonly record struct SessionReceiverOpenRequest(
+            ServiceBusAmqpConnection Connection,
+            ServiceBusAmqpEndpoint Endpoint,
+            string QueueName,
+            string SessionId);
     }
 }
