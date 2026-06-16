@@ -108,7 +108,7 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
         }
         catch (Exception ex) when (TryWrap(ex, out var wrapped))
         {
-            await _pool.InvalidateSenderAsync(endpoint, credentialMarker, topicName, closeConnection: true).ConfigureAwait(false);
+            await InvalidatePooledSenderAsync(endpoint, credentialMarker, topicName).ConfigureAwait(false);
             throw wrapped;
         }
     }
@@ -149,7 +149,7 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
                 }
                 catch (Exception ex) when (TryWrap(ex, out var wrapped))
                 {
-                    await _pool.InvalidateSenderAsync(endpoint, credentialMarker, topicName, closeConnection: true).ConfigureAwait(false);
+                    await InvalidatePooledSenderAsync(endpoint, credentialMarker, topicName).ConfigureAwait(false);
                     if (wrapped.Kind == SnsAmqpFailureKind.Auth)
                     {
                         throw wrapped;
@@ -169,7 +169,7 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
         }
         catch (Exception ex) when (TryWrap(ex, out var wrapped))
         {
-            await _pool.InvalidateSenderAsync(endpoint, credentialMarker, topicName, closeConnection: true).ConfigureAwait(false);
+            await InvalidatePooledSenderAsync(endpoint, credentialMarker, topicName).ConfigureAwait(false);
             if (wrapped.Kind == SnsAmqpFailureKind.Auth)
             {
                 throw wrapped;
@@ -228,6 +228,19 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
             (endpoint, credentialMarker),
             static (_, state) => CreateTokenProvider(state.tokenProvider, state.credentials),
             (tokenProvider: _tokenProvider, credentials));
+
+    private async Task InvalidatePooledSenderAsync(
+        ServiceBusAmqpEndpoint endpoint, string credentialMarker, string topicName)
+    {
+        // closeConnection drops the pooled connection bound to (endpoint,
+        // marker); release the cached token provider keyed the same way so a
+        // reconnect rebinds from the current credentials instead of pinning the
+        // secret captured at first use (the marker excludes the SAS key / client
+        // secret value, so it alone cannot distinguish a rotated secret).
+        _tokenProviders.TryRemove((endpoint, credentialMarker), out _);
+        await _pool.InvalidateSenderAsync(endpoint, credentialMarker, topicName, closeConnection: true)
+            .ConfigureAwait(false);
+    }
 
     private static AmqpMessage ToAmqpMessage(SnsAmqpSendMessage message)
         => new()
