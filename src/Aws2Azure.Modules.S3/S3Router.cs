@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+using System.Collections.Generic;
 using Microsoft.AspNetCore.Http;
 
 namespace Aws2Azure.Modules.S3;
@@ -217,14 +219,27 @@ public static class S3Router
         return false;
     }
 
+    private static readonly SubresourceDefinition[] ObjectSubresourceDefinitions =
+    {
+        new("tagging", new(get: S3Operation.GetObjectTagging, put: S3Operation.PutObjectTagging, delete: S3Operation.DeleteObjectTagging)),
+        new("acl", new(get: S3Operation.GetObjectAcl, put: S3Operation.PutObjectAcl)),
+        new("torrent", new(get: S3Operation.GetObjectTorrent)),
+        new("restore", new(post: S3Operation.RestoreObject)),
+        new("legal-hold", new(get: S3Operation.GetObjectLegalHold, put: S3Operation.PutObjectLegalHold)),
+        new("retention", new(get: S3Operation.GetObjectRetention, put: S3Operation.PutObjectRetention)),
+        new("attributes", SubresourceOperations.UnsupportedOnly),
+        new("uploads", SubresourceOperations.UnsupportedOnly),
+        new("uploadId", SubresourceOperations.UnsupportedOnly),
+        new("partNumber", SubresourceOperations.UnsupportedOnly),
+        new("select", SubresourceOperations.UnsupportedOnly),
+        new("select-type", SubresourceOperations.UnsupportedOnly),
+        new("versions", SubresourceOperations.UnsupportedOnly),
+        new("versionId", SubresourceOperations.UnsupportedOnly),
+    };
+
     // Well-known S3 object subresources. Membership is checked case-insensitively.
-    private static readonly System.Collections.Generic.HashSet<string> ObjectSubresources =
-        new(StringComparer.OrdinalIgnoreCase)
-        {
-            "acl", "attributes", "tagging", "torrent", "uploads", "uploadId",
-            "partNumber", "restore", "select", "select-type",
-            "legal-hold", "retention", "versions", "versionId",
-        };
+    private static readonly FrozenDictionary<string, SubresourceOperations> ObjectSubresources =
+        CreateSubresourceLookup(ObjectSubresourceDefinitions);
 
     private static bool HasObjectSubresource(IQueryCollection query)
     {
@@ -234,7 +249,7 @@ public static class S3Router
         }
         foreach (var kv in query)
         {
-            if (ObjectSubresources.Contains(kv.Key))
+            if (ObjectSubresources.ContainsKey(kv.Key))
             {
                 return true;
             }
@@ -245,80 +260,46 @@ public static class S3Router
     /// <summary>
     /// Maps an object-scoped subresource query key + HTTP method to the
     /// specific <see cref="S3Operation"/> the long-tail handler will dispatch
-    /// to. Returns false when the subresource is not recognised or the verb
-    /// combination has no S3 equivalent (caller falls back to the
-    /// catch-all <see cref="S3Operation.Unsupported"/>).
+    /// to. Returns false when the subresource is not recognised. Recognised
+    /// subresources with unsupported verbs map explicitly to
+    /// <see cref="S3Operation.Unsupported"/>.
     /// </summary>
     private static bool TryClassifyObjectSubresource(string method, IQueryCollection query, out S3Operation op)
     {
-        op = S3Operation.Unknown;
-        if (query.Count == 0) return false;
-
-        if (query.ContainsKey("tagging"))
-        {
-            op = method switch
-            {
-                var m when m == HttpMethods.Get    => S3Operation.GetObjectTagging,
-                var m when m == HttpMethods.Put    => S3Operation.PutObjectTagging,
-                var m when m == HttpMethods.Delete => S3Operation.DeleteObjectTagging,
-                _ => S3Operation.Unsupported,
-            };
-            return true;
-        }
-        if (query.ContainsKey("acl"))
-        {
-            op = method switch
-            {
-                var m when m == HttpMethods.Get => S3Operation.GetObjectAcl,
-                var m when m == HttpMethods.Put => S3Operation.PutObjectAcl,
-                _ => S3Operation.Unsupported,
-            };
-            return true;
-        }
-        if (query.ContainsKey("torrent"))
-        {
-            op = method == HttpMethods.Get ? S3Operation.GetObjectTorrent : S3Operation.Unsupported;
-            return true;
-        }
-        if (query.ContainsKey("restore"))
-        {
-            op = method == HttpMethods.Post ? S3Operation.RestoreObject : S3Operation.Unsupported;
-            return true;
-        }
-        if (query.ContainsKey("legal-hold"))
-        {
-            op = method switch
-            {
-                var m when m == HttpMethods.Get => S3Operation.GetObjectLegalHold,
-                var m when m == HttpMethods.Put => S3Operation.PutObjectLegalHold,
-                _ => S3Operation.Unsupported,
-            };
-            return true;
-        }
-        if (query.ContainsKey("retention"))
-        {
-            op = method switch
-            {
-                var m when m == HttpMethods.Get => S3Operation.GetObjectRetention,
-                var m when m == HttpMethods.Put => S3Operation.PutObjectRetention,
-                _ => S3Operation.Unsupported,
-            };
-            return true;
-        }
-        return false;
+        return TryClassifySubresource(method, query, ObjectSubresourceDefinitions, out op);
     }
+
+    private static readonly SubresourceDefinition[] BucketSubresourceDefinitions =
+    {
+        new("tagging", new(get: S3Operation.GetBucketTagging, put: S3Operation.PutBucketTagging, delete: S3Operation.DeleteBucketTagging)),
+        new("acl", new(get: S3Operation.GetBucketAcl, put: S3Operation.PutBucketAcl)),
+        new("lifecycle", new(get: S3Operation.GetBucketLifecycleConfiguration, put: S3Operation.PutBucketLifecycleConfiguration, delete: S3Operation.DeleteBucketLifecycle)),
+        new("cors", new(get: S3Operation.GetBucketCors, put: S3Operation.PutBucketCors, delete: S3Operation.DeleteBucketCors)),
+        new("website", new(get: S3Operation.GetBucketWebsite, put: S3Operation.PutBucketWebsite, delete: S3Operation.DeleteBucketWebsite)),
+        new("replication", new(get: S3Operation.GetBucketReplication, put: S3Operation.PutBucketReplication, delete: S3Operation.DeleteBucketReplication)),
+        new("encryption", new(get: S3Operation.GetBucketEncryption, put: S3Operation.PutBucketEncryption, delete: S3Operation.DeleteBucketEncryption)),
+        new("logging", new(get: S3Operation.GetBucketLogging, put: S3Operation.PutBucketLogging)),
+        new("versioning", new(get: S3Operation.GetBucketVersioning, put: S3Operation.PutBucketVersioning)),
+        new("requestPayment", new(get: S3Operation.GetBucketRequestPayment, put: S3Operation.PutBucketRequestPayment)),
+        new("object-lock", new(get: S3Operation.GetObjectLockConfiguration, put: S3Operation.PutObjectLockConfiguration)),
+        new("publicAccessBlock", new(get: S3Operation.GetPublicAccessBlock, put: S3Operation.PutPublicAccessBlock, delete: S3Operation.DeletePublicAccessBlock)),
+        new("policy", new(get: S3Operation.GetBucketPolicy, put: S3Operation.PutBucketPolicy, delete: S3Operation.DeleteBucketPolicy)),
+        new("policyStatus", new(get: S3Operation.GetBucketPolicyStatus)),
+        new("notification", new(get: S3Operation.GetBucketNotificationConfiguration, put: S3Operation.PutBucketNotificationConfiguration)),
+        new("accelerate", new(get: S3Operation.GetBucketAccelerateConfiguration, put: S3Operation.PutBucketAccelerateConfiguration)),
+        new("ownershipControls", new(get: S3Operation.GetBucketOwnershipControls, put: S3Operation.PutBucketOwnershipControls, delete: S3Operation.DeleteBucketOwnershipControls)),
+        new("analytics", SubresourceOperations.UnsupportedOnly),
+        new("intelligent-tiering", SubresourceOperations.UnsupportedOnly),
+        new("inventory", SubresourceOperations.UnsupportedOnly),
+        new("metrics", SubresourceOperations.UnsupportedOnly),
+        new("uploads", SubresourceOperations.UnsupportedOnly),
+        new("versions", SubresourceOperations.UnsupportedOnly),
+    };
 
     // Well-known S3 bucket subresources. Membership is checked case-insensitively
     // since SDKs and SigV4 canonicalization both normalise query keys.
-    private static readonly System.Collections.Generic.HashSet<string> BucketSubresources =
-        new(StringComparer.OrdinalIgnoreCase)
-        {
-            "accelerate", "acl", "analytics", "cors", "encryption", "intelligent-tiering",
-            "inventory", "lifecycle", "logging", "metrics", "notification",
-            "object-lock", "ownershipControls", "policy", "policyStatus",
-            "publicAccessBlock", "replication", "requestPayment", "tagging",
-            "uploads", "versioning", "versions", "website",
-        };
+    private static readonly FrozenDictionary<string, SubresourceOperations> BucketSubresources =
+        CreateSubresourceLookup(BucketSubresourceDefinitions);
 
     private static bool HasBucketSubresource(IQueryCollection query)
     {
@@ -328,7 +309,7 @@ public static class S3Router
         }
         foreach (var kv in query)
         {
-            if (BucketSubresources.Contains(kv.Key))
+            if (BucketSubresources.ContainsKey(kv.Key))
             {
                 return true;
             }
@@ -339,10 +320,10 @@ public static class S3Router
     /// <summary>
     /// Maps a bucket-scoped subresource query key + HTTP method to its
     /// specific <see cref="S3Operation"/>. Returns false when no recognised
-    /// subresource is present (caller falls back to the catch-all
-    /// <see cref="S3Operation.Unsupported"/>). Order matters when more than
-    /// one recognised key is present, mirroring AWS precedence; in practice
-    /// SDKs send exactly one.
+    /// subresource is present. Recognised subresources with unsupported verbs
+    /// map explicitly to <see cref="S3Operation.Unsupported"/>. Order matters
+    /// when more than one recognised key is present, mirroring AWS precedence;
+    /// in practice SDKs send exactly one.
     /// </summary>
     private static bool TryClassifyBucketSubresource(string method, IQueryCollection query, out S3Operation op)
     {
@@ -352,181 +333,96 @@ public static class S3Router
         // ?uploads belongs to multipart (handled separately).
         if (query.ContainsKey("uploads")) return false;
 
-        if (query.ContainsKey("tagging"))
+        return TryClassifySubresource(method, query, BucketSubresourceDefinitions, out op);
+    }
+
+    private static bool TryClassifySubresource(
+        string method,
+        IQueryCollection query,
+        SubresourceDefinition[] definitions,
+        out S3Operation op)
+    {
+        op = S3Operation.Unknown;
+        if (query.Count == 0)
         {
-            op = method switch
+            return false;
+        }
+
+        foreach (var definition in definitions)
+        {
+            if (!query.ContainsKey(definition.Name))
             {
-                var m when m == HttpMethods.Get    => S3Operation.GetBucketTagging,
-                var m when m == HttpMethods.Put    => S3Operation.PutBucketTagging,
-                var m when m == HttpMethods.Delete => S3Operation.DeleteBucketTagging,
-                _ => S3Operation.Unsupported,
-            };
+                continue;
+            }
+
+            op = definition.Operations.ForMethod(method);
             return true;
         }
-        if (query.ContainsKey("acl"))
-        {
-            op = method switch
-            {
-                var m when m == HttpMethods.Get => S3Operation.GetBucketAcl,
-                var m when m == HttpMethods.Put => S3Operation.PutBucketAcl,
-                _ => S3Operation.Unsupported,
-            };
-            return true;
-        }
-        if (query.ContainsKey("lifecycle"))
-        {
-            op = method switch
-            {
-                var m when m == HttpMethods.Get    => S3Operation.GetBucketLifecycleConfiguration,
-                var m when m == HttpMethods.Put    => S3Operation.PutBucketLifecycleConfiguration,
-                var m when m == HttpMethods.Delete => S3Operation.DeleteBucketLifecycle,
-                _ => S3Operation.Unsupported,
-            };
-            return true;
-        }
-        if (query.ContainsKey("cors"))
-        {
-            op = method switch
-            {
-                var m when m == HttpMethods.Get    => S3Operation.GetBucketCors,
-                var m when m == HttpMethods.Put    => S3Operation.PutBucketCors,
-                var m when m == HttpMethods.Delete => S3Operation.DeleteBucketCors,
-                _ => S3Operation.Unsupported,
-            };
-            return true;
-        }
-        if (query.ContainsKey("website"))
-        {
-            op = method switch
-            {
-                var m when m == HttpMethods.Get    => S3Operation.GetBucketWebsite,
-                var m when m == HttpMethods.Put    => S3Operation.PutBucketWebsite,
-                var m when m == HttpMethods.Delete => S3Operation.DeleteBucketWebsite,
-                _ => S3Operation.Unsupported,
-            };
-            return true;
-        }
-        if (query.ContainsKey("replication"))
-        {
-            op = method switch
-            {
-                var m when m == HttpMethods.Get    => S3Operation.GetBucketReplication,
-                var m when m == HttpMethods.Put    => S3Operation.PutBucketReplication,
-                var m when m == HttpMethods.Delete => S3Operation.DeleteBucketReplication,
-                _ => S3Operation.Unsupported,
-            };
-            return true;
-        }
-        if (query.ContainsKey("encryption"))
-        {
-            op = method switch
-            {
-                var m when m == HttpMethods.Get    => S3Operation.GetBucketEncryption,
-                var m when m == HttpMethods.Put    => S3Operation.PutBucketEncryption,
-                var m when m == HttpMethods.Delete => S3Operation.DeleteBucketEncryption,
-                _ => S3Operation.Unsupported,
-            };
-            return true;
-        }
-        if (query.ContainsKey("logging"))
-        {
-            op = method switch
-            {
-                var m when m == HttpMethods.Get => S3Operation.GetBucketLogging,
-                var m when m == HttpMethods.Put => S3Operation.PutBucketLogging,
-                _ => S3Operation.Unsupported,
-            };
-            return true;
-        }
-        if (query.ContainsKey("versioning"))
-        {
-            op = method switch
-            {
-                var m when m == HttpMethods.Get => S3Operation.GetBucketVersioning,
-                var m when m == HttpMethods.Put => S3Operation.PutBucketVersioning,
-                _ => S3Operation.Unsupported,
-            };
-            return true;
-        }
-        if (query.ContainsKey("requestPayment"))
-        {
-            op = method switch
-            {
-                var m when m == HttpMethods.Get => S3Operation.GetBucketRequestPayment,
-                var m when m == HttpMethods.Put => S3Operation.PutBucketRequestPayment,
-                _ => S3Operation.Unsupported,
-            };
-            return true;
-        }
-        if (query.ContainsKey("object-lock"))
-        {
-            op = method switch
-            {
-                var m when m == HttpMethods.Get => S3Operation.GetObjectLockConfiguration,
-                var m when m == HttpMethods.Put => S3Operation.PutObjectLockConfiguration,
-                _ => S3Operation.Unsupported,
-            };
-            return true;
-        }
-        if (query.ContainsKey("publicAccessBlock"))
-        {
-            op = method switch
-            {
-                var m when m == HttpMethods.Get    => S3Operation.GetPublicAccessBlock,
-                var m when m == HttpMethods.Put    => S3Operation.PutPublicAccessBlock,
-                var m when m == HttpMethods.Delete => S3Operation.DeletePublicAccessBlock,
-                _ => S3Operation.Unsupported,
-            };
-            return true;
-        }
-        if (query.ContainsKey("policy"))
-        {
-            op = method switch
-            {
-                var m when m == HttpMethods.Get    => S3Operation.GetBucketPolicy,
-                var m when m == HttpMethods.Put    => S3Operation.PutBucketPolicy,
-                var m when m == HttpMethods.Delete => S3Operation.DeleteBucketPolicy,
-                _ => S3Operation.Unsupported,
-            };
-            return true;
-        }
-        if (query.ContainsKey("policyStatus"))
-        {
-            op = method == HttpMethods.Get ? S3Operation.GetBucketPolicyStatus : S3Operation.Unsupported;
-            return true;
-        }
-        if (query.ContainsKey("notification"))
-        {
-            op = method switch
-            {
-                var m when m == HttpMethods.Get => S3Operation.GetBucketNotificationConfiguration,
-                var m when m == HttpMethods.Put => S3Operation.PutBucketNotificationConfiguration,
-                _ => S3Operation.Unsupported,
-            };
-            return true;
-        }
-        if (query.ContainsKey("accelerate"))
-        {
-            op = method switch
-            {
-                var m when m == HttpMethods.Get => S3Operation.GetBucketAccelerateConfiguration,
-                var m when m == HttpMethods.Put => S3Operation.PutBucketAccelerateConfiguration,
-                _ => S3Operation.Unsupported,
-            };
-            return true;
-        }
-        if (query.ContainsKey("ownershipControls"))
-        {
-            op = method switch
-            {
-                var m when m == HttpMethods.Get    => S3Operation.GetBucketOwnershipControls,
-                var m when m == HttpMethods.Put    => S3Operation.PutBucketOwnershipControls,
-                var m when m == HttpMethods.Delete => S3Operation.DeleteBucketOwnershipControls,
-                _ => S3Operation.Unsupported,
-            };
-            return true;
-        }
+
         return false;
+    }
+
+    private static FrozenDictionary<string, SubresourceOperations> CreateSubresourceLookup(SubresourceDefinition[] definitions)
+    {
+        var entries = new KeyValuePair<string, SubresourceOperations>[definitions.Length];
+        for (var i = 0; i < definitions.Length; i++)
+        {
+            entries[i] = new KeyValuePair<string, SubresourceOperations>(
+                definitions[i].Name,
+                definitions[i].Operations);
+        }
+
+        return entries.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private readonly struct SubresourceDefinition
+    {
+        public SubresourceDefinition(string name, SubresourceOperations operations)
+        {
+            Name = name;
+            Operations = operations;
+        }
+
+        public string Name { get; }
+        public SubresourceOperations Operations { get; }
+    }
+
+    private readonly struct SubresourceOperations
+    {
+        public static readonly SubresourceOperations UnsupportedOnly = new(
+            S3Operation.Unsupported,
+            S3Operation.Unsupported,
+            S3Operation.Unsupported,
+            S3Operation.Unsupported);
+
+        public SubresourceOperations(
+            S3Operation get = S3Operation.Unsupported,
+            S3Operation put = S3Operation.Unsupported,
+            S3Operation post = S3Operation.Unsupported,
+            S3Operation delete = S3Operation.Unsupported)
+        {
+            Get = get;
+            Put = put;
+            Post = post;
+            Delete = delete;
+        }
+
+        private S3Operation Get { get; }
+        private S3Operation Put { get; }
+        private S3Operation Post { get; }
+        private S3Operation Delete { get; }
+
+        public S3Operation ForMethod(string method)
+        {
+            return method switch
+            {
+                var m when m == HttpMethods.Get => Get,
+                var m when m == HttpMethods.Put => Put,
+                var m when m == HttpMethods.Post => Post,
+                var m when m == HttpMethods.Delete => Delete,
+                _ => S3Operation.Unsupported,
+            };
+        }
     }
 
     private static (string? bucket, string? key) SplitPath(ReadOnlySpan<char> path)
