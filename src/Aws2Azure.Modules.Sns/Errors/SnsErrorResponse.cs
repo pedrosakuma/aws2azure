@@ -1,6 +1,7 @@
 using System.Text;
 using System.Threading.Tasks;
 using System.Xml;
+using Aws2Azure.Core.Xml;
 using Aws2Azure.Modules.Sns.Xml;
 using Microsoft.AspNetCore.Http;
 
@@ -56,9 +57,4 @@ public static class SnsErrorResponse
         Encoding = Encoding.UTF8,
         CloseOutput = false,
     };
-
-    private sealed class Utf8StringWriter(StringBuilder builder) : System.IO.StringWriter(builder)
-    {
-        public override Encoding Encoding => Encoding.UTF8;
-    }
 }

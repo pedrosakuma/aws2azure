@@ -22,6 +22,22 @@ public class SqsServiceModuleHostMatchTests
         Assert.Equal(expected, module.MatchesHost(host));
     }
 
+    [Fact]
+    public void KnownOperations_is_derived_from_the_wire_protocol_action_table()
+    {
+        var module = new SqsServiceModule(
+            new Aws2Azure.Core.Azure.AzureHttpClient(),
+            new StubCredentialResolver(),
+            Aws2Azure.Core.Modules.CapabilityRegistry.Sqs);
+
+        // The metrics allowlist must equal the parser's action table so the two
+        // cannot drift (a hand-maintained list previously omitted parseable ops
+        // such as TagQueue / ListQueueTags / AddPermission).
+        Assert.Equal(
+            Aws2Azure.Modules.Sqs.WireProtocol.SqsOperationNames.Names.OrderBy(n => n, System.StringComparer.Ordinal),
+            module.KnownOperations.OrderBy(n => n, System.StringComparer.Ordinal));
+    }
+
     private sealed class StubCredentialResolver : Aws2Azure.Core.Configuration.ICredentialResolver
     {
         public bool TryGetAwsSecret(string awsAccessKeyId, out string awsSecretAccessKey)

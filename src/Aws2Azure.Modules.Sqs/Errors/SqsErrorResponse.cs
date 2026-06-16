@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using System.Xml;
+using Aws2Azure.Core.Xml;
 using Aws2Azure.Modules.Sqs.WireProtocol;
 using Microsoft.AspNetCore.Http;
 
@@ -84,12 +85,6 @@ public static class SqsErrorResponse
             w.Flush();
         }
         return sb.ToString();
-    }
-
-    private sealed class Utf8StringWriter : System.IO.StringWriter
-    {
-        public Utf8StringWriter(StringBuilder sb) : base(sb) { }
-        public override Encoding Encoding => Encoding.UTF8;
     }
 
     private static string ResolveRequestId(HttpContext context)

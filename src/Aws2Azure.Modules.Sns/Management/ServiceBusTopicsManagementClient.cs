@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Xml;
+using Aws2Azure.Core.Xml;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Observability;
@@ -750,11 +751,6 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         }
 
         return $"https://{namespaceFqdn.TrimEnd('/')}";
-    }
-
-    private sealed class Utf8StringWriter(StringBuilder builder) : StringWriter(builder)
-    {
-        public override Encoding Encoding => Encoding.UTF8;
     }
 
     private sealed record AtomEntryData(

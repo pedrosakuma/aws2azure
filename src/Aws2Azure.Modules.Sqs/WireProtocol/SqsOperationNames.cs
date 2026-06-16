@@ -42,4 +42,13 @@ public static class SqsOperationNames
     }
 
     public static string ToName(SqsOperation op) => op.ToString();
+
+    /// <summary>
+    /// All recognised SQS action names (the parse-table keys). The module's
+    /// <c>KnownOperations</c> metrics allowlist is derived from this so the two
+    /// can never drift: every parseable action is labelled by name (including
+    /// ones that are accepted by the parser but not yet handled), and any
+    /// unrecognised action still collapses to <c>"unknown"</c>.
+    /// </summary>
+    public static IReadOnlyCollection<string> Names => _byName.Keys;
 }

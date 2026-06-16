@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Xml;
+using Aws2Azure.Core.Xml;
 using Aws2Azure.Modules.Sqs.Internal;
 
 namespace Aws2Azure.Modules.Sqs.Xml;
@@ -343,11 +344,5 @@ internal static class AtomQueueXmlWriter
             w.Flush();
         }
         return sb.ToString();
-    }
-
-    private sealed class Utf8StringWriter : StringWriter
-    {
-        public Utf8StringWriter(StringBuilder sb) : base(sb) { }
-        public override Encoding Encoding => Encoding.UTF8;
     }
 }

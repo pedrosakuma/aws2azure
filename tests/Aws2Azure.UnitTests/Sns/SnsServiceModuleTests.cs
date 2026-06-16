@@ -164,6 +164,18 @@ public class SnsServiceModuleTests
         Assert.Contains("MissingAuthenticationToken", ReadBody(ctx));
     }
 
+    [Fact]
+    public void KnownOperations_is_derived_from_the_wire_protocol_action_table()
+    {
+        var module = NewModule();
+
+        // The metrics allowlist must equal the parser's action table so the two
+        // cannot drift (a hand-maintained list previously omitted parseable ops).
+        Assert.Equal(
+            Aws2Azure.Modules.Sns.WireProtocol.SnsOperationNames.Names.OrderBy(n => n, System.StringComparer.Ordinal),
+            module.KnownOperations.OrderBy(n => n, System.StringComparer.Ordinal));
+    }
+
     private static SnsServiceModule NewModule(
         bool includeTopicCreds = true,
         bool includeEventGridCreds = false,
