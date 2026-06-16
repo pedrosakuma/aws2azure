@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.IO.Pipelines;
 using Aws2Azure.Amqp.Connection;
 using Aws2Azure.Amqp.Framing;
 using Aws2Azure.Amqp.Transport;
@@ -128,6 +129,116 @@ public sealed class AmqpReviewFixTests
 
         await session.CloseAsync().WaitAsync(TimeSpan.FromSeconds(10));
         await conn.CloseAsync().WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public async Task Concurrent_detach_observer_completes_when_owner_reaches_final()
+    {
+        var (clientTransport, serverTransport) = PipePairTransport.CreatePair();
+        await using var server = serverTransport;
+        var conn = new AmqpConnection(clientTransport, DefaultConnSettings());
+        var firstDetachSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowPeerReply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var serverTask = Task.Run(async () =>
+        {
+            try
+            {
+                await ConsumeOpenAsync(server);
+                await ConsumeBeginAndReply(server, peerChannel: 4);
+                using (var _ = await AmqpFrameIO.ReadFrameAsync(server)) { }
+                await SendPerfAsync(server, channel: 4, new AmqpAttach
+                {
+                    Name = "link", Handle = 7, Role = AmqpRole.Receiver, InitialDeliveryCount = 0,
+                }, AmqpAttach.Write);
+
+                using (var f = await AmqpFrameIO.ReadFrameAsync(server))
+                {
+                    Assert.Equal(PerformativeKind.Detach, PerformativeCodec.PeekKind(f.Body.Span, out _));
+                    firstDetachSeen.SetResult();
+                }
+
+                await allowPeerReply.Task;
+                await SendPerfAsync(server, channel: 4, new AmqpDetach { Handle = 7, Closed = true }, AmqpDetach.Write);
+                await DrainUntilCloseAsync(server);
+            }
+            catch (Exception ex)
+            {
+                firstDetachSeen.TrySetException(ex);
+                throw;
+            }
+        });
+
+        await conn.OpenAsync();
+        var session = await conn.BeginSessionAsync();
+        var link = await session.AttachLinkAsync(new AmqpLinkSettings
+        {
+            Name = "link", Role = AmqpRole.Sender, TargetAddress = "q",
+        });
+
+        var firstDetach = link.DetachAsync();
+        await firstDetachSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var secondDetach = link.DetachAsync();
+        await Task.Delay(100);
+        Assert.False(secondDetach.IsCompleted, "second detach completed before the owning finalizer reached Final");
+
+        allowPeerReply.SetResult();
+        await Task.WhenAll(firstDetach, secondDetach).WaitAsync(TimeSpan.FromSeconds(5));
+
+        await session.CloseAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await conn.CloseAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task Peer_detach_finalization_is_bounded_when_mirror_write_stalls()
+    {
+        var originalTimeout = AmqpLink.PeerDetachFinalizationTimeout;
+        AmqpLink.PeerDetachFinalizationTimeout = TimeSpan.FromMilliseconds(150);
+        try
+        {
+            var (clientTransport, serverTransport) = CreateBackpressuredPair();
+            await using var server = serverTransport;
+            await using var conn = new AmqpConnection(clientTransport, DefaultConnSettings());
+            var allowPeerDetach = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var peerDetachSent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            var serverTask = Task.Run(async () =>
+            {
+                await ConsumeOpenAsync(server);
+                await ConsumeBeginAndReply(server, peerChannel: 4);
+                using (var _ = await AmqpFrameIO.ReadFrameAsync(server)) { }
+                await SendPerfAsync(server, channel: 4, new AmqpAttach
+                {
+                    Name = "link", Handle = 7, Role = AmqpRole.Receiver, InitialDeliveryCount = 0,
+                }, AmqpAttach.Write);
+                await allowPeerDetach.Task;
+                await SendPerfAsync(server, channel: 4, new AmqpDetach { Handle = 7, Closed = true }, AmqpDetach.Write);
+                peerDetachSent.SetResult();
+            });
+
+            await conn.OpenAsync();
+            var session = await conn.BeginSessionAsync();
+            var link = await session.AttachLinkAsync(new AmqpLinkSettings
+            {
+                Name = "link", Role = AmqpRole.Sender, TargetAddress = "q",
+            });
+
+            allowPeerDetach.SetResult();
+            await peerDetachSent.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (!link.IsClosed && DateTime.UtcNow < deadline)
+                await Task.Delay(10);
+            Assert.True(link.IsClosed, "link did not observe peer detach");
+
+            await link.DetachAsync().WaitAsync(TimeSpan.FromSeconds(2));
+            await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            AmqpLink.PeerDetachFinalizationTimeout = originalTimeout;
+        }
     }
 
     // ---------- Fix #2: sender must wait for flow before transferring ----------
@@ -852,4 +963,26 @@ public sealed class AmqpReviewFixTests
 
     // ---- helpers ----------------------------------------------------------
     // (Shared helpers live in AmqpTestBroker.cs; imported via `using static`.)
+
+    private static (IAmqpTransport Local, IAmqpTransport Peer) CreateBackpressuredPair()
+    {
+        var localToPeer = new Pipe(new PipeOptions(pauseWriterThreshold: 1, resumeWriterThreshold: 0));
+        var peerToLocal = new Pipe();
+        return (
+            new TestPipeTransport(peerToLocal.Reader, localToPeer.Writer),
+            new TestPipeTransport(localToPeer.Reader, peerToLocal.Writer));
+    }
+
+    private sealed class TestPipeTransport(PipeReader input, PipeWriter output) : IAmqpTransport
+    {
+        public PipeReader Input { get; } = input;
+        public PipeWriter Output { get; } = output;
+
+        public ValueTask DisposeAsync()
+        {
+            Input.Complete();
+            Output.Complete();
+            return ValueTask.CompletedTask;
+        }
+    }
 }
