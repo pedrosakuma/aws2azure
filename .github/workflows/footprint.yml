@@ -34,9 +34,7 @@ jobs:
       AWS2AZURE_FOOTPRINT_PUBLISH_DIR: ${{ github.workspace }}/.footprint-publish
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
+      - uses: ./.github/actions/dotnet-setup
 
       # Native-AOT toolchain: `dotnet publish` shells out to clang + the
       # platform linker and links against zlib.

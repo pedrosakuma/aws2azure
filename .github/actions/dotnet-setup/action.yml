@@ -1,0 +1,26 @@
+name: .NET setup
+description: Install the repo SDK and cache NuGet packages after checkout.
+inputs:
+  dotnet-version:
+    description: .NET SDK version passed to actions/setup-dotnet.
+    required: false
+    default: 10.0.x
+  cache-prefix:
+    description: Optional cache-key segment for jobs that need isolation.
+    required: false
+    default: dotnet
+runs:
+  using: composite
+  steps:
+    - name: Set up .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ inputs.dotnet-version }}
+    - name: Cache NuGet packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.nuget/packages
+        key: ${{ runner.os }}-nuget-${{ inputs.cache-prefix }}-${{ hashFiles('**/*.csproj', '**/*.fsproj', '**/*.vbproj', '**/*.sln', '**/*.slnx', 'Directory.Build.props', 'Directory.Build.targets', 'global.json', 'NuGet.config', 'nuget.config') }}
+        restore-keys: |
+          ${{ runner.os }}-nuget-${{ inputs.cache-prefix }}-
+          ${{ runner.os }}-nuget-

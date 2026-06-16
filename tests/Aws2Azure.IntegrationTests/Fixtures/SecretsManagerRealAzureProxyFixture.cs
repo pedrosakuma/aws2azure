@@ -19,9 +19,10 @@ namespace Aws2Azure.IntegrationTests.Fixtures;
 /// because the AWS SDK builds non-canonicalized request URIs for SigV4 that
 /// the in-memory TestServer cannot route.
 ///
-/// <para>Inert when the <c>AZURE_KEYVAULT_*</c> environment variables are
-/// absent: the fixture skips process startup so the tagged tests skip rather
-/// than fail on fork PRs and local runs without real-Azure secrets.</para>
+/// <para>Inert when the Key Vault URL or GitHub OIDC workload identity
+/// environment variables are absent: the fixture skips process startup so the
+/// tagged tests skip rather than fail on fork PRs and local runs without
+/// real-Azure access.</para>
 /// </summary>
 public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
 {
@@ -42,14 +43,13 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
     public async Task InitializeAsync()
     {
         var vaultUrl = Environment.GetEnvironmentVariable("AZURE_KEYVAULT_URL");
-        var tenantId = Environment.GetEnvironmentVariable("AZURE_KEYVAULT_TENANT_ID");
-        var clientId = Environment.GetEnvironmentVariable("AZURE_KEYVAULT_CLIENT_ID");
-        var clientSecret = Environment.GetEnvironmentVariable("AZURE_KEYVAULT_CLIENT_SECRET");
 
-        if (string.IsNullOrWhiteSpace(vaultUrl) || string.IsNullOrWhiteSpace(tenantId)
-            || string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
+        if (string.IsNullOrWhiteSpace(vaultUrl)
+            || string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("AZURE_TENANT_ID"))
+            || string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("AZURE_CLIENT_ID"))
+            || string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE")))
         {
-            SkipReason = "AZURE_KEYVAULT_* env vars not set — skipping real-Azure Secrets Manager smoke.";
+            SkipReason = "AZURE_KEYVAULT_URL or workload identity env vars not set — skipping real-Azure Secrets Manager smoke.";
             Configured = false;
             return;
         }
@@ -69,9 +69,7 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
                   "azure": {
                     "keyVault": {
                       "vaultUrl": "{{vaultUrl}}",
-                      "tenantId": "{{tenantId}}",
-                      "clientId": "{{clientId}}",
-                      "clientSecret": "{{clientSecret}}"
+                      "authMode": "WorkloadIdentity"
                     }
                   }
                 }
