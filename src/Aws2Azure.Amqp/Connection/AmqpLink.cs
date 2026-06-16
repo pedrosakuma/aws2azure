@@ -15,8 +15,11 @@ namespace Aws2Azure.Amqp.Connection;
 /// Beyond the attach/detach lifecycle, the link carries the full
 /// transfer surface: credit-flow-controlled outgoing sends, incoming
 /// delivery reassembly, and disposition
-/// (settle / accept / release / reject / modify), all driven through
-/// the dispatch hook <see cref="DispatchIncomingFrame"/>.
+/// (settle / accept / release / reject / modify). The session routes
+/// inbound frames in via three entry points — attach/detach/flow through
+/// <see cref="DispatchIncomingFrame"/>, transfers through
+/// <see cref="DispatchTransfer"/>, and dispositions through
+/// <see cref="DispatchDisposition"/>.
 /// </remarks>
 internal sealed class AmqpLink
 {

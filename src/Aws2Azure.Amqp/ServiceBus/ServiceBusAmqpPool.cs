@@ -24,13 +24,14 @@ namespace Aws2Azure.Amqp.ServiceBus;
 /// instance.
 /// </para>
 /// <para>
-/// Failure semantics: this slice does <b>not</b> attempt to detect a
-/// half-dead connection or auto-reconnect. When a handler observes a
+/// Failure semantics: the pool does <b>not</b> detect a half-dead
+/// connection or auto-reconnect. When a handler observes a
 /// link/connection-level failure it must call
-/// <see cref="InvalidateReceiverAsync"/> to evict the entry; the next
-/// <see cref="GetReceiverAsync"/> call will rebuild from scratch. The
-/// next slice (8b.4) wires this contract into the SQS handler's retry
-/// loop. Active reconnection is intentionally deferred.
+/// <see cref="InvalidateReceiverAsync"/> (or the sender / management /
+/// session-receiver variant) to evict the entry; the next
+/// <see cref="GetReceiverAsync"/> call rebuilds from scratch. The SQS
+/// receive handler already follows this contract on receive failures.
+/// Active reconnection is intentionally deferred.
 /// </para>
 /// </summary>
 internal sealed class ServiceBusAmqpPool : IAsyncDisposable
