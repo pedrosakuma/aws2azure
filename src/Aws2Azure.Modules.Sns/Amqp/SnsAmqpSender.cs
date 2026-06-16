@@ -73,6 +73,7 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
     private readonly EntraIdTokenProvider _tokenProvider;
     private readonly AmqpConnectionSettings _connectionSettings;
     private readonly ConcurrentDictionary<ConnectionKey, ConnectionSlot> _connections = new();
+    private readonly object _lifetimeGate = new();
     private int _disposed;
 
     public SnsAmqpSender(EntraIdTokenProvider tokenProvider, AmqpConnectionSettings connectionSettings)
@@ -92,7 +93,7 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
     {
         var endpoint = ResolveEndpoint(credentials, namespaceFqdn);
         var key = new ConnectionKey(endpoint, BuildCredentialMarker(credentials));
-        var slot = _connections.GetOrAdd(key, static _ => new ConnectionSlot());
+        var slot = GetConnectionSlot(key);
         var connection = await slot.GetOrCreateConnectionAsync(
                 _tokenProvider,
                 _connectionSettings,
@@ -127,7 +128,7 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
 
         var endpoint = ResolveEndpoint(credentials, namespaceFqdn);
         var key = new ConnectionKey(endpoint, BuildCredentialMarker(credentials));
-        var slot = _connections.GetOrAdd(key, static _ => new ConnectionSlot());
+        var slot = GetConnectionSlot(key);
         var connection = await slot.GetOrCreateConnectionAsync(
                 _tokenProvider,
                 _connectionSettings,
@@ -199,12 +200,51 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
             return;
         }
 
+        ConnectionSlot[] slots;
+        lock (_lifetimeGate)
+        {
+            slots = DrainConnectionsLocked();
+        }
+
+        foreach (var slot in slots)
+        {
+            await slot.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private ConnectionSlot GetConnectionSlot(ConnectionKey key)
+    {
+        lock (_lifetimeGate)
+        {
+            ThrowIfDisposed();
+            return _connections.GetOrAdd(key, static _ => new ConnectionSlot());
+        }
+    }
+
+    private ConnectionSlot[] DrainConnectionsLocked()
+    {
+        if (_connections.IsEmpty)
+        {
+            return [];
+        }
+
+        var slots = new List<ConnectionSlot>(_connections.Count);
         foreach (var entry in _connections.ToArray())
         {
             if (_connections.TryRemove(entry))
             {
-                await entry.Value.DisposeAsync().ConfigureAwait(false);
+                slots.Add(entry.Value);
             }
+        }
+
+        return [.. slots];
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            throw new ObjectDisposedException(nameof(SnsAmqpSender));
         }
     }
 

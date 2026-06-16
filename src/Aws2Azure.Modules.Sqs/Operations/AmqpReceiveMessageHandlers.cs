@@ -13,6 +13,8 @@ using Aws2Azure.Modules.Sqs.Internal;
 using Aws2Azure.Modules.Sqs.WireProtocol;
 using Aws2Azure.Modules.Sqs.Xml;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Aws2Azure.Modules.Sqs.Operations;
 
@@ -60,7 +62,7 @@ namespace Aws2Azure.Modules.Sqs.Operations;
 ///
 /// <para>Out of scope: long-polling (slice 8c).</para>
 /// </summary>
-internal static class AmqpReceiveMessageHandlers
+internal static partial class AmqpReceiveMessageHandlers
 {
     public const int MaxMessages = 10;
     public const int MaxVisibilityTimeoutSeconds = 43_200;
@@ -180,7 +182,11 @@ internal static class AmqpReceiveMessageHandlers
                 if (msg.LockToken is null)
                 {
                     try { await receiver.AbandonAsync(msg, ct).ConfigureAwait(false); }
-                    catch { /* best-effort */ }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        LogBestEffortAbandonFailed(context, queueName, ex);
+                    }
                 }
                 continue;
             }
@@ -1129,4 +1135,24 @@ internal static class AmqpReceiveMessageHandlers
             return SqsErrorMapping.FromAmqp(AmqpErrorKind.ServerFatal, condition: null, operation);
         return SqsErrorMapping.FromAmqp(AmqpErrorKind.ClientFatal, condition: null, operation);
     }
+
+    private static void LogBestEffortAbandonFailed(HttpContext context, string queueName, Exception exception)
+    {
+        var loggerFactory = context.RequestServices.GetService<ILoggerFactory>();
+        if (loggerFactory is null)
+        {
+            return;
+        }
+
+        BestEffortAbandonFailed(
+            loggerFactory.CreateLogger("Aws2Azure.Modules.Sqs.Operations.AmqpReceiveMessageHandlers"),
+            queueName,
+            exception);
+    }
+
+    [LoggerMessage(
+        EventId = 1,
+        Level = LogLevel.Trace,
+        Message = "Best-effort AMQP abandon failed for an SQS message without a lock token on queue '{QueueName}'.")]
+    private static partial void BestEffortAbandonFailed(ILogger logger, string queueName, Exception exception);
 }

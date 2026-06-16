@@ -293,6 +293,12 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     /// CMV=0) that must not acquire a new session lock — opening one
     /// just to fail the lock-token lookup would starve the
     /// MessageGroupId until the session lock expires.
+    /// <para>
+    /// A successful lookup also refreshes the session slot's idle
+    /// timestamp. Callers that renew a session lock through the
+    /// management link use this side-effect to keep the receiver slot
+    /// alive while / after the renewal completes.
+    /// </para>
     /// </summary>
     public ServiceBusReceiver? TryGetExistingSessionReceiver(
         ServiceBusAmqpEndpoint endpoint,
