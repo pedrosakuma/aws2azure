@@ -5,7 +5,7 @@ status: stub
 sub_features:
   - name: "configuration storage"
     status: unsupported
-    note: "S3 returns an empty <BucketLoggingStatus/> when logging has never been enabled; the proxy mirrors that. Azure Storage Analytics logging is account-scoped and not bridged."
+    notes: "S3 returns an empty <BucketLoggingStatus/> when logging has never been enabled; the proxy mirrors that. Azure Storage Analytics logging is account-scoped and not bridged."
 behavior_differences:
   - "GET returns 200 with an empty <BucketLoggingStatus/> document, matching the S3 'never configured' wire shape."
 references:

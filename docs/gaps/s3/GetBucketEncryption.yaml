@@ -5,7 +5,7 @@ status: unsupported
 sub_features:
   - name: "configuration storage"
     status: unsupported
-    note: "Azure Storage encrypts all data at rest by default with Microsoft-managed keys; per-container SSE configuration is not exposed through the data plane."
+    notes: "Azure Storage encrypts all data at rest by default with Microsoft-managed keys; per-container SSE configuration is not exposed through the data plane."
 behavior_differences:
   - "GET returns HTTP 404 with code ServerSideEncryptionConfigurationNotFoundError so clients receive the same shape as a never-configured S3 bucket instead of InternalError."
 references:

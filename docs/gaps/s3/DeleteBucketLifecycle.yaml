@@ -5,6 +5,6 @@ status: stub
 sub_features:
   - name: "idempotent clear"
     status: implemented
-    note: "Returns 204 No Content because the underlying configuration is never set in the first place."
+    notes: "Returns 204 No Content because the underlying configuration is never set in the first place."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketLifecycle.html

@@ -5,13 +5,13 @@ status: partial
 sub_features:
   - name: "replace whole tag set"
     status: implemented
-    note: "Single atomic Azure metadata write."
+    notes: "Single atomic Azure metadata write."
   - name: "50-tag limit per bucket"
     status: implemented
-    note: "Enforced before the Azure call."
+    notes: "Enforced before the Azure call."
   - name: "128-char key / 256-char value limits"
     status: implemented
-    note: "Enforced before the Azure call."
+    notes: "Enforced before the Azure call."
 behavior_differences:
   - "The metadata write replaces all container metadata on each PUT — the proxy uses no other container-metadata keys today."
 references:

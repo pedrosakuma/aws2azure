@@ -16,9 +16,10 @@ public static class Loader
             throw new FileNotFoundException("Gaps directory not found", gapsRoot);
         }
 
+        // No IgnoreUnmatchedProperties(): unknown keys (e.g. a "note:" typo for
+        // "notes:") must fail loud rather than silently dropping documented content.
         var deserializer = new DeserializerBuilder()
             .WithNamingConvention(UnderscoredNamingConvention.Instance)
-            .IgnoreUnmatchedProperties()
             .Build();
 
         var results = new List<OperationDoc>();

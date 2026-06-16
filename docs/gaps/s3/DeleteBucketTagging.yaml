@@ -5,6 +5,6 @@ status: implemented
 sub_features:
   - name: "idempotent clear"
     status: implemented
-    note: "Azure metadata PUT with no headers clears all metadata."
+    notes: "Azure metadata PUT with no headers clears all metadata."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketTagging.html

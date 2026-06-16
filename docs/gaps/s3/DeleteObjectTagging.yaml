@@ -5,7 +5,7 @@ status: implemented
 sub_features:
   - name: "idempotent clear"
     status: implemented
-    note: "Azure has no DELETE for blob index tags; clearing is modelled as a PUT of an empty tag set."
+    notes: "Azure has no DELETE for blob index tags; clearing is modelled as a PUT of an empty tag set."
 behavior_differences:
   - "Returns 204 No Content matching the S3 spec."
 references:

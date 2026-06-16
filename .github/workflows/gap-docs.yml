@@ -4,19 +4,26 @@ on:
   push:
     paths:
       - 'docs/gaps/**'
+      - 'docs/site/**'
       - 'tools/Aws2Azure.GapDocs/**'
       - 'src/Aws2Azure.Core/Generated/**'
       - '.github/workflows/gap-docs.yml'
   pull_request:
     paths:
       - 'docs/gaps/**'
+      - 'docs/site/**'
       - 'tools/Aws2Azure.GapDocs/**'
       - 'src/Aws2Azure.Core/Generated/**'
       - '.github/workflows/gap-docs.yml'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4

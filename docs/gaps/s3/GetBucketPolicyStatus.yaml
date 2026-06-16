@@ -5,7 +5,7 @@ status: unsupported
 sub_features:
   - name: "configuration storage"
     status: unsupported
-    note: "Same reason — no policy to summarise."
+    notes: "Same reason — no policy to summarise."
 behavior_differences:
   - "GET returns HTTP 404 with code NoSuchBucketPolicy so clients receive the same shape as a never-configured S3 bucket instead of InternalError."
 references:

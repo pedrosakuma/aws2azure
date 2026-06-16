@@ -5,7 +5,7 @@ status: unsupported
 sub_features:
   - name: "configuration storage"
     status: unsupported
-    note: "The proxy emulates BucketOwnerEnforced via the ACL stubs but does not persist an OwnershipControls document."
+    notes: "The proxy emulates BucketOwnerEnforced via the ACL stubs but does not persist an OwnershipControls document."
 behavior_differences:
   - "GET returns HTTP 404 with code OwnershipControlsNotFoundError so clients receive the same shape as a never-configured S3 bucket instead of InternalError."
 references:

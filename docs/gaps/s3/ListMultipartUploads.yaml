@@ -5,10 +5,10 @@ status: partial
 sub_features:
   - name: enumeration
     status: unsupported
-    note: "Always returns an empty <Upload> list. aws2azure does not record issued UploadIds and cannot reconstruct them from Azure block-list state alone (the HMAC tag depends on the original creation timestamp, which is not recoverable from a block name)."
+    notes: "Always returns an empty <Upload> list. aws2azure does not record issued UploadIds and cannot reconstruct them from Azure block-list state alone (the HMAC tag depends on the original creation timestamp, which is not recoverable from a block name)."
   - name: prefix-filter
     status: unsupported
-    note: "Echoed back in the response for SDK compatibility but not applied."
+    notes: "Echoed back in the response for SDK compatibility but not applied."
   - name: pagination
     status: unsupported
 behavior_differences:

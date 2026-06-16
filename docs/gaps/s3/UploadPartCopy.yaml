@@ -5,19 +5,19 @@ status: implemented
 sub_features:
   - name: same-account-copy
     status: implemented
-    note: "Source is referenced via a short-lived (1 hour) read-only blob service SAS minted with the destination account's shared key; no separate source credentials, public access, or trust relationship is needed. Azurite does not yet honour x-ms-copy-source-authorization SharedKey, so SAS is used uniformly."
+    notes: "Source is referenced via a short-lived (1 hour) read-only blob service SAS minted with the destination account's shared key; no separate source credentials, public access, or trust relationship is needed. Azurite does not yet honour x-ms-copy-source-authorization SharedKey, so SAS is used uniformly."
   - name: copy-source-range
     status: implemented
-    note: "x-amz-copy-source-range 'bytes=start-end' is parsed, canonicalised, and forwarded as x-ms-source-range on the destination request."
+    notes: "x-amz-copy-source-range 'bytes=start-end' is parsed, canonicalised, and forwarded as x-ms-source-range on the destination request."
   - name: cross-account-copy
     status: unsupported
-    note: "The proxy only models a single Azure storage account per S3 access key. Cross-account UploadPartCopy would require a source SAS minted with a different account's key or a federated identity story."
+    notes: "The proxy only models a single Azure storage account per S3 access key. Cross-account UploadPartCopy would require a source SAS minted with a different account's key or a federated identity story."
   - name: source-conditional-headers
     status: partial
-    note: "x-amz-copy-source-if-modified-since / x-amz-copy-source-if-unmodified-since forward to x-ms-source-if-*; Azure evaluates them on the source fetch and surfaces 412 PreconditionFailed. Concrete-ETag x-amz-copy-source-if-match / x-amz-copy-source-if-none-match return 501 NotImplemented (proxy-translated S3 ETags do not round-trip back to Azure's raw ETag space); the '*' sentinel is honored."
+    notes: "x-amz-copy-source-if-modified-since / x-amz-copy-source-if-unmodified-since forward to x-ms-source-if-*; Azure evaluates them on the source fetch and surfaces 412 PreconditionFailed. Concrete-ETag x-amz-copy-source-if-match / x-amz-copy-source-if-none-match return 501 NotImplemented (proxy-translated S3 ETags do not round-trip back to Azure's raw ETag space); the '*' sentinel is honored."
   - name: versionId
     status: unsupported
-    note: "x-amz-copy-source with ?versionId=… is rejected; the proxy has no versioning story."
+    notes: "x-amz-copy-source with ?versionId=… is rejected; the proxy has no versioning story."
   - name: requester-pays
     status: unsupported
 behavior_differences:

@@ -5,7 +5,7 @@ status: implemented
 sub_features:
   - name: pagination
     status: implemented
-    note: "Honours max-parts (default 1000, capped at 1000) and part-number-marker. Truncation is computed client-side from the full Azure block list."
+    notes: "Honours max-parts (default 1000, capped at 1000) and part-number-marker. Truncation is computed client-side from the full Azure block list."
   - name: encoding-type
     status: unsupported
   - name: requester-pays

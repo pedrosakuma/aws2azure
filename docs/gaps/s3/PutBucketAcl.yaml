@@ -5,12 +5,12 @@ status: partial
 sub_features:
   - name: "canned ACL 'private'"
     status: implemented
-    note: "Accepted as no-op."
+    notes: "Accepted as no-op."
   - name: "other canned ACLs (public-read, public-read-write, log-delivery-write, …)"
     status: unsupported
-    note: "Rejected with AccessControlListNotSupported."
+    notes: "Rejected with AccessControlListNotSupported."
   - name: "x-amz-grant-* headers and explicit ACL bodies"
     status: unsupported
-    note: "Rejected unless they describe a single FULL_CONTROL grant to the bucket owner."
+    notes: "Rejected unless they describe a single FULL_CONTROL grant to the bucket owner."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketAcl.html

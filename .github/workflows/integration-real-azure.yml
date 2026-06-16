@@ -49,6 +49,7 @@ jobs:
       (github.event_name == 'pull_request' &&
        contains(github.event.pull_request.labels.*.name, 'run-real-azure'))
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     # Concurrency guard: never run two real-Azure jobs in parallel (cost +
     # the reaper's age heuristic both assume a single active run).
     concurrency:
