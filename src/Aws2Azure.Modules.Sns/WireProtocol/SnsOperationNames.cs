@@ -35,4 +35,12 @@ internal static class SnsOperationNames
     }
 
     public static string ToShortName(SnsOperation operation) => operation.ToString();
+
+    /// <summary>
+    /// All recognised SNS action names (the parse-table keys). The module's
+    /// <c>KnownOperations</c> metrics allowlist is derived from this so the two
+    /// can never drift: every parseable action is labelled by name, and any
+    /// unrecognised action still collapses to <c>"unknown"</c>.
+    /// </summary>
+    public static IReadOnlyCollection<string> Names => Map.Keys;
 }

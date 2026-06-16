@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Xml;
+using Aws2Azure.Core.Xml;
 using Microsoft.AspNetCore.Http;
 
 namespace Aws2Azure.Core.Modules;
@@ -69,12 +70,6 @@ public static class AwsErrorResponse
             writer.Flush();
         }
         return sb.ToString();
-    }
-
-    private sealed class Utf8StringWriter : System.IO.StringWriter
-    {
-        public Utf8StringWriter(StringBuilder sb) : base(sb) { }
-        public override Encoding Encoding => Encoding.UTF8;
     }
 
     public static string BuildJson(string code, string message)

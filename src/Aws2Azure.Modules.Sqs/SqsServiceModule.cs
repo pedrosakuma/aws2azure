@@ -71,13 +71,12 @@ public sealed class SqsServiceModule : IServiceModule
     // the actual request protocol (Query → XML, AwsJson → JSON).
     public AwsErrorFormat ErrorFormat => AwsErrorFormat.Json;
     public IReadOnlySet<string> KnownOperations => _knownOperations;
-    private static readonly FrozenSet<string> _knownOperations = new[]
-    {
-        "SendMessage", "SendMessageBatch", "ReceiveMessage", "DeleteMessage",
-        "DeleteMessageBatch", "ChangeMessageVisibility", "ChangeMessageVisibilityBatch",
-        "CreateQueue", "DeleteQueue", "GetQueueUrl", "GetQueueAttributes",
-        "SetQueueAttributes", "ListQueues", "PurgeQueue",
-    }.ToFrozenSet();
+    // Derived from the wire-protocol action table (single source of truth) so
+    // the metrics allowlist can never drift from the set of actions the parser
+    // recognises. Every parseable action is labelled by name; unrecognised
+    // actions still collapse to "unknown".
+    private static readonly FrozenSet<string> _knownOperations =
+        SqsOperationNames.Names.ToFrozenSet(StringComparer.Ordinal);
     public CapabilityMatrix Capabilities { get; }
 
     /// <summary>

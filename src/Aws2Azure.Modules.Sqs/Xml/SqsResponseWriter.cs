@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using System.Xml;
+using Aws2Azure.Core.Xml;
 using Aws2Azure.Modules.Sqs.WireProtocol;
 using Microsoft.AspNetCore.Http;
 
@@ -573,12 +574,6 @@ internal static class SqsResponseWriter
         Encoding = Encoding.UTF8,
         CloseOutput = false,
     };
-
-    private sealed class Utf8StringWriter : StringWriter
-    {
-        public Utf8StringWriter(StringBuilder sb) : base(sb) { }
-        public override Encoding Encoding => Encoding.UTF8;
-    }
 }
 
 internal sealed record ListQueuesPayload(

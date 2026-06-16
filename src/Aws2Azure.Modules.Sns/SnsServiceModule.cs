@@ -62,13 +62,12 @@ public sealed class SnsServiceModule : IServiceModule
     public IReadOnlyList<string> RequiredSignedHeaders { get; } = ["content-type"];
     public AwsErrorFormat ErrorFormat => AwsErrorFormat.Xml;
     public IReadOnlySet<string> KnownOperations => _knownOperations;
-    private static readonly FrozenSet<string> _knownOperations = new[]
-    {
-        "Publish", "PublishBatch", "Subscribe", "Unsubscribe", "CreateTopic",
-        "DeleteTopic", "GetTopicAttributes", "SetTopicAttributes", "ListTopics",
-        "ListSubscriptions", "ListSubscriptionsByTopic", "GetSubscriptionAttributes",
-        "SetSubscriptionAttributes", "ConfirmSubscription",
-    }.ToFrozenSet();
+    // Derived from the wire-protocol action table (single source of truth) so
+    // the metrics allowlist can never drift from the set of actions the parser
+    // recognises. Every parseable action is labelled by name; unrecognised
+    // actions still collapse to "unknown".
+    private static readonly FrozenSet<string> _knownOperations =
+        SnsOperationNames.Names.ToFrozenSet(StringComparer.Ordinal);
     public CapabilityMatrix Capabilities { get; }
 
     public ValueTask EmitAuthErrorAsync(HttpContext context, int statusCode, string code, string message)
