@@ -550,9 +550,12 @@ public sealed class AmqpReviewFixTests
         var conn = new AmqpConnection(clientTransport, DefaultConnSettings());
 
         var firstBatchSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var allowRemainingReads = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Fires if the client puts any transfer beyond the granted 5 onto the
+        // wire before the second flow is issued — i.e. an oversend bug.
+        var oversend = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var allDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var transferCount = 0;
+        var creditGranted = 0;
 
         var serverTask = Task.Run(async () =>
         {
@@ -572,10 +575,10 @@ public sealed class AmqpReviewFixTests
                     Handle = 7, DeliveryCount = 0, LinkCredit = 5,
                 }, AmqpFlow.Write);
 
-                // Read transfers; after seeing exactly 5, stop reading until
-                // the test grants the remaining credits. If the client
-                // overshot the credit window, transferCount would already be
-                // greater than 5 at the synchronization point below.
+                // Keep reading continuously so the server observes every frame
+                // the client puts on the wire. While the second flow is still
+                // withheld (creditGranted == 0), any transfer beyond the granted
+                // 5 is an oversend and trips the `oversend` signal immediately.
                 while (true)
                 {
                     using var f = await AmqpFrameIO.ReadFrameAsync(server);
@@ -583,11 +586,9 @@ public sealed class AmqpReviewFixTests
                     if (kind == PerformativeKind.Transfer)
                     {
                         var n = Interlocked.Increment(ref transferCount);
-                        if (n == 5)
-                        {
-                            firstBatchSeen.TrySetResult();
-                            await allowRemainingReads.Task;
-                        }
+                        if (n == 5) firstBatchSeen.TrySetResult();
+                        if (n > 5 && Volatile.Read(ref creditGranted) == 0)
+                            oversend.TrySetResult();
                         if (n == 20) { allDone.TrySetResult(); break; }
                     }
                     else if (kind == PerformativeKind.End || kind == PerformativeKind.Close)
@@ -625,18 +626,26 @@ public sealed class AmqpReviewFixTests
             }, settled: true);
         }
 
-        // Server should observe exactly 5 transfers, then we pause.
+        // Server should observe exactly 5 transfers, then we withhold credit.
         await firstBatchSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(5, Volatile.Read(ref transferCount));
 
+        // The reader stays active. Give the client a bounded window to (wrongly)
+        // push a 6th transfer before more credit is granted; `oversend` trips
+        // immediately on a real bug so this fails fast rather than always waiting.
+        await Task.WhenAny(oversend.Task, Task.Delay(TimeSpan.FromMilliseconds(150)));
+        Assert.False(oversend.Task.IsCompleted,
+            "client sent transfers beyond the granted credit window");
+        Assert.Equal(5, Volatile.Read(ref transferCount));
+
         // Grant the remaining 15 credits and verify all 20 complete.
+        Volatile.Write(ref creditGranted, 1);
         await SendPerfAsync(serverTransport, channel: 4, new AmqpFlow
         {
             NextIncomingId = 0, IncomingWindow = uint.MaxValue,
             NextOutgoingId = 0, OutgoingWindow = uint.MaxValue,
             Handle = 7, DeliveryCount = 5, LinkCredit = 15,
         }, AmqpFlow.Write);
-        allowRemainingReads.SetResult();
 
         await allDone.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(10));
