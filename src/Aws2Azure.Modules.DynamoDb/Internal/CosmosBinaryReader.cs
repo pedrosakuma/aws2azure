@@ -19,7 +19,7 @@ namespace Aws2Azure.Modules.DynamoDb.Internal;
 /// explicit frame stack (no recursion) and <see cref="Skip"/> is O(1) via the
 /// container length prefix. Every value's byte length, container prefix length,
 /// string-marker classification and uniform-number item size come from
-/// <see cref="CosmosBinaryDecoder"/> so the streaming walk uses the exact same
+/// <see cref="CosmosBinaryMarkers"/> so the streaming walk uses the exact same
 /// format authority as the recursive decoder.</para>
 ///
 /// <para>Strings stored inline (and length-prefixed UTF-8) are surfaced as a
@@ -61,10 +61,6 @@ internal ref struct CosmosBinaryReader : ITokenReader, IDisposable
     private const int MaxDepth = 256;
     private const int StringRefMaxDepth = 64;
 
-    private const string LowercaseHex = "0123456789abcdef";
-    private const string UppercaseHex = "0123456789ABCDEF";
-    private const string DateTimeChars = " 0123456789:-.TZ";
-
     private readonly ReadOnlySpan<byte> _data;
     private Frame[] _frames;
     private byte[]? _scratch;
@@ -84,7 +80,7 @@ internal ref struct CosmosBinaryReader : ITokenReader, IDisposable
         _data = binary;
         _frames = ArrayPool<Frame>.Shared.Rent(MaxDepth);
         _scratch = null;
-        _offset = CosmosBinaryDecoder.RootOffset;
+        _offset = CosmosBinaryMarkers.RootOffset;
         _depth = 0;
         _rootConsumed = false;
         _tokenType = JsonTokenType.None;
@@ -151,7 +147,7 @@ internal ref struct CosmosBinaryReader : ITokenReader, IDisposable
                 // bounds, matching the recursive decoder's EnsureBounds check; the
                 // streaming walk would otherwise read sibling/trailing bytes and
                 // silently produce an envelope the decode-to-text path rejects.
-                if (CosmosBinaryDecoder.ValueLength(_data, _offset) > top.End - _offset)
+                if (CosmosBinaryMarkers.ValueLength(_data, _offset) > top.End - _offset)
                 {
                     throw new JsonException("Cosmos binary JSON container element exceeds container bounds.");
                 }
@@ -159,7 +155,7 @@ internal ref struct CosmosBinaryReader : ITokenReader, IDisposable
                 {
                     ReadStringToken(_offset, depth: 0);
                     _tokenType = JsonTokenType.PropertyName;
-                    _offset += CosmosBinaryDecoder.ValueLength(_data, _offset);
+                    _offset += CosmosBinaryMarkers.ValueLength(_data, _offset);
                     top.NextIsName = false;
                     return true;
                 }
@@ -229,98 +225,64 @@ internal ref struct CosmosBinaryReader : ITokenReader, IDisposable
     {
         byte marker = _data[offset];
 
-        if (marker < 0x20)
+        switch (CosmosBinaryMarkers.GetValueKind(marker))
         {
-            Span<byte> dst = EnsureScratch(8);
-            Utf8Formatter.TryFormat((int)marker, dst, out _scratchLen);
-            _synthesized = true;
-            _tokenType = JsonTokenType.Number;
-            _offset = offset + 1;
-            return;
-        }
-
-        if (CosmosBinaryDecoder.IsStringMarkerInternal(marker))
-        {
-            ReadStringToken(offset, depth: 0);
-            _tokenType = JsonTokenType.String;
-            _offset = offset + CosmosBinaryDecoder.ValueLength(_data, offset);
-            return;
-        }
-
-        switch (marker)
-        {
-            case 0xC7:
-            case 0xC8:
-            case 0xC9:
-            case 0xCA:
-            case 0xCB:
-            case 0xCC:
-            case 0xCD:
-            case 0xCE:
-            case 0xCF:
-            case 0xD7:
-            case 0xD8:
-            case 0xD9:
-            case 0xDA:
-            case 0xDB:
-            case 0xDC:
-                EmitNumber(marker, offset + 1);
-                _offset = offset + CosmosBinaryDecoder.ValueLength(_data, offset);
+            case CosmosBinaryValueKind.SmallNumber:
+                Span<byte> dst = EnsureScratch(8);
+                Utf8Formatter.TryFormat((int)marker, dst, out _scratchLen);
+                _synthesized = true;
+                _tokenType = JsonTokenType.Number;
+                _offset = offset + 1;
                 return;
-
-            case 0xD0:
+            case CosmosBinaryValueKind.String:
+                ReadStringToken(offset, depth: 0);
+                _tokenType = JsonTokenType.String;
+                _offset = offset + CosmosBinaryMarkers.ValueLength(_data, offset);
+                return;
+            case CosmosBinaryValueKind.Number:
+                EmitNumber(marker, offset + 1);
+                _offset = offset + CosmosBinaryMarkers.ValueLength(_data, offset);
+                return;
+            case CosmosBinaryValueKind.Null:
                 _synthesized = false;
                 _valueSlice = default;
                 _tokenType = JsonTokenType.Null;
                 _offset = offset + 1;
                 return;
-            case 0xD1:
+            case CosmosBinaryValueKind.False:
                 _synthesized = false;
                 _valueSlice = default;
                 _tokenType = JsonTokenType.False;
                 _offset = offset + 1;
                 return;
-            case 0xD2:
+            case CosmosBinaryValueKind.True:
                 _synthesized = false;
                 _valueSlice = default;
                 _tokenType = JsonTokenType.True;
                 _offset = offset + 1;
                 return;
-
-            case 0xD3:
+            case CosmosBinaryValueKind.GuidString:
                 SetSynthLength(WriteGuid(_data.Slice(offset + 1, 16), upper: false, quoted: false, EnsureScratch(40)));
                 _tokenType = JsonTokenType.String;
                 _offset = offset + 17;
                 return;
-
-            case 0xDD:
-            case 0xDE:
-            case 0xDF:
+            case CosmosBinaryValueKind.Binary:
                 ReadBinaryValue(offset, marker);
                 _tokenType = JsonTokenType.String;
-                _offset = offset + CosmosBinaryDecoder.ValueLength(_data, offset);
+                _offset = offset + CosmosBinaryMarkers.ValueLength(_data, offset);
                 return;
-        }
-
-        if (marker is >= 0xE0 and <= 0xE7)
-        {
-            PushContainer(offset, marker, isObject: false);
-            _tokenType = JsonTokenType.StartArray;
-            return;
-        }
-
-        if (marker is >= 0xE8 and <= 0xEF)
-        {
-            PushContainer(offset, marker, isObject: true);
-            _tokenType = JsonTokenType.StartObject;
-            return;
-        }
-
-        if (marker is >= 0xF0 and <= 0xF3)
-        {
-            PushUniformArray(offset, marker);
-            _tokenType = JsonTokenType.StartArray;
-            return;
+            case CosmosBinaryValueKind.Array:
+                PushContainer(offset, marker, isObject: false);
+                _tokenType = JsonTokenType.StartArray;
+                return;
+            case CosmosBinaryValueKind.Object:
+                PushContainer(offset, marker, isObject: true);
+                _tokenType = JsonTokenType.StartObject;
+                return;
+            case CosmosBinaryValueKind.UniformNumberArray:
+                PushUniformArray(offset, marker);
+                _tokenType = JsonTokenType.StartArray;
+                return;
         }
 
         throw new JsonException($"Unsupported Cosmos binary JSON marker 0x{marker:X2}.");
@@ -329,10 +291,10 @@ internal ref struct CosmosBinaryReader : ITokenReader, IDisposable
     private void PushContainer(int offset, byte marker, bool isObject)
     {
         EnsureDepth();
-        int end = offset + CosmosBinaryDecoder.ValueLength(_data, offset);
+        int end = offset + CosmosBinaryMarkers.ValueLength(_data, offset);
         int dataStart = marker is 0xE0 or 0xE8
             ? offset + 1
-            : offset + CosmosBinaryDecoder.ContainerPrefixLengthInternal(marker);
+            : offset + CosmosBinaryMarkers.ContainerPrefixLength(marker);
 
         _frames[_depth] = new Frame
         {
@@ -348,7 +310,7 @@ internal ref struct CosmosBinaryReader : ITokenReader, IDisposable
     private void PushUniformArray(int offset, byte marker)
     {
         EnsureDepth();
-        int end = offset + CosmosBinaryDecoder.ValueLength(_data, offset);
+        int end = offset + CosmosBinaryMarkers.ValueLength(_data, offset);
 
         switch (marker)
         {
@@ -356,14 +318,14 @@ internal ref struct CosmosBinaryReader : ITokenReader, IDisposable
             {
                 byte itemMarker = _data[offset + 1];
                 int count = _data[offset + 2];
-                PushUniformNumbers(itemMarker, CosmosBinaryDecoder.UniformNumberItemSizeInternal(itemMarker), count, offset + 3, end);
+                PushUniformNumbers(itemMarker, CosmosBinaryMarkers.UniformNumberItemSize(itemMarker), count, offset + 3, end);
                 return;
             }
             case 0xF1:
             {
                 byte itemMarker = _data[offset + 1];
                 int count = BinaryPrimitives.ReadUInt16LittleEndian(_data.Slice(offset + 2));
-                PushUniformNumbers(itemMarker, CosmosBinaryDecoder.UniformNumberItemSizeInternal(itemMarker), count, offset + 4, end);
+                PushUniformNumbers(itemMarker, CosmosBinaryMarkers.UniformNumberItemSize(itemMarker), count, offset + 4, end);
                 return;
             }
             case 0xF2:
@@ -410,7 +372,7 @@ internal ref struct CosmosBinaryReader : ITokenReader, IDisposable
             End = end,
             Kind = FrameKind.UniformOuter,
             ItemMarker = itemMarker,
-            ItemSize = CosmosBinaryDecoder.UniformNumberItemSizeInternal(itemMarker),
+            ItemSize = CosmosBinaryMarkers.UniformNumberItemSize(itemMarker),
             NumberCount = numberCount,
             Remaining = arrayCount,
             PayloadOffset = payloadOffset,
@@ -498,7 +460,7 @@ internal ref struct CosmosBinaryReader : ITokenReader, IDisposable
         // System-string dictionary (0x20-0x3F).
         if (marker is >= 0x20 and < 0x40)
         {
-            ReadOnlySpan<byte> sys = CosmosBinaryDecoder.SystemStringUtf8(marker - 0x20);
+            ReadOnlySpan<byte> sys = CosmosBinaryMarkers.SystemStringUtf8(marker - 0x20);
             Span<byte> dst = EnsureScratch(sys.Length);
             sys.CopyTo(dst);
             SetSynthLength(sys.Length);
@@ -555,7 +517,7 @@ internal ref struct CosmosBinaryReader : ITokenReader, IDisposable
             case 0x72:
             case 0x73:
             case 0x74:
-                SetSynthLength(WriteBase64(offset, marker is 0x71 or 0x73 ? 1 : 2, url: marker is 0x73 or 0x74));
+                SetSynthLength(WriteBase64(offset, CosmosBinaryMarkers.Base64LengthBytes(marker), CosmosBinaryMarkers.IsUrlBase64(marker)));
                 return;
             case 0x75:
                 SetSynthLength(WriteGuid(_data.Slice(offset + 1, 16), upper: false, quoted: false, EnsureScratch(40)));
@@ -567,28 +529,20 @@ internal ref struct CosmosBinaryReader : ITokenReader, IDisposable
                 SetSynthLength(WriteGuid(_data.Slice(offset + 1, 16), upper: false, quoted: true, EnsureScratch(40)));
                 return;
             case 0x78:
-                SetSynthLength(Write4Bit(offset, LowercaseHex));
-                return;
             case 0x79:
-                SetSynthLength(Write4Bit(offset, UppercaseHex));
-                return;
             case 0x7A:
-                SetSynthLength(Write4Bit(offset, DateTimeChars));
+                SetSynthLength(Write4Bit(offset, CosmosBinaryMarkers.FourBitAlphabet(marker)));
                 return;
             case 0x7B:
-                SetSynthLength(WritePacked(offset, bits: 4, hasBaseChar: true, lenBytes: 1));
-                return;
             case 0x7C:
-                SetSynthLength(WritePacked(offset, bits: 5, hasBaseChar: true, lenBytes: 1));
-                return;
             case 0x7D:
-                SetSynthLength(WritePacked(offset, bits: 6, hasBaseChar: true, lenBytes: 1));
-                return;
             case 0x7E:
-                SetSynthLength(WritePacked(offset, bits: 7, hasBaseChar: false, lenBytes: 1));
-                return;
             case 0x7F:
-                SetSynthLength(WritePacked(offset, bits: 7, hasBaseChar: false, lenBytes: 2));
+                SetSynthLength(WritePacked(
+                    offset,
+                    CosmosBinaryMarkers.PackedStringBits(marker),
+                    CosmosBinaryMarkers.PackedStringHasBaseChar(marker),
+                    CosmosBinaryMarkers.PackedStringLengthBytes(marker)));
                 return;
         }
 
@@ -705,7 +659,7 @@ internal ref struct CosmosBinaryReader : ITokenReader, IDisposable
 
     private static int WriteGuid(ReadOnlySpan<byte> guidBytes, bool upper, bool quoted, Span<byte> dst)
     {
-        string hex = upper ? UppercaseHex : LowercaseHex;
+        string hex = upper ? CosmosBinaryMarkers.UppercaseHex : CosmosBinaryMarkers.LowercaseHex;
         int ci = 0;
         if (quoted) dst[ci++] = (byte)'"';
         for (int i = 0; i < 16; i++)
