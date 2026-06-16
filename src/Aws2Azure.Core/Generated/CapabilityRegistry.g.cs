@@ -9,7 +9,7 @@ namespace Aws2Azure.Core.Modules;
 
 public static class CapabilityRegistry
 {
-    public static readonly CapabilityMatrix Dynamodb = new(
+    public static readonly CapabilityMatrix DynamoDb = new(
         ServiceName: "dynamodb",
         Operations: new OperationCapability[]
         {
@@ -126,7 +126,7 @@ public static class CapabilityRegistry
             new("UploadPartCopy", OperationStatus.Implemented, new[] { "Azure: Put Block From URL (?comp=block&blockid=…)", "Diff: Per-part ETag is synthesised from the (uploadId, partNumber) pair (same algorithm ListParts uses), NOT the MD5 of the copied bytes. Azure's Put Block From URL response only includes Content-MD5 when the request supplied x-ms-source-content-md5; otherwise it returns x-ms-content-crc64, which has no S3 equivalent. The synthetic ETag is stable per (uploadId, partNumber) and is what the proxy expects to see echoed back in CompleteMultipartUpload — but it is NOT a content hash and must not be compared with the per-part ETag returned by a non-copy UploadPart.", "Diff: UploadPartCopy with source==destination (same bucket+key) is rejected with InvalidRequest. Azure would otherwise stage the new block on the source blob itself, letting the eventual CompleteMultipartUpload silently reconcile against a moving target.", "Diff: Source URL SAS expires 1 hour after the UploadPartCopy request; a very large source copied over a very slow link could theoretically race the expiry. In practice Azure's intra-account server-side fetch is fast enough that this is academic.", "Diff: Integration tests against Azurite skip the end-to-end happy-path scenarios because Azurite does not implement Put Block From URL (responds 501 InternalError). The implementation is verified against real Azure Blob Storage in the cloud-integration nightly." }),
         });
 
-    public static readonly CapabilityMatrix Secretsmanager = new(
+    public static readonly CapabilityMatrix SecretsManager = new(
         ServiceName: "secretsmanager",
         Operations: new OperationCapability[]
         {
@@ -187,10 +187,10 @@ public static class CapabilityRegistry
 
     public static IReadOnlyList<CapabilityMatrix> All { get; } = new[]
     {
-        Dynamodb,
+        DynamoDb,
         Kinesis,
         S3,
-        Secretsmanager,
+        SecretsManager,
         Sns,
         Sqs,
     };
