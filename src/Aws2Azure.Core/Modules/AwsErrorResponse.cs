@@ -20,11 +20,13 @@ public static class AwsErrorResponse
         string code,
         string message,
         string? resource = null,
-        string jsonContentType = "application/x-amz-json-1.0")
+        string jsonContentType = "application/x-amz-json-1.0",
+        string requestIdHeaderName = "x-amz-request-id")
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestIdHeaderName);
         context.Response.StatusCode = statusCode;
-        var requestId = ResolveRequestId(context);
-        context.Response.Headers["x-amz-request-id"] = requestId;
+        var requestId = ResolveRequestId(context, requestIdHeaderName);
+        context.Response.Headers[requestIdHeaderName] = requestId;
 
         if (format == AwsErrorFormat.Xml)
         {
@@ -77,9 +79,9 @@ public static class AwsErrorResponse
             new AwsJsonError(code, message),
             AwsErrorJsonContext.Default.AwsJsonError);
 
-    private static string ResolveRequestId(HttpContext context)
+    private static string ResolveRequestId(HttpContext context, string requestIdHeaderName)
     {
-        if (context.Response.Headers.TryGetValue("x-amz-request-id", out var existing)
+        if (context.Response.Headers.TryGetValue(requestIdHeaderName, out var existing)
             && existing.Count > 0 && !string.IsNullOrEmpty(existing[0]))
         {
             return existing[0]!;

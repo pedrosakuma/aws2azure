@@ -1,6 +1,5 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading.Tasks;
+using Aws2Azure.Core.Modules;
 using Microsoft.AspNetCore.Http;
 
 namespace Aws2Azure.Modules.Kinesis.Errors;
@@ -22,39 +21,19 @@ namespace Aws2Azure.Modules.Kinesis.Errors;
 public static class KinesisErrorResponse
 {
     public const string ContentType = "application/x-amz-json-1.1";
+    private const string RequestIdHeaderName = "x-amzn-requestid";
 
-    public static async Task WriteAsync(
+    public static Task WriteAsync(
         HttpContext context,
         int statusCode,
         string code,
         string message)
-    {
-        context.Response.StatusCode = statusCode;
-        context.Response.Headers["x-amzn-requestid"] = ResolveRequestId(context);
-        context.Response.ContentType = ContentType;
-
-        var payload = JsonSerializer.Serialize(
-            new KinesisJsonError(code, message),
-            KinesisErrorJsonContext.Default.KinesisJsonError);
-        await context.Response.WriteAsync(payload).ConfigureAwait(false);
-    }
-
-    private static string ResolveRequestId(HttpContext context)
-    {
-        if (context.Response.Headers.TryGetValue("x-amzn-requestid", out var existing)
-            && existing.Count > 0 && !string.IsNullOrEmpty(existing[0]))
-        {
-            return existing[0]!;
-        }
-        return context.TraceIdentifier;
-    }
-}
-
-internal sealed record KinesisJsonError(
-    [property: JsonPropertyName("__type")] string Type,
-    [property: JsonPropertyName("message")] string Message);
-
-[JsonSerializable(typeof(KinesisJsonError))]
-internal sealed partial class KinesisErrorJsonContext : JsonSerializerContext
-{
+        => AwsErrorResponse.WriteAsync(
+            context,
+            AwsErrorFormat.Json,
+            statusCode,
+            code,
+            message,
+            jsonContentType: ContentType,
+            requestIdHeaderName: RequestIdHeaderName);
 }
