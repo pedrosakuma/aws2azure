@@ -274,7 +274,7 @@ builder.Services.AddSingleton<ServiceModuleRegistry>(sp =>
     modules.Add(new SqsServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.Sqs, amqpPool));
 #endif
 #if MOD_DYNAMODB
-    modules.Add(new DynamoDbServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.Dynamodb,
+    modules.Add(new DynamoDbServiceModule(azureHttpClient, credentialResolver, CapabilityRegistry.DynamoDb,
         settings: proxyConfig.DynamoDb,
         loggerFactory: loggerFactory,
         tokenProvider: tokenProvider));
@@ -304,7 +304,7 @@ builder.Services.AddSingleton<ServiceModuleRegistry>(sp =>
     modules.Add(new SecretsManagerServiceModule(
         azureHttpClient,
         credentialResolver,
-        CapabilityRegistry.Secretsmanager,
+        CapabilityRegistry.SecretsManager,
         tokenProvider));
 #endif
     return new ServiceModuleRegistry(modules.ToArray(), sigV4Validator, sp.GetRequiredService<ProxyMetrics>());

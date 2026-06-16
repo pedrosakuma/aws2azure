@@ -46,7 +46,7 @@ public static class CodeRenderer
             sb.AppendLine("        {");
             foreach (var op in ops)
             {
-                var status = MapStatus(op.Status);
+                var status = MapStatus(op);
                 var notes = BuildNotes(op);
                 sb.AppendLine($"            new(\"{Escape(op.Operation)}\", OperationStatus.{status}{notes}),");
             }
@@ -66,12 +66,14 @@ public static class CodeRenderer
         File.WriteAllText(outputPath, sb.ToString());
     }
 
-    private static string MapStatus(string s) => s.ToLowerInvariant() switch
+    private static string MapStatus(OperationDoc op) => op.Status.ToLowerInvariant() switch
     {
         "implemented" => "Implemented",
         "partial" => "Partial",
+        "stub" => "Stub",
         "unsupported" => "Unsupported",
-        _ => "Stub"
+        _ => throw new InvalidOperationException(
+            $"{op.SourceFile}: unknown operation status '{op.Status}' for {op.Service}/{op.Operation}.")
     };
 
     private static string BuildNotes(OperationDoc op)
@@ -93,8 +95,23 @@ public static class CodeRenderer
     private static string ToPascal(string s)
     {
         if (string.IsNullOrEmpty(s)) return s;
+
+        if (KnownServiceNames.TryGetValue(s, out var knownName))
+        {
+            return knownName;
+        }
+
         return char.ToUpperInvariant(s[0]) + s[1..];
     }
+
+    private static readonly IReadOnlyDictionary<string, string> KnownServiceNames =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["dynamodb"] = "DynamoDb",
+            ["eventbridge"] = "EventBridge",
+            ["secretsmanager"] = "SecretsManager",
+            ["stepfunctions"] = "StepFunctions"
+        };
 
     private static string Escape(string s) =>
         s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "");
