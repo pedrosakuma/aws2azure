@@ -21,12 +21,9 @@ public class ProxyMetricsTests
     {
         var metrics = new ProxyMetrics();
         var ctx = metrics.StartRequest("dynamodb", "PutItem", 512);
-        
-        // Simulate some work
-        Thread.Sleep(10);
-        
+
         metrics.EndRequest(ctx, 200, 256, TimeSpan.FromMilliseconds(5), TimeSpan.FromMilliseconds(5));
-        
+
         // No exception means success - actual values verified via PrometheusExporter
     }
     

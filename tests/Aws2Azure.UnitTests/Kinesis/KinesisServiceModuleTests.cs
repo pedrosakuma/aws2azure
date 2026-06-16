@@ -1,6 +1,7 @@
 using System.IO;
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
@@ -60,7 +61,7 @@ public class KinesisServiceModuleTests
         await module.HandleAsync(ctx);
 
         Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
-        Assert.Contains("ShardIterator", ReadBody(ctx));
+        AssertJsonProperty(ctx, "ShardIterator");
     }
 
     [Fact]
@@ -73,8 +74,7 @@ public class KinesisServiceModuleTests
         await module.HandleAsync(ctx);
 
         Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
-        Assert.Contains("ValidationException", ReadBody(ctx));
-        Assert.Contains("ShardIterator is required.", ReadBody(ctx));
+        AssertKinesisError(ctx, "ValidationException", "ShardIterator is required.");
     }
 
     [Fact]
@@ -87,7 +87,7 @@ public class KinesisServiceModuleTests
         await module.HandleAsync(ctx);
 
         Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
-        Assert.Contains("StreamDescription", ReadBody(ctx));
+        AssertJsonProperty(ctx, "StreamDescription");
     }
 
     [Fact]
@@ -100,7 +100,7 @@ public class KinesisServiceModuleTests
         await module.HandleAsync(ctx);
 
         Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
-        Assert.Contains("ShardId", ReadBody(ctx));
+        AssertJsonProperty(ctx, "ShardId");
     }
 
     [Fact]
@@ -113,7 +113,7 @@ public class KinesisServiceModuleTests
         await module.HandleAsync(ctx);
 
         Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
-        Assert.Contains("FailedRecordCount", ReadBody(ctx));
+        AssertJsonProperty(ctx, "FailedRecordCount");
     }
 
     [Fact]
@@ -126,7 +126,7 @@ public class KinesisServiceModuleTests
         await module.HandleAsync(ctx);
 
         Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
-        Assert.Contains("UnknownOperationException", ReadBody(ctx));
+        AssertKinesisError(ctx, "UnknownOperationException");
     }
 
     [Fact]
@@ -138,7 +138,7 @@ public class KinesisServiceModuleTests
         await module.HandleAsync(ctx);
 
         Assert.Equal(StatusCodes.Status403Forbidden, ctx.Response.StatusCode);
-        Assert.Contains("MissingAuthenticationTokenException", ReadBody(ctx));
+        AssertKinesisError(ctx, "MissingAuthenticationTokenException");
     }
 
     [Fact]
@@ -151,7 +151,7 @@ public class KinesisServiceModuleTests
         await module.HandleAsync(ctx);
 
         Assert.Equal(StatusCodes.Status403Forbidden, ctx.Response.StatusCode);
-        Assert.Contains("AccessDeniedException", ReadBody(ctx));
+        AssertKinesisError(ctx, "AccessDeniedException");
     }
 
     [Fact]
@@ -202,6 +202,25 @@ public class KinesisServiceModuleTests
             },
         };
         return new StaticCredentialResolver(config);
+    }
+
+    private static void AssertJsonProperty(DefaultHttpContext ctx, string propertyName)
+    {
+        using var document = JsonDocument.Parse(ReadBody(ctx));
+        Assert.True(
+            document.RootElement.TryGetProperty(propertyName, out _),
+            $"Expected JSON response to contain property '{propertyName}'.");
+    }
+
+    private static void AssertKinesisError(DefaultHttpContext ctx, string code, string? message = null)
+    {
+        using var document = JsonDocument.Parse(ReadBody(ctx));
+        var root = document.RootElement;
+        Assert.Equal(code, root.GetProperty("__type").GetString());
+        if (message is not null)
+        {
+            Assert.Equal(message, root.GetProperty("message").GetString());
+        }
     }
 
 
