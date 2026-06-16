@@ -224,14 +224,14 @@ var sessionIdleTimeout = ResolveSessionReceiverIdleTimeout();
 var amqpPool = new ServiceBusAmqpPool(amqpFactory, sessionIdleTimeout);
 builder.Services.AddSingleton(amqpPool);
 #if USE_EVENTHUBS
+builder.Services.AddSingleton(sp =>
+    new EventHubsAmqpConnectionPool(
+        sp.GetRequiredService<EntraIdTokenProvider>(),
+        amqpConnectionSettings));
 builder.Services.AddSingleton<IEventHubsAmqpSender>(sp =>
-    new EventHubsAmqpSender(
-        sp.GetRequiredService<EntraIdTokenProvider>(),
-        amqpConnectionSettings));
+    new EventHubsAmqpSender(sp.GetRequiredService<EventHubsAmqpConnectionPool>()));
 builder.Services.AddSingleton<IEventHubsAmqpReceiver>(sp =>
-    new EventHubsAmqpReceiver(
-        sp.GetRequiredService<EntraIdTokenProvider>(),
-        amqpConnectionSettings));
+    new EventHubsAmqpReceiver(sp.GetRequiredService<EventHubsAmqpConnectionPool>()));
 #endif
 #if MOD_SNS
 builder.Services.AddSingleton<ISnsAmqpSender>(sp =>

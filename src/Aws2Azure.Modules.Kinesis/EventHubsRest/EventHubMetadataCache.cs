@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Aws2Azure.Core.Configuration;
+using Aws2Azure.Modules.Kinesis.EventHubsAmqp;
 
 namespace Aws2Azure.Modules.Kinesis.EventHubsRest;
 
@@ -97,33 +98,11 @@ internal sealed class EventHubMetadataCache : IEventHubMetadataCache
 
     private static string BuildCacheKey(EventHubsCredentials credentials, string namespaceFqdn, string eventHubName)
     {
-        string credentialMarker;
-        if (!string.IsNullOrWhiteSpace(credentials.SasKeyName))
-        {
-            credentialMarker = "sas|" + credentials.SasKeyName.Trim();
-        }
-        else if (credentials.AuthMode == AzureAuthMode.ManagedIdentity)
-        {
-            credentialMarker = "managedIdentity|"
-                + (string.IsNullOrWhiteSpace(credentials.ClientId) ? "system" : credentials.ClientId);
-        }
-        else if (credentials.AuthMode == AzureAuthMode.WorkloadIdentity)
-        {
-            credentialMarker = "workloadIdentity|"
-                + Environment.GetEnvironmentVariable("AZURE_TENANT_ID")
-                + "|"
-                + Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
-        }
-        else
-        {
-            credentialMarker = "clientSecret|" + credentials.TenantId + "|" + credentials.ClientId;
-        }
-
         return namespaceFqdn.Trim().ToLowerInvariant()
             + "|"
             + eventHubName.Trim().ToLowerInvariant()
             + "|"
-            + credentialMarker;
+            + EventHubsCredentialMarker.Build(credentials);
     }
 
     private readonly record struct CacheEntry(EventHubDescription Description, DateTimeOffset ExpiresAt);
