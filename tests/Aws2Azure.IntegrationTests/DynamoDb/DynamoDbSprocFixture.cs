@@ -161,7 +161,7 @@ public sealed class DynamoDbSprocFixture : IAsyncLifetime
     }
 }
 
-[CollectionDefinition(Name)]
+[CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class DynamoDbSprocCollection : ICollectionFixture<DynamoDbSprocFixture>
 {
     public const string Name = "dynamodb-sproc";

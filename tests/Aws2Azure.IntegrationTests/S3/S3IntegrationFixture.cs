@@ -45,10 +45,24 @@ public sealed class S3IntegrationFixture : IAsyncLifetime
             BlobEndpoint = $"http://{_container.Hostname}:{port}/{Fixtures.AzuriteFixture.AccountName}";
             DockerAvailable = true;
         }
-        catch
+        catch (Exception ex) when (IsDockerUnavailable(ex))
         {
+            if (_container is not null)
+            {
+                await _container.DisposeAsync();
+                _container = null;
+            }
             DockerAvailable = false;
             return;
+        }
+        catch (Exception)
+        {
+            if (_container is not null)
+            {
+                await _container.DisposeAsync();
+                _container = null;
+            }
+            throw;
         }
 
         _configFile = Path.Combine(Path.GetTempPath(),
@@ -95,9 +109,15 @@ public sealed class S3IntegrationFixture : IAsyncLifetime
             try { File.Delete(_configFile); } catch { /* best-effort */ }
         }
     }
+
+    private static bool IsDockerUnavailable(Exception ex)
+        => ex is ArgumentException
+           || ex is InvalidOperationException
+           || ex.GetType().FullName?.StartsWith("Docker", StringComparison.Ordinal) == true
+           || ex.Message.Contains("docker", StringComparison.OrdinalIgnoreCase);
 }
 
-[CollectionDefinition(Name)]
+[CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class S3IntegrationCollection : ICollectionFixture<S3IntegrationFixture>
 {
     public const string Name = "s3-integration";

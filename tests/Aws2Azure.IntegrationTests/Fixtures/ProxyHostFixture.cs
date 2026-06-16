@@ -56,7 +56,7 @@ public sealed class ProxyHostFixture : WebApplicationFactory<Program>, IAsyncLif
     }
 }
 
-[CollectionDefinition(Name)]
+[CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class ProxyCollection : ICollectionFixture<ProxyHostFixture>
 {
     public const string Name = "proxy";
