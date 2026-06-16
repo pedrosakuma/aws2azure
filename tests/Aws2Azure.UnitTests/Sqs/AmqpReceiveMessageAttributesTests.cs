@@ -22,7 +22,7 @@ public sealed class AmqpReceiveMessageAttributesTests
     [Fact]
     public void BuildMessageAttributes_returns_null_when_filter_is_null()
     {
-        var (attrs, md5) = AmqpReceiveMessageHandlers.BuildMessageAttributes(
+        var (attrs, md5) = AmqpMessageTranslator.BuildMessageAttributes(
             appProps: new Dictionary<string, object?> { ["foo"] = "bar" },
             filter: null);
 
@@ -35,7 +35,7 @@ public sealed class AmqpReceiveMessageAttributesTests
     {
         // No Aws2Azure-AttrTypes header → SQS attributes cannot be reconstructed
         // (they would be indistinguishable from arbitrary AMQP properties).
-        var (attrs, md5) = AmqpReceiveMessageHandlers.BuildMessageAttributes(
+        var (attrs, md5) = AmqpMessageTranslator.BuildMessageAttributes(
             appProps: new Dictionary<string, object?> { ["foo"] = "bar" },
             filter: new HashSet<string>(StringComparer.Ordinal) { "All" });
 
@@ -46,7 +46,7 @@ public sealed class AmqpReceiveMessageAttributesTests
     [Fact]
     public void BuildMessageAttributes_returns_null_when_app_props_is_null()
     {
-        var (attrs, md5) = AmqpReceiveMessageHandlers.BuildMessageAttributes(
+        var (attrs, md5) = AmqpMessageTranslator.BuildMessageAttributes(
             appProps: null,
             filter: new HashSet<string>(StringComparer.Ordinal) { "All" });
 
@@ -67,7 +67,7 @@ public sealed class AmqpReceiveMessageAttributesTests
             [SendMessageHandlers.AttrTypesHeader] = "name=String,score=Number,blob=Binary",
         };
 
-        var (attrs, md5) = AmqpReceiveMessageHandlers.BuildMessageAttributes(
+        var (attrs, md5) = AmqpMessageTranslator.BuildMessageAttributes(
             appProps,
             new HashSet<string>(StringComparer.Ordinal) { "All" });
 
@@ -111,7 +111,7 @@ public sealed class AmqpReceiveMessageAttributesTests
             [SendMessageHandlers.AttrTypesHeader] = "keep=String,drop=String",
         };
 
-        var (attrs, md5) = AmqpReceiveMessageHandlers.BuildMessageAttributes(
+        var (attrs, md5) = AmqpMessageTranslator.BuildMessageAttributes(
             appProps,
             new HashSet<string>(StringComparer.Ordinal) { "keep" });
 
@@ -131,7 +131,7 @@ public sealed class AmqpReceiveMessageAttributesTests
             [SendMessageHandlers.AttrTypesHeader] = "a=String",
         };
 
-        var (attrs, md5) = AmqpReceiveMessageHandlers.BuildMessageAttributes(
+        var (attrs, md5) = AmqpMessageTranslator.BuildMessageAttributes(
             appProps,
             new HashSet<string>(StringComparer.Ordinal) { "nope" });
 
@@ -148,7 +148,7 @@ public sealed class AmqpReceiveMessageAttributesTests
             [SendMessageHandlers.AttrTypesHeader] = "v=String.custom",
         };
 
-        var (attrs, _) = AmqpReceiveMessageHandlers.BuildMessageAttributes(
+        var (attrs, _) = AmqpMessageTranslator.BuildMessageAttributes(
             appProps,
             new HashSet<string>(StringComparer.Ordinal) { "All" });
 
@@ -167,7 +167,7 @@ public sealed class AmqpReceiveMessageAttributesTests
             [SendMessageHandlers.AttrTypesHeader] = "b=Binary.custom",
         };
 
-        var (attrs, md5) = AmqpReceiveMessageHandlers.BuildMessageAttributes(
+        var (attrs, md5) = AmqpMessageTranslator.BuildMessageAttributes(
             appProps,
             new HashSet<string>(StringComparer.Ordinal) { "All" });
 
@@ -195,7 +195,7 @@ public sealed class AmqpReceiveMessageAttributesTests
             [SendMessageHandlers.AttrTypesHeader] = "b=Binary",
         };
 
-        var (attrs, md5) = AmqpReceiveMessageHandlers.BuildMessageAttributes(
+        var (attrs, md5) = AmqpMessageTranslator.BuildMessageAttributes(
             appProps,
             new HashSet<string>(StringComparer.Ordinal) { "All" });
 
@@ -224,7 +224,7 @@ public sealed class AmqpReceiveMessageAttributesTests
             [SendMessageHandlers.AttrTypesHeader] = "zeta=String,alpha=String",
         };
 
-        var (attrs, md5) = AmqpReceiveMessageHandlers.BuildMessageAttributes(
+        var (attrs, md5) = AmqpMessageTranslator.BuildMessageAttributes(
             appProps,
             new HashSet<string>(StringComparer.Ordinal) { "All" });
 
