@@ -68,4 +68,13 @@ internal static class DynamoDbOperationNames
     /// <c>"Unknown"</c> for <see cref="DynamoDbOperation.Unknown"/>.
     /// </summary>
     public static string ToShortName(DynamoDbOperation op) => op.ToString();
+
+    /// <summary>
+    /// All recognised short operation names (the <see cref="Map"/> keys).
+    /// Used as the module's <c>KnownOperations</c> allowlist so the
+    /// operation metric label stays bounded and every parseable op —
+    /// including ones that currently return <c>501 Not Implemented</c> —
+    /// is labelled by name rather than collapsing to <c>"unknown"</c>.
+    /// </summary>
+    public static IReadOnlyCollection<string> ShortNames => Map.Keys;
 }

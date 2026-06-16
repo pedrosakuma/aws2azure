@@ -37,9 +37,11 @@ internal static class DynamoDbNames
 
     /// <summary>
     /// Synthetic Table ARN. Real ARNs encode region + account id; we
-    /// surface a stable string that includes the table name and the
-    /// underlying Cosmos endpoint so operators can correlate cross-cloud
-    /// without leaking the master key.
+    /// surface a stable string of the form
+    /// <c>arn:aws:dynamodb:azure:{accountId}:table/{tableName}</c> so
+    /// operators can correlate cross-cloud without leaking the master key.
+    /// <paramref name="accountIdOrEmpty"/> falls back to a zero-filled
+    /// placeholder when not supplied.
     /// </summary>
     public static string BuildTableArn(string accountIdOrEmpty, string tableName)
     {

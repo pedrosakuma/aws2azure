@@ -86,6 +86,34 @@ public class DynamoDbServiceModuleTests
         Assert.Contains("AccessDeniedException", ReadBody(ctx));
     }
 
+    [Theory]
+    // Core item/table ops were always in the allowlist.
+    [InlineData("GetItem")]
+    [InlineData("TransactWriteItems")]
+    // Regression: these are handled by HandleAsync but previously drifted out
+    // of KnownOperations, so they were mislabelled "unknown" in metrics.
+    [InlineData("DescribeTimeToLive")]
+    [InlineData("UpdateTimeToLive")]
+    [InlineData("TagResource")]
+    [InlineData("UntagResource")]
+    [InlineData("ListTagsOfResource")]
+    public void ExtractOperationName_labels_every_handled_op_by_name(string op)
+    {
+        var module = NewModule();
+        var ctx = NewCtx($"DynamoDB_20120810.{op}", body: "{}");
+
+        Assert.Equal(op, ((Aws2Azure.Core.IServiceModule)module).ExtractOperationName(ctx));
+    }
+
+    [Fact]
+    public void ExtractOperationName_collapses_unrecognised_target_to_unknown()
+    {
+        var module = NewModule();
+        var ctx = NewCtx("DynamoDB_20120810.NotARealOp", body: "{}");
+
+        Assert.Equal("unknown", ((Aws2Azure.Core.IServiceModule)module).ExtractOperationName(ctx));
+    }
+
     private static DynamoDbServiceModule NewModule(bool includeCosmos = true)
     {
         var http = new AzureHttpClient(new NoopHandler(), ownsHandler: false);
