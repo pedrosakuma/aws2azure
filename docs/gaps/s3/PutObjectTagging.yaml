@@ -5,16 +5,16 @@ status: implemented
 sub_features:
   - name: "replace existing tag set"
     status: implemented
-    note: "Mirrors S3 semantics: PUT replaces the tag set atomically."
+    notes: "Mirrors S3 semantics: PUT replaces the tag set atomically."
   - name: "10-tag limit per object"
     status: implemented
-    note: "Enforced before the Azure call."
+    notes: "Enforced before the Azure call."
   - name: "128-char key / 256-char value limits"
     status: implemented
-    note: "Enforced before the Azure call."
+    notes: "Enforced before the Azure call."
   - name: "versionId qualifier"
     status: unsupported
-    note: "No versioning model in the proxy."
+    notes: "No versioning model in the proxy."
 behavior_differences:
   - "AWS uses 200 OK with empty body; the proxy matches that."
 references:

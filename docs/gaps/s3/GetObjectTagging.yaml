@@ -5,10 +5,10 @@ status: implemented
 sub_features:
   - name: "tag listing"
     status: implemented
-    note: "Azure response's <Tags><TagSet> is rewrapped as S3 <Tagging><TagSet>."
+    notes: "Azure response's <Tags><TagSet> is rewrapped as S3 <Tagging><TagSet>."
   - name: "versionId qualifier"
     status: unsupported
-    note: "The proxy has no versioning story; ignored on input."
+    notes: "The proxy has no versioning story; ignored on input."
 behavior_differences:
   - "Returns an empty TagSet (200) when no tags are set, matching Azure's behaviour. Azure surfaces 'no tags' as an empty set rather than a NoSuchTagSet error."
 references:

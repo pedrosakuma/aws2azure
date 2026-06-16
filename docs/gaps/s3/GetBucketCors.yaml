@@ -5,7 +5,7 @@ status: unsupported
 sub_features:
   - name: "configuration storage"
     status: unsupported
-    note: "Azure has container-level CORS only via the Blob service properties (account-wide). The proxy does not yet bridge these."
+    notes: "Azure has container-level CORS only via the Blob service properties (account-wide). The proxy does not yet bridge these."
 behavior_differences:
   - "GET returns HTTP 404 with code NoSuchCORSConfiguration so clients receive the same shape as a never-configured S3 bucket instead of InternalError."
 references:

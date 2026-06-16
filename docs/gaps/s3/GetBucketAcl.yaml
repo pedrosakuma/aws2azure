@@ -5,10 +5,10 @@ status: partial
 sub_features:
   - name: "owner reporting"
     status: implemented
-    note: "Owner ID = SHA-256(accountName) hex; DisplayName = accountName."
+    notes: "Owner ID = SHA-256(accountName) hex; DisplayName = accountName."
   - name: "non-owner grants"
     status: unsupported
-    note: "Always reports a single FULL_CONTROL grant to the owner."
+    notes: "Always reports a single FULL_CONTROL grant to the owner."
 behavior_differences:
   - "Azure Blob Storage's authorisation model (RBAC + Shared Key + SAS) does not map onto S3 canonical-user grants. The proxy reports the ownership-only shape that matches BucketOwnerEnforced ObjectOwnership."
 references:

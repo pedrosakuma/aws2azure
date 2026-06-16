@@ -5,13 +5,13 @@ status: partial
 sub_features:
   - name: "tag round-trip"
     status: implemented
-    note: "Tags are stored as a base64-encoded S3 <Tagging> XML in a single container metadata key (aws2azurebuckettags). Atomic, no key-name mangling."
+    notes: "Tags are stored as a base64-encoded S3 <Tagging> XML in a single container metadata key (aws2azurebuckettags). Atomic, no key-name mangling."
   - name: "NoSuchTagSet when never set"
     status: implemented
-    note: "Returned 404 with code NoSuchTagSet matching AWS."
+    notes: "Returned 404 with code NoSuchTagSet matching AWS."
   - name: "server-side enforcement (cost allocation, IAM tag conditions)"
     status: unsupported
-    note: "Azure has no native bucket-tagging surface to enforce these; tags are pure metadata."
+    notes: "Azure has no native bucket-tagging surface to enforce these; tags are pure metadata."
 behavior_differences:
   - "Bucket tags survive process restarts because they live on the container metadata, but they are invisible to any Azure-native tooling that does not know about the aws2azurebuckettags key."
 references:

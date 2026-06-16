@@ -7,7 +7,7 @@ sub_features:
     status: implemented
   - name: versionid
     status: unsupported
-    note: "Returns top-level MalformedXML when <VersionId> is present in the request body."
+    notes: "Returns top-level MalformedXML when <VersionId> is present in the request body."
   - name: mfa-delete
     status: unsupported
 behavior_differences:

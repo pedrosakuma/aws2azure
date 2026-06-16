@@ -5,17 +5,17 @@ status: implemented
 sub_features:
   - name: "Presigned GET"
     status: implemented
-    note: "Generated via boto3.generate_presigned_url('get_object', ...) or AWSSDK.S3 GetPreSignedURL with endpoint_url pointing at the proxy; the proxy validates the SigV4 signature and executes GetBlob against Azure."
+    notes: "Generated via boto3.generate_presigned_url('get_object', ...) or AWSSDK.S3 GetPreSignedURL with endpoint_url pointing at the proxy; the proxy validates the SigV4 signature and executes GetBlob against Azure."
   - name: "Presigned PUT"
     status: implemented
-    note: "Body integrity relies on TLS — SigV4 presigned PUT is signed with UNSIGNED-PAYLOAD on AWS too, so the proxy can only authenticate the request envelope (method, path, query, host, expiry)."
+    notes: "Body integrity relies on TLS — SigV4 presigned PUT is signed with UNSIGNED-PAYLOAD on AWS too, so the proxy can only authenticate the request envelope (method, path, query, host, expiry)."
   - name: "Presigned HEAD"
     status: implemented
   - name: "Presigned DELETE"
     status: implemented
   - name: "X-Amz-Expires window"
     status: implemented
-    note: "Enforced by SigV4Validator: integer in [1, 604800] seconds; clock skew of ±15 min tolerated for X-Amz-Date."
+    notes: "Enforced by SigV4Validator: integer in [1, 604800] seconds; clock skew of ±15 min tolerated for X-Amz-Date."
   - name: "X-Amz-Security-Token (STS session credentials)"
     status: unsupported
     gap: "aws2azure does not implement STS — credentials are static config entries. If a client includes X-Amz-Security-Token in a presigned URL it is part of the canonical query (and therefore signature-protected), but aws2azure does not validate it as a session token."

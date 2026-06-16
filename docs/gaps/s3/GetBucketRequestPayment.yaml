@@ -5,7 +5,7 @@ status: stub
 sub_features:
   - name: "configuration storage"
     status: unsupported
-    note: "Azure storage billing is account-scoped; the proxy always reports the default 'BucketOwner' payer."
+    notes: "Azure storage billing is account-scoped; the proxy always reports the default 'BucketOwner' payer."
 behavior_differences:
   - "GET returns 200 with <RequestPaymentConfiguration> with <Payer>BucketOwner</Payer> (S3 default)."
 references:

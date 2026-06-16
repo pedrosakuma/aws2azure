@@ -5,13 +5,13 @@ status: implemented
 sub_features:
   - name: part-ordering
     status: implemented
-    note: "Parts must arrive in ascending PartNumber order without duplicates; reuses S3's InvalidPartOrder/MalformedXML semantics."
+    notes: "Parts must arrive in ascending PartNumber order without duplicates; reuses S3's InvalidPartOrder/MalformedXML semantics."
   - name: per-part-etag-validation
     status: unsupported
-    note: "Client-supplied <ETag> values are not validated against the per-part MD5s we returned. Blocks are addressed by (uploadId.nonce, PartNumber) so a stale completion manifest will commit whatever bytes were most recently UploadPart'd under that PartNumber — S3 would have rejected the request with InvalidPart. Documented as a stateless-design trade-off."
+    notes: "Client-supplied <ETag> values are not validated against the per-part MD5s we returned. Blocks are addressed by (uploadId.nonce, PartNumber) so a stale completion manifest will commit whatever bytes were most recently UploadPart'd under that PartNumber — S3 would have rejected the request with InvalidPart. Documented as a stateless-design trade-off."
   - name: minimum-part-size
     status: unsupported
-    note: "S3's 5 MiB minimum for non-final parts is not enforced (Azure has no equivalent floor)."
+    notes: "S3's 5 MiB minimum for non-final parts is not enforced (Azure has no equivalent floor)."
   - name: checksum-algorithm
     status: unsupported
 behavior_differences:
