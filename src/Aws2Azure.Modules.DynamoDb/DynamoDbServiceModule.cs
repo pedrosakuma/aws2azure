@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Frozen;
 using System.Threading.Tasks;
 using Aws2Azure.Core;
 using Aws2Azure.Core.Azure;
@@ -75,13 +74,22 @@ public sealed class DynamoDbServiceModule : IServiceModule
     // so the operation can't be tampered with after-signature.
     public IReadOnlyList<string> RequiredSignedHeaders { get; } = new[] { "x-amz-target" };
     public AwsErrorFormat ErrorFormat => AwsErrorFormat.Json;
-    public IReadOnlySet<string> KnownOperations => _knownOperations;
-    private static readonly FrozenSet<string> _knownOperations = new[]
+
+    /// <summary>
+    /// Operation label for metrics. Reuses the wire-protocol parse table
+    /// (<see cref="DynamoDbOperationNames.FromTarget"/>) so the label can
+    /// never diverge from what the request parser actually recognises:
+    /// every parseable op is labelled by its canonical short name, and any
+    /// unrecognised or malformed <c>X-Amz-Target</c> collapses to
+    /// <c>"unknown"</c> (bounding cardinality to the op table).
+    /// </summary>
+    public string ExtractOperationName(HttpContext context)
     {
-        "GetItem", "PutItem", "UpdateItem", "DeleteItem", "Query", "Scan",
-        "BatchGetItem", "BatchWriteItem", "TransactGetItems", "TransactWriteItems",
-        "CreateTable", "DeleteTable", "DescribeTable", "ListTables", "UpdateTable",
-    }.ToFrozenSet();
+        var target = context.Request.Headers["X-Amz-Target"].ToString();
+        var op = DynamoDbOperationNames.FromTarget(target);
+        return op == DynamoDbOperation.Unknown ? "unknown" : DynamoDbOperationNames.ToShortName(op);
+    }
+
     public CapabilityMatrix Capabilities { get; }
 
     public ValueTask EmitAuthErrorAsync(HttpContext context, int statusCode, string code, string message)
