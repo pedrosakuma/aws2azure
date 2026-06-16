@@ -5,6 +5,24 @@ namespace Aws2Azure.UnitTests.S3;
 
 public class S3RouterTests
 {
+    [Fact]
+    public void Every_known_s3_operation_is_wired_to_a_dispatch_target()
+    {
+        foreach (var operation in Enum.GetValues<S3Operation>())
+        {
+            var target = S3OperationDispatcher.GetTarget(operation);
+
+            if (operation is S3Operation.Unknown or S3Operation.Unsupported)
+            {
+                Assert.Equal(S3DispatchTarget.NotImplemented, target);
+            }
+            else
+            {
+                Assert.NotEqual(S3DispatchTarget.NotImplemented, target);
+            }
+        }
+    }
+
     [Theory]
     [InlineData("s3.amazonaws.com", "GET", "/", S3Operation.ListBuckets, null)]
     [InlineData("s3.us-east-1.amazonaws.com", "GET", "/", S3Operation.ListBuckets, null)]
