@@ -23,8 +23,9 @@ name: integration-real-azure
 #   DynamoDB  -> Cosmos DB      (CreateTable -> Put/Get/Delete item -> DeleteTable)
 #   SQS       -> Service Bus    (CreateQueue -> Send/Receive/Delete -> DeleteQueue)
 #   Kinesis   -> Event Hubs     (PutRecord to a provisioned hub)
-#   Secrets   -> Key Vault      (secret lifecycle; NOT ephemeral — runs only when
-#                                the standing AZURE_KEYVAULT_* secrets are set)
+#   Secrets   -> Key Vault      (secret lifecycle against a standing vault; the
+#                                proxy authenticates via GitHub OIDC workload
+#                                identity, so no client secret is stored)
 #
 # One-time operator setup (OIDC + reaper) is documented in
 # docs/testing/real-azure-nightly.md.
@@ -68,9 +69,7 @@ jobs:
       AZURE_EVENTHUBS_STREAM: kinesis-smoke
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
+      - uses: ./.github/actions/dotnet-setup
 
       # Provisioning needs the OIDC client id. When it is absent (fork PRs, or
       # before an operator has wired up OIDC) we skip provision/login/teardown;
@@ -169,7 +168,7 @@ jobs:
             echo "AZURE_EVENTHUBS_STREAM=$AZURE_EVENTHUBS_STREAM"
           } >> "$GITHUB_ENV"
 
-      - name: Mint federated token for the Workload Identity scenario
+      - name: Mint federated token for workload identity scenarios
         if: steps.gate.outputs.wi_enabled == 'true'
         env:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -202,13 +201,9 @@ jobs:
 
       - name: Run real-Azure integration tests
         env:
-          # Secrets Manager -> Key Vault stays on the standing-secret model
-          # (the proxy authenticates to Key Vault with a service principal, not
-          # an account key). When these are unset the SecretsManager smoke skips.
+          # Secrets Manager -> Key Vault uses the OIDC token minted above. When
+          # the standing vault URL is unset the SecretsManager smoke skips.
           AZURE_KEYVAULT_URL: ${{ secrets.AZURE_KEYVAULT_URL }}
-          AZURE_KEYVAULT_TENANT_ID: ${{ secrets.AZURE_KEYVAULT_TENANT_ID }}
-          AZURE_KEYVAULT_CLIENT_ID: ${{ secrets.AZURE_KEYVAULT_CLIENT_ID }}
-          AZURE_KEYVAULT_CLIENT_SECRET: ${{ secrets.AZURE_KEYVAULT_CLIENT_SECRET }}
         run: |
           dotnet test tests/Aws2Azure.IntegrationTests \
             -c Release --no-build --nologo \

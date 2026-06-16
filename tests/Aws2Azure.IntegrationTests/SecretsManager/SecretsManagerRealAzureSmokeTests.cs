@@ -20,14 +20,7 @@ public sealed class SecretsManagerRealAzureSmokeTests
     [SkippableFact]
     public async Task Secret_lifecycle_round_trip_uses_real_key_vault_backend()
     {
-        var vaultUrl = Environment.GetEnvironmentVariable("AZURE_KEYVAULT_URL");
-        var tenantId = Environment.GetEnvironmentVariable("AZURE_KEYVAULT_TENANT_ID");
-        var clientId = Environment.GetEnvironmentVariable("AZURE_KEYVAULT_CLIENT_ID");
-        var clientSecret = Environment.GetEnvironmentVariable("AZURE_KEYVAULT_CLIENT_SECRET");
-
-        Skip.If(string.IsNullOrWhiteSpace(vaultUrl) || string.IsNullOrWhiteSpace(tenantId)
-            || string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret),
-            "AZURE_KEYVAULT_* env vars not set — skipping real-Azure Secrets Manager smoke.");
+        Skip.If(!_proxy.Configured, _proxy.SkipReason ?? "Key Vault real-Azure fixture is not configured.");
 
         var secretName = "aws2azure-it-" + Guid.NewGuid().ToString("N");
 

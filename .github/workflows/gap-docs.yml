@@ -26,9 +26,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
+      - uses: ./.github/actions/dotnet-setup
       - name: Validate YAML schema
         run: dotnet run --project tools/Aws2Azure.GapDocs -- --validate
       - name: Regenerate and ensure no diff

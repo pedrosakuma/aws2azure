@@ -17,14 +17,15 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
+      - uses: ./.github/actions/dotnet-setup
       - name: Restore + build
         run: dotnet build -c Release --nologo
       - name: Unit tests
         run: dotnet test tests/Aws2Azure.UnitTests -c Release --no-build --nologo
       - name: Conformance tests (Tier 1, offline)
         run: dotnet test tests/Aws2Azure.Conformance -c Release --no-build --nologo
-      - name: AOT publish (linux-x64)
-        run: dotnet publish src/Aws2Azure.Proxy -c Release -r linux-x64 --nologo
+      - name: AOT/trim warning gate (linux-x64)
+        run: >-
+          dotnet publish src/Aws2Azure.Proxy -c Release -r linux-x64 --nologo
+          -p:ILLinkTreatWarningsAsErrors=true
+          -p:IlcTreatWarningsAsErrors=true

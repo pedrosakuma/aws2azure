@@ -58,6 +58,10 @@ jobs:
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
+      # NOTE: do not use the local ./.github/actions/dotnet-setup composite here.
+      # This job checks out an arbitrary (possibly old) tag, and a local action
+      # is resolved from the checked-out tree — tags predating that action would
+      # fail to set up .NET. Keep the release setup inline and self-contained.
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
         with:
