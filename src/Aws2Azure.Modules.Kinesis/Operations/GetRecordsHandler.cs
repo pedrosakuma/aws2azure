@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Buffers.Text;
+using System.Text.Json;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.Kinesis.Errors;
 using Aws2Azure.Modules.Kinesis.EventHubsAmqp;
@@ -14,7 +16,6 @@ internal static class GetRecordsHandler
     private const int DefaultLimit = 10_000;
     private const int MaxLimit = 10_000;
     private const int MaxResponseBytes = 10 * 1024 * 1024;
-    private static readonly KinesisChildShard[] EmptyChildShards = [];
 
     public static async Task HandleAsync(
         HttpContext context,
@@ -124,25 +125,10 @@ internal static class GetRecordsHandler
         }
 
         var includedMessages = TrimToResponseSize(receiveResult.Messages);
-        var records = new KinesisRecord[includedMessages.Count];
-        for (var i = 0; i < includedMessages.Count; i++)
-        {
-            records[i] = ToRecord(includedMessages[i]);
-        }
-
         var nextToken = BuildNextShardIterator(codec, codecFactory.TimeProvider, token, includedMessages);
         var millisBehindLatest = ComputeMillisBehindLatest(codecFactory.TimeProvider, includedMessages.Count == 0 ? null : includedMessages[^1].EnqueuedTime);
 
-        await KinesisMetadataSupport.WriteJsonAsync(
-                context,
-                new GetRecordsResponse
-                {
-                    Records = records,
-                    NextShardIterator = nextToken,
-                    MillisBehindLatest = millisBehindLatest,
-                    ChildShards = EmptyChildShards,
-                },
-                KinesisJsonSerializerContext.Default.GetRecordsResponse)
+        await WriteGetRecordsResponseAsync(context, includedMessages, nextToken, millisBehindLatest, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -248,17 +234,55 @@ internal static class GetRecordsHandler
         return included;
     }
 
-    private static KinesisRecord ToRecord(EventHubsReceivedMessage message)
+    private static async Task WriteGetRecordsResponseAsync(
+        HttpContext context,
+        IReadOnlyList<EventHubsReceivedMessage> messages,
+        string nextToken,
+        long millisBehindLatest,
+        CancellationToken cancellationToken)
     {
-        return new KinesisRecord
+        KinesisMetadataSupport.PrepareJsonResponse(context);
+        using var writer = new Utf8JsonWriter(context.Response.Body);
+        writer.WriteStartObject();
+        writer.WritePropertyName("Records"u8);
+        writer.WriteStartArray();
+        for (var i = 0; i < messages.Count; i++)
         {
-            SequenceNumber = (message.SequenceNumber ?? 0L).ToString(CultureInfo.InvariantCulture),
-            Data = Convert.ToBase64String(message.Body.Span),
-            PartitionKey = message.PartitionKey,
-            ApproximateArrivalTimestamp = message.EnqueuedTime is { } enqueuedTime
+            WriteRecord(writer, messages[i]);
+        }
+
+        writer.WriteEndArray();
+        writer.WriteString("NextShardIterator"u8, nextToken);
+        writer.WriteNumber("MillisBehindLatest"u8, millisBehindLatest);
+        writer.WritePropertyName("ChildShards"u8);
+        writer.WriteStartArray();
+        writer.WriteEndArray();
+        writer.WriteEndObject();
+        await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static void WriteRecord(Utf8JsonWriter writer, EventHubsReceivedMessage message)
+    {
+        writer.WriteStartObject();
+
+        Span<byte> sequenceNumber = stackalloc byte[20];
+        Utf8Formatter.TryFormat(message.SequenceNumber ?? 0L, sequenceNumber, out var sequenceBytes);
+        writer.WriteString("SequenceNumber"u8, sequenceNumber[..sequenceBytes]);
+
+        writer.WriteBase64String("Data"u8, message.Body.Span);
+
+        if (message.PartitionKey is not null)
+        {
+            writer.WriteString("PartitionKey"u8, message.PartitionKey);
+        }
+
+        writer.WriteNumber(
+            "ApproximateArrivalTimestamp"u8,
+            message.EnqueuedTime is { } enqueuedTime
                 ? KinesisMetadataSupport.ToUnixTimeSeconds(enqueuedTime)
-                : 0d,
-        };
+                : 0d);
+
+        writer.WriteEndObject();
     }
 
     private static string BuildNextShardIterator(
