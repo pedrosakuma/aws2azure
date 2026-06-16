@@ -3,7 +3,6 @@ using System.Text;
 using System.Text.Json;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
-using Aws2Azure.Modules.SecretsManager.WireProtocol;
 
 namespace Aws2Azure.Modules.SecretsManager;
 
@@ -21,8 +20,6 @@ internal sealed class KeyVaultSecretClient
         _tokenProvider = tokenProvider ?? throw new ArgumentNullException(nameof(tokenProvider));
         _credentials = credentials ?? throw new ArgumentNullException(nameof(credentials));
     }
-
-    public static bool IsSupported(string operationName) => SecretsManagerOperationNames.Resolve(operationName) != SecretsManagerOperation.Unknown;
 
     public async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         => await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);

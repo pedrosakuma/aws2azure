@@ -29,8 +29,8 @@ internal static class SecretsManagerOperationNames
 
     /// <summary>
     /// All recognised Secrets Manager target short-names. The module's
-    /// <c>KnownOperations</c> allowlist and Key Vault support gate derive from
-    /// this wire-protocol table so routing and metrics labels cannot drift.
+    /// <c>KnownOperations</c> allowlist and dispatch gate derive from this
+    /// wire-protocol table so routing and metrics labels cannot drift.
     /// </summary>
     public static IReadOnlyCollection<string> Names => Map.Keys;
 
