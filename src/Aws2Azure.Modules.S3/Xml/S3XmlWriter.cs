@@ -120,24 +120,7 @@ internal static class S3XmlWriter
     /// used for ListObjects so Azure's bare ETag round-trips as S3-shaped.
     /// </summary>
     public static string CopyObjectResult(DateTimeOffset lastModified, string? eTag)
-    {
-        var sb = new StringBuilder(192);
-        using (var writer = XmlWriter.Create(sb, Settings))
-        {
-            writer.WriteStartDocument();
-            writer.WriteStartElement("CopyObjectResult", S3Namespace);
-            writer.WriteElementString("LastModified",
-                lastModified.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
-            var quoted = NormalizeETag(eTag);
-            if (!string.IsNullOrEmpty(quoted))
-            {
-                writer.WriteElementString("ETag", quoted);
-            }
-            writer.WriteEndElement();
-            writer.WriteEndDocument();
-        }
-        return sb.ToString();
-    }
+        => CopyResult("CopyObjectResult", lastModified, eTag);
 
     /// <summary>
     /// S3 <c>CopyPartResult</c> response body for UploadPartCopy. Only
@@ -145,12 +128,15 @@ internal static class S3XmlWriter
     /// normalised through the same quoting rule as CopyObject.
     /// </summary>
     public static string CopyPartResult(DateTimeOffset lastModified, string? eTag)
+        => CopyResult("CopyPartResult", lastModified, eTag);
+
+    private static string CopyResult(string rootElementName, DateTimeOffset lastModified, string? eTag)
     {
         var sb = new StringBuilder(192);
         using (var writer = XmlWriter.Create(sb, Settings))
         {
             writer.WriteStartDocument();
-            writer.WriteStartElement("CopyPartResult", S3Namespace);
+            writer.WriteStartElement(rootElementName, S3Namespace);
             writer.WriteElementString("LastModified",
                 lastModified.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
             var quoted = NormalizeETag(eTag);

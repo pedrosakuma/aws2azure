@@ -86,20 +86,7 @@ internal static class HeaderForwarding
             }
         }
 
-        foreach (var kv in source.Headers)
-        {
-            if (kv.Key.StartsWith("x-amz-meta-", StringComparison.OrdinalIgnoreCase))
-            {
-                var azureName = "x-ms-meta-" + kv.Key.AsSpan("x-amz-meta-".Length).ToString();
-                foreach (var value in kv.Value)
-                {
-                    if (!string.IsNullOrEmpty(value))
-                    {
-                        target.Headers.TryAddWithoutValidation(azureName, value);
-                    }
-                }
-            }
-        }
+        ForwardMetadata(source, target);
 
         // Forward only the "*" sentinel for If-Match / If-None-Match — Azure
         // honors it with identical semantics to S3 (write-once / replace-only).
@@ -122,6 +109,68 @@ internal static class HeaderForwarding
             {
                 target.Headers.TryAddWithoutValidation(header, "*");
                 return;
+            }
+        }
+    }
+
+    public static void ForwardCopySourceConditionals(HttpRequest source, HttpRequestMessage target)
+    {
+        ForwardHeader(source, target, "x-amz-copy-source-if-match", "x-ms-source-if-match");
+        ForwardHeader(source, target, "x-amz-copy-source-if-none-match", "x-ms-source-if-none-match");
+        ForwardHeader(source, target, "x-amz-copy-source-if-modified-since", "x-ms-source-if-modified-since");
+        ForwardHeader(source, target, "x-amz-copy-source-if-unmodified-since", "x-ms-source-if-unmodified-since");
+    }
+
+    public static void ForwardMetadata(HttpRequest source, HttpRequestMessage target)
+    {
+        foreach (var kv in source.Headers)
+        {
+            if (!kv.Key.StartsWith("x-amz-meta-", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var azureName = "x-ms-meta-" + kv.Key.AsSpan("x-amz-meta-".Length).ToString();
+            foreach (var value in kv.Value)
+            {
+                if (!string.IsNullOrEmpty(value))
+                {
+                    target.Headers.TryAddWithoutValidation(azureName, value);
+                }
+            }
+        }
+    }
+
+    public static string? ReadFirstHeader(HttpRequest request, string name)
+    {
+        if (!request.Headers.TryGetValue(name, out var values))
+        {
+            return null;
+        }
+
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrEmpty(value))
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    private static void ForwardHeader(HttpRequest source, HttpRequestMessage target, string s3Header, string azureHeader)
+    {
+        if (!source.Headers.TryGetValue(s3Header, out var values))
+        {
+            return;
+        }
+
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrEmpty(value))
+            {
+                target.Headers.TryAddWithoutValidation(azureHeader, value);
             }
         }
     }

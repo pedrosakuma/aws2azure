@@ -38,7 +38,7 @@ internal static class DeleteObjectsHandler
         // with a matching x-amz-checksum-* trailer instead. Accept either,
         // and when Content-MD5 is supplied, validate it against the body
         // (BadDigest is a hard, non-retryable failure for the caller).
-        var contentMd5 = ReadFirstHeader(context.Request, "Content-MD5");
+        var contentMd5 = HeaderForwarding.ReadFirstHeader(context.Request, "Content-MD5");
         var hasChecksumAlgo = context.Request.Headers.ContainsKey("x-amz-sdk-checksum-algorithm");
         if (string.IsNullOrEmpty(contentMd5) && !hasChecksumAlgo)
         {
@@ -53,7 +53,7 @@ internal static class DeleteObjectsHandler
             using var buffered = new MemoryStream();
             // Cap the buffered body so a hostile client can't blow up memory
             // by sending a multi-gigabyte payload before the 1 000-key check.
-            var limited = new LimitedStream(context.Request.Body, MaxBodyBytes);
+            var limited = new BoundedReadStream(context.Request.Body, MaxBodyBytes);
             await limited.CopyToAsync(buffered, ct).ConfigureAwait(false);
             bodyBytes = buffered.ToArray();
         }
@@ -108,7 +108,7 @@ internal static class DeleteObjectsHandler
         // NoSuchBucket error (not per-key) when the destination container
         // is missing, so SDK callers can surface a single, retryable error
         // instead of N parallel per-key failures.
-        var bucketCheck = await CheckBucketAsync(blob, bucket, ct).ConfigureAwait(false);
+        var bucketCheck = await blob.CheckContainerExistsAsync(bucket, S3Operation.DeleteObjects, ct).ConfigureAwait(false);
         if (bucketCheck is { } bucketErr)
         {
             await S3ErrorMapping.WriteAsync(context, bucketErr).ConfigureAwait(false);
@@ -162,26 +162,6 @@ internal static class DeleteObjectsHandler
         await context.Response.WriteAsync(body, ct).ConfigureAwait(false);
     }
 
-    private static async Task<S3ErrorMapping.Mapping?> CheckBucketAsync(BlobClient blob, string bucket, CancellationToken ct)
-    {
-        // HEAD ?restype=container is the Azure equivalent of HeadBucket and
-        // returns 404 ContainerNotFound when missing. We do this once up
-        // front so a single missing bucket short-circuits the fan-out and
-        // matches S3's top-level NoSuchBucket response shape.
-        var uri = new Uri(blob.BuildContainerUri(bucket).AbsoluteUri + "?restype=container");
-        using var req = new HttpRequestMessage(HttpMethod.Head, uri);
-        using var resp = await blob.SendBlobRequestAsync(req, ct).ConfigureAwait(false);
-        if (resp.IsSuccessStatusCode)
-        {
-            return null;
-        }
-        if (resp.StatusCode == HttpStatusCode.NotFound)
-        {
-            return new S3ErrorMapping.Mapping(404, "NoSuchBucket", "The specified bucket does not exist.");
-        }
-        return S3ErrorMapping.FromAzure(resp, S3Operation.DeleteObjects);
-    }
-
     private static async Task<S3ErrorMapping.Mapping?> DeleteOneAsync(
         BlobClient blob, string bucket, string key, CancellationToken ct)
     {
@@ -213,68 +193,4 @@ internal static class DeleteObjectsHandler
         return S3ErrorMapping.FromAzure(resp, S3Operation.DeleteObject);
     }
 
-    private static string? ReadFirstHeader(HttpRequest request, string name)
-    {
-        if (!request.Headers.TryGetValue(name, out var values))
-        {
-            return null;
-        }
-        foreach (var v in values)
-        {
-            if (!string.IsNullOrEmpty(v))
-            {
-                return v;
-            }
-        }
-        return null;
-    }
-
-    /// <summary>
-    /// Wraps an upstream <see cref="Stream"/> with a hard byte cap. Once the
-    /// cap is exceeded reads throw <see cref="InvalidDataException"/>, which
-    /// the handler maps to an S3 <c>EntityTooLarge</c> error rather than
-    /// allowing the body buffer to grow unbounded.
-    /// </summary>
-    private sealed class LimitedStream : Stream
-    {
-        private readonly Stream _inner;
-        private readonly long _limit;
-        private long _read;
-
-        public LimitedStream(Stream inner, long limit)
-        {
-            _inner = inner;
-            _limit = limit;
-        }
-
-        public override bool CanRead => _inner.CanRead;
-        public override bool CanSeek => false;
-        public override bool CanWrite => false;
-        public override long Length => throw new NotSupportedException();
-        public override long Position { get => _read; set => throw new NotSupportedException(); }
-
-        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
-        {
-            if (_read >= _limit)
-            {
-                ThrowTooLarge();
-            }
-            var read = await _inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
-            _read += read;
-            if (_read > _limit)
-            {
-                ThrowTooLarge();
-            }
-            return read;
-        }
-
-        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-        public override void Flush() { }
-        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-        public override void SetLength(long value) => throw new NotSupportedException();
-        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-
-        private void ThrowTooLarge() =>
-            throw new InvalidDataException($"Request body exceeded the {_limit}-byte limit.");
-    }
 }

@@ -1,6 +1,7 @@
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.SigV4;
 using Microsoft.AspNetCore.Http;
+using System.Globalization;
 
 namespace Aws2Azure.Modules.S3.Streaming;
 
@@ -19,6 +20,34 @@ internal static class AwsChunkedRequest
     public readonly record struct Format(bool Detected, bool Signed, bool Trailer)
     {
         public static Format None => default;
+    }
+
+    public readonly record struct PreparedBody(Stream Body, long? ContentLength, AwsChunkedDecoder? Decoder);
+
+    public static PreparedBody PrepareBodyStream(HttpRequest request, ICredentialResolver? credentials)
+    {
+        var body = request.Body;
+        var contentLength = request.ContentLength;
+        AwsChunkedDecoder? decoder = null;
+
+        var format = Detect(request);
+        if (format.Detected)
+        {
+            if (request.Headers.TryGetValue("x-amz-decoded-content-length", out var decodedLenHeader)
+                && long.TryParse(decodedLenHeader.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var decodedLen))
+            {
+                contentLength = decodedLen;
+            }
+            else
+            {
+                contentLength = null;
+            }
+
+            decoder = CreateDecoder(request, format, credentials);
+            body = decoder;
+        }
+
+        return new PreparedBody(body, contentLength, decoder);
     }
 
     public static Format Detect(HttpRequest request)

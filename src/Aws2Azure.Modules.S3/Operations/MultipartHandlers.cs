@@ -66,7 +66,7 @@ internal static class MultipartHandlers
         // Probe the container so a missing bucket short-circuits with
         // NoSuchBucket instead of issuing a successful token the client
         // would then UploadPart against and fail.
-        if (await CheckBucketAsync(blob, bucket, ct).ConfigureAwait(false) is { } bucketErr)
+        if (await blob.CheckContainerExistsAsync(bucket, S3Operation.CreateMultipartUpload, ct).ConfigureAwait(false) is { } bucketErr)
         {
             await S3ErrorMapping.WriteAsync(ctx, bucketErr).ConfigureAwait(false);
             return;
@@ -106,30 +106,7 @@ internal static class MultipartHandlers
         var blockId = UploadIdCodec.BlockId(token.Value.NonceHex, partNumber);
         var query   = "?comp=block&blockid=" + Uri.EscapeDataString(blockId);
 
-        // Modern AWS SDKs stream the part body with aws-chunked framing (signed
-        // or unsigned, with or without a checksum trailer). Decode it so the
-        // MD5/ETag and the bytes forwarded to Azure are the real part content,
-        // not the chunk framing.
-        Stream partBody = ctx.Request.Body;
-        long? contentLength = ctx.Request.ContentLength;
-        AwsChunkedDecoder? chunkedDecoder = null;
-
-        var chunkedFormat = AwsChunkedRequest.Detect(ctx.Request);
-        if (chunkedFormat.Detected)
-        {
-            if (ctx.Request.Headers.TryGetValue("x-amz-decoded-content-length", out var decodedLenHeader)
-                && long.TryParse(decodedLenHeader.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var decodedLen))
-            {
-                contentLength = decodedLen;
-            }
-            else
-            {
-                contentLength = null; // unknown
-            }
-
-            chunkedDecoder = AwsChunkedRequest.CreateDecoder(ctx.Request, chunkedFormat, credentials);
-            partBody = chunkedDecoder;
-        }
+        var body = AwsChunkedRequest.PrepareBodyStream(ctx.Request, credentials);
 
         try
         {
@@ -137,14 +114,14 @@ internal static class MultipartHandlers
             // it streams to Azure. The hex MD5 becomes the S3 part ETag the
             // client echoes back in CompleteMultipartUpload.
             using var md5 = MD5.Create();
-            using var hashing = new HashingStream(partBody, md5);
+            using var hashing = new HashingStream(body.Body, md5);
 
             using var azureReq = new HttpRequestMessage(HttpMethod.Put, blob.BuildBlobUri(bucket, key, query))
             {
                 Content = new StreamContent(hashing),
             };
             azureReq.Options.Set(Aws2Azure.Core.Azure.AzureHttpClient.NoRetryOption, true);
-            if (contentLength is { } len)
+            if (body.ContentLength is { } len)
             {
                 azureReq.Content.Headers.ContentLength = len;
             }
@@ -163,7 +140,7 @@ internal static class MultipartHandlers
         }
         finally
         {
-            chunkedDecoder?.Dispose();
+            body.Decoder?.Dispose();
         }
     }
 
@@ -202,31 +179,14 @@ internal static class MultipartHandlers
             return;
         }
 
-        var rawSource = ctx.Request.Headers.TryGetValue("x-amz-copy-source", out var sourceValues) && sourceValues.Count > 0
-            ? sourceValues[0]
-            : null;
-        var parsed = CopySourceParser.Parse(rawSource);
+        var parsed = CopySourceParser.ParseAndValidate(ctx.Request);
         if (!parsed.Success)
         {
-            await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.InvalidArgument(parsed.Error!)).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, parsed.Error).ConfigureAwait(false);
             return;
         }
         var sourceBucket = parsed.Bucket!;
         var sourceKey = parsed.Key!;
-
-        if (!BlobClient.IsValidContainerName(sourceBucket))
-        {
-            await S3ErrorMapping.WriteAsync(ctx,
-                new S3ErrorMapping.Mapping(400, "InvalidBucketName",
-                    "The specified copy-source bucket is not valid.")).ConfigureAwait(false);
-            return;
-        }
-        if (!S3ObjectKey.IsValid(sourceKey))
-        {
-            await S3ErrorMapping.WriteAsync(ctx,
-                S3ErrorMapping.InvalidArgument("The specified copy-source object key is not valid.")).ConfigureAwait(false);
-            return;
-        }
 
         // S3 forbids targeting an in-flight upload's part at the same key as
         // the source — Azure would happily Put Block From URL onto the
@@ -278,12 +238,7 @@ internal static class MultipartHandlers
             return;
         }
 
-        // Source-conditional headers (S3 → Azure rename). Evaluated by
-        // Azure on the source fetch and surfaced via 412 PreconditionFailed.
-        ForwardSourceConditional(ctx.Request, azureReq, "x-amz-copy-source-if-match",            "x-ms-source-if-match");
-        ForwardSourceConditional(ctx.Request, azureReq, "x-amz-copy-source-if-none-match",       "x-ms-source-if-none-match");
-        ForwardSourceConditional(ctx.Request, azureReq, "x-amz-copy-source-if-modified-since",   "x-ms-source-if-modified-since");
-        ForwardSourceConditional(ctx.Request, azureReq, "x-amz-copy-source-if-unmodified-since", "x-ms-source-if-unmodified-since");
+        HeaderForwarding.ForwardCopySourceConditionals(ctx.Request, azureReq);
 
         using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
         if (!azureResp.IsSuccessStatusCode)
@@ -364,20 +319,6 @@ internal static class MultipartHandlers
             + "-" + end.ToString(CultureInfo.InvariantCulture), null);
     }
 
-    private static void ForwardSourceConditional(HttpRequest source, HttpRequestMessage target, string s3Header, string azureHeader)
-    {
-        if (source.Headers.TryGetValue(s3Header, out var values))
-        {
-            foreach (var v in values)
-            {
-                if (!string.IsNullOrEmpty(v))
-                {
-                    target.Headers.TryAddWithoutValidation(azureHeader, v);
-                }
-            }
-        }
-    }
-
     // ---------- CompleteMultipartUpload ----------
 
     private static async Task CompleteAsync(HttpContext ctx, BlobClient blob, string bucket, string key, CancellationToken ct)
@@ -400,7 +341,7 @@ internal static class MultipartHandlers
         using var buffered = new MemoryStream();
         try
         {
-            await ctx.Request.Body.CopyToAsync(new LimitedStream(buffered, MaxCompleteBodyBytes), ct).ConfigureAwait(false);
+            await ctx.Request.Body.CopyToAsync(new BoundedWriteStream(buffered, MaxCompleteBodyBytes), ct).ConfigureAwait(false);
         }
         catch (InvalidDataException)
         {
@@ -475,7 +416,7 @@ internal static class MultipartHandlers
             return;
         }
 
-        if (await CheckBucketAsync(blob, bucket, ct).ConfigureAwait(false) is { } bucketErr)
+        if (await blob.CheckContainerExistsAsync(bucket, S3Operation.AbortMultipartUpload, ct).ConfigureAwait(false) is { } bucketErr)
         {
             await S3ErrorMapping.WriteAsync(ctx, bucketErr).ConfigureAwait(false);
             return;
@@ -591,7 +532,7 @@ internal static class MultipartHandlers
             return;
         }
 
-        if (await CheckBucketAsync(blob, bucket, ct).ConfigureAwait(false) is { } bucketErr)
+        if (await blob.CheckContainerExistsAsync(bucket, S3Operation.ListMultipartUploads, ct).ConfigureAwait(false) is { } bucketErr)
         {
             await S3ErrorMapping.WriteAsync(ctx, bucketErr).ConfigureAwait(false);
             return;
@@ -656,20 +597,6 @@ internal static class MultipartHandlers
     private static S3ErrorMapping.Mapping NoSuchUpload() =>
         new(404, "NoSuchUpload",
             "The specified multipart upload does not exist. The upload ID may be invalid, expired, or scoped to a different object.");
-
-    private static async Task<S3ErrorMapping.Mapping?> CheckBucketAsync(BlobClient blob, string bucket, CancellationToken ct)
-    {
-        using var resp = await blob.GetContainerPropertiesAsync(bucket, ct).ConfigureAwait(false);
-        if (resp.IsSuccessStatusCode)
-        {
-            return null;
-        }
-        if (resp.StatusCode == HttpStatusCode.NotFound)
-        {
-            return new S3ErrorMapping.Mapping(404, "NoSuchBucket", "The specified bucket does not exist.");
-        }
-        return S3ErrorMapping.FromAzure(resp, S3Operation.HeadBucket);
-    }
 
     private static async Task WriteXmlAsync(HttpContext ctx, int status, string xml, CancellationToken ct)
     {
@@ -783,50 +710,4 @@ internal static class MultipartHandlers
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
-    /// <summary>
-    /// Body cap wrapper used when buffering <c>CompleteMultipartUpload</c>
-    /// XML. Throws after <see cref="_limit"/> bytes have been written so
-    /// the caller can return EntityTooLarge instead of OOM'ing.
-    /// </summary>
-    private sealed class LimitedStream : Stream
-    {
-        private readonly Stream _inner;
-        private readonly int _limit;
-        private int _written;
-
-        public LimitedStream(Stream inner, int limit) { _inner = inner; _limit = limit; }
-
-        public override bool CanRead => false;
-        public override bool CanSeek => false;
-        public override bool CanWrite => true;
-        public override long Length => throw new NotSupportedException();
-        public override long Position { get => _written; set => throw new NotSupportedException(); }
-
-        public override void Flush() => _inner.Flush();
-        public override Task FlushAsync(CancellationToken ct) => _inner.FlushAsync(ct);
-
-        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
-        {
-            _written += buffer.Length;
-            if (_written > _limit)
-            {
-                throw new InvalidDataException($"Body exceeded the {_limit}-byte limit.");
-            }
-            await _inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
-        }
-
-        public override void Write(byte[] buffer, int offset, int count)
-        {
-            _written += count;
-            if (_written > _limit)
-            {
-                throw new InvalidDataException($"Body exceeded the {_limit}-byte limit.");
-            }
-            _inner.Write(buffer, offset, count);
-        }
-
-        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-        public override void SetLength(long value) => throw new NotSupportedException();
-    }
 }
