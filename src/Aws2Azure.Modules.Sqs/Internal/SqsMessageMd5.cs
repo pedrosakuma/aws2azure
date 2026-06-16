@@ -1,7 +1,7 @@
 using System;
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Generic;
-using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -56,53 +56,76 @@ internal static class SqsMessageMd5
         ArgumentNullException.ThrowIfNull(attributes);
         if (attributes.Count == 0) return string.Empty;
 
-        // Sort by name in ordinal byte order (matches AWS canonicalisation).
-        var names = new List<string>(attributes.Keys);
-        names.Sort(StringComparer.Ordinal);
-
-        using var buffer = new MemoryStream();
-        Span<byte> len = stackalloc byte[4];
-
-        foreach (var name in names)
+        var names = ArrayPool<string>.Shared.Rent(attributes.Count);
+        var rentedBuffer = Array.Empty<byte>();
+        try
         {
-            var attr = attributes[name];
+            var nameCount = 0;
+            foreach (var name in attributes.Keys)
+                names[nameCount++] = name;
 
-            var nameBytes = Encoding.UTF8.GetBytes(name);
-            BinaryPrimitives.WriteUInt32BigEndian(len, (uint)nameBytes.Length);
-            buffer.Write(len);
-            buffer.Write(nameBytes);
+            Array.Sort(names, 0, nameCount, StringComparer.Ordinal);
 
-            var typeBytes = Encoding.UTF8.GetBytes(attr.DataType);
-            BinaryPrimitives.WriteUInt32BigEndian(len, (uint)typeBytes.Length);
-            buffer.Write(len);
-            buffer.Write(typeBytes);
-
-            if (attr.IsBinary)
+            var totalLength = 0;
+            for (var i = 0; i < nameCount; i++)
             {
-                buffer.WriteByte(2);
-                BinaryPrimitives.WriteUInt32BigEndian(len, (uint)attr.BinaryValue.Length);
-                buffer.Write(len);
-                buffer.Write(attr.BinaryValue.Span);
+                var name = names[i];
+                var attr = attributes[name];
+                totalLength += 4 + Encoding.UTF8.GetByteCount(name);
+                totalLength += 4 + Encoding.UTF8.GetByteCount(attr.DataType);
+                totalLength += 1 + 4 + (attr.IsBinary
+                    ? attr.BinaryValue.Length
+                    : Encoding.UTF8.GetByteCount(attr.StringValue ?? string.Empty));
             }
-            else
+
+            rentedBuffer = ArrayPool<byte>.Shared.Rent(totalLength);
+            var buffer = rentedBuffer.AsSpan(0, totalLength);
+            var pos = 0;
+            for (var i = 0; i < nameCount; i++)
             {
-                buffer.WriteByte(1);
-                var valueBytes = Encoding.UTF8.GetBytes(attr.StringValue ?? string.Empty);
-                BinaryPrimitives.WriteUInt32BigEndian(len, (uint)valueBytes.Length);
-                buffer.Write(len);
-                buffer.Write(valueBytes);
+                var name = names[i];
+                var attr = attributes[name];
+                WriteUtf8Field(buffer, ref pos, name);
+                WriteUtf8Field(buffer, ref pos, attr.DataType);
+                if (attr.IsBinary)
+                {
+                    buffer[pos++] = 2;
+                    WriteBinaryField(buffer, ref pos, attr.BinaryValue.Span);
+                }
+                else
+                {
+                    buffer[pos++] = 1;
+                    WriteUtf8Field(buffer, ref pos, attr.StringValue ?? string.Empty);
+                }
             }
+
+            Span<byte> digest = stackalloc byte[16];
+            MD5.HashData(buffer, digest);
+            return Convert.ToHexStringLower(digest);
         }
-
-        Span<byte> digest = stackalloc byte[16];
-        if (!buffer.TryGetBuffer(out var seg))
+        finally
         {
-            // MemoryStream backed by an exposable buffer; should always succeed
-            // because we constructed it with the default ctor.
-            throw new InvalidOperationException("MD5 buffer is not exposable.");
+            ArrayPool<string>.Shared.Return(names, clearArray: true);
+            if (rentedBuffer.Length != 0)
+                ArrayPool<byte>.Shared.Return(rentedBuffer);
         }
-        MD5.HashData(seg.AsSpan(), digest);
-        return Convert.ToHexStringLower(digest);
+    }
+
+    private static void WriteUtf8Field(Span<byte> buffer, ref int pos, string value)
+    {
+        var lenSpan = buffer.Slice(pos, 4);
+        pos += 4;
+        var written = Encoding.UTF8.GetBytes(value, buffer[pos..]);
+        BinaryPrimitives.WriteUInt32BigEndian(lenSpan, (uint)written);
+        pos += written;
+    }
+
+    private static void WriteBinaryField(Span<byte> buffer, ref int pos, ReadOnlySpan<byte> value)
+    {
+        BinaryPrimitives.WriteUInt32BigEndian(buffer.Slice(pos, 4), (uint)value.Length);
+        pos += 4;
+        value.CopyTo(buffer[pos..]);
+        pos += value.Length;
     }
 }
 

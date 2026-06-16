@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -262,19 +263,26 @@ public static class SqsWireProtocolParser
         }
 
         using var ms = new MemoryStream();
-        var buffer = new byte[8 * 1024];
-        long total = 0;
-        int read;
-        while ((read = await context.Request.Body.ReadAsync(buffer.AsMemory(0, buffer.Length), ct).ConfigureAwait(false)) > 0)
+        var buffer = ArrayPool<byte>.Shared.Rent(8 * 1024);
+        try
         {
-            total += read;
-            if (total > MaxBodyBytes)
+            long total = 0;
+            int read;
+            while ((read = await context.Request.Body.ReadAsync(buffer.AsMemory(0, buffer.Length), ct).ConfigureAwait(false)) > 0)
             {
-                return (Array.Empty<byte>(), true);
+                total += read;
+                if (total > MaxBodyBytes)
+                {
+                    return (Array.Empty<byte>(), true);
+                }
+                ms.Write(buffer, 0, read);
             }
-            ms.Write(buffer, 0, read);
+            return (ms.ToArray(), false);
         }
-        return (ms.ToArray(), false);
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
     }
 
     private static readonly IReadOnlyDictionary<string, string> EmptyParams =

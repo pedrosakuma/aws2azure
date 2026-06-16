@@ -13,36 +13,74 @@ internal static class AmqpReceiveParameters
 {
     // --- Parameter parsing helpers -------------------------------------
 
+    internal static void ParseAttributeNameSets(
+        SqsParseResult parsed,
+        out HashSet<string>? attributeNames,
+        out HashSet<string>? messageAttributeNames)
+    {
+        var system = new HashSet<string>(StringComparer.Ordinal);
+        var message = new HashSet<string>(StringComparer.Ordinal);
+
+        AddQueryAttributeNames(parsed, "AttributeName", system);
+        AddQueryAttributeNames(parsed, "MessageAttributeName", message);
+
+        if (parsed.Protocol == SqsWireProtocol.AwsJson && !string.IsNullOrEmpty(parsed.JsonBody))
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(parsed.JsonBody);
+                AddJsonAttributeNames(doc.RootElement, "AttributeNames", system);
+                AddJsonAttributeNames(doc.RootElement, "MessageAttributeNames", message);
+            }
+            catch (System.Text.Json.JsonException) { /* protocol parser already validated */ }
+        }
+
+        attributeNames = system.Count == 0 ? null : system;
+        messageAttributeNames = message.Count == 0 ? null : message;
+    }
+
     internal static HashSet<string>? ParseAttributeNames(SqsParseResult parsed, string prefix)
     {
         var set = new HashSet<string>(StringComparer.Ordinal);
+        AddQueryAttributeNames(parsed, prefix, set);
+        if (parsed.Protocol == SqsWireProtocol.AwsJson && !string.IsNullOrEmpty(parsed.JsonBody))
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(parsed.JsonBody);
+                AddJsonAttributeNames(doc.RootElement, prefix + "s", set);
+            }
+            catch (System.Text.Json.JsonException) { /* protocol parser already validated */ }
+        }
+        return set.Count == 0 ? null : set;
+    }
+
+    private static void AddQueryAttributeNames(SqsParseResult parsed, string prefix, HashSet<string> set)
+    {
         var dotPrefix = prefix + ".";
         foreach (var kv in parsed.Parameters)
         {
             if (kv.Key.StartsWith(dotPrefix, StringComparison.Ordinal) && !string.IsNullOrEmpty(kv.Value))
                 set.Add(kv.Value);
         }
-        if (parsed.Protocol == SqsWireProtocol.AwsJson && !string.IsNullOrEmpty(parsed.JsonBody))
+    }
+
+    private static void AddJsonAttributeNames(
+        System.Text.Json.JsonElement root,
+        string propertyName,
+        HashSet<string> set)
+    {
+        if (root.TryGetProperty(propertyName, out var arr) && arr.ValueKind == System.Text.Json.JsonValueKind.Array)
         {
-            try
+            foreach (var v in arr.EnumerateArray())
             {
-                using var doc = System.Text.Json.JsonDocument.Parse(parsed.JsonBody);
-                var pluralName = prefix + "s";
-                if (doc.RootElement.TryGetProperty(pluralName, out var arr) && arr.ValueKind == System.Text.Json.JsonValueKind.Array)
+                if (v.ValueKind == System.Text.Json.JsonValueKind.String)
                 {
-                    foreach (var v in arr.EnumerateArray())
-                    {
-                        if (v.ValueKind == System.Text.Json.JsonValueKind.String)
-                        {
-                            var s = v.GetString();
-                            if (!string.IsNullOrEmpty(s)) set.Add(s);
-                        }
-                    }
+                    var s = v.GetString();
+                    if (!string.IsNullOrEmpty(s)) set.Add(s);
                 }
             }
-            catch (System.Text.Json.JsonException) { /* protocol parser already validated */ }
         }
-        return set.Count == 0 ? null : set;
     }
 
     internal static bool TryParseBoundedInt(

@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Globalization;
 using System.Text;
@@ -149,12 +150,21 @@ internal static class AmqpReceiptHandle
             return false;
         if (byteLen < 0) return false;
         var rest = span[(colon + 1)..];
-        var bytes = Encoding.UTF8.GetBytes(rest.ToString());
-        if (byteLen > bytes.Length) return false;
-        value = Encoding.UTF8.GetString(bytes, 0, byteLen);
-        var consumedChars = Encoding.UTF8.GetCharCount(bytes, 0, byteLen);
-        span = rest[consumedChars..];
-        return true;
+        var maxByteLen = Encoding.UTF8.GetMaxByteCount(rest.Length);
+        var rented = ArrayPool<byte>.Shared.Rent(maxByteLen);
+        try
+        {
+            var written = Encoding.UTF8.GetBytes(rest, rented);
+            if (byteLen > written) return false;
+            value = Encoding.UTF8.GetString(rented, 0, byteLen);
+            var consumedChars = Encoding.UTF8.GetCharCount(rented, 0, byteLen);
+            span = rest[consumedChars..];
+            return true;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
+        }
     }
 
     public readonly record struct Decoded(
