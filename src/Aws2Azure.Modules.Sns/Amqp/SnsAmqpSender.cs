@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
 using Aws2Azure.Amqp.Connection;
@@ -71,6 +72,12 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
 {
     private readonly EntraIdTokenProvider _tokenProvider;
     private readonly ServiceBusAmqpPool _pool;
+    // Token providers are stateless and reusable; the pool only consumes one
+    // when it (re)creates a connection, so caching per credential marker keeps
+    // the cached-sender publish fast path allocation-free instead of building a
+    // fresh provider (and copying SAS key bytes) on every Publish.
+    private readonly ConcurrentDictionary<string, IAmqpTokenProvider> _tokenProviders =
+        new(StringComparer.Ordinal);
     private int _disposed;
 
     public SnsAmqpSender(EntraIdTokenProvider tokenProvider, AmqpConnectionSettings connectionSettings)
@@ -90,11 +97,11 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
     {
         var endpoint = ResolveEndpoint(credentials, namespaceFqdn);
         var credentialMarker = BuildCredentialMarker(credentials);
-        var sender = await GetPooledSenderAsync(credentials, namespaceFqdn, topicName, endpoint, credentialMarker, cancellationToken)
-            .ConfigureAwait(false);
 
         try
         {
+            var sender = await GetPooledSenderAsync(credentials, namespaceFqdn, topicName, endpoint, credentialMarker, cancellationToken)
+                .ConfigureAwait(false);
             await sender.SendAsync(ToAmqpMessage(message), settled: false, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (TryWrap(ex, out var wrapped))
@@ -118,12 +125,12 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
 
         var endpoint = ResolveEndpoint(credentials, namespaceFqdn);
         var credentialMarker = BuildCredentialMarker(credentials);
-        var sender = await GetPooledSenderAsync(credentials, namespaceFqdn, topicName, endpoint, credentialMarker, cancellationToken)
-            .ConfigureAwait(false);
 
         var outcomes = new SnsBatchSendOutcome[messages.Count];
         try
         {
+            var sender = await GetPooledSenderAsync(credentials, namespaceFqdn, topicName, endpoint, credentialMarker, cancellationToken)
+                .ConfigureAwait(false);
             for (var i = 0; i < messages.Count; i++)
             {
                 try
@@ -206,12 +213,18 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
         return await _pool.GetSenderAsync(
                 endpoint,
                 credentialMarker,
-                CreateTokenProvider(_tokenProvider, credentials),
+                GetOrCreateTokenProvider(credentialMarker, credentials),
                 topicName,
                 BuildAudience(namespaceFqdn, topicName),
                 cancellationToken)
             .ConfigureAwait(false);
     }
+
+    private IAmqpTokenProvider GetOrCreateTokenProvider(string credentialMarker, ServiceBusTopicsCredentials credentials)
+        => _tokenProviders.GetOrAdd(
+            credentialMarker,
+            static (_, state) => CreateTokenProvider(state.tokenProvider, state.credentials),
+            (tokenProvider: _tokenProvider, credentials));
 
     private static AmqpMessage ToAmqpMessage(SnsAmqpSendMessage message)
         => new()
