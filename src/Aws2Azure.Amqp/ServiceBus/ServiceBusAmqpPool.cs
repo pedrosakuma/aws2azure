@@ -293,6 +293,12 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     /// CMV=0) that must not acquire a new session lock — opening one
     /// just to fail the lock-token lookup would starve the
     /// MessageGroupId until the session lock expires.
+    /// <para>
+    /// A successful lookup also refreshes the session slot's idle
+    /// timestamp. Callers that renew a session lock through the
+    /// management link use this side-effect to keep the receiver slot
+    /// alive while / after the renewal completes.
+    /// </para>
     /// </summary>
     public ServiceBusReceiver? TryGetExistingSessionReceiver(
         ServiceBusAmqpEndpoint endpoint,
@@ -857,13 +863,16 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             var evicted = 0;
             foreach (var entry in _sessionReceivers.ToArray())
             {
-                if (!entry.Value.IsIdle(now, idleTimeout)) continue;
-                if (_sessionReceivers.TryRemove(entry))
-                {
-                    try { await entry.Value.DisposeAsync().ConfigureAwait(false); }
-                    catch { /* swallow during idle eviction */ }
-                    evicted++;
-                }
+                // Atomically commit to eviction. This loses the Dekker
+                // handshake to any concurrent settle/peek that adopted the
+                // receiver, so we never detach a session-receiver while a
+                // DeleteMessage / ChangeMessageVisibility(0) / renew is in
+                // flight on it.
+                if (!entry.Value.TryBeginEvict(now, idleTimeout)) continue;
+                _sessionReceivers.TryRemove(entry);
+                try { await entry.Value.DisposeAsync().ConfigureAwait(false); }
+                catch { /* swallow during idle eviction */ }
+                evicted++;
             }
             return evicted;
         }
@@ -879,11 +888,11 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
         {
             if (!_sessionReceivers.TryGetValue(new SessionReceiverKey(queueName, sessionId), out var slot))
                 return null;
-            var receiver = slot.TryGetExisting();
-            // A live settle / peek keeps the link active for the idle
-            // sweeper (#262); don't evict a session that's being drained.
-            if (receiver is not null) slot.Touch(_timeProvider.GetUtcNow());
-            return receiver;
+            // Atomically adopt the receiver and stamp activity. Returns null
+            // when the idle sweeper (#262) is concurrently evicting this slot,
+            // in which case the caller opens a fresh session — never reuses a
+            // receiver the sweeper is about to dispose.
+            return slot.TryGetActive(_timeProvider.GetUtcNow());
         }
 
         public async Task<ServiceBusManagementClient> GetOrCreateManagementClientAsync(
@@ -1173,6 +1182,13 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     {
         private readonly ResourceSlot<ServiceBusReceiver> _slot;
         private long _lastActivityTicks;
+        // Idle-sweep state machine: None -> Tentative -> {None (back out) |
+        // Committed (dispose)}. Drives the Dekker handshake in TryGetActive /
+        // TryBeginEvict so a settle and the sweeper can never both win.
+        private const int EvictNone = 0;
+        private const int EvictTentative = 1;
+        private const int EvictCommitted = 2;
+        private int _evicting;
 
         public SessionReceiverSlot()
             : this(initialReceiver: null)
@@ -1241,15 +1257,76 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                 cancellationToken);
 
         /// <summary>
-        /// Returns the cached receiver if one has already been opened
-        /// (or adopted from the broker-assigned acquire path), without
-        /// opening a fresh session. Returns <c>null</c> when the slot
-        /// has not yet materialised a receiver — used by settle paths
-        /// (DeleteMessage, CMV=0) where opening a new session-lock
-        /// just to immediately fail the lock-token lookup would starve
-        /// the message group.
+        /// Atomically adopts the cached receiver for a settle/peek and stamps
+        /// activity, or returns <c>null</c> when no receiver is cached or the
+        /// idle-TTL sweeper (#262) is concurrently evicting this slot. The
+        /// stamp, full fence, and re-read of <see cref="_evicting"/> form a
+        /// Dekker handshake with <see cref="TryBeginEvict"/>: a caller can
+        /// never adopt a receiver the sweeper is about to dispose, and the
+        /// sweeper can never dispose a receiver a caller just adopted. A
+        /// <c>null</c> result is indistinguishable from "no cached receiver",
+        /// so the caller simply opens a fresh session.
         /// </summary>
-        public ServiceBusReceiver? TryGetExisting() => _slot.TryGetExisting();
+        public ServiceBusReceiver? TryGetActive(DateTimeOffset now)
+        {
+            var receiver = _slot.TryGetExisting();
+            if (receiver is null) return null;
+            Volatile.Write(ref _lastActivityTicks, now.UtcTicks);
+            // Full fence so the activity stamp is ordered before the eviction
+            // re-read (store-load ordering Volatile alone does not guarantee).
+            Interlocked.MemoryBarrier();
+            var spin = new SpinWait();
+            while (true)
+            {
+                switch (Volatile.Read(ref _evicting))
+                {
+                    case EvictNone:
+                        // Sweeper is not evicting (or backed out after seeing our
+                        // stamp). By the Dekker argument, observing EvictNone here
+                        // guarantees the sweeper will not commit, so the receiver
+                        // is safe to hand out.
+                        return receiver;
+                    case EvictCommitted:
+                        // Sweeper committed and now owns disposal; report "no
+                        // cached receiver" so the caller opens a fresh session.
+                        return null;
+                    default:
+                        // EvictTentative: the sweeper is mid-decision and resolves
+                        // to EvictNone or EvictCommitted in a few instructions
+                        // (no I/O, no await). Spin briefly — never returning a
+                        // false null for a slot that stays live, and never busy-
+                        // waiting on the slow DisposeAsync (that follows commit).
+                        spin.SpinOnce();
+                        break;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Commits this slot to idle eviction. Returns <c>true</c> only when
+        /// the slot is idle AND no concurrent <see cref="TryGetActive"/> won
+        /// the Dekker handshake — the caller then owns disposal and every
+        /// later <see cref="TryGetActive"/> returns <c>null</c>. Returns
+        /// <c>false</c> (leaving the slot fully usable) when the slot is not
+        /// idle or an activity stamp landed concurrently.
+        /// </summary>
+        public bool TryBeginEvict(DateTimeOffset now, TimeSpan idleTimeout)
+        {
+            if (!IsIdle(now, idleTimeout)) return false;
+            Volatile.Write(ref _evicting, EvictTentative);
+            // Full fence so the tentative flag is published before re-reading
+            // the activity stamp a concurrent TryGetActive may have written.
+            Interlocked.MemoryBarrier();
+            if (!IsIdle(now, idleTimeout))
+            {
+                // A settle stamped activity concurrently: back out so the live
+                // receiver is not detached, and release any spinning reader.
+                Volatile.Write(ref _evicting, EvictNone);
+                return false;
+            }
+            Volatile.Write(ref _evicting, EvictCommitted);
+            return true;
+        }
 
         public ValueTask DisposeAsync() => _slot.DisposeAsync();
 

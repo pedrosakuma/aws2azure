@@ -49,7 +49,9 @@ internal interface IAmqpReceiverProvider
     /// session lock — settle paths (DeleteMessage, CMV=0) must use
     /// this so a cache miss surfaces as a stale receipt handle instead
     /// of starving the MessageGroupId by acquiring (and then never
-    /// releasing) a new session lock.
+    /// releasing) a new session lock. When a receiver is found, the
+    /// lookup also records session-link activity so the AMQP pool's
+    /// idle sweeper does not evict a session being settled or renewed.
     /// </summary>
     ServiceBusReceiver? TryGetExistingSessionReceiver(string queueName, string sessionId);
 
