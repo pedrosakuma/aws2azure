@@ -2,7 +2,6 @@ using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Http;
-using System.Xml;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Observability;
@@ -21,14 +20,6 @@ public interface IEventHubsManagementClient
 
 public sealed class EventHubsManagementClient : IEventHubsManagementClient
 {
-    private static readonly XmlReaderSettings ReaderSettings = new()
-    {
-        Async = true,
-        DtdProcessing = DtdProcessing.Prohibit,
-        IgnoreComments = true,
-        IgnoreWhitespace = true,
-    };
-
     private readonly AzureHttpClient _httpClient;
     private readonly IEventHubsAuthenticator _authenticator;
     private readonly ILogger<EventHubsManagementClient> _logger;
@@ -88,17 +79,12 @@ public sealed class EventHubsManagementClient : IEventHubsManagementClient
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
 
         var fragment = ExtractEventHubDescriptionFragment(content);
-        using var stringReader = new StringReader(fragment);
-        using var reader = XmlReader.Create(stringReader, ReaderSettings);
         var partitionIds = ExtractRepeatedValues(fragment, "string");
         var partitionCount = ParseInt(ExtractScalarValue(fragment, "PartitionCount"), "PartitionCount");
         var retentionDays = ParseInt(ExtractScalarValue(fragment, "MessageRetentionInDays"), "MessageRetentionInDays");
         var createdAt = ParseDateTimeOffset(ExtractScalarValue(fragment, "CreatedAt"), "CreatedAt");
 
-        while (reader.Read())
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-        }
+        cancellationToken.ThrowIfCancellationRequested();
 
         if (partitionIds.Count == 0)
         {
@@ -221,34 +207,6 @@ public sealed class EventHubsManagementClient : IEventHubsManagementClient
         }
 
         return Uri.UriSchemeHttps;
-    }
-
-    private static void ReadPartitionIds(XmlReader reader, List<string> partitionIds)
-    {
-        if (reader.IsEmptyElement)
-        {
-            return;
-        }
-
-        while (reader.Read())
-        {
-            if (reader.NodeType == XmlNodeType.EndElement && reader.LocalName == "PartitionIds")
-            {
-                return;
-            }
-
-            if (reader.NodeType == XmlNodeType.Element && reader.LocalName == "string")
-            {
-                if (reader.IsEmptyElement)
-                {
-                    partitionIds.Add(string.Empty);
-                    continue;
-                }
-
-                var value = reader.ReadInnerXml();
-                partitionIds.Add(value);
-            }
-        }
     }
 
     private static int ParseInt(string value, string fieldName)

@@ -115,6 +115,12 @@ public sealed class SecretsManagerServiceModule : IServiceModule
                 case "DescribeSecret":
                     await HandleDescribeSecretAsync(context, client, document, context.RequestAborted).ConfigureAwait(false);
                     return;
+                default:
+                    // Defensive: the IsSupported gate and this dispatch table are both
+                    // case-sensitive (ordinal), so they cannot drift, but never let an
+                    // unmatched operation fall through and leave the response unwritten.
+                    await WriteAwsErrorAsync(context, StatusCodes.Status501NotImplemented, "NotImplementedException", $"Secrets Manager operation '{operation}' is not implemented yet.").ConfigureAwait(false);
+                    return;
             }
         }
         catch (EntraIdTokenException ex)

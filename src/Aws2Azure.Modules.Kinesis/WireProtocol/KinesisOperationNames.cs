@@ -22,6 +22,13 @@ internal static class KinesisOperationNames
         ["ListShards"] = KinesisOperation.ListShards,
     };
 
+    /// <summary>
+    /// The recognised operation short-names (the parse-map keys), used as the
+    /// single source of truth for the module's metrics allow-list so the two
+    /// cannot drift apart.
+    /// </summary>
+    public static IReadOnlyCollection<string> Names => Map.Keys;
+
     public static KinesisOperation FromTarget(string? target)
     {
         if (string.IsNullOrEmpty(target)) return KinesisOperation.Unknown;

@@ -442,6 +442,27 @@ public sealed class SecretsManagerServiceModuleTests
         Assert.True(deletedDate <= DateTimeOffset.UtcNow.AddSeconds(5));
     }
 
+    [Theory]
+    [InlineData("SecretsManager.getsecretvalue")]
+    [InlineData("SecretsManager.GETSECRETVALUE")]
+    public async Task HandleAsync_mixed_case_operation_returns_501_not_an_empty_response(string target)
+    {
+        using var http = new AzureHttpClient(new ScriptedHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK))), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext(target, "{\"SecretId\":\"demo\"}");
+
+        await module.HandleAsync(context);
+
+        // Regression: a non-canonical-case target must not slip past the support
+        // gate and fall through the case-sensitive dispatch, leaving the response
+        // unwritten (empty body / corrupted connection).
+        Assert.Equal(StatusCodes.Status501NotImplemented, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        Assert.Contains("NotImplementedException", body);
+    }
+
     private static SecretsManagerServiceModule CreateModule(AzureHttpClient http)
     {
         var config = new ProxyConfig
