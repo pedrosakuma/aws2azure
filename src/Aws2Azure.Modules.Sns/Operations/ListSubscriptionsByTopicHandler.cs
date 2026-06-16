@@ -21,7 +21,7 @@ internal static class ListSubscriptionsByTopicHandler
         ArgumentNullException.ThrowIfNull(managementClient);
 
         if (!SnsTopicSupport.TryGetRequiredParameter(parseResult.Parameters, "TopicArn", out var topicArn, out var error)
-            || !SnsPublishSupport.TryParsePublishTopicArn(topicArn, out var topicName, out error))
+            || !SnsTopicSupport.TryParseTopicArnAllowFifo(topicArn, out var topicName, out error))
         {
             await SnsTopicSupport.WriteInvalidParameterAsync(context, error!).ConfigureAwait(false);
             return;

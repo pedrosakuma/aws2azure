@@ -56,7 +56,7 @@ internal static class QueueLifecycleHandlers
             return;
         }
 
-        var attributes = ExtractAttributes(parsed, "Attribute");
+        var attributes = SqsQueueAttributeParser.ExtractAttributes(parsed, "Attribute");
         var err = QueueAttributeTranslator.ToServiceBusProperties(queueName, attributes, out var props);
         if (err.IsError)
         {
@@ -427,53 +427,6 @@ internal static class QueueLifecycleHandlers
         return list;
     }
 
-    /// <summary>
-    /// Reads SQS's flat Attribute.N.Name / Attribute.N.Value pairs (Query)
-    /// or the Attributes object (AWS JSON) into a flat dict.
-    /// </summary>
-    private static IReadOnlyDictionary<string, string> ExtractAttributes(SqsParseResult parsed, string memberName)
-    {
-        var dict = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (parsed.JsonBody is not null)
-        {
-            try
-            {
-                using var doc = System.Text.Json.JsonDocument.Parse(parsed.JsonBody);
-                if (doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
-                    && doc.RootElement.TryGetProperty("Attributes", out var attrs)
-                    && attrs.ValueKind == System.Text.Json.JsonValueKind.Object)
-                {
-                    foreach (var prop in attrs.EnumerateObject())
-                    {
-                        if (prop.Value.ValueKind == System.Text.Json.JsonValueKind.String)
-                        {
-                            dict[prop.Name] = prop.Value.GetString() ?? string.Empty;
-                        }
-                        else if (prop.Value.ValueKind is System.Text.Json.JsonValueKind.True
-                            or System.Text.Json.JsonValueKind.False
-                            or System.Text.Json.JsonValueKind.Number)
-                        {
-                            dict[prop.Name] = prop.Value.GetRawText();
-                        }
-                    }
-                    if (dict.Count > 0) return dict;
-                }
-            }
-            catch (System.Text.Json.JsonException) { }
-        }
-
-        var i = 1;
-        while (parsed.Parameters.TryGetValue($"{memberName}.{i}.Name", out var name))
-        {
-            if (parsed.Parameters.TryGetValue($"{memberName}.{i}.Value", out var value))
-            {
-                dict[name] = value;
-            }
-            i++;
-        }
-        return dict;
-    }
-
     private static Task WriteErrorAsync(HttpContext context, SqsWireProtocol protocol, SqsErrorMapping.Mapping mapping) =>
-        SqsErrorResponse.WriteAsync(context, protocol, mapping.StatusCode, mapping.Code, mapping.Message, mapping.FaultType);
+        SqsParameterHelpers.WriteErrorAsync(context, protocol, mapping);
 }

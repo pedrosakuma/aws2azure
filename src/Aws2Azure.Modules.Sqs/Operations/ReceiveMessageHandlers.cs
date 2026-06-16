@@ -43,9 +43,6 @@ internal static class ReceiveMessageHandlers
     /// <summary>AWS hard cap on WaitTimeSeconds (Slice 4 implements polling).</summary>
     public const int MaxWaitTimeSeconds = 20;
 
-    /// <summary>Side-channel header SendMessage emits to round-trip SQS attribute data types.</summary>
-    public const string AttrTypesHeader = "Aws2Azure-AttrTypes";
-
     /// <summary>Soft cap on how long the per-message peek-lock loop will wait in aggregate before returning what it has.</summary>
     public static readonly TimeSpan ReceiveLoopBudget = TimeSpan.FromSeconds(5);
 
@@ -317,7 +314,7 @@ internal static class ReceiveMessageHandlers
         var bodyText = Encoding.UTF8.GetString(bodyBytes);
         var md5OfBody = SqsMessageMd5.OfBody(bodyBytes);
 
-        var typeRegistry = ParseAttrTypeRegistry(response);
+        var typeRegistry = SqsAttributeTypeRegistry.Parse(response);
         var (msgAttrs, md5OfAttrs) = BuildMessageAttributes(response, typeRegistry, messageAttrFilter);
 
         var systemAttrs = BuildSystemAttributes(enqueuedTime, deliveryCount, sequenceNumber,
@@ -404,97 +401,21 @@ internal static class ReceiveMessageHandlers
         return (attrs, SqsMessageMd5.OfAttributes(md5Source));
     }
 
-    private static IReadOnlyDictionary<string, string> ParseAttrTypeRegistry(HttpResponseMessage response)
-    {
-        if (!response.Headers.TryGetValues(AttrTypesHeader, out var values))
-        {
-            return new Dictionary<string, string>(0);
-        }
-        var raw = string.Join(",", values);
-        var dict = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var pair in raw.Split(',', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var eq = pair.IndexOf('=');
-            if (eq <= 0) continue;
-            var name = pair[..eq];
-            var type = pair[(eq + 1)..];
-            if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(type))
-            {
-                dict[name] = type;
-            }
-        }
-        return dict;
-    }
-
     // --- Parameter parsing helpers -------------------------------------
 
-    private static HashSet<string>? ParseAttributeNames(SqsParseResult parsed, string prefix)
-    {
-        // Query protocol: AttributeName.1, AttributeName.2, ...
-        // JSON protocol: AttributeNames: ["All"] (singular vs plural — SDKs use both).
-        var set = new HashSet<string>(StringComparer.Ordinal);
-        var dotPrefix = prefix + ".";
-        foreach (var kv in parsed.Parameters)
-        {
-            if (kv.Key.StartsWith(dotPrefix, StringComparison.Ordinal) && !string.IsNullOrEmpty(kv.Value))
-            {
-                set.Add(kv.Value);
-            }
-        }
-        if (parsed.Protocol == SqsWireProtocol.AwsJson && !string.IsNullOrEmpty(parsed.JsonBody))
-        {
-            try
-            {
-                using var doc = JsonDocument.Parse(parsed.JsonBody);
-                var pluralName = prefix + "s";
-                if (doc.RootElement.TryGetProperty(pluralName, out var arr) && arr.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var v in arr.EnumerateArray())
-                    {
-                        if (v.ValueKind == JsonValueKind.String)
-                        {
-                            var s = v.GetString();
-                            if (!string.IsNullOrEmpty(s)) set.Add(s);
-                        }
-                    }
-                }
-            }
-            catch (JsonException) { /* ignore — same protocol parser already validated body */ }
-        }
-        return set.Count == 0 ? null : set;
-    }
+    private static HashSet<string>? ParseAttributeNames(SqsParseResult parsed, string prefix) =>
+        SqsParameterHelpers.ParseAttributeNames(parsed, prefix);
 
     private static bool TryParseBoundedInt(
-        SqsParseResult parsed, string name, int min, int max, int defaultValue, out int value)
-    {
-        if (!parsed.Parameters.TryGetValue(name, out var raw) || string.IsNullOrEmpty(raw))
-        {
-            value = defaultValue;
-            return true;
-        }
-        if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out value) ||
-            value < min || value > max)
-        {
-            value = defaultValue;
-            return false;
-        }
-        return true;
-    }
+        SqsParseResult parsed, string name, int min, int max, int defaultValue, out int value) =>
+        SqsParameterHelpers.TryParseBoundedInt(parsed, name, min, max, defaultValue, out value);
 
     private static string? ExtractQueueName(SqsParseResult parsed) =>
-        parsed.Parameters.TryGetValue("QueueUrl", out var url) ? QueueUrlBuilder.ExtractQueueName(url) : null;
+        SqsParameterHelpers.ExtractQueueName(parsed);
 
-    private static bool TryGetParam(SqsParseResult parsed, string key, out string value)
-    {
-        if (parsed.Parameters.TryGetValue(key, out var v) && v is not null)
-        {
-            value = v;
-            return true;
-        }
-        value = string.Empty;
-        return false;
-    }
+    private static bool TryGetParam(SqsParseResult parsed, string key, out string value) =>
+        SqsParameterHelpers.TryGetParam(parsed, key, out value);
 
     private static Task WriteErrorAsync(HttpContext context, SqsWireProtocol protocol, SqsErrorMapping.Mapping mapping) =>
-        SqsErrorResponse.WriteAsync(context, protocol, mapping.StatusCode, mapping.Code, mapping.Message, mapping.FaultType);
+        SqsParameterHelpers.WriteErrorAsync(context, protocol, mapping);
 }

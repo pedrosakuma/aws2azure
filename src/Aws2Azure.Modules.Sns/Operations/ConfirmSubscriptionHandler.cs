@@ -12,7 +12,7 @@ internal static class ConfirmSubscriptionHandler
         ArgumentNullException.ThrowIfNull(parseResult);
 
         if (!SnsTopicSupport.TryGetRequiredParameter(parseResult.Parameters, "TopicArn", out var topicArn, out var error)
-            || !SnsPublishSupport.TryParsePublishTopicArn(topicArn, out var topicName, out error)
+            || !SnsTopicSupport.TryParseTopicArnAllowFifo(topicArn, out var topicName, out error)
             || !SnsTopicSupport.TryGetRequiredParameter(parseResult.Parameters, "Token", out var token, out error))
         {
             await SnsTopicSupport.WriteInvalidParameterAsync(context, error!).ConfigureAwait(false);
