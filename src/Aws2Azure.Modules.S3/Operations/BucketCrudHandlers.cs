@@ -7,11 +7,11 @@ using Microsoft.AspNetCore.Http;
 namespace Aws2Azure.Modules.S3.Operations;
 
 /// <summary>
-/// Handlers for slice-1 bucket-lifecycle operations:
+/// Handlers for slice-1 bucket CRUD operations:
 /// <see cref="S3Operation.ListBuckets"/>, <see cref="S3Operation.CreateBucket"/>,
 /// <see cref="S3Operation.DeleteBucket"/>, <see cref="S3Operation.HeadBucket"/>.
 /// </summary>
-internal static class BucketLifecycleHandlers
+internal static class BucketCrudHandlers
 {
     public static async Task HandleAsync(
         HttpContext context,

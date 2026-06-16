@@ -113,6 +113,16 @@ public static class S3Router
         };
     }
 
+    public static bool MatchesHost(string host)
+    {
+        if (string.IsNullOrEmpty(host))
+        {
+            return false;
+        }
+
+        return IsPathStyleEndpoint(host) || FindVirtualHostedMarker(host) >= 0;
+    }
+
     /// <summary>
     /// S3 multipart upload subresources hang off the object path with their
     /// own verb mapping:
@@ -459,19 +469,13 @@ public static class S3Router
 
         // Path-style anchors: host starts with "s3." or "s3-" (e.g.
         // s3.amazonaws.com, s3.us-east-1.amazonaws.com, s3-us-west-2…).
-        if (host.StartsWith("s3.", StringComparison.OrdinalIgnoreCase) ||
-            host.StartsWith("s3-", StringComparison.OrdinalIgnoreCase) ||
-            host.Equals("s3", StringComparison.OrdinalIgnoreCase))
+        if (IsPathStyleEndpoint(host))
         {
             return false;
         }
 
         // Virtual-hosted: {bucket}.s3.… or {bucket}.s3-…
-        var dotS3 = host.IndexOf(".s3.", StringComparison.OrdinalIgnoreCase);
-        if (dotS3 < 0)
-        {
-            dotS3 = host.IndexOf(".s3-", StringComparison.OrdinalIgnoreCase);
-        }
+        var dotS3 = FindVirtualHostedMarker(host);
         if (dotS3 > 0)
         {
             bucket = host[..dotS3];
@@ -479,5 +483,16 @@ public static class S3Router
         }
 
         return false;
+    }
+
+    private static bool IsPathStyleEndpoint(string host) =>
+        host.StartsWith("s3.", StringComparison.OrdinalIgnoreCase) ||
+        host.StartsWith("s3-", StringComparison.OrdinalIgnoreCase) ||
+        host.Equals("s3", StringComparison.OrdinalIgnoreCase);
+
+    private static int FindVirtualHostedMarker(string host)
+    {
+        var dotS3 = host.IndexOf(".s3.", StringComparison.OrdinalIgnoreCase);
+        return dotS3 >= 0 ? dotS3 : host.IndexOf(".s3-", StringComparison.OrdinalIgnoreCase);
     }
 }

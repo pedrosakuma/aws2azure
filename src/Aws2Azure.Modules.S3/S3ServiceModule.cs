@@ -10,7 +10,7 @@ using Microsoft.AspNetCore.Http;
 namespace Aws2Azure.Modules.S3;
 
 /// <summary>
-/// S3 service module. Slice 1 implements the bucket-lifecycle operations
+/// S3 service module. Slice 1 implements the bucket CRUD operations
 /// (List/Create/Delete/Head) over Azure Blob Storage; other operations
 /// surface a 501 NotImplemented S3-shaped error.
 /// </summary>
@@ -60,23 +60,7 @@ public sealed class S3ServiceModule : IServiceModule
             _ => context.Request.Method,
         };
 
-    public bool MatchesHost(string host)
-    {
-        if (string.IsNullOrEmpty(host))
-        {
-            return false;
-        }
-        if (host.StartsWith("s3.", StringComparison.OrdinalIgnoreCase) ||
-            host.StartsWith("s3-", StringComparison.OrdinalIgnoreCase) ||
-            host.Equals("s3", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-        // Virtual-hosted style: matched here so the request reaches us and we
-        // can return an explicit, S3-shaped error pointing at path-style.
-        return host.Contains(".s3.", StringComparison.OrdinalIgnoreCase)
-            || host.Contains(".s3-", StringComparison.OrdinalIgnoreCase);
-    }
+    public bool MatchesHost(string host) => S3Router.MatchesHost(host);
 
     public async ValueTask HandleAsync(HttpContext context)
     {
@@ -128,8 +112,8 @@ public sealed class S3ServiceModule : IServiceModule
             case S3DispatchTarget.Subresource:
                 await SubresourceHandlers.HandleAsync(context, route, blob, context.RequestAborted).ConfigureAwait(false);
                 break;
-            case S3DispatchTarget.BucketLifecycle:
-                await BucketLifecycleHandlers.HandleAsync(context, route, blob, context.RequestAborted).ConfigureAwait(false);
+            case S3DispatchTarget.BucketCrud:
+                await BucketCrudHandlers.HandleAsync(context, route, blob, context.RequestAborted).ConfigureAwait(false);
                 break;
         }
     }

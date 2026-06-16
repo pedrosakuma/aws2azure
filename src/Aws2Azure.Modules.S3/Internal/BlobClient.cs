@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Observability;
+using Aws2Azure.Modules.S3.Errors;
 
 namespace Aws2Azure.Modules.S3.Internal;
 
@@ -152,6 +153,25 @@ internal sealed partial class BlobClient
     {
         var uri = new Uri(_serviceEndpoint, $"{container}?restype=container");
         return SendAsync(HttpMethod.Head, uri, cancellationToken);
+    }
+
+    public async Task<S3ErrorMapping.Mapping?> CheckContainerExistsAsync(
+        string container,
+        S3Operation operation,
+        CancellationToken cancellationToken)
+    {
+        using var response = await GetContainerPropertiesAsync(container, cancellationToken).ConfigureAwait(false);
+        if (response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return new S3ErrorMapping.Mapping(404, "NoSuchBucket", "The specified bucket does not exist.");
+        }
+
+        return S3ErrorMapping.FromAzure(response, operation);
     }
 
     /// <summary>

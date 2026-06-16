@@ -63,33 +63,16 @@ internal static class ObjectHandlers
         // Parse + validate x-amz-copy-source up-front; never round-trip an
         // ambiguous source to Azure (a typo'd bucket would otherwise become
         // a different error code surface).
-        var rawSource = context.Request.Headers.TryGetValue("x-amz-copy-source", out var headerValues) && headerValues.Count > 0
-            ? headerValues[0]
-            : null;
-        var parsed = CopySourceParser.Parse(rawSource);
+        var parsed = CopySourceParser.ParseAndValidate(context.Request);
         if (!parsed.Success)
         {
-            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidArgument(parsed.Error!)).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, parsed.Error).ConfigureAwait(false);
             return;
         }
         var sourceBucket = parsed.Bucket!;
         var sourceKey = parsed.Key!;
 
-        if (!BlobClient.IsValidContainerName(sourceBucket))
-        {
-            await S3ErrorMapping.WriteAsync(context,
-                new S3ErrorMapping.Mapping(400, "InvalidBucketName",
-                    "The specified copy-source bucket is not valid.")).ConfigureAwait(false);
-            return;
-        }
-        if (!S3ObjectKey.IsValid(sourceKey))
-        {
-            await S3ErrorMapping.WriteAsync(context,
-                S3ErrorMapping.InvalidArgument("The specified copy-source object key is not valid.")).ConfigureAwait(false);
-            return;
-        }
-
-        var sourceUri = blob.BuildAccountBlobUri(sourceBucket, sourceKey);
+        var sourceUri = blob.BuildBlobUri(sourceBucket, sourceKey);
 
         // S3 rejects same-bucket/same-key CopyObject unless the request
         // changes something (metadata, storage class, encryption…). We only
@@ -138,11 +121,7 @@ internal static class ObjectHandlers
             return;
         }
 
-        // Source-conditional headers (S3 → Azure rename).
-        ForwardSourceConditional(context.Request, azureReq, "x-amz-copy-source-if-match",            "x-ms-source-if-match");
-        ForwardSourceConditional(context.Request, azureReq, "x-amz-copy-source-if-none-match",       "x-ms-source-if-none-match");
-        ForwardSourceConditional(context.Request, azureReq, "x-amz-copy-source-if-modified-since",   "x-ms-source-if-modified-since");
-        ForwardSourceConditional(context.Request, azureReq, "x-amz-copy-source-if-unmodified-since", "x-ms-source-if-unmodified-since");
+        HeaderForwarding.ForwardCopySourceConditionals(context.Request, azureReq);
 
         // Metadata directive: COPY (default) preserves source metadata —
         // Azure's Copy Blob does the same when no x-ms-meta-* are sent.
@@ -150,7 +129,7 @@ internal static class ObjectHandlers
         // x-ms-meta-* present replaces source metadata wholesale).
         if (replace)
         {
-            ForwardMetadata(context.Request, azureReq);
+            HeaderForwarding.ForwardMetadata(context.Request, azureReq);
         }
 
         using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
@@ -232,20 +211,6 @@ internal static class ObjectHandlers
         await context.Response.WriteAsync(body, ct).ConfigureAwait(false);
     }
 
-    private static void ForwardSourceConditional(HttpRequest source, HttpRequestMessage target, string s3Header, string azureHeader)
-    {
-        if (source.Headers.TryGetValue(s3Header, out var values))
-        {
-            foreach (var v in values)
-            {
-                if (!string.IsNullOrEmpty(v))
-                {
-                    target.Headers.TryAddWithoutValidation(azureHeader, v);
-                }
-            }
-        }
-    }
-
     private static string? ReadDirective(HttpRequest request, string header)
     {
         if (request.Headers.TryGetValue(header, out var values))
@@ -259,29 +224,6 @@ internal static class ObjectHandlers
             }
         }
         return null;
-    }
-
-    /// <summary>
-    /// REPLACE-mode metadata forwarding for CopyObject. The Copy Blob REST
-    /// API itself only honours <c>x-ms-meta-*</c> (system properties like
-    /// Content-Type are applied separately via Set Blob Properties).
-    /// </summary>
-    private static void ForwardMetadata(HttpRequest source, HttpRequestMessage target)
-    {
-        foreach (var kv in source.Headers)
-        {
-            if (kv.Key.StartsWith("x-amz-meta-", StringComparison.OrdinalIgnoreCase))
-            {
-                var azureName = "x-ms-meta-" + kv.Key.AsSpan("x-amz-meta-".Length).ToString();
-                foreach (var value in kv.Value)
-                {
-                    if (!string.IsNullOrEmpty(value))
-                    {
-                        target.Headers.TryAddWithoutValidation(azureName, value);
-                    }
-                }
-            }
-        }
     }
 
     /// <summary>
@@ -402,35 +344,13 @@ internal static class ObjectHandlers
             return;
         }
 
-        // Detect aws-chunked encoding (all STREAMING-* framings, signed or
-        // unsigned, with or without a trailing checksum section).
-        Stream bodyStream = context.Request.Body;
-        long? contentLength = context.Request.ContentLength;
-        AwsChunkedDecoder? chunkedDecoder = null;
-
-        var chunkedFormat = AwsChunkedRequest.Detect(context.Request);
-        if (chunkedFormat.Detected)
-        {
-            // Use x-amz-decoded-content-length as the real content length
-            if (context.Request.Headers.TryGetValue("x-amz-decoded-content-length", out var decodedLenHeader)
-                && long.TryParse(decodedLenHeader.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var decodedLen))
-            {
-                contentLength = decodedLen;
-            }
-            else
-            {
-                contentLength = null; // unknown
-            }
-
-            chunkedDecoder = AwsChunkedRequest.CreateDecoder(context.Request, chunkedFormat, credentials);
-            bodyStream = chunkedDecoder;
-        }
+        var body = AwsChunkedRequest.PrepareBodyStream(context.Request, credentials);
 
         try
         {
             using var azureReq = new HttpRequestMessage(HttpMethod.Put, blob.BuildBlobUri(bucket, key))
             {
-                Content = new StreamContent(bodyStream),
+                Content = new StreamContent(body.Body),
             };
             // The request body is a non-replayable client stream; the Azure client's
             // retry loop would otherwise have to buffer the entire upload.
@@ -440,7 +360,7 @@ internal static class ObjectHandlers
 
             // If we decoded aws-chunked, remove that encoding from Content-Encoding
             // since the body is now decoded. Preserve any other encodings (e.g. gzip).
-            if (chunkedDecoder is not null && azureReq.Content.Headers.ContentEncoding.Contains("aws-chunked"))
+            if (body.Decoder is not null && azureReq.Content.Headers.ContentEncoding.Contains("aws-chunked"))
             {
                 var encodings = azureReq.Content.Headers.ContentEncoding.ToList();
                 encodings.Remove("aws-chunked");
@@ -451,7 +371,7 @@ internal static class ObjectHandlers
                 }
             }
 
-            if (contentLength is { } len)
+            if (body.ContentLength is { } len)
             {
                 azureReq.Content.Headers.ContentLength = len;
             }
@@ -470,7 +390,7 @@ internal static class ObjectHandlers
         }
         finally
         {
-            chunkedDecoder?.Dispose();
+            body.Decoder?.Dispose();
         }
     }
 
