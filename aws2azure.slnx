@@ -12,6 +12,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Aws2Azure.UnitTests/Aws2Azure.UnitTests.csproj" />
+    <Project Path="tests/Aws2Azure.TestSupport/Aws2Azure.TestSupport.csproj" />
     <Project Path="tests/Aws2Azure.Conformance/Aws2Azure.Conformance.csproj" />
     <Project Path="tests/Aws2Azure.IntegrationTests/Aws2Azure.IntegrationTests.csproj" />
     <Project Path="tests/Aws2Azure.PerfTests/Aws2Azure.PerfTests.csproj" />

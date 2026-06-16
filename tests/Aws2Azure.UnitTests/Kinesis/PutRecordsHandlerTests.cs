@@ -8,6 +8,8 @@ using Aws2Azure.Modules.Kinesis.EventHubsRest;
 using Aws2Azure.Modules.Kinesis.Operations;
 using Aws2Azure.Modules.Kinesis.WireProtocol;
 using Microsoft.AspNetCore.Http;
+using Aws2Azure.TestSupport.Kinesis;
+using static Aws2Azure.TestSupport.Http.TestHttpContext;
 
 namespace Aws2Azure.UnitTests.Kinesis;
 
@@ -16,7 +18,7 @@ public sealed class PutRecordsHandlerTests
     [Fact]
     public async Task HandleAsync_returns_success_entries_in_request_order()
     {
-        var context = NewContext();
+        var context = CreateContext();
         var sender = new FakeAmqpSender();
         var metadataCache = new FakeMetadataCache((_, namespaceFqdn, eventHubName, _) =>
         {
@@ -74,7 +76,7 @@ public sealed class PutRecordsHandlerTests
     [Fact]
     public async Task HandleAsync_returns_per_record_validation_failures_without_failing_request()
     {
-        var context = NewContext();
+        var context = CreateContext();
         var sender = new FakeAmqpSender();
         var oversizePayload = Convert.ToBase64String(new byte[PutRecordCommon.MaxDataBytes + 1]);
         var requestBody = JsonSerializer.Serialize(new
@@ -118,7 +120,7 @@ public sealed class PutRecordsHandlerTests
     [InlineData("{\"Records\":[{\"Data\":\"YQ==\",\"PartitionKey\":\"pk\"}]}", "One of StreamName or StreamARN is required.")]
     public async Task HandleAsync_returns_whole_request_validation_errors(string body, string expectedMessage)
     {
-        var context = NewContext();
+        var context = CreateContext();
 
         await PutRecordsHandler.HandleAsync(
             context,
@@ -140,7 +142,7 @@ public sealed class PutRecordsHandlerTests
             .Select(i => $"{{\"Data\":\"YQ==\",\"PartitionKey\":\"pk-{i}\"}}")
             .ToArray();
         var body = "{\"StreamName\":\"orders\",\"Records\":[" + string.Join(',', records) + "]}";
-        var context = NewContext();
+        var context = CreateContext();
 
         await PutRecordsHandler.HandleAsync(
             context,
@@ -160,7 +162,7 @@ public sealed class PutRecordsHandlerTests
     {
         var oversizedData = new string('A', PutRecordCommon.MaxRequestPayloadBytes);
         var body = "{\"StreamName\":\"orders\",\"Records\":[{\"Data\":\"" + oversizedData + "\",\"PartitionKey\":\"pk\"}]}";
-        var context = NewContext();
+        var context = CreateContext();
 
         await PutRecordsHandler.HandleAsync(
             context,
@@ -178,7 +180,7 @@ public sealed class PutRecordsHandlerTests
     [Fact]
     public async Task HandleAsync_marks_only_rejected_entries_failed_when_batch_returns_partial_outcomes()
     {
-        var context = NewContext();
+        var context = CreateContext();
         var sender = new FakeAmqpSender((_, _, _, messages, _) => Task.FromResult(new EventHubsBatchSendResult(
         [
             new EventHubsBatchSendOutcome(true, null, null),
@@ -219,7 +221,7 @@ public sealed class PutRecordsHandlerTests
     [Fact]
     public async Task HandleAsync_routes_partition_keys_deterministically()
     {
-        var context = NewContext();
+        var context = CreateContext();
         var sender = new FakeAmqpSender();
         var body = "{\"StreamName\":\"orders\",\"Records\":[{\"Data\":\"YQ==\",\"PartitionKey\":\"abc\"}]}";
 
@@ -243,7 +245,7 @@ public sealed class PutRecordsHandlerTests
     [Fact]
     public async Task HandleAsync_maps_management_not_found_to_resource_not_found()
     {
-        var context = NewContext();
+        var context = CreateContext();
 
         await PutRecordsHandler.HandleAsync(
             context,
@@ -260,7 +262,7 @@ public sealed class PutRecordsHandlerTests
     [Fact]
     public async Task HandleAsync_marks_partition_records_failed_when_sender_throws_non_auth_connection_error()
     {
-        var context = NewContext();
+        var context = CreateContext();
         var sender = new FakeAmqpSender((_, _, entityPath, messages, _) =>
         {
             if (entityPath == "orders-eh/Partitions/1")
@@ -310,7 +312,7 @@ public sealed class PutRecordsHandlerTests
     [Fact]
     public async Task HandleAsync_maps_amqp_auth_failures_to_access_denied()
     {
-        var context = NewContext();
+        var context = CreateContext();
 
         await PutRecordsHandler.HandleAsync(
             context,
@@ -341,18 +343,6 @@ public sealed class PutRecordsHandlerTests
     private static KinesisParseResult NewParseResult(string body)
         => new(KinesisOperation.PutRecords, "Kinesis_20131202.PutRecords", Encoding.UTF8.GetBytes(body), null);
 
-    private static DefaultHttpContext NewContext()
-    {
-        var context = new DefaultHttpContext();
-        context.Response.Body = new MemoryStream();
-        return context;
-    }
-
-    private static string ReadBody(HttpContext context)
-    {
-        context.Response.Body.Position = 0;
-        return new StreamReader(context.Response.Body, Encoding.UTF8).ReadToEnd();
-    }
 
     private static JsonDocument ReadJson(HttpContext context)
         => JsonDocument.Parse(ReadBody(context));
@@ -374,12 +364,6 @@ public sealed class PutRecordsHandlerTests
         Assert.False(record.TryGetProperty("SequenceNumber", out _));
     }
 
-    private sealed class FakeMetadataCache(Func<EventHubsCredentials, string, string, CancellationToken, ValueTask<EventHubDescription>> handler)
-        : IEventHubMetadataCache
-    {
-        public ValueTask<EventHubDescription> GetEventHubAsync(EventHubsCredentials credentials, string namespaceFqdn, string eventHubName, CancellationToken cancellationToken)
-            => handler(credentials, namespaceFqdn, eventHubName, cancellationToken);
-    }
 
     private sealed class FakeAmqpSender(Func<EventHubsCredentials, string, string, IReadOnlyList<(ReadOnlyMemory<byte> body, IReadOnlyDictionary<string, object>? annotations)>, CancellationToken, Task<EventHubsBatchSendResult>>? batchHandler = null)
         : IEventHubsAmqpSender

@@ -24,6 +24,7 @@
     <PackageReference Include="Xunit.SkippableFact" Version="1.4.13" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\Aws2Azure.TestSupport\Aws2Azure.TestSupport.csproj" />
     <ProjectReference Include="..\..\src\Aws2Azure.Core\Aws2Azure.Core.csproj" />
     <ProjectReference Include="..\..\src\Aws2Azure.Proxy\Aws2Azure.Proxy.csproj" />
   </ItemGroup>

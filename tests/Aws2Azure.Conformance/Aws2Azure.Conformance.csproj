@@ -18,6 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Aws2Azure.TestSupport\Aws2Azure.TestSupport.csproj" />
     <ProjectReference Include="..\..\src\Aws2Azure.Core\Aws2Azure.Core.csproj" />
     <ProjectReference Include="..\..\src\Aws2Azure.Proxy\Aws2Azure.Proxy.csproj" />
     <ProjectReference Include="..\..\tools\Aws2Azure.GapDocs\Aws2Azure.GapDocs.csproj" />

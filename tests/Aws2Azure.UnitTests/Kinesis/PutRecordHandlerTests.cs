@@ -8,6 +8,8 @@ using Aws2Azure.Modules.Kinesis.EventHubsRest;
 using Aws2Azure.Modules.Kinesis.Operations;
 using Aws2Azure.Modules.Kinesis.WireProtocol;
 using Microsoft.AspNetCore.Http;
+using Aws2Azure.TestSupport.Kinesis;
+using static Aws2Azure.TestSupport.Http.TestHttpContext;
 
 namespace Aws2Azure.UnitTests.Kinesis;
 
@@ -16,7 +18,7 @@ public sealed class PutRecordHandlerTests
     [Fact]
     public async Task HandleAsync_sends_decoded_payload_to_partition_and_returns_shape()
     {
-        var context = NewContext();
+        var context = CreateContext();
         var sender = new FakeAmqpSender();
         var metadataCache = new FakeMetadataCache((_, namespaceFqdn, eventHubName, _) =>
         {
@@ -59,7 +61,7 @@ public sealed class PutRecordHandlerTests
         var metadataCache = new FakeMetadataCache((_, _, _, _) => ValueTask.FromResult(
             new EventHubDescription(8, ["0", "1", "2", "3", "4", "5", "6", "7"], 7, DateTimeOffset.UtcNow)));
 
-        var first = NewContext();
+        var first = CreateContext();
         await PutRecordHandler.HandleAsync(
             first,
             NewParseResult("{" + "\"StreamName\":\"orders\",\"Data\":\"YQ==\",\"PartitionKey\":\"stable-key\"}"),
@@ -69,7 +71,7 @@ public sealed class PutRecordHandlerTests
             CancellationToken.None);
         var firstPath = sender.EntityPath;
 
-        var second = NewContext();
+        var second = CreateContext();
         await PutRecordHandler.HandleAsync(
             second,
             NewParseResult("{" + "\"StreamName\":\"orders\",\"Data\":\"Yg==\",\"PartitionKey\":\"stable-key\"}"),
@@ -88,7 +90,7 @@ public sealed class PutRecordHandlerTests
     [InlineData("{\"StreamName\":\"orders\",\"Data\":\"not-base64\",\"PartitionKey\":\"pk\"}", "Data must be valid base64.")]
     public async Task HandleAsync_returns_validation_error_for_invalid_requests(string body, string expectedMessage)
     {
-        var context = NewContext();
+        var context = CreateContext();
         var sender = new FakeAmqpSender();
 
         await PutRecordHandler.HandleAsync(
@@ -109,7 +111,7 @@ public sealed class PutRecordHandlerTests
     [Fact]
     public async Task HandleAsync_rejects_payloads_larger_than_one_mebibyte()
     {
-        var context = NewContext();
+        var context = CreateContext();
         var sender = new FakeAmqpSender();
         var bytes = new byte[1_048_577];
         var body = JsonSerializer.Serialize(new
@@ -136,7 +138,7 @@ public sealed class PutRecordHandlerTests
     [Fact]
     public async Task HandleAsync_maps_management_not_found_to_resource_not_found()
     {
-        var context = NewContext();
+        var context = CreateContext();
 
         await PutRecordHandler.HandleAsync(
             context,
@@ -153,7 +155,7 @@ public sealed class PutRecordHandlerTests
     [Fact]
     public async Task HandleAsync_maps_amqp_auth_failures_to_access_denied()
     {
-        var context = NewContext();
+        var context = CreateContext();
 
         await PutRecordHandler.HandleAsync(
             context,
@@ -170,7 +172,7 @@ public sealed class PutRecordHandlerTests
     [Fact]
     public async Task HandleAsync_maps_amqp_throttling_to_provisioned_throughput_exceeded()
     {
-        var context = NewContext();
+        var context = CreateContext();
 
         await PutRecordHandler.HandleAsync(
             context,
@@ -198,28 +200,10 @@ public sealed class PutRecordHandlerTests
     private static KinesisParseResult NewParseResult(string body)
         => new(KinesisOperation.PutRecord, "Kinesis_20131202.PutRecord", Encoding.UTF8.GetBytes(body), null);
 
-    private static DefaultHttpContext NewContext()
-    {
-        var context = new DefaultHttpContext();
-        context.Response.Body = new MemoryStream();
-        return context;
-    }
-
-    private static string ReadBody(HttpContext context)
-    {
-        context.Response.Body.Position = 0;
-        return new StreamReader(context.Response.Body, Encoding.UTF8).ReadToEnd();
-    }
 
     private static JsonDocument ReadJson(HttpContext context)
         => JsonDocument.Parse(ReadBody(context));
 
-    private sealed class FakeMetadataCache(Func<EventHubsCredentials, string, string, CancellationToken, ValueTask<EventHubDescription>> handler)
-        : IEventHubMetadataCache
-    {
-        public ValueTask<EventHubDescription> GetEventHubAsync(EventHubsCredentials credentials, string namespaceFqdn, string eventHubName, CancellationToken cancellationToken)
-            => handler(credentials, namespaceFqdn, eventHubName, cancellationToken);
-    }
 
     private sealed class FakeAmqpSender(Func<EventHubsCredentials, string, string, ReadOnlyMemory<byte>, IReadOnlyDictionary<string, object>?, CancellationToken, Task>? handler = null)
         : IEventHubsAmqpSender

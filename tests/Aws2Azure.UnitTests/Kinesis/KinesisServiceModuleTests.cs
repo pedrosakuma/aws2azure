@@ -13,6 +13,8 @@ using Aws2Azure.Modules.Kinesis.WireProtocol;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
+using Aws2Azure.TestSupport.Kinesis;
+using static Aws2Azure.TestSupport.Http.TestHttpContext;
 
 namespace Aws2Azure.UnitTests.Kinesis;
 
@@ -52,7 +54,7 @@ public class KinesisServiceModuleTests
     public async Task HandleAsync_dispatches_get_shard_iterator_to_real_handler()
     {
         var module = NewModule();
-        var ctx = NewCtx("Kinesis_20131202.GetShardIterator", body: "{\"StreamName\":\"orders\",\"ShardId\":\"shardId-000000000000\",\"ShardIteratorType\":\"LATEST\"}");
+        var ctx = CreateAwsJsonContext("Kinesis_20131202.GetShardIterator", body: "{\"StreamName\":\"orders\",\"ShardId\":\"shardId-000000000000\",\"ShardIteratorType\":\"LATEST\"}");
         ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
 
         await module.HandleAsync(ctx);
@@ -65,7 +67,7 @@ public class KinesisServiceModuleTests
     public async Task HandleAsync_dispatches_get_records_to_real_handler()
     {
         var module = NewModule();
-        var ctx = NewCtx("Kinesis_20131202.GetRecords", body: "{}");
+        var ctx = CreateAwsJsonContext("Kinesis_20131202.GetRecords", body: "{}");
         ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
 
         await module.HandleAsync(ctx);
@@ -79,7 +81,7 @@ public class KinesisServiceModuleTests
     public async Task HandleAsync_dispatches_describe_stream_to_real_handler()
     {
         var module = NewModule();
-        var ctx = NewCtx("Kinesis_20131202.DescribeStream", body: "{\"StreamName\":\"orders\"}");
+        var ctx = CreateAwsJsonContext("Kinesis_20131202.DescribeStream", body: "{\"StreamName\":\"orders\"}");
         ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
 
         await module.HandleAsync(ctx);
@@ -92,7 +94,7 @@ public class KinesisServiceModuleTests
     public async Task HandleAsync_dispatches_put_record_to_real_handler()
     {
         var module = NewModule();
-        var ctx = NewCtx("Kinesis_20131202.PutRecord", body: "{\"StreamName\":\"orders\",\"Data\":\"aGVsbG8=\",\"PartitionKey\":\"pk-1\"}");
+        var ctx = CreateAwsJsonContext("Kinesis_20131202.PutRecord", body: "{\"StreamName\":\"orders\",\"Data\":\"aGVsbG8=\",\"PartitionKey\":\"pk-1\"}");
         ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
 
         await module.HandleAsync(ctx);
@@ -105,7 +107,7 @@ public class KinesisServiceModuleTests
     public async Task HandleAsync_dispatches_put_records_to_real_handler()
     {
         var module = NewModule();
-        var ctx = NewCtx("Kinesis_20131202.PutRecords", body: "{\"StreamName\":\"orders\",\"Records\":[{\"Data\":\"aGVsbG8=\",\"PartitionKey\":\"pk-1\"}]}");
+        var ctx = CreateAwsJsonContext("Kinesis_20131202.PutRecords", body: "{\"StreamName\":\"orders\",\"Records\":[{\"Data\":\"aGVsbG8=\",\"PartitionKey\":\"pk-1\"}]}");
         ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
 
         await module.HandleAsync(ctx);
@@ -118,7 +120,7 @@ public class KinesisServiceModuleTests
     public async Task HandleAsync_emits_unknown_op_for_unmapped_target()
     {
         var module = NewModule();
-        var ctx = NewCtx("Kinesis_20131202.NotARealOp", body: "{}");
+        var ctx = CreateAwsJsonContext("Kinesis_20131202.NotARealOp", body: "{}");
         ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
 
         await module.HandleAsync(ctx);
@@ -131,7 +133,7 @@ public class KinesisServiceModuleTests
     public async Task HandleAsync_requires_aws_access_key_in_items()
     {
         var module = NewModule();
-        var ctx = NewCtx("Kinesis_20131202.PutRecord", body: "{}");
+        var ctx = CreateAwsJsonContext("Kinesis_20131202.PutRecord", body: "{}");
 
         await module.HandleAsync(ctx);
 
@@ -143,7 +145,7 @@ public class KinesisServiceModuleTests
     public async Task HandleAsync_returns_access_denied_when_no_event_hubs_credentials()
     {
         var module = NewModule(includeEventHubs: false);
-        var ctx = NewCtx("Kinesis_20131202.PutRecord", body: "{}");
+        var ctx = CreateAwsJsonContext("Kinesis_20131202.PutRecord", body: "{}");
         ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
 
         await module.HandleAsync(ctx);
@@ -202,44 +204,6 @@ public class KinesisServiceModuleTests
         return new StaticCredentialResolver(config);
     }
 
-    private static DefaultHttpContext NewCtx(string target, string body)
-    {
-        var ctx = new DefaultHttpContext();
-        ctx.Request.Method = HttpMethods.Post;
-        ctx.Request.ContentType = "application/x-amz-json-1.1";
-        ctx.Request.Headers["X-Amz-Target"] = target;
-        var bytes = Encoding.UTF8.GetBytes(body);
-        ctx.Request.Body = new MemoryStream(bytes);
-        ctx.Request.ContentLength = bytes.Length;
-        ctx.Response.Body = new MemoryStream();
-        return ctx;
-    }
-
-    private static string ReadBody(HttpContext ctx)
-    {
-        ctx.Response.Body.Position = 0;
-        return new StreamReader(ctx.Response.Body, Encoding.UTF8).ReadToEnd();
-    }
-
-    private sealed class FakeManagementClient : IEventHubsManagementClient
-    {
-        public ValueTask<EventHubDescription> GetEventHubAsync(EventHubsCredentials credentials, string namespaceFqdn, string eventHubName, System.Threading.CancellationToken cancellationToken)
-            => ValueTask.FromResult(new EventHubDescription(
-                1,
-                ["0"],
-                1,
-                new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero)));
-    }
-
-    private sealed class FakeMetadataCache : IEventHubMetadataCache
-    {
-        public ValueTask<EventHubDescription> GetEventHubAsync(EventHubsCredentials credentials, string namespaceFqdn, string eventHubName, System.Threading.CancellationToken cancellationToken)
-            => ValueTask.FromResult(new EventHubDescription(
-                1,
-                ["0"],
-                1,
-                new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero)));
-    }
 
     private sealed class FakeAmqpSender : IEventHubsAmqpSender
     {

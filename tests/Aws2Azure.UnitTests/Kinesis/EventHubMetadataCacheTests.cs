@@ -1,5 +1,6 @@
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.Kinesis.EventHubsRest;
+using Aws2Azure.TestSupport.Kinesis;
 
 namespace Aws2Azure.UnitTests.Kinesis;
 
@@ -137,12 +138,6 @@ public sealed class EventHubMetadataCacheTests
         SasKey = "secret",
     };
 
-    private sealed class FakeManagementClient(Func<EventHubsCredentials, string, string, CancellationToken, ValueTask<EventHubDescription>> handler)
-        : IEventHubsManagementClient
-    {
-        public ValueTask<EventHubDescription> GetEventHubAsync(EventHubsCredentials credentials, string namespaceFqdn, string eventHubName, CancellationToken cancellationToken)
-            => handler(credentials, namespaceFqdn, eventHubName, cancellationToken);
-    }
 
     private sealed class ManualTimeProvider(DateTimeOffset now) : TimeProvider
     {
