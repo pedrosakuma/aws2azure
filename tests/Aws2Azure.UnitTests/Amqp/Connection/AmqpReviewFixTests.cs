@@ -34,6 +34,21 @@ public sealed class AmqpReviewFixTests
         IdleTimeout = TimeSpan.Zero,
     };
 
+    private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout, string failureMessage)
+    {
+        var start = TimeProvider.System.GetTimestamp();
+        while (!condition())
+        {
+            if (TimeProvider.System.GetElapsedTime(start) >= timeout)
+            {
+                Assert.True(condition(), failureMessage);
+                return;
+            }
+
+            await Task.Delay(10);
+        }
+    }
+
     // ---------- Fix #1: peer-initiated end/detach must reach Final ----------
 
     [Fact]
@@ -42,6 +57,7 @@ public sealed class AmqpReviewFixTests
         var (clientTransport, serverTransport) = PipePairTransport.CreatePair();
         await using var server = serverTransport;
         var conn = new AmqpConnection(clientTransport, DefaultConnSettings());
+        var peerEndSent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var serverTask = Task.Run(async () =>
         {
@@ -49,6 +65,7 @@ public sealed class AmqpReviewFixTests
             await ConsumeBeginAndReply(server, peerChannel: 4);
             // Peer-initiates end before the client does.
             await SendPerfAsync(server, channel: 4, new AmqpEnd(), AmqpEnd.Write);
+            peerEndSent.SetResult();
             // Drain mirrored end.
             using (var _ = await AmqpFrameIO.ReadFrameAsync(server)) { }
             await ConsumeCloseAsync(server);
@@ -56,8 +73,7 @@ public sealed class AmqpReviewFixTests
 
         await conn.OpenAsync();
         var session = await conn.BeginSessionAsync();
-        // Give the peer's end time to land.
-        await Task.Delay(100);
+        await peerEndSent.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         // A subsequent CloseAsync must complete (not deadlock waiting on Final).
         await session.CloseAsync().WaitAsync(TimeSpan.FromSeconds(5));
@@ -117,11 +133,10 @@ public sealed class AmqpReviewFixTests
 
         if (link is not null)
         {
-            // Poll for the link to observe the peer detach and reach a closed state.
-            var deadline = DateTime.UtcNow.AddSeconds(30);
-            while (!link.IsClosed && DateTime.UtcNow < deadline)
-                await Task.Delay(50);
-            Assert.True(link.IsClosed, "link did not transition to closed after peer detach");
+            await WaitUntilAsync(
+                () => link.IsClosed,
+                TimeSpan.FromSeconds(30),
+                "link did not transition to closed after peer detach");
 
             // A no-op DetachAsync must short-circuit (StateFinal/StateClosed) and return promptly.
             await link.DetachAsync().WaitAsync(TimeSpan.FromSeconds(10));
@@ -227,10 +242,10 @@ public sealed class AmqpReviewFixTests
 
             allowPeerDetach.SetResult();
             await peerDetachSent.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            var deadline = DateTime.UtcNow.AddSeconds(5);
-            while (!link.IsClosed && DateTime.UtcNow < deadline)
-                await Task.Delay(10);
-            Assert.True(link.IsClosed, "link did not observe peer detach");
+            await WaitUntilAsync(
+                () => link.IsClosed,
+                TimeSpan.FromSeconds(5),
+                "link did not observe peer detach");
 
             await link.DetachAsync().WaitAsync(TimeSpan.FromSeconds(2));
             await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
@@ -535,6 +550,7 @@ public sealed class AmqpReviewFixTests
         var conn = new AmqpConnection(clientTransport, DefaultConnSettings());
 
         var firstBatchSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowRemainingReads = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var allDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var transferCount = 0;
 
@@ -556,9 +572,10 @@ public sealed class AmqpReviewFixTests
                     Handle = 7, DeliveryCount = 0, LinkCredit = 5,
                 }, AmqpFlow.Write);
 
-                // Read transfers; after seeing 5 we deliberately do not
-                // issue another flow for ~150ms so any overshoot would
-                // surface as transferCount > 5.
+                // Read transfers; after seeing exactly 5, stop reading until
+                // the test grants the remaining credits. If the client
+                // overshot the credit window, transferCount would already be
+                // greater than 5 at the synchronization point below.
                 while (true)
                 {
                     using var f = await AmqpFrameIO.ReadFrameAsync(server);
@@ -566,7 +583,11 @@ public sealed class AmqpReviewFixTests
                     if (kind == PerformativeKind.Transfer)
                     {
                         var n = Interlocked.Increment(ref transferCount);
-                        if (n == 5) firstBatchSeen.TrySetResult();
+                        if (n == 5)
+                        {
+                            firstBatchSeen.TrySetResult();
+                            await allowRemainingReads.Task;
+                        }
                         if (n == 20) { allDone.TrySetResult(); break; }
                     }
                     else if (kind == PerformativeKind.End || kind == PerformativeKind.Close)
@@ -606,8 +627,6 @@ public sealed class AmqpReviewFixTests
 
         // Server should observe exactly 5 transfers, then we pause.
         await firstBatchSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        // Hold off the next flow long enough to surface any overshoot.
-        await Task.Delay(150);
         Assert.Equal(5, Volatile.Read(ref transferCount));
 
         // Grant the remaining 15 credits and verify all 20 complete.
@@ -617,6 +636,7 @@ public sealed class AmqpReviewFixTests
             NextOutgoingId = 0, OutgoingWindow = uint.MaxValue,
             Handle = 7, DeliveryCount = 5, LinkCredit = 15,
         }, AmqpFlow.Write);
+        allowRemainingReads.SetResult();
 
         await allDone.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(10));

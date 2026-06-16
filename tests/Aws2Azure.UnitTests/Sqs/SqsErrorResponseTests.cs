@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using System.Xml;
 using Aws2Azure.Modules.Sqs.Errors;
@@ -62,7 +63,9 @@ public class SqsErrorResponseTests
         Assert.Equal("application/x-amz-json-1.0", ctx.Response.ContentType);
         ctx.Response.Body.Position = 0;
         var body = await new StreamReader(ctx.Response.Body, Encoding.UTF8).ReadToEndAsync();
-        Assert.Contains("\"__type\":\"com.amazonaws.sqs#MissingAction\"", body);
-        Assert.Contains("\"message\":\"msg\"", body);
+        using var document = JsonDocument.Parse(body);
+        var root = document.RootElement;
+        Assert.Equal("com.amazonaws.sqs#MissingAction", root.GetProperty("__type").GetString());
+        Assert.Equal("msg", root.GetProperty("message").GetString());
     }
 }
