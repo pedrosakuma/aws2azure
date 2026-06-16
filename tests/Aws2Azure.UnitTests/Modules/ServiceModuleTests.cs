@@ -5,6 +5,7 @@ using Aws2Azure.Core;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Core.SigV4;
+using Aws2Azure.Modules.Kinesis.Errors;
 using Aws2Azure.Modules.S3;
 using Microsoft.AspNetCore.Http;
 
@@ -63,6 +64,56 @@ public class AwsErrorResponseTests
         using var doc = JsonDocument.Parse(json);
         Assert.Equal("QueueDoesNotExist", doc.RootElement.GetProperty("__type").GetString());
         Assert.Equal("no such queue", doc.RootElement.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task WriteAsync_preserves_default_json_header_and_content_type()
+    {
+        var ctx = new DefaultHttpContext { TraceIdentifier = "req-1" };
+        ctx.Response.Body = new MemoryStream();
+
+        await AwsErrorResponse.WriteAsync(ctx, AwsErrorFormat.Json, StatusCodes.Status400BadRequest, "Bad", "message");
+
+        Assert.Equal("req-1", ctx.Response.Headers["x-amz-request-id"]);
+        Assert.Equal("application/x-amz-json-1.0", ctx.Response.ContentType);
+        Assert.False(ctx.Response.Headers.ContainsKey("x-amzn-requestid"));
+    }
+
+    [Fact]
+    public async Task WriteAsync_supports_custom_json_header_and_content_type()
+    {
+        var ctx = new DefaultHttpContext { TraceIdentifier = "trace-id" };
+        ctx.Response.Body = new MemoryStream();
+        ctx.Response.Headers["x-amzn-requestid"] = "existing-id";
+
+        await AwsErrorResponse.WriteAsync(
+            ctx,
+            AwsErrorFormat.Json,
+            StatusCodes.Status400BadRequest,
+            "Bad",
+            "message",
+            jsonContentType: "application/x-amz-json-1.1",
+            requestIdHeaderName: "x-amzn-requestid");
+
+        Assert.Equal("existing-id", ctx.Response.Headers["x-amzn-requestid"]);
+        Assert.Equal("application/x-amz-json-1.1", ctx.Response.ContentType);
+        Assert.False(ctx.Response.Headers.ContainsKey("x-amz-request-id"));
+    }
+
+    [Fact]
+    public async Task Kinesis_error_response_delegates_to_core_with_kinesis_defaults()
+    {
+        var ctx = new DefaultHttpContext { TraceIdentifier = "kin-req" };
+        ctx.Response.Body = new MemoryStream();
+
+        await KinesisErrorResponse.WriteAsync(ctx, StatusCodes.Status400BadRequest, "ValidationException", "bad input");
+
+        Assert.Equal("kin-req", ctx.Response.Headers["x-amzn-requestid"]);
+        Assert.Equal(KinesisErrorResponse.ContentType, ctx.Response.ContentType);
+        ctx.Response.Body.Position = 0;
+        using var doc = await JsonDocument.ParseAsync(ctx.Response.Body);
+        Assert.Equal("ValidationException", doc.RootElement.GetProperty("__type").GetString());
+        Assert.Equal("bad input", doc.RootElement.GetProperty("message").GetString());
     }
 }
 
