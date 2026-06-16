@@ -9,6 +9,8 @@ using Aws2Azure.Modules.Kinesis.ShardIterators;
 using Aws2Azure.Modules.Kinesis.WireProtocol;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
+using Aws2Azure.TestSupport.Kinesis;
+using static Aws2Azure.TestSupport.Http.TestHttpContext;
 
 namespace Aws2Azure.UnitTests.Kinesis;
 
@@ -28,7 +30,7 @@ public sealed class GetRecordsHandlerResponseLimitTests
             new EventHubsReceivedMessage(bodyA, new Dictionary<string, object>(), "100", 1, FixedNow.AddSeconds(-2), null),
             new EventHubsReceivedMessage(bodyB, new Dictionary<string, object>(), "101", 2, FixedNow.AddSeconds(-1), null),
         ]);
-        var context = NewContext();
+        var context = CreateContext();
 
         await GetRecordsHandler.HandleAsync(
             context,
@@ -57,18 +59,6 @@ public sealed class GetRecordsHandlerResponseLimitTests
         ShardIteratorSigningKey = Convert.ToBase64String(Encoding.UTF8.GetBytes("0123456789abcdef0123456789abcdef")),
     };
 
-    private static DefaultHttpContext NewContext()
-    {
-        var context = new DefaultHttpContext();
-        context.Response.Body = new MemoryStream();
-        return context;
-    }
-
-    private static string ReadBody(HttpContext context)
-    {
-        context.Response.Body.Position = 0;
-        return new StreamReader(context.Response.Body, Encoding.UTF8).ReadToEnd();
-    }
 
     private sealed class FakeReceiver(IReadOnlyList<EventHubsReceivedMessage> messages) : IEventHubsAmqpReceiver
     {
@@ -76,11 +66,6 @@ public sealed class GetRecordsHandlerResponseLimitTests
             => Task.FromResult(new EventHubsReceiveResult(messages));
     }
 
-    private sealed class FakeMetadataCache : IEventHubMetadataCache
-    {
-        public ValueTask<EventHubDescription> GetEventHubAsync(EventHubsCredentials credentials, string namespaceFqdn, string eventHubName, CancellationToken cancellationToken)
-            => ValueTask.FromResult(new EventHubDescription(3, ["0", "1", "2"], 7, FixedNow));
-    }
 
     private sealed class ManualTimeProvider(DateTimeOffset now) : TimeProvider
     {

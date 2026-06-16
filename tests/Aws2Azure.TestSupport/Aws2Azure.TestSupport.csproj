@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Aws2Azure.TestSupport</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!--
+      Shared test helpers are dev-only and are never AOT-published. They may
+      reference test-only infrastructure that should not inherit the repo-wide
+      Native AOT / trim analysis or warnings-as-errors policy enforced on the
+      shipped projects.
+    -->
+    <IsAotCompatible>false</IsAotCompatible>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Aws2Azure.Core\Aws2Azure.Core.csproj" />
+    <ProjectReference Include="..\..\src\Aws2Azure.Modules.Kinesis\Aws2Azure.Modules.Kinesis.csproj" />
+  </ItemGroup>
+
+</Project>

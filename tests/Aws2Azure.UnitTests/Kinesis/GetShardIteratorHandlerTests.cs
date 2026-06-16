@@ -9,6 +9,8 @@ using Aws2Azure.Modules.Kinesis.ShardIterators;
 using Aws2Azure.Modules.Kinesis.WireProtocol;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
+using Aws2Azure.TestSupport.Kinesis;
+using static Aws2Azure.TestSupport.Http.TestHttpContext;
 
 namespace Aws2Azure.UnitTests.Kinesis;
 
@@ -28,7 +30,7 @@ public sealed class GetShardIteratorHandlerTests
         ShardIteratorType expectedType,
         string? expectedPosition)
     {
-        var context = NewContext();
+        var context = CreateContext();
         var codecFactory = NewCodecFactory();
 
         await GetShardIteratorHandler.HandleAsync(
@@ -51,7 +53,7 @@ public sealed class GetShardIteratorHandlerTests
     [Fact]
     public async Task HandleAsync_formats_at_timestamp_as_iso8601_utc()
     {
-        var context = NewContext();
+        var context = CreateContext();
         var codecFactory = NewCodecFactory();
 
         await GetShardIteratorHandler.HandleAsync(
@@ -70,7 +72,7 @@ public sealed class GetShardIteratorHandlerTests
     [Fact]
     public async Task HandleAsync_resolves_stream_arn_only_requests()
     {
-        var context = NewContext();
+        var context = CreateContext();
         var codecFactory = NewCodecFactory();
         var body = "{" +
             "\"StreamARN\":\"arn:aws:kinesis:azure:myns:stream/orders\"," +
@@ -97,7 +99,7 @@ public sealed class GetShardIteratorHandlerTests
     [InlineData("{\"StreamName\":\"orders\",\"ShardId\":\"shardId-000000000001\",\"ShardIteratorType\":\"LATEST\",\"StartingSequenceNumber\":\"1\"}", "StartingSequenceNumber is not supported")]
     public async Task HandleAsync_rejects_invalid_requests(string body, string expectedMessage)
     {
-        var context = NewContext();
+        var context = CreateContext();
 
         await GetShardIteratorHandler.HandleAsync(
             context,
@@ -117,7 +119,7 @@ public sealed class GetShardIteratorHandlerTests
     [InlineData(-1e18)]
     public async Task HandleAsync_rejects_out_of_range_at_timestamp_values(double timestamp)
     {
-        var context = NewContext();
+        var context = CreateContext();
 
         await GetShardIteratorHandler.HandleAsync(
             context,
@@ -135,7 +137,7 @@ public sealed class GetShardIteratorHandlerTests
     [Fact]
     public async Task HandleAsync_rejects_unknown_shards()
     {
-        var context = NewContext();
+        var context = CreateContext();
 
         await GetShardIteratorHandler.HandleAsync(
             context,
@@ -152,7 +154,7 @@ public sealed class GetShardIteratorHandlerTests
     [Fact]
     public async Task HandleAsync_maps_missing_streams_from_management_api()
     {
-        var context = NewContext();
+        var context = CreateContext();
 
         await GetShardIteratorHandler.HandleAsync(
             context,
@@ -211,18 +213,6 @@ public sealed class GetShardIteratorHandlerTests
     private static KinesisParseResult NewParseResult(string body)
         => new(KinesisOperation.GetShardIterator, "Kinesis_20131202.GetShardIterator", Encoding.UTF8.GetBytes(body), null);
 
-    private static DefaultHttpContext NewContext()
-    {
-        var context = new DefaultHttpContext();
-        context.Response.Body = new MemoryStream();
-        return context;
-    }
-
-    private static string ReadBody(HttpContext context)
-    {
-        context.Response.Body.Position = 0;
-        return new StreamReader(context.Response.Body, Encoding.UTF8).ReadToEnd();
-    }
 
     private static ShardIteratorToken DecodeResponseToken(HttpContext context, ShardIteratorTokenCodecFactory codecFactory)
     {
@@ -234,12 +224,6 @@ public sealed class GetShardIteratorHandlerTests
         return token;
     }
 
-    private sealed class FakeMetadataCache(Func<EventHubsCredentials, string, string, CancellationToken, ValueTask<EventHubDescription>> handler)
-        : IEventHubMetadataCache
-    {
-        public ValueTask<EventHubDescription> GetEventHubAsync(EventHubsCredentials credentials, string namespaceFqdn, string eventHubName, CancellationToken cancellationToken)
-            => handler(credentials, namespaceFqdn, eventHubName, cancellationToken);
-    }
 
     private sealed class ManualTimeProvider(DateTimeOffset now) : TimeProvider
     {

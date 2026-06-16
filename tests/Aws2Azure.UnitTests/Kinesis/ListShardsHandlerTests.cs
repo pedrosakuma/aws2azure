@@ -8,6 +8,8 @@ using Aws2Azure.Modules.Kinesis.Operations;
 using Aws2Azure.Modules.Kinesis.WireProtocol;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
+using Aws2Azure.TestSupport.Kinesis;
+using static Aws2Azure.TestSupport.Http.TestHttpContext;
 
 namespace Aws2Azure.UnitTests.Kinesis;
 
@@ -22,7 +24,7 @@ public sealed class ListShardsHandlerTests
         var factory = NewFactory();
         var managementClient = new FakeManagementClient((_, _, _, _) => ValueTask.FromResult(NewEventHubDescription()));
 
-        var firstPageContext = NewContext();
+        var firstPageContext = CreateContext();
         await ListShardsHandler.HandleAsync(
             firstPageContext,
             NewParseResult("{\"StreamName\":\"orders\",\"MaxResults\":2,\"ShardFilter\":{\"Type\":\"AT_LATEST\"}}"),
@@ -40,7 +42,7 @@ public sealed class ListShardsHandlerTests
         var nextToken = firstPage.RootElement.GetProperty("NextToken").GetString();
         Assert.False(string.IsNullOrWhiteSpace(nextToken));
 
-        var secondPageContext = NewContext();
+        var secondPageContext = CreateContext();
         await ListShardsHandler.HandleAsync(
             secondPageContext,
             NewParseResult("{\"NextToken\":\"" + nextToken + "\"}"),
@@ -66,7 +68,7 @@ public sealed class ListShardsHandlerTests
         var codec = factory.Create(credentials);
         var token = codec.Encode(new ListShardsCursor("orders", "shardId-000000000001", FixedNow.ToUnixTimeSeconds()));
         var tampered = FlipChar(token, token.Length - 1);
-        var context = NewContext();
+        var context = CreateContext();
 
         await ListShardsHandler.HandleAsync(
             context,
@@ -93,7 +95,7 @@ public sealed class ListShardsHandlerTests
     [Fact]
     public async Task HandleAsync_returns_validation_error_when_stream_name_is_missing()
     {
-        var context = NewContext();
+        var context = CreateContext();
 
         await ListShardsHandler.HandleAsync(
             context,
@@ -110,7 +112,7 @@ public sealed class ListShardsHandlerTests
     [Fact]
     public async Task HandleAsync_maps_not_found_to_resource_not_found_exception()
     {
-        var context = NewContext();
+        var context = CreateContext();
 
         await ListShardsHandler.HandleAsync(
             context,
@@ -129,7 +131,7 @@ public sealed class ListShardsHandlerTests
     [InlineData(HttpStatusCode.Forbidden)]
     public async Task HandleAsync_maps_auth_failures_to_access_denied(HttpStatusCode statusCode)
     {
-        var context = NewContext();
+        var context = CreateContext();
 
         await ListShardsHandler.HandleAsync(
             context,
@@ -146,7 +148,7 @@ public sealed class ListShardsHandlerTests
     [Fact]
     public async Task HandleAsync_rejects_unsupported_filter_types()
     {
-        var context = NewContext();
+        var context = CreateContext();
 
         await ListShardsHandler.HandleAsync(
             context,
@@ -177,18 +179,6 @@ public sealed class ListShardsHandlerTests
     private static KinesisParseResult NewParseResult(string body)
         => new(KinesisOperation.ListShards, "Kinesis_20131202.ListShards", Encoding.UTF8.GetBytes(body), null);
 
-    private static DefaultHttpContext NewContext()
-    {
-        var context = new DefaultHttpContext();
-        context.Response.Body = new MemoryStream();
-        return context;
-    }
-
-    private static string ReadBody(HttpContext context)
-    {
-        context.Response.Body.Position = 0;
-        return new StreamReader(context.Response.Body, Encoding.UTF8).ReadToEnd();
-    }
 
     private static JsonDocument ReadJson(HttpContext context)
         => JsonDocument.Parse(ReadBody(context));
@@ -200,12 +190,6 @@ public sealed class ListShardsHandlerTests
         return new string(chars);
     }
 
-    private sealed class FakeManagementClient(Func<EventHubsCredentials, string, string, CancellationToken, ValueTask<EventHubDescription>> handler)
-        : IEventHubsManagementClient
-    {
-        public ValueTask<EventHubDescription> GetEventHubAsync(EventHubsCredentials credentials, string namespaceFqdn, string eventHubName, CancellationToken cancellationToken)
-            => handler(credentials, namespaceFqdn, eventHubName, cancellationToken);
-    }
 
     private sealed class ManualTimeProvider(DateTimeOffset now) : TimeProvider
     {

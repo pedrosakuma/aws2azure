@@ -5,6 +5,7 @@ using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.Kinesis.EventHubsRest;
 using Microsoft.Extensions.Logging.Abstractions;
+using Aws2Azure.TestSupport.Http;
 
 namespace Aws2Azure.UnitTests.Kinesis;
 
@@ -104,9 +105,4 @@ public sealed class EventHubsManagementClientTests
         }
     }
 
-    private sealed class ScriptedHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) : HttpMessageHandler
-    {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-            => Task.FromResult(responder(request));
-    }
 }

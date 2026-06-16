@@ -7,6 +7,8 @@ using Aws2Azure.Modules.Kinesis.EventHubsRest;
 using Aws2Azure.Modules.Kinesis.Operations;
 using Aws2Azure.Modules.Kinesis.WireProtocol;
 using Microsoft.AspNetCore.Http;
+using Aws2Azure.TestSupport.Kinesis;
+using static Aws2Azure.TestSupport.Http.TestHttpContext;
 
 namespace Aws2Azure.UnitTests.Kinesis;
 
@@ -15,7 +17,7 @@ public sealed class DescribeStreamSummaryHandlerTests
     [Fact]
     public async Task HandleAsync_returns_expected_summary_shape()
     {
-        var context = NewContext();
+        var context = CreateContext();
 
         await DescribeStreamSummaryHandler.HandleAsync(
             context,
@@ -39,7 +41,7 @@ public sealed class DescribeStreamSummaryHandlerTests
     [Fact]
     public async Task HandleAsync_returns_validation_error_when_stream_name_and_arn_are_missing()
     {
-        var context = NewContext();
+        var context = CreateContext();
 
         await DescribeStreamSummaryHandler.HandleAsync(
             context,
@@ -55,7 +57,7 @@ public sealed class DescribeStreamSummaryHandlerTests
     [Fact]
     public async Task HandleAsync_maps_not_found_to_resource_not_found_exception()
     {
-        var context = NewContext();
+        var context = CreateContext();
 
         await DescribeStreamSummaryHandler.HandleAsync(
             context,
@@ -73,7 +75,7 @@ public sealed class DescribeStreamSummaryHandlerTests
     [InlineData(HttpStatusCode.Forbidden)]
     public async Task HandleAsync_maps_auth_failures_to_access_denied(HttpStatusCode statusCode)
     {
-        var context = NewContext();
+        var context = CreateContext();
 
         await DescribeStreamSummaryHandler.HandleAsync(
             context,
@@ -99,26 +101,8 @@ public sealed class DescribeStreamSummaryHandlerTests
     private static KinesisParseResult NewParseResult(string body)
         => new(KinesisOperation.DescribeStreamSummary, "Kinesis_20131202.DescribeStreamSummary", Encoding.UTF8.GetBytes(body), null);
 
-    private static DefaultHttpContext NewContext()
-    {
-        var context = new DefaultHttpContext();
-        context.Response.Body = new MemoryStream();
-        return context;
-    }
-
-    private static string ReadBody(HttpContext context)
-    {
-        context.Response.Body.Position = 0;
-        return new StreamReader(context.Response.Body, Encoding.UTF8).ReadToEnd();
-    }
 
     private static JsonDocument ReadJson(HttpContext context)
         => JsonDocument.Parse(ReadBody(context));
 
-    private sealed class FakeManagementClient(Func<EventHubsCredentials, string, string, CancellationToken, ValueTask<EventHubDescription>> handler)
-        : IEventHubsManagementClient
-    {
-        public ValueTask<EventHubDescription> GetEventHubAsync(EventHubsCredentials credentials, string namespaceFqdn, string eventHubName, CancellationToken cancellationToken)
-            => handler(credentials, namespaceFqdn, eventHubName, cancellationToken);
-    }
 }

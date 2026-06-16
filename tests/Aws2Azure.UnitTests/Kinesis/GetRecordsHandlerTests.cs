@@ -9,6 +9,8 @@ using Aws2Azure.Modules.Kinesis.ShardIterators;
 using Aws2Azure.Modules.Kinesis.WireProtocol;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
+using Aws2Azure.TestSupport.Kinesis;
+using static Aws2Azure.TestSupport.Http.TestHttpContext;
 
 namespace Aws2Azure.UnitTests.Kinesis;
 
@@ -24,7 +26,7 @@ public sealed class GetRecordsHandlerTests
         receiver.Messages.Add(NewMessage("alpha", "pk-1", offset: "100", sequenceNumber: 11, enqueuedTime: FixedNow.AddSeconds(-3)));
         receiver.Messages.Add(NewMessage("beta", "pk-2", offset: "101", sequenceNumber: 12, enqueuedTime: FixedNow.AddSeconds(-2)));
         receiver.Messages.Add(NewMessage("gamma", null, offset: "102", sequenceNumber: 13, enqueuedTime: FixedNow.AddSeconds(-1)));
-        var context = NewContext();
+        var context = CreateContext();
 
         await GetRecordsHandler.HandleAsync(
             context,
@@ -57,7 +59,7 @@ public sealed class GetRecordsHandlerTests
     {
         var codecFactory = NewCodecFactory();
         var original = new ShardIteratorToken("orders", "shardId-000000000001", ShardIteratorType.AtTimestamp, "2026-01-01T11:59:30.0000000Z", FixedNow.AddSeconds(-30).ToUnixTimeSeconds());
-        var context = NewContext();
+        var context = CreateContext();
 
         await GetRecordsHandler.HandleAsync(
             context,
@@ -83,7 +85,7 @@ public sealed class GetRecordsHandlerTests
         var codecFactory = NewCodecFactory();
         var encoded = NewEncodedToken(codecFactory, new ShardIteratorToken("orders", "shardId-000000000001", ShardIteratorType.Latest, null, FixedNow.ToUnixTimeSeconds()));
         var tampered = encoded[..^1] + (encoded[^1] == 'A' ? 'B' : 'A');
-        var context = NewContext();
+        var context = CreateContext();
 
         await GetRecordsHandler.HandleAsync(
             context,
@@ -103,7 +105,7 @@ public sealed class GetRecordsHandlerTests
     {
         var codecFactory = NewCodecFactory();
         var expired = NewEncodedToken(codecFactory, new ShardIteratorToken("orders", "shardId-000000000001", ShardIteratorType.Latest, null, FixedNow.AddSeconds(-301).ToUnixTimeSeconds()));
-        var context = NewContext();
+        var context = CreateContext();
 
         await GetRecordsHandler.HandleAsync(
             context,
@@ -123,7 +125,7 @@ public sealed class GetRecordsHandlerTests
     {
         var codecFactory = NewCodecFactory();
         var receiver = new FakeReceiver();
-        var context = NewContext();
+        var context = CreateContext();
 
         await GetRecordsHandler.HandleAsync(
             context,
@@ -142,7 +144,7 @@ public sealed class GetRecordsHandlerTests
     {
         var codecFactory = NewCodecFactory();
         var receiver = new FakeReceiver();
-        var context = NewContext();
+        var context = CreateContext();
         var token = new ShardIteratorToken("orders", "shardId-000000000001", ShardIteratorType.AtTimestamp, "2026-01-01T11:58:00.0000000Z", FixedNow.ToUnixTimeSeconds());
 
         await GetRecordsHandler.HandleAsync(
@@ -165,7 +167,7 @@ public sealed class GetRecordsHandlerTests
         var receiver = new FakeReceiver();
 
         await GetRecordsHandler.HandleAsync(
-            NewContext(),
+            CreateContext(),
             NewParseResult(BuildRequestBody(NewEncodedToken(codecFactory, new ShardIteratorToken("orders", "shardId-000000000001", ShardIteratorType.Latest, null, FixedNow.ToUnixTimeSeconds())))),
             NewCredentials(),
             NewMetadataCache(),
@@ -183,7 +185,7 @@ public sealed class GetRecordsHandlerTests
         var receiver = new FakeReceiver();
 
         await GetRecordsHandler.HandleAsync(
-            NewContext(),
+            CreateContext(),
             NewParseResult(BuildRequestBody(NewEncodedToken(codecFactory, new ShardIteratorToken("orders", "shardId-000000000001", ShardIteratorType.TrimHorizon, null, FixedNow.ToUnixTimeSeconds())))),
             NewCredentials(),
             NewMetadataCache(),
@@ -202,7 +204,7 @@ public sealed class GetRecordsHandlerTests
         var synthetic = ((1_735_689_600_123L << 20) | 7L).ToString();
 
         await GetRecordsHandler.HandleAsync(
-            NewContext(),
+            CreateContext(),
             NewParseResult(BuildRequestBody(NewEncodedToken(codecFactory, new ShardIteratorToken("orders", "shardId-000000000001", ShardIteratorType.AtSequenceNumber, synthetic, FixedNow.ToUnixTimeSeconds())))),
             NewCredentials(),
             NewMetadataCache(),
@@ -221,7 +223,7 @@ public sealed class GetRecordsHandlerTests
         var synthetic = ((boundaryTime.ToUnixTimeMilliseconds() << 20) | 7L).ToString();
         var receiver = new BoundaryAwareReceiver(NewMessage("boundary", "pk-1", offset: "555", sequenceNumber: 42, enqueuedTime: boundaryTime));
         var codecFactory = NewCodecFactory();
-        var context = NewContext();
+        var context = CreateContext();
 
         await GetRecordsHandler.HandleAsync(
             context,
@@ -243,7 +245,7 @@ public sealed class GetRecordsHandlerTests
         var synthetic = ((boundaryTime.ToUnixTimeMilliseconds() << 20) | 7L).ToString();
         var receiver = new BoundaryAwareReceiver(NewMessage("boundary", "pk-1", offset: "555", sequenceNumber: 42, enqueuedTime: boundaryTime));
         var codecFactory = NewCodecFactory();
-        var context = NewContext();
+        var context = CreateContext();
 
         await GetRecordsHandler.HandleAsync(
             context,
@@ -264,7 +266,7 @@ public sealed class GetRecordsHandlerTests
         var codecFactory = NewCodecFactory();
         var receiver = new FakeReceiver();
         receiver.Messages.Add(NewMessage("payload", "pk-9", offset: "999", sequenceNumber: 777, enqueuedTime: FixedNow.AddSeconds(-5)));
-        var context = NewContext();
+        var context = CreateContext();
         var token = new ShardIteratorToken("orders", "shardId-000000000001", ShardIteratorType.AfterSequenceNumber, "offset:555", FixedNow.ToUnixTimeSeconds());
 
         await GetRecordsHandler.HandleAsync(
@@ -347,18 +349,6 @@ public sealed class GetRecordsHandlerTests
     private static KinesisParseResult NewParseResult(string body)
         => new(KinesisOperation.GetRecords, "Kinesis_20131202.GetRecords", Encoding.UTF8.GetBytes(body), null);
 
-    private static DefaultHttpContext NewContext()
-    {
-        var context = new DefaultHttpContext();
-        context.Response.Body = new MemoryStream();
-        return context;
-    }
-
-    private static string ReadBody(HttpContext context)
-    {
-        context.Response.Body.Position = 0;
-        return new StreamReader(context.Response.Body, Encoding.UTF8).ReadToEnd();
-    }
 
     private sealed class FakeReceiver : IEventHubsAmqpReceiver
     {
@@ -413,12 +403,6 @@ public sealed class GetRecordsHandlerTests
         }
     }
 
-    private sealed class FakeMetadataCache(Func<EventHubsCredentials, string, string, CancellationToken, ValueTask<EventHubDescription>> handler)
-        : IEventHubMetadataCache
-    {
-        public ValueTask<EventHubDescription> GetEventHubAsync(EventHubsCredentials credentials, string namespaceFqdn, string eventHubName, CancellationToken cancellationToken)
-            => handler(credentials, namespaceFqdn, eventHubName, cancellationToken);
-    }
 
     private sealed class ManualTimeProvider(DateTimeOffset now) : TimeProvider
     {
