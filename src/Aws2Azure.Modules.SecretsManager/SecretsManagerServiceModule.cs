@@ -1,4 +1,5 @@
 using System.Net;
+using System.Collections.Frozen;
 using System.Linq;
 using System.Net.Http.Headers;
 using System.Text;
@@ -41,6 +42,12 @@ public sealed class SecretsManagerServiceModule : IServiceModule
     public bool RequiresSigV4 => true;
     public IReadOnlyList<string> RequiredSignedHeaders { get; } = ["x-amz-target"];
     public AwsErrorFormat ErrorFormat => AwsErrorFormat.Json;
+    public IReadOnlySet<string> KnownOperations => _knownOperations;
+    private static readonly FrozenSet<string> _knownOperations = new[]
+    {
+        "GetSecretValue", "CreateSecret", "DeleteSecret",
+        "DescribeSecret", "ListSecrets", "UpdateSecret",
+    }.ToFrozenSet();
     public CapabilityMatrix Capabilities { get; }
 
     public bool MatchesHost(string host)

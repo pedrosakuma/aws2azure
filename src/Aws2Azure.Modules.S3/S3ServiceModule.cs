@@ -40,6 +40,19 @@ public sealed class S3ServiceModule : IServiceModule
 
     public CapabilityMatrix Capabilities { get; }
 
+    // S3 encodes the operation in the HTTP method + path, not in an X-Amz-Target
+    // header or Action query parameter, so it derives the metric operation name
+    // itself rather than relying on the default KnownOperations allowlist.
+    public string ExtractOperationName(HttpContext context)
+        => context.Request.Method switch
+        {
+            "GET" when context.Request.Path.Value?.Contains('/') == true => "GetObject",
+            "PUT" when context.Request.Path.Value?.Contains('/') == true => "PutObject",
+            "DELETE" when context.Request.Path.Value?.Contains('/') == true => "DeleteObject",
+            "HEAD" when context.Request.Path.Value?.Contains('/') == true => "HeadObject",
+            _ => context.Request.Method,
+        };
+
     public bool MatchesHost(string host)
     {
         if (string.IsNullOrEmpty(host))
