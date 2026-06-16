@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Frozen;
 using System.Threading.Tasks;
 using Aws2Azure.Core;
 using Aws2Azure.Core.Azure;
@@ -74,6 +75,13 @@ public sealed class DynamoDbServiceModule : IServiceModule
     // so the operation can't be tampered with after-signature.
     public IReadOnlyList<string> RequiredSignedHeaders { get; } = new[] { "x-amz-target" };
     public AwsErrorFormat ErrorFormat => AwsErrorFormat.Json;
+    public IReadOnlySet<string> KnownOperations => _knownOperations;
+    private static readonly FrozenSet<string> _knownOperations = new[]
+    {
+        "GetItem", "PutItem", "UpdateItem", "DeleteItem", "Query", "Scan",
+        "BatchGetItem", "BatchWriteItem", "TransactGetItems", "TransactWriteItems",
+        "CreateTable", "DeleteTable", "DescribeTable", "ListTables", "UpdateTable",
+    }.ToFrozenSet();
     public CapabilityMatrix Capabilities { get; }
 
     public ValueTask EmitAuthErrorAsync(HttpContext context, int statusCode, string code, string message)

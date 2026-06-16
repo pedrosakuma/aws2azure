@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Frozen;
 using System.Threading.Tasks;
 using Aws2Azure.Amqp.ServiceBus;
 using Aws2Azure.Core;
@@ -69,6 +70,14 @@ public sealed class SqsServiceModule : IServiceModule
     // handlers render their own errors via SqsErrorResponse, which respects
     // the actual request protocol (Query → XML, AwsJson → JSON).
     public AwsErrorFormat ErrorFormat => AwsErrorFormat.Json;
+    public IReadOnlySet<string> KnownOperations => _knownOperations;
+    private static readonly FrozenSet<string> _knownOperations = new[]
+    {
+        "SendMessage", "SendMessageBatch", "ReceiveMessage", "DeleteMessage",
+        "DeleteMessageBatch", "ChangeMessageVisibility", "ChangeMessageVisibilityBatch",
+        "CreateQueue", "DeleteQueue", "GetQueueUrl", "GetQueueAttributes",
+        "SetQueueAttributes", "ListQueues", "PurgeQueue",
+    }.ToFrozenSet();
     public CapabilityMatrix Capabilities { get; }
 
     /// <summary>

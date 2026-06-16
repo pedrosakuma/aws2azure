@@ -1,0 +1,104 @@
+# aws2azure — shared editor & code-style conventions.
+#
+# Severities are deliberately kept at suggestion/silent: the build runs with
+# <TreatWarningsAsErrors>true</TreatWarningsAsErrors> and
+# <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>, so escalating an IDE
+# style rule to warning/error here would turn it into a build break. This file
+# documents and tooling-enforces conventions in the IDE without gating CI on
+# formatting. Raise individual severities deliberately if/when the codebase is
+# clean against them.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{json,jsonc,yml,yaml,csproj,props,targets,slnx}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.cs]
+indent_size = 4
+max_line_length = 120
+
+# --- Language conventions -------------------------------------------------
+
+# Namespaces: file-scoped (the codebase uses `namespace X;`).
+csharp_style_namespace_declarations = file_scoped:suggestion
+
+# `using` directives outside the namespace, System.* first.
+csharp_using_directive_placement = outside_namespace:suggestion
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+
+# `var` is used widely across the codebase.
+csharp_style_var_for_built_in_types = true:silent
+csharp_style_var_when_type_is_apparent = true:silent
+csharp_style_var_elsewhere = true:silent
+
+# Prefer modern expression-bodied / pattern / null-handling idioms.
+csharp_style_expression_bodied_methods = when_on_single_line:silent
+csharp_style_expression_bodied_properties = true:silent
+csharp_style_expression_bodied_accessors = true:silent
+csharp_style_pattern_matching_over_is_with_cast_check = true:suggestion
+csharp_style_pattern_matching_over_as_with_null_check = true:suggestion
+csharp_style_prefer_pattern_matching = true:suggestion
+csharp_style_throw_expression = true:suggestion
+csharp_style_conditional_delegate_call = true:suggestion
+dotnet_style_coalesce_expression = true:suggestion
+dotnet_style_null_propagation = true:suggestion
+dotnet_style_object_initializer = true:suggestion
+dotnet_style_collection_initializer = true:suggestion
+dotnet_style_prefer_conditional_expression_over_assignment = true:silent
+dotnet_style_prefer_conditional_expression_over_return = true:silent
+
+# `this.` qualification is not used in this codebase.
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+dotnet_style_qualification_for_method = false:suggestion
+dotnet_style_qualification_for_event = false:suggestion
+
+# Prefer language keywords over BCL type names (int over Int32).
+dotnet_style_predefined_type_for_locals_parameters_members = true:suggestion
+dotnet_style_predefined_type_for_member_access = true:suggestion
+
+# Readonly where possible.
+dotnet_style_readonly_field = true:suggestion
+
+# Braces required even on single-line blocks (matches existing style).
+csharp_prefer_braces = true:silent
+
+# --- Naming conventions ---------------------------------------------------
+
+# Private instance fields: _camelCase.
+dotnet_naming_rule.private_fields_underscore.symbols = private_fields
+dotnet_naming_rule.private_fields_underscore.style = underscore_camel_case
+dotnet_naming_rule.private_fields_underscore.severity = suggestion
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+dotnet_naming_style.underscore_camel_case.capitalization = camel_case
+dotnet_naming_style.underscore_camel_case.required_prefix = _
+
+# Types, methods, properties, constants: PascalCase.
+dotnet_naming_rule.pascal_members.symbols = type_and_member_symbols
+dotnet_naming_rule.pascal_members.style = pascal_case
+dotnet_naming_rule.pascal_members.severity = suggestion
+dotnet_naming_symbols.type_and_member_symbols.applicable_kinds = namespace,class,struct,interface,enum,property,method,event,delegate,type_parameter
+dotnet_naming_symbols.type_and_member_symbols.applicable_accessibilities = *
+dotnet_naming_style.pascal_case.capitalization = pascal_case
+
+# Interfaces: I-prefixed PascalCase.
+dotnet_naming_rule.interface_prefix.symbols = interface_symbols
+dotnet_naming_rule.interface_prefix.style = i_prefixed
+dotnet_naming_rule.interface_prefix.severity = suggestion
+dotnet_naming_symbols.interface_symbols.applicable_kinds = interface
+dotnet_naming_symbols.interface_symbols.applicable_accessibilities = *
+dotnet_naming_style.i_prefixed.capitalization = pascal_case
+dotnet_naming_style.i_prefixed.required_prefix = I

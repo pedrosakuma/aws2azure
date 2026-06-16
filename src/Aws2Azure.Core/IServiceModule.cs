@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Core.SigV4;
 using Microsoft.AspNetCore.Http;
@@ -63,6 +64,58 @@ public interface IServiceModule
 
     /// <summary>Format used to render error responses (XML for S3, JSON elsewhere).</summary>
     AwsErrorFormat ErrorFormat { get; }
+
+    /// <summary>
+    /// Bounded allowlist of operation names this module recognises. Used by the
+    /// default <see cref="ExtractOperationName"/> to cap the cardinality of the
+    /// <c>operation</c> metric label even under malformed or hostile input — any
+    /// candidate outside this set is reported as <c>"unknown"</c>. Comparison is
+    /// ordinal (case-sensitive), matching the AWS wire operation names.
+    ///
+    /// <para>Empty (default) means the module derives its operation name another
+    /// way (e.g. S3 from the HTTP method/path) and overrides
+    /// <see cref="ExtractOperationName"/> directly.</para>
+    /// </summary>
+    IReadOnlySet<string> KnownOperations => FrozenSet<string>.Empty;
+
+    /// <summary>
+    /// Extracts a bounded operation name for metrics/observability from the
+    /// request. The default implementation covers the two wire conventions used
+    /// by most AWS services — AWS-JSON's <c>X-Amz-Target</c> header
+    /// (<c>Service_Version.Operation</c>) and AWS Query's <c>Action</c> query
+    /// parameter — validating the candidate against <see cref="KnownOperations"/>
+    /// so unrecognised values collapse to <c>"unknown"</c>. When neither is
+    /// present the (already bounded) HTTP method is returned. Modules whose
+    /// operation is encoded in the HTTP method/path (S3) override this.
+    ///
+    /// <para>This keeps per-service operation knowledge in the owning module
+    /// rather than in <c>ServiceModuleRegistry</c>, so adding or renaming an
+    /// operation never requires editing Core.</para>
+    /// </summary>
+    string ExtractOperationName(HttpContext context)
+    {
+        string? candidate = null;
+
+        if (context.Request.Headers.TryGetValue("X-Amz-Target", out var target)
+            && target.Count > 0 && !string.IsNullOrEmpty(target[0]))
+        {
+            // Format: "DynamoDB_20120810.GetItem" → "GetItem"
+            var parts = target[0]!.Split('.');
+            candidate = parts.Length > 1 ? parts[1] : target[0]!;
+        }
+        else if (context.Request.Query.TryGetValue("Action", out var action)
+            && action.Count > 0 && !string.IsNullOrEmpty(action[0]))
+        {
+            candidate = action[0]!;
+        }
+
+        if (candidate is null)
+        {
+            return context.Request.Method;
+        }
+
+        return KnownOperations.Contains(candidate) ? candidate : "unknown";
+    }
 
     /// <summary>
     /// The auth-error vocabulary this module's callers speak. The default maps

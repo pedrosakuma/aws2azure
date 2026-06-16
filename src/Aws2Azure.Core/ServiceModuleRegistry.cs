@@ -54,8 +54,9 @@ public sealed class ServiceModuleRegistry
             return;
         }
 
-        // Extract operation name for metrics (service-specific header extraction)
-        var operation = ExtractOperation(context, module);
+        // Extract operation name for metrics. The module owns this so per-service
+        // operation knowledge (and its bounded allowlist) stays out of Core.
+        var operation = module.ExtractOperationName(context);
         var requestSize = context.Request.ContentLength ?? 0;
         
         // Start metrics context
@@ -293,77 +294,7 @@ public sealed class ServiceModuleRegistry
 
     private static ValueTask EmitAuthError(HttpContext context, IServiceModule module, SigV4ValidationResult result)
         => module.EmitSigV4FailureAsync(context, result.Status, result.Reason ?? string.Empty);
-    
-    /// <summary>
-    /// Extracts the operation name for metrics. Service-specific: DynamoDB/Kinesis
-    /// use X-Amz-Target, S3 uses HTTP method + path pattern, SQS uses Action query.
-    /// Returns bounded values to prevent unbounded cardinality from unauthenticated requests.
-    /// </summary>
-    private static string ExtractOperation(HttpContext context, IServiceModule module)
-    {
-        string? candidate = null;
-        
-        // AWS-JSON services (DynamoDB, Kinesis) use X-Amz-Target header
-        if (context.Request.Headers.TryGetValue("X-Amz-Target", out var target) 
-            && target.Count > 0 && !string.IsNullOrEmpty(target[0]))
-        {
-            // Format: "DynamoDB_20120810.GetItem" → "GetItem"
-            var parts = target[0]!.Split('.');
-            candidate = parts.Length > 1 ? parts[1] : target[0]!;
-        }
-        // SQS/SNS use Action query parameter
-        else if (context.Request.Query.TryGetValue("Action", out var action) 
-            && action.Count > 0 && !string.IsNullOrEmpty(action[0]))
-        {
-            candidate = action[0]!;
-        }
-        // S3: derive from HTTP method + path structure
-        else if (module.ServiceName == "s3")
-        {
-            return context.Request.Method switch
-            {
-                "GET" when context.Request.Path.Value?.Contains('/') == true => "GetObject",
-                "PUT" when context.Request.Path.Value?.Contains('/') == true => "PutObject",
-                "DELETE" when context.Request.Path.Value?.Contains('/') == true => "DeleteObject",
-                "HEAD" when context.Request.Path.Value?.Contains('/') == true => "HeadObject",
-                _ => context.Request.Method
-            };
-        }
-        
-        if (candidate is null)
-        {
-            return context.Request.Method;
-        }
-        
-        // Validate against bounded allowlist to prevent cardinality explosion
-        return IsKnownOperation(module.ServiceName, candidate) ? candidate : "unknown";
-    }
-    
-    /// <summary>
-    /// Validates operation names against a bounded allowlist per service.
-    /// Prevents unbounded cardinality from malicious/malformed requests.
-    /// </summary>
-    private static bool IsKnownOperation(string service, string operation) => service switch
-    {
-        "dynamodb" => operation is "GetItem" or "PutItem" or "UpdateItem" or "DeleteItem" 
-            or "Query" or "Scan" or "BatchGetItem" or "BatchWriteItem" or "TransactGetItems" 
-            or "TransactWriteItems" or "CreateTable" or "DeleteTable" or "DescribeTable" 
-            or "ListTables" or "UpdateTable",
-        "kinesis" => operation is "PutRecord" or "PutRecords" or "GetRecords" or "GetShardIterator" 
-            or "ListShards" or "DescribeStream" or "DescribeStreamSummary" or "CreateStream" 
-            or "DeleteStream" or "ListStreams",
-        "sqs" => operation is "SendMessage" or "SendMessageBatch" or "ReceiveMessage" 
-            or "DeleteMessage" or "DeleteMessageBatch" or "ChangeMessageVisibility" 
-            or "ChangeMessageVisibilityBatch" or "CreateQueue" or "DeleteQueue" or "GetQueueUrl" 
-            or "GetQueueAttributes" or "SetQueueAttributes" or "ListQueues" or "PurgeQueue",
-        "sns" => operation is "Publish" or "PublishBatch" or "Subscribe" or "Unsubscribe" 
-            or "CreateTopic" or "DeleteTopic" or "GetTopicAttributes" or "SetTopicAttributes" 
-            or "ListTopics" or "ListSubscriptions" or "ListSubscriptionsByTopic" 
-            or "GetSubscriptionAttributes" or "SetSubscriptionAttributes" or "ConfirmSubscription",
-        "s3" => true, // S3 operations are derived from HTTP method, already bounded
-        _ => false,
-    };
-    
+
     private void RecordEndMetrics(
         RequestMetricsContext? metricsCtx, 
         int statusCode, 

@@ -5,6 +5,7 @@ using Aws2Azure.Core;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Core.SigV4;
+using Aws2Azure.Modules.S3;
 using Microsoft.AspNetCore.Http;
 
 namespace Aws2Azure.UnitTests.Modules;
@@ -275,5 +276,124 @@ public class ServiceModuleRegistryTests
             ObservedBody = await sr.ReadToEndAsync();
             context.Response.StatusCode = StatusCodes.Status200OK;
         }
+    }
+}
+
+public class ServiceModuleOperationExtractionTests
+{
+    private sealed class JsonTargetModule : IServiceModule
+    {
+        public string ServiceName => "fake";
+        public bool MatchesHost(string host) => true;
+        public CapabilityMatrix Capabilities { get; } =
+            new("fake", [new OperationCapability("DoThing", OperationStatus.Implemented)]);
+        public bool RequiresSigV4 => false;
+        public AwsErrorFormat ErrorFormat => AwsErrorFormat.Json;
+        public IReadOnlySet<string> KnownOperations { get; } =
+            new HashSet<string>(StringComparer.Ordinal) { "GetItem", "PutItem" };
+        public ValueTask HandleAsync(HttpContext context) => ValueTask.CompletedTask;
+    }
+
+    private static DefaultHttpContext Ctx(string method = "POST")
+    {
+        var ctx = new DefaultHttpContext();
+        ctx.Request.Method = method;
+        return ctx;
+    }
+
+    [Fact]
+    public void Default_extracts_operation_from_x_amz_target()
+    {
+        IServiceModule module = new JsonTargetModule();
+        var ctx = Ctx();
+        ctx.Request.Headers["X-Amz-Target"] = "DynamoDB_20120810.GetItem";
+
+        Assert.Equal("GetItem", module.ExtractOperationName(ctx));
+    }
+
+    [Fact]
+    public void Default_extracts_operation_from_action_query()
+    {
+        IServiceModule module = new JsonTargetModule { };
+        var ctx = Ctx();
+        ctx.Request.QueryString = new QueryString("?Action=PutItem&Version=2012-08-10");
+
+        Assert.Equal("PutItem", module.ExtractOperationName(ctx));
+    }
+
+    [Fact]
+    public void Default_collapses_unknown_operation_to_unknown()
+    {
+        IServiceModule module = new JsonTargetModule();
+        var ctx = Ctx();
+        ctx.Request.Headers["X-Amz-Target"] = "DynamoDB_20120810.NotARealOp";
+
+        Assert.Equal("unknown", module.ExtractOperationName(ctx));
+    }
+
+    [Fact]
+    public void Default_falls_back_to_http_method_when_no_target_or_action()
+    {
+        IServiceModule module = new JsonTargetModule();
+        Assert.Equal("GET", module.ExtractOperationName(Ctx("GET")));
+    }
+
+    [Fact]
+    public void Empty_known_operations_yields_unknown_for_any_candidate()
+    {
+        // A module that doesn't override KnownOperations defaults to the empty
+        // set, so every candidate collapses to "unknown" (cardinality-safe).
+        IServiceModule module = new EmptyModule();
+        var ctx = Ctx();
+        ctx.Request.Headers["X-Amz-Target"] = "Svc_2012.Whatever";
+
+        Assert.Equal("unknown", module.ExtractOperationName(ctx));
+    }
+
+    private sealed class EmptyModule : IServiceModule
+    {
+        public string ServiceName => "empty";
+        public bool MatchesHost(string host) => true;
+        public CapabilityMatrix Capabilities { get; } = new("empty", []);
+        public bool RequiresSigV4 => false;
+        public AwsErrorFormat ErrorFormat => AwsErrorFormat.Json;
+        public ValueTask HandleAsync(HttpContext context) => ValueTask.CompletedTask;
+    }
+
+    private static S3ServiceModule NewS3()
+    {
+        var resolver = new StaticCredentialResolver(new ProxyConfig());
+        return new S3ServiceModule(new Aws2Azure.Core.Azure.AzureHttpClient(), resolver, new CapabilityMatrix("s3", []));
+    }
+
+    [Theory]
+    [InlineData("GET", "/bucket/key", "GetObject")]
+    [InlineData("PUT", "/bucket/key", "PutObject")]
+    [InlineData("DELETE", "/bucket/key", "DeleteObject")]
+    [InlineData("HEAD", "/bucket/key", "HeadObject")]
+    [InlineData("GET", "/", "GetObject")]
+    [InlineData("GET", "", "GET")]
+    [InlineData("POST", "/bucket/key", "POST")]
+    public void S3_derives_operation_from_method_and_path(string method, string path, string expected)
+    {
+        IServiceModule s3 = NewS3();
+        var ctx = Ctx(method);
+        ctx.Request.Path = path;
+
+        Assert.Equal(expected, s3.ExtractOperationName(ctx));
+    }
+
+    [Fact]
+    public void S3_ignores_stray_action_or_target_and_stays_bounded()
+    {
+        // S3 never legitimately sends X-Amz-Target / Action; a crafted request
+        // carrying them must not leak into the (bounded) operation metric label.
+        IServiceModule s3 = NewS3();
+        var ctx = Ctx("GET");
+        ctx.Request.Path = "/bucket/key";
+        ctx.Request.QueryString = new QueryString("?Action=Whatever");
+        ctx.Request.Headers["X-Amz-Target"] = "Svc_2012.Anything";
+
+        Assert.Equal("GetObject", s3.ExtractOperationName(ctx));
     }
 }

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Aws2Azure.Core;
@@ -60,6 +61,14 @@ public sealed class SnsServiceModule : IServiceModule
     public bool BuffersRequestBodyForSigV4 => true;
     public IReadOnlyList<string> RequiredSignedHeaders { get; } = ["content-type"];
     public AwsErrorFormat ErrorFormat => AwsErrorFormat.Xml;
+    public IReadOnlySet<string> KnownOperations => _knownOperations;
+    private static readonly FrozenSet<string> _knownOperations = new[]
+    {
+        "Publish", "PublishBatch", "Subscribe", "Unsubscribe", "CreateTopic",
+        "DeleteTopic", "GetTopicAttributes", "SetTopicAttributes", "ListTopics",
+        "ListSubscriptions", "ListSubscriptionsByTopic", "GetSubscriptionAttributes",
+        "SetSubscriptionAttributes", "ConfirmSubscription",
+    }.ToFrozenSet();
     public CapabilityMatrix Capabilities { get; }
 
     public ValueTask EmitAuthErrorAsync(HttpContext context, int statusCode, string code, string message)
