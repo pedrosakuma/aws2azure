@@ -37,9 +37,9 @@ internal static class AmqpMessageTranslator
         // ServiceBusReceivedMessage.Body materialises that, falling back
         // to an empty span when the body is application/value (rare for
         // SQS-emulating producers).
-        var bodyBytes = msg.Body.ToArray();
-        var bodyText = bodyBytes.Length == 0 ? string.Empty : Encoding.UTF8.GetString(bodyBytes);
-        var md5OfBody = SqsMessageMd5.OfBody(bodyBytes);
+        var body = msg.Body.Span;
+        var bodyText = body.IsEmpty ? string.Empty : Encoding.UTF8.GetString(body);
+        var md5OfBody = SqsMessageMd5.OfBody(body);
 
         var annotations = msg.Annotations;
         var lockedUntil = annotations?.LockedUntil ?? DateTimeOffset.UtcNow.AddSeconds(30);

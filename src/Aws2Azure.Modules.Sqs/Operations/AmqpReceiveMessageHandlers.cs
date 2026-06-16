@@ -167,8 +167,7 @@ internal static partial class AmqpReceiveMessageHandlers
             return;
         }
 
-        var systemAttrFilter = AmqpReceiveParameters.ParseAttributeNames(parsed, "AttributeName");
-        var messageAttrFilter = AmqpReceiveParameters.ParseAttributeNames(parsed, "MessageAttributeName");
+        AmqpReceiveParameters.ParseAttributeNameSets(parsed, out var systemAttrFilter, out var messageAttrFilter);
         var collected = new List<ReceivedSqsMessage>(batch.Count);
         foreach (var msg in batch)
         {
