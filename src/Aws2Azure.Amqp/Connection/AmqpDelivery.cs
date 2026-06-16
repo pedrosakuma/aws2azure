@@ -4,9 +4,9 @@ using Aws2Azure.Amqp.Framing;
 namespace Aws2Azure.Amqp.Connection;
 
 /// <summary>
-/// Result of an outgoing transfer's disposition (§3.4). Slice 5c
-/// reports the four terminal outcomes; modified/received are folded
-/// into <see cref="Unknown"/> until a workload needs them.
+/// Result of an outgoing transfer's disposition (§3.4). Reports the
+/// terminal outcomes the proxy acts on; the AMQP <c>received</c>
+/// (partial) outcome is folded into <see cref="Unknown"/>.
 /// </summary>
 internal enum AmqpDispositionOutcome
 {

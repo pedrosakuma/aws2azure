@@ -8,7 +8,7 @@ namespace Aws2Azure.Amqp.Sasl;
 /// Drives the AMQP SASL sub-protocol (§5.3) for the ANONYMOUS mechanism
 /// (RFC 4505). Service Bus accepts ANONYMOUS as the SASL layer and
 /// expects authorization to happen later via the <c>$cbs</c> management
-/// link with a SAS token (handled in Slice 5).
+/// link with a SAS token (see <c>CbsAuthenticator</c>).
 /// </summary>
 internal static class SaslAnonymousNegotiator
 {

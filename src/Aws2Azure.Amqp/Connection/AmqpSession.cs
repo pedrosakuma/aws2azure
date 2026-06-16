@@ -10,10 +10,9 @@ namespace Aws2Azure.Amqp.Connection;
 /// <c>begin</c>/<c>end</c> handshake.
 /// </summary>
 /// <remarks>
-/// For Slice 5a the session is intentionally minimal: it manages
-/// lifecycle only. Link routing (attach/flow/transfer/disposition/detach)
-/// lands in Slice 5b on top of the dispatch hook
-/// <see cref="DispatchIncomingFrame"/> added here.
+/// Beyond the begin/end lifecycle, the session also routes link
+/// performatives (attach/flow/transfer/disposition/detach) to the owning
+/// <see cref="AmqpLink"/> through <see cref="DispatchIncomingFrame"/>.
 /// </remarks>
 internal sealed class AmqpSession
 {
@@ -36,8 +35,8 @@ internal sealed class AmqpSession
     private readonly Dictionary<string, AmqpLink> _linksByName = new(StringComparer.Ordinal);
     private uint _nextOutgoingHandle;
 
-    // Session-level transfer accounting (§2.5.6). Slice 5c uses a single
-    // counter; flow-control windowing comes in a later polish slice.
+    // Session-level transfer accounting (§2.5.6): a single monotonic
+    // delivery-id counter. Full flow-control windowing is not implemented.
     private uint _nextOutgoingId;
 
     private int _state = StateClosed;
@@ -210,8 +209,9 @@ internal sealed class AmqpSession
     // ---- dispatch (invoked by the connection's read loop) ----------------
 
     /// <summary>
-    /// Handles a frame received on this session's incoming channel. Slice
-    /// 5a routes only begin/end; later slices extend the switch.
+    /// Handles a frame received on this session's incoming channel,
+    /// routing each performative to the owning link (or to the session
+    /// lifecycle for begin/end).
     /// </summary>
     internal void DispatchIncomingFrame(PerformativeKind kind, ReadOnlyMemory<byte> body)
     {
@@ -280,8 +280,8 @@ internal sealed class AmqpSession
                 DispatchDisposition(disposition);
                 break;
 
-            // Flow / Transfer / Disposition land in Slice 5c.
             default:
+                // Unknown / unhandled performatives are ignored.
                 break;
         }
     }
@@ -289,8 +289,8 @@ internal sealed class AmqpSession
     private void DispatchDisposition(AmqpDisposition disposition)
     {
         // Sender-role disposition (from receiver) updates state for our
-        // outgoing transfers; receiver-role (from sender) for our incoming
-        // ones. Slice 5c targets the sender-receives-accepted path.
+        // outgoing transfers. Fanned out to all outgoing-handle links,
+        // each of which matches the disposition's delivery-id range.
         AmqpLink[] snapshot;
         lock (_linkLock)
         {

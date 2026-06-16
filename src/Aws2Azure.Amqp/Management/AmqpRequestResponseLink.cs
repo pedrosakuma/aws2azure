@@ -12,8 +12,9 @@ namespace Aws2Azure.Amqp.Management;
 /// <c>correlation-id</c> matches the original message-id.
 /// </summary>
 /// <remarks>
-/// Slice 5d ships the correlation engine and the receive pump; the
-/// CBS-specific <c>put-token</c> wrapper lands in Slice 5e.
+/// Provides the generic correlation engine and the receive pump; the
+/// CBS-specific <c>put-token</c> wrapper is layered on top by the CBS
+/// authenticator.
 /// </remarks>
 internal sealed class AmqpRequestResponseLink : IAsyncDisposable
 {

@@ -20,9 +20,9 @@ namespace Aws2Azure.Amqp.ServiceBus;
 /// Service Bus's <c>$management</c> node is per-entity in name only:
 /// the address is literally the string <c>$management</c>; the broker
 /// scopes the operation to whatever the CBS-authorised audience
-/// covers. Slice 8c.2 ships only the renew-lock operation; further
-/// ops (peek, scheduled-message cancel, session state, …) plug in
-/// the same way.
+/// covers. This client implements the renew-lock / renew-session-lock
+/// operations; further ops (peek, scheduled-message cancel, session
+/// state, …) plug in the same way.
 /// </para>
 /// <para>
 /// This client is single-use per (connection, audience) pair —
