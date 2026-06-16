@@ -5,6 +5,7 @@ using Aws2Azure.Core;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Core.SigV4;
+using Aws2Azure.Modules.S3;
 using Microsoft.AspNetCore.Http;
 
 namespace Aws2Azure.UnitTests.Modules;
@@ -357,5 +358,42 @@ public class ServiceModuleOperationExtractionTests
         public bool RequiresSigV4 => false;
         public AwsErrorFormat ErrorFormat => AwsErrorFormat.Json;
         public ValueTask HandleAsync(HttpContext context) => ValueTask.CompletedTask;
+    }
+
+    private static S3ServiceModule NewS3()
+    {
+        var resolver = new StaticCredentialResolver(new ProxyConfig());
+        return new S3ServiceModule(new Aws2Azure.Core.Azure.AzureHttpClient(), resolver, new CapabilityMatrix("s3", []));
+    }
+
+    [Theory]
+    [InlineData("GET", "/bucket/key", "GetObject")]
+    [InlineData("PUT", "/bucket/key", "PutObject")]
+    [InlineData("DELETE", "/bucket/key", "DeleteObject")]
+    [InlineData("HEAD", "/bucket/key", "HeadObject")]
+    [InlineData("GET", "/", "GetObject")]
+    [InlineData("GET", "", "GET")]
+    [InlineData("POST", "/bucket/key", "POST")]
+    public void S3_derives_operation_from_method_and_path(string method, string path, string expected)
+    {
+        IServiceModule s3 = NewS3();
+        var ctx = Ctx(method);
+        ctx.Request.Path = path;
+
+        Assert.Equal(expected, s3.ExtractOperationName(ctx));
+    }
+
+    [Fact]
+    public void S3_ignores_stray_action_or_target_and_stays_bounded()
+    {
+        // S3 never legitimately sends X-Amz-Target / Action; a crafted request
+        // carrying them must not leak into the (bounded) operation metric label.
+        IServiceModule s3 = NewS3();
+        var ctx = Ctx("GET");
+        ctx.Request.Path = "/bucket/key";
+        ctx.Request.QueryString = new QueryString("?Action=Whatever");
+        ctx.Request.Headers["X-Amz-Target"] = "Svc_2012.Anything";
+
+        Assert.Equal("GetObject", s3.ExtractOperationName(ctx));
     }
 }
