@@ -5,6 +5,7 @@ using System.Text.Json;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.Kinesis.EventHubsRest;
 using Aws2Azure.Modules.Kinesis.Operations;
+using Aws2Azure.Modules.Kinesis.ShardIterators;
 using Aws2Azure.Modules.Kinesis.WireProtocol;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
