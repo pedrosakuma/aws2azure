@@ -55,6 +55,9 @@ documented exhaustively under [`docs/gaps/`](./docs/gaps/), with the rendered
 coverage matrix published from [`docs/site/`](./docs/site/). Gaps are documented,
 never hidden.
 
+Architecture decisions that explain the project constraints are recorded in
+[`docs/adr/`](./docs/adr/).
+
 ## Configuration
 
 The proxy reads a JSON config file pointed to by `AWS2AZURE_CONFIG_FILE`. Each
