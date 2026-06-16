@@ -17,39 +17,49 @@ internal static class ProjectionExpressionParser
         if (string.IsNullOrWhiteSpace(expression))
             throw new ExpressionSyntaxException(0, "ProjectionExpression cannot be empty.");
 
-        var parts = expression.Split(',');
-        var result = new List<string>(parts.Length);
+        var tokens = ExpressionLexer.Tokenise(expression);
+        var result = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        int offset = 0;
-        foreach (var rawPart in parts)
+        int position = 0;
+        while (ExpressionPathParser.Peek(tokens, position).Kind != TokenKind.EndOfInput)
         {
-            var trimmed = rawPart.Trim();
-            if (trimmed.Length == 0)
-                throw new ExpressionSyntaxException(offset, "Empty path in ProjectionExpression.");
+            var start = ExpressionPathParser.Peek(tokens, position);
+            if (start.Kind == TokenKind.Comma)
+                throw new ExpressionSyntaxException(start.Position, "Empty path in ProjectionExpression.");
 
-            string resolved;
-            if (trimmed[0] == '#')
-            {
-                if (names is null || !names.TryGetValue(trimmed, out var alias))
-                    throw new ExpressionSyntaxException(offset,
-                        $"ExpressionAttributeNames is missing alias '{trimmed}'.");
-                resolved = alias;
-            }
-            else
-            {
-                foreach (var ch in trimmed)
-                {
-                    if (ch == '.' || ch == '[' || ch == ']')
-                        throw new ExpressionSyntaxException(offset,
-                            $"Nested path '{trimmed}' is not supported in this release; use a top-level attribute or a #alias.");
-                }
-                resolved = trimmed;
-            }
+            var path = ExpressionPathParser.ParsePath(
+                tokens,
+                ref position,
+                names,
+                AttributeAliasErrorStyle.Projection);
+            if (!path.IsTopLevel)
+                throw new ExpressionSyntaxException(start.Position,
+                    $"Nested path '{path.Display}' is not supported in this release; use a top-level attribute or a #alias.");
+
+            string resolved = path.Root;
             if (seen.Add(resolved))
             {
                 result.Add(resolved);
             }
-            offset += rawPart.Length + 1;
+
+            var separator = ExpressionPathParser.Peek(tokens, position);
+            if (separator.Kind == TokenKind.EndOfInput)
+            {
+                break;
+            }
+            if (separator.Kind != TokenKind.Comma)
+            {
+                throw new ExpressionSyntaxException(separator.Position,
+                    "Expected ',' between ProjectionExpression paths.");
+            }
+
+            position++;
+            if (ExpressionPathParser.Peek(tokens, position).Kind == TokenKind.EndOfInput)
+            {
+                throw new ExpressionSyntaxException(
+                    ExpressionPathParser.Peek(tokens, position).Position,
+                    "Empty path in ProjectionExpression.");
+            }
         }
         return result;
     }

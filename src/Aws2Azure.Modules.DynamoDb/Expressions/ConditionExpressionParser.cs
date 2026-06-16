@@ -274,72 +274,10 @@ internal sealed class ConditionExpressionParser
         return new ConditionPathOperand(ParsePath());
     }
 
-    // ----- path (same shape as UpdateExpressionParser) ---------------
+    // ----- shared parser helpers -------------------------------------
 
     private DocumentPath ParsePath()
-    {
-        var segments = new List<PathSegment>();
-        var first = Peek();
-        if (first.Kind == TokenKind.Identifier)
-        {
-            segments.Add(new AttributePathSegment(first.Text));
-            _pos++;
-        }
-        else if (first.Kind == TokenKind.AttributeNameRef)
-        {
-            segments.Add(new AttributePathSegment(ResolveAttributeName(first)));
-            _pos++;
-        }
-        else
-        {
-            throw Error("Expected an attribute name or '#alias' to start a document path.");
-        }
-
-        while (true)
-        {
-            var t = Peek();
-            if (t.Kind == TokenKind.Dot)
-            {
-                _pos++;
-                var seg = Peek();
-                if (seg.Kind == TokenKind.Identifier)
-                {
-                    segments.Add(new AttributePathSegment(seg.Text));
-                    _pos++;
-                }
-                else if (seg.Kind == TokenKind.AttributeNameRef)
-                {
-                    segments.Add(new AttributePathSegment(ResolveAttributeName(seg)));
-                    _pos++;
-                }
-                else
-                {
-                    throw Error("Expected an attribute name or '#alias' after '.'.");
-                }
-            }
-            else if (t.Kind == TokenKind.LBracket)
-            {
-                _pos++;
-                var numTok = Peek();
-                if (numTok.Kind != TokenKind.Number)
-                    throw Error("Expected a non-negative integer index inside '[ ]'.");
-                if (!int.TryParse(numTok.Text, out var idx) || idx < 0)
-                    throw Error($"Invalid list index '{numTok.Text}'.");
-                _pos++;
-                if (Peek().Kind != TokenKind.RBracket)
-                    throw Error("Expected ']' to close list index.");
-                _pos++;
-                segments.Add(new IndexPathSegment(idx));
-            }
-            else
-            {
-                break;
-            }
-        }
-        return new DocumentPath(segments);
-    }
-
-    // ----- helpers ---------------------------------------------------
+        => ExpressionPathParser.ParsePath(_tokens, ref _pos, _names);
 
     private bool TryConsumeKeyword(string keyword)
     {
@@ -353,27 +291,11 @@ internal sealed class ConditionExpressionParser
         return false;
     }
 
-    private string ResolveAttributeName(ExpressionToken token)
-    {
-        if (_names is null || !_names.TryGetValue(token.Text, out var resolved))
-            throw new ExpressionSyntaxException(token.Position,
-                $"An expression attribute name used in expression is not defined; attribute name: {token.Text}");
-        return resolved;
-    }
-
     private ValueRefOperand ResolveValueRef(ExpressionToken token)
-    {
-        if (_values is null || !_values.TryGetValue(token.Text, out var resolved))
-            throw new ExpressionSyntaxException(token.Position,
-                $"An expression attribute value used in expression is not defined; attribute value: {token.Text}");
-        return new ValueRefOperand(token.Text, resolved);
-    }
+        => ExpressionPathParser.ResolveValueRef(token, _values);
 
     private ExpressionToken Peek() => _tokens[_pos];
 
     private ExpressionSyntaxException Error(string message)
-    {
-        var t = _pos < _tokens.Count ? _tokens[_pos] : _tokens[^1];
-        return new ExpressionSyntaxException(t.Position, message);
-    }
+        => ExpressionPathParser.Error(_tokens, _pos, message);
 }
