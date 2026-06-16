@@ -30,13 +30,28 @@ internal sealed class ServiceBusAmqpConnectionFactory : IServiceBusAmqpConnectio
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sasKeyName);
         ArgumentException.ThrowIfNullOrWhiteSpace(sasKey);
+        return await CreateAsync(
+                endpoint,
+                sasKeyName,
+                new ServiceBusSasTokenProvider(sasKeyName, sasKey),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<ServiceBusAmqpConnection> CreateAsync(
+        ServiceBusAmqpEndpoint endpoint,
+        string credentialMarker,
+        IAmqpTokenProvider tokenProvider,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(credentialMarker);
+        ArgumentNullException.ThrowIfNull(tokenProvider);
 
         var transport = await ServiceBusAmqpConnector
             .ConnectAsync(endpoint, cancellationToken)
             .ConfigureAwait(false);
         try
         {
-            var tokenProvider = new ServiceBusSasTokenProvider(sasKeyName, sasKey);
             // Clone+override Hostname so the AMQP open frame's hostname
             // field matches the broker's logical namespace identity
             // rather than the docker bridge IP / loopback we happen to
@@ -54,4 +69,3 @@ internal sealed class ServiceBusAmqpConnectionFactory : IServiceBusAmqpConnectio
         }
     }
 }
-

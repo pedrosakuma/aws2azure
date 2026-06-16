@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Linq;
 using Aws2Azure.Amqp.Connection;
+using Aws2Azure.Amqp.Security;
 
 namespace Aws2Azure.Amqp.ServiceBus;
 
@@ -432,6 +433,47 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
     }
 
     /// <summary>
+    /// Returns a shared sender link for callers that provide their own CBS
+    /// token provider (for example OAuth-backed Service Bus Topics). The
+    /// <paramref name="credentialMarker"/> participates in the connection
+    /// pool key but is never sent to the broker.
+    /// </summary>
+    public async Task<ServiceBusAmqpSender> GetSenderAsync(
+        ServiceBusAmqpEndpoint endpoint,
+        string credentialMarker,
+        IAmqpTokenProvider tokenProvider,
+        string entityName,
+        string audience,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(credentialMarker);
+        ArgumentNullException.ThrowIfNull(tokenProvider);
+        ArgumentException.ThrowIfNullOrWhiteSpace(entityName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(audience);
+        ThrowIfDisposed();
+
+        var key = new ServiceBusAmqpConnectionKey(endpoint, credentialMarker);
+        while (true)
+        {
+            var slot = await GetOrCreateConnectionSlotAsync(key).ConfigureAwait(false);
+            try
+            {
+                var connection = await slot.GetOrCreateConnectionAsync(
+                    _factory, key, tokenProvider, cancellationToken).ConfigureAwait(false);
+                var sender = await slot.GetOrCreateSenderAsync(
+                    connection, key, entityName, audience, cancellationToken).ConfigureAwait(false);
+                ThrowIfDisposed();
+                return sender;
+            }
+            catch (ObjectDisposedException) when (Volatile.Read(ref _disposed) == 0)
+            {
+                _connections.TryRemove(KeyValuePair.Create(key, slot));
+                continue;
+            }
+        }
+    }
+
+    /// <summary>
     /// Evicts the cached sender for (namespace, key, queue). When
     /// <paramref name="closeConnection"/> is <c>true</c> the whole
     /// connection slot is dropped (mirrors
@@ -646,6 +688,27 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             ServiceBusAmqpConnectionKey key,
             string sasKey,
             CancellationToken cancellationToken)
+            => await GetOrCreateConnectionAsync(
+                    static (state, ct) => state.Factory.CreateAsync(state.Key.Endpoint, state.Key.SasKeyName, state.SasKey, ct),
+                    (Factory: factory, Key: key, SasKey: sasKey),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+        public async Task<ServiceBusAmqpConnection> GetOrCreateConnectionAsync(
+            IServiceBusAmqpConnectionFactory factory,
+            ServiceBusAmqpConnectionKey key,
+            IAmqpTokenProvider tokenProvider,
+            CancellationToken cancellationToken)
+            => await GetOrCreateConnectionAsync(
+                    static (state, ct) => state.Factory.CreateAsync(state.Key.Endpoint, state.Key.SasKeyName, state.TokenProvider, ct),
+                    (Factory: factory, Key: key, TokenProvider: tokenProvider),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+        private async Task<ServiceBusAmqpConnection> GetOrCreateConnectionAsync<TState>(
+            Func<TState, CancellationToken, Task<ServiceBusAmqpConnection>> createAsync,
+            TState state,
+            CancellationToken cancellationToken)
         {
             var existing = Volatile.Read(ref _connection);
             if (existing is not null && !existing.IsClosed) return existing;
@@ -673,9 +736,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                     Volatile.Write(ref _connection, null);
                 }
 
-                var created = await factory
-                    .CreateAsync(key.Endpoint, key.SasKeyName, sasKey, cancellationToken)
-                    .ConfigureAwait(false);
+                var created = await createAsync(state, cancellationToken).ConfigureAwait(false);
                 Volatile.Write(ref _connection, created);
                 return created;
             }
@@ -721,11 +782,23 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             string queueName,
             CancellationToken cancellationToken)
         {
+            var audience = ServiceBusEndpoint.BuildQueueAudience(key.NamespaceFqdn, queueName);
+            return await GetOrCreateSenderAsync(connection, key, queueName, audience, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        public async Task<ServiceBusAmqpSender> GetOrCreateSenderAsync(
+            ServiceBusAmqpConnection connection,
+            ServiceBusAmqpConnectionKey key,
+            string entityName,
+            string audience,
+            CancellationToken cancellationToken)
+        {
             ThrowIfDisposed();
-            var slot = await GetOrPublishSlotAsync(_senders, queueName, CreateSenderSlot).ConfigureAwait(false);
+            var slot = await GetOrPublishSlotAsync(_senders, entityName, CreateSenderSlot).ConfigureAwait(false);
             return await slot
                 .GetOrCreateAsync(
-                    new SenderOpenRequest(connection, key.Endpoint, queueName),
+                    new SenderOpenRequest(connection, entityName, audience),
                     OpenSenderResourceAsync,
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -994,8 +1067,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             SenderOpenRequest request,
             CancellationToken cancellationToken)
         {
-            var audience = ServiceBusEndpoint.BuildQueueAudience(request.Endpoint.LogicalNamespace, request.QueueName);
-            return request.Connection.OpenSenderAsync(request.QueueName, audience, cancellationToken);
+            return request.Connection.OpenSenderAsync(request.EntityName, request.Audience, cancellationToken);
         }
 
         private static Task<ServiceBusManagementClient> OpenManagementResourceAsync(
@@ -1013,8 +1085,8 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
 
         private readonly record struct SenderOpenRequest(
             ServiceBusAmqpConnection Connection,
-            ServiceBusAmqpEndpoint Endpoint,
-            string QueueName);
+            string EntityName,
+            string Audience);
 
         private readonly record struct ManagementOpenRequest(
             ServiceBusAmqpConnection Connection,

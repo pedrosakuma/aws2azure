@@ -1,3 +1,6 @@
+using System.Threading;
+using System.Threading.Tasks;
+
 namespace Aws2Azure.Amqp.Security;
 
 /// <summary>
@@ -18,6 +21,15 @@ internal interface IAmqpTokenProvider
     /// surface it (for proactive renewal).
     /// </summary>
     AmqpToken GetToken(string audience);
+
+    /// <summary>
+    /// Asynchronously produces a token string for <paramref name="audience"/>.
+    /// Implementations that can mint tokens synchronously may rely on the
+    /// default wrapper; OAuth-backed providers override this to avoid
+    /// sync-over-async on CBS refresh.
+    /// </summary>
+    ValueTask<AmqpToken> GetTokenAsync(string audience, CancellationToken cancellationToken = default)
+        => ValueTask.FromResult(GetToken(audience));
 }
 
 /// <summary>

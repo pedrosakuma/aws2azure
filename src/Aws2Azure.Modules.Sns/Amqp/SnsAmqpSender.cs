@@ -71,9 +71,15 @@ internal sealed class SnsAmqpException : Exception
 internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
 {
     private readonly EntraIdTokenProvider _tokenProvider;
-    private readonly AmqpConnectionSettings _connectionSettings;
-    private readonly ConcurrentDictionary<ConnectionKey, ConnectionSlot> _connections = new();
-    private readonly object _lifetimeGate = new();
+    private readonly ServiceBusAmqpPool _pool;
+    // Token providers are stateless and reusable; the pool only consumes one
+    // when it (re)creates a connection, so caching keeps the cached-sender
+    // publish fast path allocation-free instead of building a fresh provider
+    // (and copying SAS key bytes) on every Publish. Keyed by (endpoint,
+    // credentialMarker) — the same identity the pool keys connections by — so a
+    // SAS key NAME shared across namespaces never aliases different key bytes.
+    private readonly ConcurrentDictionary<(ServiceBusAmqpEndpoint Endpoint, string Marker), IAmqpTokenProvider> _tokenProviders =
+        new();
     private int _disposed;
 
     public SnsAmqpSender(EntraIdTokenProvider tokenProvider, AmqpConnectionSettings connectionSettings)
@@ -81,7 +87,7 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
         ArgumentNullException.ThrowIfNull(tokenProvider);
         ArgumentNullException.ThrowIfNull(connectionSettings);
         _tokenProvider = tokenProvider;
-        _connectionSettings = connectionSettings;
+        _pool = new ServiceBusAmqpPool(new ServiceBusAmqpConnectionFactory(connectionSettings));
     }
 
     public async Task SendAsync(
@@ -92,24 +98,17 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
         CancellationToken cancellationToken)
     {
         var endpoint = ResolveEndpoint(credentials, namespaceFqdn);
-        var key = new ConnectionKey(endpoint, BuildCredentialMarker(credentials));
-        var slot = GetConnectionSlot(key);
-        var connection = await slot.GetOrCreateConnectionAsync(
-                _tokenProvider,
-                _connectionSettings,
-                credentials,
-                endpoint,
-                cancellationToken)
-            .ConfigureAwait(false);
+        var credentialMarker = BuildCredentialMarker(credentials);
 
         try
         {
-            await using var sender = await connection.OpenSenderAsync(topicName, BuildAudience(namespaceFqdn, topicName), cancellationToken).ConfigureAwait(false);
+            var sender = await GetPooledSenderAsync(credentials, namespaceFqdn, topicName, endpoint, credentialMarker, cancellationToken)
+                .ConfigureAwait(false);
             await sender.SendAsync(ToAmqpMessage(message), settled: false, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (TryWrap(ex, out var wrapped))
         {
-            await InvalidateConnectionAsync(key).ConfigureAwait(false);
+            await InvalidatePooledSenderAsync(endpoint, credentialMarker, topicName).ConfigureAwait(false);
             throw wrapped;
         }
     }
@@ -127,20 +126,13 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
         }
 
         var endpoint = ResolveEndpoint(credentials, namespaceFqdn);
-        var key = new ConnectionKey(endpoint, BuildCredentialMarker(credentials));
-        var slot = GetConnectionSlot(key);
-        var connection = await slot.GetOrCreateConnectionAsync(
-                _tokenProvider,
-                _connectionSettings,
-                credentials,
-                endpoint,
-                cancellationToken)
-            .ConfigureAwait(false);
+        var credentialMarker = BuildCredentialMarker(credentials);
 
         var outcomes = new SnsBatchSendOutcome[messages.Count];
         try
         {
-            await using var sender = await connection.OpenSenderAsync(topicName, BuildAudience(namespaceFqdn, topicName), cancellationToken).ConfigureAwait(false);
+            var sender = await GetPooledSenderAsync(credentials, namespaceFqdn, topicName, endpoint, credentialMarker, cancellationToken)
+                .ConfigureAwait(false);
             for (var i = 0; i < messages.Count; i++)
             {
                 try
@@ -157,7 +149,7 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
                 }
                 catch (Exception ex) when (TryWrap(ex, out var wrapped))
                 {
-                    await InvalidateConnectionAsync(key).ConfigureAwait(false);
+                    await InvalidatePooledSenderAsync(endpoint, credentialMarker, topicName).ConfigureAwait(false);
                     if (wrapped.Kind == SnsAmqpFailureKind.Auth)
                     {
                         throw wrapped;
@@ -177,7 +169,7 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
         }
         catch (Exception ex) when (TryWrap(ex, out var wrapped))
         {
-            await InvalidateConnectionAsync(key).ConfigureAwait(false);
+            await InvalidatePooledSenderAsync(endpoint, credentialMarker, topicName).ConfigureAwait(false);
             if (wrapped.Kind == SnsAmqpFailureKind.Auth)
             {
                 throw wrapped;
@@ -200,44 +192,7 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
             return;
         }
 
-        ConnectionSlot[] slots;
-        lock (_lifetimeGate)
-        {
-            slots = DrainConnectionsLocked();
-        }
-
-        foreach (var slot in slots)
-        {
-            await slot.DisposeAsync().ConfigureAwait(false);
-        }
-    }
-
-    private ConnectionSlot GetConnectionSlot(ConnectionKey key)
-    {
-        lock (_lifetimeGate)
-        {
-            ThrowIfDisposed();
-            return _connections.GetOrAdd(key, static _ => new ConnectionSlot());
-        }
-    }
-
-    private ConnectionSlot[] DrainConnectionsLocked()
-    {
-        if (_connections.IsEmpty)
-        {
-            return [];
-        }
-
-        var slots = new List<ConnectionSlot>(_connections.Count);
-        foreach (var entry in _connections.ToArray())
-        {
-            if (_connections.TryRemove(entry))
-            {
-                slots.Add(entry.Value);
-            }
-        }
-
-        return [.. slots];
+        await _pool.DisposeAsync().ConfigureAwait(false);
     }
 
     private void ThrowIfDisposed()
@@ -246,6 +201,45 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
         {
             throw new ObjectDisposedException(nameof(SnsAmqpSender));
         }
+    }
+
+    private async Task<ServiceBusAmqpSender> GetPooledSenderAsync(
+        ServiceBusTopicsCredentials credentials,
+        string namespaceFqdn,
+        string topicName,
+        ServiceBusAmqpEndpoint endpoint,
+        string credentialMarker,
+        CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        return await _pool.GetSenderAsync(
+                endpoint,
+                credentialMarker,
+                GetOrCreateTokenProvider(endpoint, credentialMarker, credentials),
+                topicName,
+                BuildAudience(namespaceFqdn, topicName),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private IAmqpTokenProvider GetOrCreateTokenProvider(
+        ServiceBusAmqpEndpoint endpoint, string credentialMarker, ServiceBusTopicsCredentials credentials)
+        => _tokenProviders.GetOrAdd(
+            (endpoint, credentialMarker),
+            static (_, state) => CreateTokenProvider(state.tokenProvider, state.credentials),
+            (tokenProvider: _tokenProvider, credentials));
+
+    private async Task InvalidatePooledSenderAsync(
+        ServiceBusAmqpEndpoint endpoint, string credentialMarker, string topicName)
+    {
+        // closeConnection drops the pooled connection bound to (endpoint,
+        // marker); release the cached token provider keyed the same way so a
+        // reconnect rebinds from the current credentials instead of pinning the
+        // secret captured at first use (the marker excludes the SAS key / client
+        // secret value, so it alone cannot distinguish a rotated secret).
+        _tokenProviders.TryRemove((endpoint, credentialMarker), out _);
+        await _pool.InvalidateSenderAsync(endpoint, credentialMarker, topicName, closeConnection: true)
+            .ConfigureAwait(false);
     }
 
     private static AmqpMessage ToAmqpMessage(SnsAmqpSendMessage message)
@@ -257,14 +251,6 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
                 ? null
                 : new Dictionary<string, object?>(message.ApplicationProperties, StringComparer.Ordinal),
         };
-
-    private async Task InvalidateConnectionAsync(ConnectionKey key)
-    {
-        if (_connections.TryRemove(key, out var slot))
-        {
-            await slot.DisposeAsync().ConfigureAwait(false);
-        }
-    }
 
     private static ServiceBusAmqpEndpoint ResolveEndpoint(ServiceBusTopicsCredentials credentials, string namespaceFqdn)
     {
@@ -410,215 +396,133 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
         _ => SnsAmqpFailureKind.Unknown,
     };
 
-    private readonly record struct ConnectionKey(ServiceBusAmqpEndpoint Endpoint, string CredentialMarker);
-
-    private sealed class ConnectionSlot : IAsyncDisposable
+    private static IAmqpTokenProvider CreateTokenProvider(EntraIdTokenProvider tokenProvider, ServiceBusTopicsCredentials credentials)
     {
-        private readonly SemaphoreSlim _gate = new(1, 1);
-        private ServiceBusAmqpConnection? _connection;
-        private int _disposed;
-
-        public async Task<ServiceBusAmqpConnection> GetOrCreateConnectionAsync(
-            EntraIdTokenProvider tokenProvider,
-            AmqpConnectionSettings connectionSettings,
-            ServiceBusTopicsCredentials credentials,
-            ServiceBusAmqpEndpoint endpoint,
-            CancellationToken cancellationToken)
+        if (!string.IsNullOrWhiteSpace(credentials.SasKeyName)
+            && !string.IsNullOrWhiteSpace(credentials.SasKey))
         {
-            var existing = Volatile.Read(ref _connection);
-            if (existing is not null && !existing.IsClosed)
+            return new ServiceBusSasTokenProvider(credentials.SasKeyName, credentials.SasKey);
+        }
+
+        return new ServiceBusTopicsBearerTokenProvider(tokenProvider, credentials);
+    }
+
+    private sealed class ServiceBusTopicsBearerTokenProvider : IAmqpTokenProvider
+    {
+        private readonly EntraIdTokenProvider _tokenProvider;
+        private readonly ServiceBusTopicsCredentials _credentials;
+
+        public ServiceBusTopicsBearerTokenProvider(EntraIdTokenProvider tokenProvider, ServiceBusTopicsCredentials credentials)
+        {
+            _tokenProvider = tokenProvider;
+            _credentials = credentials;
+        }
+
+        public string TokenType => "jwt";
+
+        public AmqpToken GetToken(string audience)
+            => throw new NotSupportedException("Service Bus Topics bearer tokens are acquired asynchronously.");
+
+        public async ValueTask<AmqpToken> GetTokenAsync(string audience, CancellationToken cancellationToken = default)
+        {
+            _ = audience;
+            var auth = new AadAuthSettings(_credentials.AuthMode, _credentials.TenantId, _credentials.ClientId, _credentials.ClientSecret);
+            var token = await _tokenProvider
+                .GetTokenAsync(
+                    auth,
+                    "https://servicebus.azure.net/.default",
+                    cancellationToken)
+                .ConfigureAwait(false);
+            return new AmqpToken(token, TryParseJwtExpiry(token));
+        }
+
+        private static DateTimeOffset? TryParseJwtExpiry(string token)
+        {
+            if (string.IsNullOrWhiteSpace(token))
             {
-                return existing;
+                return null;
             }
 
-            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            var firstDot = token.IndexOf('.');
+            if (firstDot < 0)
+            {
+                return null;
+            }
+
+            var secondDot = token.IndexOf('.', firstDot + 1);
+            if (secondDot < 0)
+            {
+                return null;
+            }
+
+            var payload = token.AsSpan(firstDot + 1, secondDot - firstDot - 1);
+            if (payload.IsEmpty)
+            {
+                return null;
+            }
+
+            var requiredLength = GetBase64UrlDecodedLength(payload.Length);
+            var rented = ArrayPool<byte>.Shared.Rent(requiredLength);
             try
             {
-                existing = _connection;
-                if (existing is not null && !existing.IsClosed)
+                if (!TryDecodeBase64Url(payload, rented, out var written))
                 {
-                    return existing;
+                    return null;
                 }
 
-                if (existing is not null)
+                var reader = new Utf8JsonReader(rented.AsSpan(0, written), true, default);
+                while (reader.Read())
                 {
-                    try { await existing.DisposeAsync().ConfigureAwait(false); } catch { }
-                    Volatile.Write(ref _connection, null);
+                    if (reader.TokenType == JsonTokenType.PropertyName
+                        && reader.ValueTextEquals("exp")
+                        && reader.Read()
+                        && reader.TokenType == JsonTokenType.Number
+                        && reader.TryGetInt64(out var seconds))
+                    {
+                        return DateTimeOffset.FromUnixTimeSeconds(seconds);
+                    }
                 }
 
-                var transport = await ServiceBusAmqpConnector.ConnectAsync(endpoint, cancellationToken).ConfigureAwait(false);
-                try
-                {
-                    var created = await ServiceBusAmqpConnection.OpenAsync(
-                            transport,
-                            CreateTokenProvider(tokenProvider, credentials),
-                            connectionSettings with { Hostname = endpoint.LogicalNamespace },
-                            cancellationToken)
-                        .ConfigureAwait(false);
-                    Volatile.Write(ref _connection, created);
-                    return created;
-                }
-                catch
-                {
-                    await transport.DisposeAsync().ConfigureAwait(false);
-                    throw;
-                }
+                return null;
             }
             finally
             {
-                _gate.Release();
+                ArrayPool<byte>.Shared.Return(rented);
             }
         }
 
-        public async ValueTask DisposeAsync()
+        private static int GetBase64UrlDecodedLength(int encodedLength)
         {
-            if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            {
-                return;
-            }
+            var paddedLength = encodedLength + ((4 - (encodedLength % 4)) % 4);
+            return (paddedLength / 4) * 3;
+        }
 
-            await _gate.WaitAsync().ConfigureAwait(false);
+        private static bool TryDecodeBase64Url(ReadOnlySpan<char> encoded, Span<byte> destination, out int written)
+        {
+            var paddedLength = encoded.Length + ((4 - (encoded.Length % 4)) % 4);
+            var rented = ArrayPool<char>.Shared.Rent(paddedLength);
             try
             {
-                if (_connection is not null)
+                for (var i = 0; i < encoded.Length; i++)
                 {
-                    await _connection.DisposeAsync().ConfigureAwait(false);
-                    Volatile.Write(ref _connection, null);
+                    rented[i] = encoded[i] switch
+                    {
+                        '-' => '+',
+                        '_' => '/',
+                        var value => value,
+                    };
                 }
+
+                for (var i = encoded.Length; i < paddedLength; i++)
+                {
+                    rented[i] = '=';
+                }
+
+                return Convert.TryFromBase64Chars(rented.AsSpan(0, paddedLength), destination, out written);
             }
             finally
             {
-                _gate.Release();
-                _gate.Dispose();
-            }
-        }
-
-        private static IAmqpTokenProvider CreateTokenProvider(EntraIdTokenProvider tokenProvider, ServiceBusTopicsCredentials credentials)
-        {
-            if (!string.IsNullOrWhiteSpace(credentials.SasKeyName)
-                && !string.IsNullOrWhiteSpace(credentials.SasKey))
-            {
-                return new ServiceBusSasTokenProvider(credentials.SasKeyName, credentials.SasKey);
-            }
-
-            return new ServiceBusTopicsBearerTokenProvider(tokenProvider, credentials);
-        }
-
-        private sealed class ServiceBusTopicsBearerTokenProvider : IAmqpTokenProvider
-        {
-            private readonly EntraIdTokenProvider _tokenProvider;
-            private readonly ServiceBusTopicsCredentials _credentials;
-
-            public ServiceBusTopicsBearerTokenProvider(EntraIdTokenProvider tokenProvider, ServiceBusTopicsCredentials credentials)
-            {
-                _tokenProvider = tokenProvider;
-                _credentials = credentials;
-            }
-
-            public string TokenType => "jwt";
-
-            public AmqpToken GetToken(string audience)
-            {
-                _ = audience;
-                var auth = new AadAuthSettings(_credentials.AuthMode, _credentials.TenantId, _credentials.ClientId, _credentials.ClientSecret);
-                var token = _tokenProvider
-                    .GetTokenAsync(
-                        auth,
-                        "https://servicebus.azure.net/.default")
-                    .AsTask()
-                    .GetAwaiter()
-                    .GetResult();
-                return new AmqpToken(token, TryParseJwtExpiry(token));
-            }
-
-            private static DateTimeOffset? TryParseJwtExpiry(string token)
-            {
-                if (string.IsNullOrWhiteSpace(token))
-                {
-                    return null;
-                }
-
-                var firstDot = token.IndexOf('.');
-                if (firstDot < 0)
-                {
-                    return null;
-                }
-
-                var secondDot = token.IndexOf('.', firstDot + 1);
-                if (secondDot < 0)
-                {
-                    return null;
-                }
-
-                var payload = token.AsSpan(firstDot + 1, secondDot - firstDot - 1);
-                if (payload.IsEmpty)
-                {
-                    return null;
-                }
-
-                var requiredLength = GetBase64UrlDecodedLength(payload.Length);
-                var rented = ArrayPool<byte>.Shared.Rent(requiredLength);
-                try
-                {
-                    if (!TryDecodeBase64Url(payload, rented, out var written))
-                    {
-                        return null;
-                    }
-
-                    var reader = new Utf8JsonReader(rented.AsSpan(0, written), true, default);
-                    while (reader.Read())
-                    {
-                        if (reader.TokenType == JsonTokenType.PropertyName
-                            && reader.ValueTextEquals("exp")
-                            && reader.Read()
-                            && reader.TokenType == JsonTokenType.Number
-                            && reader.TryGetInt64(out var seconds))
-                        {
-                            return DateTimeOffset.FromUnixTimeSeconds(seconds);
-                        }
-                    }
-
-                    return null;
-                }
-                finally
-                {
-                    ArrayPool<byte>.Shared.Return(rented);
-                }
-            }
-
-            private static int GetBase64UrlDecodedLength(int encodedLength)
-            {
-                var paddedLength = encodedLength + ((4 - (encodedLength % 4)) % 4);
-                return (paddedLength / 4) * 3;
-            }
-
-            private static bool TryDecodeBase64Url(ReadOnlySpan<char> encoded, Span<byte> destination, out int written)
-            {
-                var paddedLength = encoded.Length + ((4 - (encoded.Length % 4)) % 4);
-                var rented = ArrayPool<char>.Shared.Rent(paddedLength);
-                try
-                {
-                    for (var i = 0; i < encoded.Length; i++)
-                    {
-                        rented[i] = encoded[i] switch
-                        {
-                            '-' => '+',
-                            '_' => '/',
-                            var value => value,
-                        };
-                    }
-
-                    for (var i = encoded.Length; i < paddedLength; i++)
-                    {
-                        rented[i] = '=';
-                    }
-
-                    return Convert.TryFromBase64Chars(rented.AsSpan(0, paddedLength), destination, out written);
-                }
-                finally
-                {
-                    ArrayPool<char>.Shared.Return(rented);
-                }
+                ArrayPool<char>.Shared.Return(rented);
             }
         }
     }

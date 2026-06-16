@@ -59,7 +59,7 @@ internal sealed class CbsAuthenticator : IAsyncDisposable
         if (Volatile.Read(ref _opened) == 0)
             throw new InvalidOperationException("OpenAsync must be called before PutTokenAsync.");
 
-        var token = _tokenProvider.GetToken(audience);
+        var token = await _tokenProvider.GetTokenAsync(audience, cancellationToken).ConfigureAwait(false);
         var request = new AmqpMessage
         {
             ApplicationProperties = new Dictionary<string, object?>(StringComparer.Ordinal)
