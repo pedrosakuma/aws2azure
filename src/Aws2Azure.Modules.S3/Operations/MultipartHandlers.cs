@@ -45,7 +45,7 @@ internal static class MultipartHandlers
             S3Operation.AbortMultipartUpload  => AbortAsync(context, blob, route.Bucket!, route.Key!, ct),
             S3Operation.ListParts             => ListPartsAsync(context, blob, route.Bucket!, route.Key!, ct),
             S3Operation.ListMultipartUploads  => ListMultipartUploadsAsync(context, blob, route.Bucket!, ct),
-            _ => WriteErrorAsync(context, S3ErrorMapping.NotImplemented(route.Operation)),
+            _ => S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NotImplemented(route.Operation)),
         };
 
     // ---------- CreateMultipartUpload ----------
@@ -54,12 +54,12 @@ internal static class MultipartHandlers
     {
         if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
-            await WriteErrorAsync(ctx, bucketError).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, bucketError).ConfigureAwait(false);
             return;
         }
         if (!S3ObjectKey.IsValid(key))
         {
-            await WriteErrorAsync(ctx, S3ErrorMapping.InvalidObjectKey()).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.InvalidObjectKey()).ConfigureAwait(false);
             return;
         }
 
@@ -68,7 +68,7 @@ internal static class MultipartHandlers
         // would then UploadPart against and fail.
         if (await CheckBucketAsync(blob, bucket, ct).ConfigureAwait(false) is { } bucketErr)
         {
-            await WriteErrorAsync(ctx, bucketErr).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, bucketErr).ConfigureAwait(false);
             return;
         }
 
@@ -83,7 +83,7 @@ internal static class MultipartHandlers
     {
         if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
-            await WriteErrorAsync(ctx, bucketError).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, bucketError).ConfigureAwait(false);
             return;
         }
         var uploadId = ctx.Request.Query["uploadId"].ToString();
@@ -91,7 +91,7 @@ internal static class MultipartHandlers
         if (!int.TryParse(partRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var partNumber) ||
             partNumber is < 1 or > 10000)
         {
-            await WriteErrorAsync(ctx, S3ErrorMapping.InvalidArgument(
+            await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.InvalidArgument(
                 "partNumber must be an integer in [1, 10000].")).ConfigureAwait(false);
             return;
         }
@@ -99,7 +99,7 @@ internal static class MultipartHandlers
         var token = UploadIdCodec.TryDecode(uploadId, blob.AccountName, bucket, key, blob.AccountKeyBytes);
         if (token is null)
         {
-            await WriteErrorAsync(ctx, NoSuchUpload()).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, NoSuchUpload()).ConfigureAwait(false);
             return;
         }
 
@@ -152,7 +152,7 @@ internal static class MultipartHandlers
             using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
             if (!azureResp.IsSuccessStatusCode)
             {
-                await WriteErrorAsync(ctx, S3ErrorMapping.FromAzure(azureResp, S3Operation.UploadPart)).ConfigureAwait(false);
+                await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.FromAzure(azureResp, S3Operation.UploadPart)).ConfigureAwait(false);
                 return;
             }
 
@@ -182,7 +182,7 @@ internal static class MultipartHandlers
     {
         if (S3ErrorMapping.ClassifyLookupBucketName(destBucket) is { } destBucketError)
         {
-            await WriteErrorAsync(ctx, destBucketError).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, destBucketError).ConfigureAwait(false);
             return;
         }
         var uploadId = ctx.Request.Query["uploadId"].ToString();
@@ -190,7 +190,7 @@ internal static class MultipartHandlers
         if (!int.TryParse(partRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var partNumber) ||
             partNumber is < 1 or > 10000)
         {
-            await WriteErrorAsync(ctx, S3ErrorMapping.InvalidArgument(
+            await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.InvalidArgument(
                 "partNumber must be an integer in [1, 10000].")).ConfigureAwait(false);
             return;
         }
@@ -198,7 +198,7 @@ internal static class MultipartHandlers
         var token = UploadIdCodec.TryDecode(uploadId, blob.AccountName, destBucket, destKey, blob.AccountKeyBytes);
         if (token is null)
         {
-            await WriteErrorAsync(ctx, NoSuchUpload()).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, NoSuchUpload()).ConfigureAwait(false);
             return;
         }
 
@@ -208,7 +208,7 @@ internal static class MultipartHandlers
         var parsed = CopySourceParser.Parse(rawSource);
         if (!parsed.Success)
         {
-            await WriteErrorAsync(ctx, S3ErrorMapping.InvalidArgument(parsed.Error!)).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.InvalidArgument(parsed.Error!)).ConfigureAwait(false);
             return;
         }
         var sourceBucket = parsed.Bucket!;
@@ -216,14 +216,14 @@ internal static class MultipartHandlers
 
         if (!BlobClient.IsValidContainerName(sourceBucket))
         {
-            await WriteErrorAsync(ctx,
+            await S3ErrorMapping.WriteAsync(ctx,
                 new S3ErrorMapping.Mapping(400, "InvalidBucketName",
                     "The specified copy-source bucket is not valid.")).ConfigureAwait(false);
             return;
         }
         if (!S3ObjectKey.IsValid(sourceKey))
         {
-            await WriteErrorAsync(ctx,
+            await S3ErrorMapping.WriteAsync(ctx,
                 S3ErrorMapping.InvalidArgument("The specified copy-source object key is not valid.")).ConfigureAwait(false);
             return;
         }
@@ -236,7 +236,7 @@ internal static class MultipartHandlers
         if (string.Equals(sourceBucket, destBucket, StringComparison.Ordinal)
             && string.Equals(sourceKey, destKey, StringComparison.Ordinal))
         {
-            await WriteErrorAsync(ctx, new S3ErrorMapping.Mapping(400, "InvalidRequest",
+            await S3ErrorMapping.WriteAsync(ctx, new S3ErrorMapping.Mapping(400, "InvalidRequest",
                 "The copy source and destination of an UploadPartCopy must differ.")).ConfigureAwait(false);
             return;
         }
@@ -244,7 +244,7 @@ internal static class MultipartHandlers
         var rangeHeader = NormalizeCopySourceRange(ctx.Request);
         if (rangeHeader.Error is { } rangeErr)
         {
-            await WriteErrorAsync(ctx, rangeErr).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, rangeErr).ConfigureAwait(false);
             return;
         }
 
@@ -270,7 +270,7 @@ internal static class MultipartHandlers
         if (HeaderForwarding.HasConcreteEtagPrecondition(ctx.Request, "x-amz-copy-source-if-match") ||
             HeaderForwarding.HasConcreteEtagPrecondition(ctx.Request, "x-amz-copy-source-if-none-match"))
         {
-            await WriteErrorAsync(ctx,
+            await S3ErrorMapping.WriteAsync(ctx,
                 new S3ErrorMapping.Mapping(StatusCodes.Status501NotImplemented,
                     "NotImplemented",
                     "aws2azure: UploadPartCopy with a concrete-ETag x-amz-copy-source-if-match / x-amz-copy-source-if-none-match precondition is not supported (only '*' is honored). Proxy-translated S3 ETags do not round-trip back to Azure's raw ETag space."))
@@ -291,7 +291,7 @@ internal static class MultipartHandlers
             // Distinguish the source-side 404 (NoSuchKey) from the
             // destination-side 404 (NoSuchBucket); both surface as 404 from
             // Azure with x-ms-error-code on the response.
-            await WriteErrorAsync(ctx, S3ErrorMapping.FromAzure(azureResp, S3Operation.UploadPartCopy)).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.FromAzure(azureResp, S3Operation.UploadPartCopy)).ConfigureAwait(false);
             return;
         }
 
@@ -384,14 +384,14 @@ internal static class MultipartHandlers
     {
         if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
-            await WriteErrorAsync(ctx, bucketError).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, bucketError).ConfigureAwait(false);
             return;
         }
         var uploadId = ctx.Request.Query["uploadId"].ToString();
         var token = UploadIdCodec.TryDecode(uploadId, blob.AccountName, bucket, key, blob.AccountKeyBytes);
         if (token is null)
         {
-            await WriteErrorAsync(ctx, NoSuchUpload()).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, NoSuchUpload()).ConfigureAwait(false);
             return;
         }
 
@@ -404,7 +404,7 @@ internal static class MultipartHandlers
         }
         catch (InvalidDataException)
         {
-            await WriteErrorAsync(ctx, new S3ErrorMapping.Mapping(
+            await S3ErrorMapping.WriteAsync(ctx, new S3ErrorMapping.Mapping(
                 StatusCodes.Status400BadRequest, "EntityTooLarge",
                 "CompleteMultipartUpload body exceeded the allowed size.")).ConfigureAwait(false);
             return;
@@ -414,7 +414,7 @@ internal static class MultipartHandlers
         var parsed = CompleteMultipartUploadParser.Parse(buffered);
         if (!parsed.Success)
         {
-            await WriteErrorAsync(ctx, new S3ErrorMapping.Mapping(
+            await S3ErrorMapping.WriteAsync(ctx, new S3ErrorMapping.Mapping(
                 StatusCodes.Status400BadRequest, "MalformedXML",
                 parsed.Error ?? "The XML you provided was not well-formed.")).ConfigureAwait(false);
             return;
@@ -447,7 +447,7 @@ internal static class MultipartHandlers
                 mapping = new S3ErrorMapping.Mapping(400, "InvalidPart",
                     "One or more of the specified parts could not be found.");
             }
-            await WriteErrorAsync(ctx, mapping).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, mapping).ConfigureAwait(false);
             return;
         }
 
@@ -464,20 +464,20 @@ internal static class MultipartHandlers
     {
         if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
-            await WriteErrorAsync(ctx, bucketError).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, bucketError).ConfigureAwait(false);
             return;
         }
         var uploadId = ctx.Request.Query["uploadId"].ToString();
         var token = UploadIdCodec.TryDecode(uploadId, blob.AccountName, bucket, key, blob.AccountKeyBytes);
         if (token is null)
         {
-            await WriteErrorAsync(ctx, NoSuchUpload()).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, NoSuchUpload()).ConfigureAwait(false);
             return;
         }
 
         if (await CheckBucketAsync(blob, bucket, ct).ConfigureAwait(false) is { } bucketErr)
         {
-            await WriteErrorAsync(ctx, bucketErr).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, bucketErr).ConfigureAwait(false);
             return;
         }
 
@@ -499,21 +499,21 @@ internal static class MultipartHandlers
     {
         if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
-            await WriteErrorAsync(ctx, bucketError).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, bucketError).ConfigureAwait(false);
             return;
         }
         var uploadId = ctx.Request.Query["uploadId"].ToString();
         var token = UploadIdCodec.TryDecode(uploadId, blob.AccountName, bucket, key, blob.AccountKeyBytes);
         if (token is null)
         {
-            await WriteErrorAsync(ctx, NoSuchUpload()).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, NoSuchUpload()).ConfigureAwait(false);
             return;
         }
 
         var (maxParts, maxPartsErr) = ParseMaxParts(ctx.Request.Query);
-        if (maxPartsErr is not null) { await WriteErrorAsync(ctx, maxPartsErr.Value).ConfigureAwait(false); return; }
+        if (maxPartsErr is not null) { await S3ErrorMapping.WriteAsync(ctx, maxPartsErr.Value).ConfigureAwait(false); return; }
         var (marker, markerErr) = ParsePartNumberMarker(ctx.Request.Query);
-        if (markerErr is not null) { await WriteErrorAsync(ctx, markerErr.Value).ConfigureAwait(false); return; }
+        if (markerErr is not null) { await S3ErrorMapping.WriteAsync(ctx, markerErr.Value).ConfigureAwait(false); return; }
 
         using var azureResp = await blob.GetBlockListAsync(bucket, key, "uncommitted", ct).ConfigureAwait(false);
         if (azureResp.StatusCode == HttpStatusCode.NotFound)
@@ -525,7 +525,7 @@ internal static class MultipartHandlers
             var azureErrorCode = ReadHeader(azureResp, "x-ms-error-code");
             if (string.Equals(azureErrorCode, "ContainerNotFound", StringComparison.Ordinal))
             {
-                await WriteErrorAsync(ctx, S3ErrorMapping.FromAzure(azureResp, S3Operation.ListParts)).ConfigureAwait(false);
+                await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.FromAzure(azureResp, S3Operation.ListParts)).ConfigureAwait(false);
                 return;
             }
             var emptyXml = S3XmlWriter.ListPartsResult(bucket, key, uploadId,
@@ -535,7 +535,7 @@ internal static class MultipartHandlers
         }
         if (!azureResp.IsSuccessStatusCode)
         {
-            await WriteErrorAsync(ctx, S3ErrorMapping.FromAzure(azureResp, S3Operation.ListParts)).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.FromAzure(azureResp, S3Operation.ListParts)).ConfigureAwait(false);
             return;
         }
 
@@ -587,13 +587,13 @@ internal static class MultipartHandlers
     {
         if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
-            await WriteErrorAsync(ctx, bucketError).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, bucketError).ConfigureAwait(false);
             return;
         }
 
         if (await CheckBucketAsync(blob, bucket, ct).ConfigureAwait(false) is { } bucketErr)
         {
-            await WriteErrorAsync(ctx, bucketErr).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, bucketErr).ConfigureAwait(false);
             return;
         }
 
@@ -679,10 +679,6 @@ internal static class MultipartHandlers
         ctx.Response.ContentLength = bytes.Length;
         await ctx.Response.Body.WriteAsync(bytes, ct).ConfigureAwait(false);
     }
-
-    private static Task WriteErrorAsync(HttpContext ctx, S3ErrorMapping.Mapping mapping) =>
-        AwsErrorResponse.WriteAsync(ctx, Aws2Azure.Core.Modules.AwsErrorFormat.Xml,
-            mapping.StatusCode, mapping.Code, mapping.Message);
 
     private static string? ReadHeader(HttpResponseMessage resp, string name)
     {

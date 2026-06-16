@@ -34,7 +34,7 @@ internal static class BucketLifecycleHandlers
                 await HeadBucketAsync(context, blob, route.Bucket!, cancellationToken).ConfigureAwait(false);
                 break;
             default:
-                await WriteErrorAsync(context, S3ErrorMapping.NotImplemented(route.Operation)).ConfigureAwait(false);
+                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NotImplemented(route.Operation)).ConfigureAwait(false);
                 break;
         }
     }
@@ -50,7 +50,7 @@ internal static class BucketLifecycleHandlers
             using var response = await blob.ListContainersAsync(marker, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                await WriteErrorAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.ListBuckets)).ConfigureAwait(false);
+                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.ListBuckets)).ConfigureAwait(false);
                 return;
             }
             var xml = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
@@ -87,7 +87,7 @@ internal static class BucketLifecycleHandlers
     {
         if (!BlobClient.IsValidContainerName(bucket))
         {
-            await WriteErrorAsync(context, S3ErrorMapping.InvalidBucketName()).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidBucketName()).ConfigureAwait(false);
             return;
         }
 
@@ -109,7 +109,7 @@ internal static class BucketLifecycleHandlers
                 return;
             }
 
-            await WriteErrorAsync(context, mapping).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, mapping).ConfigureAwait(false);
             return;
         }
 
@@ -140,14 +140,14 @@ internal static class BucketLifecycleHandlers
     {
         if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
-            await WriteErrorAsync(context, bucketError).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, bucketError).ConfigureAwait(false);
             return;
         }
 
         using var response = await blob.DeleteContainerAsync(bucket, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.DeleteBucket)).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.DeleteBucket)).ConfigureAwait(false);
             return;
         }
 
@@ -184,14 +184,6 @@ internal static class BucketLifecycleHandlers
         context.Response.ContentType = "application/xml; charset=utf-8";
         return context.Response.WriteAsync(body);
     }
-
-    private static Task WriteErrorAsync(HttpContext context, S3ErrorMapping.Mapping mapping) =>
-        AwsErrorResponse.WriteAsync(
-            context,
-            AwsErrorFormat.Xml,
-            mapping.StatusCode,
-            mapping.Code,
-            mapping.Message);
 
     private static Task EmitHeadErrorAsync(HttpContext context, S3ErrorMapping.Mapping mapping)
     {

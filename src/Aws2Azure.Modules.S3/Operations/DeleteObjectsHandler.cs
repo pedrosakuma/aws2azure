@@ -29,7 +29,7 @@ internal static class DeleteObjectsHandler
         var bucket = route.Bucket ?? string.Empty;
         if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
-            await WriteErrorAsync(context, bucketError).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, bucketError).ConfigureAwait(false);
             return;
         }
 
@@ -42,7 +42,7 @@ internal static class DeleteObjectsHandler
         var hasChecksumAlgo = context.Request.Headers.ContainsKey("x-amz-sdk-checksum-algorithm");
         if (string.IsNullOrEmpty(contentMd5) && !hasChecksumAlgo)
         {
-            await WriteErrorAsync(context, new S3ErrorMapping.Mapping(400, "InvalidRequest",
+            await S3ErrorMapping.WriteAsync(context, new S3ErrorMapping.Mapping(400, "InvalidRequest",
                 "Missing required header for this request: Content-MD5.")).ConfigureAwait(false);
             return;
         }
@@ -63,13 +63,13 @@ internal static class DeleteObjectsHandler
         }
         catch (InvalidDataException)
         {
-            await WriteErrorAsync(context, new S3ErrorMapping.Mapping(400, "EntityTooLarge",
+            await S3ErrorMapping.WriteAsync(context, new S3ErrorMapping.Mapping(400, "EntityTooLarge",
                 $"DeleteObjects request body exceeds the {MaxBodyBytes}-byte limit.")).ConfigureAwait(false);
             return;
         }
         catch (Exception ex)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.InvalidArgument("MalformedXML: " + ex.Message)).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidArgument("MalformedXML: " + ex.Message)).ConfigureAwait(false);
             return;
         }
 
@@ -79,7 +79,7 @@ internal static class DeleteObjectsHandler
             var actual = Convert.ToBase64String(digest);
             if (!string.Equals(actual, contentMd5.Trim(), StringComparison.Ordinal))
             {
-                await WriteErrorAsync(context, new S3ErrorMapping.Mapping(400, "BadDigest",
+                await S3ErrorMapping.WriteAsync(context, new S3ErrorMapping.Mapping(400, "BadDigest",
                     "The Content-MD5 you specified did not match what we received.")).ConfigureAwait(false);
                 return;
             }
@@ -93,13 +93,13 @@ internal static class DeleteObjectsHandler
         }
         catch (Exception ex)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.InvalidArgument("MalformedXML: " + ex.Message)).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidArgument("MalformedXML: " + ex.Message)).ConfigureAwait(false);
             return;
         }
 
         if (!parsed.Success)
         {
-            await WriteErrorAsync(context,
+            await S3ErrorMapping.WriteAsync(context,
                 new S3ErrorMapping.Mapping(400, "MalformedXML", parsed.Error!)).ConfigureAwait(false);
             return;
         }
@@ -111,7 +111,7 @@ internal static class DeleteObjectsHandler
         var bucketCheck = await CheckBucketAsync(blob, bucket, ct).ConfigureAwait(false);
         if (bucketCheck is { } bucketErr)
         {
-            await WriteErrorAsync(context, bucketErr).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, bucketErr).ConfigureAwait(false);
             return;
         }
 
@@ -277,12 +277,4 @@ internal static class DeleteObjectsHandler
         private void ThrowTooLarge() =>
             throw new InvalidDataException($"Request body exceeded the {_limit}-byte limit.");
     }
-
-    private static Task WriteErrorAsync(HttpContext context, S3ErrorMapping.Mapping mapping) =>
-        Core.Modules.AwsErrorResponse.WriteAsync(
-            context,
-            Core.Modules.AwsErrorFormat.Xml,
-            mapping.StatusCode,
-            mapping.Code,
-            mapping.Message);
 }

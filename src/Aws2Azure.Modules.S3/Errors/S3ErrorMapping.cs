@@ -164,6 +164,21 @@ internal static class S3ErrorMapping
         new(403, "AccessDenied",
             "No Azure Blob credentials are configured for the authenticated AWS access key.");
 
+    /// <summary>
+    /// Writes <paramref name="mapping"/> as an S3-shaped (XML) error response.
+    /// Single home for the error-emit call so every handler renders errors
+    /// identically (status + <c>Code</c> + <c>Message</c>); previously each
+    /// handler carried its own copy of this one-liner.
+    /// </summary>
+    public static System.Threading.Tasks.Task WriteAsync(
+        Microsoft.AspNetCore.Http.HttpContext context, Mapping mapping) =>
+        Aws2Azure.Core.Modules.AwsErrorResponse.WriteAsync(
+            context,
+            Aws2Azure.Core.Modules.AwsErrorFormat.Xml,
+            mapping.StatusCode,
+            mapping.Code,
+            mapping.Message);
+
     private static string? TryGetAzureErrorCode(HttpResponseMessage response)
     {
         if (response.Headers.TryGetValues("x-ms-error-code", out var values))

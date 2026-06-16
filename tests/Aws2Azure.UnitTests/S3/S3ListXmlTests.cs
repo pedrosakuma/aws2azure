@@ -1,3 +1,4 @@
+using System.Text;
 using System.Xml.Linq;
 using Aws2Azure.Modules.S3.Xml;
 
@@ -19,7 +20,7 @@ public class S3ListXmlTests
         };
         var prefixes = new[] { "b/", "c/" };
 
-        var xml = S3XmlWriter.ListObjectsV2Result(
+        var xml = RenderListObjectsV2(
             bucket: "my-bucket",
             prefix: "a/",
             delimiter: "/",
@@ -55,7 +56,7 @@ public class S3ListXmlTests
     [Fact]
     public void ListObjectsV2Result_emits_next_continuation_token_when_truncated()
     {
-        var xml = S3XmlWriter.ListObjectsV2Result(
+        var xml = RenderListObjectsV2(
             bucket: "b",
             prefix: null,
             delimiter: null,
@@ -83,7 +84,7 @@ public class S3ListXmlTests
             new S3XmlWriter.ListedObject("with space/and+plus.txt",
                 DateTimeOffset.Parse("2024-05-01T10:11:12Z"), null, 1, "STANDARD"),
         };
-        var xml = S3XmlWriter.ListObjectsV2Result(
+        var xml = RenderListObjectsV2(
             bucket: "b",
             prefix: "with space/",
             delimiter: "/",
@@ -116,7 +117,7 @@ public class S3ListXmlTests
             new S3XmlWriter.ListedObject("already-quoted.txt",
                 DateTimeOffset.Parse("2024-05-01T10:11:12Z"), "\"abc\"", 1, "STANDARD"),
         };
-        var xml = S3XmlWriter.ListObjectsV2Result(
+        var xml = RenderListObjectsV2(
             bucket: "b", prefix: null, delimiter: null, maxKeys: 1000,
             keyCount: 2, isTruncated: false,
             continuationToken: null, nextContinuationToken: null, startAfter: null,
@@ -132,7 +133,7 @@ public class S3ListXmlTests
     [Fact]
     public void ListBucketResult_v1_emits_marker_and_next_marker_when_truncated_with_delimiter()
     {
-        var xml = S3XmlWriter.ListBucketResult(
+        var xml = RenderListBucketV1(
             bucket: "b",
             prefix: null,
             delimiter: "/",
@@ -148,6 +149,52 @@ public class S3ListXmlTests
         Assert.Equal("incoming", doc.Root!.Element(S3Ns + "Marker")!.Value);
         Assert.Equal("stop-here", doc.Root!.Element(S3Ns + "NextMarker")!.Value);
         Assert.Equal("true", doc.Root!.Element(S3Ns + "IsTruncated")!.Value);
+    }
+
+    // Render helpers wrap the async stream overloads (the production API) and
+    // return the body as a string so the assertions below can parse it. The
+    // module no longer ships string-returning overloads (they were dead outside
+    // tests); these helpers keep the test ergonomics without that production
+    // surface.
+    private static string RenderListObjectsV2(
+        string bucket,
+        string? prefix,
+        string? delimiter,
+        int maxKeys,
+        int keyCount,
+        bool isTruncated,
+        string? continuationToken,
+        string? nextContinuationToken,
+        string? startAfter,
+        bool encodeUrl,
+        IReadOnlyList<S3XmlWriter.ListedObject> contents,
+        IReadOnlyList<string> commonPrefixes)
+    {
+        using var ms = new MemoryStream();
+        S3XmlWriter.WriteListObjectsV2ResultAsync(
+            ms, bucket, prefix, delimiter, maxKeys, keyCount, isTruncated,
+            continuationToken, nextContinuationToken, startAfter, encodeUrl,
+            contents, commonPrefixes).GetAwaiter().GetResult();
+        return Encoding.UTF8.GetString(ms.ToArray());
+    }
+
+    private static string RenderListBucketV1(
+        string bucket,
+        string? prefix,
+        string? delimiter,
+        int maxKeys,
+        bool isTruncated,
+        string? marker,
+        string? nextMarker,
+        bool encodeUrl,
+        IReadOnlyList<S3XmlWriter.ListedObject> contents,
+        IReadOnlyList<string> commonPrefixes)
+    {
+        using var ms = new MemoryStream();
+        S3XmlWriter.WriteListBucketResultAsync(
+            ms, bucket, prefix, delimiter, maxKeys, isTruncated, marker, nextMarker,
+            encodeUrl, contents, commonPrefixes).GetAwaiter().GetResult();
+        return Encoding.UTF8.GetString(ms.ToArray());
     }
 }
 

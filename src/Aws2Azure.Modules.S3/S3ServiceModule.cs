@@ -84,20 +84,20 @@ public sealed class S3ServiceModule : IServiceModule
 
         if (route.VirtualHosted)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.VirtualHostedNotSupported()).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.VirtualHostedNotSupported()).ConfigureAwait(false);
             return;
         }
 
         if (route.Operation is S3Operation.Unknown or S3Operation.Unsupported)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.NotImplemented(route.Operation)).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NotImplemented(route.Operation)).ConfigureAwait(false);
             return;
         }
 
         var accessKey = context.Items["aws2azure.accessKeyId"] as string;
         if (string.IsNullOrEmpty(accessKey))
         {
-            await WriteErrorAsync(context, new S3ErrorMapping.Mapping(
+            await S3ErrorMapping.WriteAsync(context, new S3ErrorMapping.Mapping(
                 StatusCodes.Status403Forbidden, "AccessDenied",
                 "aws2azure: SigV4 must run before the S3 module dispatch.")).ConfigureAwait(false);
             return;
@@ -105,7 +105,7 @@ public sealed class S3ServiceModule : IServiceModule
 
         if (_credentials.GetAzureCredentialsFor(accessKey, AzureService.Blob) is not BlobCredentials blobCreds)
         {
-            await WriteErrorAsync(context, S3ErrorMapping.NoCredentials()).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoCredentials()).ConfigureAwait(false);
             return;
         }
 
@@ -174,12 +174,4 @@ public sealed class S3ServiceModule : IServiceModule
         S3Operation.GetObjectTorrent or S3Operation.RestoreObject or
         S3Operation.GetObjectRetention or S3Operation.PutObjectRetention or
         S3Operation.GetObjectLegalHold or S3Operation.PutObjectLegalHold;
-
-    private static Task WriteErrorAsync(HttpContext context, S3ErrorMapping.Mapping mapping) =>
-        AwsErrorResponse.WriteAsync(
-            context,
-            AwsErrorFormat.Xml,
-            mapping.StatusCode,
-            mapping.Code,
-            mapping.Message);
 }
