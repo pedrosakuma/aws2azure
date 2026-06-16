@@ -29,6 +29,7 @@ jobs:
     timeout-minutes: 60
     env:
       AWS2AZURE_PERF: "1"
+      AWS2AZURE_PERF_UPDATE_DOCS: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4

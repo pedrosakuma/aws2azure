@@ -4,7 +4,8 @@ using System.Text;
 namespace Aws2Azure.PerfTests;
 
 /// <summary>
-/// Persists <see cref="PerfResult"/> rows to two files under <c>docs/perf/</c>:
+/// Persists <see cref="PerfResult"/> rows to report files. Local runs default to
+/// <c>TestResults/perf/</c>; CI opts into the tracked <c>docs/perf/</c> baseline.
 /// <list type="bullet">
 ///   <item><c>baseline-latest.md</c> — single-row-per-scenario human-readable snapshot.
 ///   Existing rows for the same scenario are replaced in place; rows for other scenarios
@@ -13,6 +14,8 @@ namespace Aws2Azure.PerfTests;
 ///   manually) merge cleanly instead of wiping the prior baseline.</item>
 ///   <item><c>history.csv</c> — cumulative append-only history. Never overwritten.
 ///   One row per <see cref="Append"/> call so trend analysis is possible across runs.</item>
+///   <item><c>baseline-latest.json</c> — machine-readable merged rows consumed by
+///   the relative regression gate.</item>
 /// </list>
 /// </summary>
 internal static class PerfReport
@@ -212,17 +215,44 @@ internal static class PerfReport
             Directory.CreateDirectory(overrideDir);
             return overrideDir;
         }
+        if (TryFindRepoRoot(out var repoRoot))
+        {
+            if (ShouldUpdateDocsPerf())
+            {
+                return Path.Combine(repoRoot, "docs", "perf");
+            }
+
+            return Path.Combine(repoRoot, "TestResults", "perf");
+        }
+
+        return Path.Combine(AppContext.BaseDirectory, "perf");
+    }
+
+    private static bool TryFindRepoRoot(out string repoRoot)
+    {
         var dir = AppContext.BaseDirectory;
         while (!string.IsNullOrEmpty(dir))
         {
             if (Directory.Exists(Path.Combine(dir, "docs")) &&
                 Directory.Exists(Path.Combine(dir, "src")))
             {
-                return Path.Combine(dir, "docs", "perf");
+                repoRoot = dir;
+                return true;
             }
+
             dir = Path.GetDirectoryName(dir);
         }
-        return Path.Combine(AppContext.BaseDirectory, "perf");
+
+        repoRoot = string.Empty;
+        return false;
+    }
+
+    private static bool ShouldUpdateDocsPerf()
+    {
+        var value = Environment.GetEnvironmentVariable("AWS2AZURE_PERF_UPDATE_DOCS");
+        return string.Equals(value, "1", StringComparison.Ordinal) ||
+            string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string BuildHeader()
