@@ -1,3 +1,5 @@
+using Aws2Azure.Amqp.Security;
+
 namespace Aws2Azure.Amqp.ServiceBus;
 
 /// <summary>
@@ -19,5 +21,16 @@ internal interface IServiceBusAmqpConnectionFactory
         string sasKeyName,
         string sasKey,
         CancellationToken cancellationToken);
-}
 
+    /// <summary>
+    /// Opens a new connection using a caller-supplied CBS token provider.
+    /// <paramref name="credentialMarker"/> identifies the credential in
+    /// pool keys and diagnostics; the provider owns token generation.
+    /// </summary>
+    Task<ServiceBusAmqpConnection> CreateAsync(
+        ServiceBusAmqpEndpoint endpoint,
+        string credentialMarker,
+        IAmqpTokenProvider tokenProvider,
+        CancellationToken cancellationToken)
+        => throw new NotSupportedException("This factory does not support caller-supplied AMQP token providers.");
+}
