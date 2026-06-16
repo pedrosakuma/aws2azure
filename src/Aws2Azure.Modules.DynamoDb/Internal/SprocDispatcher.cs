@@ -69,6 +69,58 @@ internal static class SprocDispatcher
             : SprocWriteResult.NotAttempted;
     }
 
+    private static async Task<(bool Attempted, SprocExecuteResult? Result, SprocWriteResult ShortCircuit)>
+        TryExecuteSingleWriteAsync(
+            SprocContext ctx,
+            CosmosClient cosmos,
+            string containerName,
+            string partitionKey,
+            string docId,
+            SprocOperation operation,
+            ReadOnlyMemory<byte>? payload,
+            ConditionNode? condition,
+            UpdateExpressionAst? updateAst,
+            CancellationToken ct)
+    {
+        if (!ctx.IsSprocEnabled || ctx.Manager is null)
+        {
+            return (false, null, SprocWriteResult.NotAttempted);
+        }
+
+        if (GateEligibility(ctx, condition, updateAst) is { } gate)
+        {
+            return (false, null, gate);
+        }
+
+        var sprocReady = await ctx.Manager.EnsureSprocAsync(cosmos, containerName, ct).ConfigureAwait(false);
+        if (!sprocReady)
+        {
+            return (false, null, ctx.IsSprocRequired
+                ? SprocWriteResult.Failed("Stored procedure creation failed and mode=Required")
+                : SprocWriteResult.NotAttempted);
+        }
+
+        var conditionAstJson = SprocAstSerializer.SerializeCondition(condition);
+        var updateAstJson = SprocAstSerializer.SerializeUpdate(updateAst);
+        var result = await ctx.Manager.ExecuteAsync(
+            cosmos,
+            containerName,
+            partitionKey,
+            operation,
+            docId,
+            payload,
+            conditionAstJson,
+            updateAstJson,
+            ct).ConfigureAwait(false);
+
+        return (true, result, default);
+    }
+
+    private static SprocWriteResult MapExecutionFailure(SprocContext ctx, SprocExecuteResult result)
+        => ctx.IsSprocRequired
+            ? SprocWriteResult.Failed($"Sproc execution failed: {result.ErrorBody}")
+            : SprocWriteResult.NotAttempted;
+
     /// <summary>
     /// Attempts to execute a conditional PutItem via stored procedure.
     /// Returns (success, conditionFailed, error) tuple.
@@ -83,39 +135,15 @@ internal static class SprocDispatcher
         ConditionNode? condition,
         CancellationToken ct)
     {
-        if (!ctx.IsSprocEnabled || ctx.Manager is null)
+        var dispatch = await TryExecuteSingleWriteAsync(
+            ctx, cosmos, containerName, partitionKey, docId, SprocOperation.Put,
+            cosmosDocJson, condition, updateAst: null, ct).ConfigureAwait(false);
+        if (!dispatch.Attempted)
         {
-            return SprocWriteResult.NotAttempted;
+            return dispatch.ShortCircuit;
         }
 
-        if (GateEligibility(ctx, condition, update: null) is { } putGate)
-        {
-            return putGate;
-        }
-
-        // Ensure sproc exists
-        var sprocReady = await ctx.Manager.EnsureSprocAsync(cosmos, containerName, ct).ConfigureAwait(false);
-        if (!sprocReady)
-        {
-            return ctx.IsSprocRequired
-                ? SprocWriteResult.Failed("Stored procedure creation failed and mode=Required")
-                : SprocWriteResult.NotAttempted;
-        }
-
-        // Serialize condition AST
-        var conditionAst = SprocAstSerializer.SerializeCondition(condition);
-
-        // Execute sproc
-        var result = await ctx.Manager.ExecuteAsync(
-            cosmos,
-            containerName,
-            partitionKey,
-            SprocOperation.Put,
-            docId,
-            cosmosDocJson,
-            conditionAst,
-            updateAst: null,
-            ct).ConfigureAwait(false);
+        var result = dispatch.Result!;
 
         if (result.Success)
         {
@@ -127,10 +155,7 @@ internal static class SprocDispatcher
             return SprocWriteResult.ConditionNotMet();
         }
 
-        // Sproc execution failed
-        return ctx.IsSprocRequired
-            ? SprocWriteResult.Failed($"Sproc execution failed: {result.ErrorBody}")
-            : SprocWriteResult.NotAttempted; // Fallback to GET→PUT
+        return MapExecutionFailure(ctx, result); // Preferred falls back to GET→PUT.
     }
 
     /// <summary>
@@ -150,40 +175,15 @@ internal static class SprocDispatcher
         string returnValuesOnConditionCheckFailure,
         CancellationToken ct)
     {
-        if (!ctx.IsSprocEnabled || ctx.Manager is null)
+        var dispatch = await TryExecuteSingleWriteAsync(
+            ctx, cosmos, containerName, partitionKey, docId, SprocOperation.Update,
+            keyAttributesJson, condition, updateAst, ct).ConfigureAwait(false);
+        if (!dispatch.Attempted)
         {
-            return SprocWriteResult.NotAttempted;
+            return dispatch.ShortCircuit;
         }
 
-        if (GateEligibility(ctx, condition, updateAst) is { } updateGate)
-        {
-            return updateGate;
-        }
-
-        // Ensure sproc exists
-        var sprocReady = await ctx.Manager.EnsureSprocAsync(cosmos, containerName, ct).ConfigureAwait(false);
-        if (!sprocReady)
-        {
-            return ctx.IsSprocRequired
-                ? SprocWriteResult.Failed("Stored procedure creation failed and mode=Required")
-                : SprocWriteResult.NotAttempted;
-        }
-
-        // Serialize ASTs
-        var conditionAstJson = SprocAstSerializer.SerializeCondition(condition);
-        var updateAstJson = SprocAstSerializer.SerializeUpdate(updateAst);
-
-        // Execute sproc
-        var result = await ctx.Manager.ExecuteAsync(
-            cosmos,
-            containerName,
-            partitionKey,
-            SprocOperation.Update,
-            docId,
-            keyAttributesJson,
-            conditionAstJson,
-            updateAstJson,
-            ct).ConfigureAwait(false);
+        var result = dispatch.Result!;
 
         if (result.Success)
         {
@@ -209,10 +209,7 @@ internal static class SprocDispatcher
             return SprocWriteResult.ConditionNotMet(null);
         }
 
-        // Sproc execution failed
-        return ctx.IsSprocRequired
-            ? SprocWriteResult.Failed($"Sproc execution failed: {result.ErrorBody}")
-            : SprocWriteResult.NotAttempted;
+        return MapExecutionFailure(ctx, result);
     }
 
     /// <summary>
@@ -228,39 +225,15 @@ internal static class SprocDispatcher
         ConditionNode? condition,
         CancellationToken ct)
     {
-        if (!ctx.IsSprocEnabled || ctx.Manager is null)
+        var dispatch = await TryExecuteSingleWriteAsync(
+            ctx, cosmos, containerName, partitionKey, docId, SprocOperation.Delete,
+            payload: null, condition, updateAst: null, ct).ConfigureAwait(false);
+        if (!dispatch.Attempted)
         {
-            return SprocWriteResult.NotAttempted;
+            return dispatch.ShortCircuit;
         }
 
-        if (GateEligibility(ctx, condition, update: null) is { } deleteGate)
-        {
-            return deleteGate;
-        }
-
-        // Ensure sproc exists
-        var sprocReady = await ctx.Manager.EnsureSprocAsync(cosmos, containerName, ct).ConfigureAwait(false);
-        if (!sprocReady)
-        {
-            return ctx.IsSprocRequired
-                ? SprocWriteResult.Failed("Stored procedure creation failed and mode=Required")
-                : SprocWriteResult.NotAttempted;
-        }
-
-        // Serialize condition AST
-        var conditionAst = SprocAstSerializer.SerializeCondition(condition);
-
-        // Execute sproc
-        var result = await ctx.Manager.ExecuteAsync(
-            cosmos,
-            containerName,
-            partitionKey,
-            SprocOperation.Delete,
-            docId,
-            payload: null,
-            conditionAst,
-            updateAst: null,
-            ct).ConfigureAwait(false);
+        var result = dispatch.Result!;
 
         if (result.Success)
         {
@@ -272,10 +245,7 @@ internal static class SprocDispatcher
             return SprocWriteResult.ConditionNotMet();
         }
 
-        // Sproc execution failed
-        return ctx.IsSprocRequired
-            ? SprocWriteResult.Failed($"Sproc execution failed: {result.ErrorBody}")
-            : SprocWriteResult.NotAttempted;
+        return MapExecutionFailure(ctx, result);
     }
 
     /// <summary>
