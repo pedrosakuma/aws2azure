@@ -22,7 +22,7 @@ internal sealed class KeyVaultSecretClient
         _credentials = credentials ?? throw new ArgumentNullException(nameof(credentials));
     }
 
-    public static bool IsSupported(string operationName) => Array.Exists(SupportedOperations, item => string.Equals(item, operationName, StringComparison.OrdinalIgnoreCase));
+    public static bool IsSupported(string operationName) => Array.Exists(SupportedOperations, item => string.Equals(item, operationName, StringComparison.Ordinal));
 
     public async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         => await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);

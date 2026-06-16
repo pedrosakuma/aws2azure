@@ -9,6 +9,7 @@ using Aws2Azure.Modules.Kinesis.EventHubsAmqp;
 using Aws2Azure.Modules.Kinesis.EventHubsRest;
 using Aws2Azure.Modules.Kinesis.Operations;
 using Aws2Azure.Modules.Kinesis.ShardIterators;
+using Aws2Azure.Modules.Kinesis.WireProtocol;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -30,6 +31,21 @@ public class KinesisServiceModuleTests
     {
         var module = NewModule();
         Assert.Equal(expected, module.MatchesHost(host));
+    }
+
+    [Fact]
+    public void KnownOperations_is_derived_from_the_wire_protocol_action_table()
+    {
+        var module = NewModule();
+
+        var expected = KinesisOperationNames.Names.ToHashSet(StringComparer.Ordinal);
+
+        Assert.Equal(expected, module.KnownOperations.ToHashSet(StringComparer.Ordinal));
+        // The parser resolves anything outside the action table to Unknown, so
+        // unimplemented control-plane ops must not be advertised as known.
+        Assert.DoesNotContain("CreateStream", module.KnownOperations);
+        Assert.DoesNotContain("DeleteStream", module.KnownOperations);
+        Assert.DoesNotContain("ListStreams", module.KnownOperations);
     }
 
     [Fact]
