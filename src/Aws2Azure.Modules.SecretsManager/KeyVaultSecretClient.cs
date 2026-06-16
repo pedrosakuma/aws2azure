@@ -3,13 +3,13 @@ using System.Text;
 using System.Text.Json;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
+using Aws2Azure.Modules.SecretsManager.WireProtocol;
 
 namespace Aws2Azure.Modules.SecretsManager;
 
 internal sealed class KeyVaultSecretClient
 {
     private const string ApiVersion = "7.4";
-    private static readonly string[] SupportedOperations = ["GetSecretValue", "CreateSecret", "UpdateSecret", "DeleteSecret", "ListSecrets", "DescribeSecret"];
 
     private readonly AzureHttpClient _http;
     private readonly EntraIdTokenProvider _tokenProvider;
@@ -22,7 +22,7 @@ internal sealed class KeyVaultSecretClient
         _credentials = credentials ?? throw new ArgumentNullException(nameof(credentials));
     }
 
-    public static bool IsSupported(string operationName) => Array.Exists(SupportedOperations, item => string.Equals(item, operationName, StringComparison.Ordinal));
+    public static bool IsSupported(string operationName) => SecretsManagerOperationNames.Resolve(operationName) != SecretsManagerOperation.Unknown;
 
     public async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         => await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
@@ -293,7 +293,7 @@ internal sealed class KeyVaultSecretClient
             Value: string.IsNullOrWhiteSpace(secretBinary) ? secretString : EncodeSecretBinary(DecodeSecretBinary(secretBinary)),
             ContentType: string.IsNullOrWhiteSpace(secretBinary) ? null : "application/octet-stream",
             Tags: tags is null || tags.Count == 0 ? null : tags,
-            Attributes: new KeyVaultSecretAttributes(true, null, null, DateTimeOffset.UtcNow.ToUnixTimeSeconds()),
+            Attributes: new KeyVaultSecretAttributes(true, null, null, null),
             Description: string.IsNullOrWhiteSpace(description) ? null : description);
 
         return JsonSerializer.Serialize(payload, SecretsManagerJsonContext.Default.KeyVaultSecretRequest);
