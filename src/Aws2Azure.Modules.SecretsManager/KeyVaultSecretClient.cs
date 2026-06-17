@@ -145,16 +145,6 @@ internal sealed class KeyVaultSecretClient
         return false;
     }
 
-    public static string? GetSecretValue(JsonDocument document, string fieldName)
-    {
-        if (document.RootElement.TryGetProperty(fieldName, out var property) && property.ValueKind == JsonValueKind.String)
-        {
-            return property.GetString();
-        }
-
-        return null;
-    }
-
     public static byte[] DecodeSecretBinary(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -167,21 +157,6 @@ internal sealed class KeyVaultSecretClient
 
     public static string EncodeSecretBinary(byte[] bytes)
         => Convert.ToBase64String(bytes);
-
-    public static bool IsBinarySecret(JsonElement root)
-    {
-        if (root.TryGetProperty("SecretBinary", out var secretBinary) && secretBinary.ValueKind == JsonValueKind.String)
-        {
-            return true;
-        }
-
-        if (root.TryGetProperty("SecretString", out var secretString) && secretString.ValueKind == JsonValueKind.String)
-        {
-            return false;
-        }
-
-        return false;
-    }
 
     public static string GetDescription(JsonElement root)
     {
@@ -294,18 +269,6 @@ internal sealed class KeyVaultSecretClient
             Description: string.IsNullOrWhiteSpace(description) ? null : description);
 
         return JsonSerializer.Serialize(payload, SecretsManagerJsonContext.Default.KeyVaultSecretRequest);
-    }
-
-    public static string RemoveVersionSuffix(string id)
-    {
-        var slash = id.LastIndexOf('/');
-        return slash >= 0 ? id[..slash] : id;
-    }
-
-    public static string? ExtractVersion(string uri)
-    {
-        var parts = uri.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        return parts.Length > 1 ? parts[^1] : null;
     }
 
     public static string BuildSecretPath(string name) => "/secrets/" + Uri.EscapeDataString(name);

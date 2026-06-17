@@ -20,8 +20,7 @@ internal static class DescribeSecretHandler
             return;
         }
 
-        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        using var secretDocument = JsonDocument.Parse(body);
+        using var secretDocument = await SecretsManagerOperationSupport.ReadJsonDocumentAsync(response.Content, cancellationToken).ConfigureAwait(false);
         var nameValue = secretDocument.RootElement.TryGetProperty("name", out var nameElement) && nameElement.ValueKind == JsonValueKind.String ? nameElement.GetString() ?? string.Empty : name;
         var id = secretDocument.RootElement.TryGetProperty("id", out var idElement) && idElement.ValueKind == JsonValueKind.String ? idElement.GetString() ?? string.Empty : string.Empty;
         var created = KeyVaultSecretClient.GetCreatedDate(secretDocument.RootElement);
@@ -46,6 +45,6 @@ internal static class DescribeSecretHandler
             RotationEnabled: null,
             DeletedDate: null);
 
-        await SecretsManagerOperationSupport.WriteJsonAsync(context, payload, SecretsManagerJsonContext.Default.DescribeSecretResponse).ConfigureAwait(false);
+        await SecretsManagerOperationSupport.WriteJsonAsync(context, payload, SecretsManagerJsonContext.Default.DescribeSecretResponse, cancellationToken).ConfigureAwait(false);
     }
 }

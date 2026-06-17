@@ -34,8 +34,7 @@ internal static class ListSecretsHandler
             return;
         }
 
-        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        using var secretDocument = JsonDocument.Parse(body);
+        using var secretDocument = await SecretsManagerOperationSupport.ReadJsonDocumentAsync(response.Content, cancellationToken).ConfigureAwait(false);
 
         var items = new List<ListSecretsItem>();
         var nextToken = secretDocument.RootElement.TryGetProperty("nextLink", out var nextLink) && nextLink.ValueKind == JsonValueKind.String
@@ -71,6 +70,6 @@ internal static class ListSecretsHandler
             }
         }
 
-        await SecretsManagerOperationSupport.WriteJsonAsync(context, new ListSecretsResponse(items, nextToken), SecretsManagerJsonContext.Default.ListSecretsResponse).ConfigureAwait(false);
+        await SecretsManagerOperationSupport.WriteJsonAsync(context, new ListSecretsResponse(items, nextToken), SecretsManagerJsonContext.Default.ListSecretsResponse, cancellationToken).ConfigureAwait(false);
     }
 }
