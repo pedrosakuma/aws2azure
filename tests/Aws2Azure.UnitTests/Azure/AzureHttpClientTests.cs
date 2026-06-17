@@ -226,6 +226,35 @@ public class AzureHttpClientTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    [Fact]
+    public async Task SendAsync_RequestsHttp2_WithDowngradeFallback()
+    {
+        // The shared Azure client opts every outbound request into opportunistic
+        // HTTP/2 (multiplexing -> fewer backend connections), relying on
+        // RequestVersionOrLower to fall back to HTTP/1.1 where h2 isn't offered.
+        var handler = new CapturingHandler(new HttpResponseMessage(HttpStatusCode.OK));
+        var client = new AzureHttpClient(handler, ownsHandler: true);
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "https://example.test/x");
+        await client.SendAsync(request);
+
+        Assert.NotNull(handler.LastRequest);
+        Assert.Equal(HttpVersion.Version20, handler.LastRequest!.Version);
+        Assert.Equal(HttpVersionPolicy.RequestVersionOrLower, handler.LastRequest!.VersionPolicy);
+    }
+
+    private sealed class CapturingHandler : HttpMessageHandler
+    {
+        private readonly HttpResponseMessage _response;
+        public HttpRequestMessage? LastRequest { get; private set; }
+        public CapturingHandler(HttpResponseMessage response) => _response = response;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            LastRequest = request;
+            return Task.FromResult(_response);
+        }
+    }
+
     private sealed class SequenceHandler : HttpMessageHandler
     {
         private readonly Queue<HttpResponseMessage> _responses;
