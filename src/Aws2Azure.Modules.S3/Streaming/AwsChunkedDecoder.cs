@@ -273,6 +273,9 @@ public sealed class AwsChunkedDecoder : Stream
 
         while (true)
         {
+            if (_headerBufferLen >= MaxChunkHeaderSize)
+                throw new InvalidDataException("aws-chunked header too long");
+
             if (_readAheadPos >= _readAheadLen)
             {
                 await FillReadAheadAsync(cancellationToken).ConfigureAwait(false);
