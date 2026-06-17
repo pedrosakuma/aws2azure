@@ -298,20 +298,7 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
                 "Throttled",
                 "Azure Service Bus Topics throttled the publish request; retry with back-off.",
                 SenderFault: true)
-            : new SnsBatchSendOutcome(false, "InternalFailure", BuildFailureMessage(exception), false);
-
-    private static string BuildFailureMessage(SnsAmqpException exception)
-    {
-        var message = string.Equals(exception.Condition, AmqpErrorCondition.Timeout, StringComparison.Ordinal)
-            ? "Azure Service Bus Topics AMQP send timed out."
-            : "Azure Service Bus Topics AMQP send failed.";
-        if (!string.IsNullOrWhiteSpace(exception.Description))
-        {
-            message += " " + exception.Description;
-        }
-
-        return message;
-    }
+            : new SnsBatchSendOutcome(false, "InternalFailure", SnsAmqpFailureMessages.Build(exception), false);
 
     internal static bool TryWrap(Exception exception, out SnsAmqpException wrapped)
     {

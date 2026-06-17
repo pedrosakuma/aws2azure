@@ -49,7 +49,7 @@ internal static class SendMessageHandlers
     /// entry's body + attributes (1,048,576 bytes / 1 MiB).</summary>
     public const int MaxBatchBytes = 1048576;
 
-    public const string AttrTypesHeader = "Aws2Azure-AttrTypes";
+    public const string AttrTypesHeader = SqsAttributeTypeRegistry.HeaderName;
 
     /// <summary>
     /// SQS-faithful wire-size accounting: AWS counts the message body
@@ -138,40 +138,12 @@ internal static class SendMessageHandlers
         TryGetParam(parsed, "MessageGroupId", out var groupId);
         TryGetParam(parsed, "MessageDeduplicationId", out var dedupId);
 
+        if (SqsFifoSendValidator.Validate(queueName, groupId, dedupId) is { } fifoError)
+        {
+            await WriteErrorAsync(context, parsed.Protocol, fifoError).ConfigureAwait(false);
+            return;
+        }
         var isFifoQueue = queueName.EndsWith(".fifo", StringComparison.Ordinal);
-        if (isFifoQueue && string.IsNullOrEmpty(groupId))
-        {
-            await WriteErrorAsync(context, parsed.Protocol,
-                SqsErrorMapping.MissingParameter("MessageGroupId")).ConfigureAwait(false);
-            return;
-        }
-        if (isFifoQueue && string.IsNullOrEmpty(dedupId))
-        {
-            // AWS FIFO requires MessageDeduplicationId unless the queue is
-            // configured with ContentBasedDeduplication=true. The proxy
-            // doesn't track per-queue dedup configuration, so the safe and
-            // AWS-compatible default is to reject. Auto-minting a random
-            // GUID here would defeat SB's dedup window — every retry of
-            // the same logical send would get a different MessageId — so
-            // we never silently substitute.
-            await WriteErrorAsync(context, parsed.Protocol,
-                SqsErrorMapping.MissingParameter("MessageDeduplicationId")).ConfigureAwait(false);
-            return;
-        }
-        if (!isFifoQueue && !string.IsNullOrEmpty(groupId))
-        {
-            await WriteErrorAsync(context, parsed.Protocol,
-                SqsErrorMapping.InvalidParameterValue("MessageGroupId",
-                    "MessageGroupId is only valid on FIFO queues.")).ConfigureAwait(false);
-            return;
-        }
-        if (!isFifoQueue && !string.IsNullOrEmpty(dedupId))
-        {
-            await WriteErrorAsync(context, parsed.Protocol,
-                SqsErrorMapping.InvalidParameterValue("MessageDeduplicationId",
-                    "MessageDeduplicationId is only valid on FIFO queues.")).ConfigureAwait(false);
-            return;
-        }
 
         // Mint a stable idempotency key BEFORE entering the HTTP retry path
         // so every retry attempt of this logical send carries the same
@@ -259,35 +231,9 @@ internal static class SendMessageHandlers
                     SqsErrorMapping.BatchEntryIdsNotDistinct(e.Id)).ConfigureAwait(false);
                 return;
             }
-            if (batchIsFifoQueue && string.IsNullOrEmpty(e.GroupId))
+            if (SqsFifoSendValidator.Validate(queueName, e.GroupId, e.DeduplicationId) is { } fifoError)
             {
-                await WriteErrorAsync(context, parsed.Protocol,
-                    SqsErrorMapping.MissingParameter("MessageGroupId")).ConfigureAwait(false);
-                return;
-            }
-            if (batchIsFifoQueue && string.IsNullOrEmpty(e.DeduplicationId))
-            {
-                // Same rationale as the single-send path: never silently
-                // substitute a random GUID for a missing dedup id on FIFO
-                // — that would defeat SB's dedup window because retries
-                // of the same logical send would each get a different
-                // MessageId.
-                await WriteErrorAsync(context, parsed.Protocol,
-                    SqsErrorMapping.MissingParameter("MessageDeduplicationId")).ConfigureAwait(false);
-                return;
-            }
-            if (!batchIsFifoQueue && !string.IsNullOrEmpty(e.GroupId))
-            {
-                await WriteErrorAsync(context, parsed.Protocol,
-                    SqsErrorMapping.InvalidParameterValue("MessageGroupId",
-                        "MessageGroupId is only valid on FIFO queues.")).ConfigureAwait(false);
-                return;
-            }
-            if (!batchIsFifoQueue && !string.IsNullOrEmpty(e.DeduplicationId))
-            {
-                await WriteErrorAsync(context, parsed.Protocol,
-                    SqsErrorMapping.InvalidParameterValue("MessageDeduplicationId",
-                        "MessageDeduplicationId is only valid on FIFO queues.")).ConfigureAwait(false);
+                await WriteErrorAsync(context, parsed.Protocol, fifoError).ConfigureAwait(false);
                 return;
             }
             totalBytes += ComputeWireSize(e.BodyBytes.Length, e.Attributes);
@@ -518,8 +464,6 @@ internal static class SendMessageHandlers
         // Aws2Azure-AttrTypes side channel so the receive path can
         // round-trip the original SQS view without ambiguity.
         var headers = new Dictionary<string, string>(StringComparer.Ordinal);
-        var typeRegistry = new StringBuilder();
-        var first = true;
         foreach (var kv in attrs)
         {
             var name = kv.Key;
@@ -528,12 +472,8 @@ internal static class SendMessageHandlers
                 ? Convert.ToBase64String(attr.BinaryValue.Span)
                 : (attr.StringValue ?? string.Empty);
             headers[name] = headerValue;
-
-            if (!first) typeRegistry.Append(',');
-            first = false;
-            typeRegistry.Append(name).Append('=').Append(attr.DataType);
         }
-        headers[AttrTypesHeader] = typeRegistry.ToString();
+        headers[AttrTypesHeader] = SqsAttributeTypeRegistry.Build(attrs);
         return headers;
     }
 
@@ -577,14 +517,7 @@ internal static class SendMessageHandlers
             {
                 sb.Append(',');
             }
-            var typeRegistry = new StringBuilder();
-            var firstReg = true;
-            foreach (var kv in e.Attributes)
-            {
-                if (!firstReg) typeRegistry.Append(',');
-                firstReg = false;
-                typeRegistry.Append(kv.Key).Append('=').Append(kv.Value.DataType);
-            }
+            var typeRegistry = SqsAttributeTypeRegistry.Build(e.Attributes);
             if (typeRegistry.Length > 0)
             {
                 sb.Append('"').Append(AttrTypesHeader).Append("\":\"")
@@ -600,18 +533,10 @@ internal static class SendMessageHandlers
     // --- Misc utilities ------------------------------------------------
 
     internal static string? ExtractQueueName(SqsParseResult parsed) =>
-        parsed.Parameters.TryGetValue("QueueUrl", out var url) ? QueueUrlBuilder.ExtractQueueName(url) : null;
+        SqsParameterHelpers.ExtractQueueName(parsed);
 
-    internal static bool TryGetParam(SqsParseResult parsed, string key, out string value)
-    {
-        if (parsed.Parameters.TryGetValue(key, out var v) && v is not null)
-        {
-            value = v;
-            return true;
-        }
-        value = string.Empty;
-        return false;
-    }
+    internal static bool TryGetParam(SqsParseResult parsed, string key, out string value) =>
+        SqsParameterHelpers.TryGetParam(parsed, key, out value);
 
     internal static bool TryParseDelaySeconds(
         SqsParseResult parsed, out int delaySeconds, out SqsErrorMapping.Mapping? error)
@@ -667,5 +592,5 @@ internal static class SendMessageHandlers
     }
 
     internal static Task WriteErrorAsync(HttpContext context, SqsWireProtocol protocol, SqsErrorMapping.Mapping mapping) =>
-        SqsErrorResponse.WriteAsync(context, protocol, mapping.StatusCode, mapping.Code, mapping.Message, mapping.FaultType);
+        SqsParameterHelpers.WriteErrorAsync(context, protocol, mapping);
 }

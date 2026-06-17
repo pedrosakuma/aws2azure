@@ -147,13 +147,24 @@ internal static class SnsTopicSupport
     }
 
     public static bool TryParseTopicArn(string topicArn, out string topicName, out string? error)
+        => TryParseTopicArn(topicArn, allowFifo: false, out topicName, out error);
+
+    public static bool TryParseTopicArn(string topicArn, bool allowFifo, out string topicName, out string? error)
+        => TryParseTopicArn(topicArn, allowFifo, blankAsInvalidArn: false, out topicName, out error);
+
+    public static bool TryParseTopicArn(string topicArn, bool allowFifo, bool blankAsInvalidArn, out string topicName, out string? error)
     {
         topicName = string.Empty;
         error = null;
 
         if (string.IsNullOrWhiteSpace(topicArn))
         {
-            error = "Parameter 'TopicArn' is required.";
+            // The publish path historically surfaced the invalid-ARN message for a
+            // blank/whitespace TopicArn (it never short-circuited on emptiness),
+            // whereas management paths report it as a missing required parameter.
+            error = blankAsInvalidArn
+                ? "TopicArn must be a valid SNS topic ARN of the form 'arn:aws:sns:{region}:{accountId}:{topicName}'."
+                : "Parameter 'TopicArn' is required.";
             return false;
         }
 
@@ -170,7 +181,7 @@ internal static class SnsTopicSupport
             return false;
         }
 
-        if (!IsValidTopicName(parts[5]))
+        if (!(IsValidTopicName(parts[5]) || allowFifo && IsValidFifoTopicName(parts[5])))
         {
             error = "TopicArn contained an invalid topic name.";
             return false;
@@ -179,6 +190,17 @@ internal static class SnsTopicSupport
         topicName = parts[5];
         return true;
     }
+
+    public static bool TryParseTopicArnAllowFifo(string topicArn, out string topicName, out string? error)
+        => TryParseTopicArn(topicArn, allowFifo: true, out topicName, out error);
+
+    public static bool TryParsePublishTopicArn(string topicArn, out string topicName, out string? error)
+        => TryParseTopicArn(topicArn, allowFifo: true, blankAsInvalidArn: true, out topicName, out error);
+
+    private static bool IsValidFifoTopicName(string topicName)
+        => topicName.EndsWith(".fifo", StringComparison.Ordinal)
+            && topicName.Length > 5
+            && IsValidTopicName(topicName[..^5]);
 
     public static string EncodeNextToken(int skip)
     {

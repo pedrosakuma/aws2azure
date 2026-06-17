@@ -16,72 +16,11 @@ internal static class AmqpReceiveParameters
     internal static void ParseAttributeNameSets(
         SqsParseResult parsed,
         out HashSet<string>? attributeNames,
-        out HashSet<string>? messageAttributeNames)
-    {
-        var system = new HashSet<string>(StringComparer.Ordinal);
-        var message = new HashSet<string>(StringComparer.Ordinal);
-
-        AddQueryAttributeNames(parsed, "AttributeName", system);
-        AddQueryAttributeNames(parsed, "MessageAttributeName", message);
-
-        if (parsed.Protocol == SqsWireProtocol.AwsJson && !string.IsNullOrEmpty(parsed.JsonBody))
-        {
-            try
-            {
-                using var doc = System.Text.Json.JsonDocument.Parse(parsed.JsonBody);
-                AddJsonAttributeNames(doc.RootElement, "AttributeNames", system);
-                AddJsonAttributeNames(doc.RootElement, "MessageAttributeNames", message);
-            }
-            catch (System.Text.Json.JsonException) { /* protocol parser already validated */ }
-        }
-
-        attributeNames = system.Count == 0 ? null : system;
-        messageAttributeNames = message.Count == 0 ? null : message;
-    }
+        out HashSet<string>? messageAttributeNames) =>
+        SqsParameterHelpers.ParseAttributeNameSets(parsed, out attributeNames, out messageAttributeNames);
 
     internal static HashSet<string>? ParseAttributeNames(SqsParseResult parsed, string prefix)
-    {
-        var set = new HashSet<string>(StringComparer.Ordinal);
-        AddQueryAttributeNames(parsed, prefix, set);
-        if (parsed.Protocol == SqsWireProtocol.AwsJson && !string.IsNullOrEmpty(parsed.JsonBody))
-        {
-            try
-            {
-                using var doc = System.Text.Json.JsonDocument.Parse(parsed.JsonBody);
-                AddJsonAttributeNames(doc.RootElement, prefix + "s", set);
-            }
-            catch (System.Text.Json.JsonException) { /* protocol parser already validated */ }
-        }
-        return set.Count == 0 ? null : set;
-    }
-
-    private static void AddQueryAttributeNames(SqsParseResult parsed, string prefix, HashSet<string> set)
-    {
-        var dotPrefix = prefix + ".";
-        foreach (var kv in parsed.Parameters)
-        {
-            if (kv.Key.StartsWith(dotPrefix, StringComparison.Ordinal) && !string.IsNullOrEmpty(kv.Value))
-                set.Add(kv.Value);
-        }
-    }
-
-    private static void AddJsonAttributeNames(
-        System.Text.Json.JsonElement root,
-        string propertyName,
-        HashSet<string> set)
-    {
-        if (root.TryGetProperty(propertyName, out var arr) && arr.ValueKind == System.Text.Json.JsonValueKind.Array)
-        {
-            foreach (var v in arr.EnumerateArray())
-            {
-                if (v.ValueKind == System.Text.Json.JsonValueKind.String)
-                {
-                    var s = v.GetString();
-                    if (!string.IsNullOrEmpty(s)) set.Add(s);
-                }
-            }
-        }
-    }
+        => SqsParameterHelpers.ParseAttributeNames(parsed, prefix);
 
     internal static bool TryParseBoundedInt(
         SqsParseResult parsed, string name, int min, int max, int defaultValue, out int value)

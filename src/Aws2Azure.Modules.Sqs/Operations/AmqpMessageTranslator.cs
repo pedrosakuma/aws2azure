@@ -124,14 +124,14 @@ internal static class AmqpMessageTranslator
     {
         if (filter is null || filter.Count == 0) return (null, null);
         if (appProps is null || appProps.Count == 0) return (null, null);
-        if (!appProps.TryGetValue(SendMessageHandlers.AttrTypesHeader, out var registryObj)
+        if (!appProps.TryGetValue(SqsAttributeTypeRegistry.HeaderName, out var registryObj)
             || registryObj is not string registryRaw
             || string.IsNullOrEmpty(registryRaw))
         {
             return (null, null);
         }
 
-        var typeRegistry = ParseAttrTypeRegistry(registryRaw);
+        var typeRegistry = SqsAttributeTypeRegistry.Parse(registryRaw);
         if (typeRegistry.Count == 0) return (null, null);
 
         var includeAll = filter.Contains("All", StringComparer.OrdinalIgnoreCase);
@@ -167,23 +167,6 @@ internal static class AmqpMessageTranslator
         }
         if (attrs.Count == 0) return (null, null);
         return (attrs, SqsMessageMd5.OfAttributes(md5Source));
-    }
-
-    private static Dictionary<string, string> ParseAttrTypeRegistry(string raw)
-    {
-        var dict = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var pair in raw.Split(',', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var eq = pair.IndexOf('=');
-            if (eq <= 0) continue;
-            var name = pair[..eq];
-            var type = pair[(eq + 1)..];
-            if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(type))
-            {
-                dict[name] = type;
-            }
-        }
-        return dict;
     }
 
     private static IReadOnlyDictionary<string, string>? BuildSystemAttributes(

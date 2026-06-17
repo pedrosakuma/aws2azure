@@ -101,33 +101,13 @@ internal static class AmqpSendMessageHandlers
         SendMessageHandlers.TryGetParam(parsed, "MessageGroupId", out var groupId);
         SendMessageHandlers.TryGetParam(parsed, "MessageDeduplicationId", out var dedupId);
 
+        if (SqsFifoSendValidator.Validate(queueName, groupId, dedupId) is { } fifoError)
+        {
+            await SendMessageHandlers.WriteErrorAsync(context, parsed.Protocol,
+                fifoError).ConfigureAwait(false);
+            return;
+        }
         var isFifoQueue = queueName.EndsWith(".fifo", StringComparison.Ordinal);
-        if (isFifoQueue && string.IsNullOrEmpty(groupId))
-        {
-            await SendMessageHandlers.WriteErrorAsync(context, parsed.Protocol,
-                SqsErrorMapping.MissingParameter("MessageGroupId")).ConfigureAwait(false);
-            return;
-        }
-        if (isFifoQueue && string.IsNullOrEmpty(dedupId))
-        {
-            await SendMessageHandlers.WriteErrorAsync(context, parsed.Protocol,
-                SqsErrorMapping.MissingParameter("MessageDeduplicationId")).ConfigureAwait(false);
-            return;
-        }
-        if (!isFifoQueue && !string.IsNullOrEmpty(groupId))
-        {
-            await SendMessageHandlers.WriteErrorAsync(context, parsed.Protocol,
-                SqsErrorMapping.InvalidParameterValue("MessageGroupId",
-                    "MessageGroupId is only valid on FIFO queues.")).ConfigureAwait(false);
-            return;
-        }
-        if (!isFifoQueue && !string.IsNullOrEmpty(dedupId))
-        {
-            await SendMessageHandlers.WriteErrorAsync(context, parsed.Protocol,
-                SqsErrorMapping.InvalidParameterValue("MessageDeduplicationId",
-                    "MessageDeduplicationId is only valid on FIFO queues.")).ConfigureAwait(false);
-            return;
-        }
 
         // Idempotency-key contract identical to the REST handler.
         var idempotencyKey = isFifoQueue ? dedupId! : Guid.NewGuid().ToString();
@@ -204,20 +184,14 @@ internal static class AmqpSendMessageHandlers
         if (attrs.Count > 0)
         {
             var ap = new Dictionary<string, object?>(attrs.Count + 1, StringComparer.Ordinal);
-            var typeRegistry = new StringBuilder();
-            var first = true;
             foreach (var kv in attrs)
             {
                 var value = kv.Value.IsBinary
                     ? Convert.ToBase64String(kv.Value.BinaryValue.Span)
                     : (kv.Value.StringValue ?? string.Empty);
                 ap[kv.Key] = value;
-
-                if (!first) typeRegistry.Append(',');
-                first = false;
-                typeRegistry.Append(kv.Key).Append('=').Append(kv.Value.DataType);
             }
-            ap[SendMessageHandlers.AttrTypesHeader] = typeRegistry.ToString();
+            ap[SqsAttributeTypeRegistry.HeaderName] = SqsAttributeTypeRegistry.Build(attrs);
             msg.ApplicationProperties = ap;
         }
 

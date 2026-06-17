@@ -18,9 +18,9 @@ internal static class SnsPublishSupport
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
-        if (!TryGetRequiredNonEmptyParameter(parameters, "TopicArn", out var topicArn, out error)
-            || !TryParsePublishTopicArn(topicArn, out var topicName, out error)
-            || !TryGetRequiredNonEmptyParameter(parameters, "Message", out var message, out error)
+        if (!SnsParameterParsing.TryGetRequiredNonEmptyParameter(parameters, "TopicArn", out var topicArn, out error)
+            || !SnsTopicSupport.TryParsePublishTopicArn(topicArn, out var topicName, out error)
+            || !SnsParameterParsing.TryGetRequiredNonEmptyParameter(parameters, "Message", out var message, out error)
             || !TryReadMessageAttributes(parameters, "MessageAttributes.entry.", out var attributes, out error))
         {
             request = default!;
@@ -57,8 +57,8 @@ internal static class SnsPublishSupport
         topicName = string.Empty;
         entries = [];
 
-        if (!TryGetRequiredNonEmptyParameter(parameters, "TopicArn", out topicArn, out error)
-            || !TryParsePublishTopicArn(topicArn, out topicName, out error))
+        if (!SnsParameterParsing.TryGetRequiredNonEmptyParameter(parameters, "TopicArn", out topicArn, out error)
+            || !SnsTopicSupport.TryParsePublishTopicArn(topicArn, out topicName, out error))
         {
             return false;
         }
@@ -66,7 +66,7 @@ internal static class SnsPublishSupport
         var indexes = new SortedSet<int>();
         foreach (var key in parameters.Keys)
         {
-            if (TryExtractEntryIndex(key, "PublishBatchRequestEntries.member.", out var index))
+            if (SnsParameterParsing.TryExtractEntryIndex(key, "PublishBatchRequestEntries.member.", out var index))
             {
                 indexes.Add(index);
             }
@@ -88,7 +88,7 @@ internal static class SnsPublishSupport
         foreach (var index in indexes)
         {
             var prefix = $"PublishBatchRequestEntries.member.{index}.";
-            if (!TryGetRequiredNonEmptyParameter(parameters, prefix + "Id", out var id, out error))
+            if (!SnsParameterParsing.TryGetRequiredNonEmptyParameter(parameters, prefix + "Id", out var id, out error))
             {
                 error = $"Entry {index}: {error}";
                 return false;
@@ -100,7 +100,7 @@ internal static class SnsPublishSupport
                 return false;
             }
 
-            if (!TryGetRequiredNonEmptyParameter(parameters, prefix + "Message", out var message, out error))
+            if (!SnsParameterParsing.TryGetRequiredNonEmptyParameter(parameters, prefix + "Message", out var message, out error))
             {
                 error = $"Entry {index}: {error}";
                 return false;
@@ -171,34 +171,6 @@ internal static class SnsPublishSupport
             request.MessageDeduplicationId,
             request.MessageAttributes);
 
-    internal static bool TryParsePublishTopicArn(string topicArn, out string topicName, out string? error)
-    {
-        topicName = string.Empty;
-        error = null;
-
-        var parts = topicArn.Split(':', 6, StringSplitOptions.None);
-        if (parts.Length != 6
-            || !string.Equals(parts[0], "arn", StringComparison.Ordinal)
-            || !string.Equals(parts[1], "aws", StringComparison.Ordinal)
-            || !string.Equals(parts[2], "sns", StringComparison.Ordinal)
-            || string.IsNullOrWhiteSpace(parts[3])
-            || string.IsNullOrWhiteSpace(parts[4])
-            || string.IsNullOrWhiteSpace(parts[5]))
-        {
-            error = "TopicArn must be a valid SNS topic ARN of the form 'arn:aws:sns:{region}:{accountId}:{topicName}'.";
-            return false;
-        }
-
-        if (!IsValidPublishTopicName(parts[5]))
-        {
-            error = "TopicArn contained an invalid topic name.";
-            return false;
-        }
-
-        topicName = parts[5];
-        return true;
-    }
-
     private static SnsAmqpSendMessage CreateAmqpMessage(
         string message,
         string? subject,
@@ -251,7 +223,7 @@ internal static class SnsPublishSupport
         var indexes = new SortedSet<int>();
         foreach (var key in parameters.Keys)
         {
-            if (TryExtractEntryIndex(key, prefix, out var index))
+            if (SnsParameterParsing.TryExtractEntryIndex(key, prefix, out var index))
             {
                 indexes.Add(index);
             }
@@ -261,8 +233,8 @@ internal static class SnsPublishSupport
         foreach (var index in indexes)
         {
             var attributePrefix = prefix + index + ".";
-            if (!TryGetRequiredNonEmptyParameter(parameters, attributePrefix + "Name", out var name, out error)
-                || !TryGetRequiredNonEmptyParameter(parameters, attributePrefix + "Value.DataType", out var dataType, out error))
+            if (!SnsParameterParsing.TryGetRequiredNonEmptyParameter(parameters, attributePrefix + "Name", out var name, out error)
+                || !SnsParameterParsing.TryGetRequiredNonEmptyParameter(parameters, attributePrefix + "Value.DataType", out var dataType, out error))
             {
                 return false;
             }
@@ -282,46 +254,6 @@ internal static class SnsPublishSupport
         return true;
     }
 
-    private static bool TryGetRequiredNonEmptyParameter(
-        IReadOnlyDictionary<string, string> parameters,
-        string name,
-        out string value,
-        out string? error)
-    {
-        if (!parameters.TryGetValue(name, out value!) || string.IsNullOrEmpty(value))
-        {
-            value = string.Empty;
-            error = $"Parameter '{name}' is required and must not be empty.";
-            return false;
-        }
-
-        error = null;
-        return true;
-    }
-
-    private static bool TryExtractEntryIndex(string key, string prefix, out int index)
-    {
-        index = 0;
-        if (!key.StartsWith(prefix, StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        var remaining = key.AsSpan(prefix.Length);
-        var separator = remaining.IndexOf('.');
-        if (separator <= 0)
-        {
-            return false;
-        }
-
-        return int.TryParse(remaining[..separator], out index);
-    }
-
-    private static bool IsValidPublishTopicName(string topicName)
-        => SnsTopicSupport.IsValidTopicName(topicName)
-            || (topicName.EndsWith(".fifo", StringComparison.Ordinal)
-                && topicName.Length > 5
-                && SnsTopicSupport.IsValidTopicName(topicName[..^5]));
 }
 
 internal sealed record PublishRequest(

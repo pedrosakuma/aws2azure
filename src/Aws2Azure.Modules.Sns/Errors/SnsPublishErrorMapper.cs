@@ -1,4 +1,3 @@
-using Aws2Azure.Amqp.Framing;
 using Aws2Azure.Modules.Sns.Amqp;
 using Aws2Azure.Modules.Sns.EventGrid;
 using Microsoft.AspNetCore.Http;
@@ -36,7 +35,7 @@ internal static class SnsPublishErrorMapper
             StatusCodes.Status500InternalServerError,
             errorType: "Receiver",
             errorCode: "InternalFailure",
-            message: BuildFailureMessage(exception));
+            message: SnsAmqpFailureMessages.Build(exception));
     }
 
     public static Task WriteSendErrorAsync(HttpContext context, EventGridPublishException exception)
@@ -70,20 +69,7 @@ internal static class SnsPublishErrorMapper
         return new SnsBatchSendOutcome(
             false,
             "InternalFailure",
-            BuildFailureMessage(exception),
+            SnsAmqpFailureMessages.Build(exception),
             SenderFault: false);
-    }
-
-    private static string BuildFailureMessage(SnsAmqpException exception)
-    {
-        var message = string.Equals(exception.Condition, AmqpErrorCondition.Timeout, StringComparison.Ordinal)
-            ? "Azure Service Bus Topics AMQP send timed out."
-            : "Azure Service Bus Topics AMQP send failed.";
-        if (!string.IsNullOrWhiteSpace(exception.Description))
-        {
-            message += " " + exception.Description;
-        }
-
-        return message;
     }
 }

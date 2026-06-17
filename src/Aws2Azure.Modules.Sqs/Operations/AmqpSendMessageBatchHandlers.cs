@@ -93,30 +93,10 @@ internal static class AmqpSendMessageBatchHandlers
                     SqsErrorMapping.BatchEntryIdsNotDistinct(e.Id)).ConfigureAwait(false);
                 return;
             }
-            if (batchIsFifoQueue && string.IsNullOrEmpty(e.GroupId))
+            if (SqsFifoSendValidator.Validate(queueName, e.GroupId, e.DeduplicationId) is { } fifoError)
             {
                 await SendMessageHandlers.WriteErrorAsync(context, parsed.Protocol,
-                    SqsErrorMapping.MissingParameter("MessageGroupId")).ConfigureAwait(false);
-                return;
-            }
-            if (batchIsFifoQueue && string.IsNullOrEmpty(e.DeduplicationId))
-            {
-                await SendMessageHandlers.WriteErrorAsync(context, parsed.Protocol,
-                    SqsErrorMapping.MissingParameter("MessageDeduplicationId")).ConfigureAwait(false);
-                return;
-            }
-            if (!batchIsFifoQueue && !string.IsNullOrEmpty(e.GroupId))
-            {
-                await SendMessageHandlers.WriteErrorAsync(context, parsed.Protocol,
-                    SqsErrorMapping.InvalidParameterValue("MessageGroupId",
-                        "MessageGroupId is only valid on FIFO queues.")).ConfigureAwait(false);
-                return;
-            }
-            if (!batchIsFifoQueue && !string.IsNullOrEmpty(e.DeduplicationId))
-            {
-                await SendMessageHandlers.WriteErrorAsync(context, parsed.Protocol,
-                    SqsErrorMapping.InvalidParameterValue("MessageDeduplicationId",
-                        "MessageDeduplicationId is only valid on FIFO queues.")).ConfigureAwait(false);
+                    fifoError).ConfigureAwait(false);
                 return;
             }
             totalBytes += SendMessageHandlers.ComputeWireSize(e.BodyBytes.Length, e.Attributes);

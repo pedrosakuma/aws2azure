@@ -225,7 +225,8 @@ internal static class BatchAdminHandlers
             return;
         }
 
-        var requestedAttrs = ExtractAttributes(parsed, "Attribute");
+        var requestedAttrs = SqsQueueAttributeParser.ExtractAttributes(
+            parsed, "Attribute", includeJsonPrimitiveValues: false);
         if (requestedAttrs.Count == 0)
         {
             // SQS treats an empty Attributes map as a no-op success.
@@ -642,59 +643,13 @@ internal static class BatchAdminHandlers
         }
     }
 
-    // --- Parameter extraction (shared with QueueLifecycleHandlers) -----
-
-    private static IReadOnlyDictionary<string, string> ExtractAttributes(SqsParseResult parsed, string prefix)
-    {
-        // SetQueueAttributes uses Attribute.<i>.Name / Attribute.<i>.Value
-        // (query) or "Attributes": { "Name": "Value", ... } (JSON).
-        var d = new Dictionary<string, string>(StringComparer.Ordinal);
-        var dotPrefix = prefix + ".";
-        var nameByIndex = new SortedDictionary<int, string>();
-        var valueByIndex = new SortedDictionary<int, string>();
-        foreach (var kv in parsed.Parameters)
-        {
-            if (!kv.Key.StartsWith(dotPrefix, StringComparison.Ordinal)) continue;
-            var rest = kv.Key.AsSpan(dotPrefix.Length);
-            var dot = rest.IndexOf('.');
-            if (dot <= 0) continue;
-            if (!int.TryParse(rest[..dot], NumberStyles.Integer, CultureInfo.InvariantCulture, out var idx))
-                continue;
-            var sub = rest[(dot + 1)..].ToString();
-            if (sub == "Name") nameByIndex[idx] = kv.Value;
-            else if (sub == "Value") valueByIndex[idx] = kv.Value;
-        }
-        foreach (var (idx, name) in nameByIndex)
-        {
-            if (valueByIndex.TryGetValue(idx, out var val)) d[name] = val;
-        }
-
-        if (parsed.Protocol == SqsWireProtocol.AwsJson && !string.IsNullOrEmpty(parsed.JsonBody))
-        {
-            try
-            {
-                using var doc = JsonDocument.Parse(parsed.JsonBody);
-                if (doc.RootElement.TryGetProperty("Attributes", out var attrs) && attrs.ValueKind == JsonValueKind.Object)
-                {
-                    foreach (var p in attrs.EnumerateObject())
-                    {
-                        if (p.Value.ValueKind == JsonValueKind.String)
-                        {
-                            d[p.Name] = p.Value.GetString() ?? string.Empty;
-                        }
-                    }
-                }
-            }
-            catch (JsonException) { /* protocol parser already validated body */ }
-        }
-        return d;
-    }
+    // --- Parameter extraction ------------------------------------------
 
     private static string? ExtractQueueName(SqsParseResult parsed) =>
-        parsed.Parameters.TryGetValue("QueueUrl", out var url) ? QueueUrlBuilder.ExtractQueueName(url) : null;
+        SqsParameterHelpers.ExtractQueueName(parsed);
 
     private static Task WriteErrorAsync(HttpContext context, SqsWireProtocol protocol, SqsErrorMapping.Mapping mapping) =>
-        SqsErrorResponse.WriteAsync(context, protocol, mapping.StatusCode, mapping.Code, mapping.Message, mapping.FaultType);
+        SqsParameterHelpers.WriteErrorAsync(context, protocol, mapping);
 
     // Test-only hook so unit tests can reset cool-down state between runs.
     internal static void ResetPurgeCoolDownForTesting() => _purgeStarted.Clear();

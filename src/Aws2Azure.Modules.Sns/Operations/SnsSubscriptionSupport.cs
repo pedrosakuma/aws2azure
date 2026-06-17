@@ -22,10 +22,10 @@ internal static class SnsSubscriptionSupport
         ArgumentNullException.ThrowIfNull(parameters);
 
         request = default!;
-        if (!TryGetRequiredNonEmptyParameter(parameters, "TopicArn", out var topicArn, out error)
-            || !SnsPublishSupport.TryParsePublishTopicArn(topicArn, out var topicName, out error)
-            || !TryGetRequiredNonEmptyParameter(parameters, "Protocol", out var protocol, out error)
-            || !TryGetRequiredNonEmptyParameter(parameters, "Endpoint", out var endpoint, out error))
+        if (!SnsParameterParsing.TryGetRequiredNonEmptyParameter(parameters, "TopicArn", out var topicArn, out error, rejectWhitespace: true)
+            || !SnsTopicSupport.TryParseTopicArnAllowFifo(topicArn, out var topicName, out error)
+            || !SnsParameterParsing.TryGetRequiredNonEmptyParameter(parameters, "Protocol", out var protocol, out error, rejectWhitespace: true)
+            || !SnsParameterParsing.TryGetRequiredNonEmptyParameter(parameters, "Endpoint", out var endpoint, out error, rejectWhitespace: true))
         {
             return false;
         }
@@ -135,7 +135,7 @@ internal static class SnsSubscriptionSupport
             return false;
         }
 
-        if (!SnsPublishSupport.TryParsePublishTopicArn(string.Join(':', parts, 0, 6), out topicName, out error))
+        if (!SnsTopicSupport.TryParseTopicArnAllowFifo(string.Join(':', parts, 0, 6), out topicName, out error))
         {
             return false;
         }
@@ -264,7 +264,7 @@ internal static class SnsSubscriptionSupport
         var indexes = new SortedSet<int>();
         foreach (var key in parameters.Keys)
         {
-            if (TryExtractEntryIndex(key, "Attributes.entry.", out var index))
+            if (SnsParameterParsing.TryExtractEntryIndex(key, "Attributes.entry.", out var index))
             {
                 indexes.Add(index);
             }
@@ -327,23 +327,6 @@ internal static class SnsSubscriptionSupport
         }
     }
 
-    private static bool TryGetRequiredNonEmptyParameter(
-        IReadOnlyDictionary<string, string> parameters,
-        string name,
-        out string value,
-        out string? error)
-    {
-        if (!parameters.TryGetValue(name, out value!) || string.IsNullOrWhiteSpace(value))
-        {
-            value = string.Empty;
-            error = $"Parameter '{name}' is required and must not be empty.";
-            return false;
-        }
-
-        error = null;
-        return true;
-    }
-
     private static bool TryGetParameterIgnoreCase(IReadOnlyDictionary<string, string> parameters, string name, out string value)
     {
         if (parameters.TryGetValue(name, out value!))
@@ -377,24 +360,6 @@ internal static class SnsSubscriptionSupport
 
         value = string.Empty;
         return false;
-    }
-
-    private static bool TryExtractEntryIndex(string key, string prefix, out int index)
-    {
-        index = 0;
-        if (!key.StartsWith(prefix, StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        var remaining = key.AsSpan(prefix.Length);
-        var separator = remaining.IndexOf('.');
-        if (separator <= 0)
-        {
-            return false;
-        }
-
-        return int.TryParse(remaining[..separator], out index);
     }
 
     private static bool TryParseBoolean(string value, out bool result)
