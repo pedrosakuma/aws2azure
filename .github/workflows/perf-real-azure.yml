@@ -64,6 +64,16 @@ jobs:
       # Real-Azure regime: suppress absolute throughput/p99 floors (network
       # bound) and gate only on backend-independent resource ceilings.
       AWS2AZURE_PERF_RESOURCE_ONLY: "1"
+      # Tier 2 saturation regime (#420): pin the proxy to a single logical core
+      # to model a CPU-constrained sidecar, and scale the closed-loop driver 4x
+      # (e.g. 16 -> 64 workers) so the proxy CPU — not the harness worker count
+      # (Little's law) — becomes the binding constraint. Only then can a CPU/alloc
+      # optimization (e.g. CosmosBinary) show up as throughput. The connection cap
+      # is raised for headroom above the scaled concurrency (HTTP/2 multiplexes,
+      # so this mainly bounds the h2 connection count / the HTTP/1.1 fallback).
+      AWS2AZURE_PERF_PROXY_CPUS: "1"
+      AWS2AZURE_PERF_CONCURRENCY_SCALE: "4"
+      AWS2AZURE_MAX_CONNECTIONS_PER_SERVER: "256"
       AZURE_LOCATION: eastus2
       RG_NAME: aws2azure-perf-${{ github.run_id }}-${{ github.run_attempt }}
       DEPLOYMENT_NAME: aws2azure-perf-realazure

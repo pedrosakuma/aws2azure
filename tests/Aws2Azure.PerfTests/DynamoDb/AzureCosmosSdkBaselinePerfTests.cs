@@ -40,7 +40,7 @@ public sealed class AzureCosmosSdkBaselinePerfTests(DynamoDbPerfFixture fixture)
 
         var result = await PerfRunner.RunAsync(
             scenario: "azure-sdk.Cosmos.UpsertItem (small)",
-            concurrency: 16,
+            concurrency: PerfConcurrency.Scale(16),
             duration: TimeSpan.FromSeconds(20),
             warmup: TimeSpan.FromSeconds(3),
             action: async (workerId, ct) =>
@@ -71,7 +71,7 @@ public sealed class AzureCosmosSdkBaselinePerfTests(DynamoDbPerfFixture fixture)
 
         var result = await PerfRunner.RunAsync(
             scenario: "azure-sdk.Cosmos.ReadItem (small)",
-            concurrency: 16,
+            concurrency: PerfConcurrency.Scale(16),
             duration: TimeSpan.FromSeconds(20),
             warmup: TimeSpan.FromSeconds(3),
             action: async (workerId, ct) =>
@@ -105,7 +105,7 @@ public sealed class AzureCosmosSdkBaselinePerfTests(DynamoDbPerfFixture fixture)
 
         var result = await PerfRunner.RunAsync(
             scenario: "azure-sdk.Cosmos.ReadManyItems (25 keys)",
-            concurrency: 8,
+            concurrency: PerfConcurrency.Scale(8),
             duration: TimeSpan.FromSeconds(20),
             warmup: TimeSpan.FromSeconds(3),
             action: async (workerId, ct) =>
