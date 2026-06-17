@@ -231,6 +231,31 @@ public sealed class PerfRegressionGateTests
         Assert.DoesNotContain("throughput", ex.Message); // network dim suppressed
     }
 
+    [Fact]
+    public void Reference_falls_back_to_committed_baseline_when_override_dir_has_none()
+    {
+        // Tier 2 (#420): the real-Azure perf workflow points AWS2AZURE_PERF_DIR
+        // at a RESULTS-only temp dir (to keep real-Azure numbers out of the
+        // committed emulator baseline). The committed thresholds/pairings must
+        // still load from docs/perf/baseline-reference.json — otherwise the
+        // scenario resource ceilings AND the relative proxy-vs-SDK gate silently
+        // no-op against an empty reference. An override dir without a reference
+        // must fall back to the repo's committed reference.
+        var emptyDir = Path.Combine(Path.GetTempPath(), "perfref-empty-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(emptyDir);
+        try
+        {
+            using var _ = new EnvOverride("AWS2AZURE_PERF_DIR", emptyDir);
+            PerfReferenceBaseline.ResetForTests();
+            Assert.NotEmpty(PerfReferenceBaseline.Pairings);
+        }
+        finally
+        {
+            PerfReferenceBaseline.ResetForTests();
+            try { Directory.Delete(emptyDir, recursive: true); } catch { }
+        }
+    }
+
     private sealed class EnvOverride : IDisposable
     {
         private readonly string _name;
