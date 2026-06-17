@@ -65,6 +65,19 @@ public sealed class AzureHttpClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        // Opportunistic HTTP/2. Azure REST gateways (Cosmos, Blob, Service Bus,
+        // ...) negotiate h2 via ALPN, multiplexing many concurrent requests over
+        // far fewer TCP connections — a real-Azure probe against the Cosmos
+        // gateway saw ~4x fewer sockets under a concurrent burst (54 -> 13),
+        // a direct sidecar footprint win (fewer sockets, fewer TLS handshakes).
+        // RequestVersionOrLower transparently falls back to HTTP/1.1 against
+        // endpoints/emulators that don't offer h2 at ALPN, and over cleartext
+        // http:// where there is no ALPN at all. This is set per request because
+        // HttpClient.DefaultRequestVersion is a no-op here: HttpRequestMessage's
+        // constructor pins Version=1.1, which the client treats as explicit.
+        request.Version = HttpVersion.Version20;
+        request.VersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
+
         var noRetry = request.Options.TryGetValue(NoRetryOption, out var noRetryFlag) && noRetryFlag;
         var attempt = 0;
         var maxAttempts = noRetry ? 1 : Math.Max(1, _options.MaxAttempts);
