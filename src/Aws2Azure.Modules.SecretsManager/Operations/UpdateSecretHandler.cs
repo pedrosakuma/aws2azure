@@ -39,8 +39,7 @@ internal static class UpdateSecretHandler
             return;
         }
 
-        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        using var secretDocument = JsonDocument.Parse(body);
+        using var secretDocument = await SecretsManagerOperationSupport.ReadJsonDocumentAsync(response.Content, cancellationToken).ConfigureAwait(false);
         var id = secretDocument.RootElement.TryGetProperty("id", out var idElement) && idElement.ValueKind == JsonValueKind.String
             ? idElement.GetString() ?? string.Empty
             : string.Empty;
@@ -53,6 +52,6 @@ internal static class UpdateSecretHandler
             VersionStages: ["AWSCURRENT"],
             CreatedDate: createdDate);
 
-        await SecretsManagerOperationSupport.WriteJsonAsync(context, payload, SecretsManagerJsonContext.Default.UpdateSecretResponse).ConfigureAwait(false);
+        await SecretsManagerOperationSupport.WriteJsonAsync(context, payload, SecretsManagerJsonContext.Default.UpdateSecretResponse, cancellationToken).ConfigureAwait(false);
     }
 }

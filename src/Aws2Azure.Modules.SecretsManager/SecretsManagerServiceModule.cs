@@ -1,5 +1,5 @@
 using System.Collections.Frozen;
-using System.Text;
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Aws2Azure.Core;
 using Aws2Azure.Core.Azure;
@@ -21,6 +21,7 @@ public sealed class SecretsManagerServiceModule : IServiceModule
     private readonly AzureHttpClient _http;
     private readonly ICredentialResolver _credentials;
     private readonly EntraIdTokenProvider _tokenProvider;
+    private readonly ConcurrentDictionary<string, KeyVaultSecretClient> _clients = new(StringComparer.Ordinal);
 
     public SecretsManagerServiceModule(
         AzureHttpClient http,
@@ -83,12 +84,15 @@ public sealed class SecretsManagerServiceModule : IServiceModule
             return;
         }
 
-        var client = new KeyVaultSecretClient(_http, _tokenProvider, keyVault);
+        var client = _clients.GetOrAdd(
+            accessKeyId,
+            static (_, state) => new KeyVaultSecretClient(state.Http, state.TokenProvider, state.KeyVault),
+            (Http: _http, TokenProvider: _tokenProvider, KeyVault: keyVault));
         try
         {
-            using var reader = new StreamReader(context.Request.Body, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
-            var body = await reader.ReadToEndAsync(context.RequestAborted).ConfigureAwait(false);
-            using var document = string.IsNullOrWhiteSpace(body) ? JsonDocument.Parse("{}") : JsonDocument.Parse(body);
+            using var document = IsEmptyRequestBody(context.Request)
+                ? JsonDocument.Parse("{}")
+                : await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted).ConfigureAwait(false);
 
             switch (operation)
             {
@@ -168,4 +172,8 @@ public sealed class SecretsManagerServiceModule : IServiceModule
 
     internal static string MapErrorCode(System.Net.HttpStatusCode statusCode)
         => SecretsManagerOperationSupport.MapErrorCode(statusCode);
+
+    private static bool IsEmptyRequestBody(HttpRequest request)
+        => request.ContentLength == 0
+            || (request.ContentLength is null && request.Body.CanSeek && request.Body.Position == request.Body.Length);
 }

@@ -39,8 +39,7 @@ internal static class PutSecretValueHandler
             return;
         }
 
-        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        using var secretDocument = JsonDocument.Parse(body);
+        using var secretDocument = await SecretsManagerOperationSupport.ReadJsonDocumentAsync(response.Content, cancellationToken).ConfigureAwait(false);
         var id = secretDocument.RootElement.TryGetProperty("id", out var idElement) && idElement.ValueKind == JsonValueKind.String
             ? idElement.GetString() ?? string.Empty
             : string.Empty;
@@ -51,6 +50,6 @@ internal static class PutSecretValueHandler
             VersionId: KeyVaultSecretClient.GetVersionId(id),
             VersionStages: ["AWSCURRENT"]);
 
-        await SecretsManagerOperationSupport.WriteJsonAsync(context, payload, SecretsManagerJsonContext.Default.PutSecretValueResponse).ConfigureAwait(false);
+        await SecretsManagerOperationSupport.WriteJsonAsync(context, payload, SecretsManagerJsonContext.Default.PutSecretValueResponse, cancellationToken).ConfigureAwait(false);
     }
 }

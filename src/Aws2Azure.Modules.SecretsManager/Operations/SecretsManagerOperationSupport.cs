@@ -15,11 +15,17 @@ internal static class SecretsManagerOperationSupport
         await AwsErrorResponse.WriteAsync(context, AwsErrorFormat.Json, statusCode, code, message, resource: null, jsonContentType: JsonContentType).ConfigureAwait(false);
     }
 
-    public static async Task WriteJsonAsync<T>(HttpContext context, T payload, JsonTypeInfo<T> typeInfo)
+    public static async Task WriteJsonAsync<T>(HttpContext context, T payload, JsonTypeInfo<T> typeInfo, CancellationToken cancellationToken)
     {
         context.Response.StatusCode = StatusCodes.Status200OK;
         context.Response.ContentType = JsonContentType;
-        await context.Response.WriteAsync(JsonSerializer.Serialize(payload, typeInfo)).ConfigureAwait(false);
+        await JsonSerializer.SerializeAsync(context.Response.Body, payload, typeInfo, cancellationToken).ConfigureAwait(false);
+    }
+
+    public static async Task<JsonDocument> ReadJsonDocumentAsync(HttpContent content, CancellationToken cancellationToken)
+    {
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     public static string? ReadString(JsonDocument document, string propertyName)

@@ -27,6 +27,6 @@ internal static class DeleteSecretHandler
             DeletedDate: DateTimeOffset.UtcNow,
             VersionId: null);
 
-        await SecretsManagerOperationSupport.WriteJsonAsync(context, payload, SecretsManagerJsonContext.Default.DeleteSecretResponse).ConfigureAwait(false);
+        await SecretsManagerOperationSupport.WriteJsonAsync(context, payload, SecretsManagerJsonContext.Default.DeleteSecretResponse, cancellationToken).ConfigureAwait(false);
     }
 }
