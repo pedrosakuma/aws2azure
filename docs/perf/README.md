@@ -242,10 +242,68 @@ regression rulers, not absolute prod memory.
 
 
 
+### 4. Tiered strategy & the falsification criterion (#420)
+
+A lower CPU/allocation number is **necessary but not sufficient** to call
+something an optimization. It only counts if it survives the real
+end-to-end flow — if CPU/alloc drop but response time and throughput do
+not improve, it is not an optimization, just a micro-benchmark artifact.
+And a CPU/alloc win only *cashes out* into throughput/latency when **CPU
+is the binding constraint** (a CPU-bound / densely-packed sidecar under a
+constrained CPU quota — the project's stated deployment premise). In a
+network/IO-bound regime the same win is invisible at the response layer.
+
+Perf coverage is therefore organized in three tiers, each answering a
+different question:
+
+| Tier | Where | Cadence | Answers |
+|------|-------|---------|---------|
+| **0 — mechanism micro-guard** | `tests/Aws2Azure.UnitTests` (e.g. `CosmosFusedEnvelopeAllocTests`) | every PR (`ci.yml`) | *Does the optimized code path still allocate/compute less than the path it replaced?* Deterministic `GC.GetAllocatedBytesForCurrentThread` deltas — fast, exact, non-flaky. |
+| **1 — emulator throughput** | `tests/Aws2Azure.PerfTests` + emulators | nightly (`perf.yml`) | *Does proxy overhead regress vs the SDK baseline?* Relative + resource gating (above). Emulator-bound — **never emits CosmosBinary**, so it only ever exercises the text path. |
+| **2 — real-Azure A/B (falsification arbiter)** | `tests/Aws2Azure.PerfTests` against live Azure | weekly (`perf-real-azure.yml`) | *Does the mechanism win (Tier 0) translate to a real throughput/latency improvement?* Runs the same scenarios twice — text vs binary — against real Cosmos and compares. |
+
+**The falsification criterion (Tier 2).** For an optimization like
+CosmosBinary (#268/#321/#336), the chain is:
+
+1. Tier 0 proves the mechanism allocates/computes less (the *necessary*
+   condition). If this fails the win never existed.
+2. Tier 2 runs the optimization on/off against real Azure under load and
+   reads both sides: the throughput/latency percentiles **and** the
+   proxy's own CPU/alloc gauges (`aws2azure_*`). The optimization is
+   *confirmed* only if the lower CPU/alloc co-occurs with **equal-or-better
+   throughput/latency** in a regime where CPU is the binding constraint
+   (saturation + constrained CPU). If real throughput/latency do not move,
+   the optimization is **falsified as an end-to-end win** — it stays a CPU
+   micro-saving, documented as such, not promoted.
+
+Because real Azure throttles and its absolute latency is network-bound,
+Tier 2 **never gates on absolute throughput/p99** (those flap). The
+`perf-real-azure.yml` job sets `AWS2AZURE_PERF_RESOURCE_ONLY=1`, which
+makes `AssertNoRegression()` suppress the throughput-floor / p99-ceiling
+dimensions while still enforcing the backend-independent resource ceilings
+(alloc/op, peak working set). The throughput/latency numbers are captured
+as run artifacts (per-mode `AWS2AZURE_PERF_DIR`, kept out of the committed
+emulator baseline) for the A/B comparison, not asserted as absolutes.
+
+> **Why a CPU/alloc win can fail to cash out.** The proxy's design goal is
+> to drive its own CPU cost toward near-zero so the request is essentially
+> pure IO. When IO/network dominates the response, halving an already-tiny
+> CPU slice leaves the wall-clock response unchanged — the win only becomes
+> observable once enough sidecars share a CPU that the saved cycles convert
+> to headroom (more concurrent requests per core). Tier 2 must run in that
+> regime to observe it; outside it, a confirmed Tier 0 win can read as
+> "no end-to-end benefit" — which is the correct, honest verdict for that
+> deployment shape.
+
+## Roadmap
+
 - Workload matrix per module (small / medium / large payload, 1 / 16 / 64
   concurrency) — currently MVP is a single point per module.
-- Real-Azure pass behind a manual workflow (see issue #119 for the
-  real-Azure smoke pattern).
+- Real-Azure A/B is live for DynamoDB via
+  [`perf-real-azure.yml`](../../.github/workflows/perf-real-azure.yml)
+  (Tier 2 above); extend the same backend-pluggable fixture pattern to the
+  other modules, and add proxy-vs-SDK relative gating against the real
+  backend.
 - Allocation / CPU profile via `dotnet-counters` collect during the run.
 
 

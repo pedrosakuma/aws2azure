@@ -196,6 +196,56 @@ public sealed class PerfRegressionGateTests
         result.AssertNoRegression(); // no throw — memory dimension opted out
     }
 
+    [Fact]
+    public void Resource_only_skips_throughput_and_p99_dimensions()
+    {
+        // Tier 2 (#420): against real Azure the absolute throughput/p99 floors
+        // are network-bound and must not gate — only resource ceilings do.
+        using var ovr = new ReferenceOverride(new Dictionary<string, (double, double)>
+        {
+            ["realScenario"] = (100.0, 100.0), // floor 100 ops/s, ceiling 100 ms
+        });
+        using var _ = new EnvOverride("AWS2AZURE_PERF_RESOURCE_ONLY", "1");
+        // throughput 1 ops/s (< floor) and p99 500 ms (> ceiling) — both would
+        // throw without resource-only mode.
+        var result = MakeResult("realScenario", throughput: 1.0, p99Us: 500_000);
+        result.AssertNoRegression(); // no throw
+    }
+
+    [Fact]
+    public void Resource_only_still_enforces_alloc_ceiling()
+    {
+        using var ovr = new ReferenceOverride(new Dictionary<string, PerfBaselineEntry>
+        {
+            ["realAllocScenario"] = new() { MinThroughputPerSec = 1_000_000, MaxAllocBytesPerOp = 1000.0 },
+        });
+        using var _ = new EnvOverride("AWS2AZURE_PERF_RESOURCE_ONLY", "1");
+        var result = MakeResult("realAllocScenario", throughput: 1.0, p99Us: 500_000) with
+        {
+            MemoryMeasured = true,
+            Completed = 100,
+            AllocatedBytesDelta = 500_000, // 5000 B/op > 1000 B/op — resource gate fires
+        };
+        var ex = Assert.Throws<Xunit.Sdk.XunitException>(result.AssertNoRegression);
+        Assert.Contains("alloc", ex.Message);
+        Assert.DoesNotContain("throughput", ex.Message); // network dim suppressed
+    }
+
+    private sealed class EnvOverride : IDisposable
+    {
+        private readonly string _name;
+        private readonly string? _previous;
+
+        public EnvOverride(string name, string? value)
+        {
+            _name = name;
+            _previous = Environment.GetEnvironmentVariable(name);
+            Environment.SetEnvironmentVariable(name, value);
+        }
+
+        public void Dispose() => Environment.SetEnvironmentVariable(_name, _previous);
+    }
+
     /// <summary>
     /// Writes a temporary baseline-reference.json under a probed perf dir and
     /// resets the cached singleton so the new file is picked up. Restores on
