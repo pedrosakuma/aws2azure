@@ -35,6 +35,7 @@ public sealed class ChunkSigningContext
 public sealed class AwsChunkedDecoder : Stream
 {
     private const int MaxChunkHeaderSize = 256; // generous for "hex;chunk-signature=64hex\r\n"
+    private const int ReadAheadBufferSize = 1024;
 
     // AWS SDK default chunk size is 64KB-128KB; S3 allows up to 5GB objects but
     // individual chunks are typically much smaller. We cap at 64MB to prevent
@@ -49,6 +50,11 @@ public sealed class AwsChunkedDecoder : Stream
 
     private byte[]? _headerBuffer;
     private int _headerBufferLen;
+
+    private byte[]? _readAheadBuffer;
+    private int _readAheadPos;
+    private int _readAheadLen;
+    private readonly byte[] _consumeBuffer = new byte[2];
 
     private byte[]? _chunkBuffer;
     private int _chunkBufferPos;
@@ -73,6 +79,7 @@ public sealed class AwsChunkedDecoder : Stream
         _expectTrailer = expectTrailer;
         _previousSignature = signingContext?.SeedSignature ?? string.Empty;
         _headerBuffer = ArrayPool<byte>.Shared.Rent(MaxChunkHeaderSize);
+        _readAheadBuffer = ArrayPool<byte>.Shared.Rent(ReadAheadBufferSize);
     }
 
     public override bool CanRead => true;
@@ -86,7 +93,7 @@ public sealed class AwsChunkedDecoder : Stream
     }
 
     public override int Read(byte[] buffer, int offset, int count)
-        => ReadAsync(buffer.AsMemory(offset, count), CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        => ReadAsync(buffer.AsMemory(offset, count), CancellationToken.None).GetAwaiter().GetResult();
 
     public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         => await ReadAsync(buffer.AsMemory(offset, count), cancellationToken).ConfigureAwait(false);
@@ -167,7 +174,7 @@ public sealed class AwsChunkedDecoder : Stream
                     var totalRead = 0;
                     while (totalRead < chunkSize)
                     {
-                        var read = await _inner.ReadAsync(_chunkBuffer.AsMemory(totalRead, (int)chunkSize - totalRead), cancellationToken).ConfigureAwait(false);
+                        var read = await ReadInnerAsync(_chunkBuffer.AsMemory(totalRead, (int)chunkSize - totalRead), cancellationToken).ConfigureAwait(false);
                         if (read == 0)
                             throw new InvalidDataException("Unexpected end of aws-chunked stream");
                         totalRead += read;
@@ -192,7 +199,7 @@ public sealed class AwsChunkedDecoder : Stream
             if (_remainingInChunk > 0)
             {
                 var toRead = (int)Math.Min(buffer.Length, _remainingInChunk);
-                var read = await _inner.ReadAsync(buffer[..toRead], cancellationToken).ConfigureAwait(false);
+                var read = await ReadInnerAsync(buffer[..toRead], cancellationToken).ConfigureAwait(false);
                 if (read == 0)
                     throw new InvalidDataException("Unexpected end of aws-chunked stream");
 
@@ -256,24 +263,38 @@ public sealed class AwsChunkedDecoder : Stream
     private async ValueTask<int> ReadCrlfLineAsync(CancellationToken cancellationToken)
     {
         _headerBufferLen = 0;
+        var headerBuffer = _headerBuffer;
+        if (headerBuffer is null)
+            throw new ObjectDisposedException(nameof(AwsChunkedDecoder));
+
+        var readAheadBuffer = _readAheadBuffer;
+        if (readAheadBuffer is null)
+            throw new ObjectDisposedException(nameof(AwsChunkedDecoder));
 
         while (true)
         {
             if (_headerBufferLen >= MaxChunkHeaderSize)
                 throw new InvalidDataException("aws-chunked header too long");
 
-            var read = await _inner.ReadAsync(_headerBuffer.AsMemory(_headerBufferLen, 1), cancellationToken).ConfigureAwait(false);
-            if (read == 0)
-                throw new InvalidDataException("Unexpected end of aws-chunked stream while reading header");
-
-            _headerBufferLen++;
-
-            // Check for \r\n at end
-            if (_headerBufferLen >= 2 &&
-                _headerBuffer![_headerBufferLen - 2] == '\r' &&
-                _headerBuffer[_headerBufferLen - 1] == '\n')
+            if (_readAheadPos >= _readAheadLen)
             {
-                return _headerBufferLen - 2; // exclude \r\n
+                await FillReadAheadAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            while (_readAheadPos < _readAheadLen)
+            {
+                if (_headerBufferLen >= MaxChunkHeaderSize)
+                    throw new InvalidDataException("aws-chunked header too long");
+
+                headerBuffer[_headerBufferLen++] = readAheadBuffer[_readAheadPos++];
+
+                // Check for \r\n at end
+                if (_headerBufferLen >= 2 &&
+                    headerBuffer[_headerBufferLen - 2] == '\r' &&
+                    headerBuffer[_headerBufferLen - 1] == '\n')
+                {
+                    return _headerBufferLen - 2; // exclude \r\n
+                }
             }
         }
     }
@@ -330,15 +351,48 @@ public sealed class AwsChunkedDecoder : Stream
 
     private async ValueTask ConsumeExactAsync(int count, CancellationToken cancellationToken)
     {
-        var buf = new byte[count];
         var totalRead = 0;
         while (totalRead < count)
         {
-            var read = await _inner.ReadAsync(buf.AsMemory(totalRead, count - totalRead), cancellationToken).ConfigureAwait(false);
+            var read = await ReadInnerAsync(
+                _consumeBuffer.AsMemory(0, Math.Min(_consumeBuffer.Length, count - totalRead)),
+                cancellationToken).ConfigureAwait(false);
             if (read == 0)
                 throw new InvalidDataException("Unexpected end of aws-chunked stream");
             totalRead += read;
         }
+    }
+
+    private async ValueTask<int> ReadInnerAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+    {
+        if (_readAheadPos < _readAheadLen)
+        {
+            var readAheadBuffer = _readAheadBuffer;
+            if (readAheadBuffer is null)
+                throw new ObjectDisposedException(nameof(AwsChunkedDecoder));
+
+            var available = _readAheadLen - _readAheadPos;
+            var toCopy = Math.Min(buffer.Length, available);
+            readAheadBuffer.AsSpan(_readAheadPos, toCopy).CopyTo(buffer.Span);
+            _readAheadPos += toCopy;
+            return toCopy;
+        }
+
+        return await _inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask FillReadAheadAsync(CancellationToken cancellationToken)
+    {
+        var readAheadBuffer = _readAheadBuffer;
+        if (readAheadBuffer is null)
+            throw new ObjectDisposedException(nameof(AwsChunkedDecoder));
+
+        var read = await _inner.ReadAsync(readAheadBuffer.AsMemory(0, ReadAheadBufferSize), cancellationToken).ConfigureAwait(false);
+        if (read == 0)
+            throw new InvalidDataException("Unexpected end of aws-chunked stream while reading header");
+
+        _readAheadPos = 0;
+        _readAheadLen = read;
     }
 
     private void ThrowIfDisposed()
@@ -359,6 +413,12 @@ public sealed class AwsChunkedDecoder : Stream
             {
                 ArrayPool<byte>.Shared.Return(_headerBuffer);
                 _headerBuffer = null;
+            }
+
+            if (_readAheadBuffer is not null)
+            {
+                ArrayPool<byte>.Shared.Return(_readAheadBuffer);
+                _readAheadBuffer = null;
             }
 
             if (_chunkBuffer is not null)

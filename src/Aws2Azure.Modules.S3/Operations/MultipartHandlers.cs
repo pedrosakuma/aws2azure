@@ -113,8 +113,7 @@ internal static class MultipartHandlers
             // Wrap the request body so we incrementally MD5-hash the part while
             // it streams to Azure. The hex MD5 becomes the S3 part ETag the
             // client echoes back in CompleteMultipartUpload.
-            using var md5 = MD5.Create();
-            using var hashing = new HashingStream(body.Body, md5);
+            using var hashing = new HashingStream(body.Body, HashAlgorithmName.MD5);
 
             using var azureReq = new HttpRequestMessage(HttpMethod.Put, blob.BuildBlobUri(bucket, key, query))
             {
@@ -133,7 +132,7 @@ internal static class MultipartHandlers
                 return;
             }
 
-            var etag = "\"" + Convert.ToHexString(md5.Hash!).ToLowerInvariant() + "\"";
+            var etag = "\"" + Convert.ToHexString(hashing.GetFinalHash()).ToLowerInvariant() + "\"";
             ctx.Response.StatusCode = StatusCodes.Status200OK;
             ctx.Response.Headers["ETag"] = etag;
             ctx.Response.ContentLength = 0;
@@ -650,22 +649,19 @@ internal static class MultipartHandlers
 
     /// <summary>
     /// Pass-through <see cref="Stream"/> that updates an
-    /// <see cref="IncrementalHash"/>-style digest as the body is read by
-    /// the HttpClient pipeline forwarding it to Azure. We use
-    /// <see cref="HashAlgorithm"/> directly so the final hash is available
-    /// via <see cref="HashAlgorithm.Hash"/> once <see cref="TransformFinalBlock"/>
-    /// runs.
+    /// <see cref="IncrementalHash"/> digest as the body is read by the
+    /// HttpClient pipeline forwarding it to Azure.
     /// </summary>
     private sealed class HashingStream : Stream
     {
         private readonly Stream _inner;
-        private readonly HashAlgorithm _hash;
-        private bool _finalised;
+        private readonly IncrementalHash _hash;
+        private byte[]? _finalHash;
 
-        public HashingStream(Stream inner, HashAlgorithm hash)
+        public HashingStream(Stream inner, HashAlgorithmName hashAlgorithm)
         {
             _inner = inner;
-            _hash = hash;
+            _hash = IncrementalHash.CreateHash(hashAlgorithm);
         }
 
         public override bool CanRead => _inner.CanRead;
@@ -679,13 +675,11 @@ internal static class MultipartHandlers
             var n = await _inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
             if (n > 0)
             {
-                _hash.TransformBlock(buffer.Span.Slice(0, n).ToArray(), 0, n, null, 0);
+                _hash.AppendData(buffer.Span[..n]);
             }
-            else if (!_finalised)
-            {
-                _hash.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
-                _finalised = true;
-            }
+            else
+                FinaliseHash();
+
             return n;
         }
 
@@ -694,14 +688,34 @@ internal static class MultipartHandlers
             var n = _inner.Read(buffer, offset, count);
             if (n > 0)
             {
-                _hash.TransformBlock(buffer, offset, n, null, 0);
+                _hash.AppendData(buffer.AsSpan(offset, n));
             }
-            else if (!_finalised)
-            {
-                _hash.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
-                _finalised = true;
-            }
+            else
+                FinaliseHash();
+
             return n;
+        }
+
+        public byte[] GetFinalHash() => FinaliseHash();
+
+        private byte[] FinaliseHash()
+        {
+            if (_finalHash is null)
+            {
+                _finalHash = _hash.GetHashAndReset();
+            }
+
+            return _finalHash;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _hash.Dispose();
+            }
+
+            base.Dispose(disposing);
         }
 
         public override void Flush() { }
