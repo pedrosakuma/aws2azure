@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Frozen;
 using System.Collections.Concurrent;
 using System.Text.Json;
@@ -22,6 +23,10 @@ public sealed class SecretsManagerServiceModule : IServiceModule
     private readonly ICredentialResolver _credentials;
     private readonly EntraIdTokenProvider _tokenProvider;
     private readonly ConcurrentDictionary<string, KeyVaultSecretClient> _clients = new(StringComparer.Ordinal);
+
+    private const int DefaultRequestBufferBytes = 256;
+    private const int MaxBufferedRequestBytes = 1 << 20;
+    private const string EmptyJsonObject = "{}";
 
     public SecretsManagerServiceModule(
         AzureHttpClient http,
@@ -90,9 +95,7 @@ public sealed class SecretsManagerServiceModule : IServiceModule
             (Http: _http, TokenProvider: _tokenProvider, KeyVault: keyVault));
         try
         {
-            using var document = IsEmptyRequestBody(context.Request)
-                ? JsonDocument.Parse("{}")
-                : await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted).ConfigureAwait(false);
+            using var document = await ReadRequestDocumentAsync(context.Request, context.RequestAborted).ConfigureAwait(false);
 
             switch (operation)
             {
@@ -173,7 +176,51 @@ public sealed class SecretsManagerServiceModule : IServiceModule
     internal static string MapErrorCode(System.Net.HttpStatusCode statusCode)
         => SecretsManagerOperationSupport.MapErrorCode(statusCode);
 
-    private static bool IsEmptyRequestBody(HttpRequest request)
-        => request.ContentLength == 0
-            || (request.ContentLength is null && request.Body.CanSeek && request.Body.Position == request.Body.Length);
+    private static async ValueTask<JsonDocument> ReadRequestDocumentAsync(HttpRequest request, CancellationToken cancellationToken)
+    {
+        if (request.ContentLength == 0)
+        {
+            return JsonDocument.Parse(EmptyJsonObject);
+        }
+
+        // Buffer the (small, bounded) Secrets Manager request body once. This
+        // maps an empty or whitespace-only payload to "{}" — matching the AWS
+        // SDK's habit of sending no/blank body for parameterless calls — while
+        // still avoiding the intermediate string + second parse pass that the
+        // previous ReadToEndAsync/Parse(string) path incurred. A non-seekable
+        // body with no Content-Length cannot be classified without reading it.
+        var writer = new ArrayBufferWriter<byte>(
+            request.ContentLength is > 0 and <= MaxBufferedRequestBytes
+                ? (int)request.ContentLength
+                : DefaultRequestBufferBytes);
+
+        while (true)
+        {
+            var memory = writer.GetMemory(DefaultRequestBufferBytes);
+            var read = await request.Body.ReadAsync(memory, cancellationToken).ConfigureAwait(false);
+            if (read == 0)
+            {
+                break;
+            }
+
+            writer.Advance(read);
+        }
+
+        return IsJsonBlank(writer.WrittenSpan)
+            ? JsonDocument.Parse(EmptyJsonObject)
+            : JsonDocument.Parse(writer.WrittenMemory);
+    }
+
+    private static bool IsJsonBlank(ReadOnlySpan<byte> utf8)
+    {
+        foreach (var b in utf8)
+        {
+            if (b is not ((byte)' ' or (byte)'\t' or (byte)'\n' or (byte)'\r'))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 }
