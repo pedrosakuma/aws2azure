@@ -76,5 +76,12 @@ internal interface ITokenWriter
     /// numeric marker (int32 / int64 / double).</summary>
     void WriteNumberRaw(string canonicalDecimal);
 
+    /// <summary>Writes a bare JSON number from its canonical decimal <b>UTF-8</b>
+    /// bytes (no exponent, no superfluous zeros) — the single-pass wire path
+    /// (#429) canonicalizes straight into a stack buffer and hands the bytes
+    /// through with zero string materialization. Behaviour matches
+    /// <see cref="WriteNumberRaw(string)"/> byte-for-byte.</summary>
+    void WriteNumberRaw(ReadOnlySpan<byte> canonicalUtf8);
+
     void Flush();
 }

@@ -42,5 +42,7 @@ internal readonly struct Utf8JsonTokenWriter(Utf8JsonWriter writer) : ITokenWrit
 
     public void WriteNumberRaw(string canonicalDecimal) => _writer.WriteRawValue(canonicalDecimal, skipInputValidation: false);
 
+    public void WriteNumberRaw(ReadOnlySpan<byte> canonicalUtf8) => _writer.WriteRawValue(canonicalUtf8, skipInputValidation: false);
+
     public void Flush() => _writer.Flush();
 }
