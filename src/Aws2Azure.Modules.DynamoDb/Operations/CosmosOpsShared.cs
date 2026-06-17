@@ -559,8 +559,11 @@ internal static class CosmosOpsShared
     /// a marker it does not fast-path, so the caller can fall back to the proven
     /// decode-to-text path. The buffer is committed only after the whole envelope
     /// is built, so a fallback never emits a partial response.
+    /// <para>Internal (not private) so the Tier 0 allocation guard
+    /// (<c>CosmosFusedEnvelopeAllocTests</c>, issue #420) measures the SHIPPED
+    /// fused path, not a reconstruction of it.</para>
     /// </summary>
-    private static bool TryWriteFusedBinaryEnvelope(
+    internal static bool TryWriteFusedBinaryEnvelope(
         ReadOnlySpan<byte> binaryBody, out PooledByteBufferWriter? envelope)
     {
         var scratch = new PooledByteBufferWriter(1024);
