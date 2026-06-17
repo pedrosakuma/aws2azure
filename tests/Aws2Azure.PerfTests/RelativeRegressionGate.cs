@@ -126,4 +126,13 @@ internal static class RelativeRegressionGate
 internal sealed record GateReport(
     IReadOnlyList<string> Violations,
     IReadOnlyList<string> Checked,
-    IReadOnlyList<string> Skipped);
+    IReadOnlyList<string> Skipped)
+{
+    /// <summary>
+    /// Whether a ratio breach should FAIL the build. A breach blocks unless the
+    /// run is in real-Azure report-only mode (#420): there the emulator-tuned
+    /// ratios aren't a real-Azure floor yet, so breaches are captured for the
+    /// A/B without failing the (weekly) job.
+    /// </summary>
+    public bool IsBlockingFailure(bool reportOnly) => !reportOnly && Violations.Count > 0;
+}

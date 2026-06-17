@@ -229,6 +229,21 @@ public sealed class RelativeRegressionGateEvaluatorTests
         Assert.Empty(report.Violations);
         Assert.Single(report.Skipped);
     }
+
+    [Theory]
+    // (hasViolation, reportOnly) -> blocks?
+    [InlineData(true, false, true)]   // breach + normal (emulator) run -> fail the build
+    [InlineData(true, true, false)]   // breach + real-Azure report-only -> do NOT fail
+    [InlineData(false, false, false)] // no breach -> never fails
+    [InlineData(false, true, false)]  // no breach, report-only -> never fails
+    public void IsBlockingFailure_only_when_breach_and_not_report_only(
+        bool hasViolation, bool reportOnly, bool expectedBlocks)
+    {
+        var violations = hasViolation ? new[] { "proxy ratio breach" } : System.Array.Empty<string>();
+        var report = new GateReport(violations, System.Array.Empty<string>(), System.Array.Empty<string>());
+
+        Assert.Equal(expectedBlocks, report.IsBlockingFailure(reportOnly));
+    }
 }
 
 /// <summary>
@@ -260,6 +275,32 @@ public sealed class RelativeRegressionGateTests
         foreach (var ok in report.Checked) _output.WriteLine("OK    " + ok);
         foreach (var skip in report.Skipped) _output.WriteLine("SKIP  " + skip);
         foreach (var bad in report.Violations) _output.WriteLine("FAIL  " + bad);
+
+        // Tier 2 / real-Azure (#420): the relative ratios in baseline-reference.json
+        // are calibrated against the EMULATOR. The proxy-vs-SDK ratio is the right
+        // signal on real Azure too (it cancels network/throttle noise by hitting
+        // both sides), but until enough real-Azure runs accrue to set a deliberate,
+        // data-backed real-Azure ratio, the real-Azure workflow runs this gate in
+        // REPORT-ONLY mode: the OK/SKIP/FAIL lines above are captured as artifacts
+        // for the A/B, but a ratio breach does not fail the (weekly) job. This
+        // mirrors the repo convention that new/untuned scenarios pass through
+        // silently until an operator bumps the reference deliberately. Flip the
+        // flag off in the workflow once a real-Azure ratio floor is established.
+        bool reportOnly = string.Equals(
+            Environment.GetEnvironmentVariable("AWS2AZURE_PERF_RELATIVE_REPORT_ONLY"),
+            "1", StringComparison.Ordinal);
+
+        if (!report.IsBlockingFailure(reportOnly))
+        {
+            if (reportOnly && report.Violations.Count > 0)
+            {
+                _output.WriteLine(
+                    "[REPORT-ONLY] Relative ratios exceeded the emulator-tuned baseline but the build "
+                    + "is NOT failed (AWS2AZURE_PERF_RELATIVE_REPORT_ONLY=1). Real-Azure ratios are "
+                    + "informational until a deliberate real-Azure floor is set.");
+            }
+            return;
+        }
 
         Assert.True(report.Violations.Count == 0,
             "Relative perf regression — the proxy exceeded its SDK-baseline ratio on the same emulator:\n  - "
