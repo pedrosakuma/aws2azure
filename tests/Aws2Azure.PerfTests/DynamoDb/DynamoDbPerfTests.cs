@@ -72,6 +72,12 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
         ? (CosmosBinaryEnabled ? "real-Azure (binary)" : "real-Azure (text)")
         : "emulator";
 
+    /// <summary>
+    /// Backend without the text/binary mode suffix — for the SDK baseline rows,
+    /// which are mode-agnostic (the native Cosmos SDK has no CosmosBinary toggle).
+    /// </summary>
+    public string BackendName => IsRealAzure ? "real-Azure" : "emulator";
+
     public AmazonDynamoDBClient CreateClient() => new(
         AccessKeyId,
         Secret,
@@ -584,17 +590,51 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
                         [fixture.TableName] = batch,
                     },
                 }, ct).ConfigureAwait(false);
-                if (resp.UnprocessedItems is { Count: > 0 } unp
-                    && unp.TryGetValue(fixture.TableName, out var left) && left.Count > 0)
+
+                // Drain UnprocessedItems with exponential backoff, modelling a
+                // real DynamoDB client. Under Cosmos RU throttling BatchWriteItem
+                // legitimately returns UnprocessedItems (the documented backpressure
+                // contract) and the AWS SDK retries them with backoff. Counting the
+                // whole batch as ONE op once drained measures the true SUSTAINABLE
+                // write throughput on real Azure instead of mislabelling throttle
+                // as a hard failure (the emulator rarely throttles, so this only
+                // bites on the real backend — issue #420 Tier 2).
+                const int maxRetries = 8;
+                var delayMs = 25;
+                for (var attempt = 0; HasUnprocessed(resp, fixture.TableName, out var leftovers); attempt++)
                 {
-                    // Emulator throttling — treat as a soft failure surfaced via failure count.
-                    throw new InvalidOperationException($"BatchWriteItem: {left.Count} unprocessed.");
+                    if (attempt >= maxRetries)
+                    {
+                        throw new InvalidOperationException(
+                            $"BatchWriteItem: {leftovers.Count} items still unprocessed after {maxRetries} backoff retries.");
+                    }
+                    await Task.Delay(delayMs, ct).ConfigureAwait(false);
+                    delayMs = Math.Min(delayMs * 2, 1000);
+                    resp = await client.BatchWriteItemAsync(new BatchWriteItemRequest
+                    {
+                        RequestItems = new Dictionary<string, List<WriteRequest>>
+                        {
+                            [fixture.TableName] = leftovers,
+                        },
+                    }, ct).ConfigureAwait(false);
                 }
             });
 
-        PerfReport.Append(result, notes: $"DynamoDB→Cosmos BatchWriteItem — 25 PutRequest/call [{fixture.BackendLabel}]");
+        PerfReport.Append(result, notes: $"DynamoDB→Cosmos BatchWriteItem — 25 PutRequest/call, UnprocessedItems retried with backoff [{fixture.BackendLabel}]");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
         result.AssertNoRegression();
+    }
+
+    private static bool HasUnprocessed(BatchWriteItemResponse resp, string table, out List<WriteRequest> leftovers)
+    {
+        if (resp.UnprocessedItems is { Count: > 0 } unp
+            && unp.TryGetValue(table, out var left) && left.Count > 0)
+        {
+            leftovers = left;
+            return true;
+        }
+        leftovers = [];
+        return false;
     }
 
     [SkippableFact]

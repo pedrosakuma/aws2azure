@@ -263,9 +263,11 @@ internal static class PerfReport
         sb.AppendLine(CultureInfo.InvariantCulture, $"Generated: {DateTime.UtcNow:O}");
         sb.AppendLine();
         sb.AppendLine("Closed-loop concurrent driver — AWS SDK clients pointing at the proxy");
-        sb.AppendLine("(`Aws2Azure.Proxy`) which fronts local emulators (Azurite, Service Bus,");
-        sb.AppendLine("Cosmos DB, Event Hubs). **Numbers are emulator-bound — they reflect proxy");
-        sb.AppendLine("overhead, not real-Azure throughput.**");
+        sb.AppendLine("(`Aws2Azure.Proxy`). The backend is indicated per row in the **Notes**");
+        sb.AppendLine("column (`[emulator]`, `[real-Azure (text)]`, `[real-Azure (binary)]`); SDK");
+        sb.AppendLine("baseline rows run directly against the same backend with no proxy. Emulator");
+        sb.AppendLine("numbers reflect proxy overhead, not real-Azure throughput; real-Azure runs");
+        sb.AppendLine("(issue #420 Tier 2) are the end-to-end falsification arbiter.");
         sb.AppendLine();
         sb.AppendLine("Rows are merged in place by scenario name (see `PerfReport.cs`); partial");
         sb.AppendLine("reruns refresh the matching row without wiping the rest. The cumulative");

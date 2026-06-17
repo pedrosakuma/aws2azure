@@ -56,7 +56,7 @@ public sealed class AzureCosmosSdkBaselinePerfTests(DynamoDbPerfFixture fixture)
                     .ConfigureAwait(false);
             });
 
-        PerfReport.Append(result, notes: "Azure SDK baseline — direct CosmosClient.UpsertItemAsync against Cosmos emulator (no proxy)");
+        PerfReport.Append(result, notes: $"Azure SDK baseline — direct CosmosClient.UpsertItemAsync, no proxy [{fixture.BackendName}]");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
         result.AssertNoRegression();
     }
@@ -90,7 +90,7 @@ public sealed class AzureCosmosSdkBaselinePerfTests(DynamoDbPerfFixture fixture)
                 }
             });
 
-        PerfReport.Append(result, notes: "Azure SDK baseline — direct CosmosClient.ReadItemAsync against Cosmos emulator (no proxy)");
+        PerfReport.Append(result, notes: $"Azure SDK baseline — direct CosmosClient.ReadItemAsync, no proxy [{fixture.BackendName}]");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
         result.AssertNoRegression();
     }
@@ -127,7 +127,7 @@ public sealed class AzureCosmosSdkBaselinePerfTests(DynamoDbPerfFixture fixture)
                 }
             });
 
-        PerfReport.Append(result, notes: "Azure SDK baseline — direct CosmosClient.ReadManyItemsAsync against Cosmos emulator (no proxy)");
+        PerfReport.Append(result, notes: $"Azure SDK baseline — direct CosmosClient.ReadManyItemsAsync, no proxy [{fixture.BackendName}]");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
         result.AssertNoRegression();
     }
