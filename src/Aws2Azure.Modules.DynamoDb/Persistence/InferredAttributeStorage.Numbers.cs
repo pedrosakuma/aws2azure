@@ -396,4 +396,267 @@ internal static partial class InferredAttributeStorage
             : span[fracStart + (srcIdx - intDigits)];
     }
 
+    // -- UTF-8 single-pass number path (#429) --------------------------
+    //
+    // The write path (DDB item -> Cosmos doc) takes numbers end-to-end on
+    // UTF-8, mirroring the string attribute path: read the raw number from the
+    // reader's value span, canonicalize into a stack buffer, write the bytes
+    // straight through. No GetString(), no StringBuilder, no ToString("R").
+    // This is a faithful byte port of TryParseDdbNumber + EmitCanonical +
+    // CanRoundTripAsBareJsonNumber; the differential test
+    // (NumberCanonicalizerParityTests) pins it byte-identical to the string
+    // path it shadows, which still serves the key-codec / filter-pushdown
+    // callers unchanged.
+
+    /// <summary>Max raw DDB number length the wire path copies into a stack
+    /// buffer for the (vanishingly rare) escaped case; valid canonical inputs
+    /// are &lt;= ~170 bytes. Non-escaped numbers forward their value span
+    /// directly with no length bound.</summary>
+    internal const int MaxRawDdbNumberUtf8Length = 256;
+
+    /// <summary>Max canonical decimal length in UTF-8 bytes: worst case is
+    /// <c>-0.&lt;129 leading zeros&gt;&lt;38 sig digits&gt;</c> == 170, rounded up.</summary>
+    internal const int MaxCanonicalDdbNumberUtf8Length = 176;
+
+    /// <summary>
+    /// Encodes a DDB Number from its raw UTF-8 bytes — the single-pass wire
+    /// analog of <see cref="EncodeNumberFromRaw{TWriter}"/>. Canonicalizes into
+    /// a stack buffer, then writes bare or enveloped exactly as the string path.
+    /// </summary>
+    private static void EncodeNumberFromRawUtf8<TWriter>(TWriter writer, ReadOnlySpan<byte> rawUtf8)
+        where TWriter : ITokenWriter
+    {
+        Span<byte> canon = stackalloc byte[MaxCanonicalDdbNumberUtf8Length];
+        if (!TryCanonicalizeDdbNumberUtf8(rawUtf8, canon, out int written, out _, out var error))
+            throw new ArgumentException(error, nameof(rawUtf8));
+
+        ReadOnlySpan<byte> canonical = canon[..written];
+        if (CanRoundTripAsBareJsonNumberUtf8(canonical))
+        {
+            writer.WriteNumberRaw(canonical);
+            return;
+        }
+
+        writer.WriteStartObject();
+        writer.WritePropertyName(EnvelopeNName);
+        writer.WriteStringValue(canonical);
+        writer.WriteEndObject();
+    }
+
+    /// <summary>
+    /// Parses + validates a raw DDB Number (UTF-8) and emits its canonical
+    /// decimal form into <paramref name="dest"/> — fused so no intermediate
+    /// significant-digit buffer is materialized. Byte-identical to
+    /// <see cref="TryNormalizeDdbNumber"/> over the same input.
+    /// </summary>
+    internal static bool TryCanonicalizeDdbNumberUtf8(
+        ReadOnlySpan<byte> raw, Span<byte> dest, out int written, out int significantDigits, out string error)
+    {
+        written = 0;
+        significantDigits = 0;
+        error = string.Empty;
+
+        if (raw.IsEmpty)
+        {
+            error = "Number AttributeValue must not be empty.";
+            return false;
+        }
+
+        int i = 0;
+        bool negative = false;
+        if (raw[i] == (byte)'+' || raw[i] == (byte)'-')
+        {
+            negative = raw[i] == (byte)'-';
+            i++;
+        }
+
+        int intStart = i;
+        while (i < raw.Length && raw[i] >= (byte)'0' && raw[i] <= (byte)'9') i++;
+        int intEnd = i;
+
+        int fracStart = -1, fracEnd = -1;
+        if (i < raw.Length && raw[i] == (byte)'.')
+        {
+            i++;
+            fracStart = i;
+            while (i < raw.Length && raw[i] >= (byte)'0' && raw[i] <= (byte)'9') i++;
+            fracEnd = i;
+        }
+
+        int expValue = 0;
+        if (i < raw.Length && (raw[i] == (byte)'e' || raw[i] == (byte)'E'))
+        {
+            i++;
+            bool expNeg = false;
+            if (i < raw.Length && (raw[i] == (byte)'+' || raw[i] == (byte)'-'))
+            {
+                expNeg = raw[i] == (byte)'-';
+                i++;
+            }
+            int expDigits = 0;
+            while (i < raw.Length && raw[i] >= (byte)'0' && raw[i] <= (byte)'9')
+            {
+                if (expDigits < 5)
+                    expValue = expValue * 10 + (raw[i] - (byte)'0');
+                else
+                    expValue = int.MaxValue / 2;
+                expDigits++;
+                i++;
+            }
+            if (expDigits == 0)
+            {
+                error = "Number has malformed exponent.";
+                return false;
+            }
+            if (expNeg) expValue = -expValue;
+        }
+
+        if (i != raw.Length)
+        {
+            error = "Number contains unexpected characters.";
+            return false;
+        }
+
+        int intDigits = intEnd - intStart;
+        int fracDigits = fracEnd >= 0 ? fracEnd - fracStart : 0;
+        if (intDigits == 0)
+        {
+            error = "Number must have at least one digit before the decimal point.";
+            return false;
+        }
+        if (fracEnd >= 0 && fracDigits == 0)
+        {
+            error = "Number has a decimal point with no following digits.";
+            return false;
+        }
+
+        int firstNonZero = -1;
+        for (int k = 0; k < intDigits; k++)
+        {
+            if (raw[intStart + k] != (byte)'0') { firstNonZero = k; break; }
+        }
+        if (firstNonZero == -1)
+        {
+            for (int k = 0; k < fracDigits; k++)
+            {
+                if (raw[fracStart + k] != (byte)'0')
+                {
+                    firstNonZero = intDigits + k;
+                    break;
+                }
+            }
+        }
+        if (firstNonZero == -1)
+        {
+            dest[0] = (byte)'0';
+            written = 1;
+            significantDigits = 1;
+            return true;
+        }
+
+        int totalDigits = intDigits + fracDigits;
+        int lastNonZero = totalDigits - 1;
+        for (; lastNonZero >= 0; lastNonZero--)
+        {
+            byte d = lastNonZero < intDigits
+                ? raw[intStart + lastNonZero]
+                : raw[fracStart + (lastNonZero - intDigits)];
+            if (d != (byte)'0') break;
+        }
+
+        int sig = lastNonZero - firstNonZero + 1;
+        if (sig > MaxDdbNumberSignificantDigits)
+        {
+            error = $"Number exceeds DynamoDB's {MaxDdbNumberSignificantDigits}-digit precision limit.";
+            return false;
+        }
+
+        int msdExponent = (intDigits - 1 - firstNonZero) + expValue;
+        if (msdExponent > MaxDdbNumberDecimalExponent)
+        {
+            error = $"Number magnitude exceeds DynamoDB's 1e+{MaxDdbNumberDecimalExponent} upper bound.";
+            return false;
+        }
+        if (msdExponent < MinDdbNumberDecimalExponent)
+        {
+            error = $"Number magnitude is below DynamoDB's 1e{MinDdbNumberDecimalExponent} lower bound.";
+            return false;
+        }
+
+        significantDigits = sig;
+        written = EmitCanonicalUtf8(negative, msdExponent, sig, raw, intStart, fracStart, intDigits, firstNonZero, dest);
+        return true;
+    }
+
+    /// <summary>
+    /// Emits the canonical decimal layout (UTF-8) from the parsed structure,
+    /// reading significant digits straight from the raw span via
+    /// <see cref="GetSignificantDigitUtf8"/> — the byte analog of
+    /// <see cref="EmitCanonical"/>.
+    /// </summary>
+    private static int EmitCanonicalUtf8(
+        bool negative, int msdExponent, int significantDigits,
+        ReadOnlySpan<byte> raw, int intStart, int fracStart, int intDigits, int firstNonZero,
+        Span<byte> dest)
+    {
+        int lsdExponent = msdExponent - (significantDigits - 1);
+        int pos = 0;
+        if (negative) dest[pos++] = (byte)'-';
+
+        if (msdExponent >= 0)
+        {
+            int intLen = msdExponent + 1;
+            for (int k = 0; k < intLen; k++)
+            {
+                dest[pos++] = k < significantDigits
+                    ? GetSignificantDigitUtf8(raw, intStart, fracStart, intDigits, firstNonZero, k)
+                    : (byte)'0';
+            }
+            if (lsdExponent < 0)
+            {
+                dest[pos++] = (byte)'.';
+                int fracLen = -lsdExponent;
+                for (int k = 0; k < fracLen; k++)
+                    dest[pos++] = GetSignificantDigitUtf8(raw, intStart, fracStart, intDigits, firstNonZero, intLen + k);
+            }
+        }
+        else
+        {
+            dest[pos++] = (byte)'0';
+            dest[pos++] = (byte)'.';
+            int leadingZeros = -msdExponent - 1;
+            for (int k = 0; k < leadingZeros; k++) dest[pos++] = (byte)'0';
+            for (int k = 0; k < significantDigits; k++)
+                dest[pos++] = GetSignificantDigitUtf8(raw, intStart, fracStart, intDigits, firstNonZero, k);
+        }
+
+        return pos;
+    }
+
+    private static byte GetSignificantDigitUtf8(
+        ReadOnlySpan<byte> raw, int intStart, int fracStart, int intDigits, int firstNonZero, int k)
+    {
+        int srcIdx = firstNonZero + k;
+        return srcIdx < intDigits
+            ? raw[intStart + srcIdx]
+            : raw[fracStart + (srcIdx - intDigits)];
+    }
+
+    /// <summary>
+    /// UTF-8 analog of <see cref="CanRoundTripAsBareJsonNumber"/> — same
+    /// algorithm (parse to double, re-print with <c>R</c>, compare) over spans,
+    /// no string allocation.
+    /// </summary>
+    internal static bool CanRoundTripAsBareJsonNumberUtf8(ReadOnlySpan<byte> canonical)
+    {
+        if (!double.TryParse(canonical, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+            return false;
+        if (double.IsNaN(value) || double.IsInfinity(value)) return false;
+
+        Span<byte> roundTrip = stackalloc byte[40];
+        if (!value.TryFormat(roundTrip, out int rtLen, "R", CultureInfo.InvariantCulture))
+            return false;
+        return roundTrip[..rtLen].SequenceEqual(canonical);
+    }
+
 }

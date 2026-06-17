@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Buffers.Text;
 using System.Globalization;
 using System.Text;
 
@@ -176,6 +177,35 @@ internal sealed class CosmosBinaryWriter : ITokenWriter, IDisposable
         }
 
         double value = double.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture);
+        WriteByte(0xCC);
+        BinaryPrimitives.WriteDoubleLittleEndian(Take(8), value);
+    }
+
+    public void WriteNumberRaw(ReadOnlySpan<byte> canonicalUtf8)
+    {
+        OnBeforeValue();
+
+        // Canonical DDB form has no exponent (TryCanonicalizeDdbNumberUtf8
+        // expands it), so an integer is exactly the absence of a decimal point.
+        if (canonicalUtf8.IndexOf((byte)'.') < 0
+            && Utf8Parser.TryParse(canonicalUtf8, out long integer, out int consumed)
+            && consumed == canonicalUtf8.Length)
+        {
+            if (integer is >= int.MinValue and <= int.MaxValue)
+            {
+                WriteByte(0xCA);
+                BinaryPrimitives.WriteInt32LittleEndian(Take(4), (int)integer);
+            }
+            else
+            {
+                WriteByte(0xCB);
+                BinaryPrimitives.WriteInt64LittleEndian(Take(8), integer);
+            }
+
+            return;
+        }
+
+        double value = double.Parse(canonicalUtf8, NumberStyles.Float, CultureInfo.InvariantCulture);
         WriteByte(0xCC);
         BinaryPrimitives.WriteDoubleLittleEndian(Take(8), value);
     }

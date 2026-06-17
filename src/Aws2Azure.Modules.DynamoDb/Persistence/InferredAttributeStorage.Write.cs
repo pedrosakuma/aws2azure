@@ -370,6 +370,25 @@ internal static partial class InferredAttributeStorage
 
         string GetStringValue();
 
+        /// <summary>
+        /// Exposes the Number payload as raw <b>unescaped</b> UTF-8 bytes without
+        /// a copy for the single-pass canonicalizer (#429), avoiding the
+        /// per-attribute <c>GetString()</c> transcode. Returns true with a span
+        /// valid for the lifetime of the source (the reader's value span) when
+        /// the number carries no escapes; false when the caller must copy via
+        /// <see cref="CopyNumberUtf8"/> or fall back to the string path.
+        /// </summary>
+        bool TryGetNumberUtf8Direct(out ReadOnlySpan<byte> utf8);
+
+        /// <summary>
+        /// Copies the (possibly escaped) Number payload as UTF-8 into
+        /// <paramref name="dest"/>, returning the byte count — used only when
+        /// <see cref="TryGetNumberUtf8Direct"/> returned false. Returns -1 when
+        /// the source has no zero-string UTF-8 path (the JsonElement source) or
+        /// the value does not fit, signalling a string-path fall-back.
+        /// </summary>
+        int CopyNumberUtf8(scoped Span<byte> dest);
+
         bool GetBooleanValue();
 
         void ExpectNullPayload();
@@ -399,7 +418,7 @@ internal static partial class InferredAttributeStorage
 
             case AttrTag.Number:
                 source.ExpectStringPayload(tag);
-                EncodeNumberFromRaw(writer, source.GetStringValue());
+                EncodeNumberValue(writer, ref source);
                 break;
 
             case AttrTag.Binary:
@@ -445,6 +464,31 @@ internal static partial class InferredAttributeStorage
         }
 
         source.EnsureAttributeClosed();
+    }
+
+    /// <summary>
+    /// Encodes a scalar DDB Number. Prefers the single-pass UTF-8 path (#429) —
+    /// canonicalize the reader's value span straight into a stack buffer with no
+    /// string materialization — and falls back to the string path only when the
+    /// source can't surface raw UTF-8 (the JsonElement source, or a rare escaped
+    /// number larger than the scratch buffer).
+    /// </summary>
+    private static void EncodeNumberValue<TWriter, TSource>(TWriter writer, ref TSource source)
+        where TWriter : ITokenWriter
+        where TSource : IDdbAttributeSource, allows ref struct
+    {
+        Span<byte> scratch = stackalloc byte[MaxRawDdbNumberUtf8Length];
+        if (source.TryGetNumberUtf8Direct(out var direct))
+        {
+            EncodeNumberFromRawUtf8(writer, direct);
+            return;
+        }
+
+        int copied = source.CopyNumberUtf8(scratch);
+        if (copied >= 0)
+            EncodeNumberFromRawUtf8(writer, scratch[..copied]);
+        else
+            EncodeNumberFromRaw(writer, source.GetStringValue());
     }
 
     private static void WriteCosmosDocumentCore<TWriter>(TWriter writer, string id, string pk, JsonElement item)
@@ -575,6 +619,30 @@ internal static partial class InferredAttributeStorage
 
         public string GetStringValue() => _reader.GetString() ?? string.Empty;
 
+        public bool TryGetNumberUtf8Direct(out ReadOnlySpan<byte> utf8)
+        {
+            // Common case: the number carries no escapes, so its raw value span
+            // is already the unescaped UTF-8 digits — forward with zero copies.
+            if (!_reader.ValueIsEscaped)
+            {
+                utf8 = _reader.ValueSpan;
+                return true;
+            }
+
+            utf8 = default;
+            return false;
+        }
+
+        public int CopyNumberUtf8(scoped Span<byte> dest)
+        {
+            // Escaped numbers are not emitted by DDB / the AWS SDK, but stay
+            // correct: unescape into the caller's buffer when it fits, else
+            // signal a string-path fall-back.
+            if (_reader.ValueSpan.Length > dest.Length)
+                return -1;
+            return _reader.CopyString(dest);
+        }
+
         public bool GetBooleanValue()
         {
             if (_reader.TokenType is not (JsonTokenType.True or JsonTokenType.False))
@@ -688,6 +756,17 @@ internal static partial class InferredAttributeStorage
             => writer.WriteStringValue(_payload.GetString());
 
         public string GetStringValue() => _payload.GetString() ?? string.Empty;
+
+        public bool TryGetNumberUtf8Direct(out ReadOnlySpan<byte> utf8)
+        {
+            // The JsonElement source keeps its existing string path — it is the
+            // legacy / correctness-gate path, not the production single-pass hot
+            // path, so the per-attribute string is acceptable here.
+            utf8 = default;
+            return false;
+        }
+
+        public int CopyNumberUtf8(scoped Span<byte> dest) => -1;
 
         public bool GetBooleanValue() => _payload.GetBoolean();
 
