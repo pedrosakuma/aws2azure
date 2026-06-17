@@ -121,6 +121,7 @@ jobs:
             -o none
 
       - name: Export Cosmos connection info
+        id: export
         if: steps.gate.outputs.enabled == 'true'
         run: |
           set -euo pipefail
@@ -148,6 +149,10 @@ jobs:
       # real Azure (#420): the ratio cancels network noise and is the meaningful
       # signal, but the emulator-tuned thresholds aren't a real-Azure floor yet,
       # so a breach is captured in the log/artifacts without failing the job.
+      #
+      # The text-path gate + the binary half use `!cancelled() && export ok` so a
+      # single failing scenario in the text run does NOT cost us the whole A/B
+      # (the binary half + both gates still run as long as provisioning succeeded).
       - name: Perf — text path
         if: steps.gate.outputs.enabled == 'true'
         env:
@@ -158,7 +163,7 @@ jobs:
             --logger "console;verbosity=normal"
 
       - name: Relative gate — text path (report-only)
-        if: steps.gate.outputs.enabled == 'true'
+        if: ${{ !cancelled() && steps.gate.outputs.enabled == 'true' && steps.export.outcome == 'success' }}
         env:
           AWS2AZURE_PERF_DIR: ${{ runner.temp }}/perf-real-azure/text
           AWS2AZURE_PERF_RELATIVE_REPORT_ONLY: "1"
@@ -168,7 +173,7 @@ jobs:
             --logger "console;verbosity=normal"
 
       - name: Perf — binary path
-        if: steps.gate.outputs.enabled == 'true'
+        if: ${{ !cancelled() && steps.gate.outputs.enabled == 'true' && steps.export.outcome == 'success' }}
         env:
           AWS2AZURE_PERF_DIR: ${{ runner.temp }}/perf-real-azure/binary
           AWS2AZURE_PERF_COSMOS_BINARY: "1"
@@ -178,7 +183,7 @@ jobs:
             --logger "console;verbosity=normal"
 
       - name: Relative gate — binary path (report-only)
-        if: steps.gate.outputs.enabled == 'true'
+        if: ${{ !cancelled() && steps.gate.outputs.enabled == 'true' && steps.export.outcome == 'success' }}
         env:
           AWS2AZURE_PERF_DIR: ${{ runner.temp }}/perf-real-azure/binary
           AWS2AZURE_PERF_RELATIVE_REPORT_ONLY: "1"
