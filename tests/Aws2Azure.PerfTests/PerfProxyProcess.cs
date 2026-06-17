@@ -49,9 +49,26 @@ internal sealed class PerfProxyProcess : IAsyncDisposable
         await File.WriteAllTextAsync(_configFile, configJson).ConfigureAwait(false);
 
         var repoRoot = FindRepoRoot();
-        var startInfo = new ProcessStartInfo(
-            "dotnet",
-            "run -c Release --project src/Aws2Azure.Proxy/Aws2Azure.Proxy.csproj --no-launch-profile")
+
+        // Optionally pin the proxy process tree to a fixed number of logical
+        // cores (AWS2AZURE_PERF_PROXY_CPUS=N), modelling a CPU-constrained
+        // sidecar so a real-Azure run can reach a CPU-bound regime at modest
+        // concurrency (issue #420 Tier 2). taskset affinity is inherited by the
+        // dotnet child that actually hosts Kestrel. Linux-only; ignored when
+        // unset or unparsable so the default (emulator/local) path is untouched.
+        var fileName = "dotnet";
+        var arguments =
+            "run -c Release --project src/Aws2Azure.Proxy/Aws2Azure.Proxy.csproj --no-launch-profile";
+        var cpus = Environment.GetEnvironmentVariable("AWS2AZURE_PERF_PROXY_CPUS");
+        if (OperatingSystem.IsLinux()
+            && int.TryParse(cpus, out var coreCount) && coreCount > 0)
+        {
+            var coreList = coreCount == 1 ? "0" : $"0-{coreCount - 1}";
+            fileName = "taskset";
+            arguments = $"-c {coreList} dotnet {arguments}";
+        }
+
+        var startInfo = new ProcessStartInfo(fileName, arguments)
         {
             WorkingDirectory = repoRoot,
             RedirectStandardOutput = true,

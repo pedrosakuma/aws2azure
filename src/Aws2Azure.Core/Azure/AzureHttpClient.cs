@@ -350,13 +350,26 @@ public sealed class AzureHttpClient : IDisposable
         {
             PooledConnectionLifetime = TimeSpan.FromMinutes(2),
             PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1),
-            MaxConnectionsPerServer = 64,
+            MaxConnectionsPerServer = ResolveMaxConnectionsPerServer(),
             // Object bodies must be byte-faithful end-to-end; Content-Encoding
             // is metadata that we forward unchanged to the client. Auto-decompression
             // would silently rewrite the bytes and break round-trips.
             AutomaticDecompression = DecompressionMethods.None,
             EnableMultipleHttp2Connections = true
         };
+
+    /// <summary>
+    /// Per-host outbound connection cap. Defaults to 64; operators serving
+    /// high-concurrency workloads can raise it via
+    /// <c>AWS2AZURE_MAX_CONNECTIONS_PER_SERVER</c>. With HTTP/2 multiplexing
+    /// this ceiling is rarely the binding constraint, but it still bounds the
+    /// HTTP/1.1 fallback and the number of parallel h2 connections.
+    /// </summary>
+    public static int ResolveMaxConnectionsPerServer()
+    {
+        var raw = Environment.GetEnvironmentVariable("AWS2AZURE_MAX_CONNECTIONS_PER_SERVER");
+        return int.TryParse(raw, out var value) && value > 0 ? value : 64;
+    }
 
     public void Dispose()
     {

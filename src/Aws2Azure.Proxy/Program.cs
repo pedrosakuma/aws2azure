@@ -166,7 +166,7 @@ static AzureHttpClient BuildAzureHttpClient()
         {
             PooledConnectionLifetime = TimeSpan.FromMinutes(2),
             PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1),
-            MaxConnectionsPerServer = 64,
+            MaxConnectionsPerServer = AzureHttpClient.ResolveMaxConnectionsPerServer(),
             AutomaticDecompression = System.Net.DecompressionMethods.None,
             EnableMultipleHttp2Connections = true,
             SslOptions = new System.Net.Security.SslClientAuthenticationOptions

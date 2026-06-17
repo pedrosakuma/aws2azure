@@ -363,7 +363,7 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
 
         var result = await PerfRunner.RunAsync(
             scenario: "dynamodb.PutItem (small)",
-            concurrency: 16,
+            concurrency: PerfConcurrency.Scale(16),
             duration: TimeSpan.FromSeconds(20),
             warmup: TimeSpan.FromSeconds(3),
             action: async (workerId, ct) =>
@@ -395,7 +395,7 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
         using var memProbe = fixture.CreateMemoryProbe();
         var result = await PerfRunner.RunAsync(
             scenario: "dynamodb.Query (pushable filter)",
-            concurrency: 8,
+            concurrency: PerfConcurrency.Scale(8),
             duration: TimeSpan.FromSeconds(20),
             warmup: TimeSpan.FromSeconds(3),
             memoryProbe: memProbe,
@@ -435,7 +435,7 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
         using var memProbe = fixture.CreateMemoryProbe();
         var result = await PerfRunner.RunAsync(
             scenario: "dynamodb.Scan (pushable filter)",
-            concurrency: 4,
+            concurrency: PerfConcurrency.Scale(4),
             duration: TimeSpan.FromSeconds(20),
             warmup: TimeSpan.FromSeconds(3),
             memoryProbe: memProbe,
@@ -470,7 +470,7 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
 
         var result = await PerfRunner.RunAsync(
             scenario: "dynamodb.GetItem (small)",
-            concurrency: 16,
+            concurrency: PerfConcurrency.Scale(16),
             duration: TimeSpan.FromSeconds(20),
             warmup: TimeSpan.FromSeconds(3),
             action: async (workerId, ct) =>
@@ -512,7 +512,7 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
         using var memProbe = fixture.CreateMemoryProbe();
         var result = await PerfRunner.RunAsync(
             scenario: "dynamodb.BatchGetItem (25 items)",
-            concurrency: 8,
+            concurrency: PerfConcurrency.Scale(8),
             duration: TimeSpan.FromSeconds(20),
             warmup: TimeSpan.FromSeconds(3),
             memoryProbe: memProbe,
@@ -568,7 +568,7 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
         using var memProbe = fixture.CreateMemoryProbe();
         var result = await PerfRunner.RunAsync(
             scenario: "dynamodb.BatchWriteItem (25 items)",
-            concurrency: 8,
+            concurrency: PerfConcurrency.Scale(8),
             duration: TimeSpan.FromSeconds(20),
             warmup: TimeSpan.FromSeconds(3),
             memoryProbe: memProbe,
@@ -646,7 +646,7 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
 
         var result = await PerfRunner.RunAsync(
             scenario: "dynamodb.UpdateItem (SET expression)",
-            concurrency: 16,
+            concurrency: PerfConcurrency.Scale(16),
             duration: TimeSpan.FromSeconds(20),
             warmup: TimeSpan.FromSeconds(3),
             action: async (workerId, ct) =>
@@ -690,7 +690,7 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
 
         var result = await PerfRunner.RunAsync(
             scenario: "dynamodb.DeleteItem (idempotent)",
-            concurrency: 16,
+            concurrency: PerfConcurrency.Scale(16),
             duration: TimeSpan.FromSeconds(20),
             warmup: TimeSpan.FromSeconds(3),
             action: async (workerId, ct) =>

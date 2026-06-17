@@ -269,6 +269,31 @@ public class AzureHttpClientTests
 }
 
 [Collection("EnvironmentVariables")]
+public class AzureHttpClientConnectionCapTests
+{
+    [Theory]
+    [InlineData(null, 64)]
+    [InlineData("", 64)]
+    [InlineData("not-a-number", 64)]
+    [InlineData("0", 64)]
+    [InlineData("-8", 64)]
+    [InlineData("256", 256)]
+    public void ResolveMaxConnectionsPerServer_HonorsEnvWithSafeDefault(string? value, int expected)
+    {
+        var previous = Environment.GetEnvironmentVariable("AWS2AZURE_MAX_CONNECTIONS_PER_SERVER");
+        try
+        {
+            Environment.SetEnvironmentVariable("AWS2AZURE_MAX_CONNECTIONS_PER_SERVER", value);
+            Assert.Equal(expected, AzureHttpClient.ResolveMaxConnectionsPerServer());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("AWS2AZURE_MAX_CONNECTIONS_PER_SERVER", previous);
+        }
+    }
+}
+
+[Collection("EnvironmentVariables")]
 public class EntraIdTokenProviderTests
 {
     [Fact]
