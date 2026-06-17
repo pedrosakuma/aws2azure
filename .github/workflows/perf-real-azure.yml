@@ -1,0 +1,177 @@
+name: perf-real-azure
+
+# Tier 2 perf (issue #420): run the DynamoDB perf scenarios against LIVE Azure
+# Cosmos DB as a falsification arbiter for the CosmosBinary optimization.
+#
+# Why a separate job from `perf.yml` (emulator) and `integration-real-azure.yml`
+# (correctness smoke):
+#   * The Cosmos emulator never emits CosmosBinary, so the emulator perf job
+#     only ever exercises the TEXT path — the binary win is invisible there.
+#   * A lower CPU/alloc number is necessary but NOT sufficient to call something
+#     an optimization (#420): it only counts if it survives the real end-to-end
+#     flow. This job runs the SAME scenarios twice — text then binary — against
+#     real Cosmos and captures throughput/latency plus the proxy's CPU/alloc
+#     gauges so the A/B is decided on real numbers, not micro-benchmarks alone.
+#
+# Gating philosophy (#420): against real Azure the absolute throughput floors /
+# p99 ceilings are network-bound and flap, so the run sets
+# AWS2AZURE_PERF_RESOURCE_ONLY=1 — only the backend-independent resource ceilings
+# (alloc/op, peak working set) gate; the throughput/latency numbers are recorded
+# as artifacts for the A/B, not asserted as absolutes. Results are NOT merged
+# into the committed emulator baseline (AWS2AZURE_PERF_DIR points at a temp dir,
+# AWS2AZURE_PERF_UPDATE_DOCS unset) so the two backends' trends never mix.
+#
+# Ephemeral provision -> measure -> deallocate, mirroring
+# integration-real-azure.yml: OIDC login (no stored secret), a per-run uniquely
+# named resource group from deploy/realazure/main.bicep tagged
+# purpose=aws2azure-nightly (so the real-azure-reaper backstop cleans up leaks),
+# then `az group delete` in an `if: always()` teardown.
+
+on:
+  schedule:
+    # Weekly, Sunday 06:30 UTC — staggered after the nightly perf (05:30) and
+    # real-azure integration (05:00) jobs. Real-Azure perf is costlier than the
+    # nightly emulator run, so it runs weekly rather than nightly.
+    - cron: '30 6 * * 0'
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize, reopened]
+
+permissions:
+  id-token: write   # required for the azure/login OIDC token exchange
+  contents: read
+
+jobs:
+  perf-real-azure:
+    # Runs on the weekly schedule, manual dispatch, or PRs carrying the
+    # `run-perf-real-azure` label. Apply the label when changing the
+    # DynamoDB->Cosmos hot path or the CosmosBinary encode/decode paths to
+    # validate the optimization against real Azure before merge.
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'run-perf-real-azure'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Never run two real-Azure perf jobs in parallel (cost + the reaper's age
+    # heuristic assumes a single active run per purpose tag).
+    concurrency:
+      group: perf-real-azure
+      cancel-in-progress: false
+    env:
+      AWS2AZURE_PERF: "1"
+      # Real-Azure regime: suppress absolute throughput/p99 floors (network
+      # bound) and gate only on backend-independent resource ceilings.
+      AWS2AZURE_PERF_RESOURCE_ONLY: "1"
+      AZURE_LOCATION: eastus2
+      RG_NAME: aws2azure-perf-${{ github.run_id }}-${{ github.run_attempt }}
+      DEPLOYMENT_NAME: aws2azure-perf-realazure
+      # The DynamoDB module creates containers but not the database — Bicep
+      # pre-creates it and the fixture targets this name.
+      AZURE_COSMOS_DATABASE: dynamodb
+      # Restrict to the DynamoDB perf scenarios (only Cosmos is exercised here).
+      PERF_FILTER: "FullyQualifiedName~DynamoDbPerfTests"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/dotnet-setup
+
+      # Provisioning needs the OIDC client id. When absent (fork PRs, or before
+      # an operator wired up OIDC) we skip provision/login/teardown; the perf
+      # fixture then finds no AZURE_COSMOS_* env and the scenarios skip, leaving
+      # the job green.
+      - name: Check provisioning credentials
+        id: gate
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        run: |
+          if [ -n "$AZURE_CLIENT_ID" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::AZURE_CLIENT_ID not set — real-Azure provisioning skipped; perf scenarios will skip."
+          fi
+
+      - name: Restore + build
+        run: dotnet build -c Release --nologo
+
+      - name: Azure login (OIDC)
+        if: steps.gate.outputs.enabled == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Provision ephemeral Cosmos DB
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          az group create -n "$RG_NAME" -l "$AZURE_LOCATION" \
+            --tags purpose=aws2azure-nightly \
+                   run-id="${{ github.run_id }}" \
+                   created="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o none
+          az deployment group create -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
+            -f deploy/realazure/main.bicep \
+            -p cosmosDatabaseName="$AZURE_COSMOS_DATABASE" \
+            -o none
+
+      - name: Export Cosmos connection info
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          out() {
+            az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
+              --query "properties.outputs.$1.value" -o tsv
+          }
+          COSMOS="$(out cosmosAccountName)"
+          COSMOS_ENDPOINT="$(out cosmosEndpoint)"
+          COSMOS_KEY="$(az cosmosdb keys list -n "$COSMOS" -g "$RG_NAME" --query primaryMasterKey -o tsv)"
+
+          echo "::add-mask::$COSMOS_KEY"
+          {
+            echo "AZURE_COSMOS_ENDPOINT=$COSMOS_ENDPOINT"
+            echo "AZURE_COSMOS_KEY=$COSMOS_KEY"
+            echo "AZURE_COSMOS_DATABASE=$AZURE_COSMOS_DATABASE"
+          } >> "$GITHUB_ENV"
+
+      # Two runs of the SAME scenarios in separate processes (one fixture =
+      # one config). Each writes its baseline-latest.{md,json} + history.csv to
+      # a per-mode temp dir (never the committed emulator baseline). Resource
+      # ceilings gate; throughput/latency are recorded for the A/B.
+      - name: Perf — text path
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          AWS2AZURE_PERF_DIR: ${{ runner.temp }}/perf-real-azure/text
+        run: |
+          dotnet test tests/Aws2Azure.PerfTests -c Release --no-build --nologo \
+            --filter "$PERF_FILTER" \
+            --logger "console;verbosity=normal"
+
+      - name: Perf — binary path
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          AWS2AZURE_PERF_DIR: ${{ runner.temp }}/perf-real-azure/binary
+          AWS2AZURE_PERF_COSMOS_BINARY: "1"
+        run: |
+          dotnet test tests/Aws2Azure.PerfTests -c Release --no-build --nologo \
+            --filter "$PERF_FILTER" \
+            --logger "console;verbosity=normal"
+
+      - name: Upload real-Azure perf A/B results
+        if: always() && steps.gate.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-real-azure-results
+          path: ${{ runner.temp }}/perf-real-azure
+          if-no-files-found: warn
+          retention-days: 90
+
+      # Deallocate even when provisioning or the runs failed. --no-wait returns
+      # immediately; the real-azure-reaper is the backstop for force-cancelled
+      # runs.
+      - name: Deallocate ephemeral Cosmos DB
+        if: always() && steps.gate.outputs.enabled == 'true'
+        run: |
+          az group delete -n "$RG_NAME" --yes --no-wait || true

@@ -227,22 +227,32 @@ internal sealed record PerfResult(
     /// is also independently opt-out: a value of 0 disables that dimension, and
     /// the memory ceilings additionally no-op when memory was not measured for
     /// the run (probe absent or unreachable).
+    /// <para>When <c>AWS2AZURE_PERF_RESOURCE_ONLY=1</c> (the Tier 2 real-Azure
+    /// regime, issue #420) the throughput-floor and p99-ceiling dimensions are
+    /// skipped because they are network-bound against live Azure and would flap;
+    /// only the backend-independent resource ceilings (alloc/op, peak working
+    /// set) are enforced. The reference floors are emulator-derived, so absolute
+    /// latency/throughput gating against real Azure is never meaningful.</para>
     /// </summary>
     public void AssertNoRegression()
     {
         var entry = PerfReferenceBaseline.TryGet(Scenario);
         if (entry is null) return;
 
+        var resourceOnly = string.Equals(
+            Environment.GetEnvironmentVariable("AWS2AZURE_PERF_RESOURCE_ONLY"), "1",
+            StringComparison.Ordinal);
+
         var p99Ms = P99Us / 1000.0;
         var problems = new System.Collections.Generic.List<string>();
         var inv = System.Globalization.CultureInfo.InvariantCulture;
-        if (entry.MinThroughputPerSec > 0 && ThroughputPerSec < entry.MinThroughputPerSec)
+        if (!resourceOnly && entry.MinThroughputPerSec > 0 && ThroughputPerSec < entry.MinThroughputPerSec)
         {
             problems.Add(string.Format(inv,
                 "throughput {0:0.0} ops/s < floor {1:0.0} ops/s",
                 ThroughputPerSec, entry.MinThroughputPerSec));
         }
-        if (entry.MaxP99Ms > 0 && p99Ms > entry.MaxP99Ms)
+        if (!resourceOnly && entry.MaxP99Ms > 0 && p99Ms > entry.MaxP99Ms)
         {
             problems.Add(string.Format(inv,
                 "p99 {0:0.0} ms > ceiling {1:0.0} ms",
