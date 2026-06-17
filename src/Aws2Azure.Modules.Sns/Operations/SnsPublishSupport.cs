@@ -19,7 +19,7 @@ internal static class SnsPublishSupport
         ArgumentNullException.ThrowIfNull(parameters);
 
         if (!SnsParameterParsing.TryGetRequiredNonEmptyParameter(parameters, "TopicArn", out var topicArn, out error)
-            || !SnsTopicSupport.TryParseTopicArnAllowFifo(topicArn, out var topicName, out error)
+            || !SnsTopicSupport.TryParsePublishTopicArn(topicArn, out var topicName, out error)
             || !SnsParameterParsing.TryGetRequiredNonEmptyParameter(parameters, "Message", out var message, out error)
             || !TryReadMessageAttributes(parameters, "MessageAttributes.entry.", out var attributes, out error))
         {
@@ -58,7 +58,7 @@ internal static class SnsPublishSupport
         entries = [];
 
         if (!SnsParameterParsing.TryGetRequiredNonEmptyParameter(parameters, "TopicArn", out topicArn, out error)
-            || !SnsTopicSupport.TryParseTopicArnAllowFifo(topicArn, out topicName, out error))
+            || !SnsTopicSupport.TryParsePublishTopicArn(topicArn, out topicName, out error))
         {
             return false;
         }

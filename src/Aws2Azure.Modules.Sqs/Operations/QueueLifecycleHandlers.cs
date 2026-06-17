@@ -56,7 +56,7 @@ internal static class QueueLifecycleHandlers
             return;
         }
 
-        var attributes = SqsQueueAttributeParser.ExtractAttributes(parsed, "Attribute");
+        var attributes = SqsQueueAttributeParser.ExtractAttributes(parsed, "Attribute", contiguousQueryIndexes: true);
         var err = QueueAttributeTranslator.ToServiceBusProperties(queueName, attributes, out var props);
         if (err.IsError)
         {

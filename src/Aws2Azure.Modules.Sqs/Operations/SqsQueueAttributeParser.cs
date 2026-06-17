@@ -11,16 +11,37 @@ internal static class SqsQueueAttributeParser
     internal static IReadOnlyDictionary<string, string> ExtractAttributes(
         SqsParseResult parsed,
         string prefix,
-        bool includeJsonPrimitiveValues = true)
+        bool includeJsonPrimitiveValues = true,
+        bool contiguousQueryIndexes = false)
     {
         var attributes = new Dictionary<string, string>(StringComparer.Ordinal);
-        AddQueryAttributes(parsed, prefix, attributes);
+        AddQueryAttributes(parsed, prefix, attributes, contiguousQueryIndexes);
         AddJsonAttributes(parsed, attributes, includeJsonPrimitiveValues);
         return attributes;
     }
 
-    private static void AddQueryAttributes(SqsParseResult parsed, string prefix, Dictionary<string, string> attributes)
+    private static void AddQueryAttributes(
+        SqsParseResult parsed,
+        string prefix,
+        Dictionary<string, string> attributes,
+        bool contiguousQueryIndexes)
     {
+        if (contiguousQueryIndexes)
+        {
+            // CreateQueue historically consumed only contiguous Attribute.<i>
+            // indexes starting at 1, stopping at the first missing Name. Preserve
+            // that semantic so sparse indexes (e.g. Attribute.2 with no
+            // Attribute.1) are not silently honoured.
+            var i = 1;
+            while (parsed.Parameters.TryGetValue($"{prefix}.{i}.Name", out var name))
+            {
+                if (parsed.Parameters.TryGetValue($"{prefix}.{i}.Value", out var value))
+                    attributes[name] = value;
+                i++;
+            }
+            return;
+        }
+
         var dotPrefix = prefix + ".";
         var nameByIndex = new SortedDictionary<int, string>();
         var valueByIndex = new SortedDictionary<int, string>();
