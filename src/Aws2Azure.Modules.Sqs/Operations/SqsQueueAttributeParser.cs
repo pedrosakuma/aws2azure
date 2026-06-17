@@ -12,9 +12,23 @@ internal static class SqsQueueAttributeParser
         SqsParseResult parsed,
         string prefix,
         bool includeJsonPrimitiveValues = true,
-        bool contiguousQueryIndexes = false)
+        bool contiguousQueryIndexes = false,
+        bool jsonAttributesWin = false)
     {
         var attributes = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (jsonAttributesWin)
+        {
+            // CreateQueue historically read the JSON "Attributes" object first and,
+            // when it yielded at least one attribute, returned exclusively those —
+            // ignoring any (malformed) Attribute.<n> query pairs, including ones the
+            // wire parser projects from dotted top-level JSON properties.
+            AddJsonAttributes(parsed, attributes, includeJsonPrimitiveValues);
+            if (attributes.Count > 0)
+                return attributes;
+            AddQueryAttributes(parsed, prefix, attributes, contiguousQueryIndexes);
+            return attributes;
+        }
+
         AddQueryAttributes(parsed, prefix, attributes, contiguousQueryIndexes);
         AddJsonAttributes(parsed, attributes, includeJsonPrimitiveValues);
         return attributes;
