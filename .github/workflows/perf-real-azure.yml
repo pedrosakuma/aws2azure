@@ -70,8 +70,11 @@ jobs:
       # The DynamoDB module creates containers but not the database — Bicep
       # pre-creates it and the fixture targets this name.
       AZURE_COSMOS_DATABASE: dynamodb
-      # Restrict to the DynamoDB perf scenarios (only Cosmos is exercised here).
-      PERF_FILTER: "FullyQualifiedName~DynamoDbPerfTests"
+      # Restrict to the DynamoDB scenarios + their Azure-SDK Cosmos baseline
+      # (AzureCosmosSdkBaselinePerfTests) so the relative proxy-vs-SDK gate has
+      # both sides on disk. Category!=RelativeGate keeps the gate itself out of
+      # the scenario step (it runs as a dedicated step per mode below).
+      PERF_FILTER: "FullyQualifiedName~DynamoDb&Category!=RelativeGate"
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/dotnet-setup
@@ -139,7 +142,12 @@ jobs:
       # Two runs of the SAME scenarios in separate processes (one fixture =
       # one config). Each writes its baseline-latest.{md,json} + history.csv to
       # a per-mode temp dir (never the committed emulator baseline). Resource
-      # ceilings gate; throughput/latency are recorded for the A/B.
+      # ceilings gate; throughput/latency are recorded for the A/B. After each
+      # mode's scenarios land their rows (proxy + azure-sdk baseline), the
+      # relative proxy-vs-SDK gate runs against the SAME dir — REPORT-ONLY on
+      # real Azure (#420): the ratio cancels network noise and is the meaningful
+      # signal, but the emulator-tuned thresholds aren't a real-Azure floor yet,
+      # so a breach is captured in the log/artifacts without failing the job.
       - name: Perf — text path
         if: steps.gate.outputs.enabled == 'true'
         env:
@@ -147,6 +155,16 @@ jobs:
         run: |
           dotnet test tests/Aws2Azure.PerfTests -c Release --no-build --nologo \
             --filter "$PERF_FILTER" \
+            --logger "console;verbosity=normal"
+
+      - name: Relative gate — text path (report-only)
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          AWS2AZURE_PERF_DIR: ${{ runner.temp }}/perf-real-azure/text
+          AWS2AZURE_PERF_RELATIVE_REPORT_ONLY: "1"
+        run: |
+          dotnet test tests/Aws2Azure.PerfTests -c Release --no-build --nologo \
+            --filter "Category=RelativeGate" \
             --logger "console;verbosity=normal"
 
       - name: Perf — binary path
@@ -157,6 +175,16 @@ jobs:
         run: |
           dotnet test tests/Aws2Azure.PerfTests -c Release --no-build --nologo \
             --filter "$PERF_FILTER" \
+            --logger "console;verbosity=normal"
+
+      - name: Relative gate — binary path (report-only)
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          AWS2AZURE_PERF_DIR: ${{ runner.temp }}/perf-real-azure/binary
+          AWS2AZURE_PERF_RELATIVE_REPORT_ONLY: "1"
+        run: |
+          dotnet test tests/Aws2Azure.PerfTests -c Release --no-build --nologo \
+            --filter "Category=RelativeGate" \
             --logger "console;verbosity=normal"
 
       - name: Upload real-Azure perf A/B results

@@ -47,7 +47,19 @@ internal static class PerfReferenceBaseline
         var overrideDir = Environment.GetEnvironmentVariable("AWS2AZURE_PERF_DIR");
         if (!string.IsNullOrEmpty(overrideDir))
         {
-            return Path.Combine(overrideDir, "baseline-reference.json");
+            // AWS2AZURE_PERF_DIR redirects where run RESULTS are written. A test
+            // (or CI) may also drop a synthetic baseline-reference.json there to
+            // inject thresholds — honor it when present. But the reference is a
+            // COMMITTED config, not a run output: the real-Azure perf workflow
+            // points AWS2AZURE_PERF_DIR at a results-only temp dir, so when the
+            // override dir has no reference fall back to the repo's committed
+            // docs/perf/baseline-reference.json instead of silently disabling the
+            // scenario resource ceilings and the relative gate.
+            var overridePath = Path.Combine(overrideDir, "baseline-reference.json");
+            if (File.Exists(overridePath))
+            {
+                return overridePath;
+            }
         }
         var dir = AppContext.BaseDirectory;
         while (!string.IsNullOrEmpty(dir))
