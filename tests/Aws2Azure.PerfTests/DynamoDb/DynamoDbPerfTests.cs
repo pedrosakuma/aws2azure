@@ -28,6 +28,23 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
     public string QueryTableName { get; } = "perfqry" + Guid.NewGuid().ToString("N")[..8];
     public int SeededPartitions => 10;
     public int SeededItemsPerPartition => 50;
+
+    /// <summary>
+    /// Table seeded with LARGE items (many attributes, multi-KB) so the
+    /// text-vs-binary A/B can exercise the regime where decode CPU is a
+    /// meaningful fraction of per-request work — point reads / read-many of
+    /// small (~256 B) items are transport-dominated and hide the translation
+    /// cost (see brazilsouth-realazure-results.md). pk+sk schema mirrors
+    /// QueryTableName so it supports GetItem (point), Query (by pk) and
+    /// BatchGetItem (by keys).
+    /// </summary>
+    public string LargeTableName { get; } = "perflrg" + Guid.NewGuid().ToString("N")[..8];
+    public int LargeSeededPartitions => 5;
+    public int LargeSeededItemsPerPartition => 10;
+    /// <summary>String attributes per large item (each ~40 B value).</summary>
+    public int LargeItemStringAttrs => 400;
+    /// <summary>Number attributes per large item.</summary>
+    public int LargeItemNumberAttrs => 800;
     public IReadOnlyList<string> SeededBuckets { get; } = new[] { "A", "B", "C" };
     public string AccessKeyId => "AKIA-PERF-DDB";
     public string Secret => "perf-ddb-secret";
@@ -191,9 +208,25 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
                 BillingMode = BillingMode.PAY_PER_REQUEST,
             }).ConfigureAwait(false);
 
-            // Wait until both tables are ACTIVE.
+            await ddb.CreateTableAsync(new CreateTableRequest
+            {
+                TableName = LargeTableName,
+                AttributeDefinitions =
+                [
+                    new AttributeDefinition("pk", ScalarAttributeType.S),
+                    new AttributeDefinition("sk", ScalarAttributeType.S),
+                ],
+                KeySchema =
+                [
+                    new KeySchemaElement("pk", KeyType.HASH),
+                    new KeySchemaElement("sk", KeyType.RANGE),
+                ],
+                BillingMode = BillingMode.PAY_PER_REQUEST,
+            }).ConfigureAwait(false);
+
+            // Wait until all tables are ACTIVE.
             var deadline = DateTime.UtcNow + TimeSpan.FromMinutes(1);
-            foreach (var name in new[] { TableName, QueryTableName })
+            foreach (var name in new[] { TableName, QueryTableName, LargeTableName })
             {
                 while (DateTime.UtcNow < deadline)
                 {
@@ -205,6 +238,8 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
 
             // Seed QueryTableName: SeededPartitions × SeededItemsPerPartition items.
             await SeedQueryTableAsync(ddb).ConfigureAwait(false);
+            // Seed LargeTableName: LargeSeededPartitions × LargeSeededItemsPerPartition LARGE items.
+            await SeedLargeTableAsync(ddb).ConfigureAwait(false);
             Ready = true;
         }
         catch (Exception ex)
@@ -226,7 +261,7 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
             try
             {
                 using var ddb = CreateClient();
-                foreach (var name in new[] { TableName, QueryTableName })
+                foreach (var name in new[] { TableName, QueryTableName, LargeTableName })
                 {
                     try
                     {
@@ -309,37 +344,82 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
                 })));
                 if (pending.Count == 25)
                 {
-                    await FlushBatchAsync(ddb, pending).ConfigureAwait(false);
+                    await FlushBatchAsync(ddb, QueryTableName, pending).ConfigureAwait(false);
                     pending.Clear();
                 }
             }
             if (pending.Count > 0)
             {
-                await FlushBatchAsync(ddb, pending).ConfigureAwait(false);
+                await FlushBatchAsync(ddb, QueryTableName, pending).ConfigureAwait(false);
             }
         }
     }
 
-    private async Task FlushBatchAsync(AmazonDynamoDBClient ddb, List<WriteRequest> batch)
+    private static async Task FlushBatchAsync(AmazonDynamoDBClient ddb, string table, List<WriteRequest> batch)
     {
         var resp = await ddb.BatchWriteItemAsync(new BatchWriteItemRequest
         {
             RequestItems = new Dictionary<string, List<WriteRequest>>
             {
-                [QueryTableName] = batch,
+                [table] = batch,
             },
         }).ConfigureAwait(false);
         // Retry unprocessed once (emulator can throttle); fail loudly otherwise.
-        if (resp.UnprocessedItems is { Count: > 0 } unp && unp.TryGetValue(QueryTableName, out var leftovers) && leftovers.Count > 0)
+        if (resp.UnprocessedItems is { Count: > 0 } unp && unp.TryGetValue(table, out var leftovers) && leftovers.Count > 0)
         {
             await Task.Delay(100).ConfigureAwait(false);
             var retry = await ddb.BatchWriteItemAsync(new BatchWriteItemRequest
             {
-                RequestItems = new Dictionary<string, List<WriteRequest>> { [QueryTableName] = leftovers },
+                RequestItems = new Dictionary<string, List<WriteRequest>> { [table] = leftovers },
             }).ConfigureAwait(false);
-            if (retry.UnprocessedItems is { Count: > 0 } left2 && left2.TryGetValue(QueryTableName, out var still) && still.Count > 0)
+            if (retry.UnprocessedItems is { Count: > 0 } left2 && left2.TryGetValue(table, out var still) && still.Count > 0)
             {
                 throw new InvalidOperationException($"Seed: {still.Count} items still unprocessed after retry.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Builds one large DynamoDB item: pk + sk plus
+    /// <see cref="LargeItemStringAttrs"/> string attributes (~40 B values) and
+    /// <see cref="LargeItemNumberAttrs"/> number attributes. Mirrors the
+    /// large-item benchmark corpus (≈26 KB, hundreds of attributes) so the
+    /// proxy's per-attribute decode/encode walk — where CosmosBinary can win —
+    /// is a meaningful share of per-request CPU.
+    /// </summary>
+    public Dictionary<string, AttributeValue> BuildLargeItem(string pk, string sk, Random rand)
+    {
+        var item = new Dictionary<string, AttributeValue>(LargeItemStringAttrs + LargeItemNumberAttrs + 2)
+        {
+            ["pk"] = new() { S = pk },
+            ["sk"] = new() { S = sk },
+        };
+        for (var i = 0; i < LargeItemStringAttrs; i++)
+        {
+            item[$"s{i:D4}"] = new AttributeValue { S = "v-" + new string((char)('a' + (i % 26)), 38) };
+        }
+        for (var i = 0; i < LargeItemNumberAttrs; i++)
+        {
+            item[$"n{i:D4}"] = new AttributeValue { N = rand.Next(0, 1_000_000).ToString(System.Globalization.CultureInfo.InvariantCulture) };
+        }
+        return item;
+    }
+
+    private async Task SeedLargeTableAsync(AmazonDynamoDBClient ddb)
+    {
+        var rand = new Random(20260618);
+        for (var pi = 0; pi < LargeSeededPartitions; pi++)
+        {
+            var pk = $"p{pi:D2}";
+            for (var si = 0; si < LargeSeededItemsPerPartition; si++)
+            {
+                // Large items exceed BatchWriteItem's 16 MB/400 KB envelope when
+                // bundled, so seed them one at a time with PutItem.
+                await ddb.PutItemAsync(new PutItemRequest
+                {
+                    TableName = LargeTableName,
+                    Item = BuildLargeItem(pk, $"s{si:D4}", rand),
+                }).ConfigureAwait(false);
             }
         }
     }
@@ -713,6 +793,179 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
             });
 
         PerfReport.Append(result, notes: $"DynamoDB→Cosmos DeleteItem — idempotent delete of unique non-existent keys (200 no-op; cost independent of existence) [{fixture.BackendLabel}]");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
+    }
+
+    // ----------------------------------------------------------------------
+    // LARGE-payload scenarios (issue #420 A/B). These read/write multi-KB
+    // items with hundreds of attributes, the regime where the proxy's
+    // per-attribute decode/encode walk is a meaningful fraction of per-request
+    // CPU — and therefore where CosmosBinary (text vs binary) can actually
+    // move latency/throughput rather than being lost in transport noise.
+    // ----------------------------------------------------------------------
+
+    [SkippableFact]
+    public async Task GetItem_large_throughput()
+    {
+        Skip.IfNot(fixture.Ready, fixture.SkipReason);
+
+        using var client = fixture.CreateClient();
+
+        using var memProbe = fixture.CreateMemoryProbe();
+        var result = await PerfRunner.RunAsync(
+            scenario: "dynamodb.GetItem (large)",
+            concurrency: PerfConcurrency.Scale(8),
+            duration: TimeSpan.FromSeconds(20),
+            warmup: TimeSpan.FromSeconds(3),
+            memoryProbe: memProbe,
+            action: async (workerId, ct) =>
+            {
+                var pk = $"p{(workerId < 0 ? 0 : workerId % fixture.LargeSeededPartitions):D2}";
+                var sk = $"s{Random.Shared.Next(0, fixture.LargeSeededItemsPerPartition):D4}";
+                var resp = await client.GetItemAsync(new GetItemRequest
+                {
+                    TableName = fixture.LargeTableName,
+                    Key = new Dictionary<string, AttributeValue>
+                    {
+                        ["pk"] = new() { S = pk },
+                        ["sk"] = new() { S = sk },
+                    },
+                    ConsistentRead = false,
+                }, ct).ConfigureAwait(false);
+                if (resp.Item is null || resp.Item.Count == 0)
+                {
+                    throw new InvalidOperationException($"GetItem(large) returned no item for pk={pk}, sk={sk} — seed data missing.");
+                }
+            });
+
+        PerfReport.Append(result, notes: $"DynamoDB→Cosmos GetItem — LARGE item (~{fixture.LargeItemStringAttrs}s+{fixture.LargeItemNumberAttrs}n attrs) point read [{fixture.BackendLabel}]");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
+    }
+
+    [SkippableFact]
+    public async Task PutItem_large_throughput()
+    {
+        Skip.IfNot(fixture.Ready, fixture.SkipReason);
+
+        using var client = fixture.CreateClient();
+
+        using var memProbe = fixture.CreateMemoryProbe();
+        var result = await PerfRunner.RunAsync(
+            scenario: "dynamodb.PutItem (large)",
+            concurrency: PerfConcurrency.Scale(8),
+            duration: TimeSpan.FromSeconds(20),
+            warmup: TimeSpan.FromSeconds(3),
+            memoryProbe: memProbe,
+            action: async (workerId, ct) =>
+            {
+                // Unique pk per write so we exercise the standalone-document
+                // write encode path (the CosmosBinaryRequests target) rather
+                // than a sproc-conditional upsert. Per-worker partition + GUID
+                // sk avoids cross-worker contention.
+                var rand = new Random(unchecked(workerId * 2654435761u).GetHashCode());
+                var item = fixture.BuildLargeItem(
+                    $"lput-w{(workerId < 0 ? 0 : workerId):D2}-{Guid.NewGuid():N}",
+                    "s0000",
+                    rand);
+                await client.PutItemAsync(new PutItemRequest
+                {
+                    TableName = fixture.LargeTableName,
+                    Item = item,
+                }, ct).ConfigureAwait(false);
+            });
+
+        PerfReport.Append(result, notes: $"DynamoDB→Cosmos PutItem — LARGE item (~{fixture.LargeItemStringAttrs}s+{fixture.LargeItemNumberAttrs}n attrs) standalone write [{fixture.BackendLabel}]");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
+    }
+
+    [SkippableFact]
+    public async Task Query_large_throughput()
+    {
+        Skip.IfNot(fixture.Ready, fixture.SkipReason);
+
+        using var client = fixture.CreateClient();
+
+        using var memProbe = fixture.CreateMemoryProbe();
+        var result = await PerfRunner.RunAsync(
+            scenario: "dynamodb.Query (large items)",
+            concurrency: PerfConcurrency.Scale(4),
+            duration: TimeSpan.FromSeconds(20),
+            warmup: TimeSpan.FromSeconds(3),
+            memoryProbe: memProbe,
+            action: async (workerId, ct) =>
+            {
+                // Query by pk returns all LargeSeededItemsPerPartition large
+                // items in that partition — a heavy multi-item read where the
+                // decode walk is amplified by item count × attribute count.
+                var pk = $"p{(workerId < 0 ? 0 : workerId % fixture.LargeSeededPartitions):D2}";
+                var resp = await client.QueryAsync(new QueryRequest
+                {
+                    TableName = fixture.LargeTableName,
+                    KeyConditionExpression = "pk = :pk",
+                    ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                    {
+                        [":pk"] = new() { S = pk },
+                    },
+                    ConsistentRead = false,
+                }, ct).ConfigureAwait(false);
+                if (resp.Items.Count == 0)
+                {
+                    throw new InvalidOperationException($"Query(large) returned no items for pk={pk} — seed data missing.");
+                }
+            });
+
+        PerfReport.Append(result, notes: $"DynamoDB→Cosmos Query — LARGE items (pk → {fixture.LargeSeededItemsPerPartition} items × ~{fixture.LargeItemStringAttrs}s+{fixture.LargeItemNumberAttrs}n attrs) [{fixture.BackendLabel}]");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
+    }
+
+    [SkippableFact]
+    public async Task BatchGetItem_large_throughput()
+    {
+        Skip.IfNot(fixture.Ready, fixture.SkipReason);
+
+        using var client = fixture.CreateClient();
+
+        using var memProbe = fixture.CreateMemoryProbe();
+        var result = await PerfRunner.RunAsync(
+            scenario: "dynamodb.BatchGetItem (large items)",
+            concurrency: PerfConcurrency.Scale(4),
+            duration: TimeSpan.FromSeconds(20),
+            warmup: TimeSpan.FromSeconds(3),
+            memoryProbe: memProbe,
+            action: async (workerId, ct) =>
+            {
+                // Read all large items in one partition by explicit keys —
+                // read-many of multi-KB documents.
+                var pk = $"p{(workerId < 0 ? 0 : workerId % fixture.LargeSeededPartitions):D2}";
+                var keys = new List<Dictionary<string, AttributeValue>>(fixture.LargeSeededItemsPerPartition);
+                for (var i = 0; i < fixture.LargeSeededItemsPerPartition; i++)
+                {
+                    keys.Add(new Dictionary<string, AttributeValue>
+                    {
+                        ["pk"] = new() { S = pk },
+                        ["sk"] = new() { S = $"s{i:D4}" },
+                    });
+                }
+                var resp = await client.BatchGetItemAsync(new BatchGetItemRequest
+                {
+                    RequestItems = new Dictionary<string, KeysAndAttributes>
+                    {
+                        [fixture.LargeTableName] = new() { Keys = keys, ConsistentRead = false },
+                    },
+                }, ct).ConfigureAwait(false);
+                if (!resp.Responses.TryGetValue(fixture.LargeTableName, out var items)
+                    || items.Count != fixture.LargeSeededItemsPerPartition)
+                {
+                    var actual = items is null ? 0 : items.Count;
+                    throw new InvalidOperationException($"BatchGetItem(large) returned {actual}/{fixture.LargeSeededItemsPerPartition} items — partial response invalidates perf measurement.");
+                }
+            });
+
+        PerfReport.Append(result, notes: $"DynamoDB→Cosmos BatchGetItem — {fixture.LargeSeededItemsPerPartition} LARGE items, single partition [{fixture.BackendLabel}]");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
         result.AssertNoRegression();
     }

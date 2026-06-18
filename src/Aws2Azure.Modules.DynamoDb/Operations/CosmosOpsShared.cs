@@ -283,17 +283,32 @@ internal static class CosmosOpsShared
                 return item;
             }
 
-            // Streaming reader declined a marker: decode to text and materialize.
+            // Streaming reader declined a marker: decode to text and materialize
+            // via the same streaming extractor (no whole-page JsonDocument DOM).
             DynamoDbMetrics.RecordReadDecodePath(op, DynamoDbMetrics.DecodeFallback);
             using var decoded = new PooledByteBufferWriter(Math.Max(4096, body.Length));
             CosmosBinaryDecoder.Decode(body.Span, decoded);
-            using var fallbackDoc = JsonDocument.Parse(decoded.WrittenMemory);
-            return Persistence.InferredAttributeStorage.ExtractItem(fallbackDoc.RootElement);
+            return ExtractItemTextStreaming(decoded.WrittenMemory.Span);
         }
 
         DynamoDbMetrics.RecordReadDecodePath(op, DynamoDbMetrics.DecodeText);
-        using var doc = JsonDocument.Parse(body);
-        return Persistence.InferredAttributeStorage.ExtractItem(doc.RootElement);
+        return ExtractItemTextStreaming(body.Span);
+    }
+
+    /// <summary>
+    /// Materializes a single Cosmos document into an AttributeValue map via a
+    /// streaming <see cref="Utf8JsonTokenReader"/> +
+    /// <see cref="Persistence.InferredAttributeStorage.ExtractItemFused"/> — the
+    /// text twin of the binary-direct <see cref="TryExtractItemBinary"/>. Avoids
+    /// the per-document whole-DOM <see cref="JsonDocument.Parse"/> so the text
+    /// point-read materialization allocates on par with the binary path. Output
+    /// is identical to the former <c>JsonDocument.Parse → ExtractItem(JsonElement)</c>
+    /// walk (pinned by the streaming-vs-DOM parity tests).
+    /// </summary>
+    private static Dictionary<string, JsonElement>? ExtractItemTextStreaming(ReadOnlySpan<byte> json)
+    {
+        var reader = new Utf8JsonTokenReader(json);
+        return Persistence.InferredAttributeStorage.ExtractItemFused(ref reader);
     }
 
     /// <summary>
@@ -362,33 +377,40 @@ internal static class CosmosOpsShared
             }
 
             // Streaming reader declined a marker mid-page: discard the partial
-            // list and re-materialize the whole page via decode-to-text.
+            // list and re-materialize the whole page. The binary body decodes to
+            // text, then the same reader-agnostic streaming extractor walks it —
+            // no whole-page JsonDocument DOM.
             items.Clear();
             DynamoDbMetrics.RecordReadDecodePath(op, DynamoDbMetrics.DecodeFallback);
             using var decoded = new PooledByteBufferWriter(Math.Max(4096, body.Length));
             CosmosBinaryDecoder.Decode(body.Span, decoded);
-            ExtractItemsText(decoded.WrittenMemory, items);
+            ExtractItemsTextStreaming(decoded.WrittenMemory.Span, items);
             return items;
         }
 
         DynamoDbMetrics.RecordReadDecodePath(op, DynamoDbMetrics.DecodeText);
-        ExtractItemsText(body, items);
+        ExtractItemsTextStreaming(body.Span, items);
         return items;
     }
 
-    private static void ExtractItemsText(
-        ReadOnlyMemory<byte> json, List<Dictionary<string, JsonElement>> sink)
+    /// <summary>
+    /// Materializes a Cosmos query/feed page's <c>Documents</c> into
+    /// AttributeValue maps via a streaming <see cref="Utf8JsonTokenReader"/> —
+    /// the same reader-agnostic <see cref="Persistence.InferredAttributeStorage.ExtractItemsFused"/>
+    /// the CosmosBinary path uses. This avoids the whole-page
+    /// <see cref="JsonDocument"/> DOM (which would parse every document, every
+    /// untransformed value, and the Cosmos system fields) so the text read path
+    /// allocates on par with the binary path: only the small per-document
+    /// re-serialize-and-parse the AttributeValue map itself requires. Output is
+    /// element-for-element identical to the former
+    /// <c>JsonDocument.Parse → ExtractItem(JsonElement)</c> walk (pinned by the
+    /// streaming-vs-DOM parity tests).
+    /// </summary>
+    private static void ExtractItemsTextStreaming(
+        ReadOnlySpan<byte> json, List<Dictionary<string, JsonElement>> sink)
     {
-        using var doc = JsonDocument.Parse(json);
-        if (doc.RootElement.TryGetProperty("Documents", out var docsEl)
-            && docsEl.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var docEl in docsEl.EnumerateArray())
-            {
-                var item = Persistence.InferredAttributeStorage.ExtractItem(docEl);
-                if (item is not null) sink.Add(item);
-            }
-        }
+        var reader = new Utf8JsonTokenReader(json);
+        Persistence.InferredAttributeStorage.ExtractItemsFused(ref reader, sink);
     }
 
     /// <summary>
@@ -437,12 +459,11 @@ internal static class CosmosOpsShared
     }
 
     /// <summary>
-    /// Writes a DynamoDB <c>GetItem</c> success envelope (<c>{"Item":{...}}</c>)
-    /// directly from a parsed Cosmos document, skipping the
-    /// <see cref="ItemModels.GetItemResponse"/> model + per-attribute
-    /// <c>Dictionary</c> materialization (and the per-attribute
-    /// <see cref="JsonElement.Clone"/> + model re-serialization the old
-    /// <c>ExtractItem → model → SerializeAsync</c> path paid).
+    /// Reads the Cosmos response body into a single contiguous pooled buffer and
+    /// pumps it through
+    /// <see cref="Persistence.InferredAttributeStorage.WriteGetItemEnvelope(Utf8JsonWriter, ReadOnlySpan{byte})"/>
+    /// — no <see cref="JsonDocument"/> DOM, no <see cref="JsonElement"/>, and no
+    /// per-attribute <see cref="string"/> materialization.
     ///
     /// <para>The envelope is built fully into a pooled
     /// <see cref="PooledByteBufferWriter"/> scratch buffer and only then handed
@@ -450,39 +471,9 @@ internal static class CosmosOpsShared
     /// <see cref="System.IO.Pipelines.PipeWriter.WriteAsync"/>. Building into
     /// scratch first preserves the error wall: a malformed Cosmos document that
     /// makes the per-attribute writer throw fails <b>before</b> any byte reaches
-    /// the response, so the pipeline can still emit a clean error (matching the
-    /// old path, which serialized into an intermediate buffer). The single
+    /// the response, so the pipeline can still emit a clean error. The single
     /// <c>WriteAsync</c> is the only socket-facing call, so no synchronous IO is
     /// issued (safe under TestServer / AllowSynchronousIO=false).</para>
-    ///
-    /// <para>The writer uses the default options (JavaScriptEncoder.Default) to
-    /// stay byte-identical to the former SerializeAsync path; see
-    /// <see cref="Persistence.InferredAttributeStorage.WriteGetItemEnvelope"/>.</para>
-    /// </summary>
-    public static async Task WriteGetItemEnvelopeAsync(
-        HttpContext ctx, JsonElement cosmosDocRoot, CancellationToken cancellationToken)
-    {
-        using var scratch = new PooledByteBufferWriter(1024);
-        using (var writer = new Utf8JsonWriter(scratch))
-        {
-            Persistence.InferredAttributeStorage.WriteGetItemEnvelope(writer, cosmosDocRoot);
-            writer.Flush();
-        }
-
-        // Envelope built successfully -> commit the response and emit in one write.
-        ctx.Response.StatusCode = 200;
-        ctx.Response.ContentType = "application/x-amz-json-1.0";
-        await ctx.Response.BodyWriter.WriteAsync(scratch.WrittenMemory, cancellationToken)
-            .ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Streaming overload: reads the Cosmos response body into a single
-    /// contiguous pooled buffer and pumps it through
-    /// <see cref="Persistence.InferredAttributeStorage.WriteGetItemEnvelope(Utf8JsonWriter, ReadOnlySpan{byte})"/>
-    /// — no <see cref="JsonDocument"/> DOM, no <see cref="JsonElement"/>, and no
-    /// per-attribute <see cref="string"/> materialization. The same scratch-then-
-    /// single-write error wall as the <see cref="JsonElement"/> overload applies.
     /// </summary>
     public static async Task WriteGetItemEnvelopeAsync(
         HttpContext ctx, System.IO.Stream cosmosBody, CancellationToken cancellationToken)
