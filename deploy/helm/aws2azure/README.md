@@ -44,8 +44,8 @@ config:
 ```
 
 See the [Configuration reference](../../../docs/getting-started.md#configuration)
-for the full schema (SQS/SNS/DynamoDB/Kinesis backends, multiple credential
-entries, etc.).
+for the full schema (SQS/SNS/DynamoDB/Kinesis/Secrets Manager backends, multiple
+credential entries, etc.).
 
 ### 2. Reference a Secret you manage yourself
 

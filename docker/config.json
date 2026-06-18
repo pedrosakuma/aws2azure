@@ -4,7 +4,8 @@
     "sqs": { "enabled": true },
     "dynamodb": { "enabled": true },
     "sns": { "enabled": true },
-    "kinesis": { "enabled": false }
+    "kinesis": { "enabled": false },
+    "secretsmanager": { "enabled": false }
   },
   "sns": {
     "defaultBackend": "ServiceBusTopics"

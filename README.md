@@ -49,6 +49,7 @@ or Workload Identity — see
 | DynamoDB | Cosmos DB (NoSQL API) | Implemented |
 | Kinesis | Event Hubs | Implemented |
 | SNS | Service Bus Topics / Event Grid | Implemented |
+| Secrets Manager | Key Vault | Implemented |
 
 Coverage is **not** 100% of each AWS service. Every operation and sub-feature is
 documented exhaustively under [`docs/gaps/`](./docs/gaps/), with the rendered
