@@ -104,7 +104,8 @@ The proxy reads a single JSON config file pointed to by the
     "sqs":      { "enabled": true },
     "dynamodb": { "enabled": true },
     "sns":      { "enabled": true },
-    "kinesis":  { "enabled": false }  // no local emulator — see the table below
+    "kinesis":  { "enabled": false },  // no local emulator — see the table below
+    "secretsmanager": { "enabled": false }  // Key Vault; no local emulator — real Azure only
   },
   "credentials": [
     {
@@ -147,6 +148,14 @@ The proxy reads a single JSON config file pointed to by the
           "namespace": "...",
           "sasKeyName": "RootManageSharedAccessKey",
           "sasKey": "..."
+        },
+        // Secrets Manager -> Key Vault (no local emulator; real Azure only).
+        // Key Vault uses Entra ID (AAD) auth, not a shared key — see
+        // docs/azure-authentication.md for the full keyVault block and the
+        // managed-identity / workload-identity / client-secret options.
+        "keyVault": {
+          "vaultUrl": "https://my-vault.vault.azure.net/",
+          "authMode": "ManagedIdentity"
         }
       }
     }
@@ -184,6 +193,7 @@ emulator — the proxy boots regardless and only connects on the first request.
 | **SQS** | Service Bus | Service Bus emulator (`--profile messaging`) | ⚠️ Queues must be pre-declared in the emulator config |
 | **SNS** | Service Bus Topics / Event Grid | Service Bus emulator (`--profile messaging`) | ⚠️ Topics must be pre-declared |
 | **Kinesis** | Event Hubs | *(none)* | ❌ No emulator — point at a real Event Hubs namespace |
+| **Secrets Manager** | Key Vault | *(none)* | ❌ No emulator — point at a real Key Vault (Entra ID auth; see [Azure authentication](./azure-authentication.md)) |
 
 ```bash
 docker compose --profile dynamodb up    # adds the Cosmos DB emulator
