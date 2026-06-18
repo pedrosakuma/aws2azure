@@ -531,7 +531,13 @@ internal static class CosmosOpsShared
                 cosmosJson = decoded.WrittenMemory;
             }
 
-            using var scratch = new PooledByteBufferWriter(1024);
+            // Pre-size the envelope buffer to the doc length so the build does
+            // not start at 1KB and re-grow (Array.Copy) through several doublings
+            // for large items — that growth-copy dominated CPU profiling of large
+            // GetItem reads. The DDB envelope (per-attribute {"S"|"N":...} tags)
+            // runs ~1.5x the Cosmos doc text, so 2x gives headroom with no growth
+            // for the common large case; small items stay at the 4096 floor.
+            using var scratch = new PooledByteBufferWriter(Math.Max(4096, cosmosJson.Length * 2));
             using (var writer = new Utf8JsonWriter(scratch))
             {
                 // The reader lives entirely within this synchronous call; the
@@ -566,7 +572,11 @@ internal static class CosmosOpsShared
     internal static bool TryWriteFusedBinaryEnvelope(
         ReadOnlySpan<byte> binaryBody, out PooledByteBufferWriter? envelope)
     {
-        var scratch = new PooledByteBufferWriter(1024);
+        // Pre-size to ~2x the binary body: the decoded DDB envelope runs ~1.9x
+        // the CosmosBinary body, so this avoids the 1KB-start re-grow (Array.Copy)
+        // doubling chain that dominated CPU profiling of large fused GetItem reads.
+        // Small items stay at the 4096 floor.
+        var scratch = new PooledByteBufferWriter(Math.Max(4096, binaryBody.Length * 2));
         try
         {
             using (var writer = new Utf8JsonWriter(scratch))
