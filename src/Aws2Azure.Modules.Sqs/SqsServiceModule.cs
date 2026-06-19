@@ -263,17 +263,8 @@ public sealed class SqsServiceModule : IServiceModule
         SqsParseResult parsed, ServiceBusCredentials sbCreds, out IAmqpReceiverProvider receivers)
     {
         receivers = null!;
-        if (_amqpPool is null) return false;
-
-        if (!parsed.Parameters.TryGetValue("QueueUrl", out var url) || string.IsNullOrEmpty(url))
-            return false;
-        var queueName = Internal.QueueUrlBuilder.ExtractQueueName(url);
-        if (string.IsNullOrEmpty(queueName)) return false;
-
-        if (SqsTransportResolver.Resolve(sbCreds, queueName) != SqsTransport.Amqp)
-            return false;
-
-        receivers = new ServiceBusAmqpReceiverProvider(_amqpPool, sbCreds);
+        if (!TryResolveAmqpPool(parsed, sbCreds, out var pool)) return false;
+        receivers = new ServiceBusAmqpReceiverProvider(pool, sbCreds);
         return true;
     }
 
@@ -282,6 +273,23 @@ public sealed class SqsServiceModule : IServiceModule
         SqsParseResult parsed, ServiceBusCredentials sbCreds, out IAmqpSenderProvider senders)
     {
         senders = null!;
+        if (!TryResolveAmqpPool(parsed, sbCreds, out var pool)) return false;
+        senders = new ServiceBusAmqpSenderProvider(pool, sbCreds);
+        return true;
+    }
+
+    /// <summary>
+    /// Shared queue-scoped AMQP routing predicate behind
+    /// <see cref="TryRouteToAmqp"/> and <see cref="TryRouteSendToAmqp"/>:
+    /// the queue must have an AMQP transport and the request must carry a
+    /// usable <c>QueueUrl</c>. On success yields the live pool (proven
+    /// non-null here) so callers construct their typed provider without a
+    /// second null check.
+    /// </summary>
+    private bool TryResolveAmqpPool(
+        SqsParseResult parsed, ServiceBusCredentials sbCreds, out ServiceBusAmqpPool pool)
+    {
+        pool = null!;
         if (_amqpPool is null) return false;
 
         if (!parsed.Parameters.TryGetValue("QueueUrl", out var url) || string.IsNullOrEmpty(url))
@@ -292,7 +300,7 @@ public sealed class SqsServiceModule : IServiceModule
         if (SqsTransportResolver.Resolve(sbCreds, queueName) != SqsTransport.Amqp)
             return false;
 
-        senders = new ServiceBusAmqpSenderProvider(_amqpPool, sbCreds);
+        pool = _amqpPool;
         return true;
     }
 }
