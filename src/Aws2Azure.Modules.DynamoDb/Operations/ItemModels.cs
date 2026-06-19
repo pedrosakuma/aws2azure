@@ -20,8 +20,8 @@ internal sealed class PutItemRequest
     // per-request JsonDocument DOM), and the handler recovers the raw item
     // bytes for the single-pass encoder + a short-lived pooled parse for the
     // shape/key validators. Cuts PutItem write-path allocation ~84-96%.
+    // (The JsonRange converter is registered on the type itself.)
     [JsonPropertyName("Item")]
-    [JsonConverter(typeof(JsonRangeConverter))]
     public JsonRange Item { get; set; }
 
     [JsonPropertyName("ReturnValues")] public string? ReturnValues { get; set; }

@@ -12,7 +12,19 @@ namespace Aws2Azure.Modules.DynamoDb.Internal;
 /// callers recover the value's raw bytes with a single slice and either encode
 /// straight from them or parse a short-lived, pooled <see cref="JsonDocument"/>
 /// on demand. <c>default</c> (<c>Length == 0</c>) means the property was absent.
+///
+/// <para>The converter consumes the value verbatim via
+/// <see cref="Utf8JsonReader.Skip"/> (no DOM, no allocation) and inherits the
+/// serializer's property-binding semantics (case-insensitivity, last-wins), so
+/// the captured range always addresses the value the bound property resolved
+/// to.</para>
+///
+/// <para>The <see cref="JsonConverterAttribute"/> is on the type (not a single
+/// property) so the capture also applies to <see cref="JsonRange"/> nested in
+/// collections (e.g. <c>List&lt;JsonRange&gt;</c> in BatchWriteItem), where there
+/// is no property to annotate.</para>
 /// </summary>
+[JsonConverter(typeof(JsonRangeConverter))]
 internal readonly record struct JsonRange(int Start, int Length)
 {
     /// <summary>Whether the property was present in the source buffer.</summary>
@@ -29,12 +41,6 @@ internal readonly record struct JsonRange(int Start, int Length)
 /// buffer. Reading from a <see cref="System.IO.Stream"/>/<c>PipeReader</c>
 /// re-buffers into segments the caller does not own, so the captured offsets
 /// would not address the caller's buffer — do not use this converter there.
-///
-/// <para>The converter consumes the value verbatim via
-/// <see cref="Utf8JsonReader.Skip"/> (no DOM, no allocation) and inherits the
-/// serializer's property-binding semantics (case-insensitivity, last-wins), so
-/// the captured range always addresses the value the bound property resolved
-/// to.</para>
 /// </summary>
 internal sealed class JsonRangeConverter : JsonConverter<JsonRange>
 {
