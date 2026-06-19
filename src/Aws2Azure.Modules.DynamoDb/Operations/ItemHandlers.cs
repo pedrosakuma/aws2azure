@@ -43,6 +43,15 @@ internal static class ItemHandlers
     // InferredAttributeStorage. See that class for the on-disk layout
     // and the inference rules for the read path.
 
+    // The item-level request models deserialize with AllowTrailingCommas (see
+    // ItemJsonContext), so the on-demand pooled parse of the captured item byte
+    // range must accept the same grammar or a body that deserialized fine could
+    // throw on re-parse. Comments stay at the serializer default (Disallow).
+    private static readonly JsonDocumentOptions ItemDocumentParseOptions = new()
+    {
+        AllowTrailingCommas = true,
+    };
+
     public static Task HandlePutItemAsync(HttpContext ctx, byte[] body, CosmosClient cosmos, SprocContext? sprocCtx, CancellationToken ct)
     {
         PutItemRequest? req;
@@ -61,7 +70,7 @@ internal static class ItemHandlers
                 "TableName is required and must match [a-zA-Z0-9_.-]{3,255}.");
         }
 
-        if (req.Item.ValueKind != JsonValueKind.Object)
+        if (!req.Item.IsPresent || body[req.Item.Start] != (byte)'{')
         {
             return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
                 "Item is required and must be a JSON object.");
@@ -129,21 +138,32 @@ internal static class ItemHandlers
         }
         var meta = metaResult.Metadata!;
 
+        // Recover the item's raw UTF-8 bytes from the request buffer (the
+        // JsonRange the converter captured) and parse a SHORT-LIVED, pooled
+        // JsonDocument for the shape/key validators. Unlike a deserialized
+        // JsonElement, this document's metadata DB is rented from the array pool
+        // and returned on Dispose, so the validators run unchanged with ~flat
+        // allocation regardless of item size. The encoder reads straight from
+        // the same bytes (no re-parse, no JsonElement traversal).
+        var itemUtf8 = body.AsMemory(req.Item.Start, req.Item.Length);
+        using var itemDoc = JsonDocument.Parse(itemUtf8, ItemDocumentParseOptions);
+        var item = itemDoc.RootElement;
+
         // Validate that key attribute type tags inside the Item match the
         // table's AttributeDefinitions before we touch Cosmos.
-        if (!ValidateKeyAttributesInItem(req.Item, meta, out var validationError))
+        if (!ValidateKeyAttributesInItem(item, meta, out var validationError))
         {
             await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", validationError).ConfigureAwait(false);
             return;
         }
 
-        if (!ValidateItemShape(req.Item, out var shapeError))
+        if (!ValidateItemShape(item, out var shapeError))
         {
             await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", shapeError).ConfigureAwait(false);
             return;
         }
 
-        if (!ItemKeyFormatter.TryBuildFromItem(req.Item, meta, out var pk, out var id, out var keyError))
+        if (!ItemKeyFormatter.TryBuildFromItem(item, meta, out var pk, out var id, out var keyError))
         {
             await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", keyError).ConfigureAwait(false);
             return;
@@ -160,7 +180,7 @@ internal static class ItemHandlers
             // when the caller doesn't care about prior state). Zero-copy:
             // the doc is written straight into a pooled UTF-8 buffer handed
             // to the HTTP layer, with no string / StringContent round-trip.
-            using var docBuf = ItemDocumentBody.Create(id, pk, body, req.Item, cosmos.CosmosBinaryRequests);
+            using var docBuf = ItemDocumentBody.CreateFromItemBytes(id, pk, itemUtf8.Span, cosmos.CosmosBinaryRequests);
             var headers = new[]
             {
                 new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
@@ -197,7 +217,7 @@ internal static class ItemHandlers
             // string / StringContent round-trip) and splice those bytes into
             // the sproc params. Sproc bodies are always text (CosmosBinary does
             // not apply to stored-procedure input), so force the text encoder.
-            using var docBuf = ItemDocumentBody.CreateText(id, pk, body, req.Item);
+            using var docBuf = ItemDocumentBody.CreateTextFromItemBytes(id, pk, itemUtf8.Span);
             var sprocResult = await SprocDispatcher.TryPutItemAsync(
                 sprocCtx,
                 cosmos,
@@ -245,7 +265,7 @@ internal static class ItemHandlers
         // with bounded retry on 412/409 so concurrent writers replay. The doc
         // is written once into a pooled UTF-8 buffer and re-sent zero-copy on
         // each attempt (no string / StringContent round-trip).
-        using var fallbackDoc = ItemDocumentBody.Create(id, pk, body, req.Item, cosmos.CosmosBinaryRequests);
+        using var fallbackDoc = ItemDocumentBody.CreateFromItemBytes(id, pk, itemUtf8.Span, cosmos.CosmosBinaryRequests);
         var docBody = fallbackDoc.Memory;
         const int MaxRetries = 4;
         for (int attempt = 0; attempt < MaxRetries; attempt++)
@@ -1015,7 +1035,57 @@ internal static class ItemHandlers
         }
 
         /// <summary>
-        /// Single-pass wire overload (#342): when the item's raw UTF-8 bytes are
+        /// Item-bytes overload: encodes the Cosmos body straight from the
+        /// caller-sliced item attribute-map UTF-8 (<paramref name="itemUtf8"/>),
+        /// with no <see cref="JsonElement"/> traversal and no
+        /// <see cref="TryLocateItemBytes"/> re-scan — the caller already holds the
+        /// item's exact byte range (the request <c>JsonRange</c>). Output is
+        /// byte-identical to the <see cref="JsonElement"/> overload.
+        /// </summary>
+        public static ItemDocumentBody CreateFromItemBytes(string id, string pk, ReadOnlySpan<byte> itemUtf8, bool binary)
+        {
+            DynamoDbMetrics.RecordWriteBodyFormat(binary);
+            if (binary)
+            {
+                return new ItemDocumentBody(InferredAttributeStorage.WriteCosmosDocumentBinary(id, pk, itemUtf8));
+            }
+
+            var text = new PooledByteBufferWriter();
+            try
+            {
+                InferredAttributeStorage.WriteCosmosDocument(text, id, pk, itemUtf8);
+            }
+            catch
+            {
+                text.Dispose();
+                throw;
+            }
+
+            return new ItemDocumentBody(text);
+        }
+
+        /// <summary>
+        /// Text-only item-bytes overload for the stored-procedure write path
+        /// (CosmosBinary does not apply to sproc input). Encodes straight from the
+        /// caller-sliced item UTF-8, byte-identical to the <see cref="JsonElement"/>
+        /// path. Does not emit the write-body-format metric, which tracks only
+        /// standalone-document writes (#336), not sproc params.
+        /// </summary>
+        public static ItemDocumentBody CreateTextFromItemBytes(string id, string pk, ReadOnlySpan<byte> itemUtf8)
+        {
+            var text = new PooledByteBufferWriter();
+            try
+            {
+                InferredAttributeStorage.WriteCosmosDocument(text, id, pk, itemUtf8);
+            }
+            catch
+            {
+                text.Dispose();
+                throw;
+            }
+
+            return new ItemDocumentBody(text);
+        }
         /// recoverable from the original request <paramref name="body"/>, encodes
         /// the Cosmos body straight from those bytes (no JsonElement traversal /
         /// per-attribute GetString), else falls back to the
