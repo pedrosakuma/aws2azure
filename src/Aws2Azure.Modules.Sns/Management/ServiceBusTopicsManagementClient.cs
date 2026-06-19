@@ -1,11 +1,7 @@
-using System.Globalization;
-using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
-using System.Xml;
-using Aws2Azure.Core.Xml;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Observability;
@@ -85,26 +81,6 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
     public const string DefaultLockDurationIso8601 = "PT30S";
     public const int DefaultMaxDeliveryCount = 10;
 
-    private const string AtomNamespace = "http://www.w3.org/2005/Atom";
-    private const string ServiceBusNamespace = "http://schemas.microsoft.com/netservices/2010/10/servicebus/connect";
-    private const string XmlSchemaInstanceNamespace = "http://www.w3.org/2001/XMLSchema-instance";
-
-    private static readonly XmlReaderSettings ReaderSettings = new()
-    {
-        Async = true,
-        DtdProcessing = DtdProcessing.Prohibit,
-        IgnoreComments = true,
-        IgnoreWhitespace = true,
-    };
-
-    private static readonly XmlWriterSettings WriterSettings = new()
-    {
-        Encoding = Encoding.UTF8,
-        Indent = false,
-        OmitXmlDeclaration = false,
-        CloseOutput = false,
-    };
-
     private readonly AzureHttpClient _httpClient;
     private readonly IServiceBusTopicsAuthenticator _authenticator;
     private readonly ILogger<ServiceBusTopicsManagementClient> _logger;
@@ -137,7 +113,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
 
         using var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
-        request.Content = new StringContent(BuildTopicDescriptionEntry(), Encoding.UTF8, "application/atom+xml");
+        request.Content = new StringContent(ServiceBusAtomXml.BuildTopicDescriptionEntry(), Encoding.UTF8, "application/atom+xml");
         request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
 
@@ -219,7 +195,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         }
 
         var content = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        var topicNames = await ParseTopicNamesAsync(content, cancellationToken).ConfigureAwait(false);
+        var topicNames = await ServiceBusAtomXml.ParseTopicNamesAsync(content, cancellationToken).ConfigureAwait(false);
         return new ServiceBusTopicPage(topicNames);
     }
 
@@ -255,7 +231,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         }
 
         var content = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        var entry = await ParseFirstEntryAsync(content, cancellationToken).ConfigureAwait(false);
+        var entry = await ServiceBusAtomXml.ParseFirstEntryAsync(content, cancellationToken).ConfigureAwait(false);
         if (entry is null)
         {
             return null;
@@ -286,7 +262,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
 
         using var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
-        var requestBody = BuildSubscriptionDescriptionEntry(userMetadata);
+        var requestBody = ServiceBusAtomXml.BuildSubscriptionDescriptionEntry(userMetadata);
         request.Content = new StringContent(requestBody, Encoding.UTF8, "application/atom+xml");
         request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
@@ -371,7 +347,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         }
 
         var content = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        var subscriptions = await ParseSubscriptionDescriptionsAsync(content, cancellationToken).ConfigureAwait(false);
+        var subscriptions = await ServiceBusAtomXml.ParseSubscriptionDescriptionsAsync(content, cancellationToken).ConfigureAwait(false);
         return new ServiceBusSubscriptionPage(subscriptions);
     }
 
@@ -409,7 +385,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         }
 
         var content = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        var entry = await ParseFirstEntryAsync(content, cancellationToken).ConfigureAwait(false);
+        var entry = await ServiceBusAtomXml.ParseFirstEntryAsync(content, cancellationToken).ConfigureAwait(false);
         if (entry is null)
         {
             return null;
@@ -441,7 +417,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
 
         using var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
-        request.Content = new StringContent(BuildSubscriptionDescriptionEntry(description), Encoding.UTF8, "application/atom+xml");
+        request.Content = new StringContent(ServiceBusAtomXml.BuildSubscriptionDescriptionEntry(description), Encoding.UTF8, "application/atom+xml");
         request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
 
@@ -455,259 +431,6 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         ServiceBusTopicsManagementClientLog.TopicRequestFailed(_logger, nameof(UpdateSubscriptionAsync), namespaceFqdn, topicName + "/subscriptions/" + description.SubscriptionName, (int)response.StatusCode);
         throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
-    }
-
-    internal static string BuildTopicDescriptionEntry(bool? requiresDuplicateDetection = null)
-    {
-        var builder = new StringBuilder();
-        using var stringWriter = new Utf8StringWriter(builder);
-        using var writer = XmlWriter.Create(stringWriter, WriterSettings);
-        writer.WriteStartDocument();
-        writer.WriteStartElement("entry", AtomNamespace);
-        writer.WriteStartElement("content", AtomNamespace);
-        writer.WriteAttributeString("type", "application/xml");
-        writer.WriteStartElement("TopicDescription", ServiceBusNamespace);
-        writer.WriteAttributeString("xmlns", "i", null, XmlSchemaInstanceNamespace);
-        if (requiresDuplicateDetection.HasValue)
-        {
-            writer.WriteElementString("RequiresDuplicateDetection", ServiceBusNamespace, requiresDuplicateDetection.Value ? "true" : "false");
-        }
-
-        writer.WriteEndElement();
-        writer.WriteEndElement();
-        writer.WriteEndElement();
-        writer.WriteEndDocument();
-        writer.Flush();
-        return builder.ToString();
-    }
-
-    internal static string BuildSubscriptionDescriptionEntry(string userMetadata)
-        => BuildSubscriptionDescriptionEntry(new ServiceBusSubscriptionDescription(
-            SubscriptionName: string.Empty,
-            UserMetadata: userMetadata,
-            LockDuration: DefaultLockDurationIso8601,
-            MaxDeliveryCount: DefaultMaxDeliveryCount,
-            AutoDeleteOnIdle: LongIdleIso8601));
-
-    internal static string BuildSubscriptionDescriptionEntry(ServiceBusSubscriptionDescription description)
-    {
-        ArgumentNullException.ThrowIfNull(description);
-
-        var builder = new StringBuilder();
-        using var stringWriter = new Utf8StringWriter(builder);
-        using var writer = XmlWriter.Create(stringWriter, WriterSettings);
-        writer.WriteStartDocument();
-        writer.WriteStartElement("entry", AtomNamespace);
-        writer.WriteStartElement("content", AtomNamespace);
-        writer.WriteAttributeString("type", "application/xml");
-        writer.WriteStartElement("SubscriptionDescription", ServiceBusNamespace);
-        writer.WriteAttributeString("xmlns", "i", null, XmlSchemaInstanceNamespace);
-        writer.WriteElementString("LockDuration", ServiceBusNamespace, string.IsNullOrWhiteSpace(description.LockDuration) ? DefaultLockDurationIso8601 : description.LockDuration);
-        writer.WriteElementString("MaxDeliveryCount", ServiceBusNamespace, description.MaxDeliveryCount <= 0 ? DefaultMaxDeliveryCount.ToString(CultureInfo.InvariantCulture) : description.MaxDeliveryCount.ToString(CultureInfo.InvariantCulture));
-        // UserMetadata must appear BEFORE AutoDeleteOnIdle in the canonical SubscriptionDescription
-        // schema order. Real Service Bus rejects out-of-order PUTs with HTTP 400; the SB emulator
-        // accepts them but silently drops fields that appear out of position. Keep this order stable.
-        writer.WriteElementString("UserMetadata", ServiceBusNamespace, description.UserMetadata ?? string.Empty);
-        writer.WriteElementString("AutoDeleteOnIdle", ServiceBusNamespace, string.IsNullOrWhiteSpace(description.AutoDeleteOnIdle) ? LongIdleIso8601 : description.AutoDeleteOnIdle);
-        writer.WriteEndElement();
-        writer.WriteEndElement();
-        writer.WriteEndElement();
-        writer.WriteEndDocument();
-        writer.Flush();
-        return builder.ToString();
-    }
-
-    internal static async ValueTask<IReadOnlyList<string>> ParseTopicNamesAsync(string content, CancellationToken cancellationToken)
-    {
-        var entries = await ParseFeedEntriesAsync(content, cancellationToken).ConfigureAwait(false);
-        var topicNames = new List<string>(entries.Count);
-        for (var i = 0; i < entries.Count; i++)
-        {
-            if (!string.IsNullOrWhiteSpace(entries[i].Title))
-            {
-                topicNames.Add(entries[i].Title!);
-            }
-        }
-
-        return topicNames;
-    }
-
-    internal static async ValueTask<IReadOnlyList<ServiceBusSubscriptionDescription>> ParseSubscriptionDescriptionsAsync(string content, CancellationToken cancellationToken)
-    {
-        var entries = await ParseFeedEntriesAsync(content, cancellationToken).ConfigureAwait(false);
-        var subscriptions = new List<ServiceBusSubscriptionDescription>(entries.Count);
-        for (var i = 0; i < entries.Count; i++)
-        {
-            if (!string.IsNullOrWhiteSpace(entries[i].Title))
-            {
-                subscriptions.Add(new ServiceBusSubscriptionDescription(
-                    entries[i].Title!,
-                    entries[i].UserMetadata,
-                    entries[i].LockDuration ?? DefaultLockDurationIso8601,
-                    entries[i].MaxDeliveryCount ?? DefaultMaxDeliveryCount,
-                    entries[i].AutoDeleteOnIdle ?? LongIdleIso8601));
-            }
-        }
-
-        return subscriptions;
-    }
-
-    private static async ValueTask<AtomEntryData?> ParseFirstEntryAsync(string content, CancellationToken cancellationToken)
-    {
-        var entries = await ParseFeedEntriesAsync(content, cancellationToken).ConfigureAwait(false);
-        return entries.Count == 0 ? null : entries[0];
-    }
-
-    private static async ValueTask<IReadOnlyList<AtomEntryData>> ParseFeedEntriesAsync(string content, CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(content))
-        {
-            return [];
-        }
-
-        var entries = new List<AtomEntryData>();
-        using var stringReader = new StringReader(content);
-        using var reader = XmlReader.Create(stringReader, ReaderSettings);
-
-        if (!await reader.ReadAsync().ConfigureAwait(false))
-        {
-            return entries;
-        }
-
-        while (true)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (reader.NodeType == XmlNodeType.Element
-                && reader.LocalName == "entry"
-                && reader.NamespaceURI == AtomNamespace)
-            {
-                using var entryReader = reader.ReadSubtree();
-                entries.Add(await ParseEntryAsync(entryReader, cancellationToken).ConfigureAwait(false));
-                reader.Skip();
-                if (reader.EOF)
-                {
-                    break;
-                }
-
-                continue;
-            }
-
-            if (!await reader.ReadAsync().ConfigureAwait(false))
-            {
-                break;
-            }
-        }
-
-        return entries;
-    }
-
-    private static async ValueTask<AtomEntryData> ParseEntryAsync(XmlReader reader, CancellationToken cancellationToken)
-    {
-        string? title = null;
-        string? userMetadata = null;
-        int? subscriptionCount = null;
-        bool? requiresDuplicateDetection = null;
-        string? lockDuration = null;
-        int? maxDeliveryCount = null;
-        string? autoDeleteOnIdle = null;
-
-        if (!await reader.ReadAsync().ConfigureAwait(false))
-        {
-            return new AtomEntryData(title, userMetadata, subscriptionCount, requiresDuplicateDetection, lockDuration, maxDeliveryCount, autoDeleteOnIdle);
-        }
-
-        while (true)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (reader.NodeType == XmlNodeType.Element)
-            {
-                if (reader.LocalName == "title" && reader.NamespaceURI == AtomNamespace)
-                {
-                    title = await reader.ReadElementContentAsStringAsync().ConfigureAwait(false);
-                    if (reader.EOF)
-                    {
-                        break;
-                    }
-
-                    continue;
-                }
-
-                if (reader.NamespaceURI == ServiceBusNamespace)
-                {
-                    switch (reader.LocalName)
-                    {
-                        case "UserMetadata":
-                            userMetadata = await reader.ReadElementContentAsStringAsync().ConfigureAwait(false);
-                            if (reader.EOF)
-                            {
-                                break;
-                            }
-
-                            continue;
-                        case "SubscriptionCount":
-                            if (int.TryParse(await reader.ReadElementContentAsStringAsync().ConfigureAwait(false), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedSubscriptionCount))
-                            {
-                                subscriptionCount = parsedSubscriptionCount;
-                            }
-
-                            if (reader.EOF)
-                            {
-                                break;
-                            }
-
-                            continue;
-                        case "RequiresDuplicateDetection":
-                            if (bool.TryParse(await reader.ReadElementContentAsStringAsync().ConfigureAwait(false), out var parsedRequiresDuplicateDetection))
-                            {
-                                requiresDuplicateDetection = parsedRequiresDuplicateDetection;
-                            }
-
-                            if (reader.EOF)
-                            {
-                                break;
-                            }
-
-                            continue;
-                        case "LockDuration":
-                            lockDuration = await reader.ReadElementContentAsStringAsync().ConfigureAwait(false);
-                            if (reader.EOF)
-                            {
-                                break;
-                            }
-
-                            continue;
-                        case "MaxDeliveryCount":
-                            if (int.TryParse(await reader.ReadElementContentAsStringAsync().ConfigureAwait(false), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedMaxDeliveryCount))
-                            {
-                                maxDeliveryCount = parsedMaxDeliveryCount;
-                            }
-
-                            if (reader.EOF)
-                            {
-                                break;
-                            }
-
-                            continue;
-                        case "AutoDeleteOnIdle":
-                            autoDeleteOnIdle = await reader.ReadElementContentAsStringAsync().ConfigureAwait(false);
-                            if (reader.EOF)
-                            {
-                                break;
-                            }
-
-                            continue;
-                    }
-                }
-            }
-
-            if (!await reader.ReadAsync().ConfigureAwait(false))
-            {
-                break;
-            }
-        }
-
-        return new AtomEntryData(title, userMetadata, subscriptionCount, requiresDuplicateDetection, lockDuration, maxDeliveryCount, autoDeleteOnIdle);
     }
 
     private static Uri BuildTopicUri(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName)
@@ -752,15 +475,6 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
 
         return $"https://{namespaceFqdn.TrimEnd('/')}";
     }
-
-    private sealed record AtomEntryData(
-        string? Title,
-        string? UserMetadata,
-        int? SubscriptionCount,
-        bool? RequiresDuplicateDetection,
-        string? LockDuration,
-        int? MaxDeliveryCount,
-        string? AutoDeleteOnIdle);
 }
 
 public sealed record ServiceBusTopicPage(IReadOnlyList<string> TopicNames);
