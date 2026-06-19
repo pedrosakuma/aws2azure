@@ -147,7 +147,7 @@ internal static class TableLifecycleHandlers
         var metaJson = JsonSerializer.Serialize(meta, TableMetadataJsonContext.Default.TableMetadata);
         var collLink = dbLink + "/colls/" + req.TableName;
         using var metaContent = new StringContent(metaJson, Encoding.UTF8, "application/json");
-        var pkHeader = BuildPartitionKeyHeader(TableMetadata.DocId);
+        var pkHeader = CosmosOpsShared.BuildPartitionKeyHeader(TableMetadata.DocId);
         var metaHeaders = new[]
         {
             new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
@@ -485,14 +485,6 @@ internal static class TableLifecycleHandlers
         if (value is not { } v) return false;
         return v.ValueKind == JsonValueKind.Array && v.GetArrayLength() > 0;
     }
-
-    /// <summary>
-    /// Builds the Cosmos partition-key header value
-    /// <c>["&lt;value&gt;"]</c>. Delegates to <see cref="CosmosOpsShared"/>
-    /// so every handler agrees on the encoding.
-    /// </summary>
-    internal static string BuildPartitionKeyHeader(string value)
-        => CosmosOpsShared.BuildPartitionKeyHeader(value);
 
     private static string BuildContainerBody(string tableName)
     {
