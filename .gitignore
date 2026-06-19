@@ -31,6 +31,9 @@ Thumbs.db
 TestResults/
 BenchmarkDotNet.Artifacts/
 
+# Local-only spikes / experiments (build artifacts, not tracked)
+experiments/
+
 # Perf — locally-generated cumulative history (artifact uploaded by perf workflow; not committed)
 docs/perf/history.csv
 # Perf — machine-readable per-run results consumed by the relative gate (fresh each run; not committed)

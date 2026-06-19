@@ -427,10 +427,10 @@ public class TableLifecycleHandlersTests
     [Fact]
     public void BuildPartitionKeyHeader_escapes_special_chars()
     {
-        Assert.Equal("[\"orders\"]", TableLifecycleHandlers.BuildPartitionKeyHeader("orders"));
+        Assert.Equal("[\"orders\"]", CosmosOpsShared.BuildPartitionKeyHeader("orders"));
         // JSON-escape of inner quote + backslash to ensure the helper goes
         // through JsonEncodedText rather than naive concat.
-        var encoded = TableLifecycleHandlers.BuildPartitionKeyHeader("a\"b");
+        var encoded = CosmosOpsShared.BuildPartitionKeyHeader("a\"b");
         Assert.Contains("\\u0022", encoded);
     }
 
