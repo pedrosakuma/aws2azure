@@ -489,23 +489,9 @@ internal static class BatchGetItemHandler
             }
 
             using var cosmosBody = await CosmosOpsShared.ReadCosmosJsonBodyAsync(resp.Content, ct).ConfigureAwait(false);
-            using var doc = JsonDocument.Parse(cosmosBody.WrittenMemory);
-            if (doc.RootElement.TryGetProperty("Documents", out var docsEl)
-                && docsEl.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var docEl in docsEl.EnumerateArray())
-                {
-                    if (!docEl.TryGetProperty(InferredAttributeStorage.IdProperty, out var idEl)
-                        || idEl.ValueKind != JsonValueKind.String)
-                    {
-                        continue;
-                    }
-                    if (!group.TryGetIndex(idEl.GetString()!, out var idx)) continue;
-                    var item = InferredAttributeStorage.ExtractItem(docEl);
-                    if (item is null) continue;
-                    results[idx] = new PerItemResult(item, false, null);
-                }
-            }
+            var reader = new Utf8JsonTokenReader(cosmosBody.WrittenMemory.Span);
+            InferredAttributeStorage.ExtractItemsFusedWithId(
+                ref reader, new GroupCorrelationSink(group, results));
 
             continuation = null;
             if (resp.Headers.TryGetValues("x-ms-continuation", out var ctValues))
@@ -625,4 +611,32 @@ internal static class BatchGetItemHandler
         HardError? HardError);
 
     private readonly record struct HardError(int Status, string Code, string Message);
+
+    /// <summary>
+    /// Streaming sink for <see cref="ExecuteGroupQueryAsync"/>: correlates each
+    /// document the page walk surfaces back to its request-key index via the
+    /// Cosmos <c>id</c> and stores the extracted item. A <c>struct</c> so
+    /// <see cref="InferredAttributeStorage.ExtractItemsFusedWithId{TReader,TSink}"/>
+    /// devirtualizes the callback with no allocation. Documents whose <c>id</c>
+    /// is absent or unknown to the group are ignored (matching the legacy
+    /// per-document correlation: missing keys stay at their default result).
+    /// </summary>
+    private readonly struct GroupCorrelationSink : IFusedItemWithIdSink
+    {
+        private readonly KeyGroup _group;
+        private readonly PerItemResult[] _results;
+
+        public GroupCorrelationSink(KeyGroup group, PerItemResult[] results)
+        {
+            _group = group;
+            _results = results;
+        }
+
+        public void Accept(string? id, Dictionary<string, JsonElement> map)
+        {
+            if (id is null) return;
+            if (!_group.TryGetIndex(id, out var idx)) return;
+            _results[idx] = new PerItemResult(map, false, null);
+        }
+    }
 }

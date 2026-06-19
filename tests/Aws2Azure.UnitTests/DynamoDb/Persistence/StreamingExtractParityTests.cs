@@ -177,4 +177,119 @@ public class StreamingExtractParityTests
         var streaming = ExtractViaStreaming("{\"Documents\":[],\"_count\":0}");
         Assert.Empty(streaming);
     }
+
+    // ---- ExtractItemsFusedWithId parity (issue #434) --------------------
+    //
+    // The BatchGetItem grouped-query read replaced its whole-page
+    // JsonDocument.Parse → (per-doc "id" + ExtractItem) correlation with the
+    // streaming ExtractItemsFusedWithId. These tests pin that the streaming
+    // walk surfaces the same Cosmos `id` and the same AttributeValue map per
+    // document as the legacy DOM correlation.
+
+    private struct CapturingSink : IFusedItemWithIdSink
+    {
+        public readonly List<string?> Ids;
+        public readonly List<Dictionary<string, JsonElement>> Maps;
+
+        public CapturingSink(List<string?> ids, List<Dictionary<string, JsonElement>> maps)
+        {
+            Ids = ids;
+            Maps = maps;
+        }
+
+        public readonly void Accept(string? id, Dictionary<string, JsonElement> map)
+        {
+            Ids.Add(id);
+            Maps.Add(map);
+        }
+    }
+
+    /// <summary>Legacy whole-page DOM correlation (the pre-#434 production path):
+    /// each document's top-level Cosmos `id` plus its extracted item.</summary>
+    private static List<(string? Id, Dictionary<string, JsonElement> Map)> CorrelateViaDom(string pageJson)
+    {
+        var sink = new List<(string?, Dictionary<string, JsonElement>)>();
+        using var doc = JsonDocument.Parse(pageJson);
+        if (doc.RootElement.TryGetProperty("Documents", out var docsEl)
+            && docsEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var docEl in docsEl.EnumerateArray())
+            {
+                string? id = docEl.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.String
+                    ? idEl.GetString()
+                    : null;
+                var item = InferredAttributeStorage.ExtractItem(docEl);
+                sink.Add((id, item!));
+            }
+        }
+        return sink;
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    [InlineData(10)]
+    public void StreamingWithId_matches_dom_correlation(int docCount)
+    {
+        string page = BuildPage(docCount);
+
+        var dom = CorrelateViaDom(page);
+
+        var ids = new List<string?>();
+        var maps = new List<Dictionary<string, JsonElement>>();
+        var reader = new Utf8JsonTokenReader(Encoding.UTF8.GetBytes(page));
+        int count = InferredAttributeStorage.ExtractItemsFusedWithId(
+            ref reader, new CapturingSink(ids, maps));
+
+        Assert.Equal(docCount, count);
+        Assert.Equal(dom.Count, ids.Count);
+        for (int i = 0; i < dom.Count; i++)
+        {
+            // Each document's id is "sk{i}" (the BuildCosmosDoc sort id) and must
+            // correlate identically; the map must strip system fields / shadow id.
+            Assert.Equal($"sk{i}", ids[i]);
+            Assert.Equal(dom[i].Id, ids[i]);
+            Assert.Equal(Canon(dom[i].Map), Canon(maps[i]));
+        }
+    }
+
+    [Fact]
+    public void StreamingWithId_surfaces_null_for_document_without_string_id()
+    {
+        // A page where one document carries no top-level "id" (a non-item /
+        // uncorrelatable document): the streaming walk must surface id == null,
+        // matching the legacy DOM path, so the caller leaves the key unresolved.
+        string withId = BuildCosmosDoc("sk0", "p", 0);
+        const string noId = "{\"name\":{\"S\":\"orphan\"},\"_rid\":\"r==\",\"_ts\":1}";
+        string page = $"{{\"_rid\":\"feedrid==\",\"Documents\":[{withId},{noId}],\"_count\":2}}";
+
+        var ids = new List<string?>();
+        var maps = new List<Dictionary<string, JsonElement>>();
+        var reader = new Utf8JsonTokenReader(Encoding.UTF8.GetBytes(page));
+        InferredAttributeStorage.ExtractItemsFusedWithId(
+            ref reader, new CapturingSink(ids, maps));
+
+        Assert.Equal(2, ids.Count);
+        Assert.Equal("sk0", ids[0]);
+        Assert.Null(ids[1]);
+    }
+
+    [Fact]
+    public void StreamingWithId_accumulates_across_continuation_pages()
+    {
+        // The handler calls the extractor once per continuation page into the
+        // same result set; emulate two pages and assert order + correlation.
+        var ids = new List<string?>();
+        var maps = new List<Dictionary<string, JsonElement>>();
+
+        foreach (var page in new[] { BuildPage(2), BuildPage(2) })
+        {
+            var reader = new Utf8JsonTokenReader(Encoding.UTF8.GetBytes(page));
+            InferredAttributeStorage.ExtractItemsFusedWithId(
+                ref reader, new CapturingSink(ids, maps));
+        }
+
+        Assert.Equal(4, ids.Count);
+        Assert.Equal(new[] { "sk0", "sk1", "sk0", "sk1" }, ids);
+    }
 }
