@@ -1,17 +1,21 @@
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Aws2Azure.Modules.DynamoDb.Internal;
 
 namespace Aws2Azure.Modules.DynamoDb.Operations;
 
 /// <summary>
 /// JSON shapes for <c>TransactWriteItems</c>. Each per-operation envelope
-/// (<c>Put</c> / <c>Delete</c> / <c>ConditionCheck</c> / <c>Update</c>) is kept
-/// as a raw <see cref="JsonElement"/> so the handler can validate/extract the
-/// inner DynamoDB fields without a deep typed model and so unknown sub-fields
-/// survive round-trip. <c>Update</c> is parsed only to emit a clear
-/// <c>ValidationException</c> — atomic <c>Update</c> within a transaction is a
-/// documented gap (see <c>docs/gaps/dynamodb/TransactWriteItems.yaml</c>).
+/// (<c>Put</c> / <c>Delete</c> / <c>ConditionCheck</c> / <c>Update</c>) is
+/// captured as a <see cref="JsonRange"/> byte range (not a materialized
+/// <see cref="JsonElement"/> DOM): the deserializer skips the value, so the
+/// request retains no per-action DOM (up to 100 actions/call), and the handler
+/// opens a short-lived pooled <see cref="JsonDocument"/> over the present
+/// envelope to validate/extract the inner DynamoDB fields. <c>Update</c> is
+/// captured only to emit a clear <c>ValidationException</c> — atomic
+/// <c>Update</c> within a transaction is a documented gap (see
+/// <c>docs/gaps/dynamodb/TransactWriteItems.yaml</c>).
 /// </summary>
 internal sealed class TransactWriteItemsRequest
 {
@@ -31,16 +35,16 @@ internal sealed class TransactWriteItemsRequest
 internal sealed class TransactWriteItem
 {
     [JsonPropertyName("Put")]
-    public JsonElement Put { get; set; }
+    public JsonRange Put { get; set; }
 
     [JsonPropertyName("Update")]
-    public JsonElement Update { get; set; }
+    public JsonRange Update { get; set; }
 
     [JsonPropertyName("Delete")]
-    public JsonElement Delete { get; set; }
+    public JsonRange Delete { get; set; }
 
     [JsonPropertyName("ConditionCheck")]
-    public JsonElement ConditionCheck { get; set; }
+    public JsonRange ConditionCheck { get; set; }
 }
 
 /// <summary>

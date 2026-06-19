@@ -39,6 +39,17 @@ internal static class TransactWriteItemsHandler
 {
     private const int MaxItemsPerCall = 100;
 
+    // The per-action envelopes are deserialized as JsonRange (no DOM) and
+    // re-parsed on demand from the request buffer. The source-gen context that
+    // captured the ranges (TransactWriteItemsJsonContext) allows trailing
+    // commas, so the transient re-parse must accept the same grammar or a body
+    // that deserialized fine could throw on re-parse. Comments stay at the
+    // serializer default (Disallow).
+    private static readonly JsonDocumentOptions TransactItemParseOptions = new()
+    {
+        AllowTrailingCommas = true,
+    };
+
     internal enum OpKind
     {
         Put,
@@ -99,10 +110,10 @@ internal static class TransactWriteItemsHandler
                 return;
             }
 
-            bool hasPut = item.Put.ValueKind == JsonValueKind.Object;
-            bool hasDelete = item.Delete.ValueKind == JsonValueKind.Object;
-            bool hasCheck = item.ConditionCheck.ValueKind == JsonValueKind.Object;
-            bool hasUpdate = item.Update.ValueKind == JsonValueKind.Object;
+            bool hasPut = IsPresentObject(body, item.Put);
+            bool hasDelete = IsPresentObject(body, item.Delete);
+            bool hasCheck = IsPresentObject(body, item.ConditionCheck);
+            bool hasUpdate = IsPresentObject(body, item.Update);
 
             if (hasUpdate)
             {
@@ -119,8 +130,17 @@ internal static class TransactWriteItemsHandler
                 return;
             }
 
-            var op = hasPut ? item.Put : hasDelete ? item.Delete : item.ConditionCheck;
+            var opRange = hasPut ? item.Put : hasDelete ? item.Delete : item.ConditionCheck;
             string opName = hasPut ? "Put" : hasDelete ? "Delete" : "ConditionCheck";
+
+            // Re-materialize only the single present envelope into a short-lived
+            // pooled JsonDocument; the validators / key-extraction / condition
+            // parser below traverse it and it is disposed at the end of this
+            // iteration. Nothing downstream retains a JsonElement: the work unit
+            // keeps only the encoded doc bytes, the condition JSON, and the
+            // computed id/pk strings.
+            using var opDoc = JsonDocument.Parse(body.AsMemory(opRange.Start, opRange.Length), TransactItemParseOptions);
+            var op = opDoc.RootElement;
 
             if (!op.TryGetProperty("TableName", out var tEl) || tEl.ValueKind != JsonValueKind.String)
             {
@@ -341,6 +361,16 @@ internal static class TransactWriteItemsHandler
                 ? "TransactWriteItems failed; the transaction was rolled back."
                 : result.ErrorBody!).ConfigureAwait(false);
     }
+
+    // True when the captured range is present and its value is a JSON object.
+    // The JsonRange converter records reader.TokenStartIndex, which STJ points
+    // at the first non-whitespace byte of the value token, so the value is an
+    // object iff that byte is '{'. This reproduces the previous
+    // `JsonElement.ValueKind == JsonValueKind.Object` gate (a present-but-null
+    // or present-but-scalar envelope is treated as absent) without materializing
+    // a DOM just to classify it.
+    private static bool IsPresentObject(byte[] body, JsonRange range)
+        => range.IsPresent && body[range.Start] == (byte)'{';
 
     private static ConditionNode? ParseCondition(JsonElement op, out string? error)
     {
