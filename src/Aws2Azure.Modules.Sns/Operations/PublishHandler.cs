@@ -35,38 +35,14 @@ internal static class PublishHandler
 
         var messageId = Guid.NewGuid();
         var route = SnsTopicRouting.Resolve(credentials, snsSettings, request.TopicName);
-        if (route.Backend == SnsTopicBackend.EventGrid)
+        var publisher = SnsBackendPublisherFactory.Create(
+            route, credentials, eventGridCredentials, amqpSender, eventGridPublisher);
+
+        var outcome = await publisher.PublishAsync(request, messageId, cancellationToken).ConfigureAwait(false);
+        if (!outcome.Succeeded)
         {
-            try
-            {
-                var destination = SnsTopicRouting.ResolveEventGridDestination(route, eventGridCredentials);
-                await eventGridPublisher.PublishAsync(
-                    destination,
-                    SnsPublishSupport.CreateEventGridMessage(request, messageId),
-                    cancellationToken).ConfigureAwait(false);
-            }
-            catch (EventGridPublishException exception)
-            {
-                await SnsPublishErrorMapper.WriteSendErrorAsync(context, exception).ConfigureAwait(false);
-                return;
-            }
-        }
-        else
-        {
-            try
-            {
-                await amqpSender.SendAsync(
-                    credentials,
-                    SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                    route.ServiceBusTopicName,
-                    SnsPublishSupport.CreateAmqpMessage(request, messageId),
-                    cancellationToken).ConfigureAwait(false);
-            }
-            catch (SnsAmqpException exception)
-            {
-                await SnsPublishErrorMapper.WriteSendErrorAsync(context, exception).ConfigureAwait(false);
-                return;
-            }
+            await SnsPublishErrorMapper.WriteSendErrorAsync(context, outcome).ConfigureAwait(false);
+            return;
         }
 
         await SnsResponseWriter.WritePublishResponseAsync(context, messageId.ToString()).ConfigureAwait(false);

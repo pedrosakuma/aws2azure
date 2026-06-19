@@ -34,55 +34,11 @@ internal static class PublishBatchHandler
         }
 
         var messageIds = new Guid[entries.Count];
-        SnsBatchSendResult sendResult;
         var route = SnsTopicRouting.Resolve(credentials, snsSettings, topicName);
-        if (route.Backend == SnsTopicBackend.EventGrid)
-        {
-            var messages = new EventGridPublishMessage[entries.Count];
-            for (var i = 0; i < entries.Count; i++)
-            {
-                messageIds[i] = Guid.NewGuid();
-                messages[i] = SnsPublishSupport.CreateEventGridMessage(topicArn, entries[i], messageIds[i]);
-            }
+        var publisher = SnsBackendPublisherFactory.Create(
+            route, credentials, eventGridCredentials, amqpSender, eventGridPublisher);
 
-            var destination = SnsTopicRouting.ResolveEventGridDestination(route, eventGridCredentials);
-            sendResult = await eventGridPublisher.PublishBatchAsync(destination, messages, cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            var messages = new SnsAmqpSendMessage[entries.Count];
-            for (var i = 0; i < entries.Count; i++)
-            {
-                messageIds[i] = Guid.NewGuid();
-                messages[i] = SnsPublishSupport.CreateAmqpMessage(entries[i], messageIds[i]);
-            }
-
-            try
-            {
-                sendResult = await amqpSender.SendBatchAsync(
-                    credentials,
-                    SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                    route.ServiceBusTopicName,
-                    messages,
-                    cancellationToken).ConfigureAwait(false);
-            }
-            catch (SnsAmqpException exception)
-            {
-                var failure = SnsPublishErrorMapper.CreateBatchFailure(exception);
-                var failed = new PublishBatchFailure[entries.Count];
-                for (var i = 0; i < entries.Count; i++)
-                {
-                    failed[i] = new PublishBatchFailure(
-                        entries[i].Id,
-                        failure.ErrorCode ?? "InternalFailure",
-                        failure.ErrorMessage ?? "Azure Service Bus Topics AMQP send failed.",
-                        failure.SenderFault);
-                }
-
-                await SnsResponseWriter.WritePublishBatchResponseAsync(context, new PublishBatchResult([], failed)).ConfigureAwait(false);
-                return;
-            }
-        }
+        var sendResult = await publisher.PublishBatchAsync(topicArn, entries, messageIds, cancellationToken).ConfigureAwait(false);
 
         var successful = new List<PublishBatchSuccess>(entries.Count);
         var failedEntries = new List<PublishBatchFailure>(entries.Count);
