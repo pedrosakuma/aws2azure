@@ -98,8 +98,15 @@ internal static class BatchWriteItemHandler
             }
             var meta = metaRead.Metadata!;
 
-            foreach (var entry in entries)
+            foreach (var entryRange in entries)
             {
+                // Open a short-lived, pooled JsonDocument over the captured
+                // envelope bytes instead of retaining one JsonElement DOM per
+                // action across the whole batch. The validators/key-extraction
+                // traverse this transient document; it is disposed at the end of
+                // each iteration so its rented metadata DB returns to the pool.
+                using var entryDoc = JsonDocument.Parse(body.AsMemory(entryRange.Start, entryRange.Length));
+                var entry = entryDoc.RootElement;
                 if (entry.ValueKind != JsonValueKind.Object)
                 {
                     await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
@@ -172,7 +179,10 @@ internal static class BatchWriteItemHandler
                     // buffer here. Still removes the string / StringContent
                     // re-encode the previous BuildItemDocument path incurred.
                     var doc = ItemHandlers.BuildItemDocumentBytes(id, pk, itemEl, cosmos.CosmosBinaryRequests);
-                    work.Add(new WriteWorkUnit(tableName, pk, id, WriteKind.Put, doc, entry.Clone()));
+                    // Keep only the envelope's byte range for any UnprocessedItems
+                    // echo (sliced from the request buffer on demand), not a
+                    // retained DOM clone.
+                    work.Add(new WriteWorkUnit(tableName, pk, id, WriteKind.Put, doc, entryRange));
                 }
                 else
                 {
@@ -207,7 +217,7 @@ internal static class BatchWriteItemHandler
                             $"BatchWriteItem contains duplicate write targeting the same key in table '{tableName}'.").ConfigureAwait(false);
                         return;
                     }
-                    work.Add(new WriteWorkUnit(tableName, pk, id, WriteKind.Delete, null, entry.Clone()));
+                    work.Add(new WriteWorkUnit(tableName, pk, id, WriteKind.Delete, null, entryRange));
                 }
             }
         }
@@ -244,7 +254,15 @@ internal static class BatchWriteItemHandler
                     list = new List<JsonElement>();
                     unprocessed[unit.Table] = list;
                 }
-                list.Add(unit.OriginalEntry);
+                // Rare path (Cosmos 429): re-materialize the original action
+                // envelope from its captured byte range only for the throttled
+                // entries that must be echoed back. Clone() detaches a standalone
+                // JsonElement that outlives the transient document, so it can be
+                // serialized into the response. The common (un-throttled) path
+                // never allocates this DOM.
+                using var echoDoc = JsonDocument.Parse(
+                    body.AsMemory(unit.OriginalEntryRange.Start, unit.OriginalEntryRange.Length));
+                list.Add(echoDoc.RootElement.Clone());
             }
         }
 
@@ -347,7 +365,7 @@ internal static class BatchWriteItemHandler
 
     private sealed record WriteWorkUnit(
         string Table, string Pk, string Id, WriteKind Kind,
-        byte[]? Doc, JsonElement OriginalEntry);
+        byte[]? Doc, JsonRange OriginalEntryRange);
 
     private readonly record struct WriteResult(bool Throttled, HardError? HardError);
 

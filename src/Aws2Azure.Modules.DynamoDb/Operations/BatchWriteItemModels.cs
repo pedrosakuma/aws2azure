@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Aws2Azure.Modules.DynamoDb.Internal;
 
 namespace Aws2Azure.Modules.DynamoDb.Operations;
 
@@ -8,13 +9,17 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 /// Wire shape for <c>BatchWriteItem</c>. <see cref="RequestItems"/>
 /// maps each table name to an ordered list of write actions; each
 /// element carries exactly one of <c>PutRequest</c> or
-/// <c>DeleteRequest</c>. The values are <see cref="JsonElement"/>
-/// because their shape is dynamic and validated per-item.
+/// <c>DeleteRequest</c>. The action envelopes are captured as
+/// <see cref="JsonRange"/> byte ranges (not materialized
+/// <see cref="JsonElement"/> DOMs) — the handler opens a short-lived pooled
+/// <see cref="JsonDocument"/> per envelope to validate/route it, so the request
+/// retains no per-action DOM (up to 25 actions/call) and slices the original
+/// bytes straight from the request buffer for any UnprocessedItems echo.
 /// </summary>
 internal sealed class BatchWriteItemRequest
 {
     [JsonPropertyName("RequestItems")]
-    public Dictionary<string, List<JsonElement>>? RequestItems { get; set; }
+    public Dictionary<string, List<JsonRange>>? RequestItems { get; set; }
 
     [JsonPropertyName("ReturnConsumedCapacity")]
     public string? ReturnConsumedCapacity { get; set; }
@@ -37,6 +42,8 @@ internal sealed class BatchWriteItemResponse
 
 [JsonSerializable(typeof(BatchWriteItemRequest))]
 [JsonSerializable(typeof(BatchWriteItemResponse))]
+[JsonSerializable(typeof(Dictionary<string, List<JsonRange>>))]
+[JsonSerializable(typeof(List<JsonRange>))]
 [JsonSerializable(typeof(Dictionary<string, List<JsonElement>>))]
 [JsonSerializable(typeof(List<JsonElement>))]
 internal sealed partial class BatchWriteItemJsonContext : JsonSerializerContext
