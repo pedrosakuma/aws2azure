@@ -307,6 +307,121 @@ internal static partial class InferredAttributeStorage
     }
 
     /// <summary>
+    /// Correlation-aware counterpart to <see cref="ExtractItemsFused"/>: streams
+    /// the <c>Documents</c> array of a Cosmos query/feed response into per-document
+    /// AttributeValue maps <i>and</i> surfaces each document's reserved Cosmos
+    /// <c>id</c> (the correlation key) via <paramref name="sink"/>, in feed order.
+    /// The BatchGetItem grouped-query read needs the <c>id</c> to map each document
+    /// back to its request-key index — <see cref="ExtractItemsFused"/> strips it.
+    /// Reader-agnostic, so the page is materialized straight off any
+    /// <see cref="ITokenReader"/> with no whole-page <see cref="JsonDocument"/> DOM —
+    /// only the same small per-document re-serialize-and-parse the map itself
+    /// requires (shared with <see cref="ExtractItemFused"/>). Each emitted map is
+    /// element-for-element identical to <c>JsonDocument.Parse → ExtractItem(JsonElement)</c>.
+    /// Non-object array elements terminate the walk (Cosmos feeds only ever contain
+    /// objects). Returns the number of documents passed to <paramref name="sink"/>.
+    /// </summary>
+    public static int ExtractItemsFusedWithId<TReader, TSink>(
+        scoped ref TReader reader, TSink sink)
+        where TReader : ITokenReader, allows ref struct
+        where TSink : struct, IFusedItemWithIdSink
+    {
+        if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+        {
+            return 0;
+        }
+
+        while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+        {
+            if (reader.ValueTextEquals(DocumentsNameU8))
+            {
+                if (!reader.Read() || reader.TokenType != JsonTokenType.StartArray)
+                {
+                    reader.Skip();
+                    return 0;
+                }
+
+                int count = 0;
+                var bw = new ArrayBufferWriter<byte>(1024);
+                while (reader.Read() && reader.TokenType == JsonTokenType.StartObject)
+                {
+                    bw.ResetWrittenCount();
+                    string? id;
+                    using (var writer = new Utf8JsonWriter(bw, WriterOptions))
+                    {
+                        WriteTransformedItemCapturingId(writer, ref reader, out id);
+                        writer.Flush();
+                    }
+
+                    var map = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+                    using (var batch = JsonDocument.Parse(bw.WrittenMemory))
+                    {
+                        foreach (var prop in batch.RootElement.EnumerateObject())
+                        {
+                            map[prop.Name] = prop.Value.Clone();
+                        }
+                    }
+                    sink.Accept(id, map);
+                    count++;
+                }
+                return count;
+            }
+
+            reader.Read();
+            reader.Skip();
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// <see cref="WriteTransformedItem{TReader}"/> variant that additionally
+    /// captures the document's reserved Cosmos <c>id</c> value into
+    /// <paramref name="id"/>. The <c>id</c> stays stripped from the emitted DDB
+    /// item (byte-identical output to <see cref="WriteTransformedItem{TReader}"/>) —
+    /// it is only surfaced, never written. <paramref name="id"/> is <c>null</c> when
+    /// the document carries no string <c>id</c> property.
+    /// </summary>
+    public static void WriteTransformedItemCapturingId<TReader>(
+        Utf8JsonWriter writer, scoped ref TReader reader, out string? id)
+        where TReader : ITokenReader, allows ref struct
+    {
+        id = null;
+        writer.WriteStartObject();
+        while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+        {
+            if (reader.ValueTextEquals(ShadowEncodedIdNameU8))
+            {
+                // Unmangle the shadow-encoded "id" attribute.
+                writer.WritePropertyName(IdPropEncoded);
+                reader.Read();
+                WriteAttributeValue(writer, ref reader);
+            }
+            else if (reader.ValueTextEquals(IdNameU8))
+            {
+                // Reserved Cosmos document id: capture for correlation but keep
+                // it stripped from the emitted item (same as the reserved-name
+                // branch in WriteTransformedItem, which routes "id" to Skip).
+                reader.Read();
+                id = reader.TokenType == JsonTokenType.String ? MaterializeString(ref reader) : null;
+                reader.Skip();
+            }
+            else if (IsReservedTopLevelNameToken(ref reader) || IsCosmosSystemFieldToken(ref reader))
+            {
+                reader.Read();
+                reader.Skip();
+            }
+            else
+            {
+                WriteCurrentPropertyName(writer, ref reader);
+                reader.Read();
+                WriteAttributeValue(writer, ref reader);
+            }
+        }
+        writer.WriteEndObject();
+    }
+
+    /// <summary>
     /// Streams the <c>Documents</c> array of a Cosmos query/feed response
     /// (<c>{"_rid":…,"Documents":[ {doc}, … ],"_count":N}</c>) into
     /// <paramref name="writer"/> as transformed DynamoDB item objects, writing
@@ -582,6 +697,22 @@ internal static partial class InferredAttributeStorage
         if (rented is not null) ArrayPool<byte>.Shared.Return(rented);
     }
 
+    /// <summary>Materializes the current String token as an unescaped UTF-16
+    /// string, parity with <see cref="JsonElement.GetString"/>. Used to capture
+    /// the reserved Cosmos <c>id</c> correlation key in
+    /// <see cref="WriteTransformedItemCapturingId{TReader}"/>.</summary>
+    private static string MaterializeString<TReader>(scoped ref TReader reader)
+        where TReader : ITokenReader, allows ref struct
+    {
+        int max = reader.HasValueSequence ? checked((int)reader.ValueSequence.Length) : reader.ValueSpan.Length;
+        byte[]? rented = max > 256 ? ArrayPool<byte>.Shared.Rent(max) : null;
+        Span<byte> buf = rented ?? stackalloc byte[256];
+        int written = reader.CopyString(buf);
+        string s = Encoding.UTF8.GetString(buf[..written]);
+        if (rented is not null) ArrayPool<byte>.Shared.Return(rented);
+        return s;
+    }
+
     /// <summary>Writes the current Number token as a DDB N string value
     /// (<c>{"N":"&lt;digits&gt;"}</c>). Number tokens never carry escapes.</summary>
     private static void WriteNumberTokenAsString<TReader>(Utf8JsonWriter writer, scoped ref TReader reader)
@@ -823,4 +954,20 @@ internal static partial class InferredAttributeStorage
         }
         return count == 1;
     }
+}
+
+/// <summary>
+/// Per-document callback for
+/// <see cref="InferredAttributeStorage.ExtractItemsFusedWithId{TReader,TSink}"/>.
+/// Receives one transformed Cosmos document at a time: its raw Cosmos <c>id</c>
+/// value (the correlation key, <c>null</c> when the document carried no string
+/// <c>id</c>) alongside the AttributeValue map. Implemented as a value type
+/// (<c>struct</c> constraint on the consumer) so the generic page walk
+/// monomorphizes and the JIT devirtualizes the callback — no delegate, closure,
+/// or intermediate collection allocation on the page-streaming read path.
+/// </summary>
+internal interface IFusedItemWithIdSink
+{
+    /// <summary>Receives one transformed document.</summary>
+    void Accept(string? id, Dictionary<string, JsonElement> map);
 }
