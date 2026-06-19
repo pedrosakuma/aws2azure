@@ -366,54 +366,37 @@ internal static class SendMessageHandlers
         return entries;
     }
 
-    internal static List<BatchEntry>? ParseBatchEntriesJson(string? jsonBody)
+    internal static List<BatchEntry>? ParseBatchEntriesJson(string? jsonBody) =>
+        SqsBatchEntryJson.Parse<BatchEntry>(jsonBody, TryParseBatchEntryJson);
+
+    private static bool TryParseBatchEntryJson(JsonElement e, string id, out BatchEntry value)
     {
-        if (string.IsNullOrEmpty(jsonBody)) return null;
-        try
+        value = null!;
+        if (!e.TryGetProperty("MessageBody", out var bodyEl) || bodyEl.ValueKind != JsonValueKind.String) return false;
+        var body = bodyEl.GetString()!;
+        string? groupId = null, dedupId = null;
+        var delay = 0;
+        if (e.TryGetProperty("MessageGroupId", out var gEl) && gEl.ValueKind == JsonValueKind.String) groupId = gEl.GetString();
+        if (e.TryGetProperty("MessageDeduplicationId", out var dEl) && dEl.ValueKind == JsonValueKind.String) dedupId = dEl.GetString();
+        if (e.TryGetProperty("DelaySeconds", out var delayEl))
         {
-            using var doc = JsonDocument.Parse(jsonBody);
-            if (!doc.RootElement.TryGetProperty("Entries", out var entriesEl) ||
-                entriesEl.ValueKind != JsonValueKind.Array)
+            if (delayEl.ValueKind != JsonValueKind.Number || !delayEl.TryGetInt32(out delay) ||
+                delay < 0 || delay > 900)
             {
-                return null;
+                return false;
             }
-            var list = new List<BatchEntry>(entriesEl.GetArrayLength());
-            foreach (var e in entriesEl.EnumerateArray())
-            {
-                if (e.ValueKind != JsonValueKind.Object) return null;
-                if (!e.TryGetProperty("Id", out var idEl) || idEl.ValueKind != JsonValueKind.String) return null;
-                if (!e.TryGetProperty("MessageBody", out var bodyEl) || bodyEl.ValueKind != JsonValueKind.String) return null;
-                var id = idEl.GetString()!;
-                var body = bodyEl.GetString()!;
-                string? groupId = null, dedupId = null;
-                var delay = 0;
-                if (e.TryGetProperty("MessageGroupId", out var gEl) && gEl.ValueKind == JsonValueKind.String) groupId = gEl.GetString();
-                if (e.TryGetProperty("MessageDeduplicationId", out var dEl) && dEl.ValueKind == JsonValueKind.String) dedupId = dEl.GetString();
-                if (e.TryGetProperty("DelaySeconds", out var delayEl))
-                {
-                    if (delayEl.ValueKind != JsonValueKind.Number || !delayEl.TryGetInt32(out delay) ||
-                        delay < 0 || delay > 900)
-                    {
-                        return null;
-                    }
-                }
-
-                var attrs = new Dictionary<string, SqsMessageAttribute>(StringComparer.Ordinal);
-                if (e.TryGetProperty("MessageAttributes", out var mAttrs))
-                {
-                    var attrResult = SqsMessageAttributeParser.FromJson(mAttrs);
-                    if (attrResult.IsError) return null;
-                    foreach (var kv in attrResult.Attributes!) attrs[kv.Key] = kv.Value;
-                }
-
-                list.Add(new BatchEntry(id, Encoding.UTF8.GetBytes(body), groupId, dedupId, delay, attrs));
-            }
-            return list;
         }
-        catch (JsonException)
+
+        var attrs = new Dictionary<string, SqsMessageAttribute>(StringComparer.Ordinal);
+        if (e.TryGetProperty("MessageAttributes", out var mAttrs))
         {
-            return null;
+            var attrResult = SqsMessageAttributeParser.FromJson(mAttrs);
+            if (attrResult.IsError) return false;
+            foreach (var kv in attrResult.Attributes!) attrs[kv.Key] = kv.Value;
         }
+
+        value = new BatchEntry(id, Encoding.UTF8.GetBytes(body), groupId, dedupId, delay, attrs);
+        return true;
     }
 
     // --- SB envelope builders ------------------------------------------

@@ -447,30 +447,15 @@ internal static class BatchAdminHandlers
         return entries;
     }
 
-    private static List<(string Id, string ReceiptHandle)>? ParseDeleteEntriesJson(string? jsonBody)
+    private static List<(string Id, string ReceiptHandle)>? ParseDeleteEntriesJson(string? jsonBody) =>
+        SqsBatchEntryJson.Parse<(string Id, string ReceiptHandle)>(jsonBody, TryParseDeleteEntryJson);
+
+    private static bool TryParseDeleteEntryJson(JsonElement e, string id, out (string Id, string ReceiptHandle) value)
     {
-        if (string.IsNullOrEmpty(jsonBody)) return null;
-        try
-        {
-            using var doc = JsonDocument.Parse(jsonBody);
-            if (!doc.RootElement.TryGetProperty("Entries", out var arr) || arr.ValueKind != JsonValueKind.Array)
-            {
-                return null;
-            }
-            var entries = new List<(string, string)>(arr.GetArrayLength());
-            foreach (var e in arr.EnumerateArray())
-            {
-                if (e.ValueKind != JsonValueKind.Object) return null;
-                if (!e.TryGetProperty("Id", out var idEl) || idEl.ValueKind != JsonValueKind.String) return null;
-                if (!e.TryGetProperty("ReceiptHandle", out var rhEl) || rhEl.ValueKind != JsonValueKind.String) return null;
-                entries.Add((idEl.GetString()!, rhEl.GetString()!));
-            }
-            return entries;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
+        value = default;
+        if (!e.TryGetProperty("ReceiptHandle", out var rhEl) || rhEl.ValueKind != JsonValueKind.String) return false;
+        value = (id, rhEl.GetString()!);
+        return true;
     }
 
     internal static List<ChangeVisEntry>? ParseChangeVisEntries(SqsParseResult parsed)
@@ -508,35 +493,20 @@ internal static class BatchAdminHandlers
         return entries;
     }
 
-    private static List<ChangeVisEntry>? ParseChangeVisEntriesJson(string? jsonBody)
+    private static List<ChangeVisEntry>? ParseChangeVisEntriesJson(string? jsonBody) =>
+        SqsBatchEntryJson.Parse<ChangeVisEntry>(jsonBody, TryParseChangeVisEntryJson);
+
+    private static bool TryParseChangeVisEntryJson(JsonElement e, string id, out ChangeVisEntry value)
     {
-        if (string.IsNullOrEmpty(jsonBody)) return null;
-        try
+        value = null!;
+        if (!e.TryGetProperty("ReceiptHandle", out var rhEl) || rhEl.ValueKind != JsonValueKind.String) return false;
+        var vis = 0;
+        if (e.TryGetProperty("VisibilityTimeout", out var vEl))
         {
-            using var doc = JsonDocument.Parse(jsonBody);
-            if (!doc.RootElement.TryGetProperty("Entries", out var arr) || arr.ValueKind != JsonValueKind.Array)
-            {
-                return null;
-            }
-            var entries = new List<ChangeVisEntry>(arr.GetArrayLength());
-            foreach (var e in arr.EnumerateArray())
-            {
-                if (e.ValueKind != JsonValueKind.Object) return null;
-                if (!e.TryGetProperty("Id", out var idEl) || idEl.ValueKind != JsonValueKind.String) return null;
-                if (!e.TryGetProperty("ReceiptHandle", out var rhEl) || rhEl.ValueKind != JsonValueKind.String) return null;
-                var vis = 0;
-                if (e.TryGetProperty("VisibilityTimeout", out var vEl))
-                {
-                    if (vEl.ValueKind != JsonValueKind.Number || !vEl.TryGetInt32(out vis)) return null;
-                }
-                entries.Add(new ChangeVisEntry(idEl.GetString()!, rhEl.GetString()!, vis));
-            }
-            return entries;
+            if (vEl.ValueKind != JsonValueKind.Number || !vEl.TryGetInt32(out vis)) return false;
         }
-        catch (JsonException)
-        {
-            return null;
-        }
+        value = new ChangeVisEntry(id, rhEl.GetString()!, vis);
+        return true;
     }
 
     private static SortedDictionary<int, Dictionary<string, string>>? GroupByIndex(
