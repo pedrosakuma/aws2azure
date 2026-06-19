@@ -287,6 +287,45 @@ public sealed class GetRecordsHandlerTests
         Assert.Equal(Convert.ToBase64String(Encoding.UTF8.GetBytes("payload")), record.GetProperty("Data").GetString());
     }
 
+    [Fact]
+    public async Task HandleAsync_writes_full_body_when_response_exceeds_buffer_and_sync_io_disallowed()
+    {
+        // Regression for issue #436 signature 2: a large GetRecords batch must
+        // not be written through a Stream-backed Utf8JsonWriter, which would
+        // auto-flush SYNCHRONOUSLY once its ~16 KB internal buffer fills.
+        // Kestrel runs with AllowSynchronousIO=false, so such a flush throws
+        // AFTER the 200 + first chunk are committed and the client reads a
+        // truncated body. The response pipe here rejects every synchronous
+        // write, so the test fails unless the handler buffers fully and writes
+        // once asynchronously.
+        var codecFactory = NewCodecFactory();
+        var receiver = new FakeReceiver();
+        const int recordCount = 200; // ~200 x 256 B base64 ≈ 70 KB ≫ 16 KB
+        var payload = new string('x', 256);
+        for (var i = 0; i < recordCount; i++)
+        {
+            receiver.Messages.Add(NewMessage(payload, "pk-" + i, offset: (1000 + i).ToString(), sequenceNumber: 1000 + i, enqueuedTime: FixedNow.AddSeconds(-1)));
+        }
+
+        var context = CreateContext();
+        var body = new SyncThrowingStream();
+        context.Response.Body = body;
+
+        await GetRecordsHandler.HandleAsync(
+            context,
+            NewParseResult(BuildRequestBody(NewEncodedToken(codecFactory, new ShardIteratorToken("orders", "shardId-000000000001", ShardIteratorType.TrimHorizon, null, FixedNow.ToUnixTimeSeconds())))),
+            NewCredentials(),
+            NewMetadataCache(),
+            receiver,
+            codecFactory,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        await context.Response.BodyWriter.FlushAsync();
+        using var document = JsonDocument.Parse(body.WrittenBytes);
+        Assert.Equal(recordCount, document.RootElement.GetProperty("Records").GetArrayLength());
+    }
+
     private static EventHubsReceivedMessage NewMessage(string body, string? partitionKey, string? offset, long sequenceNumber, DateTimeOffset enqueuedTime)
     {
         var annotations = new Dictionary<string, object>(StringComparer.Ordinal)
@@ -408,5 +447,42 @@ public sealed class GetRecordsHandlerTests
     {
         private readonly DateTimeOffset _now = now;
         public override DateTimeOffset GetUtcNow() => _now;
+    }
+
+    /// <summary>
+    /// Response-body stream that mimics Kestrel with
+    /// <c>AllowSynchronousIO=false</c>: every synchronous write/flush throws,
+    /// only the async paths are honoured. Captures everything written so the
+    /// test can assert the full body landed.
+    /// </summary>
+    private sealed class SyncThrowingStream : Stream
+    {
+        private const string Message = "Synchronous operations are disallowed. Call WriteAsync or set AllowSynchronousIO to true instead.";
+        private readonly MemoryStream _inner = new();
+
+        public byte[] WrittenBytes => _inner.ToArray();
+
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => _inner.Length;
+        public override long Position { get => _inner.Position; set => throw new NotSupportedException(); }
+
+        public override void Flush() => throw new InvalidOperationException(Message);
+        public override Task FlushAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new InvalidOperationException(Message);
+        public override void Write(ReadOnlySpan<byte> buffer) => throw new InvalidOperationException(Message);
+        public override void WriteByte(byte value) => throw new InvalidOperationException(Message);
+
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+            => _inner.WriteAsync(buffer, offset, count, cancellationToken);
+
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+            => _inner.WriteAsync(buffer, cancellationToken);
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
     }
 }

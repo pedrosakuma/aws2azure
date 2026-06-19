@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Buffers.Text;
 using System.Text.Json;
+using Aws2Azure.Core.Buffers;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.Kinesis.Errors;
 using Aws2Azure.Modules.Kinesis.EventHubsAmqp;
@@ -241,24 +242,38 @@ internal static class GetRecordsHandler
         long millisBehindLatest,
         CancellationToken cancellationToken)
     {
-        KinesisMetadataSupport.PrepareJsonResponse(context);
-        using var writer = new Utf8JsonWriter(context.Response.Body);
-        writer.WriteStartObject();
-        writer.WritePropertyName("Records"u8);
-        writer.WriteStartArray();
-        for (var i = 0; i < messages.Count; i++)
+        // Build the whole envelope into a pooled scratch buffer first, then hand
+        // it to the response pipe in a single async write (the "error wall").
+        // A Stream-backed Utf8JsonWriter (context.Response.Body) auto-flushes
+        // SYNCHRONOUSLY once its ~16 KB internal buffer fills mid-serialization,
+        // which Kestrel rejects (AllowSynchronousIO=false) AFTER the 200 + first
+        // chunk are already committed — the client then reads a truncated chunked
+        // body and unmarshalling fails on an otherwise-200 response. A full
+        // GetRecords batch easily exceeds that threshold (see issue #436).
+        using var scratch = new PooledByteBufferWriter(8192);
+        using (var writer = new Utf8JsonWriter(scratch))
         {
-            WriteRecord(writer, messages[i]);
+            writer.WriteStartObject();
+            writer.WritePropertyName("Records"u8);
+            writer.WriteStartArray();
+            for (var i = 0; i < messages.Count; i++)
+            {
+                WriteRecord(writer, messages[i]);
+            }
+
+            writer.WriteEndArray();
+            writer.WriteString("NextShardIterator"u8, nextToken);
+            writer.WriteNumber("MillisBehindLatest"u8, millisBehindLatest);
+            writer.WritePropertyName("ChildShards"u8);
+            writer.WriteStartArray();
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+            writer.Flush();
         }
 
-        writer.WriteEndArray();
-        writer.WriteString("NextShardIterator"u8, nextToken);
-        writer.WriteNumber("MillisBehindLatest"u8, millisBehindLatest);
-        writer.WritePropertyName("ChildShards"u8);
-        writer.WriteStartArray();
-        writer.WriteEndArray();
-        writer.WriteEndObject();
-        await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+        KinesisMetadataSupport.PrepareJsonResponse(context);
+        await context.Response.BodyWriter.WriteAsync(scratch.WrittenMemory, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private static void WriteRecord(Utf8JsonWriter writer, EventHubsReceivedMessage message)
