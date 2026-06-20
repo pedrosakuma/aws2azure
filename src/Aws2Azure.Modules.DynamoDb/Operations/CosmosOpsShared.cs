@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
+using Aws2Azure.Core.Buffers;
 using Aws2Azure.Modules.DynamoDb.Errors;
 using Aws2Azure.Modules.DynamoDb.Internal;
 using Microsoft.AspNetCore.Http;
@@ -601,66 +602,5 @@ internal static class CosmosOpsShared
             envelope = null;
             return false;
         }
-    }
-}
-
-/// <summary>
-/// Minimal growable <see cref="IBufferWriter{T}"/> backed by
-/// <see cref="ArrayPool{T}"/>, so the GetItem response transform allocates no
-/// per-request output array. Not thread-safe; rent-use-dispose within a single
-/// request. Mirrors the (internal) <c>PooledByteBufferWriter</c> shape
-/// <c>System.Text.Json</c> uses for the same purpose.
-/// </summary>
-internal sealed class PooledByteBufferWriter : IBufferWriter<byte>, IDisposable
-{
-    private byte[] _buffer;
-    private int _index;
-
-    public PooledByteBufferWriter(int initialCapacity = 1024)
-    {
-        _buffer = ArrayPool<byte>.Shared.Rent(Math.Max(initialCapacity, 256));
-        _index = 0;
-    }
-
-    public ReadOnlyMemory<byte> WrittenMemory => _buffer.AsMemory(0, _index);
-
-    public void Advance(int count)
-    {
-        if (count < 0 || _index > _buffer.Length - count)
-            throw new ArgumentOutOfRangeException(nameof(count));
-        _index += count;
-    }
-
-    public Memory<byte> GetMemory(int sizeHint = 0)
-    {
-        EnsureCapacity(sizeHint);
-        return _buffer.AsMemory(_index);
-    }
-
-    public Span<byte> GetSpan(int sizeHint = 0)
-    {
-        EnsureCapacity(sizeHint);
-        return _buffer.AsSpan(_index);
-    }
-
-    private void EnsureCapacity(int sizeHint)
-    {
-        if (sizeHint < 1) sizeHint = 1;
-        if (sizeHint <= _buffer.Length - _index) return;
-
-        int needed = _index + sizeHint;
-        int newSize = Math.Max(needed, _buffer.Length * 2);
-        byte[] next = ArrayPool<byte>.Shared.Rent(newSize);
-        Array.Copy(_buffer, next, _index);
-        ArrayPool<byte>.Shared.Return(_buffer);
-        _buffer = next;
-    }
-
-    public void Dispose()
-    {
-        if (_buffer.Length == 0) return;
-        ArrayPool<byte>.Shared.Return(_buffer);
-        _buffer = Array.Empty<byte>();
-        _index = 0;
     }
 }

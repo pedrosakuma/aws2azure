@@ -1,3 +1,4 @@
+using Aws2Azure.Core.Buffers;
 using System;
 using System.Buffers;
 using System.Text;

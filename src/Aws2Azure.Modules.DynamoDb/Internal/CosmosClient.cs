@@ -7,6 +7,7 @@ using System.Net.Http.Headers;
 using System.Threading;
 using System.Threading.Tasks;
 using Aws2Azure.Core.Azure;
+using Aws2Azure.Core.Buffers;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Observability;
 using Microsoft.Extensions.Logging;

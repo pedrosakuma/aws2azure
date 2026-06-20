@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Text.Json;
+using Aws2Azure.Core.Buffers;
 using Aws2Azure.Modules.DynamoDb.Expressions;
 
 namespace Aws2Azure.Modules.DynamoDb.Operations;
