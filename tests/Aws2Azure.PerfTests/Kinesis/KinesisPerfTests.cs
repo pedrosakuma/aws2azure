@@ -71,6 +71,15 @@ public sealed class KinesisPerfTests(KinesisPerfFixture fixture)
         using var client = fixture.Inner.CreateClient(httpCounter: httpCallCounter);
         var payload = Encoding.UTF8.GetBytes(new string('x', 256));
 
+        // Readiness gate (#436 signature 1): the AMQP sender link for the
+        // measured partition is attached lazily on the first send to it. A cold
+        // attach can take long enough to swallow the entire measure window —
+        // observed as 60 s of zero completions AND zero failures (the single
+        // in-flight PutRecord was still attaching when the window cancelled).
+        // Warm the exact partition key worker 0 will use BEFORE the timed
+        // window so the closed loop can't measure an empty window.
+        await WarmUpPartitionAsync(client, payload, PartitionKeyFor(0), TimeSpan.FromSeconds(30));
+
         // Closed-loop, single producer against one partition. Empirically
         // tracks the Azure SDK baseline (~80-100 ops/s against the EH
         // emulator on this hardware) so any future drop signals a real
@@ -86,7 +95,7 @@ public sealed class KinesisPerfTests(KinesisPerfFixture fixture)
                 await client.PutRecordAsync(new PutRecordRequest
                 {
                     StreamName = KinesisEmulatorProxyFixture.StreamName,
-                    PartitionKey = "perf-w" + workerId,
+                    PartitionKey = PartitionKeyFor(workerId),
                     Data = ms,
                 }, ct).ConfigureAwait(false);
             });
@@ -100,6 +109,51 @@ public sealed class KinesisPerfTests(KinesisPerfFixture fixture)
         }
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
         result.AssertNoRegression();
+    }
+
+    private static string PartitionKeyFor(int workerId) => "perf-w" + workerId;
+
+    /// <summary>
+    /// Issues PutRecord to <paramref name="partitionKey"/> with bounded retries
+    /// until one succeeds, attaching that partition's AMQP sender link OUTSIDE
+    /// the measured window (see #436 signature 1). Throws if readiness can't be
+    /// reached within <paramref name="timeout"/> so a genuinely broken transport
+    /// still fails loudly rather than masquerading as an empty window.
+    /// </summary>
+    private static async Task WarmUpPartitionAsync(
+        Amazon.Kinesis.IAmazonKinesis client, byte[] payload, string partitionKey, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        Exception? lastError = null;
+        TimeSpan remaining;
+        while ((remaining = deadline - DateTime.UtcNow) > TimeSpan.Zero)
+        {
+            // Bound each attempt by the remaining deadline so a hung cold
+            // link-attach (the very failure this gate guards against) can't
+            // outlast the timeout — the gate must fail loudly, not hang.
+            using var attemptCts = new CancellationTokenSource(remaining);
+            try
+            {
+                using var ms = new MemoryStream(payload, writable: false);
+                await client.PutRecordAsync(new PutRecordRequest
+                {
+                    StreamName = KinesisEmulatorProxyFixture.StreamName,
+                    PartitionKey = partitionKey,
+                    Data = ms,
+                }, attemptCts.Token).ConfigureAwait(false);
+                return;
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+                try { await Task.Delay(500, attemptCts.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) { }
+            }
+        }
+
+        throw new Xunit.Sdk.XunitException(
+            $"Kinesis PutRecord readiness gate timed out after {timeout.TotalSeconds:0}s warming partition " +
+            $"'{partitionKey}'. Last error: {lastError?.Message}");
     }
 
     [SkippableFact]
