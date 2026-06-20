@@ -317,10 +317,13 @@ throughput. Beyond the knee, extra workers only inflate latency.
 - **Knee semantics.** `PerfSweep.DetectKnee` is a pure function over the
   per-level `(concurrency, throughput, p99)` points (unit-tested with
   synthetic curves, no backend). `ReachedSaturation` is true **only** when
-  the ladder extended *beyond* the knee — i.e. the plateau was actually
-  observed. When the peak lands on the top rung, throughput was still
-  climbing and the run is reported as **NOT SATURATED** (widen the ladder)
-  rather than guessing a knee.
+  the ladder extended *beyond* the knee — at least one rung above the knee was
+  tested, so the near-flat region past it was actually sampled. When the knee
+  is itself the top rung (95%-of-max is only reached at the very top),
+  throughput was still climbing to the end and the run is reported as
+  **NOT SATURATED** (widen the ladder) rather than guessing a knee. Saturation
+  keys off the knee position, not the numeric peak — the max routinely lands on
+  the top rung from sub-percent noise even on a saturated curve.
 - **A/B verdict.** Each arm (text, then binary) records one row per ladder
   rung plus a single `dynamodb.GetItem (sweep knee)` row, all labelled with
   the backend. The optimization is confirmed only if the binary arm's

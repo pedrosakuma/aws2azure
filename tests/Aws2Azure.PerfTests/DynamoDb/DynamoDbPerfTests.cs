@@ -1038,11 +1038,19 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
             : $"NOT SATURATED (ladder ended at the knee c={sweep.Knee.KneeConcurrency}) — widen AWS2AZURE_PERF_SWEEP_LEVELS";
         PerfReport.Append(kneeRow, notes: $"DynamoDB→Cosmos GetItem — {saturationNote} [{fixture.BackendLabel}]");
 
-        // Health only — the sweep level scenarios are intentionally not in
-        // baseline-reference.json (the knee is regime-dependent), so no absolute
-        // regression gate; the A/B verdict comes from diffing the two passes' knee
-        // rows in the artifacts.
-        sweep.KneeLevel.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        // Health on EVERY rung (not just the knee): PerfRunner records action
+        // exceptions as Failures without throwing, so a rung that overloads the
+        // backend would post depressed throughput and could masquerade as a
+        // plateau. Asserting each level keeps the knee from being an artifact of a
+        // failing rung — if a rung blows the failure budget the ladder is too
+        // aggressive (shrink AWS2AZURE_PERF_SWEEP_LEVELS) and the run fails loudly.
+        // No AssertNoRegression: the sweep scenarios are deliberately absent from
+        // baseline-reference.json (the knee is regime-dependent); the A/B verdict
+        // comes from diffing the two passes' knee rows in the artifacts.
+        foreach (var level in sweep.Levels)
+        {
+            level.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        }
     }
 
     private static int[] ParseSweepLevels(string? raw, int[] fallback)

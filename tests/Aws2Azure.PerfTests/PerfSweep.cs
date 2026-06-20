@@ -91,9 +91,14 @@ internal static class PerfSweep
     /// The knee is the smallest concurrency whose throughput is at least
     /// <paramref name="kneeFraction"/> of the maximum observed throughput.
     /// <c>ReachedSaturation</c> is true only when the ladder extended <i>beyond</i>
-    /// the knee (so the plateau was actually observed); when the peak is at the
-    /// highest level tested, throughput was still climbing and the ladder was too
-    /// short to find saturation — reported honestly rather than guessed.
+    /// the knee — i.e. at least one rung above the knee was tested, so the near-flat
+    /// region past it was actually sampled. When the knee is itself the highest rung
+    /// (95%-of-max is only reached at the very top), throughput was still climbing to
+    /// the end and the ladder was too short to bracket saturation — reported honestly
+    /// rather than guessed. Saturation keys off the <i>knee</i> position, not the
+    /// peak: the numeric max routinely lands on the top rung from sub-percent noise
+    /// even on a fully saturated curve, so a "peak at the top rung" test would spuriously
+    /// reject genuine plateaus.
     /// </summary>
     public static SweepKnee DetectKnee(
         IReadOnlyList<(int Concurrency, double ThroughputPerSec, double P99Ms)> points,
