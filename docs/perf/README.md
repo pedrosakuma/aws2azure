@@ -295,6 +295,42 @@ emulator baseline) for the A/B comparison, not asserted as absolutes.
 > "no end-to-end benefit" — which is the correct, honest verdict for that
 > deployment shape.
 
+### Saturation sweep (Tier 2 knee)
+
+A single fixed-concurrency measurement obeys **Little's law** —
+`throughput = concurrency / latency` — so at one worker count it cannot
+distinguish whether the *proxy* or the *harness* is the binding constraint.
+A CPU/alloc optimization can therefore look like "no change" simply because
+the run was network-bound, not because the optimization is worthless. The
+**saturation sweep** (`PerfSweep`, issue #420) removes that ambiguity by
+driving the same workload up a concurrency ladder until throughput stops
+climbing, then reading the optimization at the **knee** — the smallest
+concurrency that already reaches (within 5 %) the maximum sustained
+throughput. Beyond the knee, extra workers only inflate latency.
+
+- **Opt-in.** The sweep scenario (`GetItem_saturation_sweep`) is gated on
+  `AWS2AZURE_PERF_SWEEP=1`, set only in `perf-real-azure.yml`. The emulator
+  nightly leaves it off, so the committed fixed-concurrency baseline is
+  unchanged. The ladder comes from `AWS2AZURE_PERF_SWEEP_LEVELS` (csv,
+  default `8,16,32,64,128`) and per-level duration from
+  `AWS2AZURE_PERF_SWEEP_SECONDS` (default `8`).
+- **Knee semantics.** `PerfSweep.DetectKnee` is a pure function over the
+  per-level `(concurrency, throughput, p99)` points (unit-tested with
+  synthetic curves, no backend). `ReachedSaturation` is true **only** when
+  the ladder extended *beyond* the knee — i.e. the plateau was actually
+  observed. When the peak lands on the top rung, throughput was still
+  climbing and the run is reported as **NOT SATURATED** (widen the ladder)
+  rather than guessing a knee.
+- **A/B verdict.** Each arm (text, then binary) records one row per ladder
+  rung plus a single `dynamodb.GetItem (sweep knee)` row, all labelled with
+  the backend. The optimization is confirmed only if the binary arm's
+  **throughput-at-knee** is equal-or-better and **p99-at-knee** no worse,
+  under the CPU-constrained proxy (`AWS2AZURE_PERF_PROXY_CPUS=1`). These rows
+  use distinct scenario names, so they never pollute the gated
+  fixed-concurrency baselines and carry no absolute floor/ceiling (the knee
+  is regime-dependent); the verdict comes from diffing the two passes'
+  artifacts, not from `AssertNoRegression`.
+
 ## Roadmap
 
 - Workload matrix per module (small / medium / large payload, 1 / 16 / 64

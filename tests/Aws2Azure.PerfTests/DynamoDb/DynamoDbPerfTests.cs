@@ -969,4 +969,96 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
         result.AssertNoRegression();
     }
+
+    /// <summary>
+    /// Concurrency-saturation sweep for GetItem (issue #420 Tier 2). Opt-in via
+    /// <c>AWS2AZURE_PERF_SWEEP=1</c> so the emulator nightly (fixed-concurrency
+    /// baseline) is unchanged; the real-Azure A/B job enables it to compare
+    /// <b>throughput-at-knee</b> and <b>p99-at-knee</b> between the text and binary
+    /// arms under a CPU-constrained proxy — the regime where a CPU/alloc win must
+    /// translate to throughput or be rejected. The ladder and per-level duration
+    /// come from <c>AWS2AZURE_PERF_SWEEP_LEVELS</c> (csv) and
+    /// <c>AWS2AZURE_PERF_SWEEP_SECONDS</c>. Per-level rows plus one
+    /// <c>(sweep knee)</c> row are recorded so the two A/B passes are diffable.
+    /// </summary>
+    [SkippableFact]
+    public async Task GetItem_saturation_sweep()
+    {
+        Skip.IfNot(fixture.Ready, fixture.SkipReason);
+        Skip.IfNot(
+            string.Equals(Environment.GetEnvironmentVariable("AWS2AZURE_PERF_SWEEP"), "1", StringComparison.Ordinal),
+            "saturation sweep is opt-in (set AWS2AZURE_PERF_SWEEP=1) — Tier 2 only.");
+
+        var levels = ParseSweepLevels(
+            Environment.GetEnvironmentVariable("AWS2AZURE_PERF_SWEEP_LEVELS"),
+            fallback: new[] { 8, 16, 32, 64, 128 });
+        var perLevelSeconds = ParseSweepSeconds(
+            Environment.GetEnvironmentVariable("AWS2AZURE_PERF_SWEEP_SECONDS"),
+            fallback: 8);
+
+        using var client = fixture.CreateClient();
+
+        var sweep = await PerfSweep.RunSweepAsync(
+            scenario: "dynamodb.GetItem",
+            levels: levels,
+            perLevelDuration: TimeSpan.FromSeconds(perLevelSeconds),
+            warmup: TimeSpan.FromSeconds(3),
+            memoryProbeFactory: fixture.CreateMemoryProbe,
+            action: async (workerId, ct) =>
+            {
+                var pk = $"p{(workerId < 0 ? 0 : workerId) % fixture.SeededPartitions:D2}";
+                var sk = $"s{Random.Shared.Next(0, fixture.SeededItemsPerPartition):D4}";
+                var resp = await client.GetItemAsync(new GetItemRequest
+                {
+                    TableName = fixture.QueryTableName,
+                    Key = new Dictionary<string, AttributeValue>
+                    {
+                        ["pk"] = new() { S = pk },
+                        ["sk"] = new() { S = sk },
+                    },
+                    ConsistentRead = false,
+                }, ct).ConfigureAwait(false);
+                if (resp.Item is null || resp.Item.Count == 0)
+                {
+                    throw new InvalidOperationException($"GetItem returned no item for pk={pk}, sk={sk} — seed data missing.");
+                }
+            }).ConfigureAwait(false);
+
+        Console.WriteLine(sweep.Describe());
+
+        // Record the full curve (one row per level) plus a single comparable knee
+        // row, both labelled with the backend so the text/binary A/B is traceable.
+        foreach (var level in sweep.Levels)
+        {
+            PerfReport.Append(level, notes: $"DynamoDB→Cosmos GetItem sweep [{fixture.BackendLabel}]");
+        }
+        var kneeRow = sweep.KneeLevel with { Scenario = "dynamodb.GetItem (sweep knee)" };
+        var saturationNote = sweep.Knee.ReachedSaturation
+            ? $"knee c={sweep.Knee.KneeConcurrency}, max {sweep.Knee.MaxThroughput:0.0}/s @ c={sweep.Knee.MaxThroughputConcurrency}"
+            : $"NOT SATURATED (ladder ended at the knee c={sweep.Knee.KneeConcurrency}) — widen AWS2AZURE_PERF_SWEEP_LEVELS";
+        PerfReport.Append(kneeRow, notes: $"DynamoDB→Cosmos GetItem — {saturationNote} [{fixture.BackendLabel}]");
+
+        // Health only — the sweep level scenarios are intentionally not in
+        // baseline-reference.json (the knee is regime-dependent), so no absolute
+        // regression gate; the A/B verdict comes from diffing the two passes' knee
+        // rows in the artifacts.
+        sweep.KneeLevel.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+    }
+
+    private static int[] ParseSweepLevels(string? raw, int[] fallback)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return fallback;
+        }
+        var parsed = raw
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(s => int.TryParse(s, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0)
+            .Where(v => v > 0)
+            .ToArray();
+        return parsed.Length > 0 ? parsed : fallback;
+    }
+
+    private static int ParseSweepSeconds(string? raw, int fallback) =>
+        int.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture, out var v) && v > 0 ? v : fallback;
 }
