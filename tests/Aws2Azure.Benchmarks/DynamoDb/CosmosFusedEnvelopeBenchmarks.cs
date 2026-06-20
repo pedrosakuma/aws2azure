@@ -1,3 +1,4 @@
+using Aws2Azure.Core.Buffers;
 using Aws2Azure.Benchmarks.DynamoDb.Spike319;
 using Aws2Azure.Modules.DynamoDb.Internal;
 using Aws2Azure.Modules.DynamoDb.Operations;

@@ -1,3 +1,4 @@
+using Aws2Azure.Core.Buffers;
 using System.Text;
 using System.Text.Json;
 using Aws2Azure.Modules.DynamoDb.Internal;

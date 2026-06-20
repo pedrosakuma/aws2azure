@@ -108,6 +108,32 @@ public interface IServiceModule {
 - Error responses follow the AWS service's native format (XML for S3, JSON for
   most others). Use shared helpers, not per-module duplication.
 
+### Response writers (the no-sync-IO invariant)
+
+**Never anchor a `Utf8JsonWriter` / `XmlWriter` directly at `context.Response.Body`.**
+A `Stream`-backed writer issues *blocking* flushes once its internal buffer fills
+(~16 KB), and Kestrel runs with `AllowSynchronousIO=false`, so that sync flush
+throws **after** the 200 + first chunk are already committed → the client reads a
+truncated body and fails to unmarshal a *successful* response. This bug class is
+**size-dependent**, so small-payload functional tests miss it (see #436 / #449).
+
+Two safe patterns:
+
+1. **Full-buffer + single async write (default; the "error wall").** Build the
+   whole response into a pooled `Aws2Azure.Core.Buffers.PooledByteBufferWriter`
+   (or MemoryStream/StringBuilder), then one
+   `context.Response.BodyWriter.WriteAsync(...)`. A mid-serialization throw happens
+   *before* any byte is committed, so a clean error response is still possible.
+2. **Stream to `BodyWriter` + incremental `FlushAsync`** (only for consistently
+   multi-MB, streamable responses). Write the `Utf8JsonWriter` at
+   `context.Response.BodyWriter` (a `PipeWriter`/`IBufferWriter<byte>`, async-safe)
+   and flush periodically. Lower peak memory / better TTFB, but **forfeits the
+   error wall** (Kestrel auto-flushes at 64 KB; a partial 200 can't be undone).
+
+Use pattern 1 by default — sidecar peak memory is the only cost and responses are
+bounded. A `SyncThrowingStream`-backed unit test guards each large-response writer
+(`tests/Aws2Azure.UnitTests/Http/SyncIoResponseWriterGuardrailTests.cs`).
+
 ## Configuration
 
 - POCOs + `JsonSerializerContext` source-gen. JSON + env-var overrides.
