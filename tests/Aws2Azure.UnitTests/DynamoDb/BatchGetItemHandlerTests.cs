@@ -231,6 +231,55 @@ public class BatchGetItemHandlerTests
     }
 
     [Fact]
+    public async Task BatchGet_grouped_query_splices_bytes_with_default_encoder()
+    {
+        // Grouped query (two keys, shared partition, no ProjectionExpression) →
+        // the #443 byte-splice path. A value with HTML-sensitive + non-ASCII
+        // characters must be escaped with the default JavaScriptEncoder (matching
+        // the model-serializer path), i.e. \u003C — NOT the relaxed encoder's
+        // literal '<'. This pins the byte-identity contract of the splice.
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaComposite),
+                CosmosOk(QueryEnvelope(
+                    ItemDoc("61", "70", "{\"pk\":{\"S\":\"p\"},\"sk\":{\"S\":\"a\"},\"v\":{\"S\":\"x<y>&'\\u00e9\"}}"),
+                    ItemDoc("62", "70", "{\"pk\":{\"S\":\"p\"},\"sk\":{\"S\":\"b\"},\"v\":{\"S\":\"z\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+        var req = "{\"RequestItems\":{\"orders\":{\"Keys\":["
+            + "{\"pk\":{\"S\":\"p\"},\"sk\":{\"S\":\"a\"}},"
+            + "{\"pk\":{\"S\":\"p\"},\"sk\":{\"S\":\"b\"}}]}}}";
+
+        await BatchGetItemHandler.HandleBatchGetItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        var raw = ReadResponse(body);
+        // Served by the grouped-query bytes path, not point reads.
+        Assert.Equal(1, CountQueryPosts(handler));
+        // Default-encoder escaping (matches the model serializer); never the
+        // relaxed encoder's literal characters.
+        Assert.Contains("x\\u003Cy\\u003E\\u0026\\u0027\\u00E9", raw);
+        Assert.DoesNotContain("x<y>", raw);
+        // Still parses back to the exact original value.
+        using var resp = JsonDocument.Parse(raw);
+        var items = resp.RootElement.GetProperty("Responses").GetProperty("orders");
+        Assert.Equal(2, items.GetArrayLength());
+        string? value = null;
+        foreach (var it in items.EnumerateArray())
+        {
+            if (it.TryGetProperty("v", out var v) && v.GetProperty("S").GetString() == "x<y>&'\u00e9")
+            {
+                value = "x<y>&'\u00e9";
+            }
+        }
+        Assert.Equal("x<y>&'\u00e9", value);
+    }
+
+    [Fact]
     public async Task BatchGet_query_omits_missing_keys()
     {
         var (ctx, body) = NewCtx();
