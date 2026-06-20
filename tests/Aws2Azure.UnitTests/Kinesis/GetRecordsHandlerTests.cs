@@ -9,6 +9,7 @@ using Aws2Azure.Modules.Kinesis.ShardIterators;
 using Aws2Azure.Modules.Kinesis.WireProtocol;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
+using Aws2Azure.TestSupport.Http;
 using Aws2Azure.TestSupport.Kinesis;
 using static Aws2Azure.TestSupport.Http.TestHttpContext;
 
@@ -449,40 +450,4 @@ public sealed class GetRecordsHandlerTests
         public override DateTimeOffset GetUtcNow() => _now;
     }
 
-    /// <summary>
-    /// Response-body stream that mimics Kestrel with
-    /// <c>AllowSynchronousIO=false</c>: every synchronous write/flush throws,
-    /// only the async paths are honoured. Captures everything written so the
-    /// test can assert the full body landed.
-    /// </summary>
-    private sealed class SyncThrowingStream : Stream
-    {
-        private const string Message = "Synchronous operations are disallowed. Call WriteAsync or set AllowSynchronousIO to true instead.";
-        private readonly MemoryStream _inner = new();
-
-        public byte[] WrittenBytes => _inner.ToArray();
-
-        public override bool CanRead => false;
-        public override bool CanSeek => false;
-        public override bool CanWrite => true;
-        public override long Length => _inner.Length;
-        public override long Position { get => _inner.Position; set => throw new NotSupportedException(); }
-
-        public override void Flush() => throw new InvalidOperationException(Message);
-        public override Task FlushAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-
-        public override void Write(byte[] buffer, int offset, int count) => throw new InvalidOperationException(Message);
-        public override void Write(ReadOnlySpan<byte> buffer) => throw new InvalidOperationException(Message);
-        public override void WriteByte(byte value) => throw new InvalidOperationException(Message);
-
-        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
-            => _inner.WriteAsync(buffer, offset, count, cancellationToken);
-
-        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
-            => _inner.WriteAsync(buffer, cancellationToken);
-
-        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-        public override void SetLength(long value) => throw new NotSupportedException();
-    }
 }
