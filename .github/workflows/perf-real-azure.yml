@@ -74,6 +74,16 @@ jobs:
       AWS2AZURE_PERF_PROXY_CPUS: "1"
       AWS2AZURE_PERF_CONCURRENCY_SCALE: "4"
       AWS2AZURE_MAX_CONNECTIONS_PER_SERVER: "256"
+      # Tier 2 saturation sweep (#420): opt the GetItem_saturation_sweep scenario
+      # in (the emulator nightly leaves it off, so its fixed-concurrency baseline
+      # is unchanged). The sweep drives a concurrency ladder per arm and records
+      # throughput-at-knee + p99-at-knee, so the text-vs-binary A/B is compared at
+      # saturation rather than at one arbitrary worker count. Ladder + per-level
+      # seconds are tuned for the per-arm backend budget; widen the ladder if a run
+      # reports NOT SATURATED (peak still at the top rung).
+      AWS2AZURE_PERF_SWEEP: "1"
+      AWS2AZURE_PERF_SWEEP_LEVELS: "8,16,32,64,128,256"
+      AWS2AZURE_PERF_SWEEP_SECONDS: "10"
       AZURE_LOCATION: eastus2
       RG_NAME: aws2azure-perf-${{ github.run_id }}-${{ github.run_attempt }}
       DEPLOYMENT_NAME: aws2azure-perf-realazure

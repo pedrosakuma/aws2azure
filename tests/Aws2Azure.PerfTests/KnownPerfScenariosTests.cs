@@ -12,6 +12,14 @@ namespace Aws2Azure.PerfTests;
 /// halves are required so that an absent reference entry surfaces here as a
 /// failing unit test instead of silently passing the regression gate at
 /// runtime.
+///
+/// <para><b>Exception:</b> the concurrency-sweep scenarios produced by
+/// <see cref="PerfSweep"/> (<c>… (sweep c=N)</c> / <c>… (sweep knee)</c>, issue
+/// #420 Tier 2) are <i>dynamically</i> named per ladder rung and intentionally
+/// <b>not</b> gated — the knee is regime-dependent, so they carry no absolute
+/// floor/ceiling. They are deliberately excluded from <see cref="All"/> and the
+/// reference JSON; their A/B verdict comes from diffing the two real-Azure
+/// passes' knee rows in the artifacts, not from this guard.</para>
 /// </summary>
 public sealed class KnownPerfScenariosTests
 {
