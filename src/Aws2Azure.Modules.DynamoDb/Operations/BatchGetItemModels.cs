@@ -23,7 +23,7 @@ internal sealed class BatchGetItemRequest
 internal sealed class BatchGetItemResponse
 {
     [JsonPropertyName("Responses")]
-    public Dictionary<string, List<Dictionary<string, JsonElement>>>? Responses { get; set; }
+    public Dictionary<string, List<BatchGetResponseItem>>? Responses { get; set; }
 
     [JsonPropertyName("UnprocessedKeys")]
     public Dictionary<string, BatchGetUnprocessedTable>? UnprocessedKeys { get; set; }
@@ -49,6 +49,7 @@ internal sealed class BatchGetUnprocessedTable
 [JsonSerializable(typeof(BatchGetUnprocessedTable))]
 [JsonSerializable(typeof(Dictionary<string, JsonElement>))]
 [JsonSerializable(typeof(List<Dictionary<string, JsonElement>>))]
+[JsonSerializable(typeof(List<BatchGetResponseItem>))]
 internal sealed partial class BatchGetItemJsonContext : JsonSerializerContext
 {
 }

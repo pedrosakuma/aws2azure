@@ -375,6 +375,76 @@ internal static partial class InferredAttributeStorage
     }
 
     /// <summary>
+    /// Byte-streaming counterpart to <see cref="ExtractItemsFusedWithId{TReader,TSink}"/>:
+    /// surfaces each document's reserved Cosmos <c>id</c> alongside the <i>transformed
+    /// DDB item bytes</i> (a complete <c>{…}</c> object) instead of a materialized
+    /// <see cref="Dictionary{TKey,TValue}"/> map. The BatchGetItem grouped read
+    /// (no <c>ProjectionExpression</c>) keeps these bytes and splices them straight
+    /// into the response <c>Responses</c> array, skipping the per-document
+    /// <see cref="JsonDocument.Parse"/> + dictionary + per-attribute
+    /// <see cref="JsonElement.Clone"/> the map path pays (issue #443).
+    ///
+    /// <para><b>Lifetime:</b> the span handed to <see cref="IFusedItemBytesWithIdSink.Accept"/>
+    /// is the shared scratch buffer, reused on the next iteration; the sink MUST
+    /// copy any bytes it intends to retain past the call.</para>
+    ///
+    /// <para><b>Encoder contract:</b> each item is written with the default
+    /// <see cref="JavaScriptEncoder"/> (a plain <see cref="Utf8JsonWriter"/> with no
+    /// <c>Encoder</c> override), <i>not</i> this module's relaxed-escaping
+    /// <c>WriterOptions</c>, so the spliced bytes are identical to the model-based
+    /// path that terminates in <see cref="JsonSerializer"/> using
+    /// <c>JavaScriptEncoder.Default</c> — matching the <see cref="WriteGetItemEnvelope"/>
+    /// contract. Using the relaxed encoder would silently diverge on non-ASCII and
+    /// HTML-sensitive characters.</para>
+    /// </summary>
+    public static int ExtractItemsFusedWithIdBytes<TReader, TSink>(
+        scoped ref TReader reader, TSink sink)
+        where TReader : ITokenReader, allows ref struct
+        where TSink : struct, IFusedItemBytesWithIdSink
+    {
+        if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+        {
+            return 0;
+        }
+
+        while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+        {
+            if (reader.ValueTextEquals(DocumentsNameU8))
+            {
+                if (!reader.Read() || reader.TokenType != JsonTokenType.StartArray)
+                {
+                    reader.Skip();
+                    return 0;
+                }
+
+                int count = 0;
+                var bw = new ArrayBufferWriter<byte>(1024);
+                while (reader.Read() && reader.TokenType == JsonTokenType.StartObject)
+                {
+                    bw.ResetWrittenCount();
+                    string? id;
+                    // Default encoder (no WriterOptions) — see the encoder contract
+                    // above: spliced bytes must match the model serializer's output.
+                    using (var writer = new Utf8JsonWriter(bw))
+                    {
+                        WriteTransformedItemCapturingId(writer, ref reader, out id);
+                        writer.Flush();
+                    }
+
+                    sink.Accept(id, bw.WrittenSpan);
+                    count++;
+                }
+                return count;
+            }
+
+            reader.Read();
+            reader.Skip();
+        }
+
+        return 0;
+    }
+
+    /// <summary>
     /// <see cref="WriteTransformedItem{TReader}"/> variant that additionally
     /// captures the document's reserved Cosmos <c>id</c> value into
     /// <paramref name="id"/>. The <c>id</c> stays stripped from the emitted DDB
@@ -970,4 +1040,20 @@ internal interface IFusedItemWithIdSink
 {
     /// <summary>Receives one transformed document.</summary>
     void Accept(string? id, Dictionary<string, JsonElement> map);
+}
+
+/// <summary>
+/// Byte-streaming per-document callback for
+/// <see cref="InferredAttributeStorage.ExtractItemsFusedWithIdBytes{TReader,TSink}"/>.
+/// Receives each document's correlation <c>id</c> (<c>null</c> when absent) and the
+/// transformed DDB item bytes — a complete <c>{…}</c> object written with the
+/// default <see cref="JavaScriptEncoder"/>. The span is the shared scratch buffer,
+/// reused after the call returns; an implementation that retains the bytes MUST
+/// copy them. A value type (<c>struct</c> constraint) so the generic page walk
+/// monomorphizes and the JIT devirtualizes the callback with no allocation.
+/// </summary>
+internal interface IFusedItemBytesWithIdSink
+{
+    /// <summary>Receives one transformed document's bytes.</summary>
+    void Accept(string? id, ReadOnlySpan<byte> itemBytes);
 }

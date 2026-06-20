@@ -232,7 +232,8 @@ internal static class BatchGetItemHandler
             var gk = (unit.Table, unit.Pk);
             if (!groups.TryGetValue(gk, out var g))
             {
-                g = new KeyGroup(unit.Table, unit.Pk, tableConsistent[unit.Table]);
+                g = new KeyGroup(unit.Table, unit.Pk, tableConsistent[unit.Table],
+                    noProjection: tableProjection[unit.Table] is null);
                 groups[gk] = g;
             }
             g.Add(unit.Id, i);
@@ -255,7 +256,7 @@ internal static class BatchGetItemHandler
         // Stitch results into Responses + UnprocessedKeys. A non-throttle
         // Cosmos error on any item fails the whole batch (matches
         // DynamoDB: only throttling lands in UnprocessedKeys).
-        var responses = new Dictionary<string, List<Dictionary<string, JsonElement>>>(StringComparer.Ordinal);
+        var responses = new Dictionary<string, List<BatchGetResponseItem>>(StringComparer.Ordinal);
         Dictionary<string, BatchGetUnprocessedTable>? unprocessed = null;
         for (int i = 0; i < work.Count; i++)
         {
@@ -308,14 +309,16 @@ internal static class BatchGetItemHandler
             }
             if (!responses.TryGetValue(unit.Table, out var list))
             {
-                list = new List<Dictionary<string, JsonElement>>();
+                list = new List<BatchGetResponseItem>();
                 responses[unit.Table] = list;
             }
-            var item = r.Item;
+            var item = r.Item.Value;
             var projection = tableProjection[unit.Table];
             if (projection is not null)
             {
-                item = Project(item, projection);
+                // Projection tables always travel the map path (point reads and
+                // the map sink), so Item.Map is populated here.
+                item = new BatchGetResponseItem(Project(item.Map!, projection));
             }
             list.Add(item);
         }
@@ -402,7 +405,8 @@ internal static class BatchGetItemHandler
 
         var item = await CosmosOpsShared.ReadAndExtractItemAsync(
             resp.Content, DynamoDbMetrics.OpBatchGet, ct).ConfigureAwait(false);
-        results[idx] = new PerItemResult(item, false, null);
+        results[idx] = new PerItemResult(
+            item is null ? null : new BatchGetResponseItem(item), false, null);
     }
 
     /// <summary>
@@ -490,8 +494,19 @@ internal static class BatchGetItemHandler
 
             using var cosmosBody = await CosmosOpsShared.ReadCosmosJsonBodyAsync(resp.Content, ct).ConfigureAwait(false);
             var reader = new Utf8JsonTokenReader(cosmosBody.WrittenMemory.Span);
-            InferredAttributeStorage.ExtractItemsFusedWithId(
-                ref reader, new GroupCorrelationSink(group, results));
+            if (group.NoProjection)
+            {
+                // No ProjectionExpression: keep each document's transformed bytes
+                // and splice them verbatim into Responses, skipping the per-doc
+                // map materialization (issue #443).
+                InferredAttributeStorage.ExtractItemsFusedWithIdBytes(
+                    ref reader, new GroupCorrelationBytesSink(group, results));
+            }
+            else
+            {
+                InferredAttributeStorage.ExtractItemsFusedWithId(
+                    ref reader, new GroupCorrelationSink(group, results));
+            }
 
             continuation = null;
             if (resp.Headers.TryGetValues("x-ms-continuation", out var ctValues))
@@ -579,16 +594,26 @@ internal static class BatchGetItemHandler
     /// </summary>
     private sealed class KeyGroup
     {
-        public KeyGroup(string table, string pk, bool consistent)
+        public KeyGroup(string table, string pk, bool consistent, bool noProjection)
         {
             Table = table;
             Pk = pk;
             Consistent = consistent;
+            NoProjection = noProjection;
         }
 
         public string Table { get; }
         public string Pk { get; }
         public bool Consistent { get; }
+
+        /// <summary>
+        /// True when the table carries no <c>ProjectionExpression</c>, so the
+        /// grouped query can keep each document's transformed bytes and splice
+        /// them straight into <c>Responses</c> (issue #443) instead of
+        /// materializing an AttributeValue map. Projection tables stay on the map
+        /// path because <see cref="Project"/> needs structured access.
+        /// </summary>
+        public bool NoProjection { get; }
         public List<string> Ids { get; } = new();
         public List<int> Indices { get; } = new();
         private readonly Dictionary<string, int> _idToIndex = new(StringComparer.Ordinal);
@@ -606,7 +631,7 @@ internal static class BatchGetItemHandler
     }
 
     private readonly record struct PerItemResult(
-        Dictionary<string, JsonElement>? Item,
+        BatchGetResponseItem? Item,
         bool Throttled,
         HardError? HardError);
 
@@ -636,7 +661,34 @@ internal static class BatchGetItemHandler
         {
             if (id is null) return;
             if (!_group.TryGetIndex(id, out var idx)) return;
-            _results[idx] = new PerItemResult(map, false, null);
+            _results[idx] = new PerItemResult(new BatchGetResponseItem(map), false, null);
+        }
+    }
+
+    /// <summary>
+    /// Byte-splicing twin of <see cref="GroupCorrelationSink"/> for no-projection
+    /// tables (issue #443): correlates each document by its Cosmos <c>id</c> and
+    /// retains the transformed item <i>bytes</i> instead of a materialized map,
+    /// copying the shared scratch span into an owned array so it survives past the
+    /// page walk and the pooled Cosmos body. A <c>struct</c> so the page walk
+    /// monomorphizes and devirtualizes the callback with no delegate allocation.
+    /// </summary>
+    private readonly struct GroupCorrelationBytesSink : IFusedItemBytesWithIdSink
+    {
+        private readonly KeyGroup _group;
+        private readonly PerItemResult[] _results;
+
+        public GroupCorrelationBytesSink(KeyGroup group, PerItemResult[] results)
+        {
+            _group = group;
+            _results = results;
+        }
+
+        public void Accept(string? id, ReadOnlySpan<byte> itemBytes)
+        {
+            if (id is null) return;
+            if (!_group.TryGetIndex(id, out var idx)) return;
+            _results[idx] = new PerItemResult(new BatchGetResponseItem(itemBytes.ToArray()), false, null);
         }
     }
 }
