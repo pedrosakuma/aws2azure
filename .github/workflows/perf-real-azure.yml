@@ -69,20 +69,24 @@ jobs:
       # (e.g. 16 -> 64 workers) so the proxy CPU — not the harness worker count
       # (Little's law) — becomes the binding constraint. Only then can a CPU/alloc
       # optimization (e.g. CosmosBinary) show up as throughput. The connection cap
-      # is raised for headroom above the scaled concurrency (HTTP/2 multiplexes,
-      # so this mainly bounds the h2 connection count / the HTTP/1.1 fallback).
+      # is raised to match the sweep's top rung (1024) so the backend connection
+      # pool never becomes the artificial limiter ahead of the pinned proxy CPU
+      # (HTTP/2 multiplexes, so this mainly bounds the h2 connection count / the
+      # HTTP/1.1 fallback).
       AWS2AZURE_PERF_PROXY_CPUS: "1"
       AWS2AZURE_PERF_CONCURRENCY_SCALE: "4"
-      AWS2AZURE_MAX_CONNECTIONS_PER_SERVER: "256"
+      AWS2AZURE_MAX_CONNECTIONS_PER_SERVER: "1024"
       # Tier 2 saturation sweep (#420): opt the GetItem_saturation_sweep scenario
       # in (the emulator nightly leaves it off, so its fixed-concurrency baseline
       # is unchanged). The sweep drives a concurrency ladder per arm and records
       # throughput-at-knee + p99-at-knee, so the text-vs-binary A/B is compared at
-      # saturation rather than at one arbitrary worker count. Ladder + per-level
-      # seconds are tuned for the per-arm backend budget; widen the ladder if a run
-      # reports NOT SATURATED (peak still at the top rung).
+      # saturation rather than at one arbitrary worker count. The ladder extends to
+      # 1024: the 2026-06-21 run reported reachedSaturation=no — GetItem throughput
+      # was still climbing monotonically at the old top rung (c=256 -> 1040/s,
+      # p99 787ms), so the knee defaulted to the top rung. Widen further if a run
+      # still reports NOT SATURATED (throughput had not flattened at the last rung).
       AWS2AZURE_PERF_SWEEP: "1"
-      AWS2AZURE_PERF_SWEEP_LEVELS: "8,16,32,64,128,256"
+      AWS2AZURE_PERF_SWEEP_LEVELS: "8,16,32,64,128,256,512,1024"
       AWS2AZURE_PERF_SWEEP_SECONDS: "10"
       AZURE_LOCATION: eastus2
       RG_NAME: aws2azure-perf-${{ github.run_id }}-${{ github.run_attempt }}
