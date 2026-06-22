@@ -29,6 +29,20 @@ internal static class PerfReport
         Directory.CreateDirectory(Path.GetDirectoryName(mdPath)!);
 
         var inv = CultureInfo.InvariantCulture;
+        // Surface backend throttling (#456) inline in the notes — it is excluded
+        // from the failure count/budget (expected backpressure, not a defect), so
+        // without this it would be invisible in the diffed A/B artifacts. The
+        // report schema (columns the relative gate parses) is intentionally left
+        // unchanged.
+        if (result.Throttled > 0)
+        {
+            var throttleTag = string.Format(inv,
+                "[throttled {0:P1}: {1} of {2} attempts]",
+                result.ThrottleRate, result.Throttled,
+                result.Completed + result.Throttled + result.Failures);
+            notes = string.IsNullOrEmpty(notes) ? throttleTag : $"{throttleTag} {notes}";
+        }
+
         var memCells = result.MemoryMeasured
             ? string.Format(inv, " {0,8:0.0} | {1,9:0.0} | {2,11:0} | {3,5} |",
                 result.PeakWorkingSetMb, result.PeakGcHeapBytes / (1024.0 * 1024.0),
