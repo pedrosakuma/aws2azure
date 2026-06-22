@@ -47,7 +47,9 @@ internal static class PerfRunner
         var latenciesUs = new System.Collections.Concurrent.ConcurrentQueue<long>();
         long completed = 0;
         long failures = 0;
+        long throttled = 0;
         Exception? firstFailure = null;
+        Exception? firstThrottle = null;
 
         // Memory characterization (#274). Capture a baseline snapshot of the
         // proxy's self-reported runtime gauges, sample its working set during the
@@ -113,8 +115,20 @@ internal static class PerfRunner
                 }
                 catch (Exception ex)
                 {
-                    Interlocked.CompareExchange(ref firstFailure, ex, null);
-                    Interlocked.Increment(ref failures);
+                    // Backend throttling (HTTP 429 / RequestRateTooLarge) is
+                    // expected backpressure from a capacity-bound backend, not a
+                    // proxy/translation defect — track it separately so it doesn't
+                    // count against the failure budget (issue #456).
+                    if (PerfThrottle.IsThrottle(ex))
+                    {
+                        Interlocked.CompareExchange(ref firstThrottle, ex, null);
+                        Interlocked.Increment(ref throttled);
+                    }
+                    else
+                    {
+                        Interlocked.CompareExchange(ref firstFailure, ex, null);
+                        Interlocked.Increment(ref failures);
+                    }
                 }
             }
         }, runCts.Token)).ToArray();
@@ -168,7 +182,9 @@ internal static class PerfRunner
             PeakGcHeapBytes: memoryMeasured ? peakGcHeap : 0,
             AllocatedBytesDelta: allocatedBytesDelta,
             Gen2Collections: gen2Collections,
-            FirstFailure: firstFailure);
+            FirstFailure: firstFailure,
+            Throttled: Interlocked.Read(ref throttled),
+            FirstThrottle: firstThrottle);
     }
 
     private static long Percentile(long[] sortedSamples, double p)
@@ -195,11 +211,32 @@ internal sealed record PerfResult(
     long PeakGcHeapBytes = 0,
     long AllocatedBytesDelta = 0,
     long Gen2Collections = 0,
-    Exception? FirstFailure = null)
+    Exception? FirstFailure = null,
+    long Throttled = 0,
+    Exception? FirstThrottle = null)
 {
     public double FailureRate => Completed + Failures == 0 ? 0 : (double)Failures / (Completed + Failures);
 
+    /// <summary>
+    /// Fraction of attempted operations rejected by the backend as throttling
+    /// (HTTP 429). Excluded from <see cref="FailureRate"/> — throttling is
+    /// expected backpressure, not a defect (issue #456) — but surfaced so a
+    /// heavily-throttled window is visible in the report and the A/B diff.
+    /// </summary>
+    public double ThrottleRate => Completed + Throttled + Failures == 0
+        ? 0
+        : (double)Throttled / (Completed + Throttled + Failures);
+
     public double PeakWorkingSetMb => PeakWorkingSetBytes / (1024.0 * 1024.0);
+
+    /// <summary>
+    /// True in the Tier 2 real-Azure regime (<c>AWS2AZURE_PERF_RESOURCE_ONLY=1</c>,
+    /// issue #420): absolute throughput/p99 gating is suppressed (network-bound)
+    /// and backend throttling is tolerated as expected backpressure (#456).
+    /// </summary>
+    private static bool ResourceOnly => string.Equals(
+        Environment.GetEnvironmentVariable("AWS2AZURE_PERF_RESOURCE_ONLY"), "1",
+        StringComparison.Ordinal);
 
     /// <summary>Mean managed bytes allocated by the proxy per completed op over the measure window.</summary>
     public double AllocBytesPerOp => Completed > 0 ? (double)AllocatedBytesDelta / Completed : 0;
@@ -208,9 +245,37 @@ internal sealed record PerfResult(
     {
         if (Completed == 0)
         {
+            // A window with zero successes but only throttling (no genuine
+            // failures) means the backend was capacity-bound, not the proxy.
+            // In the real-Azure resource-only regime (#420) that is an expected,
+            // non-fatal outcome against a serverless backend — report it loudly
+            // but don't red the A/B run (which would also discard the read-side
+            // sweep data that ran green). The emulator regime still hard-fails:
+            // the emulator doesn't throttle, so zero completions there is a real
+            // regression (issue #456).
+            if (Throttled > 0 && Failures == 0 && ResourceOnly)
+            {
+                Console.WriteLine(
+                    $"{Scenario}: INCONCLUSIVE — fully throttled (Throttled={Throttled}, " +
+                    $"Completed=0, Failures=0) against a capacity-bound backend; " +
+                    $"not treated as a proxy defect. FirstThrottle={FirstThrottle?.Message}");
+                return;
+            }
+
             throw new Xunit.Sdk.XunitException(
-                $"{Scenario}: no completions. Failures={Failures}. FirstFailure={FirstFailure}\nProxy stdout:\n{proxyOutput}");
+                $"{Scenario}: no completions. Failures={Failures} Throttled={Throttled}. " +
+                $"FirstFailure={FirstFailure}\nProxy stdout:\n{proxyOutput}");
         }
+
+        if (Throttled > 0)
+        {
+            // Visibility only — throttling never fails the run, but a measurement
+            // dominated by throttle is low-signal and worth flagging in the log.
+            Console.WriteLine(
+                $"{Scenario}: backend throttled {ThrottleRate:P1} of attempts " +
+                $"(Throttled={Throttled}, Completed={Completed}); excluded from the failure budget.");
+        }
+
         if (FailureRate > maxFailureRate)
         {
             throw new Xunit.Sdk.XunitException(
@@ -239,9 +304,7 @@ internal sealed record PerfResult(
         var entry = PerfReferenceBaseline.TryGet(Scenario);
         if (entry is null) return;
 
-        var resourceOnly = string.Equals(
-            Environment.GetEnvironmentVariable("AWS2AZURE_PERF_RESOURCE_ONLY"), "1",
-            StringComparison.Ordinal);
+        var resourceOnly = ResourceOnly;
 
         var p99Ms = P99Us / 1000.0;
         var problems = new System.Collections.Generic.List<string>();
