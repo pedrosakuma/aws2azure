@@ -113,6 +113,23 @@ public sealed class KinesisPerfTests(KinesisPerfFixture fixture)
 
     private static string PartitionKeyFor(int workerId) => "perf-w" + workerId;
 
+    private static string BatchPartitionKeyFor(int workerId, int recordIndex) => $"perf-w{workerId}-r{recordIndex}";
+
+    private static List<PutRecordsRequestEntry> CreatePutRecordsEntries(byte[] payload, int workerId, int recordsPerCall)
+    {
+        var entries = new List<PutRecordsRequestEntry>(recordsPerCall);
+        for (var i = 0; i < recordsPerCall; i++)
+        {
+            entries.Add(new PutRecordsRequestEntry
+            {
+                Data = new MemoryStream(payload, writable: false),
+                PartitionKey = BatchPartitionKeyFor(workerId, i),
+            });
+        }
+
+        return entries;
+    }
+
     /// <summary>
     /// Issues PutRecord to <paramref name="partitionKey"/> with bounded retries
     /// until one succeeds, attaching that partition's AMQP sender link OUTSIDE
@@ -156,6 +173,54 @@ public sealed class KinesisPerfTests(KinesisPerfFixture fixture)
             $"'{partitionKey}'. Last error: {lastError?.Message}");
     }
 
+    /// <summary>
+    /// Issues one PutRecords batch for the measured worker's exact partition
+    /// keys with bounded retries until all records succeed, attaching those
+    /// AMQP sender links OUTSIDE the measured window (see #436 signature 1).
+    /// Throws if readiness can't be reached within <paramref name="timeout"/>
+    /// so a genuinely broken transport still fails loudly rather than
+    /// masquerading as an empty window.
+    /// </summary>
+    private static async Task WarmUpBatchPartitionsAsync(
+        Amazon.Kinesis.IAmazonKinesis client, byte[] payload, int workerId, int recordsPerCall, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        Exception? lastError = null;
+        TimeSpan remaining;
+        while ((remaining = deadline - DateTime.UtcNow) > TimeSpan.Zero)
+        {
+            // Bound each attempt by the remaining deadline so a hung cold
+            // link-attach (the very failure this gate guards against) can't
+            // outlast the timeout — the gate must fail loudly, not hang.
+            using var attemptCts = new CancellationTokenSource(remaining);
+            try
+            {
+                var resp = await client.PutRecordsAsync(new PutRecordsRequest
+                {
+                    StreamName = KinesisEmulatorProxyFixture.StreamName,
+                    Records = CreatePutRecordsEntries(payload, workerId, recordsPerCall),
+                }, attemptCts.Token).ConfigureAwait(false);
+                if (resp.FailedRecordCount == 0)
+                {
+                    return;
+                }
+
+                lastError = new InvalidOperationException($"PutRecords readiness: {resp.FailedRecordCount} failed.");
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+            }
+
+            try { await Task.Delay(500, attemptCts.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+        }
+
+        throw new Xunit.Sdk.XunitException(
+            $"Kinesis PutRecords readiness gate timed out after {timeout.TotalSeconds:0}s warming " +
+            $"{recordsPerCall} partitions for worker {workerId}. Last error: {lastError?.Message}");
+    }
+
     [SkippableFact]
     public async Task PutRecords_batch_throughput()
     {
@@ -165,26 +230,24 @@ public sealed class KinesisPerfTests(KinesisPerfFixture fixture)
         var payload = Encoding.UTF8.GetBytes(new string('y', 256));
         const int recordsPerCall = 25;
 
+        // Readiness gate (#436 signature 1): PutRecords uses 25 distinct
+        // partition keys for worker 0, and the Event Hubs emulator attaches
+        // AMQP sender links lazily on first send to each key. Warm those exact
+        // keys before the timed window so the closed loop can't measure an
+        // empty window while the first batch is still attaching.
+        await WarmUpBatchPartitionsAsync(client, payload, workerId: 0, recordsPerCall, TimeSpan.FromSeconds(30));
+
         var result = await PerfRunner.RunAsync(
             scenario: "kinesis.PutRecords (25×256 B)",
             concurrency: 1,
             duration: TimeSpan.FromSeconds(30),
-            warmup: TimeSpan.FromSeconds(2),
+            warmup: TimeSpan.Zero,
             action: async (workerId, ct) =>
             {
-                var entries = new List<PutRecordsRequestEntry>(recordsPerCall);
-                for (var i = 0; i < recordsPerCall; i++)
-                {
-                    entries.Add(new PutRecordsRequestEntry
-                    {
-                        Data = new MemoryStream(payload, writable: false),
-                        PartitionKey = $"perf-w{workerId}-r{i}",
-                    });
-                }
                 var resp = await client.PutRecordsAsync(new PutRecordsRequest
                 {
                     StreamName = KinesisEmulatorProxyFixture.StreamName,
-                    Records = entries,
+                    Records = CreatePutRecordsEntries(payload, workerId, recordsPerCall),
                 }, ct).ConfigureAwait(false);
                 if (resp.FailedRecordCount > 0)
                 {
