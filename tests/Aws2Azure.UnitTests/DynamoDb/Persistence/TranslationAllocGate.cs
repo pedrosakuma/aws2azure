@@ -273,7 +273,18 @@ internal static class MicrobenchAllocReference
         var overrideDir = Environment.GetEnvironmentVariable("AWS2AZURE_PERF_DIR");
         if (!string.IsNullOrEmpty(overrideDir))
         {
-            return Path.Combine(overrideDir, "microbench-reference.json");
+            // AWS2AZURE_PERF_DIR redirects where run RESULTS are written and may
+            // also carry a synthetic reference to inject thresholds — honor it
+            // when present. But the reference is COMMITTED config, not a run
+            // output (the real-Azure perf workflow points this at a results-only
+            // temp dir), so fall back to the repo's committed reference when the
+            // override dir has none, rather than failing the always-on gate.
+            // Mirrors Aws2Azure.PerfTests.PerfReferenceBaseline.GetReferencePath.
+            var overridePath = Path.Combine(overrideDir, "microbench-reference.json");
+            if (File.Exists(overridePath))
+            {
+                return overridePath;
+            }
         }
 
         var dir = AppContext.BaseDirectory;
