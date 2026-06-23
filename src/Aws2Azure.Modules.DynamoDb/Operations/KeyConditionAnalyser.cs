@@ -28,12 +28,20 @@ internal static class KeyConditionAnalyser
 {
     internal sealed record AnalysedKeyCondition(
         string HashValue,
-        SkPredicate? Sk);
+        SkPredicate? Sk,
+        ConditionNode? IndexSortKeyNode = null);
 
     internal abstract record SkPredicate;
     internal sealed record SkCompare(string Op, string Value) : SkPredicate;
     internal sealed record SkBetween(string Lo, string Hi) : SkPredicate;
     internal sealed record SkBeginsWith(string Prefix) : SkPredicate;
+
+    /// <summary>
+    /// Identifies the alternate sort attribute of a Local Secondary Index:
+    /// the attribute <paramref name="Name"/> and its declared scalar type
+    /// (<c>S</c>/<c>N</c>/<c>B</c> per <see cref="AttributeValueTypes"/>).
+    /// </summary>
+    internal sealed record IndexSortKeySpec(string Name, string Type);
 
     public static AnalysedKeyCondition Analyse(ConditionNode root, TableMetadata meta)
     {
@@ -77,6 +85,122 @@ internal static class KeyConditionAnalyser
         }
 
         return new AnalysedKeyCondition(hashValue, sk);
+    }
+
+    /// <summary>
+    /// Analyses a <c>KeyConditionExpression</c> for a Local Secondary Index
+    /// query. The HASH equality is on the BASE table HASH attribute and is
+    /// encoded with the same codec as a base-table query so partition
+    /// routing is identical. The optional sort-key predicate, however, must
+    /// reference the LSI's alternate sort attribute (<paramref name="indexSk"/>)
+    /// and is returned as a raw <see cref="ConditionNode"/> — NOT encoded into
+    /// <c>c.id</c> — so the SQL builder can translate it against the raw
+    /// stored attribute (<c>c.&lt;lsiSort&gt;</c>) via the filter pushdown.
+    /// </summary>
+    public static AnalysedKeyCondition AnalyseForIndex(
+        ConditionNode root, TableMetadata meta, IndexSortKeySpec indexSk)
+    {
+        var hash = FindKey(meta, "HASH")
+            ?? throw new KeyConditionException("Table has no HASH key declared in metadata.");
+
+        ConditionNode hashNode;
+        ConditionNode? skNode;
+        if (root is AndCondition and)
+        {
+            hashNode = and.Left;
+            skNode = and.Right;
+            if (!ReferencesAttribute(hashNode, hash.Name) && ReferencesAttribute(and.Right, hash.Name))
+            {
+                hashNode = and.Right;
+                skNode = and.Left;
+            }
+        }
+        else
+        {
+            hashNode = root;
+            skNode = null;
+        }
+
+        string hashValue = ExtractHashEquality(hashNode, hash.Name, meta);
+
+        ConditionNode? indexSkNode = null;
+        if (skNode is not null)
+        {
+            indexSkNode = ValidateIndexSortKeyNode(skNode, indexSk);
+        }
+
+        return new AnalysedKeyCondition(hashValue, Sk: null, IndexSortKeyNode: indexSkNode);
+    }
+
+    /// <summary>
+    /// Validates that an LSI sort-key predicate conforms to the DynamoDB
+    /// KCE grammar (<c>=, &lt;, &lt;=, &gt;, &gt;=, BETWEEN, begins_with</c>)
+    /// and references the index sort attribute. Returns the validated raw
+    /// node unchanged (the SQL builder translates it against the raw stored
+    /// attribute). <c>begins_with</c> on a Number sort key is rejected,
+    /// matching the base-table path and real DynamoDB.
+    /// </summary>
+    private static ConditionNode ValidateIndexSortKeyNode(ConditionNode node, IndexSortKeySpec indexSk)
+    {
+        switch (node)
+        {
+            case CompareCondition cmp:
+                if (!IsAttributeReference(cmp.Left, indexSk.Name) || cmp.Right is not ConditionValueOperand)
+                    throw new KeyConditionException(
+                        $"Sort-key predicate must reference '{indexSk.Name}' on the left and a value placeholder on the right.");
+                switch (cmp.Op)
+                {
+                    case CompareOp.Equal:
+                    case CompareOp.Less:
+                    case CompareOp.LessEqual:
+                    case CompareOp.Greater:
+                    case CompareOp.GreaterEqual:
+                        ValidateOperandType(cmp.Right, indexSk);
+                        return cmp;
+                    default:
+                        throw new KeyConditionException(
+                            $"Sort-key predicate operator {cmp.Op} is not supported in KeyConditionExpression.");
+                }
+            case BetweenCondition bt:
+                if (!IsAttributeReference(bt.Value, indexSk.Name)
+                    || bt.Lower is not ConditionValueOperand
+                    || bt.Upper is not ConditionValueOperand)
+                    throw new KeyConditionException(
+                        $"BETWEEN sort-key predicate must reference '{indexSk.Name}' and two value placeholders.");
+                ValidateOperandType(bt.Lower, indexSk);
+                ValidateOperandType(bt.Upper, indexSk);
+                return bt;
+            case BeginsWithCondition bw:
+                if (!IsAttributeReference(bw.Path, indexSk.Name)
+                    || bw.Prefix is not ConditionValueOperand)
+                    throw new KeyConditionException(
+                        $"begins_with sort-key predicate must reference '{indexSk.Name}' and a value placeholder.");
+                if (string.Equals(indexSk.Type, AttributeValueTypes.Number, StringComparison.Ordinal))
+                    throw new KeyConditionException(
+                        $"begins_with is not supported on Number sort key '{indexSk.Name}'.");
+                ValidateOperandType(bw.Prefix, indexSk);
+                return bw;
+            default:
+                throw new KeyConditionException(
+                    "Sort-key predicate must be one of: =, <, <=, >, >=, BETWEEN, begins_with.");
+        }
+    }
+
+    /// <summary>
+    /// Validates that a value operand bound to an LSI sort-key predicate
+    /// carries the index sort key's declared scalar type, mirroring the
+    /// base-table path's key-type check. Surfaces a type mismatch as a
+    /// ValidationException, matching real DynamoDB.
+    /// </summary>
+    private static void ValidateOperandType(ConditionOperand operand, IndexSortKeySpec indexSk)
+    {
+        if (operand is not ConditionValueOperand vop) return;
+        if (!ParsedAttributeValue.TryParse(vop.Value.Value, out var parsed))
+            throw new KeyConditionException(
+                $"Value bound to '{indexSk.Name}' is not a typed attribute value.");
+        if (!string.Equals(parsed.TypeTag, indexSk.Type, StringComparison.Ordinal))
+            throw new KeyConditionException(
+                $"Sort key '{indexSk.Name}' has type {parsed.TypeTag} but the index declares {indexSk.Type}.");
     }
 
     private static TableKeySchemaElement? FindKey(TableMetadata meta, string role)
