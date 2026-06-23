@@ -1,13 +1,17 @@
 service: dynamodb
 operation: TagResource
 azure_equivalent: "Azure Cosmos DB account/resource tags (control plane)"
-status: stub
+status: implemented
 sub_features:
-  - name: Accept & discard tags
+  - name: Tag persistence and round-trip
     status: implemented
-    notes: "Returns an empty 200 after validating ResourceArn + non-empty Tags. Tags are not persisted anywhere and have no effect on Azure billing or routing."
+    notes: "Persists table tags in the aws2azure TableMetadata sidecar document inside the Cosmos container and returns them from ListTagsOfResource."
+  - name: Merge duplicate keys
+    status: implemented
+    notes: "New values overwrite existing keys while preserving unrelated tags; the final tag set is limited to 50 tags."
 behavior_differences:
-  - "AWS SDK callers that tag tables on creation as a bookkeeping side-effect work; callers that rely on tag-based access control or cost allocation do not."
-  - "Round-trip with `ListTagsOfResource` is not supported — listing always returns an empty array."
+  - "Tags are stored in the aws2azure TableMetadata sidecar document inside the table's Cosmos container, not as Azure control-plane resource tags."
+  - "Persisted tags have no effect on Azure billing, routing, Azure Policy, or Azure-native tag queries."
+  - "Acceptance has unit-test coverage against the Cosmos REST test double; real-Azure validation is pending."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TagResource.html

@@ -144,20 +144,8 @@ internal static class TableLifecycleHandlers
             AttributeDefinitions = MapAttributeDefinitions(req.AttributeDefinitions),
             KeySchema = MapKeySchema(req.KeySchema),
         };
-        var metaJson = JsonSerializer.Serialize(meta, TableMetadataJsonContext.Default.TableMetadata);
         var collLink = dbLink + "/colls/" + req.TableName;
-        using var metaContent = new StringContent(metaJson, Encoding.UTF8, "application/json");
-        var pkHeader = CosmosOpsShared.BuildPartitionKeyHeader(TableMetadata.DocId);
-        var metaHeaders = new[]
-        {
-            new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
-            new KeyValuePair<string, string>("x-ms-documentdb-is-upsert", "true"),
-        };
-        using var metaResp = await cosmos.SendAsync(
-            HttpMethod.Post, "docs", collLink, "/" + collLink + "/docs",
-            metaContent, metaHeaders, ct).ConfigureAwait(false);
-
-        if (!metaResp.IsSuccessStatusCode)
+        if (!await PersistCreateTableMetadataAsync(ctx, cosmos, req.TableName!, meta, ct).ConfigureAwait(false))
         {
             // Container created but metadata persist failed; best-effort
             // rollback to avoid an orphan container the operator can't
@@ -165,7 +153,6 @@ internal static class TableLifecycleHandlers
             using var rollback = await cosmos.SendAsync(
                 HttpMethod.Delete, "colls", collLink, "/" + collLink,
                 content: null, extraHeaders: null, ct).ConfigureAwait(false);
-            await WriteCosmosErrorAsync(ctx, metaResp, ct).ConfigureAwait(false);
             return;
         }
 
@@ -519,6 +506,154 @@ internal static class TableLifecycleHandlers
         return dst;
     }
 
+    private static async Task<bool> PersistCreateTableMetadataAsync(
+        HttpContext ctx, CosmosClient cosmos, string tableName, TableMetadata meta, CancellationToken ct)
+    {
+        using var createResp = await CreateMetadataAsync(cosmos, tableName, meta, ct).ConfigureAwait(false);
+        if (createResp.IsSuccessStatusCode)
+        {
+            CosmosOpsShared.MetadataCache.Invalidate(cosmos.AccountEndpoint, cosmos.DatabaseName, tableName);
+            return true;
+        }
+        if (createResp.StatusCode != HttpStatusCode.Conflict)
+        {
+            await WriteCosmosErrorAsync(ctx, createResp, ct).ConfigureAwait(false);
+            return false;
+        }
+
+        const int maxConditionalWriteAttempts = 3;
+        for (int attempt = 0; attempt < maxConditionalWriteAttempts; attempt++)
+        {
+            var existing = await ReadMetadataForReplaceAsync(ctx, cosmos, tableName, ct).ConfigureAwait(false);
+            if (existing is null) return false;
+
+            meta.Tags = CloneTags(existing.Metadata.Tags);
+            var replaceStatus = await ReplaceMetadataAsync(cosmos, tableName, meta, existing.ETag, ct).ConfigureAwait(false);
+            if (replaceStatus.StatusCode == HttpStatusCode.PreconditionFailed)
+            {
+                replaceStatus.Dispose();
+                if (attempt + 1 < maxConditionalWriteAttempts) continue;
+                await WriteErrorAsync(ctx, 400, "ResourceInUseException",
+                    "Could not persist table metadata because table tags changed concurrently. Retry the request.")
+                    .ConfigureAwait(false);
+                return false;
+            }
+            using (replaceStatus)
+            {
+                if (!replaceStatus.IsSuccessStatusCode)
+                {
+                    await WriteCosmosErrorAsync(ctx, replaceStatus, ct).ConfigureAwait(false);
+                    return false;
+                }
+            }
+
+            CosmosOpsShared.MetadataCache.Invalidate(cosmos.AccountEndpoint, cosmos.DatabaseName, tableName);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static async Task<HttpResponseMessage> CreateMetadataAsync(
+        CosmosClient cosmos, string tableName, TableMetadata meta, CancellationToken ct)
+    {
+        var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + tableName;
+        var metaJson = JsonSerializer.Serialize(meta, TableMetadataJsonContext.Default.TableMetadata);
+        using var metaContent = new StringContent(metaJson, Encoding.UTF8, "application/json");
+        var pkHeader = CosmosOpsShared.BuildPartitionKeyHeader(TableMetadata.DocId);
+        var metaHeaders = new[]
+        {
+            new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
+        };
+        return await cosmos.SendAsync(
+            HttpMethod.Post, "docs", collLink, "/" + collLink + "/docs",
+            metaContent, metaHeaders, ct).ConfigureAwait(false);
+    }
+
+    private static async Task<LoadedMetadataForReplace?> ReadMetadataForReplaceAsync(
+        HttpContext ctx, CosmosClient cosmos, string tableName, CancellationToken ct)
+    {
+        var docLink = "dbs/" + cosmos.DatabaseName + "/colls/" + tableName + "/docs/" + TableMetadata.DocId;
+        var pkHeader = CosmosOpsShared.BuildPartitionKeyHeader(TableMetadata.DocId);
+        var headers = new[]
+        {
+            new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
+        };
+        using var resp = await cosmos.SendAsync(
+            HttpMethod.Get, "docs", docLink, "/" + docLink,
+            content: null, headers, ct).ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode)
+        {
+            await WriteCosmosErrorAsync(ctx, resp, ct).ConfigureAwait(false);
+            return null;
+        }
+
+        string? etag = null;
+        if (resp.Headers.ETag is not null)
+        {
+            etag = resp.Headers.ETag.Tag;
+        }
+        else if (resp.Headers.TryGetValues("ETag", out var etags))
+        {
+            foreach (var value in etags) { etag = value; break; }
+        }
+        if (string.IsNullOrEmpty(etag))
+        {
+            await WriteErrorAsync(ctx, 500, "InternalServerError",
+                "Cosmos metadata document did not include an ETag.").ConfigureAwait(false);
+            return null;
+        }
+
+        try
+        {
+            using var body = await CosmosOpsShared.ReadCosmosJsonBodyAsync(resp.Content, ct).ConfigureAwait(false);
+            var existing = JsonSerializer.Deserialize(
+                body.WrittenMemory.Span,
+                TableMetadataJsonContext.Default.TableMetadata);
+            if (existing is null)
+            {
+                await WriteErrorAsync(ctx, 500, "InternalServerError",
+                    "Cosmos metadata document was empty.").ConfigureAwait(false);
+                return null;
+            }
+            return new LoadedMetadataForReplace(existing, etag);
+        }
+        catch (JsonException ex)
+        {
+            await WriteErrorAsync(ctx, 500, "InternalServerError",
+                "Malformed table metadata: " + ex.Message).ConfigureAwait(false);
+            return null;
+        }
+    }
+
+    private static async Task<HttpResponseMessage> ReplaceMetadataAsync(
+        CosmosClient cosmos, string tableName, TableMetadata meta, string etag, CancellationToken ct)
+    {
+        var docLink = "dbs/" + cosmos.DatabaseName + "/colls/" + tableName + "/docs/" + TableMetadata.DocId;
+        var metaJson = JsonSerializer.Serialize(meta, TableMetadataJsonContext.Default.TableMetadata);
+        using var metaContent = new StringContent(metaJson, Encoding.UTF8, "application/json");
+        var pkHeader = CosmosOpsShared.BuildPartitionKeyHeader(TableMetadata.DocId);
+        var headers = new[]
+        {
+            new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
+            new KeyValuePair<string, string>("If-Match", etag),
+        };
+        return await cosmos.SendAsync(
+            HttpMethod.Put, "docs", docLink, "/" + docLink,
+            metaContent, headers, ct).ConfigureAwait(false);
+    }
+
+    private static List<TableTag>? CloneTags(List<TableTag>? source)
+    {
+        if (source is null) return null;
+        var clone = new List<TableTag>(source.Count);
+        foreach (var tag in source)
+        {
+            clone.Add(new TableTag { Key = tag.Key, Value = tag.Value });
+        }
+        return clone;
+    }
+
     private static TableDescription BuildTableDescription(TableMetadata meta, string status)
     {
         var attrs = new List<AttributeDefinitionDto>(meta.AttributeDefinitions.Count);
@@ -584,4 +719,6 @@ internal static class TableLifecycleHandlers
     private static Task WriteJsonAsync<T>(HttpContext ctx, int status, T payload, JsonTypeInfo<T> typeInfo)
         where T : class
         => CosmosOpsShared.WriteJsonAsync(ctx, status, payload, typeInfo);
+
+    private sealed record LoadedMetadataForReplace(TableMetadata Metadata, string ETag);
 }

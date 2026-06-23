@@ -1,12 +1,14 @@
 service: dynamodb
 operation: UntagResource
 azure_equivalent: "Azure Cosmos DB account/resource tags (control plane)"
-status: stub
+status: implemented
 sub_features:
-  - name: Accept & no-op
+  - name: Remove persisted tag keys
     status: implemented
-    notes: "Returns an empty 200 after validating ResourceArn + non-empty TagKeys. There is no persisted state to untag."
+    notes: "Removes requested keys from the aws2azure TableMetadata sidecar document and invalidates the table metadata cache."
 behavior_differences:
-  - "Mirrors the `TagResource` stub: tags are never persisted, so removal is unconditionally a no-op."
+  - "Tags are stored in the aws2azure TableMetadata sidecar document inside the table's Cosmos container, not as Azure control-plane resource tags."
+  - "Removing tags has no effect on Azure billing, routing, Azure Policy, or Azure-native tag queries."
+  - "Acceptance has unit-test coverage against the Cosmos REST test double; real-Azure validation is pending."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UntagResource.html

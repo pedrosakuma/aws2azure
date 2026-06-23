@@ -256,18 +256,21 @@
 
 ## ListTagsOfResource
 
-- **Status:** ⚪ stub
+- **Status:** ✅ implemented
 - **Azure equivalent:** `Azure Cosmos DB account/resource tags (control plane)`
 
 ### Sub-features
 
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
-| Returns empty tag list | ✅ implemented | Returns `{Tags: []}` after validating ResourceArn. No pagination because there is nothing to page over. |  |  |
+| Returns persisted TableMetadata tags | ✅ implemented | Reads tags from the aws2azure TableMetadata sidecar document written by TagResource. |  |  |
+| Pagination | 🟡 partial | The proxy returns the full tag set (DynamoDB allows at most 50 tags) and rejects NextToken instead of paginating. |  |  |
 
 ### Behaviour differences
 
-- Always returns an empty tag list, even immediately after a `TagResource` call (tags are not persisted by the proxy).
+- Tags are stored in the aws2azure TableMetadata sidecar document inside the table's Cosmos container, not as Azure control-plane resource tags.
+- Persisted tags have no effect on Azure billing, routing, Azure Policy, or Azure-native tag queries.
+- Acceptance has unit-test coverage against the Cosmos REST test double; real-Azure validation is pending.
 
 ### References
 
@@ -387,19 +390,21 @@
 
 ## TagResource
 
-- **Status:** ⚪ stub
+- **Status:** ✅ implemented
 - **Azure equivalent:** `Azure Cosmos DB account/resource tags (control plane)`
 
 ### Sub-features
 
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
-| Accept & discard tags | ✅ implemented | Returns an empty 200 after validating ResourceArn + non-empty Tags. Tags are not persisted anywhere and have no effect on Azure billing or routing. |  |  |
+| Tag persistence and round-trip | ✅ implemented | Persists table tags in the aws2azure TableMetadata sidecar document inside the Cosmos container and returns them from ListTagsOfResource. |  |  |
+| Merge duplicate keys | ✅ implemented | New values overwrite existing keys while preserving unrelated tags; the final tag set is limited to 50 tags. |  |  |
 
 ### Behaviour differences
 
-- AWS SDK callers that tag tables on creation as a bookkeeping side-effect work; callers that rely on tag-based access control or cost allocation do not.
-- Round-trip with `ListTagsOfResource` is not supported — listing always returns an empty array.
+- Tags are stored in the aws2azure TableMetadata sidecar document inside the table's Cosmos container, not as Azure control-plane resource tags.
+- Persisted tags have no effect on Azure billing, routing, Azure Policy, or Azure-native tag queries.
+- Acceptance has unit-test coverage against the Cosmos REST test double; real-Azure validation is pending.
 
 ### References
 
@@ -467,18 +472,20 @@
 
 ## UntagResource
 
-- **Status:** ⚪ stub
+- **Status:** ✅ implemented
 - **Azure equivalent:** `Azure Cosmos DB account/resource tags (control plane)`
 
 ### Sub-features
 
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
-| Accept & no-op | ✅ implemented | Returns an empty 200 after validating ResourceArn + non-empty TagKeys. There is no persisted state to untag. |  |  |
+| Remove persisted tag keys | ✅ implemented | Removes requested keys from the aws2azure TableMetadata sidecar document and invalidates the table metadata cache. |  |  |
 
 ### Behaviour differences
 
-- Mirrors the `TagResource` stub: tags are never persisted, so removal is unconditionally a no-op.
+- Tags are stored in the aws2azure TableMetadata sidecar document inside the table's Cosmos container, not as Azure control-plane resource tags.
+- Removing tags has no effect on Azure billing, routing, Azure Policy, or Azure-native tag queries.
+- Acceptance has unit-test coverage against the Cosmos REST test double; real-Azure validation is pending.
 
 ### References
 

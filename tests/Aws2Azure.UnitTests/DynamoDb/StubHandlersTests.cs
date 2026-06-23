@@ -92,18 +92,6 @@ public class StubHandlersTests
     // ----- TagResource -----
 
     [Fact]
-    public async Task TagResource_with_valid_payload_returns_empty_200()
-    {
-        var (ctx, body) = NewCtx();
-        var req = "{\"ResourceArn\":\"arn:aws:dynamodb:::table/orders\",\"Tags\":[{\"Key\":\"env\",\"Value\":\"prod\"}]}";
-
-        await TaggingHandlers.HandleTagResourceAsync(ctx, Encoding.UTF8.GetBytes(req), BuildClient(), default);
-
-        Assert.Equal(200, ctx.Response.StatusCode);
-        Assert.Equal(0, body.Length);
-    }
-
-    [Fact]
     public async Task TagResource_missing_arn_is_rejected()
     {
         var (ctx, body) = NewCtx();
@@ -130,18 +118,6 @@ public class StubHandlersTests
     // ----- UntagResource -----
 
     [Fact]
-    public async Task UntagResource_with_valid_payload_returns_empty_200()
-    {
-        var (ctx, body) = NewCtx();
-        var req = "{\"ResourceArn\":\"arn:aws:dynamodb:::table/orders\",\"TagKeys\":[\"env\"]}";
-
-        await TaggingHandlers.HandleUntagResourceAsync(ctx, Encoding.UTF8.GetBytes(req), BuildClient(), default);
-
-        Assert.Equal(200, ctx.Response.StatusCode);
-        Assert.Equal(0, body.Length);
-    }
-
-    [Fact]
     public async Task UntagResource_empty_keys_is_rejected()
     {
         var (ctx, _) = NewCtx();
@@ -153,19 +129,6 @@ public class StubHandlersTests
     }
 
     // ----- ListTagsOfResource -----
-
-    [Fact]
-    public async Task ListTagsOfResource_returns_empty_tags()
-    {
-        var (ctx, body) = NewCtx();
-        var req = "{\"ResourceArn\":\"arn:aws:dynamodb:::table/orders\"}";
-
-        await TaggingHandlers.HandleListTagsOfResourceAsync(ctx, Encoding.UTF8.GetBytes(req), BuildClient(), default);
-
-        Assert.Equal(200, ctx.Response.StatusCode);
-        using var doc = JsonDocument.Parse(ReadResponse(body));
-        Assert.Equal(0, doc.RootElement.GetProperty("Tags").GetArrayLength());
-    }
 
     [Fact]
     public async Task ListTagsOfResource_missing_arn_is_rejected()
