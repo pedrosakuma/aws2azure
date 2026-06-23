@@ -44,6 +44,12 @@ internal static class TableLifecycleHandlers
     internal const int MaxLocalSecondaryIndexes = 5;
     internal const int MaxGlobalSecondaryIndexes = 20;
 
+    // Projection limits: at most 20 INCLUDE non-key attributes per index,
+    // at most 100 summed across all secondary indexes, each name <= 255 chars.
+    internal const int MaxIndexNonKeyAttributes = 20;
+    internal const int MaxTotalIndexNonKeyAttributes = 100;
+    internal const int MaxAttributeNameLength = 255;
+
     public static Task HandleCreateTableAsync(HttpContext ctx, byte[] body, CosmosClient cosmos, CancellationToken ct)
     {
         CreateTableRequest? req;
@@ -513,6 +519,8 @@ internal static class TableLifecycleHandlers
 
         // Index names must be unique across both GSIs and LSIs.
         var indexNames = new HashSet<string>(StringComparer.Ordinal);
+        // INCLUDE non-key attributes are capped per-index and in aggregate.
+        int totalNonKeyAttributes = 0;
 
         var lsis = req.LocalSecondaryIndexes;
         if (lsis is { Count: > 0 })
@@ -530,7 +538,7 @@ internal static class TableLifecycleHandlers
             foreach (var lsi in lsis)
             {
                 if (!ValidateIndexCommon(lsi, "LocalSecondaryIndex", declared, indexNames, indexKeyNames,
-                        out var hash, out var range, out error))
+                        ref totalNonKeyAttributes, out var hash, out var range, out error))
                 {
                     return false;
                 }
@@ -563,7 +571,7 @@ internal static class TableLifecycleHandlers
             foreach (var gsi in gsis)
             {
                 if (!ValidateIndexCommon(gsi, "GlobalSecondaryIndex", declared, indexNames, indexKeyNames,
-                        out _, out _, out error))
+                        ref totalNonKeyAttributes, out _, out _, out error))
                 {
                     return false;
                 }
@@ -580,6 +588,7 @@ internal static class TableLifecycleHandlers
         HashSet<string> declared,
         HashSet<string> indexNames,
         HashSet<string> indexKeyNames,
+        ref int totalNonKeyAttributes,
         out string? hashName,
         out string? rangeName,
         out string error)
@@ -631,10 +640,19 @@ internal static class TableLifecycleHandlers
             error = $"{kind} '{idx.IndexName}' HASH and RANGE attributes must differ.";
             return false;
         }
-        return ValidateProjection(idx.Projection, kind, idx.IndexName!, out error);
+        // DynamoDB requires the Projection member on every secondary index
+        // (only ProjectionType inside it may be omitted, defaulting to ALL).
+        if (idx.Projection is null)
+        {
+            error = $"{kind} '{idx.IndexName}' requires a Projection.";
+            return false;
+        }
+        return ValidateProjection(idx.Projection, kind, idx.IndexName!, ref totalNonKeyAttributes, out error);
     }
 
-    private static bool ValidateProjection(ProjectionDto? projection, string kind, string indexName, out string error)
+    private static bool ValidateProjection(
+        ProjectionDto? projection, string kind, string indexName,
+        ref int totalNonKeyAttributes, out string error)
     {
         var type = projection?.ProjectionType;
         // ProjectionType defaults to ALL when omitted.
@@ -656,6 +674,11 @@ internal static class TableLifecycleHandlers
                 error = $"{kind} '{indexName}' Projection.NonKeyAttributes is required when ProjectionType is INCLUDE.";
                 return false;
             }
+            if (nonKey.Count > MaxIndexNonKeyAttributes)
+            {
+                error = $"{kind} '{indexName}' Projection.NonKeyAttributes cannot exceed {MaxIndexNonKeyAttributes} attributes.";
+                return false;
+            }
             foreach (var n in nonKey)
             {
                 if (string.IsNullOrEmpty(n))
@@ -663,6 +686,17 @@ internal static class TableLifecycleHandlers
                     error = $"{kind} '{indexName}' Projection.NonKeyAttributes entries must be non-empty.";
                     return false;
                 }
+                if (n.Length > MaxAttributeNameLength)
+                {
+                    error = $"{kind} '{indexName}' Projection.NonKeyAttributes names cannot exceed {MaxAttributeNameLength} characters.";
+                    return false;
+                }
+            }
+            totalNonKeyAttributes += nonKey.Count;
+            if (totalNonKeyAttributes > MaxTotalIndexNonKeyAttributes)
+            {
+                error = $"The total number of INCLUDE non-key attributes across all secondary indexes cannot exceed {MaxTotalIndexNonKeyAttributes}.";
+                return false;
             }
         }
         else if (nonKey is { Count: > 0 })

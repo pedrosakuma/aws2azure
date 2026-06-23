@@ -656,6 +656,57 @@ public class TableLifecycleHandlersTests
     }
 
     [Fact]
+    public async Task CreateTable_rejects_index_without_projection()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+        var cosmos = BuildClient(handler);
+
+        var reqBody = "{\"TableName\":\"orders\","
+                      + "\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"}],"
+                      + "\"AttributeDefinitions\":["
+                      + "{\"AttributeName\":\"pk\",\"AttributeType\":\"S\"},"
+                      + "{\"AttributeName\":\"gsiHash\",\"AttributeType\":\"S\"}],"
+                      + "\"GlobalSecondaryIndexes\":[{\"IndexName\":\"gsi1\","
+                      + "\"KeySchema\":[{\"AttributeName\":\"gsiHash\",\"KeyType\":\"HASH\"}]}]}";
+        await TableLifecycleHandlers.HandleCreateTableAsync(
+            ctx, Encoding.UTF8.GetBytes(reqBody), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("requires a Projection", ReadResponse(body));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task CreateTable_rejects_include_projection_over_attribute_limit()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+        var cosmos = BuildClient(handler);
+
+        var sb = new System.Text.StringBuilder();
+        for (int i = 0; i < 21; i++)
+        {
+            if (i > 0) sb.Append(',');
+            sb.Append('"').Append("n").Append(i).Append('"');
+        }
+        var reqBody = "{\"TableName\":\"orders\","
+                      + "\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"}],"
+                      + "\"AttributeDefinitions\":["
+                      + "{\"AttributeName\":\"pk\",\"AttributeType\":\"S\"},"
+                      + "{\"AttributeName\":\"gsiHash\",\"AttributeType\":\"S\"}],"
+                      + "\"GlobalSecondaryIndexes\":[{\"IndexName\":\"gsi1\","
+                      + "\"KeySchema\":[{\"AttributeName\":\"gsiHash\",\"KeyType\":\"HASH\"}],"
+                      + "\"Projection\":{\"ProjectionType\":\"INCLUDE\",\"NonKeyAttributes\":[" + sb + "]}}]}";
+        await TableLifecycleHandlers.HandleCreateTableAsync(
+            ctx, Encoding.UTF8.GetBytes(reqBody), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("NonKeyAttributes cannot exceed", ReadResponse(body));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
     public async Task CreateTable_rejects_duplicate_index_name()
     {
         var (ctx, body) = NewCtx();
