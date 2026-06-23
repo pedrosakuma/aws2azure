@@ -269,6 +269,27 @@ internal sealed class KeyVaultSecretClient
         return result;
     }
 
+    public static IReadOnlyDictionary<string, string> GetRawTags(JsonElement root)
+    {
+        var empty = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("tags", out var tags)
+            || tags.ValueKind != JsonValueKind.Object)
+        {
+            return empty;
+        }
+
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var property in tags.EnumerateObject())
+        {
+            result[property.Name] = property.Value.ValueKind == JsonValueKind.String
+                ? property.Value.GetString() ?? string.Empty
+                : property.Value.ToString();
+        }
+
+        return result;
+    }
+
     public static string[] GetVersionStages(JsonElement root)
     {
         if (TryGetRawTag(root, VersionStagesTag, out var value))
@@ -342,7 +363,8 @@ internal sealed class KeyVaultSecretClient
         var result = tags is null || tags.Count == 0
             ? new Dictionary<string, string>(StringComparer.Ordinal)
             : new Dictionary<string, string>(tags, StringComparer.Ordinal);
-        result[VersionStagesTag] = EncodeVersionStages(versionStages);
+        result[VersionStagesTag] = versionStages.Count == 0 ? "\n" : EncodeVersionStages(versionStages);
+
         return result;
     }
 
@@ -379,6 +401,12 @@ internal sealed class KeyVaultSecretClient
             Description: string.IsNullOrWhiteSpace(description) ? null : description);
 
         return JsonSerializer.Serialize(payload, SecretsManagerJsonContext.Default.KeyVaultSecretRequest);
+    }
+
+    public static string BuildTagsJsonBody(IReadOnlyDictionary<string, string>? tags)
+    {
+        var payload = new KeyVaultSecretTagsRequest(tags);
+        return JsonSerializer.Serialize(payload, SecretsManagerJsonContext.Default.KeyVaultSecretTagsRequest);
     }
 
     public static string BuildSecretPath(string name) => "/secrets/" + Uri.EscapeDataString(name);
