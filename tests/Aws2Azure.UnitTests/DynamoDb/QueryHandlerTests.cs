@@ -57,6 +57,43 @@ public class QueryHandlerTests
         + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
         + "\"billingMode\":\"PAY_PER_REQUEST\"}";
 
+    // Composite table with an LSI ("byCreatedAt") whose alternate sort key is
+    // the S attribute "createdAt", projection ALL. Used by LSI Query tests.
+    private static readonly string MetadataLsi =
+        "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        + "\"tableName\":\"orders\","
+        + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"sk\",\"type\":\"S\"},"
+        + "{\"name\":\"createdAt\",\"type\":\"S\"}],"
+        + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
+        + "\"localSecondaryIndexes\":[{\"indexName\":\"byCreatedAt\","
+        + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"createdAt\",\"keyType\":\"RANGE\"}],"
+        + "\"projectionType\":\"ALL\"}],"
+        + "\"billingMode\":\"PAY_PER_REQUEST\"}";
+
+    // LSI on a Number sort attribute ("score"), projection KEYS_ONLY.
+    private static readonly string MetadataLsiNumberKeysOnly =
+        "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        + "\"tableName\":\"orders\","
+        + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"sk\",\"type\":\"S\"},"
+        + "{\"name\":\"score\",\"type\":\"N\"}],"
+        + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
+        + "\"localSecondaryIndexes\":[{\"indexName\":\"byScore\","
+        + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"score\",\"keyType\":\"RANGE\"}],"
+        + "\"projectionType\":\"KEYS_ONLY\"}],"
+        + "\"billingMode\":\"PAY_PER_REQUEST\"}";
+
+    // Composite table with a GSI ("byCustomer"), used for the GSI-rejection test.
+    private static readonly string MetadataGsi =
+        "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        + "\"tableName\":\"orders\","
+        + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"sk\",\"type\":\"S\"},"
+        + "{\"name\":\"customer\",\"type\":\"S\"}],"
+        + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
+        + "\"globalSecondaryIndexes\":[{\"indexName\":\"byCustomer\","
+        + "\"keySchema\":[{\"name\":\"customer\",\"keyType\":\"HASH\"}],"
+        + "\"projectionType\":\"ALL\"}],"
+        + "\"billingMode\":\"PAY_PER_REQUEST\"}";
+
     private static CosmosClient BuildClient(ScriptedHandler handler)
     {
         var http = new AzureHttpClient(handler, ownsHandler: false,
@@ -82,6 +119,15 @@ public class QueryHandlerTests
     {
         body.Position = 0;
         return new StreamReader(body).ReadToEnd();
+    }
+
+    // Decodes the SQL `query` field out of a captured Cosmos query body so
+    // assertions can match the unescaped SQL (bracket-string paths embed
+    // double quotes that are JSON-escaped in the raw body).
+    private static string QuerySql(string? body)
+    {
+        using var d = JsonDocument.Parse(body!);
+        return d.RootElement.GetProperty("query").GetString()!;
     }
 
     private static HttpResponseMessage CosmosOk(string body, string? continuation = null)
@@ -675,20 +721,270 @@ public class QueryHandlerTests
     }
 
     [Fact]
-    public async Task Query_index_name_is_rejected()
+    public async Task Query_lsi_sort_key_comparison_targets_index_attribute()
     {
         var (ctx, body) = NewCtx();
-        var handler = new ScriptedHandler();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataLsi),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "x", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"x\"},\"createdAt\":{\"S\":\"2024-02\"}}"),
+                    DocWithItem("a", "y", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"y\"},\"createdAt\":{\"S\":\"2024-03\"}}"))),
+            },
+        };
         var cosmos = BuildClient(handler);
 
-        var req = "{\"TableName\":\"orders\",\"IndexName\":\"gsi1\","
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byCreatedAt\","
+                  + "\"KeyConditionExpression\":\"pk = :p AND createdAt > :c\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":c\":{\"S\":\"2024-01\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        var queryReq = handler.Requests[1];
+        // Predicate + ORDER BY target the raw LSI attribute, not c.id.
+        var sql1 = QuerySql(queryReq.Body);
+        Assert.Contains("c[\"createdAt\"] >", sql1);
+        Assert.Contains("ORDER BY c[\"createdAt\"] ASC", sql1);
+        // Sparse-index guard: items missing the LSI sort attribute are excluded.
+        Assert.Contains("IS_DEFINED(c[\"createdAt\"])", sql1);
+        Assert.DoesNotContain("c.id >", sql1);
+        // Partition-key header is the base HASH scope.
+        var pkHex = Convert.ToHexStringLower(Encoding.UTF8.GetBytes("a"));
+        Assert.Equal($"[\"{pkHex}\"]", queryReq.Headers["x-ms-documentdb-partitionkey"]);
+
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(2, resp.RootElement.GetProperty("Count").GetInt32());
+    }
+
+    [Fact]
+    public async Task Query_lsi_sort_key_equality_targets_index_attribute()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataLsi),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "x", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"x\"},\"createdAt\":{\"S\":\"2024-02\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byCreatedAt\","
+                  + "\"KeyConditionExpression\":\"pk = :p AND createdAt = :c\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":c\":{\"S\":\"2024-02\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        var queryReq = handler.Requests[1];
+        var sql2 = QuerySql(queryReq.Body);
+        Assert.Contains("c[\"createdAt\"] = @sk0", sql2);
+        Assert.Contains("ORDER BY c[\"createdAt\"] ASC", sql2);
+
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
+    }
+
+    [Fact]
+    public async Task Query_lsi_begins_with_on_string_key_emits_startswith()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataLsi),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "x", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"x\"},\"createdAt\":{\"S\":\"2024-02-01\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byCreatedAt\","
+                  + "\"KeyConditionExpression\":\"pk = :p AND begins_with(createdAt, :pre)\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":pre\":{\"S\":\"2024-02\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        var queryReq = handler.Requests[1];
+        var sql3 = QuerySql(queryReq.Body);
+        Assert.Contains("STARTSWITH(c[\"createdAt\"], @sk0", sql3);
+        Assert.Contains("ORDER BY c[\"createdAt\"] ASC", sql3);
+    }
+
+    [Fact]
+    public async Task Query_lsi_begins_with_on_number_key_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataLsiNumberKeysOnly) },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byScore\","
+                  + "\"KeyConditionExpression\":\"pk = :p AND begins_with(score, :pre)\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":pre\":{\"N\":\"5\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("begins_with", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task Query_gsi_index_name_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataGsi) },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byCustomer\","
+                  + "\"KeyConditionExpression\":\"customer = :p\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("global secondary indexes is not yet supported", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task Query_unknown_index_name_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataLsi) },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"nope\","
                   + "\"KeyConditionExpression\":\"pk = :p\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
         await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
-        Assert.Contains("secondary indexes", ReadResponse(body));
+        Assert.Contains("does not have the specified index", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task Query_lsi_all_projected_keys_only_projects_keys_plus_index_attr()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataLsiNumberKeysOnly),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "x",
+                        "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"x\"},\"score\":{\"N\":\"9\"},\"extra\":{\"S\":\"drop\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byScore\","
+                  + "\"Select\":\"ALL_PROJECTED_ATTRIBUTES\","
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        var item = resp.RootElement.GetProperty("Items")[0];
+        Assert.True(item.TryGetProperty("pk", out _));
+        Assert.True(item.TryGetProperty("sk", out _));
+        Assert.True(item.TryGetProperty("score", out _));
+        Assert.False(item.TryGetProperty("extra", out _));
+    }
+
+    [Fact]
+    public async Task Query_lsi_scan_index_forward_false_emits_desc_order()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataLsi),
+                CosmosOk(QueryEnvelope()),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byCreatedAt\","
+                  + "\"ScanIndexForward\":false,"
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.Contains("ORDER BY c[\"createdAt\"] DESC", QuerySql(handler.Requests[1].Body));
+    }
+
+    [Fact]
+    public async Task Query_lsi_sort_key_type_mismatch_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataLsi) },
+        };
+        var cosmos = BuildClient(handler);
+
+        // createdAt is declared S; binding an N operand must be rejected.
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byCreatedAt\","
+                  + "\"KeyConditionExpression\":\"pk = :p AND createdAt > :c\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":c\":{\"N\":\"1\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("ValidationException", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task Query_lsi_default_select_keys_only_projects_index_attributes()
+    {
+        // No Select and no ProjectionExpression on an index query defaults to
+        // ALL_PROJECTED_ATTRIBUTES → KEYS_ONLY projection applied in-process.
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataLsiNumberKeysOnly),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "x",
+                        "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"x\"},\"score\":{\"N\":\"9\"},\"extra\":{\"S\":\"drop\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byScore\","
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        var item = resp.RootElement.GetProperty("Items")[0];
+        Assert.True(item.TryGetProperty("score", out _));
+        Assert.False(item.TryGetProperty("extra", out _));
     }
 
     [Fact]
