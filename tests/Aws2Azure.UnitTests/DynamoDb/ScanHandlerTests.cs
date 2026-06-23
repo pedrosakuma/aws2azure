@@ -231,6 +231,35 @@ public class ScanHandlerTests
     }
 
     [Fact]
+    public async Task Scan_does_not_return_tagged_metadata_sidecar()
+    {
+        var taggedMetadata = Metadata[..^1]
+            + ",\"tags\":[{\"key\":\"env\",\"value\":\"prod\"}]}";
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(taggedMetadata),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        await ScanHandler.HandleScanAsync(
+            ctx, Encoding.UTF8.GetBytes("{\"TableName\":\"orders\"}"), cosmos, logger: null, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.Contains("c._a2a = 'item'", handler.Requests[1].Body);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
+        Assert.Equal(1, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+        var item = resp.RootElement.GetProperty("Items")[0];
+        Assert.Equal("a", item.GetProperty("pk").GetProperty("S").GetString());
+    }
+
+    [Fact]
     public async Task Scan_filter_expression_diverges_count_and_scanned()
     {
         // Uses a non-pushable predicate (size() is always residual)
