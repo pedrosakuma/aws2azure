@@ -137,14 +137,14 @@ internal static class QueryHandler
         KeyConditionAnalyser.IndexSortKeySpec? lsiSortKey = null;
         if (!string.IsNullOrEmpty(req.IndexName))
         {
-            var outcome = ResolveIndex(meta, req.IndexName!, out lsi);
+            var outcome = SecondaryIndexResolver.ResolveIndex(meta, req.IndexName!, out lsi);
             switch (outcome)
             {
-                case IndexResolution.Gsi:
+                case SecondaryIndexResolver.IndexResolution.Gsi:
                     await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
                         "Querying global secondary indexes is not yet supported by the proxy.").ConfigureAwait(false);
                     return;
-                case IndexResolution.NotFound:
+                case SecondaryIndexResolver.IndexResolution.NotFound:
                     await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
                         $"The table does not have the specified index: {req.IndexName}").ConfigureAwait(false);
                     return;
@@ -153,7 +153,7 @@ internal static class QueryHandler
             // An LSI's KeySchema is [HASH (= base table HASH), RANGE (alternate
             // sort attribute)]. Resolve the alternate sort attribute + its
             // declared type for the sort-key predicate translation.
-            if (!TryGetLsiSortKey(meta, lsi!, out var skName, out var skType, out var lsiError))
+            if (!SecondaryIndexResolver.TryGetLsiSortKey(meta, lsi!, out var skName, out var skType, out var lsiError))
             {
                 await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", lsiError).ConfigureAwait(false);
                 return;
@@ -199,7 +199,7 @@ internal static class QueryHandler
                 // NonKeyAttributes. An explicit ProjectionExpression (handled
                 // above) always takes precedence; an explicit ALL_ATTRIBUTES /
                 // SPECIFIC_ATTRIBUTES / COUNT Select skips this branch.
-                projection = ResolveIndexProjection(meta, lsi!, lsiSortKey!.Name);
+                projection = SecondaryIndexResolver.ResolveIndexProjection(meta, lsi!, lsiSortKey!.Name);
             }
         }
         catch (KeyConditionException ex)
@@ -590,103 +590,6 @@ internal static class QueryHandler
             (null, ConditionNode r) => r,
             (ConditionNode l, ConditionNode r) => new AndCondition(l, r),
         };
-
-    private enum IndexResolution { Lsi, Gsi, NotFound }
-
-    /// <summary>
-    /// Resolves <paramref name="indexName"/> against the table's secondary
-    /// index schemas. Returns <see cref="IndexResolution.Lsi"/> (with
-    /// <paramref name="lsi"/> set), <see cref="IndexResolution.Gsi"/>, or
-    /// <see cref="IndexResolution.NotFound"/>.
-    /// </summary>
-    private static IndexResolution ResolveIndex(
-        TableMetadata meta, string indexName, out TableIndexDefinition? lsi)
-    {
-        lsi = null;
-        if (meta.LocalSecondaryIndexes is { } lsis)
-        {
-            foreach (var ix in lsis)
-            {
-                if (string.Equals(ix.IndexName, indexName, StringComparison.Ordinal))
-                {
-                    lsi = ix;
-                    return IndexResolution.Lsi;
-                }
-            }
-        }
-        if (meta.GlobalSecondaryIndexes is { } gsis)
-        {
-            foreach (var ix in gsis)
-            {
-                if (string.Equals(ix.IndexName, indexName, StringComparison.Ordinal))
-                    return IndexResolution.Gsi;
-            }
-        }
-        return IndexResolution.NotFound;
-    }
-
-    /// <summary>
-    /// Extracts the LSI's alternate sort attribute (the RANGE key-schema
-    /// element) and its declared scalar type from the table's
-    /// AttributeDefinitions.
-    /// </summary>
-    private static bool TryGetLsiSortKey(
-        TableMetadata meta, TableIndexDefinition lsi,
-        out string sortName, out string sortType, out string error)
-    {
-        sortName = string.Empty;
-        sortType = string.Empty;
-        error = string.Empty;
-        foreach (var k in lsi.KeySchema)
-        {
-            if (string.Equals(k.KeyType, "RANGE", StringComparison.OrdinalIgnoreCase))
-            {
-                sortName = k.Name;
-                break;
-            }
-        }
-        if (string.IsNullOrEmpty(sortName))
-        {
-            error = $"Local secondary index '{lsi.IndexName}' declares no RANGE key.";
-            return false;
-        }
-        if (!ItemKeyFormatter.TryGetDeclaredKeyType(meta, sortName, out sortType))
-        {
-            error = $"Index sort key '{sortName}' is not declared in the table's AttributeDefinitions.";
-            return false;
-        }
-        return true;
-    }
-
-    /// <summary>
-    /// Resolves the in-process projection paths for
-    /// <c>Select=ALL_PROJECTED_ATTRIBUTES</c> against the LSI projection:
-    /// <c>ALL</c> → null (all attributes); <c>KEYS_ONLY</c> → base HASH +
-    /// base RANGE + LSI sort attribute; <c>INCLUDE</c> → those keys plus the
-    /// index's NonKeyAttributes.
-    /// </summary>
-    private static IReadOnlyList<string>? ResolveIndexProjection(
-        TableMetadata meta, TableIndexDefinition lsi, string lsiSortName)
-    {
-        if (string.Equals(lsi.ProjectionType, "ALL", StringComparison.OrdinalIgnoreCase))
-            return null;
-
-        var paths = new List<string>();
-        void Add(string? name)
-        {
-            if (!string.IsNullOrEmpty(name) && !paths.Contains(name)) paths.Add(name!);
-        }
-
-        foreach (var k in meta.KeySchema) Add(k.Name);
-        Add(lsiSortName);
-
-        if (string.Equals(lsi.ProjectionType, "INCLUDE", StringComparison.OrdinalIgnoreCase)
-            && lsi.NonKeyAttributes is { } extra)
-        {
-            foreach (var a in extra) Add(a);
-        }
-        return paths;
-    }
 
     internal static (string sql, List<CosmosSqlParameter> parameters) BuildSql(
         KeyConditionAnalyser.AnalysedKeyCondition keyCond, bool forward, bool composite,

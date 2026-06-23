@@ -51,6 +51,33 @@ public class ScanHandlerTests
         + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}],"
         + "\"billingMode\":\"PAY_PER_REQUEST\"}";
 
+    // Table metadata carrying a Local Secondary Index named "ix_created" on the
+    // base HASH (pk) plus an alternate raw sort attribute. projectionType and
+    // its NonKeyAttributes are caller-controlled so projection resolution can be
+    // exercised. A Global Secondary Index "gsi1" is always present for the
+    // GSI-rejection path.
+    private static string MetaWithLsi(
+        string sortName, string sortType, string projectionType, string? nonKeyCsv = null)
+    {
+        string nonKey = string.Empty;
+        if (nonKeyCsv is not null)
+        {
+            var quoted = string.Join(",", Array.ConvertAll(nonKeyCsv.Split(','), a => "\"" + a + "\""));
+            nonKey = ",\"nonKeyAttributes\":[" + quoted + "]";
+        }
+        return "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+            + "\"tableName\":\"orders\","
+            + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"" + sortName + "\",\"type\":\"" + sortType + "\"}],"
+            + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}],"
+            + "\"localSecondaryIndexes\":[{\"indexName\":\"ix_created\","
+            + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"" + sortName + "\",\"keyType\":\"RANGE\"}],"
+            + "\"projectionType\":\"" + projectionType + "\"" + nonKey + "}],"
+            + "\"globalSecondaryIndexes\":[{\"indexName\":\"gsi1\","
+            + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}],"
+            + "\"projectionType\":\"ALL\"}],"
+            + "\"billingMode\":\"PAY_PER_REQUEST\"}";
+    }
+
     private static CosmosClient BuildClient(ScriptedHandler handler)
     {
         var http = new AzureHttpClient(handler, ownsHandler: false,
@@ -693,16 +720,178 @@ public class ScanHandlerTests
     }
 
     [Fact]
-    public async Task Scan_index_name_is_rejected()
+    public async Task Scan_gsi_index_name_is_rejected()
     {
         var (ctx, body) = NewCtx();
-        var cosmos = BuildClient(new ScriptedHandler());
+        var handler = new ScriptedHandler { Responses = { CosmosOk(MetaWithLsi("createdAt", "S", "ALL")) } };
+        var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"IndexName\":\"gsi1\"}";
         await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
-        Assert.Contains("secondary indexes", ReadResponse(body));
+        Assert.Contains("global secondary indexes", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task Scan_unknown_index_name_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler { Responses = { CosmosOk(MetaWithLsi("createdAt", "S", "ALL")) } };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"nope\"}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("does not have the specified index", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task Scan_lsi_emits_is_defined_guard_and_stays_cross_partition()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaWithLsi("createdAt", "S", "ALL")),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"createdAt\":{\"S\":\"2024\"}}"),
+                    DocWithItem("b", "b", "{\"pk\":{\"S\":\"b\"},\"createdAt\":{\"S\":\"2025\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"ix_created\"}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        var qr = handler.Requests[1];
+        // Sparse-index guard restricts the scan to index members; the scan
+        // still fans out cross-partition (no partition-key scoping).
+        Assert.Contains("IS_DEFINED(c[\\\"createdAt\\\"])", qr.Body);
+        Assert.Equal("true", qr.Headers["x-ms-documentdb-query-enablecrosspartition"]);
+        Assert.False(qr.Headers.ContainsKey("x-ms-documentdb-partitionkey"));
+
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(2, resp.RootElement.GetProperty("Count").GetInt32());
+        Assert.Equal(2, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+    }
+
+    [Fact]
+    public async Task Scan_lsi_keys_only_projection_projects_keys_plus_index_attr()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaWithLsi("createdAt", "S", "KEYS_ONLY")),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a",
+                        "{\"pk\":{\"S\":\"a\"},\"createdAt\":{\"S\":\"2024\"},\"extra\":{\"S\":\"drop-me\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"ix_created\"}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        var item = resp.RootElement.GetProperty("Items")[0];
+        Assert.True(item.TryGetProperty("pk", out _));
+        Assert.True(item.TryGetProperty("createdAt", out _));
+        Assert.False(item.TryGetProperty("extra", out _));
+    }
+
+    [Fact]
+    public async Task Scan_lsi_include_projection_keeps_listed_non_key_attributes()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaWithLsi("createdAt", "S", "INCLUDE", "keep")),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a",
+                        "{\"pk\":{\"S\":\"a\"},\"createdAt\":{\"S\":\"2024\"},\"keep\":{\"S\":\"y\"},\"drop\":{\"S\":\"n\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"ix_created\"}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        var item = resp.RootElement.GetProperty("Items")[0];
+        Assert.True(item.TryGetProperty("keep", out _));
+        Assert.True(item.TryGetProperty("createdAt", out _));
+        Assert.False(item.TryGetProperty("drop", out _));
+    }
+
+    [Fact]
+    public async Task Scan_lsi_select_all_projected_attributes_is_allowed()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaWithLsi("createdAt", "S", "ALL")),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"createdAt\":{\"S\":\"2024\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"ix_created\",\"Select\":\"ALL_PROJECTED_ATTRIBUTES\"}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
+    }
+
+    [Fact]
+    public async Task Scan_lsi_pushed_filter_recovers_scanned_count_with_is_defined_scope()
+    {
+        // With a FilterExpression pushed server-side, the faithful ScannedCount
+        // (index members examined) is recovered via SELECT VALUE COUNT(1) over
+        // the index scope (IS_DEFINED) minus the pushed filter.
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaWithLsi("createdAt", "S", "ALL")),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"createdAt\":{\"S\":\"2024\"},\"v\":{\"S\":\"x\"}}"))),
+                CosmosOk(CountEnvelope(7)),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"ix_created\","
+                  + "\"FilterExpression\":\"v = :v\","
+                  + "\"ExpressionAttributeValues\":{\":v\":{\"S\":\"x\"}}}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
+        Assert.Equal(7, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+
+        Assert.Equal(3, handler.Requests.Count);
+        var countReq = handler.Requests[2];
+        Assert.Contains("SELECT VALUE COUNT(1)", countReq.Body);
+        // The aggregate scopes to the index (IS_DEFINED) but excludes the
+        // pushed user filter.
+        Assert.Contains("IS_DEFINED(c[\\\"createdAt\\\"])", countReq.Body);
+        Assert.DoesNotContain("@fp0", countReq.Body);
     }
 
     [Fact]
