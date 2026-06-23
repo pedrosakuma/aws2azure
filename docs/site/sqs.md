@@ -252,24 +252,27 @@
 
 ## ListQueueTags
 
-- **Status:** ⚪ stub
-- **Azure equivalent:** `No native Service Bus equivalent — returns an empty Tags map after validating queue existence.`
+- **Status:** 🟡 partial
+- **Azure equivalent:** `GET QueueDescription and decode aws2azure's base64 tag blob from UserMetadata.`
 
 ### Sub-features
 
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
 | Queue existence validation | ✅ implemented | Returns NonExistentQueue if the SB queue does not exist. |  |  |
-| Tags round-trip | ⛔ unsupported |  | SB queues have no per-queue tag surface in the REST control plane. The proxy returns an empty Tags map until a durable namespace-metadata store lands. |  |
+| Tags round-trip | ✅ implemented | Decodes the SQS tag map persisted by TagQueue/UntagQueue in QueueDescription.UserMetadata. |  |  |
+| Empty / foreign metadata handling | ✅ implemented | Missing, empty, non-base64, or non-aws2azure UserMetadata is treated as an empty SQS tag map. |  |  |
 
 ### Behaviour differences
 
-- Always returns an empty Tags map for any existing queue. Clients using tagging as a billing-allocation signal should expect zero data; an actual implementation requires a side-store (mirrors the S3 bucket-tagging trick from Phase 1 Slice 9).
-- Verified against in-process fakes; emulator-backed validation is blocked (SB emulator does not expose management REST).
+- Tags are stored as an aws2azure-owned compact binary tag map, base64-encoded into Service Bus QueueDescription.UserMetadata. Azure-side tools will see the opaque base64 blob rather than individual tag keys.
+- Service Bus UserMetadata is limited to roughly 1024 characters in the legacy management schema, so TagQueue may reject otherwise-valid SQS tag sets that cannot fit.
+- Verified with in-process Service Bus management fakes. The Service Bus emulator does not validate or persist this management-plane UserMetadata path; real-Azure validation remains pending.
 
 ### References
 
 - <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListQueueTags.html>
+- <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-xml-management-api>
 
 ## ListQueues
 
@@ -477,42 +480,50 @@
 
 ## TagQueue
 
-- **Status:** ⚪ stub
-- **Azure equivalent:** `No native Service Bus equivalent — validates queue existence and returns success.`
+- **Status:** 🟡 partial
+- **Azure equivalent:** `GET + PUT QueueDescription with aws2azure's base64 tag blob stored in UserMetadata.`
 
 ### Sub-features
 
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
 | Queue existence validation | ✅ implemented | Returns NonExistentQueue if the SB queue does not exist. |  |  |
-| Tag persistence | ⛔ unsupported |  | Tags are accepted and dropped on the floor; subsequent ListQueueTags will not see them. |  |
+| Tag persistence | ✅ implemented | Merges requested SQS tags into the existing tag map and persists them in QueueDescription.UserMetadata. |  |  |
+| SQS tag limits | ✅ implemented | Enforces at most 50 tags, key length 1..128, and value length 0..256 before writing. |  |  |
+| UserMetadata capacity guard | 🟡 partial | Requests whose compact base64 blob would exceed Service Bus's 1024-character UserMetadata limit fail with InvalidParameterValue. |  |  |
 
 ### Behaviour differences
 
-- Tags are not persisted: a TagQueue → ListQueueTags round-trip returns an empty Tags map. Clients depending on tags for cost-allocation or governance should be aware that aws2azure does not store them. A durable side-store is tracked for the NFR phase.
-- No throttling or per-resource tag-count cap is enforced (SQS allows up to 50 tags); since nothing is stored, the cap is moot.
+- Tags are stored as an aws2azure-owned compact binary tag map, base64-encoded into Service Bus QueueDescription.UserMetadata. This preserves AWS tag keys and values exactly but consumes the queue's native UserMetadata field.
+- Service Bus UserMetadata is limited to roughly 1024 characters in the legacy management schema, so valid SQS tag sets near the 50-tag / 128-key / 256-value maximum may be rejected when the serialized blob does not fit.
+- Verified with in-process Service Bus management fakes. The Service Bus emulator does not validate or persist this management-plane UserMetadata path; real-Azure validation remains pending.
 
 ### References
 
 - <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_TagQueue.html>
+- <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-xml-management-api>
 
 ## UntagQueue
 
-- **Status:** ⚪ stub
-- **Azure equivalent:** `No native Service Bus equivalent — validates queue existence and returns success.`
+- **Status:** 🟡 partial
+- **Azure equivalent:** `GET + PUT QueueDescription with aws2azure's base64 tag blob stored in UserMetadata.`
 
 ### Sub-features
 
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
 | Queue existence validation | ✅ implemented | Returns NonExistentQueue if the SB queue does not exist. |  |  |
-| Tag removal | ⛔ unsupported |  | Tags are never persisted (see TagQueue gap doc), so removal is a no-op. |  |
+| Tag removal | ✅ implemented | Reads the stored tag map from UserMetadata, removes requested keys, and writes the updated QueueDescription. |  |  |
+| UserMetadata capacity guard | 🟡 partial | Updated tag blobs are kept within Service Bus's 1024-character UserMetadata limit. |  |  |
 
 ### Behaviour differences
 
-- No-op: returns 200 OK regardless of the TagKey list because no tags are stored.
+- Tags are stored as an aws2azure-owned compact binary tag map, base64-encoded into Service Bus QueueDescription.UserMetadata. Removing the last tag clears that UserMetadata value.
+- Service Bus UserMetadata is limited to roughly 1024 characters in the legacy management schema; aws2azure rejects updates that cannot fit the serialized tag map.
+- Verified with in-process Service Bus management fakes. The Service Bus emulator does not validate or persist this management-plane UserMetadata path; real-Azure validation remains pending.
 
 ### References
 
 - <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_UntagQueue.html>
+- <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-xml-management-api>
 

@@ -271,9 +271,8 @@ internal static class SqsResponseWriter
             xmlContent: null);
 
     /// <summary>
-    /// Writes a ListQueueTags response. Service Bus has no native tag
-    /// surface, so the proxy returns an empty Tags map until a metadata
-    /// store lands.
+    /// Writes a ListQueueTags response from tags persisted in the Service
+    /// Bus queue's UserMetadata field.
     /// </summary>
     public static Task WriteListQueueTagsAsync(
         HttpContext ctx, SqsWireProtocol protocol, IReadOnlyDictionary<string, string> tags)

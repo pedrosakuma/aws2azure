@@ -222,6 +222,10 @@ internal static class AtomQueueXmlReader
                     p.UpdatedAt = ReadDate(reader);
                     advanced = true;
                     break;
+                case "UserMetadata":
+                    p.UserMetadata = reader.ReadElementContentAsString();
+                    advanced = true;
+                    break;
                 default:
                     // Skip properties we don't model yet. Slice 4+ will add
                     // SetQueueAttributes round-tripping for the full set.
@@ -336,6 +340,12 @@ internal static class AtomQueueXmlWriter
             {
                 w.WriteElementString("ForwardDeadLetteredMessagesTo", AtomQueueXmlReader.SbNs,
                     props.ForwardDeadLetteredMessagesTo);
+            }
+            if (props.UserMetadata is not null)
+            {
+                // QueueDescription's legacy schema is order-sensitive:
+                // UserMetadata belongs near the end, after forwarding fields.
+                w.WriteElementString("UserMetadata", AtomQueueXmlReader.SbNs, props.UserMetadata);
             }
             w.WriteEndElement(); // QueueDescription
             w.WriteEndElement(); // content

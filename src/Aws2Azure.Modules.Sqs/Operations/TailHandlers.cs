@@ -14,8 +14,9 @@ namespace Aws2Azure.Modules.Sqs.Operations;
 /// <summary>
 /// Slice-5 "long-tail" handlers: <c>ListDeadLetterSourceQueues</c> (real
 /// implementation backed by the Service Bus queue metadata), plus the
-/// tagging and permission ops which Service Bus has no native equivalent
-/// for and are therefore implemented as queue-existence-validated stubs.
+/// queue tagging (persisted in QueueDescription.UserMetadata), plus the
+/// permission ops which Service Bus has no native equivalent for and are
+/// therefore implemented as queue-existence-validated stubs.
 /// </summary>
 internal static class TailHandlers
 {
@@ -156,27 +157,97 @@ internal static class TailHandlers
         return 0;
     }
 
-    // --- Tag stubs ------------------------------------------------------
+    // --- Queue tags -----------------------------------------------------
 
     private static async Task ListQueueTagsAsync(
         HttpContext context, SqsParseResult parsed, ServiceBusClient sb, CancellationToken ct)
     {
-        if (await EnsureQueueExistsAsync(context, parsed, sb, ct).ConfigureAwait(false) is false) return;
-        await SqsResponseWriter.WriteListQueueTagsAsync(context, parsed.Protocol,
-            new Dictionary<string, string>(StringComparer.Ordinal)).ConfigureAwait(false);
+        var entry = await ReadQueueEntryAsync(context, parsed, sb, ct).ConfigureAwait(false);
+        if (entry is null) return;
+
+        var tags = SqsQueueTagStore.Decode(entry.Properties.UserMetadata);
+        await SqsResponseWriter.WriteListQueueTagsAsync(context, parsed.Protocol, tags).ConfigureAwait(false);
     }
 
     private static async Task TagQueueAsync(
         HttpContext context, SqsParseResult parsed, ServiceBusClient sb, CancellationToken ct)
     {
-        if (await EnsureQueueExistsAsync(context, parsed, sb, ct).ConfigureAwait(false) is false) return;
+        if (!SqsQueueTagStore.TryParseTagQueueRequest(parsed, out var requestedTags, out var parseError))
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.InvalidParameterValue("Tags", parseError ?? "Tags are invalid.")).ConfigureAwait(false);
+            return;
+        }
+        if (SqsQueueTagStore.ValidateTagMap(requestedTags) is { } validationError)
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.InvalidParameterValue("Tags", validationError)).ConfigureAwait(false);
+            return;
+        }
+
+        var entry = await ReadQueueEntryAsync(context, parsed, sb, ct).ConfigureAwait(false);
+        if (entry is null) return;
+
+        var tags = SqsQueueTagStore.Decode(entry.Properties.UserMetadata);
+        foreach (var kv in requestedTags)
+        {
+            tags[kv.Key] = kv.Value;
+        }
+        if (SqsQueueTagStore.ValidateTagMap(tags) is { } mergedError)
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.InvalidParameterValue("Tags", mergedError)).ConfigureAwait(false);
+            return;
+        }
+        if (!SqsQueueTagStore.TryEncode(tags, out var userMetadata))
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.InvalidParameterValue("Tags",
+                    $"Serialized queue tags exceed the Azure Service Bus UserMetadata limit of {SqsQueueTagStore.UserMetadataMaxLength} characters."))
+                .ConfigureAwait(false);
+            return;
+        }
+
+        entry.Properties.UserMetadata = userMetadata;
+        if (!await UpdateQueueEntryAsync(context, parsed, sb, entry.Properties, ct).ConfigureAwait(false)) return;
         await SqsResponseWriter.WriteTagQueueAsync(context, parsed.Protocol).ConfigureAwait(false);
     }
 
     private static async Task UntagQueueAsync(
         HttpContext context, SqsParseResult parsed, ServiceBusClient sb, CancellationToken ct)
     {
-        if (await EnsureQueueExistsAsync(context, parsed, sb, ct).ConfigureAwait(false) is false) return;
+        if (!SqsQueueTagStore.TryParseUntagQueueRequest(parsed, out var tagKeys, out var parseError))
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.InvalidParameterValue("TagKeys", parseError ?? "TagKeys are invalid.")).ConfigureAwait(false);
+            return;
+        }
+        if (SqsQueueTagStore.ValidateTagKeys(tagKeys) is { } validationError)
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.InvalidParameterValue("TagKeys", validationError)).ConfigureAwait(false);
+            return;
+        }
+
+        var entry = await ReadQueueEntryAsync(context, parsed, sb, ct).ConfigureAwait(false);
+        if (entry is null) return;
+
+        var tags = SqsQueueTagStore.Decode(entry.Properties.UserMetadata);
+        for (var i = 0; i < tagKeys.Count; i++)
+        {
+            tags.Remove(tagKeys[i]);
+        }
+        if (!SqsQueueTagStore.TryEncode(tags, out var userMetadata))
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.InvalidParameterValue("TagKeys",
+                    $"Serialized queue tags exceed the Azure Service Bus UserMetadata limit of {SqsQueueTagStore.UserMetadataMaxLength} characters."))
+                .ConfigureAwait(false);
+            return;
+        }
+
+        entry.Properties.UserMetadata = userMetadata;
+        if (!await UpdateQueueEntryAsync(context, parsed, sb, entry.Properties, ct).ConfigureAwait(false)) return;
         await SqsResponseWriter.WriteUntagQueueAsync(context, parsed.Protocol).ConfigureAwait(false);
     }
 
@@ -230,6 +301,72 @@ internal static class TailHandlers
             await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.FromServiceBus(response)).ConfigureAwait(false);
             return false;
         }
+        return true;
+    }
+
+    private static async Task<AtomQueueXmlReader.QueueEntry?> ReadQueueEntryAsync(
+        HttpContext context, SqsParseResult parsed, ServiceBusClient sb, CancellationToken ct)
+    {
+        var queueName = ResolveQueueNameOrNull(parsed);
+        if (queueName is null)
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.InvalidParameterValue("QueueUrl", "QueueUrl is required.")).ConfigureAwait(false);
+            return null;
+        }
+        if (!QueueName.IsValid(queueName))
+        {
+            await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.QueueNameInvalid()).ConfigureAwait(false);
+            return null;
+        }
+
+        using var response = await sb.GetQueueAsync(queueName, ct).ConfigureAwait(false);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.QueueDoesNotExist()).ConfigureAwait(false);
+            return null;
+        }
+        if (!response.IsSuccessStatusCode)
+        {
+            await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.FromServiceBus(response)).ConfigureAwait(false);
+            return null;
+        }
+
+        var xml = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        var entry = AtomQueueXmlReader.ParseQueueEntry(xml);
+        if (entry is null)
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.InternalError("aws2azure: failed to parse Service Bus queue description.")).ConfigureAwait(false);
+            return null;
+        }
+
+        return entry;
+    }
+
+    private static async Task<bool> UpdateQueueEntryAsync(
+        HttpContext context,
+        SqsParseResult parsed,
+        ServiceBusClient sb,
+        QueueDescriptionProperties properties,
+        CancellationToken ct)
+    {
+        var queueName = ResolveQueueNameOrNull(parsed);
+        if (queueName is null)
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.InvalidParameterValue("QueueUrl", "QueueUrl is required.")).ConfigureAwait(false);
+            return false;
+        }
+
+        var atomBody = AtomQueueXmlWriter.BuildQueueEntry(properties);
+        using var putResp = await sb.UpdateQueueAsync(queueName, atomBody, ct).ConfigureAwait(false);
+        if (!putResp.IsSuccessStatusCode)
+        {
+            await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.FromServiceBus(putResp)).ConfigureAwait(false);
+            return false;
+        }
+
         return true;
     }
 

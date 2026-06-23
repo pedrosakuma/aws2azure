@@ -19,8 +19,9 @@ namespace Aws2Azure.UnitTests.Sqs;
 
 /// <summary>
 /// Slice-5 long-tail handler tests: <c>ListDeadLetterSourceQueues</c> walks
-/// SB pages and filters by <c>ForwardDeadLetteredMessagesTo</c>, while the
-/// tag / permission stubs all gate on queue existence.
+/// SB pages and filters by <c>ForwardDeadLetteredMessagesTo</c>, queue tags
+/// round-trip through QueueDescription.UserMetadata, and permission stubs
+/// gate on queue existence.
 /// </summary>
 public sealed class TailHandlersTests
 {
@@ -107,9 +108,176 @@ public sealed class TailHandlersTests
         Assert.DoesNotContain("<Tag>", body);
     }
 
+    [Fact]
+    public void SqsQueueTagStore_round_trips_special_characters()
+    {
+        var tags = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["env"] = "prod",
+            ["unicode-✓"] = "a=b&c<d>\"'",
+        };
+
+        Assert.True(SqsQueueTagStore.TryEncode(tags, out var metadata));
+        var decoded = SqsQueueTagStore.Decode(metadata);
+
+        Assert.Equal(tags.Count, decoded.Count);
+        Assert.Equal("prod", decoded["env"]);
+        Assert.Equal("a=b&c<d>\"'", decoded["unicode-✓"]);
+    }
+
+    [Fact]
+    public async Task TagQueue_ListQueueTags_UntagQueue_round_trips_through_user_metadata()
+    {
+        var userMetadata = string.Empty;
+        var handler = new ScriptedHandler();
+        handler.Enqueue(_ => Atom200("q1", dlqTarget: null, userMetadata));
+        handler.Enqueue(async req =>
+        {
+            Assert.Equal(HttpMethod.Put, req.Method);
+            Assert.Contains("If-Match", req.Headers.ToString());
+            userMetadata = ReadElementValue(await req.Content!.ReadAsStringAsync().ConfigureAwait(false), "UserMetadata");
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+        handler.Enqueue(_ => Atom200("q1", dlqTarget: null, userMetadata));
+        handler.Enqueue(_ => Atom200("q1", dlqTarget: null, userMetadata));
+        handler.Enqueue(async req =>
+        {
+            Assert.Equal(HttpMethod.Put, req.Method);
+            userMetadata = ReadElementValue(await req.Content!.ReadAsStringAsync().ConfigureAwait(false), "UserMetadata");
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+        handler.Enqueue(_ => Atom200("q1", dlqTarget: null, userMetadata));
+
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var sb = new ServiceBusClient(http, Creds);
+
+        var tagCtx = NewCtx();
+        await TailHandlers.HandleAsync(tagCtx, QueryParsed(SqsOperation.TagQueue,
+            ("QueueUrl", "https://sqs.us-east-1.amazonaws.com/000000000000/q1"),
+            ("Tag.1.Key", "env"),
+            ("Tag.1.Value", "prod"),
+            ("Tag.2.Key", "owner"),
+            ("Tag.2.Value", "platform")), sb, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, tagCtx.Response.StatusCode);
+        Assert.False(string.IsNullOrEmpty(userMetadata));
+
+        var listCtx = NewCtx();
+        await TailHandlers.HandleAsync(listCtx, QueryParsed(SqsOperation.ListQueueTags,
+            ("QueueUrl", "https://sqs.us-east-1.amazonaws.com/000000000000/q1")), sb, CancellationToken.None);
+        var listBody = ReadBody(listCtx);
+        Assert.Contains("<Key>env</Key>", listBody);
+        Assert.Contains("<Value>prod</Value>", listBody);
+        Assert.Contains("<Key>owner</Key>", listBody);
+
+        var untagCtx = NewCtx();
+        await TailHandlers.HandleAsync(untagCtx, QueryParsed(SqsOperation.UntagQueue,
+            ("QueueUrl", "https://sqs.us-east-1.amazonaws.com/000000000000/q1"),
+            ("TagKey.1", "env")), sb, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, untagCtx.Response.StatusCode);
+
+        var finalListCtx = NewCtx();
+        await TailHandlers.HandleAsync(finalListCtx, QueryParsed(SqsOperation.ListQueueTags,
+            ("QueueUrl", "https://sqs.us-east-1.amazonaws.com/000000000000/q1")), sb, CancellationToken.None);
+        var finalBody = ReadBody(finalListCtx);
+        Assert.DoesNotContain("<Key>env</Key>", finalBody);
+        Assert.Contains("<Key>owner</Key>", finalBody);
+    }
+
+    [Fact]
+    public async Task TagQueue_and_ListQueueTags_support_aws_json_protocol()
+    {
+        var userMetadata = string.Empty;
+        var handler = new ScriptedHandler();
+        handler.Enqueue(_ => Atom200("q1", dlqTarget: null, userMetadata));
+        handler.Enqueue(async req =>
+        {
+            userMetadata = ReadElementValue(await req.Content!.ReadAsStringAsync().ConfigureAwait(false), "UserMetadata");
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+        handler.Enqueue(_ => Atom200("q1", dlqTarget: null, userMetadata));
+
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var sb = new ServiceBusClient(http, Creds);
+
+        var tagCtx = NewCtx();
+        await TailHandlers.HandleAsync(tagCtx, JsonParsed(SqsOperation.TagQueue,
+            "{\"QueueUrl\":\"https://sqs.us-east-1.amazonaws.com/000000000000/q1\",\"Tags\":{\"env\":\"prod\"}}"),
+            sb, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, tagCtx.Response.StatusCode);
+
+        var listCtx = NewCtx();
+        await TailHandlers.HandleAsync(listCtx, JsonParsed(SqsOperation.ListQueueTags,
+            "{\"QueueUrl\":\"https://sqs.us-east-1.amazonaws.com/000000000000/q1\"}"),
+            sb, CancellationToken.None);
+
+        var body = ReadBody(listCtx);
+        Assert.Contains("\"Tags\"", body);
+        Assert.Contains("\"env\"", body);
+        Assert.Contains("\"prod\"", body);
+    }
+
+    [Fact]
+    public async Task UntagQueue_supports_aws_json_protocol()
+    {
+        var tags = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["env"] = "prod",
+            ["owner"] = "platform",
+        };
+        Assert.True(SqsQueueTagStore.TryEncode(tags, out var userMetadata));
+        var handler = new ScriptedHandler();
+        handler.Enqueue(_ => Atom200("q1", dlqTarget: null, userMetadata));
+        handler.Enqueue(async req =>
+        {
+            userMetadata = ReadElementValue(await req.Content!.ReadAsStringAsync().ConfigureAwait(false), "UserMetadata");
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+        handler.Enqueue(_ => Atom200("q1", dlqTarget: null, userMetadata));
+
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var sb = new ServiceBusClient(http, Creds);
+
+        var untagCtx = NewCtx();
+        await TailHandlers.HandleAsync(untagCtx, JsonParsed(SqsOperation.UntagQueue,
+            "{\"QueueUrl\":\"https://sqs.us-east-1.amazonaws.com/000000000000/q1\",\"TagKeys\":[\"env\"]}"),
+            sb, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, untagCtx.Response.StatusCode);
+
+        var listCtx = NewCtx();
+        await TailHandlers.HandleAsync(listCtx, JsonParsed(SqsOperation.ListQueueTags,
+            "{\"QueueUrl\":\"https://sqs.us-east-1.amazonaws.com/000000000000/q1\"}"),
+            sb, CancellationToken.None);
+
+        var body = ReadBody(listCtx);
+        Assert.DoesNotContain("\"env\"", body);
+        Assert.Contains("\"owner\"", body);
+    }
+
+    [Fact]
+    public async Task TagQueue_rejects_tags_that_exceed_user_metadata_limit()
+    {
+        var handler = new ScriptedHandler();
+        handler.Enqueue(_ => Atom200("q1", dlqTarget: null));
+
+        var ctx = NewCtx();
+        var parsed = QueryParsed(SqsOperation.TagQueue,
+            ("QueueUrl", "https://sqs.us-east-1.amazonaws.com/000000000000/q1"),
+            ("Tag.1.Key", "large"),
+            ("Tag.1.Value", new string('x', 256)),
+            ("Tag.2.Key", "large2"),
+            ("Tag.2.Value", new string('y', 256)),
+            ("Tag.3.Key", "large3"),
+            ("Tag.3.Value", new string('z', 256)));
+
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var sb = new ServiceBusClient(http, Creds);
+        await TailHandlers.HandleAsync(ctx, parsed, sb, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        Assert.Contains("UserMetadata limit", ReadBody(ctx));
+    }
+
     [Theory]
-    [InlineData(SqsOperation.TagQueue, "TagQueueResponse")]
-    [InlineData(SqsOperation.UntagQueue, "UntagQueueResponse")]
     [InlineData(SqsOperation.AddPermission, "AddPermissionResponse")]
     [InlineData(SqsOperation.RemovePermission, "RemovePermissionResponse")]
     public async Task Stub_handlers_succeed_for_existing_queue(SqsOperation op, string envelope)
@@ -246,6 +414,20 @@ public sealed class TailHandlersTests
         return new SqsParseResult(SqsWireProtocol.Query, op, dict, JsonBody: null, Error: null);
     }
 
+    private static SqsParseResult JsonParsed(SqsOperation op, string jsonBody)
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(jsonBody);
+        var dict = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var prop in doc.RootElement.EnumerateObject())
+        {
+            if (prop.Value.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                dict[prop.Name] = prop.Value.GetString() ?? string.Empty;
+            }
+        }
+        return new SqsParseResult(SqsWireProtocol.AwsJson, op, dict, JsonBody: jsonBody, Error: null);
+    }
+
     private static string ReadBody(HttpContext ctx)
     {
         ctx.Response.Body.Position = 0;
@@ -253,12 +435,14 @@ public sealed class TailHandlersTests
         return reader.ReadToEnd();
     }
 
-    private static HttpResponseMessage Atom200(string name, string? dlqTarget)
+    private static HttpResponseMessage Atom200(string name, string? dlqTarget, string? userMetadata = null)
     {
         var qd = "<QueueDescription xmlns=\"" + SbNs + "\">" +
                  "<LockDuration>PT30S</LockDuration>" +
                  (dlqTarget is null ? string.Empty :
                     "<ForwardDeadLetteredMessagesTo>" + dlqTarget + "</ForwardDeadLetteredMessagesTo>") +
+                 (userMetadata is null ? string.Empty :
+                    "<UserMetadata>" + WebUtility.HtmlEncode(userMetadata) + "</UserMetadata>") +
                  "</QueueDescription>";
         var body =
             "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
@@ -291,11 +475,30 @@ public sealed class TailHandlersTests
         return sb.ToString();
     }
 
+    private static string ReadElementValue(string xml, string name)
+    {
+        var startTag = "<" + name + ">";
+        var endTag = "</" + name + ">";
+        var start = xml.IndexOf(startTag, StringComparison.Ordinal);
+        if (start < 0)
+        {
+            var emptyTag = "<" + name + " />";
+            if (xml.Contains(emptyTag, StringComparison.Ordinal)) return string.Empty;
+            return string.Empty;
+        }
+        start += startTag.Length;
+        var end = xml.IndexOf(endTag, start, StringComparison.Ordinal);
+        return end < 0 ? string.Empty : WebUtility.HtmlDecode(xml[start..end]);
+    }
+
     private sealed class ScriptedHandler : HttpMessageHandler
     {
-        private readonly Queue<Func<HttpRequestMessage, HttpResponseMessage>> _responses = new();
+        private readonly Queue<Func<HttpRequestMessage, Task<HttpResponseMessage>>> _responses = new();
 
-        public void Enqueue(Func<HttpRequestMessage, HttpResponseMessage> builder) => _responses.Enqueue(builder);
+        public void Enqueue(Func<HttpRequestMessage, HttpResponseMessage> builder) =>
+            _responses.Enqueue(request => Task.FromResult(builder(request)));
+
+        public void Enqueue(Func<HttpRequestMessage, Task<HttpResponseMessage>> builder) => _responses.Enqueue(builder);
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -307,7 +510,7 @@ public sealed class TailHandlersTests
                 });
             }
             var build = _responses.Dequeue();
-            return Task.FromResult(build(request));
+            return build(request);
         }
     }
 }

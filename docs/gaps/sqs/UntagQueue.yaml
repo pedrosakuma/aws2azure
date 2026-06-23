@@ -1,11 +1,15 @@
 service: sqs
 operation: UntagQueue
-azure_equivalent: "No native Service Bus equivalent — validates queue existence and returns success."
-status: stub
+azure_equivalent: "GET + PUT QueueDescription with aws2azure's base64 tag blob stored in UserMetadata."
+status: partial
 sub_features:
   - {name: "Queue existence validation", status: implemented, notes: "Returns NonExistentQueue if the SB queue does not exist."}
-  - {name: "Tag removal", status: unsupported, gap: "Tags are never persisted (see TagQueue gap doc), so removal is a no-op."}
+  - {name: "Tag removal", status: implemented, notes: "Reads the stored tag map from UserMetadata, removes requested keys, and writes the updated QueueDescription."}
+  - {name: "UserMetadata capacity guard", status: partial, notes: "Updated tag blobs are kept within Service Bus's 1024-character UserMetadata limit."}
 behavior_differences:
-  - "No-op: returns 200 OK regardless of the TagKey list because no tags are stored."
+  - "Tags are stored as an aws2azure-owned compact binary tag map, base64-encoded into Service Bus QueueDescription.UserMetadata. Removing the last tag clears that UserMetadata value."
+  - "Service Bus UserMetadata is limited to roughly 1024 characters in the legacy management schema; aws2azure rejects updates that cannot fit the serialized tag map."
+  - "Verified with in-process Service Bus management fakes. The Service Bus emulator does not validate or persist this management-plane UserMetadata path; real-Azure validation remains pending."
 references:
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_UntagQueue.html
+  - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-xml-management-api
