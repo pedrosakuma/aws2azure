@@ -258,7 +258,7 @@ different question:
 
 | Tier | Where | Cadence | Answers |
 |------|-------|---------|---------|
-| **0 — mechanism micro-guard** | `tests/Aws2Azure.UnitTests` (e.g. `CosmosFusedEnvelopeAllocTests`) | every PR (`ci.yml`) | *Does the optimized code path still allocate/compute less than the path it replaced?* Deterministic `GC.GetAllocatedBytesForCurrentThread` deltas — fast, exact, non-flaky. |
+| **0 — mechanism micro-guard** | `tests/Aws2Azure.UnitTests` (`CosmosFusedEnvelopeAllocTests` relative guard + `TranslationAllocGateTests` absolute alloc/op ceilings, #459) | every PR (`ci.yml`) | *Does the optimized code path still allocate/compute less than the path it replaced, and does any backendless translation path stay under its committed alloc/op floor?* Deterministic `GC.GetAllocatedBytesForCurrentThread` deltas — fast, exact, non-flaky. |
 | **1 — emulator throughput** | `tests/Aws2Azure.PerfTests` + emulators | nightly (`perf.yml`) | *Does proxy overhead regress vs the SDK baseline?* Relative + resource gating (above). Emulator-bound — **never emits CosmosBinary**, so it only ever exercises the text path. |
 | **2 — real-Azure A/B (falsification arbiter)** | `tests/Aws2Azure.PerfTests` against live Azure | weekly (`perf-real-azure.yml`) | *Does the mechanism win (Tier 0) translate to a real throughput/latency improvement?* Runs the same scenarios twice — text vs binary — against real Cosmos and compares. |
 
@@ -294,6 +294,51 @@ emulator baseline) for the A/B comparison, not asserted as absolutes.
 > regime to observe it; outside it, a confirmed Tier 0 win can read as
 > "no end-to-end benefit" — which is the correct, honest verdict for that
 > deployment shape.
+
+### Tier 0 alloc/op gate — `microbench-reference.json` (#459)
+
+The backendless DynamoDb translation micro-benchmarks
+(`tests/Aws2Azure.Benchmarks`: `CosmosFusedEnvelopeBenchmarks` decode,
+`Spike332/CosmosWriteEncodeBenchmarks` encode) prove the CPU/alloc *mechanism*
+but are dev-only — they never run in CI, so a CPU/alloc regression in a hot
+translation path could merge undetected. `TranslationAllocGateTests`
+(`tests/Aws2Azure.UnitTests/DynamoDb/Persistence`) promotes them into a cheap
+per-PR gate: it drives the **production** DDB→Cosmos encode/decode entry points
+over the same `lean` / `payload_512` / `wide_20s_20n` shapes with no backend,
+measures **alloc/op** with `GC.GetAllocatedBytesForCurrentThread` (exact, not
+sampled — deterministic byte-for-byte, independent of CPU/runner noise), and
+fails when a path exceeds its committed ceiling in
+[`microbench-reference.json`](./microbench-reference.json). It runs in the fast
+`ci.yml` unit-test leg (sub-second), so no extra workflow or AOT publish.
+
+Only **alloc/op** is gated; absolute **time** is a non-goal (runner-bound
+noise) — this extends the *relative > absolute* / versioned-floor philosophy of
+`baseline-reference.json` to the in-memory hot paths. Each scenario carries a
+`maxAllocBytesPerOp` ceiling; `0` opts a scenario out of gating, and a coverage
+drift guard fails the build if a gate scenario has no entry (or vice versa), so
+a missing floor can never silently pass.
+
+**Bumping a floor.** A regression should be *investigated*, not waved through.
+Only raise a `maxAllocBytesPerOp` ceiling when a code change is **expected** to
+increase allocation (and the tradeoff is justified) — never to make a red gate
+green by reflex. When you do:
+
+1. Run the gate locally to read the new measured `B/op` (the per-scenario lines
+   are printed via `ITestOutputHelper`):
+
+   ```bash
+   dotnet test tests/Aws2Azure.UnitTests -c Release \
+     --filter "FullyQualifiedName~TranslationAllocGateTests" \
+     --logger "console;verbosity=detailed"
+   ```
+
+2. Set the ceiling ~1.5× the new measured min (round to a tidy number) so it
+   keeps catching a real regression (a re-materialized intermediate buffer, a
+   per-attribute string round-trip, a lost pooled-buffer reuse) without
+   flapping on minor runtime-version drift.
+3. Cite the harness and the reason in the PR — per the repo convention *"Perf
+   claims must cite the harness"*, a floor change must reference the scenario
+   that produced the number and why the allocation moved.
 
 ### Saturation sweep (Tier 2 knee)
 

@@ -1,0 +1,19 @@
+{
+  "comment": "Tier 0 alloc/op regression floors for the backendless DynamoDb translation micro-benchmarks (issue #459), enforced per-PR by Aws2Azure.UnitTests.DynamoDb.Persistence.TranslationAllocGateTests in the fast ci.yml unit-test leg. Each scenario maps to a maxAllocBytesPerOp ceiling on the MINIMUM managed bytes allocated per op (GC.GetAllocatedBytesForCurrentThread, exact/deterministic — independent of CPU/runner noise, so the absolute floor is stable run-to-run unlike timing). Extends the 'relative > absolute' philosophy of baseline-reference.json to the in-memory translation hot paths: alloc/op is gated (per #459), absolute TIME is NOT (runner-bound noise). A ceiling of 0 opts a scenario out of gating; every gate scenario must still carry an entry (a coverage drift guard fails the build otherwise). Ceilings are seeded ~1.5x the measured min B/op so a real regression (a re-materialized intermediate buffer, a per-attribute string round-trip creeping back, a lost pooled-buffer reuse) trips the gate while minor runtime-version drift does not. Bump DELIBERATELY when a change is expected to raise allocation — never by accident (see docs/perf/README.md). Scenarios mirror CosmosFusedEnvelopeBenchmarks (decode) and Spike332/CosmosWriteEncodeBenchmarks (encode) over the lean / payload_512 / wide_20s_20n document shapes.",
+  "scenarios": {
+    "ddb.decode.GetItemEnvelope.fused (lean)":          { "maxAllocBytesPerOp": 256.0 },
+    "ddb.decode.GetItemEnvelope.text (lean)":           { "maxAllocBytesPerOp": 256.0 },
+    "ddb.encode.CosmosDocument.text.wire (lean)":       { "maxAllocBytesPerOp": 256.0 },
+    "ddb.encode.CosmosDocument.binary.wire (lean)":     { "maxAllocBytesPerOp": 96.0 },
+
+    "ddb.decode.GetItemEnvelope.fused (payload_512)":      { "maxAllocBytesPerOp": 256.0 },
+    "ddb.decode.GetItemEnvelope.text (payload_512)":       { "maxAllocBytesPerOp": 256.0 },
+    "ddb.encode.CosmosDocument.text.wire (payload_512)":   { "maxAllocBytesPerOp": 256.0 },
+    "ddb.encode.CosmosDocument.binary.wire (payload_512)": { "maxAllocBytesPerOp": 96.0 },
+
+    "ddb.decode.GetItemEnvelope.fused (wide_20s_20n)":      { "maxAllocBytesPerOp": 256.0 },
+    "ddb.decode.GetItemEnvelope.text (wide_20s_20n)":       { "maxAllocBytesPerOp": 256.0 },
+    "ddb.encode.CosmosDocument.text.wire (wide_20s_20n)":   { "maxAllocBytesPerOp": 256.0 },
+    "ddb.encode.CosmosDocument.binary.wire (wide_20s_20n)": { "maxAllocBytesPerOp": 96.0 }
+  }
+}
