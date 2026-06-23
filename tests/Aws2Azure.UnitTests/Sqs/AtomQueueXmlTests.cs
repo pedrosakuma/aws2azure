@@ -29,6 +29,31 @@ public class AtomQueueXmlTests
     }
 
     [Fact]
+    public void Writer_emits_user_metadata_before_forward_dead_lettered_messages_to()
+    {
+        var props = new QueueDescriptionProperties
+        {
+            LockDuration = "PT30S",
+            DefaultMessageTimeToLive = "P14D",
+            RequiresDuplicateDetection = false,
+            RequiresSession = false,
+            MaxMessageSizeBytes = 1048576,
+            MaxDeliveryCount = 10,
+            UserMetadata = "owned-by-aws2azure",
+            ForwardDeadLetteredMessagesTo = "dead-letter-target",
+        };
+
+        var xml = AtomQueueXmlWriter.BuildQueueEntry(props);
+
+        Assert.True(
+            xml.IndexOf("<MaxDeliveryCount", System.StringComparison.Ordinal) <
+            xml.IndexOf("<UserMetadata", System.StringComparison.Ordinal));
+        Assert.True(
+            xml.IndexOf("<UserMetadata", System.StringComparison.Ordinal) <
+            xml.IndexOf("<ForwardDeadLetteredMessagesTo", System.StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Reader_parses_single_queue_entry()
     {
         var wrappedXml =

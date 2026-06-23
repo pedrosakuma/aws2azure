@@ -9,6 +9,8 @@ sub_features:
   - {name: "UserMetadata capacity guard", status: partial, notes: "Requests whose compact base64 blob would exceed Service Bus's 1024-character UserMetadata limit fail with InvalidParameterValue."}
 behavior_differences:
   - "Tags are stored as an aws2azure-owned compact binary tag map, base64-encoded into Service Bus QueueDescription.UserMetadata. This preserves AWS tag keys and values exactly but consumes the queue's native UserMetadata field."
+  - "If QueueDescription.UserMetadata is already non-empty and does not contain aws2azure's tag blob, TagQueue fails with InvalidParameterValue instead of overwriting operator-owned metadata."
+  - "TagQueue uses the Service Bus management ETag from GET as the PUT If-Match value. A 412 Precondition Failed triggers a bounded refetch/remerge retry so concurrent queue property changes are not clobbered."
   - "Service Bus UserMetadata is limited to roughly 1024 characters in the legacy management schema, so valid SQS tag sets near the 50-tag / 128-key / 256-value maximum may be rejected when the serialized blob does not fit."
   - "Verified with in-process Service Bus management fakes. The Service Bus emulator does not validate or persist this management-plane UserMetadata path; real-Azure validation remains pending."
 references:

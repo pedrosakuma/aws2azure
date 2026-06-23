@@ -304,20 +304,31 @@ internal sealed class ServiceBusClient
 
     /// <summary>
     /// Updates an existing queue's QueueDescription via
-    /// <c>PUT /{queue}?api-version=…</c> with <c>If-Match: *</c>. Service
-    /// Bus only honours updates to a small subset of properties
+    /// <c>PUT /{queue}?api-version=…</c>. Service Bus only honours updates to a small subset of properties
     /// (LockDuration, DefaultMessageTimeToLive, etc.); other fields must
     /// match the existing values verbatim. Callers are responsible for
     /// merging the desired changes onto the current QueueDescription
     /// before serialising the Atom entry.
     /// </summary>
-    public Task<HttpResponseMessage> UpdateQueueAsync(string queueName, string atomEntryXml, CancellationToken ct)
+    public Task<HttpResponseMessage> UpdateQueueAsync(string queueName, string atomEntryXml, CancellationToken ct) =>
+        UpdateQueueAsync(queueName, atomEntryXml, ifMatch: "*", ct);
+
+    /// <summary>
+    /// Updates an existing queue using the caller-supplied optimistic
+    /// concurrency token from the preceding management GET.
+    /// </summary>
+    public Task<HttpResponseMessage> UpdateQueueAsync(
+        string queueName,
+        string atomEntryXml,
+        string ifMatch,
+        CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(queueName);
         ArgumentException.ThrowIfNullOrEmpty(atomEntryXml);
+        ArgumentException.ThrowIfNullOrWhiteSpace(ifMatch);
         var req = new HttpRequestMessage(HttpMethod.Put, BuildUri(queueName, $"api-version={ApiVersion}"));
         req.Content = CreateAtomEntryContent(atomEntryXml);
-        req.Headers.TryAddWithoutValidation("If-Match", "*");
+        req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
         return SendAsync(req, ct);
     }
 

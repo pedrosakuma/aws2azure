@@ -62,6 +62,11 @@ public static class SqsErrorMapping
     public static Mapping QueueAlreadyExists(string message) =>
         new(StatusCodes.Status400BadRequest, "QueueAlreadyExists", message);
 
+    public static Mapping QueueTagUpdateConflict() =>
+        new(StatusCodes.Status503ServiceUnavailable, "ServiceUnavailable",
+            "aws2azure: concurrent Azure Service Bus queue updates prevented the tag change; retry the request.",
+            SqsErrorResponse.FaultType.Receiver);
+
     // ---- Send-path mappings (Slice 2) ----
 
     public static Mapping MessageTooLong() =>

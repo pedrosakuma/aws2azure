@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Threading;
 using System.Threading.Tasks;
 using Aws2Azure.Core.Azure;
@@ -134,7 +135,7 @@ public sealed class TailHandlersTests
         handler.Enqueue(async req =>
         {
             Assert.Equal(HttpMethod.Put, req.Method);
-            Assert.Contains("If-Match", req.Headers.ToString());
+            Assert.Equal("\"etag-q1\"", Assert.Single(req.Headers.IfMatch).Tag);
             userMetadata = ReadElementValue(await req.Content!.ReadAsStringAsync().ConfigureAwait(false), "UserMetadata");
             return new HttpResponseMessage(HttpStatusCode.OK);
         });
@@ -181,6 +182,80 @@ public sealed class TailHandlersTests
         var finalBody = ReadBody(finalListCtx);
         Assert.DoesNotContain("<Key>env</Key>", finalBody);
         Assert.Contains("<Key>owner</Key>", finalBody);
+    }
+
+    [Fact]
+    public async Task TagQueue_uses_etag_and_retries_precondition_failures_without_dropping_properties()
+    {
+        var handler = new ScriptedHandler();
+        var putAttempts = 0;
+        handler.Enqueue(_ => Atom200("q1", "old-dlq", string.Empty, "\"etag-1\"", maxDeliveryCount: 12));
+        handler.Enqueue(req =>
+        {
+            putAttempts++;
+            Assert.Equal("\"etag-1\"", Assert.Single(req.Headers.IfMatch).Tag);
+            return new HttpResponseMessage(HttpStatusCode.PreconditionFailed);
+        });
+        Assert.True(SqsQueueTagStore.TryEncode(
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["owner"] = "platform" },
+            out var concurrentMetadata));
+        handler.Enqueue(_ => Atom200("q1", "new-dlq", concurrentMetadata, "\"etag-2\"", maxDeliveryCount: 7));
+        handler.Enqueue(async req =>
+        {
+            putAttempts++;
+            Assert.Equal("\"etag-2\"", Assert.Single(req.Headers.IfMatch).Tag);
+            var body = await req.Content!.ReadAsStringAsync().ConfigureAwait(false);
+            Assert.Contains("<LockDuration", body);
+            Assert.Contains("<MaxDeliveryCount", body);
+            Assert.Contains(">7<", body);
+            Assert.Contains("<ForwardDeadLetteredMessagesTo", body);
+            Assert.Contains(">new-dlq<", body);
+
+            var decoded = SqsQueueTagStore.Decode(ReadElementValue(body, "UserMetadata"));
+            Assert.Equal("prod", decoded["env"]);
+            Assert.Equal("platform", decoded["owner"]);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+
+        var ctx = NewCtx();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var sb = new ServiceBusClient(http, Creds);
+        await TailHandlers.HandleAsync(ctx, QueryParsed(SqsOperation.TagQueue,
+            ("QueueUrl", "https://sqs.us-east-1.amazonaws.com/000000000000/q1"),
+            ("Tag.1.Key", "env"),
+            ("Tag.1.Value", "prod")), sb, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Equal(2, putAttempts);
+    }
+
+    [Theory]
+    [InlineData(SqsOperation.TagQueue)]
+    [InlineData(SqsOperation.UntagQueue)]
+    public async Task Tag_mutations_reject_pre_existing_foreign_user_metadata(SqsOperation op)
+    {
+        var handler = new ScriptedHandler();
+        handler.Enqueue(_ => Atom200("q1", dlqTarget: null, userMetadata: "plain operator metadata"));
+
+        var parsed = op == SqsOperation.TagQueue
+            ? QueryParsed(op,
+                ("QueueUrl", "https://sqs.us-east-1.amazonaws.com/000000000000/q1"),
+                ("Tag.1.Key", "env"),
+                ("Tag.1.Value", "prod"))
+            : QueryParsed(op,
+                ("QueueUrl", "https://sqs.us-east-1.amazonaws.com/000000000000/q1"),
+                ("TagKey.1", "env"));
+
+        var ctx = NewCtx();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var sb = new ServiceBusClient(http, Creds);
+        await TailHandlers.HandleAsync(ctx, parsed, sb, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        var body = ReadBody(ctx);
+        Assert.Contains("InvalidParameterValue", body);
+        Assert.Contains("UserMetadata", body);
+        Assert.Contains("already in use", body);
     }
 
     [Fact]
@@ -435,10 +510,17 @@ public sealed class TailHandlersTests
         return reader.ReadToEnd();
     }
 
-    private static HttpResponseMessage Atom200(string name, string? dlqTarget, string? userMetadata = null)
+    private static HttpResponseMessage Atom200(
+        string name,
+        string? dlqTarget,
+        string? userMetadata = null,
+        string eTag = "\"etag-q1\"",
+        int? maxDeliveryCount = null)
     {
         var qd = "<QueueDescription xmlns=\"" + SbNs + "\">" +
                  "<LockDuration>PT30S</LockDuration>" +
+                 (maxDeliveryCount is null ? string.Empty :
+                   "<MaxDeliveryCount>" + maxDeliveryCount.Value + "</MaxDeliveryCount>") +
                  (dlqTarget is null ? string.Empty :
                     "<ForwardDeadLetteredMessagesTo>" + dlqTarget + "</ForwardDeadLetteredMessagesTo>") +
                  (userMetadata is null ? string.Empty :
@@ -450,10 +532,12 @@ public sealed class TailHandlersTests
               "<title>" + name + "</title>" +
               "<content type=\"application/xml\">" + qd + "</content>" +
             "</entry>";
-        return new HttpResponseMessage(HttpStatusCode.OK)
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(body, System.Text.Encoding.UTF8, "application/atom+xml"),
         };
+        response.Headers.ETag = new EntityTagHeaderValue(eTag);
+        return response;
     }
 
     private static string BuildFeed(params (string Name, string? DlqTarget)[] entries)

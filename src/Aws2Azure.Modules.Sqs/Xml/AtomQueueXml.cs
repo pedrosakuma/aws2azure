@@ -336,16 +336,17 @@ internal static class AtomQueueXmlWriter
                 w.WriteElementString("MaxDeliveryCount", AtomQueueXmlReader.SbNs,
                     mdc.ToString(System.Globalization.CultureInfo.InvariantCulture));
             }
+            if (props.UserMetadata is not null)
+            {
+                // QueueDescription's legacy schema is order-sensitive:
+                // UserMetadata precedes AutoDelete/partitioning fields and
+                // ForwardDeadLetteredMessagesTo in the canonical sequence.
+                w.WriteElementString("UserMetadata", AtomQueueXmlReader.SbNs, props.UserMetadata);
+            }
             if (!string.IsNullOrEmpty(props.ForwardDeadLetteredMessagesTo))
             {
                 w.WriteElementString("ForwardDeadLetteredMessagesTo", AtomQueueXmlReader.SbNs,
                     props.ForwardDeadLetteredMessagesTo);
-            }
-            if (props.UserMetadata is not null)
-            {
-                // QueueDescription's legacy schema is order-sensitive:
-                // UserMetadata belongs near the end, after forwarding fields.
-                w.WriteElementString("UserMetadata", AtomQueueXmlReader.SbNs, props.UserMetadata);
             }
             w.WriteEndElement(); // QueueDescription
             w.WriteEndElement(); // content

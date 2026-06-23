@@ -21,6 +21,7 @@ namespace Aws2Azure.Modules.Sqs.Operations;
 internal static class TailHandlers
 {
     private const int SbPageSize = 100;
+    private const int TagUpdateMaxAttempts = 3;
 
     public static Task HandleAsync(
         HttpContext context,
@@ -185,31 +186,24 @@ internal static class TailHandlers
             return;
         }
 
-        var entry = await ReadQueueEntryAsync(context, parsed, sb, ct).ConfigureAwait(false);
-        if (entry is null) return;
-
-        var tags = SqsQueueTagStore.Decode(entry.Properties.UserMetadata);
-        foreach (var kv in requestedTags)
+        if (!await MutateQueueTagsAsync(
+                context,
+                parsed,
+                sb,
+                tags =>
+                {
+                    foreach (var kv in requestedTags)
+                    {
+                        tags[kv.Key] = kv.Value;
+                    }
+                    return null;
+                },
+                "Tags",
+                ct).ConfigureAwait(false))
         {
-            tags[kv.Key] = kv.Value;
-        }
-        if (SqsQueueTagStore.ValidateTagMap(tags) is { } mergedError)
-        {
-            await WriteErrorAsync(context, parsed.Protocol,
-                SqsErrorMapping.InvalidParameterValue("Tags", mergedError)).ConfigureAwait(false);
-            return;
-        }
-        if (!SqsQueueTagStore.TryEncode(tags, out var userMetadata))
-        {
-            await WriteErrorAsync(context, parsed.Protocol,
-                SqsErrorMapping.InvalidParameterValue("Tags",
-                    $"Serialized queue tags exceed the Azure Service Bus UserMetadata limit of {SqsQueueTagStore.UserMetadataMaxLength} characters."))
-                .ConfigureAwait(false);
             return;
         }
 
-        entry.Properties.UserMetadata = userMetadata;
-        if (!await UpdateQueueEntryAsync(context, parsed, sb, entry.Properties, ct).ConfigureAwait(false)) return;
         await SqsResponseWriter.WriteTagQueueAsync(context, parsed.Protocol).ConfigureAwait(false);
     }
 
@@ -229,25 +223,24 @@ internal static class TailHandlers
             return;
         }
 
-        var entry = await ReadQueueEntryAsync(context, parsed, sb, ct).ConfigureAwait(false);
-        if (entry is null) return;
-
-        var tags = SqsQueueTagStore.Decode(entry.Properties.UserMetadata);
-        for (var i = 0; i < tagKeys.Count; i++)
+        if (!await MutateQueueTagsAsync(
+                context,
+                parsed,
+                sb,
+                tags =>
+                {
+                    for (var i = 0; i < tagKeys.Count; i++)
+                    {
+                        tags.Remove(tagKeys[i]);
+                    }
+                    return null;
+                },
+                "TagKeys",
+                ct).ConfigureAwait(false))
         {
-            tags.Remove(tagKeys[i]);
-        }
-        if (!SqsQueueTagStore.TryEncode(tags, out var userMetadata))
-        {
-            await WriteErrorAsync(context, parsed.Protocol,
-                SqsErrorMapping.InvalidParameterValue("TagKeys",
-                    $"Serialized queue tags exceed the Azure Service Bus UserMetadata limit of {SqsQueueTagStore.UserMetadataMaxLength} characters."))
-                .ConfigureAwait(false);
             return;
         }
 
-        entry.Properties.UserMetadata = userMetadata;
-        if (!await UpdateQueueEntryAsync(context, parsed, sb, entry.Properties, ct).ConfigureAwait(false)) return;
         await SqsResponseWriter.WriteUntagQueueAsync(context, parsed.Protocol).ConfigureAwait(false);
     }
 
@@ -307,6 +300,13 @@ internal static class TailHandlers
     private static async Task<AtomQueueXmlReader.QueueEntry?> ReadQueueEntryAsync(
         HttpContext context, SqsParseResult parsed, ServiceBusClient sb, CancellationToken ct)
     {
+        var result = await ReadQueueEntryWithETagAsync(context, parsed, sb, ct).ConfigureAwait(false);
+        return result?.Entry;
+    }
+
+    private static async Task<QueueReadResult?> ReadQueueEntryWithETagAsync(
+        HttpContext context, SqsParseResult parsed, ServiceBusClient sb, CancellationToken ct)
+    {
         var queueName = ResolveQueueNameOrNull(parsed);
         if (queueName is null)
         {
@@ -341,14 +341,29 @@ internal static class TailHandlers
             return null;
         }
 
-        return entry;
+        var eTag = response.Headers.ETag?.Tag;
+        if (string.IsNullOrWhiteSpace(eTag) &&
+            response.Headers.TryGetValues("ETag", out var values))
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    eTag = value;
+                    break;
+                }
+            }
+        }
+
+        return new QueueReadResult(entry, eTag);
     }
 
-    private static async Task<bool> UpdateQueueEntryAsync(
+    private static async Task<bool> MutateQueueTagsAsync(
         HttpContext context,
         SqsParseResult parsed,
         ServiceBusClient sb,
-        QueueDescriptionProperties properties,
+        Func<Dictionary<string, string>, string?> mutate,
+        string parameterName,
         CancellationToken ct)
     {
         var queueName = ResolveQueueNameOrNull(parsed);
@@ -358,16 +373,74 @@ internal static class TailHandlers
                 SqsErrorMapping.InvalidParameterValue("QueueUrl", "QueueUrl is required.")).ConfigureAwait(false);
             return false;
         }
-
-        var atomBody = AtomQueueXmlWriter.BuildQueueEntry(properties);
-        using var putResp = await sb.UpdateQueueAsync(queueName, atomBody, ct).ConfigureAwait(false);
-        if (!putResp.IsSuccessStatusCode)
+        if (!QueueName.IsValid(queueName))
         {
+            await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.QueueNameInvalid()).ConfigureAwait(false);
+            return false;
+        }
+
+        for (var attempt = 0; attempt < TagUpdateMaxAttempts; attempt++)
+        {
+            var read = await ReadQueueEntryWithETagAsync(context, parsed, sb, ct).ConfigureAwait(false);
+            if (read is null) return false;
+
+            if (!SqsQueueTagStore.TryDecodeForMutation(
+                    read.Entry.Properties.UserMetadata,
+                    out var tags,
+                    out var metadataError))
+            {
+                await WriteErrorAsync(context, parsed.Protocol,
+                    SqsErrorMapping.InvalidParameterValue("UserMetadata", metadataError ?? "UserMetadata is invalid."))
+                    .ConfigureAwait(false);
+                return false;
+            }
+
+            var mutationError = mutate(tags);
+            if (mutationError is not null)
+            {
+                await WriteErrorAsync(context, parsed.Protocol,
+                    SqsErrorMapping.InvalidParameterValue(parameterName, mutationError)).ConfigureAwait(false);
+                return false;
+            }
+            if (SqsQueueTagStore.ValidateTagMap(tags) is { } mergedError)
+            {
+                await WriteErrorAsync(context, parsed.Protocol,
+                    SqsErrorMapping.InvalidParameterValue(parameterName, mergedError)).ConfigureAwait(false);
+                return false;
+            }
+            if (!SqsQueueTagStore.TryEncode(tags, out var userMetadata))
+            {
+                await WriteErrorAsync(context, parsed.Protocol,
+                    SqsErrorMapping.InvalidParameterValue(parameterName,
+                        $"Serialized queue tags exceed the Azure Service Bus UserMetadata limit of {SqsQueueTagStore.UserMetadataMaxLength} characters."))
+                    .ConfigureAwait(false);
+                return false;
+            }
+            if (string.IsNullOrWhiteSpace(read.ETag))
+            {
+                await WriteErrorAsync(context, parsed.Protocol,
+                    SqsErrorMapping.QueueTagUpdateConflict()).ConfigureAwait(false);
+                return false;
+            }
+
+            read.Entry.Properties.UserMetadata = userMetadata;
+            var atomBody = AtomQueueXmlWriter.BuildQueueEntry(read.Entry.Properties);
+            using var putResp = await sb.UpdateQueueAsync(queueName, atomBody, read.ETag, ct).ConfigureAwait(false);
+            if (putResp.IsSuccessStatusCode)
+            {
+                return true;
+            }
+            if (putResp.StatusCode == HttpStatusCode.PreconditionFailed)
+            {
+                continue;
+            }
+
             await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.FromServiceBus(putResp)).ConfigureAwait(false);
             return false;
         }
 
-        return true;
+        await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.QueueTagUpdateConflict()).ConfigureAwait(false);
+        return false;
     }
 
     private static string? ResolveQueueNameOrNull(SqsParseResult parsed)
@@ -381,4 +454,6 @@ internal static class TailHandlers
 
     private static Task WriteErrorAsync(HttpContext context, SqsWireProtocol protocol, SqsErrorMapping.Mapping mapping) =>
         SqsErrorResponse.WriteAsync(context, protocol, mapping.StatusCode, mapping.Code, mapping.Message, mapping.FaultType);
+
+    private sealed record QueueReadResult(AtomQueueXmlReader.QueueEntry Entry, string? ETag);
 }

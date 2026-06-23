@@ -100,10 +100,27 @@ internal static class SqsQueueTagStore
 
     internal static Dictionary<string, string> Decode(string? userMetadata)
     {
-        var tags = new Dictionary<string, string>(StringComparer.Ordinal);
+        TryDecode(userMetadata, failOnForeignMetadata: false, out var tags, out _);
+        return tags;
+    }
+
+    internal static bool TryDecodeForMutation(
+        string? userMetadata,
+        out Dictionary<string, string> tags,
+        out string? error) =>
+        TryDecode(userMetadata, failOnForeignMetadata: true, out tags, out error);
+
+    private static bool TryDecode(
+        string? userMetadata,
+        bool failOnForeignMetadata,
+        out Dictionary<string, string> tags,
+        out string? error)
+    {
+        tags = new Dictionary<string, string>(StringComparer.Ordinal);
+        error = null;
         if (string.IsNullOrWhiteSpace(userMetadata))
         {
-            return tags;
+            return true;
         }
 
         byte[] raw;
@@ -113,12 +130,12 @@ internal static class SqsQueueTagStore
         }
         catch (FormatException)
         {
-            return tags;
+            return HandleForeignMetadata(failOnForeignMetadata, tags, out error);
         }
 
         if (raw.Length < Magic.Length + 1 || !raw.AsSpan(0, Magic.Length).SequenceEqual(Magic))
         {
-            return tags;
+            return HandleForeignMetadata(failOnForeignMetadata, tags, out error);
         }
 
         var offset = Magic.Length;
@@ -128,15 +145,49 @@ internal static class SqsQueueTagStore
             if (!TryReadUtf8(raw, ref offset, out var key) ||
                 !TryReadUtf8(raw, ref offset, out var value))
             {
-                return new Dictionary<string, string>(StringComparer.Ordinal);
+                tags.Clear();
+                return HandleMalformedMetadata(failOnForeignMetadata, out error);
             }
 
             tags[key] = value;
         }
 
-        return offset == raw.Length
-            ? tags
-            : new Dictionary<string, string>(StringComparer.Ordinal);
+        if (offset == raw.Length)
+        {
+            return true;
+        }
+
+        tags.Clear();
+        return HandleMalformedMetadata(failOnForeignMetadata, out error);
+    }
+
+    private static bool HandleForeignMetadata(
+        bool failOnForeignMetadata,
+        Dictionary<string, string> tags,
+        out string? error)
+    {
+        if (failOnForeignMetadata)
+        {
+            error = "Azure Service Bus QueueDescription.UserMetadata is already in use by non-aws2azure content; " +
+                    "aws2azure cannot safely persist SQS queue tags without overwriting it.";
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool HandleMalformedMetadata(bool failOnForeignMetadata, out string? error)
+    {
+        if (failOnForeignMetadata)
+        {
+            error = "aws2azure queue tag metadata stored in Azure Service Bus QueueDescription.UserMetadata is malformed; " +
+                    "refusing to overwrite it.";
+            return false;
+        }
+
+        error = null;
+        return true;
     }
 
     internal static bool TryEncode(IReadOnlyDictionary<string, string> tags, out string userMetadata)
