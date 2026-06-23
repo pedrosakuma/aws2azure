@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Aws2Azure.Core.Azure;
@@ -9,6 +10,10 @@ namespace Aws2Azure.Modules.SecretsManager;
 internal sealed class KeyVaultSecretClient
 {
     private const string ApiVersion = "7.4";
+    private const string InternalTagPrefix = "aws2azure-";
+    internal const string ClientRequestTokenTag = InternalTagPrefix + "client-request-token";
+    internal const string PayloadSha256Tag = InternalTagPrefix + "payload-sha256";
+    internal const string VersionStagesTag = InternalTagPrefix + "version-stages";
 
     private readonly AzureHttpClient _http;
     private readonly EntraIdTokenProvider _tokenProvider;
@@ -236,7 +241,7 @@ internal sealed class KeyVaultSecretClient
                 }
 
                 var keyName = key.GetString();
-                if (string.IsNullOrEmpty(keyName))
+                if (string.IsNullOrEmpty(keyName) || IsInternalTag(keyName))
                 {
                     continue;
                 }
@@ -251,12 +256,117 @@ internal sealed class KeyVaultSecretClient
 
         foreach (var property in tags.EnumerateObject())
         {
+            if (IsInternalTag(property.Name))
+            {
+                continue;
+            }
+
             result[property.Name] = property.Value.ValueKind == JsonValueKind.String
                 ? property.Value.GetString() ?? string.Empty
                 : property.Value.ToString();
         }
 
         return result;
+    }
+
+    public static string[] GetVersionStages(JsonElement root)
+    {
+        if (TryGetRawTag(root, VersionStagesTag, out var value))
+        {
+            return DecodeVersionStages(value);
+        }
+
+        return ["AWSCURRENT"];
+    }
+
+    public static string[] ReadVersionStages(JsonDocument document)
+    {
+        if (!document.RootElement.TryGetProperty("VersionStages", out var stagesElement))
+        {
+            return ["AWSCURRENT"];
+        }
+
+        if (stagesElement.ValueKind != JsonValueKind.Array)
+        {
+            throw new ArgumentException("VersionStages must be an array.");
+        }
+
+        var stages = new List<string>();
+        foreach (var item in stagesElement.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String)
+            {
+                throw new ArgumentException("VersionStages must contain only strings.");
+            }
+
+            var stage = item.GetString();
+            if (string.IsNullOrWhiteSpace(stage))
+            {
+                throw new ArgumentException("VersionStages must not contain empty labels.");
+            }
+
+            if (stage.IndexOf('\n') >= 0 || stage.IndexOf('\r') >= 0)
+            {
+                throw new ArgumentException("VersionStages labels must not contain newline characters.");
+            }
+
+            stages.Add(stage);
+        }
+
+        if (stages.Count == 0)
+        {
+            throw new ArgumentException("VersionStages must contain at least one label.");
+        }
+
+        return stages.ToArray();
+    }
+
+    public static IReadOnlyDictionary<string, string> BuildInternalTags(string? clientRequestToken, string payloadSha256, IReadOnlyList<string> versionStages)
+    {
+        var tags = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [PayloadSha256Tag] = payloadSha256,
+            [VersionStagesTag] = EncodeVersionStages(versionStages),
+        };
+
+        if (!string.IsNullOrWhiteSpace(clientRequestToken))
+        {
+            tags[ClientRequestTokenTag] = clientRequestToken;
+        }
+
+        return tags;
+    }
+
+    public static IReadOnlyDictionary<string, string> WithVersionStages(IReadOnlyDictionary<string, string>? tags, IReadOnlyList<string> versionStages)
+    {
+        var result = tags is null || tags.Count == 0
+            ? new Dictionary<string, string>(StringComparer.Ordinal)
+            : new Dictionary<string, string>(tags, StringComparer.Ordinal);
+        result[VersionStagesTag] = EncodeVersionStages(versionStages);
+        return result;
+    }
+
+    public static bool TryGetRawTag(JsonElement root, string name, out string value)
+    {
+        value = string.Empty;
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("tags", out var tags)
+            || tags.ValueKind != JsonValueKind.Object
+            || !tags.TryGetProperty(name, out var tag)
+            || tag.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        value = tag.GetString() ?? string.Empty;
+        return !string.IsNullOrEmpty(value);
+    }
+
+    public static string GetPayloadSha256(string? value, string? contentType)
+    {
+        var material = (contentType ?? string.Empty) + "\n" + (value ?? string.Empty);
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(material));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 
     public static string BuildJsonBody(string? secretString, string? secretBinary, string? description, IReadOnlyDictionary<string, string>? tags)
@@ -274,4 +384,28 @@ internal sealed class KeyVaultSecretClient
     public static string BuildSecretPath(string name) => "/secrets/" + Uri.EscapeDataString(name);
 
     public static string BuildSecretVersionPath(string name, string versionId) => "/secrets/" + Uri.EscapeDataString(name) + "/" + Uri.EscapeDataString(versionId);
+
+    public static string BuildSecretVersionsPath(string name) => "/secrets/" + Uri.EscapeDataString(name) + "/versions";
+
+    private static bool IsInternalTag(string name)
+        => name.StartsWith(InternalTagPrefix, StringComparison.Ordinal);
+
+    private static string EncodeVersionStages(IReadOnlyList<string> stages)
+    {
+        var builder = new StringBuilder();
+        for (var i = 0; i < stages.Count; i++)
+        {
+            if (i > 0)
+            {
+                builder.Append('\n');
+            }
+
+            builder.Append(stages[i]);
+        }
+
+        return builder.ToString();
+    }
+
+    private static string[] DecodeVersionStages(string value)
+        => value.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 }

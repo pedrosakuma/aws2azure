@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using Aws2Azure.Core.Buffers;
 using Aws2Azure.Core.Modules;
 using Microsoft.AspNetCore.Http;
 
@@ -17,9 +18,15 @@ internal static class SecretsManagerOperationSupport
 
     public static async Task WriteJsonAsync<T>(HttpContext context, T payload, JsonTypeInfo<T> typeInfo, CancellationToken cancellationToken)
     {
+        using var buffer = new PooledByteBufferWriter();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            JsonSerializer.Serialize(writer, payload, typeInfo);
+        }
+
         context.Response.StatusCode = StatusCodes.Status200OK;
         context.Response.ContentType = JsonContentType;
-        await JsonSerializer.SerializeAsync(context.Response.Body, payload, typeInfo, cancellationToken).ConfigureAwait(false);
+        await context.Response.BodyWriter.WriteAsync(buffer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
 
     public static async Task<JsonDocument> ReadJsonDocumentAsync(HttpContent content, CancellationToken cancellationToken)

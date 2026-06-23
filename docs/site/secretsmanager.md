@@ -11,6 +11,7 @@
 - Advanced rotation, restore, and policy semantics are not yet modeled; the proxy uses Key Vault secret versions as the AWS version surface.
 - Responses use the AWS JSON 1.1 wire shape (Unix-epoch numeric timestamps, Content-Type application/x-amz-json-1.1); validated end-to-end against a real Azure Key Vault through the proxy with the AWS SDK.
 - Input Tags are accepted in the AWS Key/Value array shape (as sent by the AWS SDK) and mapped to the Key Vault tags map; an existing-name conflict (including Key Vault 409) maps to ResourceExistsException.
+- The aws2azure- tag prefix is reserved for proxy-owned version metadata and is stripped from caller-supplied tags before writing to Key Vault.
 
 ### References
 
@@ -60,11 +61,13 @@
 - Initial MVP uses Key Vault AAD auth and translates the core secret CRUD/read paths to AWS Secrets Manager JSON responses.
 - Advanced rotation, restore, and policy semantics are not yet modeled; the proxy uses Key Vault secret versions as the AWS version surface.
 - Responses use the AWS JSON 1.1 wire shape (Unix-epoch numeric timestamps, Content-Type application/x-amz-json-1.1); validated end-to-end against a real Azure Key Vault through the proxy with the AWS SDK.
+- VersionStage lookup scans proxy-owned Key Vault version tags written by PutSecretValue; untagged legacy versions are treated as AWSCURRENT fallback for default reads. VersionId accepts either a raw Key Vault version id or a PutSecretValue ClientRequestToken, and VersionId+VersionStage requests are rejected when they do not refer to the same version. Full AWS rotation workflows such as RotateSecret are not implemented.
 
 ### References
 
 - <https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetSecretValue.html>
 - <https://learn.microsoft.com/rest/api/keyvault/secrets/get-secret>
+- <https://learn.microsoft.com/rest/api/keyvault/secrets/get-secret-versions>
 
 ## ListSecrets
 
@@ -89,17 +92,27 @@
 - **Status:** 🟡 partial
 - **Azure equivalent:** `PUT https://{vault}.vault.azure.net/secrets/{name}`
 
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| ClientRequestToken idempotency | 🟡 partial | Implemented with proxy-owned Key Vault version tags; pending real-Azure validation. | Does not detect versions written directly in Key Vault without aws2azure metadata tags. | Use the proxy for all PutSecretValue writes that need AWS-style idempotency. |
+| VersionStages request labels | 🟡 partial | Persisted as proxy-owned Key Vault version tags and returned by PutSecretValue/GetSecretValue; pending real-Azure validation. | Full AWS staging-label mutation semantics and RotateSecret workflow support are not implemented. | Use AWSCURRENT-only flows or validate custom labels against Key Vault before marking implemented. |
+
 ### Behaviour differences
 
 - Initial MVP uses Key Vault AAD auth and translates PutSecretValue to a Key Vault Set Secret request that creates a new Key Vault secret version.
 - The proxy first checks that the secret exists and returns ResourceNotFoundException when it does not, matching AWS PutSecretValue semantics instead of Key Vault's native upsert.
-- Advanced rotation-state modelling is deferred: ClientRequestToken idempotency and VersionStages label updates are not yet persisted; successful writes return AWSCURRENT for the new Key Vault version.
+- ClientRequestToken idempotency is modeled with proxy-owned Key Vault version tags and the token is exposed as the AWS VersionId: a repeated token with the same payload replays the existing VersionId, while a repeated token with different payload returns ResourceExistsException. The proxy serializes same-secret token checks within one process, but this is proxy-local metadata and is not a durable cross-instance lock; it will not detect versions written directly in Key Vault without these tags.
+- VersionStages supplied to PutSecretValue are persisted as proxy-owned Key Vault version tags and surfaced by PutSecretValue/GetSecretValue; when omitted the proxy returns AWSCURRENT. Full AWS rotation workflows such as RotateSecret are not implemented.
 - The Key Vault PUT payload deliberately omits attributes.created so Key Vault preserves the original secret creation timestamp reported by DescribeSecret/GetSecretValue.
+- Validated with scripted Key Vault REST fakes and response-writer guardrails only for ClientRequestToken/VersionStages; before promoting this operation to implemented, exercise against a real Azure Key Vault and record any divergences here.
 
 ### References
 
 - <https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_PutSecretValue.html>
 - <https://learn.microsoft.com/rest/api/keyvault/secrets/set-secret>
+- <https://learn.microsoft.com/rest/api/keyvault/secrets/get-secret-versions>
 
 ## UpdateSecret
 

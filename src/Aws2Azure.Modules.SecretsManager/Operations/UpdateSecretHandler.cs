@@ -30,7 +30,7 @@ internal static class UpdateSecretHandler
             SecretsManagerOperationSupport.ReadString(document, "SecretString"),
             SecretsManagerOperationSupport.ReadString(document, "SecretBinary"),
             SecretsManagerOperationSupport.ReadString(document, "Description"),
-            KeyVaultSecretClient.GetTags(document.RootElement)), Encoding.UTF8, "application/json");
+            KeyVaultSecretClient.WithVersionStages(KeyVaultSecretClient.GetTags(document.RootElement), ["AWSCURRENT"])), Encoding.UTF8, "application/json");
 
         using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
