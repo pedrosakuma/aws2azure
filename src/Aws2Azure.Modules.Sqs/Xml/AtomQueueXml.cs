@@ -222,6 +222,10 @@ internal static class AtomQueueXmlReader
                     p.UpdatedAt = ReadDate(reader);
                     advanced = true;
                     break;
+                case "UserMetadata":
+                    p.UserMetadata = reader.ReadElementContentAsString();
+                    advanced = true;
+                    break;
                 default:
                     // Skip properties we don't model yet. Slice 4+ will add
                     // SetQueueAttributes round-tripping for the full set.
@@ -331,6 +335,13 @@ internal static class AtomQueueXmlWriter
             {
                 w.WriteElementString("MaxDeliveryCount", AtomQueueXmlReader.SbNs,
                     mdc.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+            if (props.UserMetadata is not null)
+            {
+                // QueueDescription's legacy schema is order-sensitive:
+                // UserMetadata precedes AutoDelete/partitioning fields and
+                // ForwardDeadLetteredMessagesTo in the canonical sequence.
+                w.WriteElementString("UserMetadata", AtomQueueXmlReader.SbNs, props.UserMetadata);
             }
             if (!string.IsNullOrEmpty(props.ForwardDeadLetteredMessagesTo))
             {

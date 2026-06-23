@@ -1,12 +1,15 @@
 service: sqs
 operation: ListQueueTags
-azure_equivalent: "No native Service Bus equivalent — returns an empty Tags map after validating queue existence."
-status: stub
+azure_equivalent: "GET QueueDescription and decode aws2azure's base64 tag blob from UserMetadata."
+status: partial
 sub_features:
   - {name: "Queue existence validation", status: implemented, notes: "Returns NonExistentQueue if the SB queue does not exist."}
-  - {name: "Tags round-trip", status: unsupported, gap: "SB queues have no per-queue tag surface in the REST control plane. The proxy returns an empty Tags map until a durable namespace-metadata store lands."}
+  - {name: "Tags round-trip", status: implemented, notes: "Decodes the SQS tag map persisted by TagQueue/UntagQueue in QueueDescription.UserMetadata."}
+  - {name: "Empty / foreign metadata handling", status: implemented, notes: "Missing, empty, non-base64, or non-aws2azure UserMetadata is treated as an empty SQS tag map."}
 behavior_differences:
-  - "Always returns an empty Tags map for any existing queue. Clients using tagging as a billing-allocation signal should expect zero data; an actual implementation requires a side-store (mirrors the S3 bucket-tagging trick from Phase 1 Slice 9)."
-  - "Verified against in-process fakes; emulator-backed validation is blocked (SB emulator does not expose management REST)."
+  - "Tags are stored as an aws2azure-owned compact binary tag map, base64-encoded into Service Bus QueueDescription.UserMetadata. Azure-side tools will see the opaque base64 blob rather than individual tag keys."
+  - "Service Bus UserMetadata is limited to roughly 1024 characters in the legacy management schema, so TagQueue may reject otherwise-valid SQS tag sets that cannot fit."
+  - "Verified with in-process Service Bus management fakes. The Service Bus emulator does not validate or persist this management-plane UserMetadata path; real-Azure validation remains pending."
 references:
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListQueueTags.html
+  - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-xml-management-api

@@ -225,6 +225,7 @@ internal static class QueueAttributeTranslator
             ApproximateNumberOfMessages        = existing.ApproximateNumberOfMessages,
             CreatedAt                          = existing.CreatedAt,
             UpdatedAt                          = existing.UpdatedAt,
+            UserMetadata                       = existing.UserMetadata,
             ForwardDeadLetteredMessagesTo      = patch.ClearDeadLetter ? null
                                                  : (patch.ForwardDeadLetteredMessagesTo ?? existing.ForwardDeadLetteredMessagesTo),
             MaxDeliveryCount                   = patch.ClearDeadLetter ? null
@@ -396,6 +397,7 @@ internal sealed class QueueDescriptionProperties
     public long? ApproximateNumberOfMessages { get; set; }
     public DateTimeOffset? CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
+    public string? UserMetadata { get; set; }
 
     /// <summary>
     /// SB queue name (short, no path / namespace prefix) of the dead-letter
