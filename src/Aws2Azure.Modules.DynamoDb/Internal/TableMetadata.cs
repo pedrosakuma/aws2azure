@@ -49,6 +49,41 @@ internal sealed class TableMetadata
 
     [JsonPropertyName("tags")]
     public List<TableTag>? Tags { get; set; }
+
+    /// <summary>
+    /// Global secondary index schemas. Persisted so index Query/Scan
+    /// (later slices) and <c>DescribeTable</c> can resolve the index
+    /// HASH/RANGE attributes. Null when the table declares no GSIs.
+    /// </summary>
+    [JsonPropertyName("globalSecondaryIndexes")]
+    public List<TableIndexDefinition>? GlobalSecondaryIndexes { get; set; }
+
+    /// <summary>
+    /// Local secondary index schemas. An LSI shares the table HASH key
+    /// and adds an alternate RANGE key. Null when the table declares no
+    /// LSIs.
+    /// </summary>
+    [JsonPropertyName("localSecondaryIndexes")]
+    public List<TableIndexDefinition>? LocalSecondaryIndexes { get; set; }
+}
+
+/// <summary>
+/// A persisted secondary index schema (GSI or LSI). The <see cref="KeySchema"/>
+/// holds the index HASH (and optional RANGE) attribute names; the projection
+/// describes which attributes a query against the index returns.
+/// </summary>
+internal sealed class TableIndexDefinition
+{
+    [JsonPropertyName("indexName")] public string IndexName { get; set; } = string.Empty;
+
+    [JsonPropertyName("keySchema")]
+    public List<TableKeySchemaElement> KeySchema { get; set; } = new();
+
+    /// <summary>Projection type: <c>ALL</c>, <c>KEYS_ONLY</c>, or <c>INCLUDE</c>.</summary>
+    [JsonPropertyName("projectionType")] public string ProjectionType { get; set; } = "ALL";
+
+    /// <summary>Extra attributes returned when <see cref="ProjectionType"/> is <c>INCLUDE</c>.</summary>
+    [JsonPropertyName("nonKeyAttributes")] public List<string>? NonKeyAttributes { get; set; }
 }
 
 internal sealed class TableTag
