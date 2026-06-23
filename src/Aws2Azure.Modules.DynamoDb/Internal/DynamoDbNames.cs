@@ -36,6 +36,12 @@ internal static class DynamoDbNames
     }
 
     /// <summary>
+    /// Secondary-index names share the DynamoDB table-name grammar:
+    /// 3..255 chars from <c>[a-zA-Z0-9_.-]</c>.
+    /// </summary>
+    public static bool IsValidIndexName(string? name) => IsValidTableName(name);
+
+    /// <summary>
     /// Synthetic Table ARN. Real ARNs encode region + account id; we
     /// surface a stable string of the form
     /// <c>arn:aws:dynamodb:azure:{accountId}:table/{tableName}</c> so
@@ -50,5 +56,19 @@ internal static class DynamoDbNames
             CultureInfo.InvariantCulture,
             "arn:aws:dynamodb:azure:{0}:table/{1}",
             account, tableName);
+    }
+
+    /// <summary>
+    /// Synthetic secondary-index ARN of the form
+    /// <c>arn:aws:dynamodb:azure:{accountId}:table/{table}/index/{index}</c>,
+    /// matching the AWS index-ARN layout so SDKs that inspect it parse cleanly.
+    /// </summary>
+    public static string BuildIndexArn(string accountIdOrEmpty, string tableName, string indexName)
+    {
+        var account = string.IsNullOrEmpty(accountIdOrEmpty) ? "000000000000" : accountIdOrEmpty;
+        return string.Format(
+            CultureInfo.InvariantCulture,
+            "arn:aws:dynamodb:azure:{0}:table/{1}/index/{2}",
+            account, tableName, indexName);
     }
 }

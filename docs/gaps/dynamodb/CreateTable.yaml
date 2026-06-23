@@ -7,8 +7,8 @@ sub_features:
   - { name: "HASH + RANGE composite key", status: implemented }
   - { name: "PAY_PER_REQUEST + PROVISIONED billing mode (informational)", status: implemented }
   - { name: "AttributeDefinitions round-trip via sidecar metadata", status: implemented }
-  - { name: "GlobalSecondaryIndexes", status: unsupported }
-  - { name: "LocalSecondaryIndexes", status: unsupported }
+  - { name: "GlobalSecondaryIndexes (schema accepted + persisted)", status: partial }
+  - { name: "LocalSecondaryIndexes (schema accepted + persisted)", status: partial }
   - { name: "StreamSpecification", status: unsupported }
   - { name: "SSESpecification", status: unsupported }
   - { name: "Tags", status: unsupported }
@@ -17,6 +17,8 @@ behavior_differences:
   - "ProvisionedThroughput / BillingMode values are accepted but not enforced; throughput is governed by the Cosmos account/database, not per-table."
   - "TableStatus is always returned as ACTIVE since Cosmos container creation is synchronous."
   - "On metadata-sidecar persist failure the container is best-effort deleted to avoid orphan containers."
+  - "GSI/LSI schemas are validated (key arity, HASH/RANGE roles, LSI HASH must match the table HASH, projection type, attribute-definition references, name uniqueness, service limits) and persisted into the sidecar metadata. Index Query/Scan execution lands in later slices; until then a table can be created with indexes but querying them still returns ValidationException."
+  - "GSI/LSI ProvisionedThroughput on an index is accepted but not enforced, mirroring base-table throughput handling."
   - "Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_CreateTable.html

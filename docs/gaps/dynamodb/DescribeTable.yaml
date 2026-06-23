@@ -7,11 +7,12 @@ sub_features:
   - { name: "BillingModeSummary echo", status: implemented }
   - { name: "TableArn synthesis (azure-region pseudo-arn)", status: implemented }
   - { name: "ItemCount / TableSizeBytes (live metrics)", status: unsupported }
-  - { name: "GSI/LSI description", status: unsupported }
+  - { name: "GSI/LSI description", status: partial }
 behavior_differences:
   - "ItemCount and TableSizeBytes default to 0; populating them requires either Cosmos partition-key statistics or a stored aggregate, deferred to a later slice."
   - "TableArn is synthetic (region 'azure', account '000000000000'); real AWS arns carry the region + account id which are not meaningful in this deployment."
   - "Tables created out-of-band (no sidecar metadata) still describe but with empty attribute/key arrays."
+  - "GSI/LSI descriptions echo the persisted index schema (IndexName, KeySchema, Projection) plus a synthetic IndexArn; GSIs report IndexStatus=ACTIVE. IndexSizeBytes / ItemCount / Backfilling / ProvisionedThroughput are not populated."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DescribeTable.html
   - https://learn.microsoft.com/rest/api/cosmos-db/get-a-collection

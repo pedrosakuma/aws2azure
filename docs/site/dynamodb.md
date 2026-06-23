@@ -82,8 +82,8 @@
 | HASH + RANGE composite key | ✅ implemented |  |  |  |
 | PAY_PER_REQUEST + PROVISIONED billing mode (informational) | ✅ implemented |  |  |  |
 | AttributeDefinitions round-trip via sidecar metadata | ✅ implemented |  |  |  |
-| GlobalSecondaryIndexes | ⛔ unsupported |  |  |  |
-| LocalSecondaryIndexes | ⛔ unsupported |  |  |  |
+| GlobalSecondaryIndexes (schema accepted + persisted) | 🟡 partial |  |  |  |
+| LocalSecondaryIndexes (schema accepted + persisted) | 🟡 partial |  |  |  |
 | StreamSpecification | ⛔ unsupported |  |  |  |
 | SSESpecification | ⛔ unsupported |  |  |  |
 | Tags | ⛔ unsupported |  |  |  |
@@ -94,6 +94,8 @@
 - ProvisionedThroughput / BillingMode values are accepted but not enforced; throughput is governed by the Cosmos account/database, not per-table.
 - TableStatus is always returned as ACTIVE since Cosmos container creation is synchronous.
 - On metadata-sidecar persist failure the container is best-effort deleted to avoid orphan containers.
+- GSI/LSI schemas are validated (key arity, HASH/RANGE roles, LSI HASH must match the table HASH, projection type, attribute-definition references, name uniqueness, service limits) and persisted into the sidecar metadata. Index Query/Scan execution lands in later slices; until then a table can be created with indexes but querying them still returns ValidationException.
+- GSI/LSI ProvisionedThroughput on an index is accepted but not enforced, mirroring base-table throughput handling.
 - Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB.
 
 ### References
@@ -164,13 +166,14 @@
 | BillingModeSummary echo | ✅ implemented |  |  |  |
 | TableArn synthesis (azure-region pseudo-arn) | ✅ implemented |  |  |  |
 | ItemCount / TableSizeBytes (live metrics) | ⛔ unsupported |  |  |  |
-| GSI/LSI description | ⛔ unsupported |  |  |  |
+| GSI/LSI description | 🟡 partial |  |  |  |
 
 ### Behaviour differences
 
 - ItemCount and TableSizeBytes default to 0; populating them requires either Cosmos partition-key statistics or a stored aggregate, deferred to a later slice.
 - TableArn is synthetic (region 'azure', account '000000000000'); real AWS arns carry the region + account id which are not meaningful in this deployment.
 - Tables created out-of-band (no sidecar metadata) still describe but with empty attribute/key arrays.
+- GSI/LSI descriptions echo the persisted index schema (IndexName, KeySchema, Projection) plus a synthetic IndexArn; GSIs report IndexStatus=ACTIVE. IndexSizeBytes / ItemCount / Backfilling / ProvisionedThroughput are not populated.
 
 ### References
 

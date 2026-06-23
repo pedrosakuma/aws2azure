@@ -1,15 +1,12 @@
 using System.Collections.Generic;
-using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Aws2Azure.Modules.DynamoDb.Operations;
 
 /// <summary>
-/// DynamoDB CreateTable request body. Index/throughput/SSE fields are
-/// modeled as raw <see cref="JsonElement"/> so the handler can detect
-/// when a caller asks for an unsupported feature and reject the call
-/// instead of silently dropping it — see the matching gap doc for the
-/// divergence list.
+/// DynamoDB CreateTable request body. Secondary index schemas are modeled
+/// as typed DTOs so the handler can validate and persist them; throughput
+/// and SSE fields are still accepted-and-ignored per the gap doc.
 /// </summary>
 internal sealed class CreateTableRequest
 {
@@ -17,8 +14,26 @@ internal sealed class CreateTableRequest
     [JsonPropertyName("AttributeDefinitions")] public List<AttributeDefinitionDto>? AttributeDefinitions { get; set; }
     [JsonPropertyName("KeySchema")] public List<KeySchemaElementDto>? KeySchema { get; set; }
     [JsonPropertyName("BillingMode")] public string? BillingMode { get; set; }
-    [JsonPropertyName("GlobalSecondaryIndexes")] public JsonElement? GlobalSecondaryIndexes { get; set; }
-    [JsonPropertyName("LocalSecondaryIndexes")] public JsonElement? LocalSecondaryIndexes { get; set; }
+    [JsonPropertyName("GlobalSecondaryIndexes")] public List<SecondaryIndexDto>? GlobalSecondaryIndexes { get; set; }
+    [JsonPropertyName("LocalSecondaryIndexes")] public List<SecondaryIndexDto>? LocalSecondaryIndexes { get; set; }
+}
+
+/// <summary>
+/// CreateTable representation of a GSI or LSI. The two share an identical
+/// request shape (IndexName + KeySchema + Projection); GSI-only fields like
+/// ProvisionedThroughput are accepted-and-ignored.
+/// </summary>
+internal sealed class SecondaryIndexDto
+{
+    [JsonPropertyName("IndexName")] public string? IndexName { get; set; }
+    [JsonPropertyName("KeySchema")] public List<KeySchemaElementDto>? KeySchema { get; set; }
+    [JsonPropertyName("Projection")] public ProjectionDto? Projection { get; set; }
+}
+
+internal sealed class ProjectionDto
+{
+    [JsonPropertyName("ProjectionType")] public string? ProjectionType { get; set; }
+    [JsonPropertyName("NonKeyAttributes")] public List<string>? NonKeyAttributes { get; set; }
 }
 
 internal sealed class AttributeDefinitionDto
@@ -83,6 +98,22 @@ internal sealed class TableDescription
     [JsonPropertyName("TableSizeBytes")] public long TableSizeBytes { get; set; }
     [JsonPropertyName("TableArn")] public string? TableArn { get; set; }
     [JsonPropertyName("BillingModeSummary")] public BillingModeSummary? BillingModeSummary { get; set; }
+    [JsonPropertyName("GlobalSecondaryIndexes")] public List<SecondaryIndexDescriptionDto>? GlobalSecondaryIndexes { get; set; }
+    [JsonPropertyName("LocalSecondaryIndexes")] public List<SecondaryIndexDescriptionDto>? LocalSecondaryIndexes { get; set; }
+}
+
+/// <summary>
+/// DescribeTable representation of a GSI or LSI. <see cref="IndexStatus"/>
+/// is GSI-only (LSIs have no lifecycle status); it is omitted for LSIs via
+/// the context's WhenWritingNull policy.
+/// </summary>
+internal sealed class SecondaryIndexDescriptionDto
+{
+    [JsonPropertyName("IndexName")] public string? IndexName { get; set; }
+    [JsonPropertyName("KeySchema")] public List<KeySchemaElementDto>? KeySchema { get; set; }
+    [JsonPropertyName("Projection")] public ProjectionDto? Projection { get; set; }
+    [JsonPropertyName("IndexStatus")] public string? IndexStatus { get; set; }
+    [JsonPropertyName("IndexArn")] public string? IndexArn { get; set; }
 }
 
 internal sealed class BillingModeSummary

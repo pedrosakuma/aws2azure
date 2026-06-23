@@ -502,40 +502,181 @@ public class TableLifecycleHandlersTests
     }
 
     [Fact]
-    public async Task CreateTable_rejects_global_secondary_indexes()
+    public async Task CreateTable_accepts_and_persists_global_secondary_index()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                new HttpResponseMessage(HttpStatusCode.Created) { Content = new StringContent("{\"id\":\"orders\"}") },
+                new HttpResponseMessage(HttpStatusCode.Created) { Content = new StringContent("{}") },
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var reqBody = "{\"TableName\":\"orders\","
+                      + "\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"}],"
+                      + "\"AttributeDefinitions\":["
+                      + "{\"AttributeName\":\"pk\",\"AttributeType\":\"S\"},"
+                      + "{\"AttributeName\":\"gsiHash\",\"AttributeType\":\"S\"},"
+                      + "{\"AttributeName\":\"gsiSort\",\"AttributeType\":\"N\"}],"
+                      + "\"GlobalSecondaryIndexes\":[{\"IndexName\":\"gsi1\","
+                      + "\"KeySchema\":[{\"AttributeName\":\"gsiHash\",\"KeyType\":\"HASH\"},{\"AttributeName\":\"gsiSort\",\"KeyType\":\"RANGE\"}],"
+                      + "\"Projection\":{\"ProjectionType\":\"INCLUDE\",\"NonKeyAttributes\":[\"extra\"]}}]}";
+        await TableLifecycleHandlers.HandleCreateTableAsync(
+            ctx, Encoding.UTF8.GetBytes(reqBody), cosmos, CancellationToken.None);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.Equal(2, handler.Requests.Count);
+
+        // Persisted sidecar metadata carries the GSI schema.
+        using var persisted = JsonDocument.Parse(handler.Requests[1].Body!);
+        var gsis = persisted.RootElement.GetProperty("globalSecondaryIndexes");
+        Assert.Equal(1, gsis.GetArrayLength());
+        Assert.Equal("gsi1", gsis[0].GetProperty("indexName").GetString());
+        Assert.Equal("INCLUDE", gsis[0].GetProperty("projectionType").GetString());
+        Assert.Equal("extra", gsis[0].GetProperty("nonKeyAttributes")[0].GetString());
+        Assert.Equal(2, gsis[0].GetProperty("keySchema").GetArrayLength());
+
+        // Response TableDescription echoes the GSI with ACTIVE status + an ARN.
+        using var doc = JsonDocument.Parse(ReadResponse(body));
+        var descGsi = doc.RootElement.GetProperty("TableDescription").GetProperty("GlobalSecondaryIndexes");
+        Assert.Equal(1, descGsi.GetArrayLength());
+        Assert.Equal("gsi1", descGsi[0].GetProperty("IndexName").GetString());
+        Assert.Equal("ACTIVE", descGsi[0].GetProperty("IndexStatus").GetString());
+        Assert.EndsWith("table/orders/index/gsi1", descGsi[0].GetProperty("IndexArn").GetString());
+    }
+
+    [Fact]
+    public async Task CreateTable_accepts_and_persists_local_secondary_index()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                new HttpResponseMessage(HttpStatusCode.Created) { Content = new StringContent("{\"id\":\"orders\"}") },
+                new HttpResponseMessage(HttpStatusCode.Created) { Content = new StringContent("{}") },
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var reqBody = "{\"TableName\":\"orders\","
+                      + "\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"},{\"AttributeName\":\"sk\",\"KeyType\":\"RANGE\"}],"
+                      + "\"AttributeDefinitions\":["
+                      + "{\"AttributeName\":\"pk\",\"AttributeType\":\"S\"},"
+                      + "{\"AttributeName\":\"sk\",\"AttributeType\":\"N\"},"
+                      + "{\"AttributeName\":\"lsiSort\",\"AttributeType\":\"S\"}],"
+                      + "\"LocalSecondaryIndexes\":[{\"IndexName\":\"lsi1\","
+                      + "\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"},{\"AttributeName\":\"lsiSort\",\"KeyType\":\"RANGE\"}],"
+                      + "\"Projection\":{\"ProjectionType\":\"ALL\"}}]}";
+        await TableLifecycleHandlers.HandleCreateTableAsync(
+            ctx, Encoding.UTF8.GetBytes(reqBody), cosmos, CancellationToken.None);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+
+        using var persisted = JsonDocument.Parse(handler.Requests[1].Body!);
+        var lsis = persisted.RootElement.GetProperty("localSecondaryIndexes");
+        Assert.Equal(1, lsis.GetArrayLength());
+        Assert.Equal("lsi1", lsis[0].GetProperty("indexName").GetString());
+
+        // LSIs have no lifecycle status — IndexStatus is omitted.
+        using var doc = JsonDocument.Parse(ReadResponse(body));
+        var descLsi = doc.RootElement.GetProperty("TableDescription").GetProperty("LocalSecondaryIndexes");
+        Assert.Equal("lsi1", descLsi[0].GetProperty("IndexName").GetString());
+        Assert.False(descLsi[0].TryGetProperty("IndexStatus", out _));
+    }
+
+    [Fact]
+    public async Task CreateTable_rejects_lsi_without_composite_key()
     {
         var (ctx, body) = NewCtx();
         var handler = new ScriptedHandler();
         var cosmos = BuildClient(handler);
 
-        var reqBody = "{\"TableName\":\"orders\",\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"}],"
-                      + "\"AttributeDefinitions\":[{\"AttributeName\":\"pk\",\"AttributeType\":\"S\"}],"
-                      + "\"GlobalSecondaryIndexes\":[{\"IndexName\":\"gsi1\"}]}";
+        var reqBody = "{\"TableName\":\"orders\","
+                      + "\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"}],"
+                      + "\"AttributeDefinitions\":["
+                      + "{\"AttributeName\":\"pk\",\"AttributeType\":\"S\"},"
+                      + "{\"AttributeName\":\"lsiSort\",\"AttributeType\":\"S\"}],"
+                      + "\"LocalSecondaryIndexes\":[{\"IndexName\":\"lsi1\","
+                      + "\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"},{\"AttributeName\":\"lsiSort\",\"KeyType\":\"RANGE\"}],"
+                      + "\"Projection\":{\"ProjectionType\":\"ALL\"}}]}";
         await TableLifecycleHandlers.HandleCreateTableAsync(
             ctx, Encoding.UTF8.GetBytes(reqBody), cosmos, CancellationToken.None);
 
         Assert.Equal(400, ctx.Response.StatusCode);
-        var resp = ReadResponse(body);
-        Assert.Contains("ValidationException", resp);
-        Assert.Contains("GlobalSecondaryIndexes", resp);
+        Assert.Contains("composite", ReadResponse(body));
         Assert.Empty(handler.Requests);
     }
 
     [Fact]
-    public async Task CreateTable_rejects_local_secondary_indexes()
+    public async Task CreateTable_rejects_index_key_attr_without_definition()
     {
         var (ctx, body) = NewCtx();
         var handler = new ScriptedHandler();
         var cosmos = BuildClient(handler);
 
-        var reqBody = "{\"TableName\":\"orders\",\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"}],"
+        var reqBody = "{\"TableName\":\"orders\","
+                      + "\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"}],"
                       + "\"AttributeDefinitions\":[{\"AttributeName\":\"pk\",\"AttributeType\":\"S\"}],"
-                      + "\"LocalSecondaryIndexes\":[{\"IndexName\":\"lsi1\"}]}";
+                      + "\"GlobalSecondaryIndexes\":[{\"IndexName\":\"gsi1\","
+                      + "\"KeySchema\":[{\"AttributeName\":\"undeclared\",\"KeyType\":\"HASH\"}],"
+                      + "\"Projection\":{\"ProjectionType\":\"ALL\"}}]}";
         await TableLifecycleHandlers.HandleCreateTableAsync(
             ctx, Encoding.UTF8.GetBytes(reqBody), cosmos, CancellationToken.None);
 
         Assert.Equal(400, ctx.Response.StatusCode);
-        Assert.Contains("LocalSecondaryIndexes", ReadResponse(body));
+        Assert.Contains("undeclared", ReadResponse(body));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task CreateTable_rejects_invalid_projection_type()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+        var cosmos = BuildClient(handler);
+
+        var reqBody = "{\"TableName\":\"orders\","
+                      + "\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"}],"
+                      + "\"AttributeDefinitions\":["
+                      + "{\"AttributeName\":\"pk\",\"AttributeType\":\"S\"},"
+                      + "{\"AttributeName\":\"gsiHash\",\"AttributeType\":\"S\"}],"
+                      + "\"GlobalSecondaryIndexes\":[{\"IndexName\":\"gsi1\","
+                      + "\"KeySchema\":[{\"AttributeName\":\"gsiHash\",\"KeyType\":\"HASH\"}],"
+                      + "\"Projection\":{\"ProjectionType\":\"SOMETHING\"}}]}";
+        await TableLifecycleHandlers.HandleCreateTableAsync(
+            ctx, Encoding.UTF8.GetBytes(reqBody), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("ProjectionType", ReadResponse(body));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task CreateTable_rejects_duplicate_index_name()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+        var cosmos = BuildClient(handler);
+
+        var reqBody = "{\"TableName\":\"orders\","
+                      + "\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"}],"
+                      + "\"AttributeDefinitions\":["
+                      + "{\"AttributeName\":\"pk\",\"AttributeType\":\"S\"},"
+                      + "{\"AttributeName\":\"g1\",\"AttributeType\":\"S\"},"
+                      + "{\"AttributeName\":\"g2\",\"AttributeType\":\"S\"}],"
+                      + "\"GlobalSecondaryIndexes\":["
+                      + "{\"IndexName\":\"dup\",\"KeySchema\":[{\"AttributeName\":\"g1\",\"KeyType\":\"HASH\"}],\"Projection\":{\"ProjectionType\":\"ALL\"}},"
+                      + "{\"IndexName\":\"dup\",\"KeySchema\":[{\"AttributeName\":\"g2\",\"KeyType\":\"HASH\"}],\"Projection\":{\"ProjectionType\":\"ALL\"}}]}";
+        await TableLifecycleHandlers.HandleCreateTableAsync(
+            ctx, Encoding.UTF8.GetBytes(reqBody), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("Duplicate index name", ReadResponse(body));
+        Assert.Empty(handler.Requests);
     }
 
     [Fact]
