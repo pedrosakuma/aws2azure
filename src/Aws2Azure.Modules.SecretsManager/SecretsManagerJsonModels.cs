@@ -87,6 +87,9 @@ internal sealed record KeyVaultSecretRequest(
     [property: JsonPropertyName("attributes")] KeyVaultSecretAttributes? Attributes,
     [property: JsonPropertyName("description")] string? Description);
 
+internal sealed record KeyVaultSecretTagsRequest(
+    [property: JsonPropertyName("tags")] IReadOnlyDictionary<string, string>? Tags);
+
 [JsonSerializable(typeof(GetSecretValueResponse))]
 [JsonSerializable(typeof(CreateSecretResponse))]
 [JsonSerializable(typeof(DeleteSecretResponse))]
@@ -97,6 +100,7 @@ internal sealed record KeyVaultSecretRequest(
 [JsonSerializable(typeof(UpdateSecretResponse))]
 [JsonSerializable(typeof(PutSecretValueResponse))]
 [JsonSerializable(typeof(KeyVaultSecretRequest))]
+[JsonSerializable(typeof(KeyVaultSecretTagsRequest))]
 [JsonSerializable(typeof(KeyVaultSecretAttributes))]
 internal sealed partial class SecretsManagerJsonContext : JsonSerializerContext
 {

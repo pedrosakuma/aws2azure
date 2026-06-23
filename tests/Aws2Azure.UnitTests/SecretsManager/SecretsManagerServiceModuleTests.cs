@@ -26,6 +26,14 @@ public sealed class SecretsManagerServiceModuleTests
                 });
             }
 
+            if (request.RequestUri!.AbsolutePath.EndsWith("/versions", StringComparison.Ordinal))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"value\":[{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/abc123\"}]}", Encoding.UTF8, "application/json"),
+                });
+            }
+
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent("{\"value\":\"super-secret\",\"id\":\"https://example.vault.azure.net/secrets/demo/versions/abc123\",\"contentType\":\"text/plain\",\"attributes\":{\"created\":1710000000}}", Encoding.UTF8, "application/json"),
@@ -108,6 +116,177 @@ public sealed class SecretsManagerServiceModuleTests
         Assert.NotNull(requestedUri);
         Assert.Contains("/secrets/demo/abc123?api-version=7.4", requestedUri);
         Assert.DoesNotContain("/versions/", requestedUri);
+    }
+
+    [Fact]
+    public async Task HandleAsync_GetSecretValue_resolves_version_stage_from_key_vault_version_tags()
+    {
+        var requestedUris = new List<string>();
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            requestedUris.Add(request.RequestUri.ToString());
+            if (request.RequestUri.AbsolutePath.EndsWith("/versions", StringComparison.Ordinal))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"value\":[{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/pending123\",\"tags\":{\"aws2azure-version-stages\":\"AWSPENDING\"}},{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/current123\",\"tags\":{\"aws2azure-version-stages\":\"AWSCURRENT\"}}]}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":\"pending-secret\",\"id\":\"https://example.vault.azure.net/secrets/demo/versions/pending123\",\"contentType\":\"text/plain\",\"attributes\":{\"created\":1710000000},\"tags\":{\"aws2azure-version-stages\":\"AWSPENDING\"}}", Encoding.UTF8, "application/json"),
+            });
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.GetSecretValue", "{\"SecretId\":\"demo\",\"VersionStage\":\"AWSPENDING\"}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Contains(requestedUris, uri => uri.Contains("/secrets/demo/versions?api-version=7.4", StringComparison.Ordinal));
+        Assert.Contains(requestedUris, uri => uri.Contains("/secrets/demo/pending123?api-version=7.4", StringComparison.Ordinal));
+        var body = await ReadBodyAsync(context);
+        using var document = JsonDocument.Parse(body);
+        Assert.Equal("pending-secret", document.RootElement.GetProperty("SecretString").GetString());
+        Assert.Equal("AWSPENDING", document.RootElement.GetProperty("VersionStages")[0].GetString());
+    }
+
+    [Fact]
+    public async Task HandleAsync_GetSecretValue_prefers_explicit_current_stage_over_untagged_fallback()
+    {
+        var requestedUris = new List<string>();
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            requestedUris.Add(request.RequestUri.ToString());
+            if (request.RequestUri.AbsolutePath.EndsWith("/versions", StringComparison.Ordinal))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"value\":[{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/legacy\",\"attributes\":{\"created\":1710000000}},{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/current\",\"attributes\":{\"created\":1710000100},\"tags\":{\"aws2azure-version-stages\":\"AWSCURRENT\"}}]}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":\"current-secret\",\"id\":\"https://example.vault.azure.net/secrets/demo/versions/current\",\"contentType\":\"text/plain\",\"attributes\":{\"created\":1710000100},\"tags\":{\"aws2azure-version-stages\":\"AWSCURRENT\"}}", Encoding.UTF8, "application/json"),
+            });
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.GetSecretValue", "{\"SecretId\":\"demo\"}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Contains(requestedUris, uri => uri.Contains("/secrets/demo/current?api-version=7.4", StringComparison.Ordinal));
+        var body = await ReadBodyAsync(context);
+        using var document = JsonDocument.Parse(body);
+        Assert.Equal("current-secret", document.RootElement.GetProperty("SecretString").GetString());
+    }
+
+    [Fact]
+    public void GetTags_strips_reserved_internal_tags_from_aws_tag_array()
+    {
+        using var document = JsonDocument.Parse("{\"Tags\":[{\"Key\":\"env\",\"Value\":\"dev\"},{\"Key\":\"aws2azure-client-request-token\",\"Value\":\"spoofed\"}]}");
+
+        var tags = KeyVaultSecretClient.GetTags(document.RootElement);
+
+        Assert.True(tags.ContainsKey("env"));
+        Assert.False(tags.ContainsKey("aws2azure-client-request-token"));
+    }
+
+    [Fact]
+    public async Task HandleAsync_GetSecretValue_accepts_client_request_token_as_version_id()
+    {
+        var requestedUris = new List<string>();
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            requestedUris.Add(request.RequestUri.ToString());
+            if (request.RequestUri.AbsolutePath.EndsWith("/client-token-1", StringComparison.Ordinal))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            }
+
+            if (request.RequestUri.AbsolutePath.EndsWith("/versions", StringComparison.Ordinal))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"value\":[{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/real-kv-version\",\"tags\":{\"aws2azure-client-request-token\":\"client-token-1\",\"aws2azure-version-stages\":\"AWSCURRENT\"}}]}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":\"token-secret\",\"id\":\"https://example.vault.azure.net/secrets/demo/versions/real-kv-version\",\"contentType\":\"text/plain\",\"attributes\":{\"created\":1710000000},\"tags\":{\"aws2azure-client-request-token\":\"client-token-1\",\"aws2azure-version-stages\":\"AWSCURRENT\"}}", Encoding.UTF8, "application/json"),
+            });
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.GetSecretValue", "{\"SecretId\":\"demo\",\"VersionId\":\"client-token-1\"}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Contains(requestedUris, uri => uri.Contains("/secrets/demo/client-token-1?api-version=7.4", StringComparison.Ordinal));
+        Assert.Contains(requestedUris, uri => uri.Contains("/secrets/demo/real-kv-version?api-version=7.4", StringComparison.Ordinal));
+        var body = await ReadBodyAsync(context);
+        using var document = JsonDocument.Parse(body);
+        Assert.Equal("client-token-1", document.RootElement.GetProperty("VersionId").GetString());
+    }
+
+    [Fact]
+    public async Task HandleAsync_GetSecretValue_rejects_mismatched_version_id_and_stage()
+    {
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":\"current-secret\",\"id\":\"https://example.vault.azure.net/secrets/demo/versions/current123\",\"contentType\":\"text/plain\",\"attributes\":{\"created\":1710000000},\"tags\":{\"aws2azure-version-stages\":\"AWSCURRENT\"}}", Encoding.UTF8, "application/json"),
+            });
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.GetSecretValue", "{\"SecretId\":\"demo\",\"VersionId\":\"current123\",\"VersionStage\":\"AWSPENDING\"}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        Assert.Contains("InvalidRequestException", body);
     }
 
     [Fact]
@@ -547,7 +726,7 @@ public sealed class SecretsManagerServiceModuleTests
         }), ownsHandler: false);
 
         var module = CreateModule(http);
-        var context = CreateContext("SecretsManager.PutSecretValue", "{\"SecretId\":\"demo\",\"SecretString\":\"new-secret\"}");
+        var context = CreateContext("SecretsManager.PutSecretValue", "{\"SecretId\":\"demo\",\"SecretString\":\"new-secret\",\"ClientRequestToken\":\"token-1\",\"VersionStages\":[\"AWSCURRENT\",\"BLUE\"]}");
 
         await module.HandleAsync(context);
 
@@ -556,11 +735,207 @@ public sealed class SecretsManagerServiceModuleTests
         Assert.Contains("/secrets/demo?api-version=7.4", requestedUri);
         Assert.NotNull(requestBody);
         Assert.Contains("\"value\":\"new-secret\"", requestBody);
+        using (var requestDocument = JsonDocument.Parse(requestBody))
+        {
+            var tags = requestDocument.RootElement.GetProperty("tags");
+            Assert.Equal("token-1", tags.GetProperty("aws2azure-client-request-token").GetString());
+            Assert.Equal("AWSCURRENT\nBLUE", tags.GetProperty("aws2azure-version-stages").GetString());
+            Assert.False(requestDocument.RootElement.GetProperty("attributes").TryGetProperty("created", out _));
+        }
+
         var body = await ReadBodyAsync(context);
         using var document = JsonDocument.Parse(body);
         Assert.Equal("demo", document.RootElement.GetProperty("Name").GetString());
-        Assert.Equal("put789", document.RootElement.GetProperty("VersionId").GetString());
+        Assert.Equal("token-1", document.RootElement.GetProperty("VersionId").GetString());
         Assert.Equal("AWSCURRENT", document.RootElement.GetProperty("VersionStages")[0].GetString());
+        Assert.Equal("BLUE", document.RootElement.GetProperty("VersionStages")[1].GetString());
+    }
+
+    [Fact]
+    public async Task HandleAsync_PutSecretValue_default_stage_moves_current_to_previous()
+    {
+        using var http = new AzureHttpClient(new InMemoryKeyVaultHandler(
+            new SecretVersionState("old-current", "old-secret", 1_710_000_000, new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["aws2azure-version-stages"] = "AWSCURRENT",
+            }),
+            new SecretVersionState("old-previous", "previous-secret", 1_709_999_000, new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["aws2azure-version-stages"] = "AWSPREVIOUS",
+            })), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var putContext = CreateContext("SecretsManager.PutSecretValue", "{\"SecretId\":\"demo\",\"SecretString\":\"new-secret\"}");
+
+        await module.HandleAsync(putContext);
+
+        Assert.Equal(StatusCodes.Status200OK, putContext.Response.StatusCode);
+        var putBody = await ReadBodyAsync(putContext);
+        using (var putDocument = JsonDocument.Parse(putBody))
+        {
+            Assert.Equal("new-version", putDocument.RootElement.GetProperty("VersionId").GetString());
+            Assert.Equal("AWSCURRENT", putDocument.RootElement.GetProperty("VersionStages")[0].GetString());
+        }
+
+        var oldCurrentContext = CreateContext("SecretsManager.GetSecretValue", "{\"SecretId\":\"demo\",\"VersionId\":\"old-current\",\"VersionStage\":\"AWSCURRENT\"}");
+        await module.HandleAsync(oldCurrentContext);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, oldCurrentContext.Response.StatusCode);
+        var oldCurrentBody = await ReadBodyAsync(oldCurrentContext);
+        Assert.Contains("InvalidRequestException", oldCurrentBody);
+
+        var previousContext = CreateContext("SecretsManager.GetSecretValue", "{\"SecretId\":\"demo\",\"VersionStage\":\"AWSPREVIOUS\"}");
+        await module.HandleAsync(previousContext);
+
+        Assert.Equal(StatusCodes.Status200OK, previousContext.Response.StatusCode);
+        var previousBody = await ReadBodyAsync(previousContext);
+        using (var previousDocument = JsonDocument.Parse(previousBody))
+        {
+            Assert.Equal("old-current", previousDocument.RootElement.GetProperty("VersionId").GetString());
+            Assert.Equal("old-secret", previousDocument.RootElement.GetProperty("SecretString").GetString());
+            Assert.Equal("AWSPREVIOUS", previousDocument.RootElement.GetProperty("VersionStages")[0].GetString());
+        }
+
+        var currentContext = CreateContext("SecretsManager.GetSecretValue", "{\"SecretId\":\"demo\",\"VersionStage\":\"AWSCURRENT\"}");
+        await module.HandleAsync(currentContext);
+
+        Assert.Equal(StatusCodes.Status200OK, currentContext.Response.StatusCode);
+        var currentBody = await ReadBodyAsync(currentContext);
+        using var currentDocument = JsonDocument.Parse(currentBody);
+        Assert.Equal("new-version", currentDocument.RootElement.GetProperty("VersionId").GetString());
+        Assert.Equal("new-secret", currentDocument.RootElement.GetProperty("SecretString").GetString());
+    }
+
+    [Fact]
+    public async Task HandleAsync_PutSecretValue_explicit_stages_move_only_requested_labels()
+    {
+        using var http = new AzureHttpClient(new InMemoryKeyVaultHandler(
+            new SecretVersionState("current", "current-secret", 1_710_000_000, new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["aws2azure-version-stages"] = "AWSCURRENT",
+            }),
+            new SecretVersionState("blue", "blue-secret", 1_710_000_100, new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["aws2azure-version-stages"] = "BLUE",
+            })), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var putContext = CreateContext("SecretsManager.PutSecretValue", "{\"SecretId\":\"demo\",\"SecretString\":\"new-secret\",\"VersionStages\":[\"BLUE\"]}");
+
+        await module.HandleAsync(putContext);
+
+        Assert.Equal(StatusCodes.Status200OK, putContext.Response.StatusCode);
+
+        var currentContext = CreateContext("SecretsManager.GetSecretValue", "{\"SecretId\":\"demo\",\"VersionStage\":\"AWSCURRENT\"}");
+        await module.HandleAsync(currentContext);
+        Assert.Equal(StatusCodes.Status200OK, currentContext.Response.StatusCode);
+        var currentBody = await ReadBodyAsync(currentContext);
+        using (var currentDocument = JsonDocument.Parse(currentBody))
+        {
+            Assert.Equal("current", currentDocument.RootElement.GetProperty("VersionId").GetString());
+        }
+
+        var blueContext = CreateContext("SecretsManager.GetSecretValue", "{\"SecretId\":\"demo\",\"VersionStage\":\"BLUE\"}");
+        await module.HandleAsync(blueContext);
+        Assert.Equal(StatusCodes.Status200OK, blueContext.Response.StatusCode);
+        var blueBody = await ReadBodyAsync(blueContext);
+        using var blueDocument = JsonDocument.Parse(blueBody);
+        Assert.Equal("new-version", blueDocument.RootElement.GetProperty("VersionId").GetString());
+    }
+
+    [Fact]
+    public void PutSecretValue_gap_doc_records_cross_instance_idempotency_limit()
+    {
+        var yamlPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../..", "docs/gaps/secretsmanager/PutSecretValue.yaml"));
+        var yaml = File.ReadAllText(yamlPath);
+
+        Assert.Contains("not a durable cross-instance lock", yaml, StringComparison.Ordinal);
+        Assert.Contains("Concurrent same-token PutSecretValue calls through different proxy instances can both create versions", yaml, StringComparison.Ordinal);
+        Assert.Contains("status: partial", yaml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task HandleAsync_PutSecretValue_replays_existing_client_request_token_without_new_put()
+    {
+        var expectedHash = KeyVaultSecretClient.GetPayloadSha256("new-secret", null);
+        var putCount = 0;
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.Method == HttpMethod.Put)
+            {
+                putCount++;
+            }
+
+            if (request.RequestUri.AbsolutePath.EndsWith("/versions", StringComparison.Ordinal))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent($"{{\"value\":[{{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/reused123\",\"tags\":{{\"aws2azure-client-request-token\":\"token-1\",\"aws2azure-payload-sha256\":\"{expectedHash}\",\"aws2azure-version-stages\":\"AWSCURRENT\\nBLUE\"}}}}]}}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"id\":\"https://example.vault.azure.net/secrets/demo\",\"attributes\":{\"created\":1710000000}}", Encoding.UTF8, "application/json"),
+            });
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.PutSecretValue", "{\"SecretId\":\"demo\",\"SecretString\":\"new-secret\",\"ClientRequestToken\":\"token-1\"}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(0, putCount);
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        using var document = JsonDocument.Parse(body);
+        Assert.Equal("token-1", document.RootElement.GetProperty("VersionId").GetString());
+        Assert.Equal("BLUE", document.RootElement.GetProperty("VersionStages")[1].GetString());
+    }
+
+    [Fact]
+    public async Task HandleAsync_PutSecretValue_rejects_client_request_token_with_different_payload()
+    {
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath.EndsWith("/versions", StringComparison.Ordinal))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"value\":[{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/reused123\",\"tags\":{\"aws2azure-client-request-token\":\"token-1\",\"aws2azure-payload-sha256\":\"different\"}}]}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"id\":\"https://example.vault.azure.net/secrets/demo\",\"attributes\":{\"created\":1710000000}}", Encoding.UTF8, "application/json"),
+            });
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.PutSecretValue", "{\"SecretId\":\"demo\",\"SecretString\":\"new-secret\",\"ClientRequestToken\":\"token-1\"}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status409Conflict, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        Assert.Contains("ResourceExistsException", body);
     }
 
     [Theory]
@@ -721,6 +1096,142 @@ public sealed class SecretsManagerServiceModuleTests
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
+
+    private sealed class InMemoryKeyVaultHandler(params SecretVersionState[] initialVersions) : HttpMessageHandler
+    {
+        private readonly List<SecretVersionState> _versions = [.. initialVersions];
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token", StringComparison.Ordinal))
+            {
+                return JsonResponse("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}");
+            }
+
+            var path = request.RequestUri.AbsolutePath;
+            if (request.Method == HttpMethod.Get && string.Equals(path, "/secrets/demo", StringComparison.Ordinal))
+            {
+                return JsonResponse("{\"id\":\"https://example.vault.azure.net/secrets/demo\",\"attributes\":{\"created\":1710000000}}");
+            }
+
+            if (request.Method == HttpMethod.Get && string.Equals(path, "/secrets/demo/versions", StringComparison.Ordinal))
+            {
+                var builder = new StringBuilder();
+                builder.Append("{\"value\":[");
+                for (var i = 0; i < _versions.Count; i++)
+                {
+                    if (i > 0)
+                    {
+                        builder.Append(',');
+                    }
+
+                    AppendVersionJson(builder, _versions[i], includeValue: false);
+                }
+
+                builder.Append("]}");
+                return JsonResponse(builder.ToString());
+            }
+
+            if (request.Method == HttpMethod.Put && string.Equals(path, "/secrets/demo", StringComparison.Ordinal))
+            {
+                var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+                using var document = JsonDocument.Parse(body);
+                var value = document.RootElement.TryGetProperty("value", out var valueElement) && valueElement.ValueKind == JsonValueKind.String
+                    ? valueElement.GetString() ?? string.Empty
+                    : string.Empty;
+                var tags = ReadRequestTags(document.RootElement);
+                var version = new SecretVersionState("new-version", value, 1_710_000_200, tags);
+                _versions.Add(version);
+                return JsonResponse(BuildVersionJson(version, includeValue: false));
+            }
+
+            if (request.Method == HttpMethod.Patch && path.StartsWith("/secrets/demo/", StringComparison.Ordinal))
+            {
+                var versionId = Uri.UnescapeDataString(path["/secrets/demo/".Length..]);
+                var version = _versions.Find(candidate => string.Equals(candidate.VersionId, versionId, StringComparison.Ordinal));
+                if (version is null)
+                {
+                    return JsonResponse("{\"error\":{\"code\":\"SecretNotFound\"}}", HttpStatusCode.NotFound);
+                }
+
+                var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+                using var document = JsonDocument.Parse(body);
+                version.Tags.Clear();
+                foreach (var tag in ReadRequestTags(document.RootElement))
+                {
+                    version.Tags[tag.Key] = tag.Value;
+                }
+
+                return JsonResponse(BuildVersionJson(version, includeValue: false));
+            }
+
+            if (request.Method == HttpMethod.Get && path.StartsWith("/secrets/demo/", StringComparison.Ordinal))
+            {
+                var versionId = Uri.UnescapeDataString(path["/secrets/demo/".Length..]);
+                var version = _versions.Find(candidate => string.Equals(candidate.VersionId, versionId, StringComparison.Ordinal));
+                if (version is null)
+                {
+                    return JsonResponse("{\"error\":{\"code\":\"SecretNotFound\"}}", HttpStatusCode.NotFound);
+                }
+
+                return JsonResponse(BuildVersionJson(version, includeValue: true));
+            }
+
+            return JsonResponse("{\"error\":{\"code\":\"Unhandled\"}}", HttpStatusCode.NotFound);
+        }
+
+        private static Dictionary<string, string> ReadRequestTags(JsonElement root)
+        {
+            var tags = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (!root.TryGetProperty("tags", out var tagsElement) || tagsElement.ValueKind != JsonValueKind.Object)
+            {
+                return tags;
+            }
+
+            foreach (var property in tagsElement.EnumerateObject())
+            {
+                tags[property.Name] = property.Value.ValueKind == JsonValueKind.String
+                    ? property.Value.GetString() ?? string.Empty
+                    : property.Value.ToString();
+            }
+
+            return tags;
+        }
+
+        private static string BuildVersionJson(SecretVersionState version, bool includeValue)
+        {
+            var builder = new StringBuilder();
+            AppendVersionJson(builder, version, includeValue);
+            return builder.ToString();
+        }
+
+        private static void AppendVersionJson(StringBuilder builder, SecretVersionState version, bool includeValue)
+        {
+            builder.Append('{');
+            if (includeValue)
+            {
+                builder.Append("\"value\":");
+                builder.Append(JsonSerializer.Serialize(version.Value));
+                builder.Append(',');
+            }
+
+            builder.Append("\"id\":\"https://example.vault.azure.net/secrets/demo/versions/");
+            builder.Append(version.VersionId);
+            builder.Append("\",\"contentType\":\"text/plain\",\"attributes\":{\"created\":");
+            builder.Append(version.Created);
+            builder.Append("},\"tags\":");
+            builder.Append(JsonSerializer.Serialize(version.Tags));
+            builder.Append('}');
+        }
+
+        private static HttpResponseMessage JsonResponse(string json, HttpStatusCode statusCode = HttpStatusCode.OK)
+            => new(statusCode)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json"),
+            };
+    }
+
+    private sealed record SecretVersionState(string VersionId, string Value, long Created, Dictionary<string, string> Tags);
 
     private sealed class ScriptedHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> responder) : HttpMessageHandler
     {

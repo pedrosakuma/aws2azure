@@ -6,6 +6,8 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 using Aws2Azure.Modules.DynamoDb.Operations;
+using Aws2Azure.Modules.SecretsManager;
+using Aws2Azure.Modules.SecretsManager.Operations;
 using Aws2Azure.Modules.S3.Xml;
 using Aws2Azure.Modules.Sns.Xml;
 using Aws2Azure.Modules.Sqs.Xml;
@@ -168,6 +170,32 @@ public sealed class SyncIoResponseWriterGuardrailTests
         XNamespace ns = SnsResponseWriter.XmlNamespace;
         var doc = XDocument.Parse(Encoding.UTF8.GetString(bytes));
         Assert.Equal(topicCount, doc.Descendants(ns + "member").Count());
+    }
+
+    [Fact]
+    public async Task SecretsManager_ListSecrets_large_listing_writes_full_body_without_sync_io()
+    {
+        const int secretCount = 800;
+        var secrets = new List<ListSecretsItem>(secretCount);
+        for (var i = 0; i < secretCount; i++)
+        {
+            secrets.Add(new ListSecretsItem(
+                Arn: $"arn:aws:secretsmanager:azure:keyvault:secret:secret-name-{i:D6}",
+                Name: $"secret-name-{i:D6}",
+                Description: $"secret description {i:D6}",
+                CreatedDate: DateTimeOffset.UnixEpoch.AddSeconds(i),
+                LastChangedDate: DateTimeOffset.UnixEpoch.AddSeconds(i + 1),
+                Tags: [new SecretsManagerTag("env", "test")],
+                VersionIdsToStages: null));
+        }
+
+        var (context, body) = NewContext();
+        await SecretsManagerOperationSupport.WriteJsonAsync(context, new ListSecretsResponse(secrets, null), SecretsManagerJsonContext.Default.ListSecretsResponse, CancellationToken.None);
+        var bytes = await CompleteAndReadAsync(context, body);
+
+        Assert.True(bytes.Length > SyncFlushThresholdBytes, $"payload was only {bytes.Length} bytes");
+        using var json = JsonDocument.Parse(bytes);
+        Assert.Equal(secretCount, json.RootElement.GetProperty("SecretList").GetArrayLength());
     }
 
     private static JsonElement Attr(string value)
