@@ -106,7 +106,7 @@ public class TableLifecycleHandlersTests
     }
 
     [Fact]
-    public async Task CreateTable_posts_to_colls_then_upserts_metadata()
+    public async Task CreateTable_posts_to_colls_then_creates_metadata()
     {
         var (ctx, body) = NewCtx();
         var req = Encoding.UTF8.GetBytes(
@@ -123,7 +123,7 @@ public class TableLifecycleHandlersTests
                 {
                     Content = new StringContent("{\"id\":\"orders\"}", Encoding.UTF8, "application/json"),
                 },
-                // POST /dbs/main/colls/orders/docs  (metadata upsert)
+                // POST /dbs/main/colls/orders/docs  (metadata create)
                 new HttpResponseMessage(HttpStatusCode.Created)
                 {
                     Content = new StringContent("{\"id\":\"__aws2azure_table_meta__\"}", Encoding.UTF8, "application/json"),
@@ -146,8 +146,7 @@ public class TableLifecycleHandlersTests
         var meta = handler.Requests[1];
         Assert.Equal(HttpMethod.Post, meta.Method);
         Assert.EndsWith("/dbs/main/colls/orders/docs", meta.Uri.AbsolutePath);
-        Assert.True(meta.Headers.ContainsKey("x-ms-documentdb-is-upsert"));
-        Assert.Equal("true", meta.Headers["x-ms-documentdb-is-upsert"]);
+        Assert.False(meta.Headers.ContainsKey("x-ms-documentdb-is-upsert"));
         Assert.Equal("[\"__aws2azure_table_meta__\"]", meta.Headers["x-ms-documentdb-partitionkey"]);
 
         var bodyJson = ReadResponse(body);
@@ -157,6 +156,59 @@ public class TableLifecycleHandlersTests
         Assert.Equal("ACTIVE", desc.GetProperty("TableStatus").GetString());
         Assert.Equal(2, desc.GetProperty("AttributeDefinitions").GetArrayLength());
         Assert.Equal(2, desc.GetProperty("KeySchema").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task CreateTable_metadata_conflict_preserves_concurrent_tags()
+    {
+        var (ctx, body) = NewCtx();
+        var req = Encoding.UTF8.GetBytes(
+            "{\"TableName\":\"orders\","
+            + "\"BillingMode\":\"PAY_PER_REQUEST\","
+            + "\"AttributeDefinitions\":[{\"AttributeName\":\"pk\",\"AttributeType\":\"S\"},{\"AttributeName\":\"sk\",\"AttributeType\":\"N\"}],"
+            + "\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"},{\"AttributeName\":\"sk\",\"KeyType\":\"RANGE\"}]}");
+
+        var existing = "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+            + "\"tableName\":\"orders\",\"tags\":[{\"key\":\"env\",\"value\":\"prod\"}]}";
+        var readExisting = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(existing, Encoding.UTF8, "application/json"),
+        };
+        readExisting.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue("\"tag-v1\"");
+
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                new HttpResponseMessage(HttpStatusCode.Created) { Content = new StringContent("{}") },
+                new HttpResponseMessage(HttpStatusCode.Conflict) { Content = new StringContent("{}") },
+                readExisting,
+                new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") },
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        await TableLifecycleHandlers.HandleCreateTableAsync(ctx, req, cosmos, CancellationToken.None);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.Equal(4, handler.Requests.Count);
+        Assert.Equal(HttpMethod.Post, handler.Requests[1].Method);
+        Assert.False(handler.Requests[1].Headers.ContainsKey("x-ms-documentdb-is-upsert"));
+        Assert.Equal(HttpMethod.Get, handler.Requests[2].Method);
+        Assert.Equal(HttpMethod.Put, handler.Requests[3].Method);
+        Assert.Equal("\"tag-v1\"", handler.Requests[3].Headers["If-Match"]);
+
+        using var persisted = JsonDocument.Parse(handler.Requests[3].Body!);
+        var root = persisted.RootElement;
+        Assert.Equal("PAY_PER_REQUEST", root.GetProperty("billingMode").GetString());
+        Assert.Equal(2, root.GetProperty("attributeDefinitions").GetArrayLength());
+        Assert.Equal(2, root.GetProperty("keySchema").GetArrayLength());
+        Assert.Equal("env", root.GetProperty("tags")[0].GetProperty("key").GetString());
+        Assert.Equal("prod", root.GetProperty("tags")[0].GetProperty("value").GetString());
+
+        using var responseDoc = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(2, responseDoc.RootElement.GetProperty("TableDescription")
+            .GetProperty("KeySchema").GetArrayLength());
     }
 
     [Fact]

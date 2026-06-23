@@ -88,6 +88,58 @@ public class TaggingHandlersTests
     }
 
     [Fact]
+    public async Task TagResource_conditional_replace_preserves_schema_fields()
+    {
+        var handler = new MetadataHandler(tableExists: true,
+            "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+            + "\"tableName\":\"orders\",\"creationDateTime\":123,\"billingMode\":\"PAY_PER_REQUEST\","
+            + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"sk\",\"type\":\"N\"}],"
+            + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
+            + "\"tags\":[{\"key\":\"owner\",\"value\":\"team-a\"}]}");
+        var cosmos = BuildClient(handler);
+
+        await InvokeTagAsync(cosmos,
+            "{\"ResourceArn\":\"orders\",\"Tags\":[{\"Key\":\"env\",\"Value\":\"prod\"}]}");
+
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(HttpMethod.Put, handler.Requests[1].Method);
+        Assert.Equal("\"1\"", handler.Requests[1].Headers["If-Match"]);
+
+        using var doc = JsonDocument.Parse(handler.MetadataJson!);
+        var root = doc.RootElement;
+        Assert.Equal(123, root.GetProperty("creationDateTime").GetInt64());
+        Assert.Equal("PAY_PER_REQUEST", root.GetProperty("billingMode").GetString());
+        Assert.Equal(2, root.GetProperty("attributeDefinitions").GetArrayLength());
+        Assert.Equal("sk", root.GetProperty("keySchema")[1].GetProperty("name").GetString());
+        Assert.Equal(2, root.GetProperty("tags").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task TagResource_retries_conditional_replace_after_precondition_failure()
+    {
+        var handler = new MetadataHandler(tableExists: true, MetadataJson())
+        {
+            PreconditionFailuresBeforeSuccess = 1,
+        };
+        var cosmos = BuildClient(handler);
+
+        await InvokeTagAsync(cosmos,
+            "{\"ResourceArn\":\"orders\",\"Tags\":[{\"Key\":\"env\",\"Value\":\"prod\"}]}");
+
+        Assert.Equal(4, handler.Requests.Count);
+        Assert.Equal(HttpMethod.Get, handler.Requests[0].Method);
+        Assert.Equal(HttpMethod.Put, handler.Requests[1].Method);
+        Assert.Equal(HttpMethod.Get, handler.Requests[2].Method);
+        Assert.Equal(HttpMethod.Put, handler.Requests[3].Method);
+        Assert.Equal("\"1\"", handler.Requests[1].Headers["If-Match"]);
+        Assert.Equal("\"1\"", handler.Requests[3].Headers["If-Match"]);
+
+        using var doc = JsonDocument.Parse(handler.MetadataJson!);
+        Assert.Equal("env", doc.RootElement.GetProperty("tags")[0].GetProperty("key").GetString());
+    }
+
+
+    [Fact]
     public async Task ListTagsOfResource_missing_table_returns_resource_not_found()
     {
         var handler = new MetadataHandler(tableExists: false, metadataJson: null);
@@ -214,10 +266,24 @@ public class TaggingHandlersTests
     {
         public string? MetadataJson { get; private set; } = metadataJson;
         public int UpsertCount { get; private set; }
+        public int PreconditionFailuresBeforeSuccess { get; set; }
+        public List<CapturedRequest> Requests { get; } = new();
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var header in request.Headers)
+            {
+                headers[header.Key] = string.Join(",", header.Value);
+            }
+            string? body = null;
+            if (request.Content is not null)
+            {
+                body = await request.Content.ReadAsStringAsync(ct);
+            }
+            Requests.Add(new CapturedRequest(request.Method, path, headers, body));
+
             if (request.Method == HttpMethod.Get && path.EndsWith("/docs/__aws2azure_table_meta__", StringComparison.Ordinal))
             {
                 if (MetadataJson is null) return NotFound();
@@ -229,13 +295,21 @@ public class TaggingHandlersTests
             }
             if (request.Method == HttpMethod.Post && path.EndsWith("/colls/orders/docs", StringComparison.Ordinal))
             {
-                MetadataJson = await request.Content!.ReadAsStringAsync(ct);
+                MetadataJson = body;
                 UpsertCount++;
                 return JsonOk("{\"id\":\"__aws2azure_table_meta__\"}");
             }
             if (request.Method == HttpMethod.Put && path.EndsWith("/colls/orders/docs/__aws2azure_table_meta__", StringComparison.Ordinal))
             {
-                MetadataJson = await request.Content!.ReadAsStringAsync(ct);
+                if (PreconditionFailuresBeforeSuccess > 0)
+                {
+                    PreconditionFailuresBeforeSuccess--;
+                    return new HttpResponseMessage(HttpStatusCode.PreconditionFailed)
+                    {
+                        Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+                    };
+                }
+                MetadataJson = body;
                 UpsertCount++;
                 return JsonOk("{\"id\":\"__aws2azure_table_meta__\"}");
             }
@@ -258,4 +332,10 @@ public class TaggingHandlersTests
         private static HttpResponseMessage NotFound()
             => new(HttpStatusCode.NotFound) { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
     }
+
+    private sealed record CapturedRequest(
+        HttpMethod Method,
+        string Path,
+        Dictionary<string, string> Headers,
+        string? Body);
 }
