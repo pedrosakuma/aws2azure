@@ -195,10 +195,27 @@ internal static class QueryHandler
         }
         bool isLsiQuery = lsi is not null;
         bool isGsiQuery = gsi is not null;
+        // A GSI is a projected view: when its projection is not ALL, only the
+        // index's projected attributes are physically available in DynamoDB.
+        // The proxy reads the full base-container document, so it must enforce
+        // the projected set itself to avoid leaking non-projected attributes.
+        bool gsiProjectionAll = isGsiQuery
+            && string.Equals(gsi!.ProjectionType, "ALL", StringComparison.OrdinalIgnoreCase);
 
         if (!IsAllowedSelect(req.Select, isLsiQuery || isGsiQuery, out var selectError))
         {
             await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", selectError).ConfigureAwait(false);
+            return;
+        }
+
+        // Select=ALL_ATTRIBUTES on a GSI is only legal when the index projects
+        // ALL — a GSI cannot fetch non-projected attributes from the base table
+        // (unlike an LSI). Reject it, matching DynamoDB.
+        if (isGsiQuery && !gsiProjectionAll
+            && string.Equals(req.Select, "ALL_ATTRIBUTES", StringComparison.Ordinal))
+        {
+            await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                $"Select=ALL_ATTRIBUTES is not supported on global secondary index '{req.IndexName}' whose projection type is not ALL.").ConfigureAwait(false);
             return;
         }
 
@@ -223,6 +240,26 @@ internal static class QueryHandler
             if (!string.IsNullOrWhiteSpace(req.ProjectionExpression))
             {
                 projection = ProjectionExpressionParser.Parse(req.ProjectionExpression!, names);
+                if (isGsiQuery && !gsiProjectionAll)
+                {
+                    // The GSI only projects a subset of attributes; a
+                    // ProjectionExpression cannot reference attributes outside
+                    // that set (DynamoDB cannot fetch them from the base table
+                    // for a GSI). Reject any non-projected path.
+                    var allowed = SecondaryIndexResolver.ResolveIndexProjection(
+                        meta, gsi!, gsiHashKey!.Name, gsiSortKey?.Name)!;
+                    foreach (var path in projection)
+                    {
+                        bool projected = false;
+                        foreach (var a in allowed)
+                        {
+                            if (string.Equals(a, path, StringComparison.Ordinal)) { projected = true; break; }
+                        }
+                        if (!projected)
+                            throw new KeyConditionException(
+                                $"ProjectionExpression references attribute '{path}' that is not projected into index '{req.IndexName}'.");
+                    }
+                }
             }
             else if ((isLsiQuery || isGsiQuery)
                 && (string.IsNullOrEmpty(req.Select)

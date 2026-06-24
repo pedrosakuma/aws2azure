@@ -1143,6 +1143,107 @@ public class QueryHandlerTests
     }
 
     [Fact]
+    public async Task Query_gsi_keys_only_select_all_attributes_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataGsiNumberKeysOnly) },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byAmount\","
+                  + "\"KeyConditionExpression\":\"customer = :c\","
+                  + "\"Select\":\"ALL_ATTRIBUTES\","
+                  + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("ALL_ATTRIBUTES is not supported on global secondary index", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task Query_gsi_all_projection_select_all_attributes_is_allowed()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataGsi),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "x", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"x\"},\"customer\":{\"S\":\"acme\"},\"extra\":{\"S\":\"keep\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byCustomer\","
+                  + "\"KeyConditionExpression\":\"customer = :c\","
+                  + "\"Select\":\"ALL_ATTRIBUTES\","
+                  + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        // Projection ALL → full item returned, including non-key attributes.
+        Assert.True(resp.RootElement.GetProperty("Items")[0].TryGetProperty("extra", out _));
+    }
+
+    [Fact]
+    public async Task Query_gsi_projection_expression_non_projected_attribute_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataGsiNumberKeysOnly) },
+        };
+        var cosmos = BuildClient(handler);
+
+        // KEYS_ONLY GSI projects only base keys + customer + amount; 'extra' is not projected.
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byAmount\","
+                  + "\"KeyConditionExpression\":\"customer = :c\","
+                  + "\"ProjectionExpression\":\"customer, extra\","
+                  + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("not projected into index", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task Query_gsi_projection_expression_projected_attribute_is_allowed()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataGsiNumberKeysOnly),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "x", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"x\"},\"customer\":{\"S\":\"acme\"},\"amount\":{\"N\":\"5\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byAmount\","
+                  + "\"KeyConditionExpression\":\"customer = :c\","
+                  + "\"ProjectionExpression\":\"customer, amount\","
+                  + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        var item = resp.RootElement.GetProperty("Items")[0];
+        Assert.True(item.TryGetProperty("customer", out _));
+        Assert.True(item.TryGetProperty("amount", out _));
+        Assert.False(item.TryGetProperty("pk", out _));
+    }
+
+    [Fact]
     public async Task Query_unknown_index_name_is_rejected()
     {
         var (ctx, body) = NewCtx();
