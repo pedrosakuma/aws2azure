@@ -1042,6 +1042,26 @@ public class ScanHandlerTests
     }
 
     [Fact]
+    public async Task Scan_gsi_specific_attributes_without_projection_expression_is_rejected()
+    {
+        // SPECIFIC_ATTRIBUTES with no ProjectionExpression must be rejected — on
+        // a non-ALL GSI, falling through with no projection would leak
+        // non-projected attributes.
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetaWithGsi("customer", "S", sortName: null, "KEYS_ONLY")) },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"gix\",\"Select\":\"SPECIFIC_ATTRIBUTES\"}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: true, ct: default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("SPECIFIC_ATTRIBUTES without providing the ProjectionExpression", ReadResponse(body));
+    }
+
+    [Fact]
     public async Task Scan_lsi_emits_is_defined_guard_and_stays_cross_partition()
     {
         var (ctx, body) = NewCtx();

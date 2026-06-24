@@ -208,6 +208,20 @@ internal static class QueryHandler
             return;
         }
 
+        // Select=SPECIFIC_ATTRIBUTES requires a ProjectionExpression (the proxy
+        // does not support the legacy AttributesToGet form, which STJ drops).
+        // Without one DynamoDB rejects the request; the proxy must too,
+        // otherwise the query would fall through with no projection and return
+        // every attribute — which on a non-ALL GSI would leak attributes outside
+        // the index's projected set.
+        if (string.Equals(req.Select, "SPECIFIC_ATTRIBUTES", StringComparison.Ordinal)
+            && string.IsNullOrWhiteSpace(req.ProjectionExpression))
+        {
+            await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                "Cannot use Select Type SPECIFIC_ATTRIBUTES without providing the ProjectionExpression parameter.").ConfigureAwait(false);
+            return;
+        }
+
         // Select=ALL_ATTRIBUTES on a GSI is only legal when the index projects
         // ALL — a GSI cannot fetch non-projected attributes from the base table
         // (unlike an LSI). Reject it, matching DynamoDB.
