@@ -43,6 +43,25 @@ internal static class KeyConditionAnalyser
     /// </summary>
     internal sealed record IndexSortKeySpec(string Name, string Type);
 
+    /// <summary>
+    /// Identifies the HASH attribute of a Global Secondary Index: the
+    /// attribute <paramref name="Name"/> and its declared scalar type. Unlike
+    /// an LSI (whose HASH is the base table partition key), a GSI HASH is an
+    /// arbitrary attribute stored raw, so a GSI query is cross-partition with a
+    /// <c>c.&lt;gsiHash&gt; = @v</c> predicate rather than a partition-key
+    /// header.
+    /// </summary>
+    internal sealed record IndexHashKeySpec(string Name, string Type);
+
+    /// <summary>
+    /// The validated raw KeyConditionExpression nodes for a Global Secondary
+    /// Index query: the mandatory HASH equality and an optional sort-key
+    /// predicate, both referencing the GSI's own (raw-stored) attributes. The
+    /// SQL builder translates them against <c>c.&lt;gsiHash&gt;</c> /
+    /// <c>c.&lt;gsiSort&gt;</c> via the filter pushdown.
+    /// </summary>
+    internal sealed record AnalysedGsiKeyCondition(ConditionNode HashNode, ConditionNode? SkNode);
+
     public static AnalysedKeyCondition Analyse(ConditionNode root, TableMetadata meta)
     {
         var hash = FindKey(meta, "HASH")
@@ -130,6 +149,73 @@ internal static class KeyConditionAnalyser
         }
 
         return new AnalysedKeyCondition(hashValue, Sk: null, IndexSortKeyNode: indexSkNode);
+    }
+
+    /// <summary>
+    /// Analyses a <c>KeyConditionExpression</c> for a Global Secondary Index
+    /// query. Both the mandatory HASH equality and the optional sort-key
+    /// predicate reference the GSI's own attributes, which are stored raw (not
+    /// the key codec) — so both are returned as validated raw
+    /// <see cref="ConditionNode"/>s for the SQL builder to translate against
+    /// <c>c.&lt;gsiHash&gt;</c> / <c>c.&lt;gsiSort&gt;</c>. There is no
+    /// partition-key routing: a GSI query is cross-partition.
+    /// </summary>
+    public static AnalysedGsiKeyCondition AnalyseForGsi(
+        ConditionNode root, IndexHashKeySpec gsiHash, IndexSortKeySpec? gsiSk)
+    {
+        ConditionNode hashNode;
+        ConditionNode? skNode;
+        if (root is AndCondition and)
+        {
+            hashNode = and.Left;
+            skNode = and.Right;
+            if (!ReferencesAttribute(hashNode, gsiHash.Name) && ReferencesAttribute(and.Right, gsiHash.Name))
+            {
+                hashNode = and.Right;
+                skNode = and.Left;
+            }
+        }
+        else
+        {
+            hashNode = root;
+            skNode = null;
+        }
+
+        var validatedHash = ValidateGsiHashNode(hashNode, gsiHash);
+
+        ConditionNode? validatedSk = null;
+        if (skNode is not null)
+        {
+            if (gsiSk is null)
+                throw new KeyConditionException(
+                    "KeyConditionExpression references a sort-key predicate but the index has no RANGE key.");
+            validatedSk = ValidateIndexSortKeyNode(skNode, gsiSk);
+        }
+
+        return new AnalysedGsiKeyCondition(validatedHash, validatedSk);
+    }
+
+    /// <summary>
+    /// Validates that a GSI HASH predicate is a plain equality
+    /// (<c>gsiHash = :v</c>) referencing the index hash attribute, with the
+    /// value typed to the index hash's declared scalar type. Returns the
+    /// validated raw node unchanged.
+    /// </summary>
+    private static ConditionNode ValidateGsiHashNode(ConditionNode node, IndexHashKeySpec gsiHash)
+    {
+        if (node is not CompareCondition cmp || cmp.Op != CompareOp.Equal)
+            throw new KeyConditionException(
+                $"KeyConditionExpression must compare the index HASH attribute '{gsiHash.Name}' with =.");
+        if (!IsAttributeReference(cmp.Left, gsiHash.Name) || cmp.Right is not ConditionValueOperand vop)
+            throw new KeyConditionException(
+                $"KeyConditionExpression must be of the form '{gsiHash.Name} = :value'.");
+        if (!ParsedAttributeValue.TryParse(vop.Value.Value, out var parsed))
+            throw new KeyConditionException(
+                $"Value bound to '{gsiHash.Name}' is not a typed attribute value.");
+        if (!string.Equals(parsed.TypeTag, gsiHash.Type, StringComparison.Ordinal))
+            throw new KeyConditionException(
+                $"Index hash key '{gsiHash.Name}' has type {parsed.TypeTag} but the index declares {gsiHash.Type}.");
+        return cmp;
     }
 
     /// <summary>

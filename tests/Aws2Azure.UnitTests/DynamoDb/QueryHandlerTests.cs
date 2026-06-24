@@ -94,6 +94,46 @@ public class QueryHandlerTests
         + "\"projectionType\":\"ALL\"}],"
         + "\"billingMode\":\"PAY_PER_REQUEST\"}";
 
+    // Composite GSI ("byCustomer"): HASH=customer(S), RANGE=createdAt(S),
+    // projection ALL. Used for GSI sort-key predicate / ORDER BY tests.
+    private static readonly string MetadataGsiComposite =
+        "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        + "\"tableName\":\"orders\","
+        + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"sk\",\"type\":\"S\"},"
+        + "{\"name\":\"customer\",\"type\":\"S\"},{\"name\":\"createdAt\",\"type\":\"S\"}],"
+        + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
+        + "\"globalSecondaryIndexes\":[{\"indexName\":\"byCustomer\","
+        + "\"keySchema\":[{\"name\":\"customer\",\"keyType\":\"HASH\"},{\"name\":\"createdAt\",\"keyType\":\"RANGE\"}],"
+        + "\"projectionType\":\"ALL\"}],"
+        + "\"billingMode\":\"PAY_PER_REQUEST\"}";
+
+    // Composite GSI with a Number RANGE ("amount") and KEYS_ONLY projection.
+    // Used for begins_with rejection on N + KEYS_ONLY projection assertions.
+    private static readonly string MetadataGsiNumberKeysOnly =
+        "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        + "\"tableName\":\"orders\","
+        + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"sk\",\"type\":\"S\"},"
+        + "{\"name\":\"customer\",\"type\":\"S\"},{\"name\":\"amount\",\"type\":\"N\"}],"
+        + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
+        + "\"globalSecondaryIndexes\":[{\"indexName\":\"byAmount\","
+        + "\"keySchema\":[{\"name\":\"customer\",\"keyType\":\"HASH\"},{\"name\":\"amount\",\"keyType\":\"RANGE\"}],"
+        + "\"projectionType\":\"KEYS_ONLY\"}],"
+        + "\"billingMode\":\"PAY_PER_REQUEST\"}";
+
+    // Hash-only GSI ("byCustomer") with INCLUDE projection over ["total"].
+    private static readonly string MetadataGsiInclude =
+        "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        + "\"tableName\":\"orders\","
+        + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"sk\",\"type\":\"S\"},"
+        + "{\"name\":\"customer\",\"type\":\"S\"}],"
+        + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
+        + "\"globalSecondaryIndexes\":[{\"indexName\":\"byCustomer\","
+        + "\"keySchema\":[{\"name\":\"customer\",\"keyType\":\"HASH\"}],"
+        + "\"projectionType\":\"INCLUDE\",\"nonKeyAttributes\":[\"total\"]}],"
+        + "\"billingMode\":\"PAY_PER_REQUEST\"}";
+
+    private const bool EnableGsi = true;
+
     private static CosmosClient BuildClient(ScriptedHandler handler)
     {
         var http = new AzureHttpClient(handler, ownsHandler: false,
@@ -229,7 +269,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}},"
                   + "\"Limit\":3}";
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         Assert.Equal("application/x-amz-json-1.0", ctx.Response.ContentType);
@@ -267,7 +307,7 @@ public class QueryHandlerTests
                 Responses = { CosmosOk(MetadataHashOnly), wrap(page) },
             };
             var cosmos = BuildClient(handler);
-            await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+            await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
             Assert.Equal(200, ctx.Response.StatusCode);
             return ReadResponse(body);
         }
@@ -306,7 +346,7 @@ public class QueryHandlerTests
                   + "\"FilterExpression\":\"v > :min\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":min\":{\"N\":\"3\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         using var resp = JsonDocument.Parse(ReadResponse(body));
         Assert.Equal(2, resp.RootElement.GetProperty("Count").GetInt32());
@@ -351,7 +391,7 @@ public class QueryHandlerTests
                 Responses = { CosmosOk(MetadataHashOnly), wrap(page) },
             };
             var cosmos = BuildClient(handler);
-            await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+            await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
             Assert.Equal(200, ctx.Response.StatusCode);
             return ReadResponse(body);
         }
@@ -384,7 +424,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var resp = JsonDocument.Parse(ReadResponse(body));
@@ -411,7 +451,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :v\","
                   + "\"ExpressionAttributeValues\":{\":v\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         var queryReq = handler.Requests[1];
@@ -451,7 +491,7 @@ public class QueryHandlerTests
                   + "\"ExpressionAttributeValues\":{"
                   + "\":p\":{\"S\":\"a\"},\":lo\":{\"S\":\"b\"},\":hi\":{\"S\":\"c\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         var queryReq = handler.Requests[1];
@@ -485,7 +525,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p AND begins_with(sk, :pre)\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":pre\":{\"S\":\"ord#\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         var queryReq = handler.Requests[1];
@@ -516,7 +556,7 @@ public class QueryHandlerTests
                   + "\"FilterExpression\":\"size(v) > :min\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":min\":{\"N\":\"3\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var resp = JsonDocument.Parse(ReadResponse(body));
@@ -546,7 +586,7 @@ public class QueryHandlerTests
                   + "\"FilterExpression\":\"v > :min\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":min\":{\"N\":\"2\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         var queryReq = handler.Requests[1];
@@ -577,7 +617,7 @@ public class QueryHandlerTests
                   + "\"ExpressionAttributeNames\":{\"#v\":\"v\"},"
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var resp = JsonDocument.Parse(ReadResponse(body));
@@ -607,7 +647,7 @@ public class QueryHandlerTests
                   + "\"Select\":\"COUNT\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         using var resp = JsonDocument.Parse(ReadResponse(body));
         Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
@@ -633,7 +673,7 @@ public class QueryHandlerTests
                   + "\"ConsistentRead\":true,"
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         Assert.Equal("Strong", handler.Requests[1].Headers["x-ms-consistency-level"]);
@@ -658,7 +698,7 @@ public class QueryHandlerTests
                   + "\"ScanIndexForward\":false,"
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Contains("ORDER BY c.id DESC", handler.Requests[1].Body);
     }
@@ -685,7 +725,7 @@ public class QueryHandlerTests
                   + "\"Limit\":2,"
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         using var resp = JsonDocument.Parse(ReadResponse(body));
         Assert.True(resp.RootElement.TryGetProperty("LastEvaluatedKey", out var lek));
@@ -714,7 +754,7 @@ public class QueryHandlerTests
                   + "\"ExclusiveStartKey\":{\"__a2a_continuation\":{\"S\":\"" + b64 + "\"}},"
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         Assert.Equal("RESUME-1", handler.Requests[1].Headers["x-ms-continuation"]);
@@ -740,7 +780,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p AND createdAt > :c\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":c\":{\"S\":\"2024-01\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         var queryReq = handler.Requests[1];
@@ -778,7 +818,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p AND createdAt = :c\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":c\":{\"S\":\"2024-02\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         var queryReq = handler.Requests[1];
@@ -809,7 +849,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p AND begins_with(createdAt, :pre)\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":pre\":{\"S\":\"2024-02\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         var queryReq = handler.Requests[1];
@@ -832,14 +872,14 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p AND begins_with(score, :pre)\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":pre\":{\"N\":\"5\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("begins_with", ReadResponse(body));
     }
 
     [Fact]
-    public async Task Query_gsi_index_name_is_rejected()
+    public async Task Query_gsi_index_name_is_rejected_when_flag_off()
     {
         var (ctx, body) = NewCtx();
         var handler = new ScriptedHandler
@@ -852,10 +892,254 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"customer = :p\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("global secondary indexes is not yet supported", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task Query_gsi_hash_only_is_cross_partition_with_no_pk_header()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataGsi),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "x", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"x\"},\"customer\":{\"S\":\"acme\"}}"),
+                    DocWithItem("b", "y", "{\"pk\":{\"S\":\"b\"},\"sk\":{\"S\":\"y\"},\"customer\":{\"S\":\"acme\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byCustomer\","
+                  + "\"KeyConditionExpression\":\"customer = :c\","
+                  + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        var queryReq = handler.Requests[1];
+        var sql = QuerySql(queryReq.Body);
+        // HASH equality targets the raw GSI attribute, guarded by IS_DEFINED.
+        Assert.Contains("c[\"customer\"] = ", sql);
+        Assert.Contains("IS_DEFINED(c[\"customer\"])", sql);
+        // Hash-only GSI returns unordered: no ORDER BY.
+        Assert.DoesNotContain("ORDER BY", sql);
+        // Cross-partition fan-out: enablecrosspartition set, no partition-key header.
+        Assert.Equal("true", queryReq.Headers["x-ms-documentdb-query-enablecrosspartition"]);
+        Assert.False(queryReq.Headers.ContainsKey("x-ms-documentdb-partitionkey"));
+
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(2, resp.RootElement.GetProperty("Count").GetInt32());
+    }
+
+    [Fact]
+    public async Task Query_gsi_composite_sort_key_comparison_and_order_by()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataGsiComposite),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "x", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"x\"},\"customer\":{\"S\":\"acme\"},\"createdAt\":{\"S\":\"2024-03\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byCustomer\","
+                  + "\"KeyConditionExpression\":\"customer = :c AND createdAt > :d\","
+                  + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"},\":d\":{\"S\":\"2024-01\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        var sql = QuerySql(handler.Requests[1].Body);
+        Assert.Contains("c[\"customer\"] = ", sql);
+        Assert.Contains("c[\"createdAt\"] > ", sql);
+        // Composite GSI membership guard on both key attributes.
+        Assert.Contains("IS_DEFINED(c[\"customer\"])", sql);
+        Assert.Contains("IS_DEFINED(c[\"createdAt\"])", sql);
+        // Composite GSI is ordered by the index sort attribute.
+        Assert.Contains("ORDER BY c[\"createdAt\"] ASC", sql);
+    }
+
+    [Fact]
+    public async Task Query_gsi_scan_index_forward_false_emits_desc_order()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataGsiComposite),
+                CosmosOk(QueryEnvelope()),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byCustomer\","
+                  + "\"KeyConditionExpression\":\"customer = :c\","
+                  + "\"ScanIndexForward\":false,"
+                  + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.Contains("ORDER BY c[\"createdAt\"] DESC", QuerySql(handler.Requests[1].Body));
+    }
+
+    [Fact]
+    public async Task Query_gsi_between_predicate_targets_index_sort_attribute()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataGsiComposite),
+                CosmosOk(QueryEnvelope()),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byCustomer\","
+                  + "\"KeyConditionExpression\":\"customer = :c AND createdAt BETWEEN :lo AND :hi\","
+                  + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"},\":lo\":{\"S\":\"2024-01\"},\":hi\":{\"S\":\"2024-12\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        var sql = QuerySql(handler.Requests[1].Body);
+        Assert.Contains("c[\"createdAt\"] >= ", sql);
+        Assert.Contains("c[\"createdAt\"] <= ", sql);
+    }
+
+    [Fact]
+    public async Task Query_gsi_begins_with_on_number_sort_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataGsiNumberKeysOnly) },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byAmount\","
+                  + "\"KeyConditionExpression\":\"customer = :c AND begins_with(amount, :p)\","
+                  + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"},\":p\":{\"N\":\"1\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Query_gsi_consistent_read_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataGsi) },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byCustomer\","
+                  + "\"KeyConditionExpression\":\"customer = :c\","
+                  + "\"ConsistentRead\":true,"
+                  + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("Consistent reads are not supported on global secondary indexes", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task Query_gsi_hash_type_mismatch_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataGsi) },
+        };
+        var cosmos = BuildClient(handler);
+
+        // customer is declared S; binding an N is a type mismatch.
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byCustomer\","
+                  + "\"KeyConditionExpression\":\"customer = :c\","
+                  + "\"ExpressionAttributeValues\":{\":c\":{\"N\":\"1\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Query_gsi_keys_only_projection_resolves_base_and_index_keys()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataGsiNumberKeysOnly),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "x", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"x\"},\"customer\":{\"S\":\"acme\"},\"amount\":{\"N\":\"5\"},\"extra\":{\"S\":\"drop\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byAmount\","
+                  + "\"KeyConditionExpression\":\"customer = :c\","
+                  + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        var item = resp.RootElement.GetProperty("Items")[0];
+        // KEYS_ONLY → base keys (pk, sk) + GSI keys (customer, amount); non-key 'extra' dropped.
+        Assert.True(item.TryGetProperty("pk", out _));
+        Assert.True(item.TryGetProperty("sk", out _));
+        Assert.True(item.TryGetProperty("customer", out _));
+        Assert.True(item.TryGetProperty("amount", out _));
+        Assert.False(item.TryGetProperty("extra", out _));
+    }
+
+    [Fact]
+    public async Task Query_gsi_include_projection_adds_non_key_attributes()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataGsiInclude),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "x", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"x\"},\"customer\":{\"S\":\"acme\"},\"total\":{\"N\":\"9\"},\"extra\":{\"S\":\"drop\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byCustomer\","
+                  + "\"KeyConditionExpression\":\"customer = :c\","
+                  + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        var item = resp.RootElement.GetProperty("Items")[0];
+        // INCLUDE → base keys + GSI key + NonKeyAttributes ('total'); 'extra' dropped.
+        Assert.True(item.TryGetProperty("pk", out _));
+        Assert.True(item.TryGetProperty("customer", out _));
+        Assert.True(item.TryGetProperty("total", out _));
+        Assert.False(item.TryGetProperty("extra", out _));
     }
 
     [Fact]
@@ -872,7 +1156,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("does not have the specified index", ReadResponse(body));
@@ -899,7 +1183,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var resp = JsonDocument.Parse(ReadResponse(body));
@@ -929,7 +1213,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         Assert.Contains("ORDER BY c[\"createdAt\"] DESC", QuerySql(handler.Requests[1].Body));
@@ -950,7 +1234,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p AND createdAt > :c\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":c\":{\"N\":\"1\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("ValidationException", ReadResponse(body));
@@ -978,7 +1262,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var resp = JsonDocument.Parse(ReadResponse(body));
@@ -999,7 +1283,7 @@ public class QueryHandlerTests
                   + "\"KeyConditions\":{\"pk\":{\"AttributeValueList\":[{\"S\":\"a\"}],\"ComparisonOperator\":\"EQ\"}},"
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("Legacy KeyConditions", ReadResponse(body));
@@ -1022,7 +1306,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("ResourceNotFoundException", ReadResponse(body));
@@ -1042,7 +1326,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk > :p\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("ValidationException", ReadResponse(body));
@@ -1062,7 +1346,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p AND sk = :s\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":s\":{\"S\":\"b\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
     }
@@ -1097,7 +1381,7 @@ public class QueryHandlerTests
                   + "\"Limit\":2,"
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":min\":{\"N\":\"3\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         // Exactly one Cosmos query call (no second-page fetch).
         Assert.Equal(2, handler.Requests.Count);
@@ -1137,7 +1421,7 @@ public class QueryHandlerTests
                   + "\"Limit\":5,"
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":min\":{\"N\":\"2\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
 
         Assert.Equal(2, handler.Requests.Count);
         using var resp = JsonDocument.Parse(ReadResponse(body));

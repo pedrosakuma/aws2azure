@@ -58,7 +58,7 @@ internal static class QueryHandler
     private const int MaxBatchSize = 1000;
 
     public static async Task HandleQueryAsync(
-        HttpContext ctx, byte[] body, CosmosClient cosmos, CancellationToken ct)
+        HttpContext ctx, byte[] body, CosmosClient cosmos, bool enableGsi, CancellationToken ct)
     {
         QueryRequest? req;
         try
@@ -130,53 +130,91 @@ internal static class QueryHandler
         }
         var meta = metaResult.Metadata!;
 
-        // Resolve IndexName against the table's secondary index schemas. Only
-        // Local Secondary Index queries are supported in this slice; GSI and
-        // unknown indices are rejected loudly.
+        // Resolve IndexName against the table's secondary index schemas. Local
+        // Secondary Index queries are always supported; Global Secondary Index
+        // queries are gated behind a default-off config flag (cross-partition,
+        // eventually consistent — see DynamoDbSettings.EnableGlobalSecondaryIndexQueries).
+        // Unknown indices are rejected loudly.
         TableIndexDefinition? lsi = null;
+        TableIndexDefinition? gsi = null;
         KeyConditionAnalyser.IndexSortKeySpec? lsiSortKey = null;
+        KeyConditionAnalyser.IndexHashKeySpec? gsiHashKey = null;
+        KeyConditionAnalyser.IndexSortKeySpec? gsiSortKey = null;
         if (!string.IsNullOrEmpty(req.IndexName))
         {
-            var outcome = SecondaryIndexResolver.ResolveIndex(meta, req.IndexName!, out lsi);
+            var outcome = SecondaryIndexResolver.ResolveIndex(meta, req.IndexName!, out var resolved);
             switch (outcome)
             {
+                case SecondaryIndexResolver.IndexResolution.Lsi:
+                    lsi = resolved;
+                    break;
                 case SecondaryIndexResolver.IndexResolution.Gsi:
-                    await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
-                        "Querying global secondary indexes is not yet supported by the proxy.").ConfigureAwait(false);
-                    return;
+                    if (!enableGsi)
+                    {
+                        await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                            "Querying global secondary indexes is not yet supported by the proxy.").ConfigureAwait(false);
+                        return;
+                    }
+                    // A GSI query is eventually consistent in DynamoDB; strongly
+                    // consistent reads are not permitted on a GSI.
+                    if (req.ConsistentRead == true)
+                    {
+                        await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                            "Consistent reads are not supported on global secondary indexes.").ConfigureAwait(false);
+                        return;
+                    }
+                    gsi = resolved;
+                    if (!SecondaryIndexResolver.TryGetGsiKeys(meta, gsi!,
+                            out var ghName, out var ghType, out var gsName, out var gsType, out var gsiError))
+                    {
+                        await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", gsiError).ConfigureAwait(false);
+                        return;
+                    }
+                    gsiHashKey = new KeyConditionAnalyser.IndexHashKeySpec(ghName, ghType);
+                    if (gsName is not null)
+                        gsiSortKey = new KeyConditionAnalyser.IndexSortKeySpec(gsName, gsType!);
+                    break;
                 case SecondaryIndexResolver.IndexResolution.NotFound:
                     await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
                         $"The table does not have the specified index: {req.IndexName}").ConfigureAwait(false);
                     return;
             }
 
-            // An LSI's KeySchema is [HASH (= base table HASH), RANGE (alternate
-            // sort attribute)]. Resolve the alternate sort attribute + its
-            // declared type for the sort-key predicate translation.
-            if (!SecondaryIndexResolver.TryGetLsiSortKey(meta, lsi!, out var skName, out var skType, out var lsiError))
+            if (lsi is not null)
             {
-                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", lsiError).ConfigureAwait(false);
-                return;
+                // An LSI's KeySchema is [HASH (= base table HASH), RANGE (alternate
+                // sort attribute)]. Resolve the alternate sort attribute + its
+                // declared type for the sort-key predicate translation.
+                if (!SecondaryIndexResolver.TryGetLsiSortKey(meta, lsi!, out var skName, out var skType, out var lsiError))
+                {
+                    await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", lsiError).ConfigureAwait(false);
+                    return;
+                }
+                lsiSortKey = new KeyConditionAnalyser.IndexSortKeySpec(skName, skType);
             }
-            lsiSortKey = new KeyConditionAnalyser.IndexSortKeySpec(skName, skType);
         }
         bool isLsiQuery = lsi is not null;
+        bool isGsiQuery = gsi is not null;
 
-        if (!IsAllowedSelect(req.Select, isLsiQuery, out var selectError))
+        if (!IsAllowedSelect(req.Select, isLsiQuery || isGsiQuery, out var selectError))
         {
             await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", selectError).ConfigureAwait(false);
             return;
         }
 
-        KeyConditionAnalyser.AnalysedKeyCondition keyCond;
+        KeyConditionAnalyser.AnalysedKeyCondition? keyCond = null;
+        KeyConditionAnalyser.AnalysedGsiKeyCondition? gsiKey = null;
         ConditionNode? filter = null;
         IReadOnlyList<string>? projection = null;
         try
         {
             var kceAst = ConditionExpressionParser.Parse(req.KeyConditionExpression!, names, values);
-            keyCond = isLsiQuery
-                ? KeyConditionAnalyser.AnalyseForIndex(kceAst, meta, lsiSortKey!)
-                : KeyConditionAnalyser.Analyse(kceAst, meta);
+            if (isGsiQuery)
+                gsiKey = KeyConditionAnalyser.AnalyseForGsi(kceAst, gsiHashKey!, gsiSortKey);
+            else if (isLsiQuery)
+                keyCond = KeyConditionAnalyser.AnalyseForIndex(kceAst, meta, lsiSortKey!);
+            else
+                keyCond = KeyConditionAnalyser.Analyse(kceAst, meta);
 
             if (!string.IsNullOrWhiteSpace(req.FilterExpression))
             {
@@ -186,20 +224,23 @@ internal static class QueryHandler
             {
                 projection = ProjectionExpressionParser.Parse(req.ProjectionExpression!, names);
             }
-            else if (isLsiQuery
+            else if ((isLsiQuery || isGsiQuery)
                 && (string.IsNullOrEmpty(req.Select)
                     || string.Equals(req.Select, "ALL_PROJECTED_ATTRIBUTES", StringComparison.Ordinal)))
             {
                 // For an index query DynamoDB defaults Select to
                 // ALL_PROJECTED_ATTRIBUTES when neither Select nor a
                 // ProjectionExpression is supplied. ALL_PROJECTED_ATTRIBUTES
-                // resolves against the LSI projection: ALL → all attributes
-                // (no in-process projection); KEYS_ONLY → base keys + LSI sort
-                // attribute; INCLUDE → those keys plus the index's
-                // NonKeyAttributes. An explicit ProjectionExpression (handled
-                // above) always takes precedence; an explicit ALL_ATTRIBUTES /
-                // SPECIFIC_ATTRIBUTES / COUNT Select skips this branch.
-                projection = SecondaryIndexResolver.ResolveIndexProjection(meta, lsi!, lsiSortKey!.Name);
+                // resolves against the index projection: ALL → all attributes
+                // (no in-process projection); KEYS_ONLY → base keys + the
+                // index's own key attributes; INCLUDE → those keys plus the
+                // index's NonKeyAttributes. An explicit ProjectionExpression
+                // (handled above) always takes precedence; an explicit
+                // ALL_ATTRIBUTES / SPECIFIC_ATTRIBUTES / COUNT Select skips
+                // this branch.
+                projection = isGsiQuery
+                    ? SecondaryIndexResolver.ResolveIndexProjection(meta, gsi!, gsiHashKey!.Name, gsiSortKey?.Name)
+                    : SecondaryIndexResolver.ResolveIndexProjection(meta, lsi!, lsiSortKey!.Name);
             }
         }
         catch (KeyConditionException ex)
@@ -227,24 +268,45 @@ internal static class QueryHandler
             return;
         }
 
-        await ExecuteQueryAsync(ctx, req, meta, keyCond, filter, projection, lsiSortKey?.Name, continuationIn, cosmos, ct)
+        await ExecuteQueryAsync(ctx, req, meta, keyCond, gsiKey, gsiHashKey?.Name, gsiSortKey?.Name,
+            filter, projection, lsiSortKey?.Name, continuationIn, cosmos, ct)
             .ConfigureAwait(false);
     }
 
     private static async Task ExecuteQueryAsync(
         HttpContext ctx, QueryRequest req, TableMetadata meta,
-        KeyConditionAnalyser.AnalysedKeyCondition keyCond,
+        KeyConditionAnalyser.AnalysedKeyCondition? keyCond,
+        KeyConditionAnalyser.AnalysedGsiKeyCondition? gsiKey,
+        string? gsiHashName, string? gsiSortName,
         ConditionNode? filter, IReadOnlyList<string>? projection, string? lsiSortName, string? continuationIn,
         CosmosClient cosmos, CancellationToken ct)
     {
         bool forward = req.ScanIndexForward ?? true;
         bool isLsiQuery = lsiSortName is not null;
+        bool isGsiQuery = gsiKey is not null;
         bool countOnly = string.Equals(req.Select, "COUNT", StringComparison.OrdinalIgnoreCase);
 
         string sql;
         List<CosmosSqlParameter> sqlParams;
         var pushdown = FilterPushdownVisitor.Translate(filter);
-        if (isLsiQuery)
+        if (isGsiQuery)
+        {
+            // GSI query: there is no partition-key routing. The mandatory HASH
+            // equality and optional sort-key predicate target the RAW stored
+            // index attributes (`c.<gsiHash>` / `c.<gsiSort>`) and are pushed
+            // via the filter translator using distinct `@gh*` / `@sk*` prefixes
+            // so they never collide with the user FilterExpression's `@fp*`
+            // bindings. Their residuals (e.g. a high-precision envelope N) join
+            // the in-process filter chain. The query fans out cross-partition.
+            var hashPush = FilterPushdownVisitor.Translate(
+                gsiKey!.HashNode, CosmosPathTranslator.DefaultRootAlias, "gh");
+            var skPush = FilterPushdownVisitor.Translate(
+                gsiKey.SkNode, CosmosPathTranslator.DefaultRootAlias, "sk");
+            (sql, sqlParams) = BuildGsiSql(
+                gsiHashName!, gsiSortName, forward, hashPush, skPush, pushdown);
+            filter = CombineResidual(CombineResidual(hashPush.Residual, skPush.Residual), pushdown.Residual);
+        }
+        else if (isLsiQuery)
         {
             // LSI query: the sort-key predicate (if any) targets the RAW
             // stored attribute `c.<lsiSort>` (Option-A), not `c.id`. Reuse the
@@ -255,14 +317,14 @@ internal static class QueryHandler
             // attribute. Items missing the attribute are excluded by an explicit
             // IS_DEFINED guard in BuildLsiSql, matching LSI sparse-index semantics.
             var skPush = FilterPushdownVisitor.Translate(
-                keyCond.IndexSortKeyNode, CosmosPathTranslator.DefaultRootAlias, "sk");
+                keyCond!.IndexSortKeyNode, CosmosPathTranslator.DefaultRootAlias, "sk");
             (sql, sqlParams) = BuildLsiSql(lsiSortName!, forward, skPush, pushdown);
             filter = CombineResidual(skPush.Residual, pushdown.Residual);
         }
         else
         {
             (sql, sqlParams) = BuildSql(
-                keyCond, forward, FindKey(meta, "RANGE") is not null, pushdown);
+                keyCond!, forward, FindKey(meta, "RANGE") is not null, pushdown);
             // Replace the parsed filter with the residual; the pushable
             // half is already enforced by Cosmos, so we only need to
             // evaluate what could not be translated.
@@ -272,19 +334,23 @@ internal static class QueryHandler
         using var queryBody = CosmosQueryBody.Build(sql, sqlParams);
         var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + req.TableName;
         var collUri = "/" + collLink + "/docs";
-        var pkHeader = CosmosOpsShared.BuildPartitionKeyHeader(keyCond.HashValue);
+        // A GSI query is cross-partition: there is no single partition-key
+        // scope, so no partition-key header is sent (the cross-partition
+        // header is added on the request below instead).
+        var pkHeader = isGsiQuery ? null : CosmosOpsShared.BuildPartitionKeyHeader(keyCond!.HashValue);
 
         // Fast path: no in-process per-item work (no residual filter, no
         // projection) and nothing pushed to Cosmos (so ScannedCount ==
         // Count). Stream Cosmos documents straight into the DynamoDB
         // response envelope without materializing an AttributeValue map
-        // per item. Mirrors ScanHandler.ExecuteScanFusedAsync. LSI queries
-        // always use the materialized path: the fused path assumes base-table
-        // semantics (sort on `c.id`, no LSI projection).
-        if (!isLsiQuery && !countOnly && filter is null && projection is null && pushdown.Sql is null)
+        // per item. Mirrors ScanHandler.ExecuteScanFusedAsync. LSI and GSI
+        // queries always use the materialized path: the fused path assumes
+        // base-table semantics (single partition, sort on `c.id`, no index
+        // projection).
+        if (!isLsiQuery && !isGsiQuery && !countOnly && filter is null && projection is null && pushdown.Sql is null)
         {
             await ExecuteQueryFusedAsync(
-                ctx, req, continuationIn, queryBody.WrittenMemory, collLink, collUri, pkHeader, cosmos, ct)
+                ctx, req, continuationIn, queryBody.WrittenMemory, collLink, collUri, pkHeader!, cosmos, ct)
                 .ConfigureAwait(false);
             return;
         }
@@ -309,10 +375,18 @@ internal static class QueryHandler
 
             var headers = new List<KeyValuePair<string, string>>
             {
-                new("x-ms-documentdb-partitionkey", pkHeader),
                 new("x-ms-documentdb-isquery", "true"),
                 new("x-ms-max-item-count", pageSize.ToString(System.Globalization.CultureInfo.InvariantCulture)),
             };
+            if (isGsiQuery)
+            {
+                // Cross-partition fan-out: no partition-key scope.
+                headers.Add(new KeyValuePair<string, string>("x-ms-documentdb-query-enablecrosspartition", "true"));
+            }
+            else
+            {
+                headers.Add(new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader!));
+            }
             if (req.ConsistentRead == true)
             {
                 headers.Add(new KeyValuePair<string, string>("x-ms-consistency-level", "Strong"));
@@ -382,8 +456,12 @@ internal static class QueryHandler
             // LastEvaluatedKey. Empty pages still iterate so we don't
             // return a zero-row page when Cosmos has more rows
             // waiting. LSI queries always pre-filter (sort-key predicate
-            // and/or the sparse ORDER BY), so they follow the same rule.
-            if ((pushdown.Sql is not null || isLsiQuery) && matched > 0) break;
+            // and/or the sparse ORDER BY), so they follow the same rule. GSI
+            // queries always pre-filter (the cross-partition HASH equality
+            // and/or sparse ORDER BY) and additionally cannot recover a
+            // faithful pre-filter ScannedCount, so they preserve the Cosmos
+            // page boundary too.
+            if ((pushdown.Sql is not null || isLsiQuery || isGsiQuery) && matched > 0) break;
         }
 
         // See ScanHandler: a pushed filter makes `scanned` count only matched
@@ -394,19 +472,20 @@ internal static class QueryHandler
         // (single-partition, so cheap). Limit/paginated queries remain a
         // documented divergence: the aggregate spans the whole scope and would
         // not match DynamoDB's per-page count on a resumed/partial page. LSI
-        // queries skip the aggregate recovery entirely (the base-table count
-        // scope is on `c.id`, not the LSI sort attribute) — ScannedCount
-        // reflects rows after the Cosmos prefilter of the sort-key predicate.
-        if (!isLsiQuery
+        // and GSI queries skip the aggregate recovery entirely (the base-table
+        // count scope is on `c.id` / a single partition, not the index key
+        // attribute) — ScannedCount reflects rows after the Cosmos prefilter of
+        // the index key predicate (a documented divergence).
+        if (!isLsiQuery && !isGsiQuery
             && pushdown.Sql is not null
             && wantedScanned == int.MaxValue
             && string.IsNullOrEmpty(continuationIn)
             && string.IsNullOrEmpty(continuationOut))
         {
-            var (countSql, countParams) = BuildCountSql(keyCond, FindKey(meta, "RANGE") is not null);
+            var (countSql, countParams) = BuildCountSql(keyCond!, FindKey(meta, "RANGE") is not null);
             var faithful = await ScannedCountQuery.CountAsync(
                 cosmos, collLink, collUri, countSql, countParams,
-                partitionKeyHeader: pkHeader, strong: req.ConsistentRead == true, ct).ConfigureAwait(false);
+                partitionKeyHeader: pkHeader!, strong: req.ConsistentRead == true, ct).ConfigureAwait(false);
             if (faithful is int fc && fc >= matched)
             {
                 scanned = fc;
@@ -578,6 +657,57 @@ internal static class QueryHandler
             foreach (var fp in userPush.Parameters) parameters.Add(fp);
         }
         sb.Append(" ORDER BY ").Append(lsiPath).Append(forward ? " ASC" : " DESC");
+        return (sb.ToString(), parameters);
+    }
+
+    /// <summary>
+    /// Builds the cross-partition Cosmos SQL for a Global Secondary Index
+    /// query. Both the mandatory HASH equality and the optional sort-key
+    /// predicate are pushed against the RAW stored index attributes
+    /// (<c>c.&lt;gsiHash&gt;</c> / <c>c.&lt;gsiSort&gt;</c>) via the filter
+    /// translator, alongside the user FilterExpression. An explicit
+    /// <c>IS_DEFINED</c> guard on each index key attribute enforces GSI
+    /// membership semantics (an item is an index member only if it carries the
+    /// index's key attributes) independent of the container's indexing policy.
+    /// <c>ORDER BY c.&lt;gsiSort&gt;</c> honours <c>ScanIndexForward</c> and is
+    /// emitted only for a composite GSI (a hash-only GSI returns unordered).
+    /// </summary>
+    internal static (string sql, List<CosmosSqlParameter> parameters) BuildGsiSql(
+        string gsiHashName, string? gsiSortName, bool forward,
+        FilterPushdownResult hashPush, FilterPushdownResult skPush, FilterPushdownResult userPush)
+    {
+        var hashPath = CosmosPathTranslator.Translate(
+            new DocumentPath(new[] { new AttributePathSegment(gsiHashName) }));
+        var sb = new StringBuilder("SELECT * FROM c WHERE c._a2a = 'item'");
+        var parameters = new List<CosmosSqlParameter>();
+        sb.Append(" AND IS_DEFINED(").Append(hashPath).Append(')');
+        if (gsiSortName is not null)
+        {
+            var sortPath = CosmosPathTranslator.Translate(
+                new DocumentPath(new[] { new AttributePathSegment(gsiSortName) }));
+            sb.Append(" AND IS_DEFINED(").Append(sortPath).Append(')');
+        }
+        if (hashPush.Sql is { } hSql)
+        {
+            sb.Append(" AND ").Append(hSql);
+            foreach (var p in hashPush.Parameters) parameters.Add(p);
+        }
+        if (skPush.Sql is { } skSql)
+        {
+            sb.Append(" AND ").Append(skSql);
+            foreach (var p in skPush.Parameters) parameters.Add(p);
+        }
+        if (userPush.Sql is { } fSql)
+        {
+            sb.Append(" AND ").Append(fSql);
+            foreach (var fp in userPush.Parameters) parameters.Add(fp);
+        }
+        if (gsiSortName is not null)
+        {
+            var sortPath = CosmosPathTranslator.Translate(
+                new DocumentPath(new[] { new AttributePathSegment(gsiSortName) }));
+            sb.Append(" ORDER BY ").Append(sortPath).Append(forward ? " ASC" : " DESC");
+        }
         return (sb.ToString(), parameters);
     }
 
