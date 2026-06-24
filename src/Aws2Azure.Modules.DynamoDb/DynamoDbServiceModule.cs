@@ -168,7 +168,7 @@ public sealed class DynamoDbServiceModule : IServiceModule
                 await QueryHandler.HandleQueryAsync(context, parsed.Body, cosmos, _settings.EnableGlobalSecondaryIndexQueries, context.RequestAborted).ConfigureAwait(false);
                 return;
             case DynamoDbOperation.Scan:
-                await ScanHandler.HandleScanAsync(context, parsed.Body, cosmos, _scanLogger, context.RequestAborted).ConfigureAwait(false);
+                await ScanHandler.HandleScanAsync(context, parsed.Body, cosmos, _scanLogger, _settings.EnableGlobalSecondaryIndexQueries, context.RequestAborted).ConfigureAwait(false);
                 return;
             case DynamoDbOperation.BatchGetItem:
                 await BatchGetItemHandler.HandleBatchGetItemAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);

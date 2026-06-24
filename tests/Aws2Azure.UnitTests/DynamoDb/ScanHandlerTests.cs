@@ -78,6 +78,38 @@ public class ScanHandlerTests
             + "\"billingMode\":\"PAY_PER_REQUEST\"}";
     }
 
+    // Builds table "orders" (base HASH=pk(S)) with a single Global Secondary
+    // Index "gix": HASH=hashName(hashType), optional RANGE=sortName(S),
+    // caller-controlled projectionType (+ nonKeyAttributes for INCLUDE). Used to
+    // exercise the flag-gated GSI scan path (membership guards + projection).
+    private static string MetaWithGsi(
+        string hashName, string hashType, string? sortName,
+        string projectionType, string? nonKeyCsv = null)
+    {
+        var attrs = "{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"" + hashName + "\",\"type\":\"" + hashType + "\"}";
+        var gsiKeySchema = "[{\"name\":\"" + hashName + "\",\"keyType\":\"HASH\"}";
+        if (sortName is not null)
+        {
+            attrs += ",{\"name\":\"" + sortName + "\",\"type\":\"S\"}";
+            gsiKeySchema += ",{\"name\":\"" + sortName + "\",\"keyType\":\"RANGE\"}";
+        }
+        gsiKeySchema += "]";
+        string nonKey = string.Empty;
+        if (nonKeyCsv is not null)
+        {
+            var quoted = string.Join(",", Array.ConvertAll(nonKeyCsv.Split(','), a => "\"" + a + "\""));
+            nonKey = ",\"nonKeyAttributes\":[" + quoted + "]";
+        }
+        return "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+            + "\"tableName\":\"orders\","
+            + "\"attributeDefinitions\":[" + attrs + "],"
+            + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}],"
+            + "\"globalSecondaryIndexes\":[{\"indexName\":\"gix\","
+            + "\"keySchema\":" + gsiKeySchema + ","
+            + "\"projectionType\":\"" + projectionType + "\"" + nonKey + "}],"
+            + "\"billingMode\":\"PAY_PER_REQUEST\"}";
+    }
+
     private static CosmosClient BuildClient(ScriptedHandler handler)
     {
         var http = new AzureHttpClient(handler, ownsHandler: false,
@@ -215,7 +247,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"Limit\":3}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         Assert.Equal("application/x-amz-json-1.0", ctx.Response.ContentType);
@@ -242,7 +274,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\"}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         var qr = handler.Requests[1];
@@ -275,7 +307,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         await ScanHandler.HandleScanAsync(
-            ctx, Encoding.UTF8.GetBytes("{\"TableName\":\"orders\"}"), cosmos, logger: null, default);
+            ctx, Encoding.UTF8.GetBytes("{\"TableName\":\"orders\"}"), cosmos, logger: null, enableGsi: false, ct: default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         Assert.Contains("c._a2a = 'item'", handler.Requests[1].Body);
@@ -309,7 +341,7 @@ public class ScanHandlerTests
                   + "\"FilterExpression\":\"size(v) > :min\","
                   + "\"ExpressionAttributeValues\":{\":min\":{\"N\":\"3\"}}}";
 
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         using var resp = JsonDocument.Parse(ReadResponse(body));
         Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
@@ -343,7 +375,7 @@ public class ScanHandlerTests
                 Responses = { CosmosOk(Metadata), wrap(page) },
             };
             var cosmos = BuildClient(handler);
-            await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+            await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
             Assert.Equal(200, ctx.Response.StatusCode);
             return ReadResponse(body);
         }
@@ -385,7 +417,7 @@ public class ScanHandlerTests
                 Responses = { CosmosOk(Metadata), wrap(page) },
             };
             var cosmos = BuildClient(handler);
-            await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+            await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
             Assert.Equal(200, ctx.Response.StatusCode);
             return ReadResponse(body);
         }
@@ -422,7 +454,7 @@ public class ScanHandlerTests
                   + "\"FilterExpression\":\"v = :v\","
                   + "\"ExpressionAttributeValues\":{\":v\":{\"S\":\"x\"}}}";
 
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         var queryReq = handler.Requests[1];
         // Body is JSON-encoded so `"` is escaped as `\"`.
@@ -454,7 +486,7 @@ public class ScanHandlerTests
                   + "\"FilterExpression\":\"v = :v\","
                   + "\"ExpressionAttributeValues\":{\":v\":{\"S\":\"x\"}}}";
 
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         using var resp = JsonDocument.Parse(ReadResponse(body));
         Assert.Equal(2, resp.RootElement.GetProperty("Count").GetInt32());
@@ -493,7 +525,7 @@ public class ScanHandlerTests
                   + "\"FilterExpression\":\"v = :v\","
                   + "\"ExpressionAttributeValues\":{\":v\":{\"S\":\"x\"}}}";
 
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         using var resp = JsonDocument.Parse(ReadResponse(body));
         Assert.Equal(1, resp.RootElement.GetProperty("ScannedCount").GetInt32());
@@ -527,7 +559,7 @@ public class ScanHandlerTests
                   + "\"ExpressionAttributeValues\":{\":v\":{\"S\":\"x\"}},"
                   + "\"ExclusiveStartKey\":{\"__a2a_continuation\":{\"S\":\"" + b64 + "\"}}}";
 
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         using var resp = JsonDocument.Parse(ReadResponse(body));
         Assert.Equal(1, resp.RootElement.GetProperty("ScannedCount").GetInt32());
@@ -557,7 +589,7 @@ public class ScanHandlerTests
                   + "\"FilterExpression\":\"v = :v\","
                   + "\"ExpressionAttributeValues\":{\":v\":{\"S\":\"x\"}}}";
 
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         using var resp = JsonDocument.Parse(ReadResponse(body));
         Assert.Equal(200, ctx.Response.StatusCode);
@@ -588,7 +620,7 @@ public class ScanHandlerTests
                   + "\"FilterExpression\":\"v = :v\","
                   + "\"ExpressionAttributeValues\":{\":v\":{\"S\":\"x\"}}}";
 
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         using var resp = JsonDocument.Parse(ReadResponse(body));
         Assert.Equal(200, ctx.Response.StatusCode);
@@ -615,7 +647,7 @@ public class ScanHandlerTests
                   + "\"ProjectionExpression\":\"pk, #v\","
                   + "\"ExpressionAttributeNames\":{\"#v\":\"v\"}}";
 
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         using var resp = JsonDocument.Parse(ReadResponse(body));
         var item = resp.RootElement.GetProperty("Items")[0];
@@ -640,7 +672,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"Select\":\"COUNT\"}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         using var resp = JsonDocument.Parse(ReadResponse(body));
         Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
@@ -662,7 +694,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"ConsistentRead\":true}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         Assert.Equal("Strong", handler.Requests[1].Headers["x-ms-consistency-level"]);
     }
@@ -685,7 +717,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"Limit\":2}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         Assert.Equal(2, handler.Requests.Count);
         Assert.Equal("2", handler.Requests[1].Headers["x-ms-max-item-count"]);
@@ -714,7 +746,7 @@ public class ScanHandlerTests
         var req = "{\"TableName\":\"orders\","
                   + "\"ExclusiveStartKey\":{\"__a2a_continuation\":{\"S\":\"" + b64 + "\"}}}";
 
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         Assert.Equal("RESUME-Z", handler.Requests[1].Headers["x-ms-continuation"]);
     }
@@ -727,7 +759,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"IndexName\":\"gsi1\"}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("global secondary indexes", ReadResponse(body));
@@ -741,10 +773,272 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"IndexName\":\"nope\"}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("does not have the specified index", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task Scan_gsi_hash_only_emits_membership_guard_and_stays_cross_partition()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaWithGsi("customer", "S", sortName: null, "ALL")),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"customer\":{\"S\":\"acme\"}}"),
+                    DocWithItem("b", "b", "{\"pk\":{\"S\":\"b\"},\"customer\":{\"S\":\"acme\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"gix\"}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: true, ct: default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        var qr = handler.Requests[1];
+        // GSI membership guard restricts the scan to items defining the index
+        // hash attribute; the scan still fans out cross-partition.
+        Assert.Contains("IS_DEFINED(c[\\\"customer\\\"])", qr.Body);
+        // Hash-only GSI: no sort guard, and a Scan never emits ORDER BY.
+        Assert.DoesNotContain("ORDER BY", qr.Body);
+        Assert.Equal("true", qr.Headers["x-ms-documentdb-query-enablecrosspartition"]);
+        Assert.False(qr.Headers.ContainsKey("x-ms-documentdb-partitionkey"));
+
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(2, resp.RootElement.GetProperty("Count").GetInt32());
+    }
+
+    [Fact]
+    public async Task Scan_gsi_index_is_rejected_when_flag_off()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler { Responses = { CosmosOk(MetaWithGsi("customer", "S", sortName: null, "ALL")) } };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"gix\"}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("global secondary indexes is not yet supported", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task Scan_gsi_composite_emits_double_membership_guard()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaWithGsi("customer", "S", "createdAt", "ALL")),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a",
+                        "{\"pk\":{\"S\":\"a\"},\"customer\":{\"S\":\"acme\"},\"createdAt\":{\"S\":\"2024\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"gix\"}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: true, ct: default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        var qr = handler.Requests[1];
+        // Composite GSI membership requires BOTH key attributes to be defined.
+        Assert.Contains("IS_DEFINED(c[\\\"customer\\\"])", qr.Body);
+        Assert.Contains("IS_DEFINED(c[\\\"createdAt\\\"])", qr.Body);
+    }
+
+    [Fact]
+    public async Task Scan_gsi_filter_expression_pushdown_recovers_member_scanned_count()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaWithGsi("customer", "S", sortName: null, "ALL")),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a",
+                        "{\"pk\":{\"S\":\"a\"},\"customer\":{\"S\":\"acme\"},\"v\":{\"S\":\"x\"}}"))),
+                CosmosOk(CountEnvelope(9)),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"gix\","
+                  + "\"FilterExpression\":\"v = :v\","
+                  + "\"ExpressionAttributeValues\":{\":v\":{\"S\":\"x\"}}}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: true, ct: default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
+        Assert.Equal(9, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+
+        Assert.Equal(3, handler.Requests.Count);
+        var countReq = handler.Requests[2];
+        Assert.Contains("SELECT VALUE COUNT(1)", countReq.Body);
+        // The aggregate scopes to the GSI member set (IS_DEFINED) but excludes
+        // the pushed user filter.
+        Assert.Contains("IS_DEFINED(c[\\\"customer\\\"])", countReq.Body);
+        Assert.DoesNotContain("@fp0", countReq.Body);
+    }
+
+    [Fact]
+    public async Task Scan_gsi_keys_only_projection_projects_keys_only()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaWithGsi("customer", "S", sortName: null, "KEYS_ONLY")),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a",
+                        "{\"pk\":{\"S\":\"a\"},\"customer\":{\"S\":\"acme\"},\"extra\":{\"S\":\"drop-me\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"gix\"}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: true, ct: default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        var item = resp.RootElement.GetProperty("Items")[0];
+        Assert.True(item.TryGetProperty("pk", out _));
+        Assert.True(item.TryGetProperty("customer", out _));
+        Assert.False(item.TryGetProperty("extra", out _));
+    }
+
+    [Fact]
+    public async Task Scan_gsi_include_projection_keeps_listed_non_key_attributes()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaWithGsi("customer", "S", sortName: null, "INCLUDE", "total")),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a",
+                        "{\"pk\":{\"S\":\"a\"},\"customer\":{\"S\":\"acme\"},\"total\":{\"N\":\"5\"},\"drop\":{\"S\":\"n\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"gix\"}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: true, ct: default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        var item = resp.RootElement.GetProperty("Items")[0];
+        Assert.True(item.TryGetProperty("customer", out _));
+        Assert.True(item.TryGetProperty("total", out _));
+        Assert.False(item.TryGetProperty("drop", out _));
+    }
+
+    [Fact]
+    public async Task Scan_gsi_select_all_attributes_is_rejected_when_projection_not_all()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetaWithGsi("customer", "S", sortName: null, "KEYS_ONLY")) },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"gix\",\"Select\":\"ALL_ATTRIBUTES\"}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: true, ct: default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("Select=ALL_ATTRIBUTES is not supported on global secondary index", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task Scan_gsi_all_projection_select_all_attributes_is_allowed()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaWithGsi("customer", "S", sortName: null, "ALL")),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"customer\":{\"S\":\"acme\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"gix\",\"Select\":\"ALL_ATTRIBUTES\"}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: true, ct: default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
+    }
+
+    [Fact]
+    public async Task Scan_gsi_projection_expression_non_projected_attribute_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetaWithGsi("customer", "S", sortName: null, "KEYS_ONLY")) },
+        };
+        var cosmos = BuildClient(handler);
+
+        // "total" is not projected into a KEYS_ONLY GSI.
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"gix\",\"ProjectionExpression\":\"total\"}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: true, ct: default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("not projected into index", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task Scan_gsi_projection_expression_projected_attribute_is_allowed()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaWithGsi("customer", "S", sortName: null, "KEYS_ONLY")),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"customer\":{\"S\":\"acme\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        // "customer" is the GSI hash attribute, so it is part of the projected set.
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"gix\",\"ProjectionExpression\":\"customer\"}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: true, ct: default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
+    }
+
+    [Fact]
+    public async Task Scan_gsi_consistent_read_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetaWithGsi("customer", "S", sortName: null, "ALL")) },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"gix\",\"ConsistentRead\":true}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: true, ct: default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("Consistent reads are not supported on global secondary indexes", ReadResponse(body));
     }
 
     [Fact]
@@ -764,7 +1058,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"IndexName\":\"ix_created\"}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         var qr = handler.Requests[1];
@@ -796,7 +1090,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"IndexName\":\"ix_created\"}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var resp = JsonDocument.Parse(ReadResponse(body));
@@ -823,7 +1117,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"IndexName\":\"ix_created\"}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var resp = JsonDocument.Parse(ReadResponse(body));
@@ -849,7 +1143,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"IndexName\":\"ix_created\",\"Select\":\"ALL_PROJECTED_ATTRIBUTES\"}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var resp = JsonDocument.Parse(ReadResponse(body));
@@ -878,7 +1172,7 @@ public class ScanHandlerTests
         var req = "{\"TableName\":\"orders\",\"IndexName\":\"ix_created\","
                   + "\"FilterExpression\":\"v = :v\","
                   + "\"ExpressionAttributeValues\":{\":v\":{\"S\":\"x\"}}}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var resp = JsonDocument.Parse(ReadResponse(body));
@@ -901,7 +1195,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(new ScriptedHandler());
 
         var req = "{\"TableName\":\"orders\",\"Segment\":0,\"TotalSegments\":4}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("Parallel scan", ReadResponse(body));
@@ -915,7 +1209,7 @@ public class ScanHandlerTests
 
         var req = "{\"TableName\":\"orders\","
                   + "\"ScanFilter\":{\"pk\":{\"AttributeValueList\":[{\"S\":\"a\"}],\"ComparisonOperator\":\"EQ\"}}}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("Legacy", ReadResponse(body));
@@ -928,7 +1222,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(new ScriptedHandler());
 
         var req = "{\"TableName\":\"orders\",\"AttributesToGet\":[\"pk\"]}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
     }
@@ -947,7 +1241,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"missing\"}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("ResourceNotFoundException", ReadResponse(body));
@@ -961,7 +1255,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"a/b\"}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Empty(handler.Requests);
@@ -973,7 +1267,7 @@ public class ScanHandlerTests
         var (ctx, body) = NewCtx();
         var cosmos = BuildClient(new ScriptedHandler());
 
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes("{"), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes("{"), cosmos, logger: null, enableGsi: false, ct: default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("SerializationException", ReadResponse(body));
@@ -997,7 +1291,7 @@ public class ScanHandlerTests
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\"}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
 
         Assert.Equal(3, handler.Requests.Count);
         Assert.Equal("P2", handler.Requests[2].Headers["x-ms-continuation"]);
@@ -1022,7 +1316,7 @@ public class ScanHandlerTests
         var logger = new RecordingLogger();
 
         var req = "{\"TableName\":\"orders\"}";
-        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger, default);
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger, enableGsi: false, ct: default);
 
         var warn = Assert.Single(logger.Entries);
         Assert.Equal(Microsoft.Extensions.Logging.LogLevel.Warning, warn.Level);
