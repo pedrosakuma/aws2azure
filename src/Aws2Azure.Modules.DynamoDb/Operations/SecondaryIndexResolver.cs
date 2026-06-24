@@ -23,20 +23,21 @@ internal static class SecondaryIndexResolver
     /// <summary>
     /// Resolves <paramref name="indexName"/> against the table's secondary
     /// index schemas. Returns <see cref="IndexResolution.Lsi"/> (with
-    /// <paramref name="lsi"/> set), <see cref="IndexResolution.Gsi"/>, or
+    /// <paramref name="index"/> set to the LSI), <see cref="IndexResolution.Gsi"/>
+    /// (with <paramref name="index"/> set to the GSI), or
     /// <see cref="IndexResolution.NotFound"/>.
     /// </summary>
     internal static IndexResolution ResolveIndex(
-        TableMetadata meta, string indexName, out TableIndexDefinition? lsi)
+        TableMetadata meta, string indexName, out TableIndexDefinition? index)
     {
-        lsi = null;
+        index = null;
         if (meta.LocalSecondaryIndexes is { } lsis)
         {
             foreach (var ix in lsis)
             {
                 if (string.Equals(ix.IndexName, indexName, StringComparison.Ordinal))
                 {
-                    lsi = ix;
+                    index = ix;
                     return IndexResolution.Lsi;
                 }
             }
@@ -46,7 +47,10 @@ internal static class SecondaryIndexResolver
             foreach (var ix in gsis)
             {
                 if (string.Equals(ix.IndexName, indexName, StringComparison.Ordinal))
+                {
+                    index = ix;
                     return IndexResolution.Gsi;
+                }
             }
         }
         return IndexResolution.NotFound;
@@ -86,16 +90,60 @@ internal static class SecondaryIndexResolver
     }
 
     /// <summary>
+    /// Extracts a Global Secondary Index's HASH attribute (and optional RANGE
+    /// attribute) plus their declared scalar types from the table's
+    /// AttributeDefinitions. A GSI may be hash-only or composite.
+    /// </summary>
+    internal static bool TryGetGsiKeys(
+        TableMetadata meta, TableIndexDefinition gsi,
+        out string hashName, out string hashType,
+        out string? sortName, out string? sortType, out string error)
+    {
+        hashName = string.Empty;
+        hashType = string.Empty;
+        sortName = null;
+        sortType = null;
+        error = string.Empty;
+        foreach (var k in gsi.KeySchema)
+        {
+            if (string.Equals(k.KeyType, "HASH", StringComparison.OrdinalIgnoreCase))
+                hashName = k.Name;
+            else if (string.Equals(k.KeyType, "RANGE", StringComparison.OrdinalIgnoreCase))
+                sortName = k.Name;
+        }
+        if (string.IsNullOrEmpty(hashName))
+        {
+            error = $"Global secondary index '{gsi.IndexName}' declares no HASH key.";
+            return false;
+        }
+        if (!ItemKeyFormatter.TryGetDeclaredKeyType(meta, hashName, out hashType))
+        {
+            error = $"Index hash key '{hashName}' is not declared in the table's AttributeDefinitions.";
+            return false;
+        }
+        if (sortName is not null)
+        {
+            if (!ItemKeyFormatter.TryGetDeclaredKeyType(meta, sortName, out var st))
+            {
+                error = $"Index sort key '{sortName}' is not declared in the table's AttributeDefinitions.";
+                return false;
+            }
+            sortType = st;
+        }
+        return true;
+    }
+
+    /// <summary>
     /// Resolves the in-process projection paths for an index's
     /// <c>ALL_PROJECTED_ATTRIBUTES</c> projection: <c>ALL</c> → null (all
-    /// attributes); <c>KEYS_ONLY</c> → base HASH + base RANGE + index sort
-    /// attribute; <c>INCLUDE</c> → those keys plus the index's
-    /// NonKeyAttributes.
+    /// attributes); <c>KEYS_ONLY</c> → base HASH + base RANGE + the index's own
+    /// key attributes (<paramref name="indexKeyAttrs"/>); <c>INCLUDE</c> →
+    /// those keys plus the index's NonKeyAttributes.
     /// </summary>
     internal static IReadOnlyList<string>? ResolveIndexProjection(
-        TableMetadata meta, TableIndexDefinition lsi, string lsiSortName)
+        TableMetadata meta, TableIndexDefinition index, params string?[] indexKeyAttrs)
     {
-        if (string.Equals(lsi.ProjectionType, "ALL", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(index.ProjectionType, "ALL", StringComparison.OrdinalIgnoreCase))
             return null;
 
         var paths = new List<string>();
@@ -105,10 +153,10 @@ internal static class SecondaryIndexResolver
         }
 
         foreach (var k in meta.KeySchema) Add(k.Name);
-        Add(lsiSortName);
+        foreach (var a in indexKeyAttrs) Add(a);
 
-        if (string.Equals(lsi.ProjectionType, "INCLUDE", StringComparison.OrdinalIgnoreCase)
-            && lsi.NonKeyAttributes is { } extra)
+        if (string.Equals(index.ProjectionType, "INCLUDE", StringComparison.OrdinalIgnoreCase)
+            && index.NonKeyAttributes is { } extra)
         {
             foreach (var a in extra) Add(a);
         }
