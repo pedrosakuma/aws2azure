@@ -64,7 +64,7 @@ internal static class ScanHandler
     private const int MaxBatchSize = 1000;
 
     public static async Task HandleScanAsync(
-        HttpContext ctx, byte[] body, CosmosClient cosmos, ILogger? logger, CancellationToken ct)
+        HttpContext ctx, byte[] body, CosmosClient cosmos, ILogger? logger, bool enableGsi, CancellationToken ct)
     {
         ScanRequest? req;
         try
@@ -137,41 +137,101 @@ internal static class ScanHandler
         }
         var meta = metaResult.Metadata!;
 
-        // Resolve IndexName against the table's secondary index schemas. Only
-        // Local Secondary Index scans are supported in this slice; GSI and
-        // unknown indices are rejected loudly. An LSI scan is still
-        // cross-partition (Scan never scopes to a partition) but is restricted
-        // to the index's member items (those that define the LSI sort
-        // attribute) and honours the index projection.
+        // Resolve IndexName against the table's secondary index schemas. Local
+        // Secondary Index scans are always supported; Global Secondary Index
+        // scans are gated behind the opt-in EnableGlobalSecondaryIndexQueries
+        // flag (cross-partition; off by default). Unknown indices are rejected
+        // loudly. An index scan is still cross-partition (Scan never scopes to a
+        // partition) but is restricted to the index's member items — those that
+        // define the LSI sort attribute, or the GSI hash (plus sort when
+        // composite) attribute(s) — and honours the index projection.
         TableIndexDefinition? lsi = null;
+        TableIndexDefinition? gsi = null;
         string? lsiSortName = null;
+        string? gsiHashName = null;
+        string? gsiSortName = null;
         if (!string.IsNullOrEmpty(req.IndexName))
         {
-            var outcome = SecondaryIndexResolver.ResolveIndex(meta, req.IndexName!, out lsi);
+            var outcome = SecondaryIndexResolver.ResolveIndex(meta, req.IndexName!, out var index);
             switch (outcome)
             {
+                case SecondaryIndexResolver.IndexResolution.Lsi:
+                    lsi = index;
+                    if (!SecondaryIndexResolver.TryGetLsiSortKey(meta, lsi!, out var skName, out _, out var lsiError))
+                    {
+                        await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", lsiError).ConfigureAwait(false);
+                        return;
+                    }
+                    lsiSortName = skName;
+                    break;
                 case SecondaryIndexResolver.IndexResolution.Gsi:
-                    await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
-                        "Scanning global secondary indexes is not yet supported by the proxy.").ConfigureAwait(false);
-                    return;
+                    if (!enableGsi)
+                    {
+                        await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                            "Scanning global secondary indexes is not yet supported by the proxy.").ConfigureAwait(false);
+                        return;
+                    }
+                    // A GSI scan is eventually consistent in DynamoDB; strongly
+                    // consistent reads are not permitted on a GSI.
+                    if (req.ConsistentRead == true)
+                    {
+                        await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                            "Consistent reads are not supported on global secondary indexes.").ConfigureAwait(false);
+                        return;
+                    }
+                    gsi = index;
+                    if (!SecondaryIndexResolver.TryGetGsiKeys(meta, gsi!,
+                            out var ghName, out _, out var gsName, out _, out var gsiError))
+                    {
+                        await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", gsiError).ConfigureAwait(false);
+                        return;
+                    }
+                    gsiHashName = ghName;
+                    gsiSortName = gsName;
+                    break;
                 case SecondaryIndexResolver.IndexResolution.NotFound:
                     await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
                         $"The table does not have the specified index: {req.IndexName}").ConfigureAwait(false);
                     return;
             }
-
-            if (!SecondaryIndexResolver.TryGetLsiSortKey(meta, lsi!, out var skName, out _, out var lsiError))
-            {
-                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", lsiError).ConfigureAwait(false);
-                return;
-            }
-            lsiSortName = skName;
         }
         bool isLsiScan = lsi is not null;
+        bool isGsiScan = gsi is not null;
+        bool isIndexScan = isLsiScan || isGsiScan;
+        // A GSI is a projected view: when its projection is not ALL, only the
+        // index's projected attributes are physically available in DynamoDB.
+        // The proxy reads the full base-container document, so it must enforce
+        // the projected set itself to avoid leaking non-projected attributes.
+        bool gsiProjectionAll = isGsiScan
+            && string.Equals(gsi!.ProjectionType, "ALL", StringComparison.OrdinalIgnoreCase);
 
-        if (!IsAllowedSelect(req.Select, isLsiScan, out var selectError))
+        if (!IsAllowedSelect(req.Select, isIndexScan, out var selectError))
         {
             await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", selectError).ConfigureAwait(false);
+            return;
+        }
+
+        // Select=SPECIFIC_ATTRIBUTES requires a ProjectionExpression (legacy
+        // AttributesToGet is already rejected above). Without one DynamoDB
+        // rejects the request; the proxy must too, otherwise the scan would
+        // fall through with no projection and return every attribute — which on
+        // a non-ALL GSI would leak attributes outside the index's projected set.
+        if (string.Equals(req.Select, "SPECIFIC_ATTRIBUTES", StringComparison.Ordinal)
+            && string.IsNullOrWhiteSpace(req.ProjectionExpression))
+        {
+            await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                "Cannot use Select Type SPECIFIC_ATTRIBUTES without providing the ProjectionExpression parameter.").ConfigureAwait(false);
+            return;
+        }
+
+        // Select=ALL_ATTRIBUTES on a GSI is only legal when the index projects
+        // ALL — a GSI cannot fetch non-projected attributes from the base table
+        // (unlike an LSI). Reject it, matching DynamoDB.
+        if (isGsiScan && !gsiProjectionAll
+            && string.Equals(req.Select, "ALL_ATTRIBUTES", StringComparison.Ordinal))
+        {
+            await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                $"Select=ALL_ATTRIBUTES is not supported on global secondary index '{req.IndexName}' whose projection type is not ALL.").ConfigureAwait(false);
             return;
         }
 
@@ -185,20 +245,22 @@ internal static class ScanHandler
             {
                 projection = ProjectionExpressionParser.Parse(req.ProjectionExpression!, names);
             }
-            else if (isLsiScan
+            else if (isIndexScan
                 && (string.IsNullOrEmpty(req.Select)
                     || string.Equals(req.Select, "ALL_PROJECTED_ATTRIBUTES", StringComparison.Ordinal)))
             {
                 // For an index scan DynamoDB defaults Select to
                 // ALL_PROJECTED_ATTRIBUTES when neither Select nor a
                 // ProjectionExpression is supplied. ALL_PROJECTED_ATTRIBUTES
-                // resolves against the LSI projection: ALL → all attributes (no
-                // in-process projection); KEYS_ONLY → base keys + LSI sort
-                // attribute; INCLUDE → those keys plus the index's
+                // resolves against the index projection: ALL → all attributes (no
+                // in-process projection); KEYS_ONLY → base keys + the index's own
+                // key attributes; INCLUDE → those keys plus the index's
                 // NonKeyAttributes. An explicit ProjectionExpression (handled
                 // above) always takes precedence; an explicit ALL_ATTRIBUTES /
                 // SPECIFIC_ATTRIBUTES / COUNT Select skips this branch.
-                projection = SecondaryIndexResolver.ResolveIndexProjection(meta, lsi!, lsiSortName!);
+                projection = isGsiScan
+                    ? SecondaryIndexResolver.ResolveIndexProjection(meta, gsi!, gsiHashName!, gsiSortName)
+                    : SecondaryIndexResolver.ResolveIndexProjection(meta, lsi!, lsiSortName!);
             }
         }
         catch (ExpressionSyntaxException ex)
@@ -206,6 +268,30 @@ internal static class ScanHandler
             await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
                 $"Invalid expression (offset {ex.Position}): {ex.Message}").ConfigureAwait(false);
             return;
+        }
+
+        // The GSI only projects a subset of attributes when its projection type
+        // is not ALL; a ProjectionExpression cannot reference attributes outside
+        // that set (DynamoDB cannot fetch them from the base table for a GSI).
+        // Reject any non-projected path.
+        if (isGsiScan && !gsiProjectionAll && !string.IsNullOrWhiteSpace(req.ProjectionExpression))
+        {
+            var allowed = SecondaryIndexResolver.ResolveIndexProjection(
+                meta, gsi!, gsiHashName!, gsiSortName)!;
+            foreach (var path in projection!)
+            {
+                bool projected = false;
+                foreach (var a in allowed)
+                {
+                    if (string.Equals(a, path, StringComparison.Ordinal)) { projected = true; break; }
+                }
+                if (!projected)
+                {
+                    await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                        $"ProjectionExpression references attribute '{path}' that is not projected into index '{req.IndexName}'.").ConfigureAwait(false);
+                    return;
+                }
+            }
         }
 
         string? continuationIn;
@@ -220,15 +306,30 @@ internal static class ScanHandler
             return;
         }
 
-        await ExecuteScanAsync(ctx, req, filter, projection, lsiSortName, continuationIn, cosmos, ct).ConfigureAwait(false);
+        // Index membership guards: restrict the cross-partition scan to the
+        // index's member items via IS_DEFINED. For an LSI, the sort attribute;
+        // for a GSI, the hash attribute (plus the sort attribute when the GSI is
+        // composite — both must be defined for an item to be an index member).
+        IReadOnlyList<string>? membershipAttrs = null;
+        if (isLsiScan)
+        {
+            membershipAttrs = new[] { lsiSortName! };
+        }
+        else if (isGsiScan)
+        {
+            membershipAttrs = gsiSortName is null
+                ? new[] { gsiHashName! }
+                : new[] { gsiHashName!, gsiSortName };
+        }
+
+        await ExecuteScanAsync(ctx, req, filter, projection, membershipAttrs, continuationIn, cosmos, ct).ConfigureAwait(false);
     }
 
     private static async Task ExecuteScanAsync(
         HttpContext ctx, ScanRequest req,
-        ConditionNode? filter, IReadOnlyList<string>? projection, string? lsiSortName, string? continuationIn,
+        ConditionNode? filter, IReadOnlyList<string>? projection, IReadOnlyList<string>? membershipAttrs, string? continuationIn,
         CosmosClient cosmos, CancellationToken ct)
     {
-        bool isLsiScan = lsiSortName is not null;
         bool countOnly = string.Equals(req.Select, "COUNT", StringComparison.OrdinalIgnoreCase);
 
         var pushdown = FilterPushdownVisitor.Translate(filter);
@@ -236,7 +337,7 @@ internal static class ScanHandler
         // is already enforced by Cosmos so only the leftover needs
         // client-side evaluation.
         filter = pushdown.Residual;
-        using var queryBody = BuildScanQueryBody(pushdown, lsiSortName);
+        using var queryBody = BuildScanQueryBody(pushdown, membershipAttrs);
         var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + req.TableName;
         var collUri = "/" + collLink + "/docs";
 
@@ -359,7 +460,7 @@ internal static class ScanHandler
             && string.IsNullOrEmpty(continuationOut))
         {
             var faithful = await ScannedCountQuery.CountAsync(
-                cosmos, collLink, collUri, BuildScanCountSql(lsiSortName),
+                cosmos, collLink, collUri, BuildScanCountSql(membershipAttrs),
                 System.Array.Empty<CosmosSqlParameter>(),
                 partitionKeyHeader: null, strong: req.ConsistentRead == true, ct).ConfigureAwait(false);
             if (faithful is int fc && fc >= matched)
@@ -519,21 +620,19 @@ internal static class ScanHandler
     /// Scan's Cosmos SQL starts at <c>SELECT * FROM c WHERE c._a2a =
     /// 'item'</c> (skip the table-metadata sidecar) and appends any
     /// fragment pushed down by <see cref="FilterPushdownVisitor"/>.
-    /// Everything else is evaluated in-process. For a Local Secondary Index
-    /// scan, an explicit <c>IS_DEFINED(c.&lt;lsiSort&gt;)</c> guard restricts
-    /// the scan to the index's member items (sparse-index semantics), so the
-    /// streamed row count is already the index's ScannedCount.
+    /// Everything else is evaluated in-process. For a secondary-index scan,
+    /// an explicit <c>IS_DEFINED(c.&lt;attr&gt;)</c> guard per index key
+    /// attribute restricts the scan to the index's member items
+    /// (sparse-index / GSI-membership semantics) — for an LSI the single sort
+    /// attribute, for a GSI the hash attribute (plus the sort attribute when
+    /// the GSI is composite). The streamed row count is then already the
+    /// index's ScannedCount.
     /// </summary>
     internal static PooledByteBufferWriter BuildScanQueryBody(
-        FilterPushdownResult pushdown, string? lsiSortName = null)
+        FilterPushdownResult pushdown, IReadOnlyList<string>? membershipAttrs = null)
     {
         var sb = new StringBuilder("SELECT * FROM c WHERE c._a2a = 'item'");
-        if (lsiSortName is { } sortName)
-        {
-            var lsiPath = CosmosPathTranslator.Translate(
-                new DocumentPath(new[] { new AttributePathSegment(sortName) }));
-            sb.Append(" AND IS_DEFINED(").Append(lsiPath).Append(')');
-        }
+        AppendMembershipGuards(sb, membershipAttrs);
         if (pushdown.Sql is { } f)
         {
             sb.Append(" AND ").Append(f);
@@ -544,18 +643,25 @@ internal static class ScanHandler
     /// <summary>
     /// The aggregate counterpart of <see cref="BuildScanQueryBody"/> used to
     /// recover a faithful <c>ScannedCount</c>: the base scan predicate (plus
-    /// the LSI sparse-index guard when scanning an index) with no pushed
+    /// the index membership guards when scanning an index) with no pushed
     /// filter, projected as a server-side count.
     /// </summary>
-    internal static string BuildScanCountSql(string? lsiSortName = null)
+    internal static string BuildScanCountSql(IReadOnlyList<string>? membershipAttrs = null)
     {
-        if (lsiSortName is { } sortName)
+        var sb = new StringBuilder("SELECT VALUE COUNT(1) FROM c WHERE c._a2a = 'item'");
+        AppendMembershipGuards(sb, membershipAttrs);
+        return sb.ToString();
+    }
+
+    private static void AppendMembershipGuards(StringBuilder sb, IReadOnlyList<string>? membershipAttrs)
+    {
+        if (membershipAttrs is null) return;
+        foreach (var attr in membershipAttrs)
         {
-            var lsiPath = CosmosPathTranslator.Translate(
-                new DocumentPath(new[] { new AttributePathSegment(sortName) }));
-            return "SELECT VALUE COUNT(1) FROM c WHERE c._a2a = 'item' AND IS_DEFINED(" + lsiPath + ")";
+            var path = CosmosPathTranslator.Translate(
+                new DocumentPath(new[] { new AttributePathSegment(attr) }));
+            sb.Append(" AND IS_DEFINED(").Append(path).Append(')');
         }
-        return "SELECT VALUE COUNT(1) FROM c WHERE c._a2a = 'item'";
     }
 
     private static Dictionary<string, JsonElement> Project(

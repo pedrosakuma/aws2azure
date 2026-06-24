@@ -1244,6 +1244,30 @@ public class QueryHandlerTests
     }
 
     [Fact]
+    public async Task Query_gsi_specific_attributes_without_projection_expression_is_rejected()
+    {
+        // SPECIFIC_ATTRIBUTES with no ProjectionExpression must be rejected — on
+        // a non-ALL GSI, falling through with no projection would leak
+        // non-projected attributes.
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataGsiNumberKeysOnly) },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byAmount\","
+                  + "\"KeyConditionExpression\":\"customer = :c\","
+                  + "\"Select\":\"SPECIFIC_ATTRIBUTES\","
+                  + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("SPECIFIC_ATTRIBUTES without providing the ProjectionExpression", ReadResponse(body));
+    }
+
+    [Fact]
     public async Task Query_unknown_index_name_is_rejected()
     {
         var (ctx, body) = NewCtx();
