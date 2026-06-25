@@ -189,6 +189,22 @@ public class QueryHandlerTests
         return r;
     }
 
+    // Scripts the `pkranges` feed read that the cross-partition ordered-query
+    // executor (composite GSI Query) issues before fanning out per range.
+    private static HttpResponseMessage CosmosPkRanges(params string[] rangeIds)
+    {
+        var sb = new StringBuilder("{\"PartitionKeyRanges\":[");
+        for (int i = 0; i < rangeIds.Length; i++)
+        {
+            if (i > 0) sb.Append(',');
+            sb.Append("{\"id\":\"").Append(rangeIds[i])
+              .Append("\",\"minInclusive\":\"").Append(i.ToString("D4"))
+              .Append("\",\"maxExclusive\":\"").Append((i + 1).ToString("D4")).Append("\"}");
+        }
+        sb.Append("]}");
+        return CosmosOk(sb.ToString());
+    }
+
     private static string DocWithItem(string pk, string id, string itemJson)
     {
         using var d = JsonDocument.Parse(itemJson);
@@ -945,6 +961,7 @@ public class QueryHandlerTests
             Responses =
             {
                 CosmosOk(MetadataGsiComposite),
+                CosmosPkRanges("0"),
                 CosmosOk(QueryEnvelope(
                     DocWithItem("a", "x", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"x\"},\"customer\":{\"S\":\"acme\"},\"createdAt\":{\"S\":\"2024-03\"}}"))),
             },
@@ -958,7 +975,9 @@ public class QueryHandlerTests
         await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
-        var sql = QuerySql(handler.Requests[1].Body);
+        // Composite GSI diverts to the cross-partition ordered executor:
+        // metadata read, then a pkranges feed, then the per-range ordered query.
+        var sql = QuerySql(handler.Requests[2].Body);
         Assert.Contains("c[\"customer\"] = ", sql);
         Assert.Contains("c[\"createdAt\"] > ", sql);
         // Composite GSI membership guard on both key attributes.
@@ -966,6 +985,8 @@ public class QueryHandlerTests
         Assert.Contains("IS_DEFINED(c[\"createdAt\"])", sql);
         // Composite GSI is ordered by the index sort attribute.
         Assert.Contains("ORDER BY c[\"createdAt\"] ASC", sql);
+        // Per-range fan-out targets one physical partition key range.
+        Assert.Equal("0", handler.Requests[2].Headers["x-ms-documentdb-partitionkeyrangeid"]);
     }
 
     [Fact]
@@ -977,6 +998,7 @@ public class QueryHandlerTests
             Responses =
             {
                 CosmosOk(MetadataGsiComposite),
+                CosmosPkRanges("0"),
                 CosmosOk(QueryEnvelope()),
             },
         };
@@ -990,7 +1012,7 @@ public class QueryHandlerTests
         await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
-        Assert.Contains("ORDER BY c[\"createdAt\"] DESC", QuerySql(handler.Requests[1].Body));
+        Assert.Contains("ORDER BY c[\"createdAt\"] DESC", QuerySql(handler.Requests[2].Body));
     }
 
     [Fact]
@@ -1002,6 +1024,7 @@ public class QueryHandlerTests
             Responses =
             {
                 CosmosOk(MetadataGsiComposite),
+                CosmosPkRanges("0"),
                 CosmosOk(QueryEnvelope()),
             },
         };
@@ -1014,7 +1037,7 @@ public class QueryHandlerTests
         await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
-        var sql = QuerySql(handler.Requests[1].Body);
+        var sql = QuerySql(handler.Requests[2].Body);
         Assert.Contains("c[\"createdAt\"] >= ", sql);
         Assert.Contains("c[\"createdAt\"] <= ", sql);
     }
@@ -1088,6 +1111,7 @@ public class QueryHandlerTests
             Responses =
             {
                 CosmosOk(MetadataGsiNumberKeysOnly),
+                CosmosPkRanges("0"),
                 CosmosOk(QueryEnvelope(
                     DocWithItem("a", "x", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"x\"},\"customer\":{\"S\":\"acme\"},\"amount\":{\"N\":\"5\"},\"extra\":{\"S\":\"drop\"}}"))),
             },
@@ -1222,6 +1246,7 @@ public class QueryHandlerTests
             Responses =
             {
                 CosmosOk(MetadataGsiNumberKeysOnly),
+                CosmosPkRanges("0"),
                 CosmosOk(QueryEnvelope(
                     DocWithItem("a", "x", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"x\"},\"customer\":{\"S\":\"acme\"},\"amount\":{\"N\":\"5\"}}"))),
             },
