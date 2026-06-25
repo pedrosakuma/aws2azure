@@ -399,8 +399,12 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         // CosmosBinary): responses (#268/#321) drive the fused GetItem reader,
         // and requests (#336/#337) send 0x80 write bodies the gateway must parse
         // + index. Both are response-/request-only opt-ins, default-off in prod.
+        // Also opt into Global Secondary Index access (#461): GSI/LSI cross-
+        // partition ORDER BY, pagination and eventual consistency only manifest
+        // against real Cosmos, so the nightly proxy enables the flag to let the
+        // secondary-index validation suite exercise the live query machinery.
         var dynamoDbBlock = (CosmosConfigured || CosmosWorkloadIdentityConfigured)
-            ? "  \"dynamodb\": { \"cosmosBinaryResponses\": true, \"cosmosBinaryRequests\": true },\n"
+            ? "  \"dynamodb\": { \"cosmosBinaryResponses\": true, \"cosmosBinaryRequests\": true, \"enableGlobalSecondaryIndexQueries\": true },\n"
             : string.Empty;
 
         return $$"""
