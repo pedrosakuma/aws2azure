@@ -320,7 +320,7 @@ internal static class QueryHandler
         }
 
         await ExecuteQueryAsync(ctx, req, meta, keyCond, gsiKey, gsiHashKey?.Name, gsiSortKey?.Name,
-            filter, projection, lsiSortKey?.Name, continuationIn, cosmos, ct)
+            gsiSortKey?.Type, filter, projection, lsiSortKey?.Name, continuationIn, cosmos, ct)
             .ConfigureAwait(false);
     }
 
@@ -328,7 +328,7 @@ internal static class QueryHandler
         HttpContext ctx, QueryRequest req, TableMetadata meta,
         KeyConditionAnalyser.AnalysedKeyCondition? keyCond,
         KeyConditionAnalyser.AnalysedGsiKeyCondition? gsiKey,
-        string? gsiHashName, string? gsiSortName,
+        string? gsiHashName, string? gsiSortName, string? gsiSortType,
         ConditionNode? filter, IReadOnlyList<string>? projection, string? lsiSortName, string? continuationIn,
         CosmosClient cosmos, CancellationToken ct)
     {
@@ -361,6 +361,20 @@ internal static class QueryHandler
             // the unordered cross-partition loop below (emitOrderBy: false).
             if (gsiSortName is not null && !countOnly)
             {
+                // A binary (B) GSI sort key is stored as a Cosmos envelope object
+                // ({"_a2a:B":...}), not a scalar, so the per-range `ORDER BY
+                // c.<gsiSort>` orders it as an object (type-equal) rather than by
+                // the binary payload — the merge precondition (each range locally
+                // sorted by the sort value) cannot hold. Reject it rather than
+                // return silently mis-ordered results.
+                if (string.Equals(gsiSortType, "B", StringComparison.Ordinal))
+                {
+                    await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                        "Ordered queries on a global secondary index with a binary (B) sort key are not supported.")
+                        .ConfigureAwait(false);
+                    return;
+                }
+
                 var residual = CombineResidual(
                     CombineResidual(hashPush.Residual, skPush.Residual), pushdown.Residual);
                 await CrossPartitionOrderByQuery.ExecuteAsync(

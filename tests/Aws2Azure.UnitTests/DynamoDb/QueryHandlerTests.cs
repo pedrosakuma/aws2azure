@@ -132,6 +132,20 @@ public class QueryHandlerTests
         + "\"projectionType\":\"INCLUDE\",\"nonKeyAttributes\":[\"total\"]}],"
         + "\"billingMode\":\"PAY_PER_REQUEST\"}";
 
+    // Composite GSI with a Binary (B) RANGE ("token"); projection ALL. Binary
+    // sort keys are envelope-stored and unsortable, so ordered GSI queries on
+    // them are rejected.
+    private static readonly string MetadataGsiBinarySort =
+        "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        + "\"tableName\":\"orders\","
+        + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"sk\",\"type\":\"S\"},"
+        + "{\"name\":\"customer\",\"type\":\"S\"},{\"name\":\"token\",\"type\":\"B\"}],"
+        + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
+        + "\"globalSecondaryIndexes\":[{\"indexName\":\"byToken\","
+        + "\"keySchema\":[{\"name\":\"customer\",\"keyType\":\"HASH\"},{\"name\":\"token\",\"keyType\":\"RANGE\"}],"
+        + "\"projectionType\":\"ALL\"}],"
+        + "\"billingMode\":\"PAY_PER_REQUEST\"}";
+
     private const bool EnableGsi = true;
 
     private static CosmosClient BuildClient(ScriptedHandler handler)
@@ -987,6 +1001,31 @@ public class QueryHandlerTests
         Assert.Contains("ORDER BY c[\"createdAt\"] ASC", sql);
         // Per-range fan-out targets one physical partition key range.
         Assert.Equal("0", handler.Requests[2].Headers["x-ms-documentdb-partitionkeyrangeid"]);
+    }
+
+    [Fact]
+    public async Task Query_gsi_binary_sort_key_ordered_query_is_rejected()
+    {
+        // A binary GSI sort key is envelope-stored ({"_a2a:B":...}) and cannot
+        // be ordered by the per-range query, so an ordered (non-COUNT) GSI
+        // query on it is rejected before any pkranges fan-out.
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataGsiBinarySort) },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byToken\","
+                  + "\"KeyConditionExpression\":\"customer = :c\","
+                  + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("binary (B) sort key", ReadResponse(body));
+        // No fan-out: only the metadata read was issued.
+        Assert.Single(handler.Requests);
     }
 
     [Fact]

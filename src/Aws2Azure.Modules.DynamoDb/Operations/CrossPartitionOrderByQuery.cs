@@ -57,17 +57,33 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 /// <c>__a2a_continuation</c> sentinel that <see cref="QueryHandler"/> already
 /// uses for <c>LastEvaluatedKey</c>.</para>
 ///
+/// <para><b>Correctness precondition.</b> The <c>skip</c> resume is exact iff the
+/// global emit order of a <c>V</c>-block is <i>deterministic and stable across
+/// the two requests</i>. It is, because: (a) across ranges the merge tie-break is
+/// the range's <c>minInclusive</c> ordinal (constant), and (b) within a range the
+/// per-range <c>ORDER BY c.&lt;gsiSort&gt;</c> returns equal-key rows in Cosmos's
+/// physical index (<c>_rid</c>) order, which is identical for two identical-shape
+/// queries over unchanged data. This is the same physical-order stability the
+/// official SDK's <c>_rid</c>-based resume depends on. The one residual
+/// divergence is a <i>concurrent insert/delete inside the exact boundary-value
+/// block between two page fetches</i>, which can shift the <c>skip</c> alignment
+/// by the net change — a narrow eventual-consistency window (DynamoDB pagination
+/// exhibits analogous behaviour under concurrent writes). Recorded in the gap
+/// doc's <c>behavior_differences</c>.</para>
+///
 /// <para><b>Footprint.</b> Seeding the heap requires one in-flight page per
 /// overlapping range, so peak memory is O(ranges × page × item size) — bounded
 /// by <see cref="PerPartitionPageSize"/>. This is the documented cost of the
 /// opt-in <c>EnableGlobalSecondaryIndexQueries</c> feature.</para>
 ///
-/// <para><b>Known divergence.</b> The merge comparator orders the sort value as
+/// <para><b>Known divergences.</b> The merge comparator orders the sort value as
 /// Cosmos does (numbers by IEEE-754 double, strings by ordinal). High-precision
 /// numeric sort keys that the storage layer keeps in the <c>{"_a2a:N":...}</c>
 /// envelope (i.e. values that do not survive a double round-trip) are ordered by
 /// Cosmos as objects, not numbers — those are not supported as a composite GSI
-/// ordering key (a pre-existing limitation of the ORDER BY translation).</para>
+/// ordering key (a pre-existing limitation of the ORDER BY translation). Binary
+/// (<c>B</c>) sort keys are always envelope-stored and so are rejected upstream
+/// in <see cref="QueryHandler"/> before reaching this executor.</para>
 /// </summary>
 internal static class CrossPartitionOrderByQuery
 {
