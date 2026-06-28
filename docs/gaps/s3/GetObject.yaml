@@ -18,8 +18,8 @@ sub_features:
   - name: server-side encryption customer keys (SSE-C)
     status: unsupported
   - name: versioning (versionId query)
-    status: unsupported
-    gap: "Routed to Unsupported; blob versioning will be a later slice."
+    status: partial
+    gap: "?versionId selector maps to Azure ?versionid (opaque x-ms-version-id round-trips); x-amz-version-id is emitted from x-ms-version-id. Requires account-level Blob versioning enabled out-of-band; no delete markers in ListObjectVersions yet."
 behavior_differences:
   - "Streaming end-to-end: response body is forwarded without buffering."
   - "x-amz-id-2 carries the Azure x-ms-request-id for cross-system tracing."

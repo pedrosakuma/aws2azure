@@ -7,7 +7,8 @@ sub_features:
     status: implemented
     gap: "Azure returns 404 for a missing blob; the proxy mirrors S3 by returning 204 in that case."
   - name: versioning (versionId query)
-    status: unsupported
+    status: partial
+    gap: "?versionId selector deletes a specific blob version (maps to Azure ?versionid). Delete-marker semantics and x-amz-delete-marker not modelled; requires account-level versioning enabled out-of-band."
   - name: MFA delete (x-amz-mfa)
     status: unsupported
   - name: bypass-governance
