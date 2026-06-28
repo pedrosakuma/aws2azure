@@ -37,6 +37,7 @@ var storageAccountName = toLower('${baseName}st${suffix}')
 var serviceBusNamespaceName = '${baseName}-sb-${suffix}'
 var cosmosAccountName = toLower('${baseName}-cosmos-${suffix}')
 var eventHubsNamespaceName = '${baseName}-eh-${suffix}'
+var keyVaultName = '${baseName}-kv-${suffix}'
 
 // Built-in role definition ids for the AAD data-plane roles the proxy needs when a
 // backend block authenticates with Workload Identity (issue #307). Event Hubs /
@@ -46,6 +47,10 @@ var serviceBusDataOwnerRoleId = '090c5cfd-751d-490a-894a-3ce6f1109419' // Azure 
 // Cosmos DB Built-in Data Contributor — a SQL-plane role assigned via
 // sqlRoleAssignments, NOT an Azure RBAC roleAssignment.
 var cosmosDataContributorRoleId = '00000000-0000-0000-0000-000000000002'
+// Key Vault Secrets Officer — built-in Azure RBAC role granting get/set/list/delete
+// on secrets (data plane). Assigned to the proxy SP so the SecretsManager smoke can
+// drive the full secret lifecycle against the ephemeral vault via Workload Identity.
+var keyVaultSecretsOfficerRoleId = 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
 var assignDataPlaneRoles = !empty(principalId)
 
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
@@ -129,6 +134,29 @@ resource eventHub 'Microsoft.EventHub/namespaces/eventhubs@2024-01-01' = {
   }
 }
 
+// Key Vault backing the Secrets Manager smoke. Ephemeral like every other
+// backend here: a uniquely-named, RBAC-authorized vault provisioned per run and
+// purged on teardown. Soft-delete is mandatory and cannot be disabled, so the
+// retention is pinned to the 7-day minimum and purge protection is left OFF so
+// the workflow can `az keyvault purge` the name immediately after the run
+// instead of leaking a reserved name for 90 days. The proxy authenticates with
+// the same Workload-Identity SP (principalId) the other AAD scenarios use.
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
+  name: keyVaultName
+  location: location
+  properties: {
+    sku: {
+      family: 'A'
+      name: 'standard'
+    }
+    tenantId: subscription().tenantId
+    enableRbacAuthorization: true
+    enableSoftDelete: true
+    softDeleteRetentionInDays: 7
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
 // --- Data-plane RBAC for the Workload-Identity E2E scenario (issue #307) ---
 // Each is created only when principalId is supplied, so the default shared-key
 // provisioning path (and any deploy without the OIDC SP) is unchanged.
@@ -163,6 +191,16 @@ resource cosmosDataContributor 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAss
   }
 }
 
+resource keyVaultSecretsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignDataPlaneRoles) {
+  name: guid(keyVault.id, principalId, keyVaultSecretsOfficerRoleId)
+  scope: keyVault
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultSecretsOfficerRoleId)
+    principalId: principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 output storageAccountName string = storage.name
 output serviceBusNamespaceName string = serviceBus.name
 output cosmosAccountName string = cosmos.name
@@ -170,3 +208,5 @@ output cosmosDatabaseName string = cosmosDatabaseName
 output cosmosEndpoint string = cosmos.properties.documentEndpoint
 output eventHubsNamespaceName string = eventHubs.name
 output eventHubName string = eventHubName
+output keyVaultName string = keyVault.name
+output keyVaultUri string = keyVault.properties.vaultUri

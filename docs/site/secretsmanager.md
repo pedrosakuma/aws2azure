@@ -114,6 +114,28 @@
 - <https://learn.microsoft.com/rest/api/keyvault/secrets/set-secret>
 - <https://learn.microsoft.com/rest/api/keyvault/secrets/get-secret-versions>
 
+## RotateSecret
+
+- **Status:** ⛔ unsupported
+- **Azure equivalent:** `None — Azure Key Vault has no equivalent managed-rotation trigger the proxy can drive`
+
+### Sub-features
+
+| Name | Status | Notes | Gap | Workaround |
+|---|---|---|---|---|
+| Rotation Lambda orchestration | ⛔ unsupported | AWS RotateSecret invokes a customer-owned Lambda rotation function that generates, sets, tests, and finishes new credential versions (createSecret/setSecret/testSecret/finishSecret steps). aws2azure is a stateless wire-protocol translator: it has no Lambda runtime, no place to execute rotation logic, and no durable state to track a multi-step rotation, so it cannot honour the contract. Translating it to a single Key Vault write would silently break the caller's rotation expectations. |  |  |
+| RotateImmediately / RotationRules / RotationLambdaARN | ⛔ unsupported | Not applicable without rotation orchestration; the operation is rejected before any backend call so these parameters are never interpreted. |  |  |
+
+### Behaviour differences
+
+- Returns HTTP 501 with an AWS `NotImplementedException` error shape and a message directing operators to rotate out-of-band and publish the new value via PutSecretValue, or to manage rotation directly in Azure Key Vault. The action is recognised by the wire-protocol router (so it surfaces in metrics) but is rejected before backend credentials are resolved — it is deliberately unsupported, not merely unimplemented.
+
+### References
+
+- <https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_RotateSecret.html>
+- <https://docs.aws.amazon.com/secretsmanager/latest/userguide/rotating-secrets.html>
+- <https://learn.microsoft.com/azure/key-vault/secrets/tutorial-rotation>
+
 ## UpdateSecret
 
 - **Status:** ✅ implemented

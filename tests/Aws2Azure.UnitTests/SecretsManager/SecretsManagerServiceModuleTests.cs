@@ -644,6 +644,31 @@ public sealed class SecretsManagerServiceModuleTests
     }
 
     [Fact]
+    public async Task HandleAsync_RotateSecret_is_rejected_as_unsupported_without_backend_call()
+    {
+        var backendCalled = false;
+        using var http = new AzureHttpClient(new ScriptedHandler((_, _) =>
+        {
+            backendCalled = true;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.RotateSecret", "{\"SecretId\":\"demo\"}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status501NotImplemented, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        Assert.Contains("NotImplementedException", body);
+        Assert.Contains("RotateSecret is not supported", body);
+        // Recognised-but-unsupported ops are rejected before any Key Vault request.
+        Assert.False(backendCalled);
+        // It is a known operation (routed/metered), derived from the action table.
+        Assert.Contains("RotateSecret", module.KnownOperations);
+    }
+
+    [Fact]
     public void KnownOperations_is_derived_from_the_wire_protocol_action_table()
     {
         using var http = new AzureHttpClient(new ScriptedHandler((_, _) =>

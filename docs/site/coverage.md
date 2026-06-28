@@ -107,6 +107,7 @@
 | secretsmanager | [GetSecretValue](secretsmanager.md#getsecretvalue) | ✅ implemented | `GET https://{vault}.vault.azure.net/secrets/{name}/versions/{version?}` |
 | secretsmanager | [ListSecrets](secretsmanager.md#listsecrets) | ✅ implemented | `GET https://{vault}.vault.azure.net/secrets?api-version=7.4` |
 | secretsmanager | [PutSecretValue](secretsmanager.md#putsecretvalue) | 🟡 partial | `PUT https://{vault}.vault.azure.net/secrets/{name}` |
+| secretsmanager | [RotateSecret](secretsmanager.md#rotatesecret) | ⛔ unsupported | `None — Azure Key Vault has no equivalent managed-rotation trigger the proxy can drive` |
 | secretsmanager | [UpdateSecret](secretsmanager.md#updatesecret) | ✅ implemented | `PUT https://{vault}.vault.azure.net/secrets/{name}/versions` |
 | sns | [ConfirmSubscription](sns.md#confirmsubscription) | 🟡 partial | `Azure Service Bus topic subscriptions` |
 | sns | [CreateTopic](sns.md#createtopic) | 🟡 partial | `Azure Service Bus Topics management REST API` |

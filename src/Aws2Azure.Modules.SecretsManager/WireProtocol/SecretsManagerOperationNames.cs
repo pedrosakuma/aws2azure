@@ -12,6 +12,7 @@ internal enum SecretsManagerOperation
     DeleteSecret,
     ListSecrets,
     DescribeSecret,
+    RotateSecret,
 }
 
 internal static class SecretsManagerOperationNames
@@ -25,6 +26,11 @@ internal static class SecretsManagerOperationNames
         ["DeleteSecret"] = SecretsManagerOperation.DeleteSecret,
         ["ListSecrets"] = SecretsManagerOperation.ListSecrets,
         ["DescribeSecret"] = SecretsManagerOperation.DescribeSecret,
+        // Recognised for routing/metrics but deliberately unsupported: a stateless
+        // wire-protocol proxy cannot orchestrate AWS rotation Lambda functions.
+        // Dispatch rejects it with a NotImplementedException (see the module + the
+        // RotateSecret gap doc) rather than silently translating to Key Vault.
+        ["RotateSecret"] = SecretsManagerOperation.RotateSecret,
     };
 
     /// <summary>

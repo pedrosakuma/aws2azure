@@ -76,6 +76,17 @@ public sealed class SecretsManagerServiceModule : IServiceModule
             return;
         }
 
+        if (operation == SecretsManagerOperation.RotateSecret)
+        {
+            // Deliberately unsupported (not "not yet"): AWS RotateSecret invokes a
+            // customer-owned rotation Lambda to generate and stage new credentials.
+            // aws2azure is a stateless wire-protocol translator with no Lambda
+            // equivalent and no place to run rotation logic, so it cannot honor the
+            // contract. Reject before resolving backend credentials.
+            await SecretsManagerOperationSupport.WriteAwsErrorAsync(context, StatusCodes.Status501NotImplemented, "NotImplementedException", "RotateSecret is not supported by aws2azure: a stateless wire-protocol proxy cannot invoke the rotation Lambda function AWS Secrets Manager relies on. Rotate the secret out-of-band and publish the new value with PutSecretValue, or manage rotation directly in Azure Key Vault.").ConfigureAwait(false);
+            return;
+        }
+
         var accessKeyId = context.Items["aws2azure.accessKeyId"] as string;
         if (string.IsNullOrWhiteSpace(accessKeyId))
         {
