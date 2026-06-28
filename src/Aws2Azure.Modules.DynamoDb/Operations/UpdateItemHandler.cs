@@ -314,10 +314,16 @@ internal static class UpdateItemHandler
                 return;
             }
 
+            // Translate an enabled TTL attribute's absolute epoch expiry into a
+            // Cosmos relative per-item ttl, recomputed on every update so the
+            // absolute expiry stays correct across writes.
+            int? ttlSeconds = TtlTranslation.ComputeItemTtlSeconds(
+                newItemJson, meta.TimeToLive, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+
             // Build the Cosmos doc envelope from the mutated item map,
             // straight into a pooled UTF-8 buffer (no string / StringContent
             // round-trip on the write body).
-            using var docBuf = ItemHandlers.ItemDocumentBody.Create(id, pk, newItemJson, cosmos.CosmosBinaryRequests);
+            using var docBuf = ItemHandlers.ItemDocumentBody.Create(id, pk, newItemJson, cosmos.CosmosBinaryRequests, ttlSeconds);
             var docBody = docBuf.Memory;
 
             HttpResponseMessage writeResp;

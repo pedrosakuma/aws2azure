@@ -289,7 +289,9 @@ internal static class TransactWriteItemsHandler
                 {
                     // Embedded into the sproc params JSON via WriteRawValue
                     // (bytes overload) — no string round-trip.
-                    docBytes = ItemHandlers.BuildItemDocumentBytes(id, pk, keyBearer);
+                    int? ttlSeconds = TtlTranslation.ComputeItemTtlSeconds(
+                        keyBearer, meta.TimeToLive, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+                    docBytes = ItemHandlers.BuildItemDocumentBytes(id, pk, keyBearer, binary: false, ttlSeconds);
                 }
                 catch (ArgumentException ex)
                 {

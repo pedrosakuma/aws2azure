@@ -182,23 +182,25 @@
 
 ## DescribeTimeToLive
 
-- **Status:** ⚪ stub
+- **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Cosmos DB container `defaultTtl` / per-item `ttl``
 
 ### Sub-features
 
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
-| Returns DISABLED | ✅ implemented | Returns `{TimeToLiveDescription: {TimeToLiveStatus: "DISABLED"}}` for every table without consulting Cosmos. SDK callers that probe TTL on every connection get a clean shape instead of a 501. |  |  |
+| Reports ENABLED/DISABLED + AttributeName | ✅ implemented | Reads the proxy's per-table metadata sidecar and returns `{TimeToLiveDescription: {TimeToLiveStatus: "ENABLED"\|"DISABLED", AttributeName: <name>}}`. AttributeName is echoed only when TTL is enabled, matching DynamoDB. |  |  |
 
 ### Behaviour differences
 
-- Always reports DISABLED — even if a Cosmos container has `defaultTtl` configured out-of-band, this proxy will not surface that state.
-- Pairs with `UpdateTimeToLive` which is currently `unsupported`; once item-level TTL translation lands, this op will be promoted to `partial`.
+- Reports the TTL state recorded by this proxy (the metadata sidecar written by `UpdateTimeToLive`). A Cosmos container whose `defaultTtl` was configured out-of-band (not via this proxy) is not reflected here, since the DynamoDB attribute name is unknown to the proxy.
+- DynamoDB's transient `ENABLING` / `DISABLING` states are not surfaced; the proxy flips between ENABLED and DISABLED synchronously once the Cosmos container replace + metadata write complete.
+- Validated against real Azure Cosmos DB alongside UpdateTimeToLive.
 
 ### References
 
 - <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DescribeTimeToLive.html>
+- <https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/time-to-live>
 
 ## GetItem
 
@@ -539,20 +541,28 @@
 
 ## UpdateTimeToLive
 
-- **Status:** ⛔ unsupported
+- **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Cosmos DB container `defaultTtl` / per-item `ttl``
 
 ### Sub-features
 
 | Name | Status | Notes | Gap | Workaround |
 |---|---|---|---|---|
-| TTL enable/disable | ⛔ unsupported | Honouring DynamoDB TTL semantics requires translating the named attribute's epoch-seconds value into Cosmos' per-item `ttl` field on every PutItem / UpdateItem write. That translation is not yet implemented; accepting the call without translating would silently break the user's expiration contract. |  |  |
+| TTL enable | ✅ implemented | Arms the Cosmos container by setting `defaultTtl = -1` (TTL enabled, no blanket expiry) and persists the DynamoDB attribute name in the proxy's per-table metadata sidecar. From that point every write path (PutItem / UpdateItem / BatchWriteItem / TransactWriteItems) translates the named attribute's absolute epoch-seconds value into Cosmos' per-item relative `ttl` (`ttl = epochAttr - now`, recomputed on every write so the absolute expiry stays correct across updates). The container replace runs FIRST, then the metadata write, so a metadata-write failure leaves a benign non-expiring state rather than silently dropping items. |  |  |
+| TTL disable | ✅ implemented | Removes the container `defaultTtl` (Cosmos stops honouring per-item `ttl`) and clears the attribute name in metadata. Items keep any previously written `ttl` field but it becomes inert. |  |  |
+| AttributeName validation | ✅ implemented | Rejects an enable request that omits `TimeToLiveSpecification.AttributeName` with HTTP 400; rejects an unknown table with ResourceNotFoundException. |  |  |
 
 ### Behaviour differences
 
-- Returns `ValidationException` with an explanatory message. Operators who need TTL on Azure should configure Cosmos container `defaultTtl` directly out-of-band and not rely on this API.
+- DynamoDB TTL stores an *absolute* epoch-seconds expiry in a named item attribute; Cosmos `ttl` is a *relative* duration measured from the document's `_ts`. The proxy bridges this by recomputing `ttl = epochAttr - now` on every write. Items written BEFORE TTL was enabled carry no per-item `ttl` and are not retroactively expired until they are rewritten — this differs from DynamoDB, which begins evaluating the attribute for all items as soon as TTL is enabled.
+- Expiry sweep cadence differs: DynamoDB deletes expired items within ~48h of expiry; Cosmos removes them on its own background TTL sweep. Neither guarantees deletion exactly at the expiry instant — callers must not rely on read-after-expiry returning empty immediately.
+- Past-due expiry (attribute value already in the past, within a 5-year guard window) is clamped to `ttl = 1` so Cosmos expires the item promptly. An expiry more than 5 years in the past is treated as non-expiring (no `ttl` written), mirroring DynamoDB's safety guard against accidental mass-deletion.
+- The TTL attribute value must be a Number (epoch seconds); a non-Number value, a missing attribute, or a fractional value (floored) is handled per DynamoDB semantics — a missing/non-Number attribute simply yields no per-item `ttl`.
+- Known limitation: a user attribute literally named `ttl` collides with Cosmos' reserved `ttl` document field (a pre-existing latent issue for any reserved system field). Avoid naming the TTL attribute `ttl`.
+- Validated against real Azure Cosmos DB (container `defaultTtl` armed, per-item `ttl` written and read back); background expiry timing is not asserted in tests.
 
 ### References
 
 - <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTimeToLive.html>
+- <https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/time-to-live>
 

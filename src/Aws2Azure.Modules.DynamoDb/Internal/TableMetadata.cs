@@ -65,6 +65,34 @@ internal sealed class TableMetadata
     /// </summary>
     [JsonPropertyName("localSecondaryIndexes")]
     public List<TableIndexDefinition>? LocalSecondaryIndexes { get; set; }
+
+    /// <summary>
+    /// DynamoDB Time To Live configuration (UpdateTimeToLive). When enabled,
+    /// the named attribute carries an absolute epoch-seconds expiry that item
+    /// write paths translate into Cosmos' relative per-item <c>ttl</c> field.
+    /// Null when TTL has never been configured for the table.
+    /// </summary>
+    [JsonPropertyName("timeToLive")]
+    public TableTimeToLive? TimeToLive { get; set; }
+}
+
+/// <summary>
+/// Persisted DynamoDB TTL configuration for a table. DynamoDB expires items
+/// whose <see cref="AttributeName"/> attribute (a Number of epoch seconds) is
+/// in the past; the proxy maps this onto Cosmos' container <c>defaultTtl</c>
+/// plus a per-item <c>ttl</c> computed at write time.
+/// </summary>
+internal sealed class TableTimeToLive
+{
+    /// <summary>Whether TTL expiry is currently enabled for the table.</summary>
+    [JsonPropertyName("enabled")] public bool Enabled { get; set; }
+
+    /// <summary>
+    /// The DynamoDB item attribute designated as the expiry timestamp. Retained
+    /// even after TTL is disabled so <c>DescribeTimeToLive</c> can echo it, and
+    /// because DynamoDB requires the name to flip a table back on.
+    /// </summary>
+    [JsonPropertyName("attributeName")] public string? AttributeName { get; set; }
 }
 
 /// <summary>

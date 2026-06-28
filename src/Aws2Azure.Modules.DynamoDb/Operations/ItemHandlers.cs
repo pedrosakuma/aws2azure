@@ -150,6 +150,13 @@ internal static class ItemHandlers
         using var itemDoc = JsonDocument.Parse(itemUtf8, ItemDocumentParseOptions);
         var item = itemDoc.RootElement;
 
+        // When TTL is enabled, translate the item's absolute epoch-seconds expiry
+        // attribute into a Cosmos relative per-item ttl (recomputed every write,
+        // so updates keep the absolute expiry correct). Null leaves the doc
+        // non-expiring, matching DynamoDB for items lacking the attribute.
+        int? ttlSeconds = TtlTranslation.ComputeItemTtlSeconds(
+            item, meta.TimeToLive, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+
         // Validate that key attribute type tags inside the Item match the
         // table's AttributeDefinitions before we touch Cosmos.
         if (!ValidateKeyAttributesInItem(item, meta, out var validationError))
@@ -181,7 +188,7 @@ internal static class ItemHandlers
             // when the caller doesn't care about prior state). Zero-copy:
             // the doc is written straight into a pooled UTF-8 buffer handed
             // to the HTTP layer, with no string / StringContent round-trip.
-            using var docBuf = ItemDocumentBody.CreateFromItemBytes(id, pk, itemUtf8.Span, cosmos.CosmosBinaryRequests);
+            using var docBuf = ItemDocumentBody.CreateFromItemBytes(id, pk, itemUtf8.Span, cosmos.CosmosBinaryRequests, ttlSeconds);
             var headers = new[]
             {
                 new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
@@ -218,7 +225,7 @@ internal static class ItemHandlers
             // string / StringContent round-trip) and splice those bytes into
             // the sproc params. Sproc bodies are always text (CosmosBinary does
             // not apply to stored-procedure input), so force the text encoder.
-            using var docBuf = ItemDocumentBody.CreateTextFromItemBytes(id, pk, itemUtf8.Span);
+            using var docBuf = ItemDocumentBody.CreateTextFromItemBytes(id, pk, itemUtf8.Span, ttlSeconds);
             var sprocResult = await SprocDispatcher.TryPutItemAsync(
                 sprocCtx,
                 cosmos,
@@ -266,7 +273,7 @@ internal static class ItemHandlers
         // with bounded retry on 412/409 so concurrent writers replay. The doc
         // is written once into a pooled UTF-8 buffer and re-sent zero-copy on
         // each attempt (no string / StringContent round-trip).
-        using var fallbackDoc = ItemDocumentBody.CreateFromItemBytes(id, pk, itemUtf8.Span, cosmos.CosmosBinaryRequests);
+        using var fallbackDoc = ItemDocumentBody.CreateFromItemBytes(id, pk, itemUtf8.Span, cosmos.CosmosBinaryRequests, ttlSeconds);
         var docBody = fallbackDoc.Memory;
         const int MaxRetries = 4;
         for (int attempt = 0; attempt < MaxRetries; attempt++)
@@ -965,17 +972,17 @@ internal static class ItemHandlers
     /// unit's standalone document body is built upfront and held live across
     /// parallel sends, so a GC-managed array is the leak-safe representation.
     /// </summary>
-    internal static byte[] BuildItemDocumentBytes(string id, string pk, JsonElement item, bool binary)
+    internal static byte[] BuildItemDocumentBytes(string id, string pk, JsonElement item, bool binary, int? ttlSeconds = null)
     {
         DynamoDbMetrics.RecordWriteBodyFormat(binary);
         if (binary)
         {
-            using var writer = InferredAttributeStorage.WriteCosmosDocumentBinary(id, pk, item);
+            using var writer = InferredAttributeStorage.WriteCosmosDocumentBinary(id, pk, item, ttlSeconds);
             return writer.WrittenMemory.ToArray();
         }
 
         var bw = new System.Buffers.ArrayBufferWriter<byte>(1024);
-        InferredAttributeStorage.WriteCosmosDocument(bw, id, pk, item);
+        InferredAttributeStorage.WriteCosmosDocument(bw, id, pk, item, ttlSeconds);
         return bw.WrittenSpan.ToArray();
     }
 
@@ -1013,18 +1020,18 @@ internal static class ItemHandlers
             Memory = binary.WrittenMemory;
         }
 
-        public static ItemDocumentBody Create(string id, string pk, JsonElement item, bool binary)
+        public static ItemDocumentBody Create(string id, string pk, JsonElement item, bool binary, int? ttlSeconds = null)
         {
             DynamoDbMetrics.RecordWriteBodyFormat(binary);
             if (binary)
             {
-                return new ItemDocumentBody(InferredAttributeStorage.WriteCosmosDocumentBinary(id, pk, item));
+                return new ItemDocumentBody(InferredAttributeStorage.WriteCosmosDocumentBinary(id, pk, item, ttlSeconds));
             }
 
             var text = new PooledByteBufferWriter();
             try
             {
-                InferredAttributeStorage.WriteCosmosDocument(text, id, pk, item);
+                InferredAttributeStorage.WriteCosmosDocument(text, id, pk, item, ttlSeconds);
             }
             catch
             {
@@ -1043,18 +1050,18 @@ internal static class ItemHandlers
         /// item's exact byte range (the request <c>JsonRange</c>). Output is
         /// byte-identical to the <see cref="JsonElement"/> overload.
         /// </summary>
-        public static ItemDocumentBody CreateFromItemBytes(string id, string pk, ReadOnlySpan<byte> itemUtf8, bool binary)
+        public static ItemDocumentBody CreateFromItemBytes(string id, string pk, ReadOnlySpan<byte> itemUtf8, bool binary, int? ttlSeconds = null)
         {
             DynamoDbMetrics.RecordWriteBodyFormat(binary);
             if (binary)
             {
-                return new ItemDocumentBody(InferredAttributeStorage.WriteCosmosDocumentBinary(id, pk, itemUtf8));
+                return new ItemDocumentBody(InferredAttributeStorage.WriteCosmosDocumentBinary(id, pk, itemUtf8, ttlSeconds));
             }
 
             var text = new PooledByteBufferWriter();
             try
             {
-                InferredAttributeStorage.WriteCosmosDocument(text, id, pk, itemUtf8);
+                InferredAttributeStorage.WriteCosmosDocument(text, id, pk, itemUtf8, ttlSeconds);
             }
             catch
             {
@@ -1072,12 +1079,12 @@ internal static class ItemHandlers
         /// path. Does not emit the write-body-format metric, which tracks only
         /// standalone-document writes (#336), not sproc params.
         /// </summary>
-        public static ItemDocumentBody CreateTextFromItemBytes(string id, string pk, ReadOnlySpan<byte> itemUtf8)
+        public static ItemDocumentBody CreateTextFromItemBytes(string id, string pk, ReadOnlySpan<byte> itemUtf8, int? ttlSeconds = null)
         {
             var text = new PooledByteBufferWriter();
             try
             {
-                InferredAttributeStorage.WriteCosmosDocument(text, id, pk, itemUtf8);
+                InferredAttributeStorage.WriteCosmosDocument(text, id, pk, itemUtf8, ttlSeconds);
             }
             catch
             {

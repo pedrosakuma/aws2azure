@@ -57,37 +57,8 @@ public class StubHandlersTests
 
     // ----- TransactWriteItems: see TransactWriteItemsHandlerTests for full coverage. -----
 
-    // ----- DescribeTimeToLive -----
-
-    [Fact]
-    public async Task DescribeTimeToLive_returns_DISABLED()
-    {
-        var (ctx, body) = NewCtx();
-        var req = "{\"TableName\":\"orders\"}";
-
-        await TimeToLiveHandlers.HandleDescribeTimeToLiveAsync(ctx, Encoding.UTF8.GetBytes(req), BuildClient(), default);
-
-        Assert.Equal(200, ctx.Response.StatusCode);
-        using var doc = JsonDocument.Parse(ReadResponse(body));
-        Assert.Equal("DISABLED",
-            doc.RootElement.GetProperty("TimeToLiveDescription").GetProperty("TimeToLiveStatus").GetString());
-    }
-
-    // ----- UpdateTimeToLive -----
-
-    [Fact]
-    public async Task UpdateTimeToLive_is_rejected_with_explanatory_message()
-    {
-        var (ctx, body) = NewCtx();
-        var req = "{\"TableName\":\"orders\",\"TimeToLiveSpecification\":{\"Enabled\":true,\"AttributeName\":\"ttl\"}}";
-
-        await TimeToLiveHandlers.HandleUpdateTimeToLiveAsync(ctx, Encoding.UTF8.GetBytes(req), BuildClient(), default);
-
-        Assert.Equal(400, ctx.Response.StatusCode);
-        var text = ReadResponse(body);
-        Assert.Contains("ValidationException", text);
-        Assert.Contains("not supported", text);
-    }
+    // ----- TTL: see TimeToLiveHandlersTests for full coverage of the now-implemented
+    //       Update/DescribeTimeToLive control plane. -----
 
     // ----- TagResource -----
 

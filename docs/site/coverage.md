@@ -8,7 +8,7 @@
 | dynamodb | [DeleteItem](dynamodb.md#deleteitem) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [DeleteTable](dynamodb.md#deletetable) | ✅ implemented | `Azure Cosmos DB (Core SQL API) — DELETE /dbs/{db}/colls/{name}` |
 | dynamodb | [DescribeTable](dynamodb.md#describetable) | ✅ implemented | `Azure Cosmos DB (Core SQL API) — GET /dbs/{db}/colls/{name} + sidecar metadata` |
-| dynamodb | [DescribeTimeToLive](dynamodb.md#describetimetolive) | ⚪ stub | `Azure Cosmos DB container `defaultTtl` / per-item `ttl`` |
+| dynamodb | [DescribeTimeToLive](dynamodb.md#describetimetolive) | 🟡 partial | `Azure Cosmos DB container `defaultTtl` / per-item `ttl`` |
 | dynamodb | [GetItem](dynamodb.md#getitem) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [ListTables](dynamodb.md#listtables) | ✅ implemented | `Azure Cosmos DB (Core SQL API) — GET /dbs/{db}/colls` |
 | dynamodb | [ListTagsOfResource](dynamodb.md#listtagsofresource) | ✅ implemented | `Azure Cosmos DB account/resource tags (control plane)` |
@@ -20,7 +20,7 @@
 | dynamodb | [TransactWriteItems](dynamodb.md#transactwriteitems) | 🟡 partial | `Azure Cosmos DB (Core SQL API) — single-partition stored-procedure transaction` |
 | dynamodb | [UntagResource](dynamodb.md#untagresource) | ✅ implemented | `Azure Cosmos DB account/resource tags (control plane)` |
 | dynamodb | [UpdateItem](dynamodb.md#updateitem) | 🟡 partial | `Azure Cosmos DB (Core SQL API)` |
-| dynamodb | [UpdateTimeToLive](dynamodb.md#updatetimetolive) | ⛔ unsupported | `Azure Cosmos DB container `defaultTtl` / per-item `ttl`` |
+| dynamodb | [UpdateTimeToLive](dynamodb.md#updatetimetolive) | 🟡 partial | `Azure Cosmos DB container `defaultTtl` / per-item `ttl`` |
 | kinesis | [DescribeStream](kinesis.md#describestream) | 🟡 partial | `Azure Event Hubs Service Bus management REST API` |
 | kinesis | [DescribeStreamSummary](kinesis.md#describestreamsummary) | 🟡 partial | `Azure Event Hubs Service Bus management REST API` |
 | kinesis | [GetRecords](kinesis.md#getrecords) | 🟡 partial | `Azure Event Hubs (AMQP 1.0 data plane)` |
