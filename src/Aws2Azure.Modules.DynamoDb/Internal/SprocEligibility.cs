@@ -27,6 +27,67 @@ internal static class SprocEligibility
     public static bool IsEligible(ConditionNode? condition, UpdateExpressionAst? update)
         => IsConditionEligible(condition) && IsUpdateEligible(update);
 
+    /// <summary>
+    /// Finds the first condition path whose ROOT attribute is a reserved Cosmos
+    /// doc property (<c>id</c>, <c>ttl</c>, or any <c>_a2a</c> name) — i.e. a
+    /// name the storage layer shadow-encodes or injects, so the raw Cosmos
+    /// document the server-side sproc sees does not hold the user's value under
+    /// that key. The single-write path routes such conditions to the in-process
+    /// fallback (<see cref="IsPathEligible"/>); callers with no fallback (e.g.
+    /// TransactWriteItems, whose sproc is the only execution path) must reject.
+    /// Returns the offending root name, or null if every path root is safe.
+    /// </summary>
+    public static string? FindReservedConditionRoot(ConditionNode? node)
+    {
+        switch (node)
+        {
+            case null:
+                return null;
+            case AndCondition a:
+                return FindReservedConditionRoot(a.Left) ?? FindReservedConditionRoot(a.Right);
+            case OrCondition o:
+                return FindReservedConditionRoot(o.Left) ?? FindReservedConditionRoot(o.Right);
+            case NotCondition n:
+                return FindReservedConditionRoot(n.Inner);
+            case CompareCondition c:
+                return ReservedOperandRoot(c.Left) ?? ReservedOperandRoot(c.Right);
+            case BetweenCondition b:
+                return ReservedOperandRoot(b.Value) ?? ReservedOperandRoot(b.Lower) ?? ReservedOperandRoot(b.Upper);
+            case InCondition inc:
+                if (ReservedOperandRoot(inc.Value) is { } vr) return vr;
+                foreach (var op in inc.Set)
+                {
+                    if (ReservedOperandRoot(op) is { } sr) return sr;
+                }
+                return null;
+            case AttributeExistsCondition ae:
+                return ReservedPathRoot(ae.Path);
+            case AttributeNotExistsCondition ane:
+                return ReservedPathRoot(ane.Path);
+            case AttributeTypeCondition at:
+                return ReservedPathRoot(at.Path);
+            case BeginsWithCondition bw:
+                return ReservedOperandRoot(bw.Path) ?? ReservedOperandRoot(bw.Prefix);
+            case ContainsCondition cc:
+                return ReservedOperandRoot(cc.Container) ?? ReservedOperandRoot(cc.Item);
+            default:
+                return null;
+        }
+    }
+
+    private static string? ReservedOperandRoot(ConditionOperand operand) => operand switch
+    {
+        ConditionPathOperand cp => ReservedPathRoot(cp.Path),
+        SizeOperand so => ReservedPathRoot(so.Path),
+        _ => null,
+    };
+
+    private static string? ReservedPathRoot(DocumentPath path)
+        => path.Segments.Count > 0 && path.Segments[0] is AttributePathSegment attr
+            && InferredAttributeStorage.IsReservedTopLevelName(attr.Name)
+            ? attr.Name
+            : null;
+
     private static bool IsUpdateEligible(UpdateExpressionAst? update)
     {
         if (update is null)
