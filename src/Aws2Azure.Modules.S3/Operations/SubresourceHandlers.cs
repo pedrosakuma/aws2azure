@@ -428,7 +428,9 @@ internal static class SubresourceHandlers
         }
 
         // Read-merge-write so unrelated container metadata (e.g. bucket tags) is
-        // preserved — SetContainerMetadata replaces the whole bag.
+        // preserved — SetContainerMetadata replaces the whole bag. Same accepted
+        // last-writer-wins race as bucket tagging: concurrent metadata updates may
+        // drop each other (no ETag/If-Match guard); rare control-plane op.
         var metadata = await ReadExistingMetadataAsync(blob, bucket, S3Operation.PutBucketVersioning, context, ct).ConfigureAwait(false);
         if (metadata is null) return;
         metadata[BucketVersioningMetadataKey] = status;
@@ -443,8 +445,10 @@ internal static class SubresourceHandlers
     }
 
     // Parses the S3 <VersioningConfiguration><Status>…</Status></> body.
-    // Returns "Enabled"/"Suspended" or null when the body is malformed or the
-    // status is unrecognised (S3 rejects MFADelete/other values too).
+    // Returns "Enabled"/"Suspended" or null when the body is malformed, the
+    // root element is wrong, or the status is unrecognised (S3 rejects
+    // MFADelete=Enabled and other values too). The whole document is consumed
+    // so malformed trailing content is rejected, not silently accepted.
     private static async Task<string?> ReadVersioningStatusAsync(HttpContext context, CancellationToken ct)
     {
         string body;
@@ -463,20 +467,29 @@ internal static class SubresourceHandlers
                 IgnoreWhitespace = true,
                 IgnoreComments = true,
             });
+
+            if (!xml.MoveToContent().Equals(XmlNodeType.Element)
+                || !string.Equals(xml.LocalName, "VersioningConfiguration", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            string? status = null;
             while (xml.Read())
             {
                 if (xml.NodeType == XmlNodeType.Element && string.Equals(xml.LocalName, "Status", StringComparison.Ordinal))
                 {
-                    var value = xml.ReadElementContentAsString();
-                    return value is "Enabled" or "Suspended" ? value : null;
+                    status = xml.ReadElementContentAsString();
                 }
             }
+
+            // Reaching here means the document was well-formed end-to-end.
+            return status is "Enabled" or "Suspended" ? status : null;
         }
         catch (XmlException)
         {
             return null;
         }
-        return null;
     }
 
 

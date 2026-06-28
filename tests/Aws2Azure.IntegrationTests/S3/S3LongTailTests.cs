@@ -160,15 +160,17 @@ public class S3LongTailTests
         Assert.Equal("Suspended", doc2.Root!.Element(S3Ns + "Status")!.Value);
     }
 
-    [SkippableFact]
-    public async Task PutBucketVersioning_with_malformed_status_returns_MalformedXML()
+    [SkippableTheory]
+    [InlineData("<VersioningConfiguration><Status>Bogus</Status></VersioningConfiguration>")]
+    [InlineData("<NotVersioning><Status>Enabled</Status></NotVersioning>")]
+    [InlineData("<VersioningConfiguration><Status>Enabled</Status>")]
+    public async Task PutBucketVersioning_with_malformed_status_returns_MalformedXML(string bad)
     {
         Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
 
         var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
         await PutBucket(bucket);
 
-        var bad = "<VersioningConfiguration><Status>Bogus</Status></VersioningConfiguration>";
         using var resp = await SendAsync(HttpMethod.Put, $"/{bucket}?versioning",
             Encoding.UTF8.GetBytes(bad), contentType: "application/xml");
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
