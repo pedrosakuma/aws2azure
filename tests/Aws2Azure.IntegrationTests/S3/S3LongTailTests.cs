@@ -116,6 +116,65 @@ public class S3LongTailTests
         Assert.Equal(HttpStatusCode.NotFound, afterDel.StatusCode);
     }
 
+    // ── Bucket versioning ─────────────────────────────────────────────
+
+    [SkippableFact]
+    public async Task PutBucketVersioning_round_trips_via_container_metadata()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
+
+        var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
+        await PutBucket(bucket);
+
+        // Never configured → empty document, no <Status>.
+        using (var initial = await SendAsync(HttpMethod.Get, $"/{bucket}?versioning", Array.Empty<byte>()))
+        {
+            Assert.Equal(HttpStatusCode.OK, initial.StatusCode);
+            var doc = XDocument.Parse(await initial.Content.ReadAsStringAsync());
+            Assert.Null(doc.Root!.Element(S3Ns + "Status"));
+        }
+
+        var enable = "<VersioningConfiguration><Status>Enabled</Status></VersioningConfiguration>";
+        using (var put = await SendAsync(HttpMethod.Put, $"/{bucket}?versioning",
+            Encoding.UTF8.GetBytes(enable), contentType: "application/xml"))
+        {
+            Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+        }
+
+        using (var get = await SendAsync(HttpMethod.Get, $"/{bucket}?versioning", Array.Empty<byte>()))
+        {
+            Assert.Equal(HttpStatusCode.OK, get.StatusCode);
+            var doc = XDocument.Parse(await get.Content.ReadAsStringAsync());
+            Assert.Equal("Enabled", doc.Root!.Element(S3Ns + "Status")!.Value);
+        }
+
+        var suspend = "<VersioningConfiguration><Status>Suspended</Status></VersioningConfiguration>";
+        using (var put = await SendAsync(HttpMethod.Put, $"/{bucket}?versioning",
+            Encoding.UTF8.GetBytes(suspend), contentType: "application/xml"))
+        {
+            Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+        }
+
+        using var after = await SendAsync(HttpMethod.Get, $"/{bucket}?versioning", Array.Empty<byte>());
+        var doc2 = XDocument.Parse(await after.Content.ReadAsStringAsync());
+        Assert.Equal("Suspended", doc2.Root!.Element(S3Ns + "Status")!.Value);
+    }
+
+    [SkippableFact]
+    public async Task PutBucketVersioning_with_malformed_status_returns_MalformedXML()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
+
+        var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
+        await PutBucket(bucket);
+
+        var bad = "<VersioningConfiguration><Status>Bogus</Status></VersioningConfiguration>";
+        using var resp = await SendAsync(HttpMethod.Put, $"/{bucket}?versioning",
+            Encoding.UTF8.GetBytes(bad), contentType: "application/xml");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        Assert.Contains("MalformedXML", await resp.Content.ReadAsStringAsync());
+    }
+
     // ── ACL ───────────────────────────────────────────────────────────
 
     [SkippableFact]

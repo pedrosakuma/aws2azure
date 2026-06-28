@@ -626,6 +626,28 @@ internal static class S3XmlWriter
     }
 
     /// <summary>
+    /// Renders a <c>&lt;VersioningConfiguration&gt;</c> document. A null status
+    /// produces the empty "never configured" shape; "Enabled"/"Suspended"
+    /// emit the corresponding <c>&lt;Status&gt;</c> element.
+    /// </summary>
+    public static string VersioningConfiguration(string? status)
+    {
+        var sb = new StringBuilder(128);
+        using (var writer = XmlWriter.Create(sb, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("VersioningConfiguration", S3Namespace);
+            if (!string.IsNullOrEmpty(status))
+            {
+                writer.WriteElementString("Status", status);
+            }
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
     /// Renders a top-level empty configuration document of the given root
     /// element name. Used for the GET-config stubs that AWS documents as
     /// returning a 200 with an empty body (versioning, notification, logging,

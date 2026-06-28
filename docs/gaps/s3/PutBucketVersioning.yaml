@@ -1,12 +1,15 @@
 service: s3
 operation: PutBucketVersioning
-azure_equivalent: "(no equivalent — proxy returns 501 NotImplemented)"
-status: unsupported
+azure_equivalent: "Container metadata (per-bucket toggle); account-level Blob versioning assumed pre-enabled"
+status: partial
 sub_features:
   - name: "configuration storage"
+    status: partial
+    notes: "Persists the bucket-level Status (Enabled/Suspended) in container metadata. Malformed/unrecognised bodies rejected with MalformedXML."
+  - name: "MFADelete"
     status: unsupported
-    notes: "See the matching Get* gap doc for the Azure-side reason."
+    notes: "MFADelete is silently ignored / unsupported."
 behavior_differences:
-  - "PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape."
+  - "Stores the S3 bucket-level intent only; does not toggle account-level Azure Blob versioning (no control-plane). Operators must enable account versioning out-of-band for versionId retention to function (opt-in, documented per topology)."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketVersioning.html

@@ -59,7 +59,7 @@
 | s3 | [GetBucketReplication](s3.md#getbucketreplication) | ⛔ unsupported | `(no equivalent — proxy returns 404 ReplicationConfigurationNotFoundError)` |
 | s3 | [GetBucketRequestPayment](s3.md#getbucketrequestpayment) | ⚪ stub | `(no equivalent — proxy returns the S3 default body)` |
 | s3 | [GetBucketTagging](s3.md#getbuckettagging) | 🟡 partial | `GET {container}?restype=container&comp=metadata (single opaque metadata blob)` |
-| s3 | [GetBucketVersioning](s3.md#getbucketversioning) | ⚪ stub | `(no equivalent — proxy returns an empty <VersioningConfiguration/> document)` |
+| s3 | [GetBucketVersioning](s3.md#getbucketversioning) | 🟡 partial | `Container metadata (per-bucket toggle); reflects stored PutBucketVersioning intent` |
 | s3 | [GetBucketWebsite](s3.md#getbucketwebsite) | ⛔ unsupported | `(no equivalent — proxy returns 404 NoSuchWebsiteConfiguration)` |
 | s3 | [GetObject](s3.md#getobject) | ✅ implemented | `GET https://{account}.blob.core.windows.net/{container}/{blob}` |
 | s3 | [GetObjectAcl](s3.md#getobjectacl) | 🟡 partial | `(no Azure equivalent — synthetic ownership-only response)` |
@@ -89,7 +89,7 @@
 | s3 | [PutBucketReplication](s3.md#putbucketreplication) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
 | s3 | [PutBucketRequestPayment](s3.md#putbucketrequestpayment) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
 | s3 | [PutBucketTagging](s3.md#putbuckettagging) | 🟡 partial | `PUT {container}?restype=container&comp=metadata` |
-| s3 | [PutBucketVersioning](s3.md#putbucketversioning) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
+| s3 | [PutBucketVersioning](s3.md#putbucketversioning) | 🟡 partial | `Container metadata (per-bucket toggle); account-level Blob versioning assumed pre-enabled` |
 | s3 | [PutBucketWebsite](s3.md#putbucketwebsite) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
 | s3 | [PutObject](s3.md#putobject) | ✅ implemented | `PUT https://{account}.blob.core.windows.net/{container}/{blob}` |
 | s3 | [PutObjectAcl](s3.md#putobjectacl) | 🟡 partial | `(no Azure equivalent — validates owner-only intent and replies 200)` |
