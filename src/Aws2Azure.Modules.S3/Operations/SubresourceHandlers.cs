@@ -38,6 +38,13 @@ internal static class SubresourceHandlers
     // single base64-encoded XML blob instead of one metadata name per tag.
     private const string BucketTagsMetadataKey = "aws2azurebuckettags";
 
+    // Per-bucket S3 versioning toggle. Azure Blob versioning is an account-level
+    // property the proxy cannot manage (no control-plane / management API), so
+    // this stores only the S3 bucket-level intent ("Enabled"/"Suspended") in the
+    // container metadata. Actual version retention requires account-level
+    // versioning to be enabled out-of-band by the operator (documented divergence).
+    private const string BucketVersioningMetadataKey = "aws2azureversioning";
+
     public static async Task HandleAsync(
         HttpContext context, S3RouteResult route, BlobClient blob, CancellationToken ct)
     {
@@ -162,7 +169,10 @@ internal static class SubresourceHandlers
                 await WriteXmlAsync(context, S3XmlWriter.EmptyConfiguration("BucketLoggingStatus")).ConfigureAwait(false);
                 return;
             case S3Operation.GetBucketVersioning:
-                await WriteXmlAsync(context, S3XmlWriter.EmptyConfiguration("VersioningConfiguration")).ConfigureAwait(false);
+                await GetBucketVersioningAsync(context, blob, bucket, ct).ConfigureAwait(false);
+                return;
+            case S3Operation.PutBucketVersioning:
+                await PutBucketVersioningAsync(context, blob, bucket, ct).ConfigureAwait(false);
                 return;
             case S3Operation.GetBucketRequestPayment:
                 await WriteXmlAsync(context, S3XmlWriter.RequestPaymentConfigurationDefault()).ConfigureAwait(false);
@@ -181,7 +191,6 @@ internal static class SubresourceHandlers
             case S3Operation.PutBucketReplication:
             case S3Operation.PutBucketEncryption:
             case S3Operation.PutBucketLogging:
-            case S3Operation.PutBucketVersioning:
             case S3Operation.PutBucketRequestPayment:
             case S3Operation.PutObjectLockConfiguration:
             case S3Operation.PutPublicAccessBlock:
@@ -380,7 +389,110 @@ internal static class SubresourceHandlers
         context.Response.StatusCode = StatusCodes.Status204NoContent;
     }
 
-    // ─── ACL (ownership-only) ─────────────────────────────────────────
+    // ─── Bucket versioning (container metadata toggle) ────────────────
+
+    private static async Task GetBucketVersioningAsync(
+        HttpContext context, BlobClient blob, string bucket, CancellationToken ct)
+    {
+        using var response = await blob.GetContainerMetadataAsync(bucket, ct).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.GetBucketVersioning)).ConfigureAwait(false);
+            return;
+        }
+
+        string? status = null;
+        if (response.Headers.TryGetValues("x-ms-meta-" + BucketVersioningMetadataKey, out var values))
+        {
+            foreach (var v in values)
+            {
+                if (!string.IsNullOrEmpty(v)) { status = v; break; }
+            }
+        }
+
+        // Never configured → empty document. Otherwise echo the stored intent.
+        await WriteXmlAsync(context, S3XmlWriter.VersioningConfiguration(status)).ConfigureAwait(false);
+    }
+
+    private static async Task PutBucketVersioningAsync(
+        HttpContext context, BlobClient blob, string bucket, CancellationToken ct)
+    {
+        var status = await ReadVersioningStatusAsync(context, ct).ConfigureAwait(false);
+        if (status is null)
+        {
+            await S3ErrorMapping.WriteAsync(context, new S3ErrorMapping.Mapping(
+                StatusCodes.Status400BadRequest,
+                "MalformedXML",
+                "The XML you provided was not well-formed or did not validate against our published schema.")).ConfigureAwait(false);
+            return;
+        }
+
+        // Read-merge-write so unrelated container metadata (e.g. bucket tags) is
+        // preserved — SetContainerMetadata replaces the whole bag. Same accepted
+        // last-writer-wins race as bucket tagging: concurrent metadata updates may
+        // drop each other (no ETag/If-Match guard); rare control-plane op.
+        var metadata = await ReadExistingMetadataAsync(blob, bucket, S3Operation.PutBucketVersioning, context, ct).ConfigureAwait(false);
+        if (metadata is null) return;
+        metadata[BucketVersioningMetadataKey] = status;
+
+        using var response = await blob.SetContainerMetadataAsync(bucket, metadata, ct).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.PutBucketVersioning)).ConfigureAwait(false);
+            return;
+        }
+        context.Response.StatusCode = StatusCodes.Status200OK;
+    }
+
+    // Parses the S3 <VersioningConfiguration><Status>…</Status></> body.
+    // Returns "Enabled"/"Suspended" or null when the body is malformed, the
+    // root element is wrong, or the status is unrecognised (S3 rejects
+    // MFADelete=Enabled and other values too). The whole document is consumed
+    // so malformed trailing content is rejected, not silently accepted.
+    private static async Task<string?> ReadVersioningStatusAsync(HttpContext context, CancellationToken ct)
+    {
+        string body;
+        using (var reader = new StreamReader(context.Request.Body, Encoding.UTF8))
+        {
+            body = await reader.ReadToEndAsync(ct).ConfigureAwait(false);
+        }
+        if (string.IsNullOrWhiteSpace(body)) return null;
+
+        try
+        {
+            using var xml = XmlReader.Create(new StringReader(body), new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Prohibit,
+                XmlResolver = null,
+                IgnoreWhitespace = true,
+                IgnoreComments = true,
+            });
+
+            if (!xml.MoveToContent().Equals(XmlNodeType.Element)
+                || !string.Equals(xml.LocalName, "VersioningConfiguration", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            string? status = null;
+            while (xml.Read())
+            {
+                if (xml.NodeType == XmlNodeType.Element && string.Equals(xml.LocalName, "Status", StringComparison.Ordinal))
+                {
+                    status = xml.ReadElementContentAsString();
+                }
+            }
+
+            // Reaching here means the document was well-formed end-to-end.
+            return status is "Enabled" or "Suspended" ? status : null;
+        }
+        catch (XmlException)
+        {
+            return null;
+        }
+    }
+
+
 
     private static async Task GetAclAsync(HttpContext context, BlobClient blob)
     {

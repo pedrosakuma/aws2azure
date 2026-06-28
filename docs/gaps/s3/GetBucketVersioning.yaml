@@ -1,12 +1,13 @@
 service: s3
 operation: GetBucketVersioning
-azure_equivalent: "(no equivalent — proxy returns an empty <VersioningConfiguration/> document)"
-status: stub
+azure_equivalent: "Container metadata (per-bucket toggle); reflects stored PutBucketVersioning intent"
+status: partial
 sub_features:
   - name: "configuration storage"
-    status: unsupported
-    notes: "S3 returns an empty document when versioning has never been enabled. Azure Blob Versioning is account-scoped; the proxy does not bridge it."
+    status: partial
+    notes: "The bucket-level versioning intent (Enabled/Suspended) is stored in container metadata and echoed back. Returns the empty 'never configured' document when unset."
 behavior_differences:
-  - "GET returns 200 with an empty <VersioningConfiguration/> document, matching the S3 'never configured' wire shape."
+  - "GET returns the per-bucket toggle persisted by PutBucketVersioning. Azure Blob versioning itself is account-scoped: actual version retention requires account-level versioning enabled out-of-band by the operator."
+  - "MFADelete is never reported (not supported)."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketVersioning.html

@@ -6,6 +6,28 @@ namespace Aws2Azure.UnitTests.S3;
 
 public class S3XmlTests
 {
+    private static readonly XNamespace S3Ns = "http://s3.amazonaws.com/doc/2006-03-01/";
+
+    [Theory]
+    [InlineData("Enabled")]
+    [InlineData("Suspended")]
+    public void VersioningConfiguration_emits_status(string status)
+    {
+        var xml = S3XmlWriter.VersioningConfiguration(status);
+        var doc = XDocument.Parse(xml);
+        Assert.Equal("VersioningConfiguration", doc.Root!.Name.LocalName);
+        Assert.Equal(S3Ns, doc.Root!.Name.Namespace);
+        Assert.Equal(status, doc.Root!.Element(S3Ns + "Status")!.Value);
+    }
+
+    [Fact]
+    public void VersioningConfiguration_null_emits_empty_document()
+    {
+        var doc = XDocument.Parse(S3XmlWriter.VersioningConfiguration(null));
+        Assert.Equal("VersioningConfiguration", doc.Root!.Name.LocalName);
+        Assert.Null(doc.Root!.Element(S3Ns + "Status"));
+    }
+
     [Fact]
     public void ListAllMyBucketsResult_emits_expected_shape()
     {
