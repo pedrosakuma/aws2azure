@@ -58,6 +58,16 @@ public class TtlTranslationTests
     }
 
     [Fact]
+    public void Extreme_past_epoch_does_not_overflow_into_future()
+    {
+        // long.MinValue would overflow `epoch - now` into a positive delta if the
+        // subtraction ran before the past-due classification; it must be treated
+        // as more-than-five-years-past (non-expiring).
+        var item = Item("{\"expiresAt\":{\"N\":\"" + long.MinValue + "\"}}");
+        Assert.Null(TtlTranslation.ComputeItemTtlSeconds(item, Enabled(), Now));
+    }
+
+    [Fact]
     public void Missing_attribute_yields_no_ttl()
     {
         var item = Item("{\"name\":{\"S\":\"widget\"}}");

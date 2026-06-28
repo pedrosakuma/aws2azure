@@ -251,8 +251,17 @@ internal static partial class InferredAttributeStorage
                 return;
             }
 
+            if (name.SequenceEqual("ttl"u8))
+            {
+                // Shadow-encode a user attr named "ttl" so it doesn't collide
+                // with Cosmos's native time-to-live field (which the proxy
+                // injects on TTL-enabled tables); decoder unmangles.
+                writer.WritePropertyName(ShadowTtlPropName);
+                return;
+            }
+
             // Any name in the _a2a namespace (other than the shadow-encodable
-            // "id") is reserved for proxy use and must be rejected.
+            // "id"/"ttl") is reserved for proxy use and must be rejected.
             if (name.StartsWith("_a2a"u8))
             {
                 throw new ArgumentException(
@@ -532,9 +541,10 @@ internal static partial class InferredAttributeStorage
         {
             if (IsShadowEncodableName(prop.Name))
             {
-                // Shadow-encode the rare DDB attr that collides with
-                // Cosmos's required "id" field; decoder unmangles.
-                writer.WritePropertyName(ShadowIdPropName);
+                // Shadow-encode the rare DDB attr that collides with a
+                // reserved Cosmos field ("id" routing key / "ttl" native
+                // time-to-live); decoder unmangles.
+                writer.WritePropertyName(ShadowNameFor(prop.Name));
             }
             else if (IsReservedTopLevelName(prop.Name))
             {

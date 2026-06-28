@@ -69,11 +69,17 @@ internal static partial class InferredAttributeStorage
                     // Unmangle the shadow-encoded "id" attribute.
                     targetName = IdProperty;
                 }
+                else if (prop.Name.Equals(ShadowEncodedTtlName, StringComparison.Ordinal))
+                {
+                    // Unmangle the shadow-encoded "ttl" attribute.
+                    targetName = TtlProperty;
+                }
                 else if (IsReservedTopLevelName(prop.Name) || IsCosmosSystemField(prop.Name))
                 {
                     // Routing fields, discriminator, other reserved
-                    // _a2a-namespace props, and Cosmos system fields
-                    // (_rid/_self/_etag/_ts/_attachments/...) — never user data.
+                    // _a2a-namespace props, Cosmos system fields
+                    // (_rid/_self/_etag/_ts/_attachments/...), and the injected
+                    // native "ttl" — never user data.
                     continue;
                 }
                 else
@@ -107,7 +113,9 @@ internal static partial class InferredAttributeStorage
     // first property name under that prefix is deterministically an envelope.
 
     private static ReadOnlySpan<byte> ShadowEncodedIdNameU8 => "_a2a$id"u8;
+    private static ReadOnlySpan<byte> ShadowEncodedTtlNameU8 => "_a2a$ttl"u8;
     private static ReadOnlySpan<byte> IdNameU8 => "id"u8;
+    private static ReadOnlySpan<byte> TtlNameU8 => "ttl"u8;
     private static ReadOnlySpan<byte> DiscriminatorPrefixU8 => "_a2a"u8;
     private static ReadOnlySpan<byte> EnvelopeTagPrefixU8 => "_a2a:"u8;
     private static ReadOnlySpan<byte> EnvelopeTagNU8 => "_a2a:N"u8;
@@ -178,10 +186,18 @@ internal static partial class InferredAttributeStorage
                 reader.Read();
                 WriteAttributeValue(writer, ref reader);
             }
+            else if (reader.ValueTextEquals(ShadowEncodedTtlNameU8))
+            {
+                // Unmangle the shadow-encoded "ttl" attribute.
+                writer.WritePropertyName(TtlPropEncoded);
+                reader.Read();
+                WriteAttributeValue(writer, ref reader);
+            }
             else if (IsReservedTopLevelNameToken(ref reader) || IsCosmosSystemFieldToken(ref reader))
             {
                 // Routing fields, discriminator, other reserved _a2a props,
-                // and Cosmos system fields (_rid/_self/_etag/_ts/...).
+                // the injected native "ttl", and Cosmos system fields
+                // (_rid/_self/_etag/_ts/...).
                 reader.Read();
                 reader.Skip();
             }
@@ -467,6 +483,13 @@ internal static partial class InferredAttributeStorage
                 reader.Read();
                 WriteAttributeValue(writer, ref reader);
             }
+            else if (reader.ValueTextEquals(ShadowEncodedTtlNameU8))
+            {
+                // Unmangle the shadow-encoded "ttl" attribute.
+                writer.WritePropertyName(TtlPropEncoded);
+                reader.Read();
+                WriteAttributeValue(writer, ref reader);
+            }
             else if (reader.ValueTextEquals(IdNameU8))
             {
                 // Reserved Cosmos document id: capture for correlation but keep
@@ -552,6 +575,10 @@ internal static partial class InferredAttributeStorage
         where TReader : ITokenReader, allows ref struct
     {
         if (reader.ValueTextEquals(IdNameU8)) return true;
+        // Cosmos's native "ttl" (injected by the proxy on TTL-enabled tables)
+        // is reserved and stripped on read; a user attr named "ttl" is stored
+        // shadow-encoded as "_a2a$ttl" and unmangled by the caller before this.
+        if (reader.ValueTextEquals(TtlNameU8)) return true;
         // Proxy metadata names (_a2a, _a2a_pk, ...) are always emitted
         // canonically — never escaped — so an escaped name cannot be ours.
         if (reader.ValueIsEscaped || reader.HasValueSequence) return false;
@@ -824,11 +851,17 @@ internal static partial class InferredAttributeStorage
                     // Unmangle the shadow-encoded "id" attribute.
                     targetName = IdProperty;
                 }
+                else if (prop.Name.Equals(ShadowEncodedTtlName, StringComparison.Ordinal))
+                {
+                    // Unmangle the shadow-encoded "ttl" attribute.
+                    targetName = TtlProperty;
+                }
                 else if (IsReservedTopLevelName(prop.Name) || IsCosmosSystemField(prop.Name))
                 {
                     // Routing fields, discriminator, other reserved
-                    // _a2a-namespace props, and Cosmos system fields
-                    // (_rid/_self/_etag/_ts/_attachments/...) — never user data.
+                    // _a2a-namespace props, Cosmos system fields
+                    // (_rid/_self/_etag/_ts/_attachments/...), and the injected
+                    // native "ttl" — never user data.
                     continue;
                 }
                 else

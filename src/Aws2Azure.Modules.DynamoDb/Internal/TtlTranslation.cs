@@ -64,17 +64,23 @@ internal static class TtlTranslation
             return null;
         }
 
-        long delta = epochSeconds - nowEpochSeconds;
-        if (delta <= 0)
+        // Classify before subtracting so an extreme epoch (e.g. long.MinValue)
+        // can't overflow `epochSeconds - nowEpochSeconds` into a spurious
+        // positive delta. `nowEpochSeconds` is real wall-clock time (~1.7e9), so
+        // `nowEpochSeconds - FiveYearsSeconds` cannot underflow.
+        if (epochSeconds <= nowEpochSeconds)
         {
-            if (delta < -FiveYearsSeconds)
+            if (epochSeconds < nowEpochSeconds - FiveYearsSeconds)
             {
                 return null;
             }
 
+            // Past-due (within five years) → expire promptly (Cosmos rejects a
+            // ttl of 0 or any negative value except -1).
             return 1;
         }
 
+        long delta = epochSeconds - nowEpochSeconds;
         if (delta > int.MaxValue)
         {
             return int.MaxValue;

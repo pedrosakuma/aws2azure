@@ -128,6 +128,16 @@ internal static class TimeToLiveHandlers
         //    benign: if the metadata write then fails, the proxy keeps reporting
         //    the prior TTL state and does not write a per-item ttl, so nothing
         //    expires unexpectedly.
+        //
+        //    Note: the container replace and the metadata write are not a single
+        //    atomic unit, so racing concurrent enable/disable calls for the SAME
+        //    table can interleave (one call's container replace landing between
+        //    the other's container replace and metadata write). This is an
+        //    accepted limitation: TTL is a rare control-plane op and a single
+        //    DynamoDB client does not issue concurrent UpdateTimeToLive for one
+        //    table (real DynamoDB serialises via transient ENABLING/DISABLING
+        //    states); cross-sidecar coordination is out of scope. Documented in
+        //    docs/gaps/dynamodb/UpdateTimeToLive.yaml.
         if (!await TryReplaceContainerDefaultTtlAsync(ctx, cosmos, req.TableName!, enabling ? -1 : (int?)null, ct).ConfigureAwait(false))
         {
             return;

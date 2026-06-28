@@ -91,6 +91,14 @@ internal static partial class InferredAttributeStorage
     public const string ShadowPrefix = "_a2a$";
     public const string ShadowEncodedIdName = "_a2a$id";
 
+    // Cosmos reserves the top-level "ttl" property for native time-to-live. The
+    // proxy injects it (a relative duration) on writes to TTL-enabled tables, so
+    // a user DDB attribute literally named "ttl" — the most common DynamoDB TTL
+    // attribute name — must be shadow-encoded just like "id", otherwise the
+    // user value and the injected native ttl would collide on the same JSON key.
+    public const string TtlProperty = "ttl";
+    public const string ShadowEncodedTtlName = "_a2a$ttl";
+
     // Envelope tag prefix. All five ambiguous-type tags live under this
     // namespace so detection is a single substring check.
     public const string EnvelopeTagPrefix = "_a2a:";
@@ -105,6 +113,7 @@ internal static partial class InferredAttributeStorage
     // read path (Cosmos → DDB); the remaining write-path names moved to the
     // dual-back-end TokenName block below.
     private static readonly JsonEncodedText IdPropEncoded = JsonEncodedText.Encode(IdProperty);
+    private static readonly JsonEncodedText TtlPropEncoded = JsonEncodedText.Encode(TtlProperty);
     private static readonly JsonEncodedText ItemPropEncoded = JsonEncodedText.Encode("Item");
     private static readonly JsonEncodedText TagS = JsonEncodedText.Encode(AttributeValueTypes.String);
     private static readonly JsonEncodedText TagN = JsonEncodedText.Encode(AttributeValueTypes.Number);
@@ -125,6 +134,7 @@ internal static partial class InferredAttributeStorage
     private static readonly TokenName DiscPropName = new(DiscriminatorProperty);
     private static readonly TokenName DiscValueItemName = new(DiscriminatorValueItem);
     private static readonly TokenName ShadowIdPropName = new(ShadowEncodedIdName);
+    private static readonly TokenName ShadowTtlPropName = new(ShadowEncodedTtlName);
     private static readonly TokenName EnvelopeNName = new(EnvelopeTagN);
     private static readonly TokenName EnvelopeBName = new(EnvelopeTagB);
     private static readonly TokenName EnvelopeSSName = new(EnvelopeTagSS);
@@ -152,7 +162,7 @@ internal static partial class InferredAttributeStorage
     public static bool IsReservedTopLevelName(string name)
     {
         if (string.IsNullOrEmpty(name)) return false;
-        if (name == IdProperty || name == PkProperty || name == DiscriminatorProperty)
+        if (name == IdProperty || name == PkProperty || name == DiscriminatorProperty || name == TtlProperty)
             return true;
         // Any name in the _a2a namespace (envelope tags, shadow names,
         // future reserved props) — keep the user out of it entirely so
@@ -174,7 +184,9 @@ internal static partial class InferredAttributeStorage
     /// <c>_etag</c> is still written verbatim and then stripped on read.
     /// Disambiguating that rare collision requires namespacing user attributes
     /// (see #203); the allowlist is intentionally exact — never a <c>_</c>
-    /// wildcard — to avoid eating legitimate user attributes such as <c>ttl</c>.
+    /// wildcard. The reserved Cosmos <c>ttl</c> field is handled by
+    /// <see cref="IsReservedTopLevelName"/> (and shadow-encoded on write), not
+    /// here.
     /// </remarks>
     public static bool IsCosmosSystemField(string name) => name switch
     {
@@ -184,12 +196,22 @@ internal static partial class InferredAttributeStorage
 
     /// <summary>
     /// True if the attribute name can be written directly at the root
-    /// without shadow-encoding. The only collision the encoder rewrites
-    /// transparently is <c>id</c>; every other reserved name is a hard
+    /// without shadow-encoding. The collisions the encoder rewrites
+    /// transparently are <c>id</c> (Cosmos routing field) and <c>ttl</c>
+    /// (Cosmos native time-to-live); every other reserved name is a hard
     /// validation failure (those would be names the user actively chose
     /// to put under the <c>_a2a</c> namespace).
     /// </summary>
     public static bool IsShadowEncodableName(string name)
-        => string.Equals(name, IdProperty, StringComparison.Ordinal);
+        => string.Equals(name, IdProperty, StringComparison.Ordinal)
+        || string.Equals(name, TtlProperty, StringComparison.Ordinal);
+
+    /// <summary>
+    /// The shadow-encoded property name for a top-level DDB attribute that
+    /// collides with a reserved Cosmos field. Caller must have checked
+    /// <see cref="IsShadowEncodableName"/> first.
+    /// </summary>
+    internal static TokenName ShadowNameFor(string name)
+        => string.Equals(name, TtlProperty, StringComparison.Ordinal) ? ShadowTtlPropName : ShadowIdPropName;
 
 }
