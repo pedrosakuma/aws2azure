@@ -92,4 +92,113 @@ public sealed class SecretsManagerRealAzureSmokeTests
             }
         }
     }
+
+    [SkippableFact]
+    public async Task PutSecretValue_versioning_and_idempotency_against_real_key_vault()
+    {
+        Skip.If(!_proxy.Configured, _proxy.SkipReason ?? "Key Vault real-Azure fixture is not configured.");
+
+        var secretName = "aws2azure-it-put-" + Guid.NewGuid().ToString("N");
+
+        using var client = _proxy.CreateSecretsManagerClient();
+
+        try
+        {
+            var created = await client.CreateSecretAsync(new CreateSecretRequest
+            {
+                Name = secretName,
+                SecretString = "v1",
+            }).ConfigureAwait(false);
+
+            // PutSecretValue moves AWSCURRENT to the new version and demotes the
+            // prior current version to AWSPREVIOUS.
+            var put = await client.PutSecretValueAsync(new PutSecretValueRequest
+            {
+                SecretId = secretName,
+                SecretString = "v2",
+            }).ConfigureAwait(false);
+
+            Assert.False(string.IsNullOrWhiteSpace(put.VersionId));
+            Assert.NotEqual(created.VersionId, put.VersionId);
+            Assert.Contains("AWSCURRENT", put.VersionStages);
+
+            var current = await client.GetSecretValueAsync(new GetSecretValueRequest
+            {
+                SecretId = secretName,
+            }).ConfigureAwait(false);
+            Assert.Equal("v2", current.SecretString);
+
+            var previous = await client.GetSecretValueAsync(new GetSecretValueRequest
+            {
+                SecretId = secretName,
+                VersionStage = "AWSPREVIOUS",
+            }).ConfigureAwait(false);
+            Assert.Equal("v1", previous.SecretString);
+
+            // ClientRequestToken idempotency: replaying the same token with the same
+            // payload returns the same VersionId without creating a new version.
+            var token = Guid.NewGuid().ToString();
+            var first = await client.PutSecretValueAsync(new PutSecretValueRequest
+            {
+                SecretId = secretName,
+                SecretString = "v3",
+                ClientRequestToken = token,
+            }).ConfigureAwait(false);
+
+            var replay = await client.PutSecretValueAsync(new PutSecretValueRequest
+            {
+                SecretId = secretName,
+                SecretString = "v3",
+                ClientRequestToken = token,
+            }).ConfigureAwait(false);
+
+            Assert.Equal(first.VersionId, replay.VersionId);
+
+            // Same token, different payload must conflict (ResourceExistsException).
+            await Assert.ThrowsAsync<ResourceExistsException>(() => client.PutSecretValueAsync(new PutSecretValueRequest
+            {
+                SecretId = secretName,
+                SecretString = "different-payload",
+                ClientRequestToken = token,
+            })).ConfigureAwait(false);
+
+            // Explicit VersionStages: a custom staging label is persisted on the new
+            // version and resolvable via GetSecretValue (the supported path — the
+            // proxy resolves stages from Key Vault version tags). DescribeSecret's
+            // VersionIdsToStages is intentionally a simplified current-version view
+            // and is not asserted here.
+            var staged = await client.PutSecretValueAsync(new PutSecretValueRequest
+            {
+                SecretId = secretName,
+                SecretString = "v4",
+                VersionStages = ["MYSTAGE"],
+            }).ConfigureAwait(false);
+
+            Assert.Contains("MYSTAGE", staged.VersionStages);
+
+            var byStage = await client.GetSecretValueAsync(new GetSecretValueRequest
+            {
+                SecretId = secretName,
+                VersionStage = "MYSTAGE",
+            }).ConfigureAwait(false);
+
+            Assert.Equal("v4", byStage.SecretString);
+            Assert.Equal(staged.VersionId, byStage.VersionId);
+        }
+        finally
+        {
+            try
+            {
+                await client.DeleteSecretAsync(new DeleteSecretRequest
+                {
+                    SecretId = secretName,
+                    ForceDeleteWithoutRecovery = true,
+                }).ConfigureAwait(false);
+            }
+            catch
+            {
+                // Best-effort cleanup for the real-Azure smoke path.
+            }
+        }
+    }
 }

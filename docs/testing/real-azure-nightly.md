@@ -53,7 +53,7 @@ proxy ([`RealAzureProxyFixture`](../../tests/Aws2Azure.IntegrationTests/Fixtures
 | DynamoDB | Cosmos DB | CreateTable → Put/Get/Delete item → DeleteTable | Ephemeral (Bicep) account + **database**; the test owns the table (container) |
 | SQS | Service Bus | CreateQueue → Send/Receive/Delete → DeleteQueue | Ephemeral (Bicep); the proxy creates the queue |
 | Kinesis | Event Hubs | PutRecord | Ephemeral (Bicep) namespace + **hub** (`CreateStream` is not implemented) |
-| Secrets Manager | Key Vault | secret lifecycle | **Standing** — runs only when `AZURE_KEYVAULT_*` secrets are set (see below) |
+| Secrets Manager | Key Vault | secret lifecycle (Create → Describe → Get → Put/VersionStages → Update → List → Delete) | Ephemeral (Bicep) + data-plane RBAC; authenticates via a **federated token**, no client secret (issue #307) |
 | DynamoDB *(Workload Identity)* | Cosmos DB | Put/Get/Delete item (table provisioned with the shared key — Cosmos rejects container DDL over an AAD token) | Ephemeral (Bicep) + data-plane RBAC; item CRUD via a **federated token** (issue #307) |
 | Kinesis *(Workload Identity)* | Event Hubs | PutRecord | Ephemeral (Bicep) + data-plane RBAC; authenticates via a **federated token**, no SAS key (issue #307) |
 
@@ -187,19 +187,21 @@ and the Workload-Identity tests skip — the shared-key matrix is unchanged.
 > not have. Covering it would require a self-hosted Azure runner; tracked
 > separately.
 
-## Secrets Manager (Key Vault) — standing secrets
+## Secrets Manager (Key Vault) — ephemeral vault
 
-Unlike the four data-plane backends, the proxy authenticates to Key Vault with a
-**service principal** (client id + secret), not an account key, so it is not
-auto-provisioned. The SecretsManager smoke runs only when these standing repo
-secrets are present (otherwise it skips):
+Like the four data-plane backends, the Key Vault is provisioned ephemerally by
+`deploy/realazure/main.bicep` (a uniquely-named, RBAC-authorized vault per run)
+and the proxy authenticates to it with the **same GitHub OIDC workload-identity
+service principal** the other AAD scenarios use — no standing vault and no client
+secret to manage. The Bicep grants the SP the **Key Vault Secrets Officer** role
+on the vault (gated on `principalId`, i.e. `AZURE_CLIENT_OBJECT_ID`), and the
+workflow exports the vault URL from the deployment output as `AZURE_KEYVAULT_URL`.
 
-| Secret | Notes |
-|---|---|
-| `AZURE_KEYVAULT_URL` | Vault URL |
-| `AZURE_KEYVAULT_TENANT_ID` | Service principal tenant |
-| `AZURE_KEYVAULT_CLIENT_ID` | Service principal app id |
-| `AZURE_KEYVAULT_CLIENT_SECRET` | Service principal secret |
+The SecretsManager smoke therefore runs whenever the Workload-Identity scenario
+is enabled (`AZURE_CLIENT_OBJECT_ID` set); it skips otherwise. Key Vault
+soft-delete is mandatory, so the teardown explicitly deletes **and purges** the
+vault (retention pinned to the 7-day minimum, purge protection off) to free the
+unique name immediately rather than leaking a reserved name.
 
 ## Running locally
 

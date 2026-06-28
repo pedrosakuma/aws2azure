@@ -23,9 +23,10 @@ name: integration-real-azure
 #   DynamoDB  -> Cosmos DB      (CreateTable -> Put/Get/Delete item -> DeleteTable)
 #   SQS       -> Service Bus    (CreateQueue -> Send/Receive/Delete -> DeleteQueue)
 #   Kinesis   -> Event Hubs     (PutRecord to a provisioned hub)
-#   Secrets   -> Key Vault      (secret lifecycle against a standing vault; the
-#                                proxy authenticates via GitHub OIDC workload
-#                                identity, so no client secret is stored)
+#   Secrets   -> Key Vault      (secret lifecycle against an ephemeral, per-run
+#                                RBAC vault provisioned by the Bicep; the proxy
+#                                authenticates via GitHub OIDC workload identity,
+#                                so no client secret is stored)
 #
 # One-time operator setup (OIDC + reaper) is documented in
 # docs/testing/real-azure-nightly.md.
@@ -142,6 +143,7 @@ jobs:
           COSMOS="$(out cosmosAccountName)"
           COSMOS_ENDPOINT="$(out cosmosEndpoint)"
           EH_NS="$(out eventHubsNamespaceName)"
+          KV_URI="$(out keyVaultUri)"
 
           BLOB_KEY="$(az storage account keys list -n "$STORAGE" -g "$RG_NAME" --query '[0].value' -o tsv)"
           SB_CONN="$(az servicebus namespace authorization-rule keys list -g "$RG_NAME" \
@@ -166,6 +168,7 @@ jobs:
             echo "AZURE_SB_CONNSTR=$SB_CONN"
             echo "AZURE_EVENTHUBS_CONNSTR=$EH_CONN"
             echo "AZURE_EVENTHUBS_STREAM=$AZURE_EVENTHUBS_STREAM"
+            echo "AZURE_KEYVAULT_URL=$KV_URI"
           } >> "$GITHUB_ENV"
 
       - name: Mint federated token for workload identity scenarios
@@ -200,11 +203,11 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Run real-Azure integration tests
-        env:
-          # Secrets Manager -> Key Vault uses the OIDC token minted above. When
-          # the standing vault URL is unset the SecretsManager smoke skips.
-          AZURE_KEYVAULT_URL: ${{ secrets.AZURE_KEYVAULT_URL }}
         run: |
+          # AZURE_KEYVAULT_URL is exported from the ephemeral deployment output by
+          # the "Export connection info" step (Secrets Manager -> Key Vault). When
+          # provisioning is skipped (no OIDC) it stays unset and the SecretsManager
+          # smoke skips. Workload-Identity auth uses the OIDC token minted above.
           dotnet test tests/Aws2Azure.IntegrationTests \
             -c Release --no-build --nologo \
             --filter "Category=RealAzure"
@@ -215,4 +218,15 @@ jobs:
       - name: Deallocate ephemeral Azure backends
         if: always() && steps.gate.outputs.enabled == 'true'
         run: |
+          # Key Vault soft-delete is mandatory and cannot be disabled, so deleting
+          # the resource group alone leaves the vault name reserved (7-day minimum
+          # retention). Discover any vault in the RG independently of the export
+          # step (so a mid-export failure can't leak a soft-deleted name), then
+          # delete (sync) + purge each to free the unique name immediately. Purge
+          # protection is OFF on these vaults; best-effort, and the reaper backstops
+          # force-cancelled runs.
+          for kv in $(az keyvault list -g "$RG_NAME" --query "[].name" -o tsv 2>/dev/null || true); do
+            az keyvault delete -n "$kv" -g "$RG_NAME" || true
+            az keyvault purge -n "$kv" --no-wait || true
+          done
           az group delete -n "$RG_NAME" --yes --no-wait || true
