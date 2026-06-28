@@ -320,7 +320,7 @@ internal static class QueryHandler
         }
 
         await ExecuteQueryAsync(ctx, req, meta, keyCond, gsiKey, gsiHashKey?.Name, gsiSortKey?.Name,
-            filter, projection, lsiSortKey?.Name, continuationIn, cosmos, ct)
+            gsiSortKey?.Type, filter, projection, lsiSortKey?.Name, continuationIn, cosmos, ct)
             .ConfigureAwait(false);
     }
 
@@ -328,7 +328,7 @@ internal static class QueryHandler
         HttpContext ctx, QueryRequest req, TableMetadata meta,
         KeyConditionAnalyser.AnalysedKeyCondition? keyCond,
         KeyConditionAnalyser.AnalysedGsiKeyCondition? gsiKey,
-        string? gsiHashName, string? gsiSortName,
+        string? gsiHashName, string? gsiSortName, string? gsiSortType,
         ConditionNode? filter, IReadOnlyList<string>? projection, string? lsiSortName, string? continuationIn,
         CosmosClient cosmos, CancellationToken ct)
     {
@@ -353,8 +353,40 @@ internal static class QueryHandler
                 gsiKey!.HashNode, CosmosPathTranslator.DefaultRootAlias, "gh");
             var skPush = FilterPushdownVisitor.Translate(
                 gsiKey.SkNode, CosmosPathTranslator.DefaultRootAlias, "sk");
+
+            // A composite GSI SELECT query must be ordered by the GSI sort key.
+            // The Cosmos gateway will not serve an ordered cross-partition query
+            // in one request (#480), so divert to the client-side fan-out +
+            // merge-sort executor. COUNT does not need ordering and is served by
+            // the unordered cross-partition loop below (emitOrderBy: false).
+            if (gsiSortName is not null && !countOnly)
+            {
+                // A binary (B) GSI sort key is stored as a Cosmos envelope object
+                // ({"_a2a:B":...}), not a scalar, so the per-range `ORDER BY
+                // c.<gsiSort>` orders it as an object (type-equal) rather than by
+                // the binary payload — the merge precondition (each range locally
+                // sorted by the sort value) cannot hold. Reject it rather than
+                // return silently mis-ordered results.
+                if (string.Equals(gsiSortType, "B", StringComparison.Ordinal))
+                {
+                    await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                        "Ordered queries on a global secondary index with a binary (B) sort key are not supported.")
+                        .ConfigureAwait(false);
+                    return;
+                }
+
+                var residual = CombineResidual(
+                    CombineResidual(hashPush.Residual, skPush.Residual), pushdown.Residual);
+                await CrossPartitionOrderByQuery.ExecuteAsync(
+                    ctx, req, gsiHashName!, gsiSortName, forward,
+                    hashPush, skPush, pushdown, residual, projection, cosmos, ct)
+                    .ConfigureAwait(false);
+                return;
+            }
+
             (sql, sqlParams) = BuildGsiSql(
-                gsiHashName!, gsiSortName, forward, hashPush, skPush, pushdown);
+                gsiHashName!, gsiSortName, forward, hashPush, skPush, pushdown,
+                emitOrderBy: !countOnly);
             filter = CombineResidual(CombineResidual(hashPush.Residual, skPush.Residual), pushdown.Residual);
         }
         else if (isLsiQuery)
@@ -725,7 +757,10 @@ internal static class QueryHandler
     /// </summary>
     internal static (string sql, List<CosmosSqlParameter> parameters) BuildGsiSql(
         string gsiHashName, string? gsiSortName, bool forward,
-        FilterPushdownResult hashPush, FilterPushdownResult skPush, FilterPushdownResult userPush)
+        FilterPushdownResult hashPush, FilterPushdownResult skPush, FilterPushdownResult userPush,
+        bool emitOrderBy = true,
+        string? resumeFilterSql = null,
+        IReadOnlyList<CosmosSqlParameter>? resumeParams = null)
     {
         var hashPath = CosmosPathTranslator.Translate(
             new DocumentPath(new[] { new AttributePathSegment(gsiHashName) }));
@@ -753,7 +788,17 @@ internal static class QueryHandler
             sb.Append(" AND ").Append(fSql);
             foreach (var fp in userPush.Parameters) parameters.Add(fp);
         }
-        if (gsiSortName is not null)
+        // Cross-partition ordered resume bound (#481): restricts each physical
+        // partition to rows at/after the continuation boundary value.
+        if (resumeFilterSql is not null)
+        {
+            sb.Append(" AND ").Append(resumeFilterSql);
+            if (resumeParams is not null)
+            {
+                foreach (var rp in resumeParams) parameters.Add(rp);
+            }
+        }
+        if (emitOrderBy && gsiSortName is not null)
         {
             var sortPath = CosmosPathTranslator.Translate(
                 new DocumentPath(new[] { new AttributePathSegment(gsiSortName) }));
@@ -842,7 +887,7 @@ internal static class QueryHandler
         return result;
     }
 
-    private static string? ExtractContinuation(JsonElement? exclusiveStartKey)
+    internal static string? ExtractContinuation(JsonElement? exclusiveStartKey)
     {
         if (exclusiveStartKey is not { } esk) return null;
         if (esk.ValueKind != JsonValueKind.Object) return null;
@@ -862,7 +907,7 @@ internal static class QueryHandler
         }
     }
 
-    private static Dictionary<string, JsonElement> BuildContinuationKey(string cosmosContinuation)
+    internal static Dictionary<string, JsonElement> BuildContinuationKey(string cosmosContinuation)
     {
         var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(cosmosContinuation));
         var json = $"{{\"S\":\"{b64}\"}}";

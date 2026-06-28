@@ -132,6 +132,20 @@ public class QueryHandlerTests
         + "\"projectionType\":\"INCLUDE\",\"nonKeyAttributes\":[\"total\"]}],"
         + "\"billingMode\":\"PAY_PER_REQUEST\"}";
 
+    // Composite GSI with a Binary (B) RANGE ("token"); projection ALL. Binary
+    // sort keys are envelope-stored and unsortable, so ordered GSI queries on
+    // them are rejected.
+    private static readonly string MetadataGsiBinarySort =
+        "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        + "\"tableName\":\"orders\","
+        + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"sk\",\"type\":\"S\"},"
+        + "{\"name\":\"customer\",\"type\":\"S\"},{\"name\":\"token\",\"type\":\"B\"}],"
+        + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
+        + "\"globalSecondaryIndexes\":[{\"indexName\":\"byToken\","
+        + "\"keySchema\":[{\"name\":\"customer\",\"keyType\":\"HASH\"},{\"name\":\"token\",\"keyType\":\"RANGE\"}],"
+        + "\"projectionType\":\"ALL\"}],"
+        + "\"billingMode\":\"PAY_PER_REQUEST\"}";
+
     private const bool EnableGsi = true;
 
     private static CosmosClient BuildClient(ScriptedHandler handler)
@@ -187,6 +201,22 @@ public class QueryHandlerTests
         if (continuation is not null)
             r.Headers.TryAddWithoutValidation("x-ms-continuation", continuation);
         return r;
+    }
+
+    // Scripts the `pkranges` feed read that the cross-partition ordered-query
+    // executor (composite GSI Query) issues before fanning out per range.
+    private static HttpResponseMessage CosmosPkRanges(params string[] rangeIds)
+    {
+        var sb = new StringBuilder("{\"PartitionKeyRanges\":[");
+        for (int i = 0; i < rangeIds.Length; i++)
+        {
+            if (i > 0) sb.Append(',');
+            sb.Append("{\"id\":\"").Append(rangeIds[i])
+              .Append("\",\"minInclusive\":\"").Append(i.ToString("D4"))
+              .Append("\",\"maxExclusive\":\"").Append((i + 1).ToString("D4")).Append("\"}");
+        }
+        sb.Append("]}");
+        return CosmosOk(sb.ToString());
     }
 
     private static string DocWithItem(string pk, string id, string itemJson)
@@ -945,6 +975,7 @@ public class QueryHandlerTests
             Responses =
             {
                 CosmosOk(MetadataGsiComposite),
+                CosmosPkRanges("0"),
                 CosmosOk(QueryEnvelope(
                     DocWithItem("a", "x", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"x\"},\"customer\":{\"S\":\"acme\"},\"createdAt\":{\"S\":\"2024-03\"}}"))),
             },
@@ -958,7 +989,9 @@ public class QueryHandlerTests
         await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
-        var sql = QuerySql(handler.Requests[1].Body);
+        // Composite GSI diverts to the cross-partition ordered executor:
+        // metadata read, then a pkranges feed, then the per-range ordered query.
+        var sql = QuerySql(handler.Requests[2].Body);
         Assert.Contains("c[\"customer\"] = ", sql);
         Assert.Contains("c[\"createdAt\"] > ", sql);
         // Composite GSI membership guard on both key attributes.
@@ -966,6 +999,33 @@ public class QueryHandlerTests
         Assert.Contains("IS_DEFINED(c[\"createdAt\"])", sql);
         // Composite GSI is ordered by the index sort attribute.
         Assert.Contains("ORDER BY c[\"createdAt\"] ASC", sql);
+        // Per-range fan-out targets one physical partition key range.
+        Assert.Equal("0", handler.Requests[2].Headers["x-ms-documentdb-partitionkeyrangeid"]);
+    }
+
+    [Fact]
+    public async Task Query_gsi_binary_sort_key_ordered_query_is_rejected()
+    {
+        // A binary GSI sort key is envelope-stored ({"_a2a:B":...}) and cannot
+        // be ordered by the per-range query, so an ordered (non-COUNT) GSI
+        // query on it is rejected before any pkranges fan-out.
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataGsiBinarySort) },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byToken\","
+                  + "\"KeyConditionExpression\":\"customer = :c\","
+                  + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("binary (B) sort key", ReadResponse(body));
+        // No fan-out: only the metadata read was issued.
+        Assert.Single(handler.Requests);
     }
 
     [Fact]
@@ -977,6 +1037,7 @@ public class QueryHandlerTests
             Responses =
             {
                 CosmosOk(MetadataGsiComposite),
+                CosmosPkRanges("0"),
                 CosmosOk(QueryEnvelope()),
             },
         };
@@ -990,7 +1051,7 @@ public class QueryHandlerTests
         await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
-        Assert.Contains("ORDER BY c[\"createdAt\"] DESC", QuerySql(handler.Requests[1].Body));
+        Assert.Contains("ORDER BY c[\"createdAt\"] DESC", QuerySql(handler.Requests[2].Body));
     }
 
     [Fact]
@@ -1002,6 +1063,7 @@ public class QueryHandlerTests
             Responses =
             {
                 CosmosOk(MetadataGsiComposite),
+                CosmosPkRanges("0"),
                 CosmosOk(QueryEnvelope()),
             },
         };
@@ -1014,7 +1076,7 @@ public class QueryHandlerTests
         await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
-        var sql = QuerySql(handler.Requests[1].Body);
+        var sql = QuerySql(handler.Requests[2].Body);
         Assert.Contains("c[\"createdAt\"] >= ", sql);
         Assert.Contains("c[\"createdAt\"] <= ", sql);
     }
@@ -1088,6 +1150,7 @@ public class QueryHandlerTests
             Responses =
             {
                 CosmosOk(MetadataGsiNumberKeysOnly),
+                CosmosPkRanges("0"),
                 CosmosOk(QueryEnvelope(
                     DocWithItem("a", "x", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"x\"},\"customer\":{\"S\":\"acme\"},\"amount\":{\"N\":\"5\"},\"extra\":{\"S\":\"drop\"}}"))),
             },
@@ -1222,6 +1285,7 @@ public class QueryHandlerTests
             Responses =
             {
                 CosmosOk(MetadataGsiNumberKeysOnly),
+                CosmosPkRanges("0"),
                 CosmosOk(QueryEnvelope(
                     DocWithItem("a", "x", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"x\"},\"customer\":{\"S\":\"acme\"},\"amount\":{\"N\":\"5\"}}"))),
             },

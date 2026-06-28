@@ -122,15 +122,14 @@ public sealed class DynamoDbSettings
     public bool CosmosBinaryRequests { get; set; }
 
     /// <summary>
-    /// Opts DynamoDB <c>Query</c> (and, in a later slice, <c>Scan</c>) into
-    /// Global Secondary Index access via <c>IndexName</c>. Disabled by default.
-    /// GSI queries are served as cross-partition Cosmos queries filtered by the
-    /// raw index hash attribute (Option A), are eventually consistent
-    /// (<c>ConsistentRead=true</c> is rejected), and their cross-partition
-    /// <c>ORDER BY</c> / pagination behaviour has only been verified against the
-    /// emulator — keep this off unless validated against the target Cosmos
-    /// account (see #461). When disabled, a GSI <c>IndexName</c> is rejected
-    /// with ValidationException.
+    /// Opts DynamoDB <c>Query</c> and <c>Scan</c> into Global Secondary Index
+    /// access via <c>IndexName</c>. Disabled by default. GSI queries/scans are
+    /// served as cross-partition Cosmos queries filtered by the raw index hash
+    /// attribute (Option A), are eventually consistent (<c>ConsistentRead=true</c>
+    /// is rejected), and their cross-partition <c>ORDER BY</c> / pagination
+    /// behaviour is validated against real Cosmos by the nightly
+    /// <c>integration-real-azure</c> secondary-index suite (#461). When disabled,
+    /// a GSI <c>IndexName</c> is rejected with ValidationException.
     /// </summary>
     public bool EnableGlobalSecondaryIndexQueries { get; set; }
 }
