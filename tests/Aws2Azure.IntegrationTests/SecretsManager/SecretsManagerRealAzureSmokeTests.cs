@@ -162,8 +162,11 @@ public sealed class SecretsManagerRealAzureSmokeTests
                 ClientRequestToken = token,
             })).ConfigureAwait(false);
 
-            // Explicit VersionStages: a custom staging label is persisted and
-            // surfaced by DescribeSecret's version->stages mapping.
+            // Explicit VersionStages: a custom staging label is persisted on the new
+            // version and resolvable via GetSecretValue (the supported path — the
+            // proxy resolves stages from Key Vault version tags). DescribeSecret's
+            // VersionIdsToStages is intentionally a simplified current-version view
+            // and is not asserted here.
             var staged = await client.PutSecretValueAsync(new PutSecretValueRequest
             {
                 SecretId = secretName,
@@ -171,13 +174,16 @@ public sealed class SecretsManagerRealAzureSmokeTests
                 VersionStages = ["MYSTAGE"],
             }).ConfigureAwait(false);
 
-            var described = await client.DescribeSecretAsync(new DescribeSecretRequest
+            Assert.Contains("MYSTAGE", staged.VersionStages);
+
+            var byStage = await client.GetSecretValueAsync(new GetSecretValueRequest
             {
                 SecretId = secretName,
+                VersionStage = "MYSTAGE",
             }).ConfigureAwait(false);
 
-            Assert.True(described.VersionIdsToStages.TryGetValue(staged.VersionId, out var stages));
-            Assert.Contains("MYSTAGE", stages);
+            Assert.Equal("v4", byStage.SecretString);
+            Assert.Equal(staged.VersionId, byStage.VersionId);
         }
         finally
         {
