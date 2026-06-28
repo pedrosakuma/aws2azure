@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Amazon.SecretsManager;
 using Amazon.SecretsManager.Model;
 using Xunit;
 
@@ -69,10 +70,10 @@ public sealed class SecretsManagerRealAzureSmokeTests
             var listed = await client.ListSecretsAsync(new ListSecretsRequest()).ConfigureAwait(false);
             Assert.Contains(listed.SecretList, item => string.Equals(item.Name, secretName, StringComparison.Ordinal));
 
-            var updatedValue = await client.GetSecretValueAsync(new GetSecretValueRequest
-            {
-                SecretId = secretName,
-            }).ConfigureAwait(false);
+            var updatedValue = await GetSecretValueEventuallyAsync(
+                client,
+                new GetSecretValueRequest { SecretId = secretName },
+                "smoke-secret-value-updated").ConfigureAwait(false);
 
             Assert.Equal("smoke-secret-value-updated", updatedValue.SecretString);
         }
@@ -122,10 +123,10 @@ public sealed class SecretsManagerRealAzureSmokeTests
             Assert.NotEqual(created.VersionId, put.VersionId);
             Assert.Contains("AWSCURRENT", put.VersionStages);
 
-            var current = await client.GetSecretValueAsync(new GetSecretValueRequest
-            {
-                SecretId = secretName,
-            }).ConfigureAwait(false);
+            var current = await GetSecretValueEventuallyAsync(
+                client,
+                new GetSecretValueRequest { SecretId = secretName },
+                "v2").ConfigureAwait(false);
             Assert.Equal("v2", current.SecretString);
 
             var previous = await client.GetSecretValueAsync(new GetSecretValueRequest
@@ -199,6 +200,32 @@ public sealed class SecretsManagerRealAzureSmokeTests
             {
                 // Best-effort cleanup for the real-Azure smoke path.
             }
+        }
+    }
+
+    // Azure Key Vault does not guarantee read-your-write on the unversioned
+    // GetSecret endpoint immediately after an update: the latest-version pointer
+    // can briefly resolve to the prior version (propagation lag). Poll with a
+    // short bounded retry until the expected value is observed; on timeout return
+    // the last response so the assertion fails with the actual value for
+    // diagnostics. See issue #484.
+    private static async Task<GetSecretValueResponse> GetSecretValueEventuallyAsync(
+        IAmazonSecretsManager client,
+        GetSecretValueRequest request,
+        string expectedValue)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        GetSecretValueResponse response;
+        while (true)
+        {
+            response = await client.GetSecretValueAsync(request).ConfigureAwait(false);
+            if (string.Equals(response.SecretString, expectedValue, StringComparison.Ordinal)
+                || DateTime.UtcNow >= deadline)
+            {
+                return response;
+            }
+
+            await Task.Delay(500).ConfigureAwait(false);
         }
     }
 }
