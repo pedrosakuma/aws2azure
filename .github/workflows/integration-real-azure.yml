@@ -144,7 +144,6 @@ jobs:
           COSMOS_ENDPOINT="$(out cosmosEndpoint)"
           EH_NS="$(out eventHubsNamespaceName)"
           KV_URI="$(out keyVaultUri)"
-          KV_NAME="$(out keyVaultName)"
 
           BLOB_KEY="$(az storage account keys list -n "$STORAGE" -g "$RG_NAME" --query '[0].value' -o tsv)"
           SB_CONN="$(az servicebus namespace authorization-rule keys list -g "$RG_NAME" \
@@ -170,7 +169,6 @@ jobs:
             echo "AZURE_EVENTHUBS_CONNSTR=$EH_CONN"
             echo "AZURE_EVENTHUBS_STREAM=$AZURE_EVENTHUBS_STREAM"
             echo "AZURE_KEYVAULT_URL=$KV_URI"
-            echo "AZURE_KEYVAULT_NAME=$KV_NAME"
           } >> "$GITHUB_ENV"
 
       - name: Mint federated token for workload identity scenarios
@@ -222,11 +220,13 @@ jobs:
         run: |
           # Key Vault soft-delete is mandatory and cannot be disabled, so deleting
           # the resource group alone leaves the vault name reserved (7-day minimum
-          # retention). Explicitly delete (sync) then purge it so the unique name is
-          # freed immediately and never accumulates. Best-effort; the reaper backstops
-          # force-cancelled runs, and purge protection is OFF on these vaults.
-          if [ -n "${AZURE_KEYVAULT_NAME:-}" ]; then
-            az keyvault delete -n "$AZURE_KEYVAULT_NAME" -g "$RG_NAME" || true
-            az keyvault purge -n "$AZURE_KEYVAULT_NAME" --no-wait || true
-          fi
+          # retention). Discover any vault in the RG independently of the export
+          # step (so a mid-export failure can't leak a soft-deleted name), then
+          # delete (sync) + purge each to free the unique name immediately. Purge
+          # protection is OFF on these vaults; best-effort, and the reaper backstops
+          # force-cancelled runs.
+          for kv in $(az keyvault list -g "$RG_NAME" --query "[].name" -o tsv 2>/dev/null || true); do
+            az keyvault delete -n "$kv" -g "$RG_NAME" || true
+            az keyvault purge -n "$kv" --no-wait || true
+          done
           az group delete -n "$RG_NAME" --yes --no-wait || true
