@@ -91,6 +91,23 @@ public class S3ObjectOpsTests
     }
 
     [SkippableFact]
+    public async Task Get_with_versionId_selector_routes_to_object_not_unsupported()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
+
+        var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
+        await PutBucket(bucket);
+        await PutObject(bucket, "v.txt", "hello"u8.ToArray());
+
+        // Azurite has no account-level versioning, so the version selector
+        // resolves to the current blob (not a 501/Unsupported). The selector
+        // must reach object dispatch — regression guard for the router.
+        using var resp = await SendAsync(HttpMethod.Get, $"/{bucket}/v.txt?versionId=2024-01-01T00:00:00.0000000Z", Array.Empty<byte>());
+        Assert.NotEqual(HttpStatusCode.NotImplemented, resp.StatusCode);
+        Assert.Equal("hello", await resp.Content.ReadAsStringAsync());
+    }
+
+    [SkippableFact]
     public async Task Get_missing_object_returns_NoSuchKey_xml()
     {
         Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");

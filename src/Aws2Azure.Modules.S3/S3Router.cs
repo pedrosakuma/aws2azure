@@ -244,7 +244,6 @@ public static class S3Router
         new("select", SubresourceOperations.UnsupportedOnly),
         new("select-type", SubresourceOperations.UnsupportedOnly),
         new("versions", SubresourceOperations.UnsupportedOnly),
-        new("versionId", SubresourceOperations.UnsupportedOnly),
     };
 
     // Well-known S3 object subresources. Membership is checked case-insensitively.
