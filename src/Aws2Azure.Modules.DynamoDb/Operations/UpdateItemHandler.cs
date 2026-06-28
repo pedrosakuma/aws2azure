@@ -166,8 +166,13 @@ internal static class UpdateItemHandler
         var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + req.TableName;
         var docLink = collLink + "/docs/" + id;
 
-        // Sproc path: single atomic call if enabled
-        if (sprocCtx is { IsSprocEnabled: true })
+        // Sproc path: single atomic call if enabled. Skipped when the table has
+        // TTL enabled: the server-side JS sproc upserts the new document without
+        // recomputing the Cosmos native `ttl` (it has no access to the table's
+        // TTL config or a recompute-on-write step), so an update that changes or
+        // removes the TTL attribute would leave a stale/absent expiry. The C#
+        // GET → apply → PUT fallback below recomputes `ttl` from the merged item.
+        if (sprocCtx is { IsSprocEnabled: true } && meta.TimeToLive is not { Enabled: true })
         {
             // For UpdateItem upsert case, pass the key attributes so sproc can
             // build a new item. Written straight into a pooled UTF-8 buffer (no
@@ -314,10 +319,16 @@ internal static class UpdateItemHandler
                 return;
             }
 
+            // Translate an enabled TTL attribute's absolute epoch expiry into a
+            // Cosmos relative per-item ttl, recomputed on every update so the
+            // absolute expiry stays correct across writes.
+            int? ttlSeconds = TtlTranslation.ComputeItemTtlSeconds(
+                newItemJson, meta.TimeToLive, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+
             // Build the Cosmos doc envelope from the mutated item map,
             // straight into a pooled UTF-8 buffer (no string / StringContent
             // round-trip on the write body).
-            using var docBuf = ItemHandlers.ItemDocumentBody.Create(id, pk, newItemJson, cosmos.CosmosBinaryRequests);
+            using var docBuf = ItemHandlers.ItemDocumentBody.Create(id, pk, newItemJson, cosmos.CosmosBinaryRequests, ttlSeconds);
             var docBody = docBuf.Memory;
 
             HttpResponseMessage writeResp;

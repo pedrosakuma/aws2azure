@@ -23,11 +23,11 @@ internal static partial class InferredAttributeStorage
     /// validated key-attribute presence/type and reserved-name conflicts
     /// (via <see cref="IsReservedTopLevelName"/>).
     /// </summary>
-    public static void WriteCosmosDocument(IBufferWriter<byte> output, string id, string pk, JsonElement item)
+    public static void WriteCosmosDocument(IBufferWriter<byte> output, string id, string pk, JsonElement item, int? ttlSeconds = null)
     {
         ArgumentNullException.ThrowIfNull(output);
         using var writer = new Utf8JsonWriter(output, WriterOptions);
-        WriteCosmosDocumentCore(new Utf8JsonTokenWriter(writer), id, pk, item);
+        WriteCosmosDocumentCore(new Utf8JsonTokenWriter(writer), id, pk, item, ttlSeconds);
     }
 
     /// <summary>
@@ -37,11 +37,11 @@ internal static partial class InferredAttributeStorage
     /// the <see cref="ITokenWriter"/> back-end, so the two are semantically
     /// symmetric (verified by the decode round-trip golden corpus).
     /// </summary>
-    public static void WriteCosmosDocumentBinary(IBufferWriter<byte> output, string id, string pk, JsonElement item)
+    public static void WriteCosmosDocumentBinary(IBufferWriter<byte> output, string id, string pk, JsonElement item, int? ttlSeconds = null)
     {
         ArgumentNullException.ThrowIfNull(output);
         using var writer = new CosmosBinaryWriter(output);
-        WriteCosmosDocumentCore(writer, id, pk, item);
+        WriteCosmosDocumentCore(writer, id, pk, item, ttlSeconds);
     }
 
     /// <summary>
@@ -51,12 +51,12 @@ internal static partial class InferredAttributeStorage
     /// directly (no copy into a second buffer). The caller <b>owns the returned
     /// writer</b> and must dispose it once the send completes.
     /// </summary>
-    public static CosmosBinaryWriter WriteCosmosDocumentBinary(string id, string pk, JsonElement item)
+    public static CosmosBinaryWriter WriteCosmosDocumentBinary(string id, string pk, JsonElement item, int? ttlSeconds = null)
     {
         var writer = new CosmosBinaryWriter();
         try
         {
-            WriteCosmosDocumentCore(writer, id, pk, item);
+            WriteCosmosDocumentCore(writer, id, pk, item, ttlSeconds);
         }
         catch
         {
@@ -103,12 +103,12 @@ internal static partial class InferredAttributeStorage
     /// no intermediate <see cref="JsonElement"/> or per-attribute string
     /// materialization. Output is byte-identical to the JsonElement overload.
     /// </summary>
-    public static void WriteCosmosDocument(IBufferWriter<byte> output, string id, string pk, ReadOnlySpan<byte> itemUtf8)
+    public static void WriteCosmosDocument(IBufferWriter<byte> output, string id, string pk, ReadOnlySpan<byte> itemUtf8, int? ttlSeconds = null)
     {
         ArgumentNullException.ThrowIfNull(output);
         using var writer = new Utf8JsonWriter(output, WriterOptions);
         var reader = new Utf8JsonReader(itemUtf8, WireReaderOptions);
-        WriteCosmosDocumentCore(new Utf8JsonTokenWriter(writer), id, pk, ref reader);
+        WriteCosmosDocumentCore(new Utf8JsonTokenWriter(writer), id, pk, ref reader, ttlSeconds);
     }
 
     /// <summary>
@@ -118,12 +118,12 @@ internal static partial class InferredAttributeStorage
     /// attribute-map bytes. Decode round-trip is identical to the JsonElement
     /// overload (golden corpus).
     /// </summary>
-    public static void WriteCosmosDocumentBinary(IBufferWriter<byte> output, string id, string pk, ReadOnlySpan<byte> itemUtf8)
+    public static void WriteCosmosDocumentBinary(IBufferWriter<byte> output, string id, string pk, ReadOnlySpan<byte> itemUtf8, int? ttlSeconds = null)
     {
         ArgumentNullException.ThrowIfNull(output);
         using var writer = new CosmosBinaryWriter(output);
         var reader = new Utf8JsonReader(itemUtf8, WireReaderOptions);
-        WriteCosmosDocumentCore(writer, id, pk, ref reader);
+        WriteCosmosDocumentCore(writer, id, pk, ref reader, ttlSeconds);
     }
 
     /// <summary>
@@ -133,13 +133,13 @@ internal static partial class InferredAttributeStorage
     /// <see cref="CosmosBinaryWriter.WrittenMemory"/> for a zero-copy send. The
     /// caller owns and must dispose the returned writer once the send completes.
     /// </summary>
-    public static CosmosBinaryWriter WriteCosmosDocumentBinary(string id, string pk, ReadOnlySpan<byte> itemUtf8)
+    public static CosmosBinaryWriter WriteCosmosDocumentBinary(string id, string pk, ReadOnlySpan<byte> itemUtf8, int? ttlSeconds = null)
     {
         var writer = new CosmosBinaryWriter();
         try
         {
             var reader = new Utf8JsonReader(itemUtf8, WireReaderOptions);
-            WriteCosmosDocumentCore(writer, id, pk, ref reader);
+            WriteCosmosDocumentCore(writer, id, pk, ref reader, ttlSeconds);
         }
         catch
         {
@@ -150,7 +150,31 @@ internal static partial class InferredAttributeStorage
         return writer;
     }
 
-    private static void WriteCosmosDocumentCore<TWriter>(TWriter writer, string id, string pk, ref Utf8JsonReader reader)
+    // Cosmos' reserved per-item TTL property: a duration in seconds relative to
+    // the document's last-write _ts. Written immediately after the proxy's own
+    // reserved fields and before user attributes (#465).
+    private static readonly TokenName TtlPropName = new("ttl");
+
+    /// <summary>
+    /// Emits the Cosmos reserved <c>ttl</c> property when <paramref name="ttlSeconds"/>
+    /// is set. The value is a small positive duration, formatted without an
+    /// intermediate string allocation.
+    /// </summary>
+    private static void WriteItemTtl<TWriter>(TWriter writer, int? ttlSeconds)
+        where TWriter : ITokenWriter
+    {
+        if (!ttlSeconds.HasValue)
+        {
+            return;
+        }
+
+        writer.WritePropertyName(TtlPropName);
+        Span<byte> buffer = stackalloc byte[16];
+        Utf8Formatter.TryFormat(ttlSeconds.Value, buffer, out int written);
+        writer.WriteNumberRaw(buffer[..written]);
+    }
+
+    private static void WriteCosmosDocumentCore<TWriter>(TWriter writer, string id, string pk, ref Utf8JsonReader reader, int? ttlSeconds = null)
         where TWriter : ITokenWriter
     {
         if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
@@ -160,6 +184,7 @@ internal static partial class InferredAttributeStorage
         writer.WriteString(IdPropName, id);
         writer.WriteString(PkPropName, pk);
         writer.WriteString(DiscPropName, DiscValueItemName);
+        WriteItemTtl(writer, ttlSeconds);
 
         while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
         {
@@ -226,8 +251,17 @@ internal static partial class InferredAttributeStorage
                 return;
             }
 
+            if (name.SequenceEqual("ttl"u8))
+            {
+                // Shadow-encode a user attr named "ttl" so it doesn't collide
+                // with Cosmos's native time-to-live field (which the proxy
+                // injects on TTL-enabled tables); decoder unmangles.
+                writer.WritePropertyName(ShadowTtlPropName);
+                return;
+            }
+
             // Any name in the _a2a namespace (other than the shadow-encodable
-            // "id") is reserved for proxy use and must be rejected.
+            // "id"/"ttl") is reserved for proxy use and must be rejected.
             if (name.StartsWith("_a2a"u8))
             {
                 throw new ArgumentException(
@@ -491,7 +525,7 @@ internal static partial class InferredAttributeStorage
             EncodeNumberFromRaw(writer, source.GetStringValue());
     }
 
-    private static void WriteCosmosDocumentCore<TWriter>(TWriter writer, string id, string pk, JsonElement item)
+    private static void WriteCosmosDocumentCore<TWriter>(TWriter writer, string id, string pk, JsonElement item, int? ttlSeconds = null)
         where TWriter : ITokenWriter
     {
         if (item.ValueKind != JsonValueKind.Object)
@@ -501,14 +535,16 @@ internal static partial class InferredAttributeStorage
         writer.WriteString(IdPropName, id);
         writer.WriteString(PkPropName, pk);
         writer.WriteString(DiscPropName, DiscValueItemName);
+        WriteItemTtl(writer, ttlSeconds);
 
         foreach (var prop in item.EnumerateObject())
         {
             if (IsShadowEncodableName(prop.Name))
             {
-                // Shadow-encode the rare DDB attr that collides with
-                // Cosmos's required "id" field; decoder unmangles.
-                writer.WritePropertyName(ShadowIdPropName);
+                // Shadow-encode the rare DDB attr that collides with a
+                // reserved Cosmos field ("id" routing key / "ttl" native
+                // time-to-live); decoder unmangles.
+                writer.WritePropertyName(ShadowNameFor(prop.Name));
             }
             else if (IsReservedTopLevelName(prop.Name))
             {

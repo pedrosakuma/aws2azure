@@ -178,7 +178,9 @@ internal static class BatchWriteItemHandler
                     // every early-return path) is preferred over a pooled
                     // buffer here. Still removes the string / StringContent
                     // re-encode the previous BuildItemDocument path incurred.
-                    var doc = ItemHandlers.BuildItemDocumentBytes(id, pk, itemEl, cosmos.CosmosBinaryRequests);
+                    int? ttlSeconds = TtlTranslation.ComputeItemTtlSeconds(
+                        itemEl, meta.TimeToLive, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+                    var doc = ItemHandlers.BuildItemDocumentBytes(id, pk, itemEl, cosmos.CosmosBinaryRequests, ttlSeconds);
                     // Keep only the envelope's byte range for any UnprocessedItems
                     // echo (sliced from the request buffer on demand), not a
                     // retained DOM clone.

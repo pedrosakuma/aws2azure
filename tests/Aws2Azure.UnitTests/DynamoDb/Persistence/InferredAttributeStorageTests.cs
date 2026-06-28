@@ -118,6 +118,92 @@ public class InferredAttributeStorageTests
             () => InferredAttributeStorage.BuildCosmosDocument("id1", "pk1", item));
     }
 
+    // ---------- reserved "ttl" (Cosmos native time-to-live) ----------
+
+    [Theory]
+    [InlineData("ttl")]
+    [InlineData("_a2a$ttl")]
+    public void IsReservedTopLevelName_recognises_ttl(string name)
+    {
+        Assert.True(InferredAttributeStorage.IsReservedTopLevelName(name));
+    }
+
+    [Fact]
+    public void BuildCosmosDocument_shadow_encodes_ttl_attribute()
+    {
+        var item = Parse("{\"ttl\":{\"N\":\"1700000000\"}}");
+        var doc = InferredAttributeStorage.BuildCosmosDocument("k", "k", item);
+        // The user's "ttl" attribute rides under the shadow name so it cannot
+        // collide with Cosmos' reserved native ttl field.
+        Assert.Contains("\"_a2a$ttl\":1700000000", doc);
+        Assert.DoesNotContain("\"ttl\":", doc);
+    }
+
+    [Fact]
+    public void Roundtrip_unmangles_shadow_encoded_ttl_attribute_dom()
+    {
+        var item = Parse("{\"ttl\":{\"N\":\"1700000000\"},\"name\":{\"S\":\"Alice\"}}");
+        var doc = InferredAttributeStorage.BuildCosmosDocument("k", "k", item);
+        using var parsed = JsonDocument.Parse(doc);
+        var decoded = InferredAttributeStorage.ExtractItem(parsed.RootElement);
+        Assert.NotNull(decoded);
+        Assert.Equal("1700000000", decoded!["ttl"].GetProperty("N").GetString());
+        Assert.Equal("Alice", decoded["name"].GetProperty("S").GetString());
+    }
+
+    [Fact]
+    public void Roundtrip_unmangles_shadow_encoded_ttl_attribute_streaming()
+    {
+        var item = Parse("{\"ttl\":{\"N\":\"1700000000\"},\"name\":{\"S\":\"Alice\"}}");
+        var doc = InferredAttributeStorage.BuildCosmosDocument("k", "k", item);
+        var decoded = Decode(doc);
+        Assert.Equal("1700000000", decoded["ttl"].GetProperty("N").GetString());
+        Assert.Equal("Alice", decoded["name"].GetProperty("S").GetString());
+    }
+
+    [Fact]
+    public void Injected_native_ttl_is_stripped_on_read_dom()
+    {
+        var output = new System.Buffers.ArrayBufferWriter<byte>();
+        InferredAttributeStorage.WriteCosmosDocument(
+            output, "k", "k", Parse("{\"name\":{\"S\":\"Alice\"}}"), ttlSeconds: 3600);
+        using var parsed = JsonDocument.Parse(output.WrittenMemory);
+        // Sanity: the native ttl is physically present in the stored doc.
+        Assert.Equal(3600, parsed.RootElement.GetProperty("ttl").GetInt32());
+        var decoded = InferredAttributeStorage.ExtractItem(parsed.RootElement);
+        Assert.NotNull(decoded);
+        Assert.False(decoded!.ContainsKey("ttl"));
+        Assert.Equal("Alice", decoded["name"].GetProperty("S").GetString());
+    }
+
+    [Fact]
+    public void Injected_native_ttl_is_stripped_on_read_streaming()
+    {
+        var output = new System.Buffers.ArrayBufferWriter<byte>();
+        InferredAttributeStorage.WriteCosmosDocument(
+            output, "k", "k", Parse("{\"name\":{\"S\":\"Alice\"}}"), ttlSeconds: 3600);
+        var decoded = Decode(Encoding.UTF8.GetString(output.WrittenMemory.Span));
+        Assert.False(decoded.ContainsKey("ttl"));
+        Assert.Equal("Alice", decoded["name"].GetProperty("S").GetString());
+    }
+
+    [Fact]
+    public void User_ttl_and_injected_native_ttl_coexist_without_collision()
+    {
+        // Simulates a TTL-enabled write whose TTL attribute is literally named
+        // "ttl": the user's absolute epoch rides as _a2a$ttl while the proxy's
+        // computed relative ttl is the native field. Read surfaces the former,
+        // strips the latter.
+        var output = new System.Buffers.ArrayBufferWriter<byte>();
+        InferredAttributeStorage.WriteCosmosDocument(
+            output, "k", "k", Parse("{\"ttl\":{\"N\":\"1700003600\"}}"), ttlSeconds: 3600);
+        using var parsed = JsonDocument.Parse(output.WrittenMemory);
+        Assert.Equal(3600, parsed.RootElement.GetProperty("ttl").GetInt32());
+        Assert.Equal(1700003600, parsed.RootElement.GetProperty("_a2a$ttl").GetInt64());
+        var decoded = Decode(Encoding.UTF8.GetString(output.WrittenMemory.Span));
+        Assert.Equal("1700003600", decoded["ttl"].GetProperty("N").GetString());
+    }
+
     // ---------- single-type round trips ----------
 
     [Fact]

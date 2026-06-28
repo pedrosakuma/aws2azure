@@ -213,6 +213,24 @@ public class TransactWriteItemsHandlerTests
     }
 
     [Fact]
+    public async Task Condition_on_reserved_attribute_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler { Responses = { CosmosOk(MetaPkSk) } };
+        var cosmos = BuildClient(handler);
+        // "ttl" is shadow-encoded / injected as Cosmos' native TTL, so a
+        // transaction condition on it cannot be faithfully evaluated server-side.
+        var req = "{\"TransactItems\":[" + PutOp("1", condition: "attribute_not_exists(ttl)") + "]}";
+
+        await Run(ctx, cosmos, EnabledSproc(), req);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        var resp = ReadResponse(body);
+        Assert.Contains("ValidationException", resp);
+        Assert.Contains("ttl", resp);
+    }
+
+    [Fact]
     public async Task Over_100_items_rejected()
     {
         var (ctx, body) = NewCtx();

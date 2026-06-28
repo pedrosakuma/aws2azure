@@ -275,6 +275,21 @@ internal static class TransactWriteItemsHandler
                 return;
             }
 
+            // The transaction sproc evaluates condition paths against the RAW
+            // Cosmos document, where shadow-encoded / injected reserved names
+            // (id, ttl, _a2a*) do not hold the user's value under that key. With
+            // no in-process fallback (unlike single-item conditional writes),
+            // such a condition would silently evaluate against the wrong field,
+            // so reject it. See docs/gaps/dynamodb/TransactWriteItems.yaml.
+            if (SprocEligibility.FindReservedConditionRoot(condition) is { } reservedRoot)
+            {
+                await Reject(ctx,
+                    $"TransactItems[{i}] ConditionExpression references attribute '{reservedRoot}', " +
+                    "which this proxy cannot evaluate inside a transaction because it collides with a " +
+                    "reserved Cosmos document field. Use a different attribute name.").ConfigureAwait(false);
+                return;
+            }
+
             string? conditionJson = SprocAstSerializer.SerializeCondition(condition);
 
             byte[]? docBytes = null;
@@ -289,7 +304,9 @@ internal static class TransactWriteItemsHandler
                 {
                     // Embedded into the sproc params JSON via WriteRawValue
                     // (bytes overload) — no string round-trip.
-                    docBytes = ItemHandlers.BuildItemDocumentBytes(id, pk, keyBearer);
+                    int? ttlSeconds = TtlTranslation.ComputeItemTtlSeconds(
+                        keyBearer, meta.TimeToLive, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+                    docBytes = ItemHandlers.BuildItemDocumentBytes(id, pk, keyBearer, binary: false, ttlSeconds);
                 }
                 catch (ArgumentException ex)
                 {
