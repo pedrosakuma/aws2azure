@@ -64,6 +64,22 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
     minimumTlsVersion: 'TLS1_2'
     allowBlobPublicAccess: false
     supportsHttpsTrafficOnly: true
+    // Version-level WORM: lets the proxy map S3 object-lock retention / legal
+    // hold to per-blob immutability policies (A6) without per-container ARM.
+    // Requires blob versioning, enabled on the blobServices child below.
+    immutableStorageWithVersioning: {
+      enabled: true
+    }
+  }
+}
+
+resource blobServices 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+  properties: {
+    // Blob versioning underpins both S3 bucket versioning (A5) and version-level
+    // immutability (A6) validated by the real-Azure smoke suite.
+    isVersioningEnabled: true
   }
 }
 
