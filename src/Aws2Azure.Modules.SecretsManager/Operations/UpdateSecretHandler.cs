@@ -44,14 +44,55 @@ internal static class UpdateSecretHandler
             ? idElement.GetString() ?? string.Empty
             : string.Empty;
         var createdDate = KeyVaultSecretClient.GetCreatedDate(secretDocument.RootElement);
+        var newVersionId = KeyVaultSecretClient.GetVersionId(id);
+
+        // Demote any prior AWSCURRENT version so only the new version is current.
+        // Without this, Key Vault list-by-stage sees two AWSCURRENT versions and,
+        // because `created` has 1s granularity, a same-second update can resolve
+        // AWSCURRENT to the stale version (read-your-write regression, #484).
+        await DemotePriorCurrentAsync(client, token, name, newVersionId, cancellationToken).ConfigureAwait(false);
 
         var payload = new UpdateSecretResponse(
             Arn: KeyVaultSecretClient.BuildArn(name),
             Name: name,
-            VersionId: KeyVaultSecretClient.GetVersionId(id),
+            VersionId: newVersionId,
             VersionStages: ["AWSCURRENT"],
             CreatedDate: createdDate);
 
         await SecretsManagerOperationSupport.WriteJsonAsync(context, payload, SecretsManagerJsonContext.Default.UpdateSecretResponse, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task DemotePriorCurrentAsync(KeyVaultSecretClient client, string token, string name, string newVersionId, CancellationToken cancellationToken)
+    {
+        using var listRequest = new HttpRequestMessage(HttpMethod.Get, client.BuildVaultUri(KeyVaultSecretClient.BuildSecretVersionsPath(name)));
+        listRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var listResponse = await client.SendAsync(listRequest, cancellationToken).ConfigureAwait(false);
+        if (!listResponse.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        using var versions = await SecretsManagerOperationSupport.ReadJsonDocumentAsync(listResponse.Content, cancellationToken).ConfigureAwait(false);
+        if (!versions.RootElement.TryGetProperty("value", out var array) || array.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        foreach (var version in array.EnumerateArray())
+        {
+            var vid = version.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.String
+                ? KeyVaultSecretClient.GetVersionId(idEl.GetString() ?? string.Empty)
+                : string.Empty;
+            if (string.IsNullOrEmpty(vid) || string.Equals(vid, newVersionId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var demoted = KeyVaultSecretClient.WithVersionStages(KeyVaultSecretClient.GetRawTags(version), ["AWSPREVIOUS"]);
+            using var patch = new HttpRequestMessage(HttpMethod.Patch, client.BuildVaultUri(KeyVaultSecretClient.BuildSecretVersionPath(name, vid)));
+            patch.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            patch.Content = new StringContent(KeyVaultSecretClient.BuildTagsJsonBody(demoted), Encoding.UTF8, "application/json");
+            using var _ = await client.SendAsync(patch, cancellationToken).ConfigureAwait(false);
+        }
     }
 }
