@@ -294,3 +294,22 @@ compute** whenever the token-source or auth-mode wiring changes
 
 Record any real-Azure divergence from emulator behaviour in the relevant gap doc
 or here, per the project's emulator caveat.
+
+## Divergence report & real-Azure seal (Theme C, #467)
+
+The `integration-real-azure` workflow regenerates the gap-doc site after the
+suite and uploads `docs/site/divergences.md` as the **`real-azure-divergences`**
+artifact, with a one-line summary in the run's job summary. The report lists
+every documented behaviour difference and which operations carry a real-Azure
+seal vs. are implemented-but-unsealed.
+
+To **seal** an operation as real-Azure verified, add `verified_real_azure` to its
+gap-doc YAML (a date and/or workflow run URL), e.g.:
+
+```yaml
+verified_real_azure: "2026-06-29 (run 28343347638)"
+```
+
+It renders a ✅ in the coverage matrix / service page and removes the op from the
+"implemented without a seal" list. Only seal after a real-Azure run has actually
+exercised the operation.

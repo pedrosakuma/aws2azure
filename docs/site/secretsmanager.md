@@ -94,10 +94,10 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| ClientRequestToken idempotency | 🟡 partial | Implemented with proxy-owned Key Vault version tags plus an in-process same-secret lock. Validated against real Azure Key Vault (run 28332049014: replaying the same token + payload returns the same VersionId; same token + different payload returns ResourceExistsException). | The lock is per proxy instance, not a durable Key Vault conditional write/lease. Concurrent same-token PutSecretValue calls through different proxy instances can both create versions instead of one call returning ResourceExistsException; versions written directly in Key Vault without aws2azure metadata tags are also not detected. | Route same-secret writes through one proxy instance when strict ClientRequestToken idempotency is required, or add an external single-writer/lease before calling PutSecretValue. |
-| VersionStages request labels | 🟡 partial | Persisted as proxy-owned Key Vault version tags and returned by PutSecretValue/GetSecretValue; default PutSecretValue moves AWSCURRENT to the new version and AWSPREVIOUS to the prior current version; explicit VersionStages move only the requested labels. Validated against real Azure Key Vault (run 28332049014: AWSCURRENT/AWSPREVIOUS transitions and a custom stage label resolved via GetSecretValue(VersionStage=...)). | Label transitions are implemented as multiple Key Vault version tag updates, so they are as close to atomic as Key Vault allows but are not a single backend transaction. Custom stage labels are resolvable via GetSecretValue(VersionStage=...) but are NOT enumerated by DescribeSecret, whose VersionIdsToStages is a simplified current-version view ({current version: [AWSCURRENT]}). Full AWS rotation workflow support (RotateSecret) is unsupported (see RotateSecret gap doc). | Resolve custom stage labels with GetSecretValue(VersionStage=...) rather than DescribeSecret. Use AWSCURRENT-only flows when a single-transaction stage move is required. |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| ClientRequestToken idempotency | 🟡 partial | — | Implemented with proxy-owned Key Vault version tags plus an in-process same-secret lock. Validated against real Azure Key Vault (run 28332049014: replaying the same token + payload returns the same VersionId; same token + different payload returns ResourceExistsException). | The lock is per proxy instance, not a durable Key Vault conditional write/lease. Concurrent same-token PutSecretValue calls through different proxy instances can both create versions instead of one call returning ResourceExistsException; versions written directly in Key Vault without aws2azure metadata tags are also not detected. | Route same-secret writes through one proxy instance when strict ClientRequestToken idempotency is required, or add an external single-writer/lease before calling PutSecretValue. |
+| VersionStages request labels | 🟡 partial | — | Persisted as proxy-owned Key Vault version tags and returned by PutSecretValue/GetSecretValue; default PutSecretValue moves AWSCURRENT to the new version and AWSPREVIOUS to the prior current version; explicit VersionStages move only the requested labels. Validated against real Azure Key Vault (run 28332049014: AWSCURRENT/AWSPREVIOUS transitions and a custom stage label resolved via GetSecretValue(VersionStage=...)). | Label transitions are implemented as multiple Key Vault version tag updates, so they are as close to atomic as Key Vault allows but are not a single backend transaction. Custom stage labels are resolvable via GetSecretValue(VersionStage=...) but are NOT enumerated by DescribeSecret, whose VersionIdsToStages is a simplified current-version view ({current version: [AWSCURRENT]}). Full AWS rotation workflow support (RotateSecret) is unsupported (see RotateSecret gap doc). | Resolve custom stage labels with GetSecretValue(VersionStage=...) rather than DescribeSecret. Use AWSCURRENT-only flows when a single-transaction stage move is required. |
 
 ### Behaviour differences
 
@@ -121,10 +121,10 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| Rotation Lambda orchestration | ⛔ unsupported | AWS RotateSecret invokes a customer-owned Lambda rotation function that generates, sets, tests, and finishes new credential versions (createSecret/setSecret/testSecret/finishSecret steps). aws2azure is a stateless wire-protocol translator: it has no Lambda runtime, no place to execute rotation logic, and no durable state to track a multi-step rotation, so it cannot honour the contract. Translating it to a single Key Vault write would silently break the caller's rotation expectations. |  |  |
-| RotateImmediately / RotationRules / RotationLambdaARN | ⛔ unsupported | Not applicable without rotation orchestration; the operation is rejected before any backend call so these parameters are never interpreted. |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| Rotation Lambda orchestration | ⛔ unsupported | — | AWS RotateSecret invokes a customer-owned Lambda rotation function that generates, sets, tests, and finishes new credential versions (createSecret/setSecret/testSecret/finishSecret steps). aws2azure is a stateless wire-protocol translator: it has no Lambda runtime, no place to execute rotation logic, and no durable state to track a multi-step rotation, so it cannot honour the contract. Translating it to a single Key Vault write would silently break the caller's rotation expectations. |  |  |
+| RotateImmediately / RotationRules / RotationLambdaARN | ⛔ unsupported | — | Not applicable without rotation orchestration; the operation is rejected before any backend call so these parameters are never interpreted. |  |  |
 
 ### Behaviour differences
 

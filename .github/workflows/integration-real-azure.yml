@@ -212,6 +212,28 @@ jobs:
             -c Release --no-build --nologo \
             --filter "Category=RealAzure"
 
+      # Theme C divergence report (#467): regenerate the gap-doc site so the
+      # divergence dossier reflects the current YAML seals, surface the summary
+      # inline, and upload it as the run's conformance artifact. Runs even when
+      # tests fail so the report still captures the documented divergences.
+      - name: Generate divergence report
+        if: always()
+        run: |
+          dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release
+          {
+            echo "## Real-Azure conformance"
+            echo
+            grep -m1 'Operations:' docs/site/divergences.md || true
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload divergence report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-azure-divergences
+          path: docs/site/divergences.md
+          if-no-files-found: warn
+
       # The deallocate guarantee: delete the ephemeral resource group even when
       # provisioning or the tests failed. --no-wait returns immediately; the
       # reaper workflow is the backstop for force-cancelled runs.

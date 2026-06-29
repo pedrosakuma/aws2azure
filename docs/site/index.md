@@ -12,3 +12,5 @@ Authoritative inventory of which AWS operations the proxy translates, with the A
 - [sqs](sqs.md) — 20 operation(s)
 
 See [coverage matrix](coverage.md) for a one-screen overview.
+
+See [real-Azure conformance & divergences](divergences.md) for verification state.
