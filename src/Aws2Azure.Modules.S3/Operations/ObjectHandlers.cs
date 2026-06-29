@@ -397,9 +397,22 @@ internal static class ObjectHandlers
     private static bool HasConcreteEtagPrecondition(HttpRequest request, string header)
         => HeaderForwarding.HasConcreteEtagPrecondition(request, header);
 
+    // Maps the S3 ?versionId selector to Azure's ?versionid query. The version
+    // identifier is the opaque x-ms-version-id surfaced on writes, so it passes
+    // through unchanged. No selector → the bare (current) blob URI.
+    private static Uri BuildObjectUri(BlobClient blob, string bucket, string key, HttpRequest request)
+    {
+        var versionId = request.Query["versionId"].ToString();
+        if (string.IsNullOrEmpty(versionId))
+        {
+            return blob.BuildBlobUri(bucket, key);
+        }
+        return blob.BuildBlobUri(bucket, key, "?versionid=" + Uri.EscapeDataString(versionId));
+    }
+
     private static async Task GetAsync(HttpContext context, BlobClient blob, string bucket, string key, CancellationToken ct)
     {
-        using var azureReq = new HttpRequestMessage(HttpMethod.Get, blob.BuildBlobUri(bucket, key));
+        using var azureReq = new HttpRequestMessage(HttpMethod.Get, BuildObjectUri(blob, bucket, key, context.Request));
         HeaderForwarding.CopyToAzureRequest(context.Request, azureReq);
 
         using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
@@ -457,7 +470,7 @@ internal static class ObjectHandlers
 
     private static async Task HeadAsync(HttpContext context, BlobClient blob, string bucket, string key, CancellationToken ct)
     {
-        using var azureReq = new HttpRequestMessage(HttpMethod.Head, blob.BuildBlobUri(bucket, key));
+        using var azureReq = new HttpRequestMessage(HttpMethod.Head, BuildObjectUri(blob, bucket, key, context.Request));
         HeaderForwarding.CopyToAzureRequest(context.Request, azureReq);
 
         using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
@@ -513,7 +526,7 @@ internal static class ObjectHandlers
 
     private static async Task DeleteAsync(HttpContext context, BlobClient blob, string bucket, string key, CancellationToken ct)
     {
-        using var azureReq = new HttpRequestMessage(HttpMethod.Delete, blob.BuildBlobUri(bucket, key));
+        using var azureReq = new HttpRequestMessage(HttpMethod.Delete, BuildObjectUri(blob, bucket, key, context.Request));
         HeaderForwarding.CopyToAzureRequest(context.Request, azureReq);
 
         using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);

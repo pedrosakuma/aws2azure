@@ -6,6 +6,18 @@ namespace Aws2Azure.UnitTests.S3;
 public class HeaderForwardingTests
 {
     [Fact]
+    public void CopyFromAzureResponse_maps_version_id_to_x_amz_version_id()
+    {
+        using var azure = new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK);
+        azure.Headers.TryAddWithoutValidation("x-ms-version-id", "2024-05-06T07:08:09.0000000Z");
+        var target = new Microsoft.AspNetCore.Http.DefaultHttpContext().Response;
+
+        HeaderForwarding.CopyFromAzureResponse(azure, target);
+
+        Assert.Equal("2024-05-06T07:08:09.0000000Z", target.Headers["x-amz-version-id"]);
+    }
+
+    [Fact]
     public void TranslateAzureEtagToS3_uses_content_md5_when_present()
     {
         // 16-byte MD5 of empty string = d41d8cd98f00b204e9800998ecf8427e.

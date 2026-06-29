@@ -264,6 +264,18 @@ internal static class HeaderForwarding
                 break;
             }
         }
+
+        // Azure surfaces the created/served blob version as x-ms-version-id; S3
+        // clients expect the same value under x-amz-version-id. The identifier
+        // is opaque to both sides, so it round-trips unchanged (Get/Head/Delete
+        // accept it back as the ?versionId selector).
+        if (source.Headers.TryGetValues("x-ms-version-id", out var versionId))
+        {
+            foreach (var v in versionId)
+            {
+                if (!string.IsNullOrEmpty(v)) { target.Headers["x-amz-version-id"] = v; break; }
+            }
+        }
     }
 
     /// <summary>

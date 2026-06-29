@@ -145,7 +145,6 @@ public class S3RouterTests
     }
 
     [Theory]
-    [InlineData("DELETE", "/b/k.txt", "versionId=abc")]
     [InlineData("PUT",    "/b/k.txt", "uploads")]
     [InlineData("GET",    "/b/k.txt", "uploadId=xyz&partNumber=1")]
     [InlineData("GET",    "/b/k.txt", "attributes")]
@@ -154,6 +153,19 @@ public class S3RouterTests
         var ctx = BuildContext("s3.amazonaws.com", method, path, query: "?" + query);
         var result = S3Router.Classify(ctx);
         Assert.Equal(S3Operation.Unsupported, result.Operation);
+        Assert.Equal("b", result.Bucket);
+        Assert.Equal("k.txt", result.Key);
+    }
+
+    [Theory]
+    [InlineData("GET", S3Operation.GetObject)]
+    [InlineData("HEAD", S3Operation.HeadObject)]
+    [InlineData("DELETE", S3Operation.DeleteObject)]
+    public void VersionId_selector_routes_to_object_operation(string method, S3Operation expected)
+    {
+        var ctx = BuildContext("s3.amazonaws.com", method, "/b/k.txt", query: "?versionId=abc");
+        var result = S3Router.Classify(ctx);
+        Assert.Equal(expected, result.Operation);
         Assert.Equal("b", result.Bucket);
         Assert.Equal("k.txt", result.Key);
     }
