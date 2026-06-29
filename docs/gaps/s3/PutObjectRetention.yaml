@@ -1,13 +1,16 @@
 service: s3
 operation: PutObjectRetention
 azure_equivalent: "Set Blob Immutability Policy (PUT blob ?comp=immutabilityPolicies)"
-status: partial
+status: implemented
+verified_real_azure: "run 28346494642 (2026-06-29)"
 sub_features:
   - name: "mode + retain-until"
-    status: partial
+    status: implemented
+    verified_real_azure: "run 28346494642 (2026-06-29)"
     notes: "GOVERNANCE->Unlocked, COMPLIANCE->Locked; RetainUntilDate (ISO8601) -> x-ms-immutability-policy-until-date (RFC1123). Requires the object to exist."
 behavior_differences:
   - "Azure locked policies are irreversible and extend-only; bypassing/shortening COMPLIANCE is rejected by Azure as in S3."
+  - "Requires the storage account to have version-level immutability + blob versioning enabled (operator-provisioned via ARM); opt-in per topology."
   - "Verified against real Azure only - Azurite does not support immutability policies."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectRetention.html

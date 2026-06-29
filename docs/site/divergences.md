@@ -4,7 +4,7 @@ Emulators are a necessary, not sufficient, signal: nothing is trusted as
 `implemented` without ≥1 recorded real-Azure validation. This report aggregates
 the documented behaviour differences and the real-Azure seal state.
 
-- Operations: **142** — real-Azure verified: **0**, implemented-but-unsealed: **46**
+- Operations: **142** — real-Azure verified: **4**, implemented-but-unsealed: **46**
 
 ## Implemented without a real-Azure seal
 
@@ -281,10 +281,10 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | GetObject | — | NoSuchBucket envelopes omit the informational <BucketName> element real S3 includes. [conformance:nosuchbucket-get-object::missing-field:BucketName] |
 | s3 | GetObject | — | NoSuchKey envelopes omit the informational <Key> element real S3 includes. [conformance:nosuchkey-get-object::missing-field:Key] |
 | s3 | GetObject | — | PreconditionFailed envelopes omit the informational <Condition> element (e.g. <Condition>If-Match</Condition>) real S3 includes. [conformance:precondition-failed-get::missing-field:Condition] |
-| s3 | GetObjectLegalHold | — | Verified against real Azure only - Azurite does not support legal hold. |
+| s3 | GetObjectLegalHold | ✅ | Verified against real Azure only - Azurite does not support legal hold. |
 | s3 | GetObjectLockConfiguration | — | GET returns HTTP 404 with code ObjectLockConfigurationNotFoundError so clients receive the same shape as a never-configured S3 bucket instead of InternalError. |
-| s3 | GetObjectRetention | — | Mode mapping: GOVERNANCE<->unlocked, COMPLIANCE<->locked. Azure locked is irreversible and extend-only, like S3 COMPLIANCE. |
-| s3 | GetObjectRetention | — | Verified against real Azure only - Azurite does not support immutability policies. |
+| s3 | GetObjectRetention | ✅ | Mode mapping: GOVERNANCE<->unlocked, COMPLIANCE<->locked. Azure locked is irreversible and extend-only, like S3 COMPLIANCE. |
+| s3 | GetObjectRetention | ✅ | Verified against real Azure only - Azurite does not support immutability policies. |
 | s3 | GetObjectTagging | — | Returns an empty TagSet (200) when no tags are set, matching Azure's behaviour. Azure surfaces 'no tags' as an empty set rather than a NoSuchTagSet error. |
 | s3 | GetPublicAccessBlock | — | GET returns HTTP 404 with code NoSuchPublicAccessBlockConfiguration so clients receive the same shape as a never-configured S3 bucket instead of InternalError. |
 | s3 | HeadBucket | — | 404 responses include x-amz-error-code: NoSuchBucket so SDKs can map the error without a body (HEAD has none). |
@@ -329,10 +329,11 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | PutObject | — | PUT always overwrites an existing blob, matching S3 default semantics. |
 | s3 | PutObject | — | Concrete-ETag preconditions (If-Match / If-None-Match with a value other than '*') return 501 NotImplemented: proxy-translated S3 ETags do not round-trip back to Azure's raw ETag space, and supporting optimistic concurrency would require a HEAD-then-PUT cycle that is not yet implemented. The '*' sentinel is honored (forwarded to Azure). |
 | s3 | PutObject | — | Presigned PUT is accepted (see PresignedUrl.yaml). Body integrity is not signature-protected (UNSIGNED-PAYLOAD) — identical to AWS S3 semantics. |
-| s3 | PutObjectLegalHold | — | Verified against real Azure only - Azurite does not support legal hold. |
+| s3 | PutObjectLegalHold | ✅ | Verified against real Azure only - Azurite does not support legal hold. |
 | s3 | PutObjectLockConfiguration | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
-| s3 | PutObjectRetention | — | Azure locked policies are irreversible and extend-only; bypassing/shortening COMPLIANCE is rejected by Azure as in S3. |
-| s3 | PutObjectRetention | — | Verified against real Azure only - Azurite does not support immutability policies. |
+| s3 | PutObjectRetention | ✅ | Azure locked policies are irreversible and extend-only; bypassing/shortening COMPLIANCE is rejected by Azure as in S3. |
+| s3 | PutObjectRetention | ✅ | Requires the storage account to have version-level immutability + blob versioning enabled (operator-provisioned via ARM); opt-in per topology. |
+| s3 | PutObjectRetention | ✅ | Verified against real Azure only - Azurite does not support immutability policies. |
 | s3 | PutObjectTagging | — | AWS uses 200 OK with empty body; the proxy matches that. |
 | s3 | PutPublicAccessBlock | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
 | s3 | UploadPart | — | Block IDs use the fixed-width layout b{nonce16hex}p{partNumber5d} (base64-encoded) so all parts of a blob share a constant length, satisfying Azure's per-blob block-ID uniformity rule. |
