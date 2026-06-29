@@ -1,10 +1,12 @@
 service: s3
 operation: PutObjectLegalHold
 azure_equivalent: "Set Blob Legal Hold (PUT blob ?comp=legalhold, x-ms-legal-hold)"
-status: partial
+status: implemented
+verified_real_azure: "run 28346494642 (2026-06-29)"
 sub_features:
   - name: "status ON/OFF"
-    status: partial
+    status: implemented
+    verified_real_azure: "run 28346494642 (2026-06-29)"
     notes: "ON->x-ms-legal-hold:true, OFF->false. Requires the object to exist."
 behavior_differences:
   - "Verified against real Azure only - Azurite does not support legal hold."
