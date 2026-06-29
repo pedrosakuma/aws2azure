@@ -264,7 +264,7 @@ internal static class ObjectListHandlers
 
         if (maxKeys > 0)
         {
-            var azureMax = Math.Min(maxKeys + 1, AzureMaxResults);
+            var azureMax = Math.Min(maxKeys, AzureMaxResults);
             using var response = await blob.ListBlobsAsync(
                 bucket, prefix, delimiter, keyMarker, azureMax, includeVersions: true, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
@@ -281,7 +281,6 @@ internal static class ObjectListHandlers
                 if (versions.Count + commonPrefixes.Count >= maxKeys)
                 {
                     truncated = true;
-                    nextKeyMarker = v.Name;
                     break;
                 }
                 versions.Add(new S3XmlWriter.ListedVersion(
@@ -292,13 +291,28 @@ internal static class ObjectListHandlers
             {
                 foreach (var p in page.BlobPrefixes)
                 {
+                    if (versions.Count + commonPrefixes.Count >= maxKeys)
+                    {
+                        truncated = true;
+                        break;
+                    }
                     if (seen.Add(p)) { commonPrefixes.Add(p); }
                 }
-                if (!string.IsNullOrEmpty(page.NextMarker))
-                {
-                    truncated = true;
-                    nextKeyMarker = page.NextMarker;
-                }
+            }
+
+            // Azure's opaque NextMarker is the only resumable continuation; we
+            // never emit a NextVersionIdMarker, so resume is a page boundary.
+            // Re-fetching the page marker may re-return listed versions but
+            // never skips them. If our budget filled before the page ended,
+            // fall back to the request marker (page partially consumed).
+            if (!string.IsNullOrEmpty(page.NextMarker))
+            {
+                truncated = true;
+                nextKeyMarker = page.NextMarker;
+            }
+            else if (truncated)
+            {
+                nextKeyMarker = keyMarker;
             }
         }
 
