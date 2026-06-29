@@ -73,6 +73,7 @@
 | s3 | [HeadObject](s3.md#headobject) | ✅ implemented | `HEAD https://{account}.blob.core.windows.net/{container}/{blob}` |
 | s3 | [ListBuckets](s3.md#listbuckets) | ✅ implemented | `GET https://{account}.blob.core.windows.net/?comp=list` |
 | s3 | [ListMultipartUploads](s3.md#listmultipartuploads) | 🟡 partial | `(none — Azure Blob has no in-progress-upload enumeration)` |
+| s3 | [ListObjectVersions](s3.md#listobjectversions) | 🟡 partial | `GET {container}?restype=container&comp=list&include=versions` |
 | s3 | [ListObjects](s3.md#listobjects) | ✅ implemented | `GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list` |
 | s3 | [ListObjectsV2](s3.md#listobjectsv2) | ✅ implemented | `GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list` |
 | s3 | [ListParts](s3.md#listparts) | ✅ implemented | `Get Block List (?comp=blocklist&blocklisttype=uncommitted)` |

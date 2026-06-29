@@ -98,6 +98,21 @@ internal static class AzureBlobXmlReader
         long ContentLength,
         string? ETag);
 
+    /// <summary>One blob version: a blob name plus its VersionId and whether
+    /// it is the current version (S3 IsLatest).</summary>
+    public readonly record struct BlobVersionEntry(
+        string Name,
+        DateTimeOffset LastModified,
+        long ContentLength,
+        string? ETag,
+        string? VersionId,
+        bool IsCurrent);
+
+    public readonly record struct BlobVersionListPage(
+        IReadOnlyList<BlobVersionEntry> Versions,
+        IReadOnlyList<string> BlobPrefixes,
+        string? NextMarker);
+
     /// <summary>
     /// One page of an Azure blob listing: the blob entries in the segment,
     /// the BlobPrefix values (Azure's equivalent of S3 CommonPrefixes,
@@ -224,6 +239,113 @@ internal static class AzureBlobXmlReader
         }
 
         return new BlobListPage(blobs, prefixes, nextMarker);
+    }
+
+    /// <summary>
+    /// Parses an EnumerationResults document from a versioned listing
+    /// (<c>?restype=container&amp;comp=list&amp;include=versions</c>), where each
+    /// <c>&lt;Blob&gt;</c> additionally carries <c>&lt;VersionId&gt;</c> and
+    /// <c>&lt;IsCurrentVersion&gt;</c>. Blobs with no VersionId (versioning not
+    /// enabled) are treated as the current version with a null id.
+    /// </summary>
+    public static BlobVersionListPage ParseBlobVersionListPage(string xml, int expectedCount = 64)
+    {
+        var versions = new List<BlobVersionEntry>(expectedCount);
+        var prefixes = new List<string>();
+        string? nextMarker = null;
+
+        using var reader = XmlReader.Create(new StringReader(xml), new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Prohibit,
+            XmlResolver = null,
+            IgnoreWhitespace = true,
+            IgnoreComments = true,
+        });
+
+        var inBlob = false;
+        var inBlobPrefix = false;
+        string? name = null;
+        DateTimeOffset? lastModified = null;
+        long contentLength = 0;
+        string? etag = null;
+        string? versionId = null;
+        var isCurrent = false;
+        var sawCurrentFlag = false;
+
+        if (!reader.Read()) return new BlobVersionListPage(versions, prefixes, nextMarker);
+
+        while (!reader.EOF)
+        {
+            var shouldAdvance = true;
+
+            if (reader.NodeType == XmlNodeType.Element)
+            {
+                switch (reader.LocalName)
+                {
+                    case "Blob":
+                        inBlob = true;
+                        name = null; lastModified = null; contentLength = 0;
+                        etag = null; versionId = null; isCurrent = false; sawCurrentFlag = false;
+                        break;
+                    case "BlobPrefix":
+                        inBlobPrefix = true; name = null;
+                        break;
+                    case "Name" when inBlob || inBlobPrefix:
+                        name = reader.ReadElementContentAsString(); shouldAdvance = false;
+                        break;
+                    case "Last-Modified" when inBlob:
+                        var rawLm = reader.ReadElementContentAsString();
+                        if (DateTimeOffset.TryParse(rawLm, CultureInfo.InvariantCulture,
+                                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsedLm))
+                        {
+                            lastModified = parsedLm;
+                        }
+                        shouldAdvance = false;
+                        break;
+                    case "Content-Length" when inBlob:
+                        long.TryParse(reader.ReadElementContentAsString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out contentLength);
+                        shouldAdvance = false;
+                        break;
+                    case "Etag" when inBlob:
+                        etag = reader.ReadElementContentAsString(); shouldAdvance = false;
+                        break;
+                    case "VersionId" when inBlob:
+                        versionId = reader.ReadElementContentAsString(); shouldAdvance = false;
+                        break;
+                    case "IsCurrentVersion" when inBlob:
+                        isCurrent = string.Equals(reader.ReadElementContentAsString(), "true", StringComparison.OrdinalIgnoreCase);
+                        sawCurrentFlag = true; shouldAdvance = false;
+                        break;
+                    case "NextMarker" when !inBlob && !inBlobPrefix:
+                        var marker = reader.ReadElementContentAsString();
+                        if (!string.IsNullOrEmpty(marker)) { nextMarker = marker; }
+                        shouldAdvance = false;
+                        break;
+                }
+            }
+            else if (reader.NodeType == XmlNodeType.EndElement)
+            {
+                if (reader.LocalName == "Blob" && inBlob)
+                {
+                    // No version flag means versioning is off → it's current.
+                    versions.Add(new BlobVersionEntry(
+                        name ?? string.Empty,
+                        lastModified ?? DateTimeOffset.UnixEpoch,
+                        contentLength, etag, versionId,
+                        sawCurrentFlag ? isCurrent : true));
+                    inBlob = false;
+                }
+                else if (reader.LocalName == "BlobPrefix" && inBlobPrefix)
+                {
+                    if (!string.IsNullOrEmpty(name)) { prefixes.Add(name!); }
+                    inBlobPrefix = false;
+                }
+            }
+
+            if (shouldAdvance) { reader.Read(); }
+        }
+
+        return new BlobVersionListPage(versions, prefixes, nextMarker);
     }
 
     /// <summary>

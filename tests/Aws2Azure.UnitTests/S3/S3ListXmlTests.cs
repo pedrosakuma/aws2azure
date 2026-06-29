@@ -151,6 +151,46 @@ public class S3ListXmlTests
         Assert.Equal("true", doc.Root!.Element(S3Ns + "IsTruncated")!.Value);
     }
 
+    [Fact]
+    public async Task ListVersionsResult_emits_versions_with_islatest_and_next_key_marker()
+    {
+        var versions = new[]
+        {
+            new S3XmlWriter.ListedVersion("k.txt", "v2", true,
+                DateTimeOffset.Parse("2024-05-06T07:08:09Z"), "\"e2\"", 5, "STANDARD"),
+            new S3XmlWriter.ListedVersion("k.txt", "v1", false,
+                DateTimeOffset.Parse("2024-05-05T01:02:03Z"), "\"e1\"", 3, "STANDARD"),
+        };
+        using var ms = new MemoryStream();
+        await S3XmlWriter.WriteListVersionsResultAsync(
+            ms, "b", null, null, 1000, isTruncated: true, keyMarker: null,
+            nextKeyMarker: "k.txt", encodeUrl: false, versions: versions,
+            commonPrefixes: Array.Empty<string>());
+        var doc = XDocument.Parse(Encoding.UTF8.GetString(ms.ToArray()));
+
+        Assert.Equal("ListVersionsResult", doc.Root!.Name.LocalName);
+        var v = doc.Root!.Elements(S3Ns + "Version").ToArray();
+        Assert.Equal(2, v.Length);
+        Assert.Equal("v2", v[0].Element(S3Ns + "VersionId")!.Value);
+        Assert.Equal("true", v[0].Element(S3Ns + "IsLatest")!.Value);
+        Assert.Equal("k.txt", doc.Root!.Element(S3Ns + "NextKeyMarker")!.Value);
+    }
+
+    [Fact]
+    public async Task ListVersionsResult_emits_null_version_id_when_unversioned()
+    {
+        var versions = new[]
+        {
+            new S3XmlWriter.ListedVersion("x", "", true,
+                DateTimeOffset.Parse("2024-05-06T07:08:09Z"), "\"e\"", 1, "STANDARD"),
+        };
+        using var ms = new MemoryStream();
+        await S3XmlWriter.WriteListVersionsResultAsync(
+            ms, "b", null, null, 1000, false, null, null, false, versions, Array.Empty<string>());
+        var doc = XDocument.Parse(Encoding.UTF8.GetString(ms.ToArray()));
+        Assert.Equal("null", doc.Root!.Element(S3Ns + "Version")!.Element(S3Ns + "VersionId")!.Value);
+    }
+
     // Render helpers wrap the async stream overloads (the production API) and
     // return the body as a string so the assertions below can parse it. The
     // module no longer ships string-returning overloads (they were dead outside
@@ -236,6 +276,41 @@ public class AzureBlobListReaderTests
         Assert.Single(page.BlobPrefixes);
         Assert.Equal("b/", page.BlobPrefixes[0]);
         Assert.Equal("continue-here", page.NextMarker);
+    }
+
+    [Fact]
+    public void ParseBlobVersionListPage_extracts_version_id_and_current_flag()
+    {
+        const string xml =
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+            "<EnumerationResults><Blobs>" +
+            "  <Blob><Name>k.txt</Name><VersionId>2024-05-06T07:08:09.0Z</VersionId>" +
+            "    <IsCurrentVersion>true</IsCurrentVersion>" +
+            "    <Properties><Last-Modified>Mon, 06 May 2024 07:08:09 GMT</Last-Modified>" +
+            "    <Etag>\"e2\"</Etag><Content-Length>5</Content-Length></Properties></Blob>" +
+            "  <Blob><Name>k.txt</Name><VersionId>2024-05-05T01:02:03.0Z</VersionId>" +
+            "    <IsCurrentVersion>false</IsCurrentVersion>" +
+            "    <Properties><Last-Modified>Sun, 05 May 2024 01:02:03 GMT</Last-Modified>" +
+            "    <Etag>\"e1\"</Etag><Content-Length>3</Content-Length></Properties></Blob>" +
+            "</Blobs></EnumerationResults>";
+
+        var page = Aws2Azure.Modules.S3.Xml.AzureBlobXmlReader.ParseBlobVersionListPage(xml);
+        Assert.Equal(2, page.Versions.Count);
+        Assert.True(page.Versions[0].IsCurrent);
+        Assert.Equal("2024-05-06T07:08:09.0Z", page.Versions[0].VersionId);
+        Assert.False(page.Versions[1].IsCurrent);
+    }
+
+    [Fact]
+    public void ParseBlobVersionListPage_treats_unversioned_blob_as_current()
+    {
+        const string xml =
+            "<EnumerationResults><Blobs><Blob><Name>x</Name>" +
+            "<Properties><Content-Length>1</Content-Length></Properties></Blob></Blobs></EnumerationResults>";
+        var page = Aws2Azure.Modules.S3.Xml.AzureBlobXmlReader.ParseBlobVersionListPage(xml);
+        Assert.Single(page.Versions);
+        Assert.True(page.Versions[0].IsCurrent);
+        Assert.Null(page.Versions[0].VersionId);
     }
 
     [Fact]

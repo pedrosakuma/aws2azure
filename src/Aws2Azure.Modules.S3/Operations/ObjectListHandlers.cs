@@ -36,6 +36,12 @@ internal static class ObjectListHandlers
             return;
         }
 
+        if (route.Operation == S3Operation.ListObjectVersions)
+        {
+            await HandleListVersionsAsync(context, bucket, blob, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         var query = context.Request.Query;
         var isV2 = route.Operation == S3Operation.ListObjectsV2;
 
@@ -224,6 +230,84 @@ internal static class ObjectListHandlers
                 contents: contents,
                 commonPrefixes: commonPrefixes).ConfigureAwait(false);
         }
+    }
+
+    // ListObjectVersions: single Azure page (versions listing) shaped into the
+    // S3 ListVersionsResult. Pagination via key-marker → Azure marker; delete
+    // markers are not modelled (no S3↔Azure delete-marker mapping).
+    private static async Task HandleListVersionsAsync(
+        HttpContext context, string bucket, BlobClient blob, CancellationToken cancellationToken)
+    {
+        var query = context.Request.Query;
+        var prefix = StringOrNull(query, "prefix");
+        var delimiter = StringOrNull(query, "delimiter");
+        var encodingType = StringOrNull(query, "encoding-type");
+        var encodeUrl = string.Equals(encodingType, "url", StringComparison.OrdinalIgnoreCase);
+        if (!string.IsNullOrEmpty(encodingType) && !encodeUrl)
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidArgument(
+                "Invalid Encoding Method specified in Request")).ConfigureAwait(false);
+            return;
+        }
+        if (!TryParseMaxKeys(query, out var maxKeys, out var maxKeysError))
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidArgument(maxKeysError!)).ConfigureAwait(false);
+            return;
+        }
+        var keyMarker = StringOrNull(query, "key-marker");
+
+        var versions = new List<S3XmlWriter.ListedVersion>(Math.Min(maxKeys, 64));
+        var commonPrefixes = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var truncated = false;
+        string? nextKeyMarker = null;
+
+        if (maxKeys > 0)
+        {
+            var azureMax = Math.Min(maxKeys + 1, AzureMaxResults);
+            using var response = await blob.ListBlobsAsync(
+                bucket, prefix, delimiter, keyMarker, azureMax, includeVersions: true, cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                await S3ErrorMapping.WriteAsync(context,
+                    S3ErrorMapping.FromAzure(response, S3Operation.ListObjectVersions)).ConfigureAwait(false);
+                return;
+            }
+            var xml = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            var page = AzureBlobXmlReader.ParseBlobVersionListPage(xml, azureMax);
+
+            foreach (var v in page.Versions)
+            {
+                if (versions.Count + commonPrefixes.Count >= maxKeys)
+                {
+                    truncated = true;
+                    nextKeyMarker = v.Name;
+                    break;
+                }
+                versions.Add(new S3XmlWriter.ListedVersion(
+                    v.Name, v.VersionId ?? string.Empty, v.IsCurrent,
+                    v.LastModified, v.ETag ?? string.Empty, v.ContentLength, DefaultStorageClass));
+            }
+            if (!truncated)
+            {
+                foreach (var p in page.BlobPrefixes)
+                {
+                    if (seen.Add(p)) { commonPrefixes.Add(p); }
+                }
+                if (!string.IsNullOrEmpty(page.NextMarker))
+                {
+                    truncated = true;
+                    nextKeyMarker = page.NextMarker;
+                }
+            }
+        }
+
+        context.Response.StatusCode = StatusCodes.Status200OK;
+        context.Response.ContentType = "application/xml; charset=utf-8";
+        await S3XmlWriter.WriteListVersionsResultAsync(
+            context.Response.Body, bucket, prefix, delimiter, maxKeys,
+            isTruncated: truncated, keyMarker: keyMarker, nextKeyMarker: truncated ? nextKeyMarker : null,
+            encodeUrl: encodeUrl, versions: versions, commonPrefixes: commonPrefixes).ConfigureAwait(false);
     }
 
     private static bool TryParseMaxKeys(IQueryCollection query, out int maxKeys, out string? error)

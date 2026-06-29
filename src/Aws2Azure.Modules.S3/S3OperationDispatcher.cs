@@ -25,7 +25,8 @@ internal static class S3OperationDispatcher
             S3Operation.CopyObject => S3DispatchTarget.Object,
 
             S3Operation.ListObjects or
-            S3Operation.ListObjectsV2 => S3DispatchTarget.ObjectList,
+            S3Operation.ListObjectsV2 or
+            S3Operation.ListObjectVersions => S3DispatchTarget.ObjectList,
 
             S3Operation.DeleteObjects => S3DispatchTarget.DeleteObjects,
 

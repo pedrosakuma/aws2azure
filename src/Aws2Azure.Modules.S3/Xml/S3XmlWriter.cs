@@ -476,6 +476,84 @@ internal static class S3XmlWriter
         await buffer.CopyToAsync(output).ConfigureAwait(false);
     }
 
+    public readonly record struct ListedVersion(
+        string Key,
+        string VersionId,
+        bool IsLatest,
+        DateTimeOffset LastModified,
+        string ETag,
+        long Size,
+        string StorageClass);
+
+    /// <summary>
+    /// S3 ListObjectVersions response. Maps Azure blob versions to S3
+    /// &lt;Version&gt; entries. Delete markers are not modelled (Azure delete
+    /// markers do not map 1:1 to S3 delete markers). Pagination uses KeyMarker
+    /// / NextKeyMarker only (Azure's marker is opaque and key-ordered).
+    /// </summary>
+    public static async Task WriteListVersionsResultAsync(
+        Stream output,
+        string bucket,
+        string? prefix,
+        string? delimiter,
+        int maxKeys,
+        bool isTruncated,
+        string? keyMarker,
+        string? nextKeyMarker,
+        bool encodeUrl,
+        IReadOnlyList<ListedVersion> versions,
+        IReadOnlyList<string> commonPrefixes)
+    {
+        using var buffer = new MemoryStream(EstimateXmlSize(versions.Count, commonPrefixes.Count));
+        using (var writer = XmlWriter.Create(buffer, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("ListVersionsResult", S3Namespace);
+
+            writer.WriteElementString("Name", bucket);
+            writer.WriteElementString("Prefix", Encode(prefix, encodeUrl));
+            writer.WriteElementString("KeyMarker", Encode(keyMarker, encodeUrl));
+            writer.WriteElementString("VersionIdMarker", string.Empty);
+            if (!string.IsNullOrEmpty(nextKeyMarker))
+            {
+                writer.WriteElementString("NextKeyMarker", Encode(nextKeyMarker, encodeUrl));
+            }
+            WriteIntElement(writer, "MaxKeys", maxKeys);
+            if (!string.IsNullOrEmpty(delimiter))
+            {
+                writer.WriteElementString("Delimiter", Encode(delimiter, encodeUrl));
+            }
+            writer.WriteElementString("IsTruncated", isTruncated ? "true" : "false");
+            if (encodeUrl)
+            {
+                writer.WriteElementString("EncodingType", "url");
+            }
+            foreach (var v in versions)
+            {
+                writer.WriteStartElement("Version");
+                writer.WriteElementString("Key", Encode(v.Key, encodeUrl));
+                writer.WriteElementString("VersionId", string.IsNullOrEmpty(v.VersionId) ? "null" : v.VersionId);
+                writer.WriteElementString("IsLatest", v.IsLatest ? "true" : "false");
+                WriteDateTimeElement(writer, "LastModified", v.LastModified.UtcDateTime);
+                var etag = NormalizeETag(v.ETag);
+                if (!string.IsNullOrEmpty(etag))
+                {
+                    writer.WriteElementString("ETag", etag);
+                }
+                WriteLongElement(writer, "Size", v.Size);
+                writer.WriteElementString("StorageClass", v.StorageClass);
+                writer.WriteEndElement();
+            }
+            WriteCommonPrefixes(writer, commonPrefixes, encodeUrl);
+
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+
+        buffer.Position = 0;
+        await buffer.CopyToAsync(output).ConfigureAwait(false);
+    }
+
     /// <summary>
     /// Writes Contents elements with zero-allocation DateTime and Size formatting.
     /// </summary>
