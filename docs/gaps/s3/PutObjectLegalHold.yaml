@@ -1,10 +1,13 @@
 service: s3
 operation: PutObjectLegalHold
-azure_equivalent: "(no equivalent — proxy returns 501 NotImplemented)"
-status: unsupported
+azure_equivalent: "Set Blob Legal Hold (PUT blob ?comp=legalhold, x-ms-legal-hold)"
+status: partial
 sub_features:
-  - name: "operation"
-    status: unsupported
-    notes: "Azure has no equivalent surface for this S3 operation. The proxy returns 501 NotImplemented so the absence is explicit."
+  - name: "status ON/OFF"
+    status: partial
+    notes: "ON->x-ms-legal-hold:true, OFF->false. Requires the object to exist."
+behavior_differences:
+  - "Verified against real Azure only - Azurite does not support legal hold."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectLegalHold.html
+  - https://learn.microsoft.com/en-us/rest/api/storageservices/set-blob-legal-hold

@@ -90,4 +90,56 @@ public sealed class S3RealAzureSmokeTests
             }
         }
     }
+
+    [SkippableFact]
+    public async Task ObjectLock_retention_and_legal_hold_round_trip()
+    {
+        Skip.IfNot(_fx.BlobConfigured,
+            "AZURE_BLOB_ACCOUNT/AZURE_BLOB_KEY not set — skipping real-Azure object-lock smoke.");
+
+        var bucket = "aws2azure-it-" + Guid.NewGuid().ToString("N")[..12];
+        const string key = "lock/object.txt";
+        using var client = _fx.CreateS3Client();
+        var bucketCreated = false;
+        try
+        {
+            await client.PutBucketAsync(new PutBucketRequest { BucketName = bucket }).ConfigureAwait(false);
+            bucketCreated = true;
+            await client.PutObjectAsync(new PutObjectRequest
+            {
+                BucketName = bucket, Key = key, ContentBody = "worm",
+            }).ConfigureAwait(false);
+
+            var until = DateTime.UtcNow.AddMinutes(2);
+            await client.PutObjectRetentionAsync(new PutObjectRetentionRequest
+            {
+                BucketName = bucket, Key = key,
+                Retention = new ObjectLockRetention { Mode = ObjectLockRetentionMode.Governance, RetainUntilDate = until },
+            }).ConfigureAwait(false);
+            var ret = await client.GetObjectRetentionAsync(new GetObjectRetentionRequest { BucketName = bucket, Key = key }).ConfigureAwait(false);
+            Assert.Equal(ObjectLockRetentionMode.Governance, ret.Retention.Mode);
+
+            await client.PutObjectLegalHoldAsync(new PutObjectLegalHoldRequest
+            {
+                BucketName = bucket, Key = key,
+                LegalHold = new ObjectLockLegalHold { Status = ObjectLockLegalHoldStatus.On },
+            }).ConfigureAwait(false);
+            var hold = await client.GetObjectLegalHoldAsync(new GetObjectLegalHoldRequest { BucketName = bucket, Key = key }).ConfigureAwait(false);
+            Assert.Equal(ObjectLockLegalHoldStatus.On, hold.LegalHold.Status);
+
+            await client.PutObjectLegalHoldAsync(new PutObjectLegalHoldRequest
+            {
+                BucketName = bucket, Key = key,
+                LegalHold = new ObjectLockLegalHold { Status = ObjectLockLegalHoldStatus.Off },
+            }).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (bucketCreated)
+            {
+                try { await client.DeleteObjectAsync(new DeleteObjectRequest { BucketName = bucket, Key = key }).ConfigureAwait(false); } catch { }
+                try { await client.DeleteBucketAsync(new DeleteBucketRequest { BucketName = bucket }).ConfigureAwait(false); } catch { }
+            }
+        }
+    }
 }

@@ -1,12 +1,13 @@
 service: s3
 operation: GetObjectLockConfiguration
-azure_equivalent: "(no equivalent — proxy returns 404 ObjectLockConfigurationNotFoundError)"
+azure_equivalent: "(bucket-level WORM is ARM/management-plane only; proxy returns 404 ObjectLockConfigurationNotFoundError)"
 status: unsupported
 sub_features:
   - name: "configuration storage"
     status: unsupported
-    notes: "Azure Immutable Blob Storage uses time-based or legal-hold policies; not surfaced through this proxy yet."
+    notes: "Object-level retention/legal-hold ARE supported (see PutObjectRetention/PutObjectLegalHold). Bucket-level ObjectLockConfiguration maps to Azure container/account WORM, which is an ARM (management-plane, Entra-token) surface unreachable with storage account keys, so it stays unsupported."
 behavior_differences:
   - "GET returns HTTP 404 with code ObjectLockConfigurationNotFoundError so clients receive the same shape as a never-configured S3 bucket instead of InternalError."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectLockConfiguration.html
+  - https://learn.microsoft.com/en-us/rest/api/storagerp/blob-containers/create-or-update-immutability-policy

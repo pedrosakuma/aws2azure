@@ -1,11 +1,11 @@
 service: s3
 operation: PutObjectLockConfiguration
-azure_equivalent: "(no equivalent — proxy returns 501 NotImplemented)"
+azure_equivalent: "(bucket-level WORM is ARM/management-plane only; proxy returns 501 NotImplemented)"
 status: unsupported
 sub_features:
   - name: "configuration storage"
     status: unsupported
-    notes: "See the matching Get* gap doc for the Azure-side reason."
+    notes: "Per-object retention/legal-hold are supported; bucket-level lock config is ARM-only. See the matching Get* gap doc."
 behavior_differences:
   - "PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape."
 references:
