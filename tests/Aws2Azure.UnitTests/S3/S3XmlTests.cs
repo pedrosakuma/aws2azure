@@ -29,6 +29,27 @@ public class S3XmlTests
     }
 
     [Fact]
+    public void ObjectRetention_emits_mode_and_iso_date()
+    {
+        var until = DateTimeOffset.Parse("2030-01-02T03:04:05Z");
+        var doc = XDocument.Parse(S3XmlWriter.ObjectRetention("COMPLIANCE", until));
+        Assert.Equal("Retention", doc.Root!.Name.LocalName);
+        Assert.Equal(S3Ns, doc.Root!.Name.Namespace);
+        Assert.Equal("COMPLIANCE", doc.Root!.Element(S3Ns + "Mode")!.Value);
+        Assert.Equal("2030-01-02T03:04:05.000Z", doc.Root!.Element(S3Ns + "RetainUntilDate")!.Value);
+    }
+
+    [Theory]
+    [InlineData(true, "ON")]
+    [InlineData(false, "OFF")]
+    public void ObjectLegalHold_emits_status(bool on, string expected)
+    {
+        var doc = XDocument.Parse(S3XmlWriter.ObjectLegalHold(on));
+        Assert.Equal("LegalHold", doc.Root!.Name.LocalName);
+        Assert.Equal(expected, doc.Root!.Element(S3Ns + "Status")!.Value);
+    }
+
+    [Fact]
     public void ListAllMyBucketsResult_emits_expected_shape()
     {
         var buckets = new[]

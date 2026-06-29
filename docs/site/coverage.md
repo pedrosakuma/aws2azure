@@ -63,9 +63,9 @@
 | s3 | [GetBucketWebsite](s3.md#getbucketwebsite) | ⛔ unsupported | `(no equivalent — proxy returns 404 NoSuchWebsiteConfiguration)` |
 | s3 | [GetObject](s3.md#getobject) | ✅ implemented | `GET https://{account}.blob.core.windows.net/{container}/{blob}` |
 | s3 | [GetObjectAcl](s3.md#getobjectacl) | 🟡 partial | `(no Azure equivalent — synthetic ownership-only response)` |
-| s3 | [GetObjectLegalHold](s3.md#getobjectlegalhold) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
-| s3 | [GetObjectLockConfiguration](s3.md#getobjectlockconfiguration) | ⛔ unsupported | `(no equivalent — proxy returns 404 ObjectLockConfigurationNotFoundError)` |
-| s3 | [GetObjectRetention](s3.md#getobjectretention) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
+| s3 | [GetObjectLegalHold](s3.md#getobjectlegalhold) | 🟡 partial | `Blob legal hold (HEAD blob: x-ms-legal-hold)` |
+| s3 | [GetObjectLockConfiguration](s3.md#getobjectlockconfiguration) | ⛔ unsupported | `(bucket-level WORM is ARM/management-plane only; proxy returns 404 ObjectLockConfigurationNotFoundError)` |
+| s3 | [GetObjectRetention](s3.md#getobjectretention) | 🟡 partial | `Blob immutability policy (HEAD blob: x-ms-immutability-policy-mode/-until-date)` |
 | s3 | [GetObjectTagging](s3.md#getobjecttagging) | ✅ implemented | `GET {blob}?comp=tags (Azure Blob Index Tags)` |
 | s3 | [GetObjectTorrent](s3.md#getobjecttorrent) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
 | s3 | [GetPublicAccessBlock](s3.md#getpublicaccessblock) | ⛔ unsupported | `(no equivalent — proxy returns 404 NoSuchPublicAccessBlockConfiguration)` |
@@ -94,9 +94,9 @@
 | s3 | [PutBucketWebsite](s3.md#putbucketwebsite) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
 | s3 | [PutObject](s3.md#putobject) | ✅ implemented | `PUT https://{account}.blob.core.windows.net/{container}/{blob}` |
 | s3 | [PutObjectAcl](s3.md#putobjectacl) | 🟡 partial | `(no Azure equivalent — validates owner-only intent and replies 200)` |
-| s3 | [PutObjectLegalHold](s3.md#putobjectlegalhold) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
-| s3 | [PutObjectLockConfiguration](s3.md#putobjectlockconfiguration) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
-| s3 | [PutObjectRetention](s3.md#putobjectretention) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
+| s3 | [PutObjectLegalHold](s3.md#putobjectlegalhold) | 🟡 partial | `Set Blob Legal Hold (PUT blob ?comp=legalhold, x-ms-legal-hold)` |
+| s3 | [PutObjectLockConfiguration](s3.md#putobjectlockconfiguration) | ⛔ unsupported | `(bucket-level WORM is ARM/management-plane only; proxy returns 501 NotImplemented)` |
+| s3 | [PutObjectRetention](s3.md#putobjectretention) | 🟡 partial | `Set Blob Immutability Policy (PUT blob ?comp=immutabilityPolicies)` |
 | s3 | [PutObjectTagging](s3.md#putobjecttagging) | ✅ implemented | `PUT {blob}?comp=tags` |
 | s3 | [PutPublicAccessBlock](s3.md#putpublicaccessblock) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |
 | s3 | [RestoreObject](s3.md#restoreobject) | ⛔ unsupported | `(no equivalent — proxy returns 501 NotImplemented)` |

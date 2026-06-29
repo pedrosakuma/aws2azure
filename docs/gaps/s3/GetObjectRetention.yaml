@@ -1,10 +1,14 @@
 service: s3
 operation: GetObjectRetention
-azure_equivalent: "(no equivalent — proxy returns 501 NotImplemented)"
-status: unsupported
+azure_equivalent: "Blob immutability policy (HEAD blob: x-ms-immutability-policy-mode/-until-date)"
+status: partial
 sub_features:
-  - name: "operation"
-    status: unsupported
-    notes: "Azure has no equivalent surface for this S3 operation. The proxy returns 501 NotImplemented so the absence is explicit."
+  - name: "mode + retain-until"
+    status: partial
+    notes: "Reads the blob immutability policy via HEAD: x-ms-immutability-policy-mode (locked->COMPLIANCE, unlocked->GOVERNANCE) and x-ms-immutability-policy-until-date. Returns 404 NoSuchObjectLockConfiguration when no policy is set."
+behavior_differences:
+  - "Mode mapping: GOVERNANCE<->unlocked, COMPLIANCE<->locked. Azure locked is irreversible and extend-only, like S3 COMPLIANCE."
+  - "Verified against real Azure only - Azurite does not support immutability policies."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectRetention.html
+  - https://learn.microsoft.com/en-us/rest/api/storageservices/get-blob-properties

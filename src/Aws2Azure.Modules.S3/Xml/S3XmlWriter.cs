@@ -154,6 +154,41 @@ internal static class S3XmlWriter
 
     public readonly record struct DeleteErrorEntry(string Key, string Code, string Message);
 
+    /// <summary>
+    /// S3 <c>Retention</c> body for Get/PutObjectRetention. Mode is
+    /// GOVERNANCE/COMPLIANCE; RetainUntilDate is ISO 8601.
+    /// </summary>
+    public static string ObjectRetention(string mode, DateTimeOffset retainUntil)
+    {
+        var sb = new StringBuilder(160);
+        using (var writer = XmlWriter.Create(sb, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("Retention", S3Namespace);
+            writer.WriteElementString("Mode", mode);
+            writer.WriteElementString("RetainUntilDate",
+                retainUntil.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>S3 <c>LegalHold</c> body for Get/PutObjectLegalHold (ON/OFF).</summary>
+    public static string ObjectLegalHold(bool on)
+    {
+        var sb = new StringBuilder(128);
+        using (var writer = XmlWriter.Create(sb, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("LegalHold", S3Namespace);
+            writer.WriteElementString("Status", on ? "ON" : "OFF");
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        return sb.ToString();
+    }
+
     public readonly record struct ListedPart(int PartNumber, DateTimeOffset LastModified, string ETag, long Size);
 
     public readonly record struct ListedUpload(string Key, string UploadId, DateTimeOffset Initiated);

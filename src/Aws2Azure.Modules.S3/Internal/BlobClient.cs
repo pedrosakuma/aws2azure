@@ -349,6 +349,57 @@ internal sealed partial class BlobClient
     }
 
     /// <summary>
+    /// Issues <c>HEAD {blob}</c> (Get Blob Properties). The response carries
+    /// the <c>x-ms-immutability-policy-until-date</c>, <c>x-ms-immutability-
+    /// policy-mode</c>, and <c>x-ms-legal-hold</c> headers (when set) that back
+    /// S3 GetObjectRetention / GetObjectLegalHold.
+    /// </summary>
+    public Task<HttpResponseMessage> HeadBlobAsync(string container, string key, string? versionId, CancellationToken cancellationToken)
+    {
+        var uri = BuildBlobUri(container, key, VersionQuery(null, versionId));
+        var request = new HttpRequestMessage(HttpMethod.Head, uri);
+        return SendBlobRequestAsync(request, cancellationToken);
+    }
+
+    public Task<HttpResponseMessage> SetBlobImmutabilityPolicyAsync(
+        string container, string key, string untilDateRfc1123, string mode, string? versionId, CancellationToken cancellationToken)
+    {
+        var uri = BuildBlobUri(container, key, VersionQuery("comp=immutabilityPolicies", versionId));
+        var request = new HttpRequestMessage(HttpMethod.Put, uri);
+        request.Headers.TryAddWithoutValidation("x-ms-immutability-policy-until-date", untilDateRfc1123);
+        request.Headers.TryAddWithoutValidation("x-ms-immutability-policy-mode", mode);
+        return SendBlobRequestAsync(request, cancellationToken);
+    }
+
+    public Task<HttpResponseMessage> DeleteBlobImmutabilityPolicyAsync(
+        string container, string key, string? versionId, CancellationToken cancellationToken)
+    {
+        var uri = BuildBlobUri(container, key, VersionQuery("comp=immutabilityPolicies", versionId));
+        return SendAsync(HttpMethod.Delete, uri, cancellationToken);
+    }
+
+    public Task<HttpResponseMessage> SetBlobLegalHoldAsync(
+        string container, string key, bool hold, string? versionId, CancellationToken cancellationToken)
+    {
+        var uri = BuildBlobUri(container, key, VersionQuery("comp=legalhold", versionId));
+        var request = new HttpRequestMessage(HttpMethod.Put, uri);
+        request.Headers.TryAddWithoutValidation("x-ms-legal-hold", hold ? "true" : "false");
+        return SendBlobRequestAsync(request, cancellationToken);
+    }
+
+    // Builds "?comp=...&versionid=..." threading the S3 versionId (opaque
+    // Azure x-ms-version-id) onto the subresource query, both parts optional.
+    private static string VersionQuery(string? comp, string? versionId)
+    {
+        var hasComp = !string.IsNullOrEmpty(comp);
+        var hasVer = !string.IsNullOrEmpty(versionId);
+        if (!hasComp && !hasVer) return string.Empty;
+        if (hasComp && !hasVer) return "?" + comp;
+        if (!hasComp) return "?versionid=" + Uri.EscapeDataString(versionId!);
+        return "?" + comp + "&versionid=" + Uri.EscapeDataString(versionId!);
+    }
+
+    /// <summary>
     /// Issues <c>PUT {container}?restype=container&amp;comp=metadata</c>
     /// replacing the container metadata with <paramref name="metadata"/>.
     /// Used by the S3 module to back PutBucketTagging / DeleteBucketTagging

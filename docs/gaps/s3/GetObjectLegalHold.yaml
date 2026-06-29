@@ -1,10 +1,13 @@
 service: s3
 operation: GetObjectLegalHold
-azure_equivalent: "(no equivalent — proxy returns 501 NotImplemented)"
-status: unsupported
+azure_equivalent: "Blob legal hold (HEAD blob: x-ms-legal-hold)"
+status: partial
 sub_features:
-  - name: "operation"
-    status: unsupported
-    notes: "Azure has no equivalent surface for this S3 operation. The proxy returns 501 NotImplemented so the absence is explicit."
+  - name: "status ON/OFF"
+    status: partial
+    notes: "Reads x-ms-legal-hold from HEAD; true->ON, absent/false->OFF."
+behavior_differences:
+  - "Verified against real Azure only - Azurite does not support legal hold."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectLegalHold.html
+  - https://learn.microsoft.com/en-us/rest/api/storageservices/get-blob-properties

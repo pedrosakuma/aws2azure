@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Globalization;
 using System.Text;
 using System.Xml;
 using Aws2Azure.Core.Modules;
@@ -216,11 +217,21 @@ internal static class SubresourceHandlers
             // ── Object-scoped stubs ──
             case S3Operation.GetObjectTorrent:
             case S3Operation.RestoreObject:
-            case S3Operation.GetObjectLegalHold:
-            case S3Operation.PutObjectLegalHold:
-            case S3Operation.GetObjectRetention:
-            case S3Operation.PutObjectRetention:
                 await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NotImplemented(op)).ConfigureAwait(false);
+                return;
+
+            // ── Object lock / retention / legal hold (blob WORM) ──
+            case S3Operation.GetObjectRetention:
+                await GetObjectRetentionAsync(context, blob, bucket, key!, ct).ConfigureAwait(false);
+                return;
+            case S3Operation.PutObjectRetention:
+                await PutObjectRetentionAsync(context, blob, bucket, key!, ct).ConfigureAwait(false);
+                return;
+            case S3Operation.GetObjectLegalHold:
+                await GetObjectLegalHoldAsync(context, blob, bucket, key!, ct).ConfigureAwait(false);
+                return;
+            case S3Operation.PutObjectLegalHold:
+                await PutObjectLegalHoldAsync(context, blob, bucket, key!, ct).ConfigureAwait(false);
                 return;
 
             default:
@@ -295,6 +306,205 @@ internal static class SubresourceHandlers
             return;
         }
         context.Response.StatusCode = StatusCodes.Status204NoContent;
+    }
+
+    // ─── Object lock: retention + legal hold (blob WORM) ──────────────
+    //
+    // S3 GOVERNANCE/COMPLIANCE map to Azure unlocked/locked immutability
+    // policies; legal hold maps to the blob legal-hold flag. Bucket-level
+    // ObjectLockConfiguration stays unsupported: Azure container/account WORM
+    // is an ARM (management-plane, Entra-token) surface the proxy can't reach
+    // with storage account keys. Azurite supports none of these — validated
+    // only against real Azure.
+
+    private const string RetentionHeaderUntil = "x-ms-immutability-policy-until-date";
+    private const string RetentionHeaderMode = "x-ms-immutability-policy-mode";
+    private const string LegalHoldHeader = "x-ms-legal-hold";
+
+    private static async Task GetObjectRetentionAsync(
+        HttpContext context, BlobClient blob, string bucket, string key, CancellationToken ct)
+    {
+        var versionId = StringOrNullQuery(context, "versionId");
+        using var response = await blob.HeadBlobAsync(bucket, key, versionId, ct).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.GetObjectRetention)).ConfigureAwait(false);
+            return;
+        }
+
+        var until = FirstHeader(response, RetentionHeaderUntil);
+        var azureMode = FirstHeader(response, RetentionHeaderMode);
+        if (string.IsNullOrEmpty(until) || string.IsNullOrEmpty(azureMode)
+            || !DateTimeOffset.TryParse(until, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var retainUntil))
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchConfiguration(
+                "NoSuchObjectLockConfiguration", "object lock configuration")).ConfigureAwait(false);
+            return;
+        }
+
+        var mode = string.Equals(azureMode, "locked", StringComparison.OrdinalIgnoreCase) ? "COMPLIANCE" : "GOVERNANCE";
+        await WriteXmlAsync(context, S3XmlWriter.ObjectRetention(mode, retainUntil)).ConfigureAwait(false);
+    }
+
+    private static async Task PutObjectRetentionAsync(
+        HttpContext context, BlobClient blob, string bucket, string key, CancellationToken ct)
+    {
+        var (mode, retainUntil) = await ReadRetentionAsync(context, ct).ConfigureAwait(false);
+        if (mode is null || retainUntil is null)
+        {
+            await S3ErrorMapping.WriteAsync(context, MalformedXml()).ConfigureAwait(false);
+            return;
+        }
+
+        var azureMode = mode == "COMPLIANCE" ? "Locked" : "Unlocked";
+        var until = retainUntil.Value.UtcDateTime.ToString("R", CultureInfo.InvariantCulture);
+        var versionId = StringOrNullQuery(context, "versionId");
+        using var response = await blob.SetBlobImmutabilityPolicyAsync(bucket, key, until, azureMode, versionId, ct).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.PutObjectRetention)).ConfigureAwait(false);
+            return;
+        }
+        context.Response.StatusCode = StatusCodes.Status200OK;
+    }
+
+    private static async Task GetObjectLegalHoldAsync(
+        HttpContext context, BlobClient blob, string bucket, string key, CancellationToken ct)
+    {
+        var versionId = StringOrNullQuery(context, "versionId");
+        using var response = await blob.HeadBlobAsync(bucket, key, versionId, ct).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.GetObjectLegalHold)).ConfigureAwait(false);
+            return;
+        }
+
+        var hold = FirstHeader(response, LegalHoldHeader);
+        var on = string.Equals(hold, "true", StringComparison.OrdinalIgnoreCase);
+        await WriteXmlAsync(context, S3XmlWriter.ObjectLegalHold(on)).ConfigureAwait(false);
+    }
+
+    private static async Task PutObjectLegalHoldAsync(
+        HttpContext context, BlobClient blob, string bucket, string key, CancellationToken ct)
+    {
+        var on = await ReadLegalHoldAsync(context, ct).ConfigureAwait(false);
+        if (on is null)
+        {
+            await S3ErrorMapping.WriteAsync(context, MalformedXml()).ConfigureAwait(false);
+            return;
+        }
+
+        var versionId = StringOrNullQuery(context, "versionId");
+        using var response = await blob.SetBlobLegalHoldAsync(bucket, key, on.Value, versionId, ct).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.PutObjectLegalHold)).ConfigureAwait(false);
+            return;
+        }
+        context.Response.StatusCode = StatusCodes.Status200OK;
+    }
+
+    private static S3ErrorMapping.Mapping MalformedXml() => new(
+        StatusCodes.Status400BadRequest, "MalformedXML",
+        "The XML you provided was not well-formed or did not validate against our published schema.");
+
+    private static string? StringOrNullQuery(HttpContext context, string key)
+    {
+        if (context.Request.Query.TryGetValue(key, out var values) && values.Count > 0)
+        {
+            var v = values[0];
+            return string.IsNullOrEmpty(v) ? null : v;
+        }
+        return null;
+    }
+
+    private static string? FirstHeader(HttpResponseMessage response, string name)
+    {
+        if (response.Headers.TryGetValues(name, out var values))
+        {
+            foreach (var v in values) { if (!string.IsNullOrEmpty(v)) return v; }
+        }
+        return null;
+    }
+
+    // Parses <Retention><Mode>GOVERNANCE|COMPLIANCE</Mode><RetainUntilDate>ISO8601</></>.
+    // Both fields required; null on malformed/unknown.
+    private static async Task<(string? mode, DateTimeOffset? until)> ReadRetentionAsync(HttpContext context, CancellationToken ct)
+    {
+        string body;
+        using (var reader = new StreamReader(context.Request.Body, Encoding.UTF8))
+        {
+            body = await reader.ReadToEndAsync(ct).ConfigureAwait(false);
+        }
+        if (string.IsNullOrWhiteSpace(body)) return (null, null);
+        try
+        {
+            using var xml = XmlReader.Create(new StringReader(body), new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
+                IgnoreWhitespace = true, IgnoreComments = true,
+            });
+            if (!xml.MoveToContent().Equals(XmlNodeType.Element)
+                || !string.Equals(xml.LocalName, "Retention", StringComparison.Ordinal))
+            {
+                return (null, null);
+            }
+            string? mode = null, until = null;
+            while (xml.Read())
+            {
+                if (xml.NodeType != XmlNodeType.Element) continue;
+                if (xml.LocalName == "Mode") mode = xml.ReadElementContentAsString();
+                else if (xml.LocalName == "RetainUntilDate") until = xml.ReadElementContentAsString();
+            }
+            if (mode is not ("GOVERNANCE" or "COMPLIANCE")) return (null, null);
+            if (string.IsNullOrEmpty(until) || !DateTimeOffset.TryParse(
+                until, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed))
+            {
+                return (null, null);
+            }
+            return (mode, parsed);
+        }
+        catch (XmlException)
+        {
+            return (null, null);
+        }
+    }
+
+    // Parses <LegalHold><Status>ON|OFF</Status></LegalHold>; null on malformed.
+    private static async Task<bool?> ReadLegalHoldAsync(HttpContext context, CancellationToken ct)
+    {
+        string body;
+        using (var reader = new StreamReader(context.Request.Body, Encoding.UTF8))
+        {
+            body = await reader.ReadToEndAsync(ct).ConfigureAwait(false);
+        }
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        try
+        {
+            using var xml = XmlReader.Create(new StringReader(body), new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
+                IgnoreWhitespace = true, IgnoreComments = true,
+            });
+            if (!xml.MoveToContent().Equals(XmlNodeType.Element)
+                || !string.Equals(xml.LocalName, "LegalHold", StringComparison.Ordinal))
+            {
+                return null;
+            }
+            string? status = null;
+            while (xml.Read())
+            {
+                if (xml.NodeType == XmlNodeType.Element && xml.LocalName == "Status")
+                {
+                    status = xml.ReadElementContentAsString();
+                }
+            }
+            return status switch { "ON" => true, "OFF" => false, _ => null };
+        }
+        catch (XmlException)
+        {
+            return null;
+        }
     }
 
     // ─── Bucket tagging (container metadata blob) ─────────────────────

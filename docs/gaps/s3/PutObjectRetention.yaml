@@ -1,10 +1,14 @@
 service: s3
 operation: PutObjectRetention
-azure_equivalent: "(no equivalent — proxy returns 501 NotImplemented)"
-status: unsupported
+azure_equivalent: "Set Blob Immutability Policy (PUT blob ?comp=immutabilityPolicies)"
+status: partial
 sub_features:
-  - name: "operation"
-    status: unsupported
-    notes: "Azure has no equivalent surface for this S3 operation. The proxy returns 501 NotImplemented so the absence is explicit."
+  - name: "mode + retain-until"
+    status: partial
+    notes: "GOVERNANCE->Unlocked, COMPLIANCE->Locked; RetainUntilDate (ISO8601) -> x-ms-immutability-policy-until-date (RFC1123). Requires the object to exist."
+behavior_differences:
+  - "Azure locked policies are irreversible and extend-only; bypassing/shortening COMPLIANCE is rejected by Azure as in S3."
+  - "Verified against real Azure only - Azurite does not support immutability policies."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectRetention.html
+  - https://learn.microsoft.com/en-us/rest/api/storageservices/set-blob-immutability-policy
