@@ -83,11 +83,11 @@ public static class MarkdownRenderer
             {
                 sb.AppendLine("### Sub-features");
                 sb.AppendLine();
-                sb.AppendLine("| Name | Status | Notes | Gap | Workaround |");
-                sb.AppendLine("|---|---|---|---|---|");
+                sb.AppendLine("| Name | Status | Real-Azure | Notes | Gap | Workaround |");
+                sb.AppendLine("|---|---|---|---|---|---|");
                 foreach (var sf in op.SubFeatures)
                 {
-                    sb.AppendLine($"| {sf.Name} | {StatusBadge(sf.Status)} | {Esc(sf.Notes)} | {Esc(sf.Gap)} | {Esc(sf.Workaround)} |");
+                    sb.AppendLine($"| {sf.Name} | {StatusBadge(sf.Status)} | {Seal(sf.VerifiedRealAzure)} | {Esc(sf.Notes)} | {Esc(sf.Gap)} | {Esc(sf.Workaround)} |");
                 }
                 sb.AppendLine();
             }

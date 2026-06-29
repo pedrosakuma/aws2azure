@@ -7,19 +7,19 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| Multi-table fan-out | ✅ implemented | Each table's keys are grouped by Cosmos partition key. Keys that share a partition are served by a single `SELECT * FROM c WHERE c.id IN (...)` query (one round-trip per partition); a lone key keeps the cheap `GET /docs/{id}` point read. Bounded parallelism (16 concurrent calls) keeps a single multi-partition request from saturating the proxy. |  |  |
-| Single-partition batching | ✅ implemented | issue #185 — a BatchGetItem whose keys all share a partition (e.g. 25 sort keys under one HASH) issues one IN-list Cosmos query instead of N point reads, draining `x-ms-continuation` as needed. Roughly an order of magnitude fewer round-trips for the common single-partition shape. |  |  |
-| Per-item miss semantics | ✅ implemented | Missing items are omitted from `Responses` (matching DynamoDB), not surfaced as errors. In the batched-query path a requested key whose document is absent from the partition is simply left out of the result set. |  |  |
-| Throttling → UnprocessedKeys | ✅ implemented | A Cosmos 429 on a point read drops that key into `UnprocessedKeys`; a 429 on a batched single-partition query drops the whole partition's keys into `UnprocessedKeys`. Either way SDK retry loops re-issue only the throttled subset and the rest of the batch still returns 200. |  |  |
-| ProjectionExpression (per table) | 🟡 partial | Top-level attribute names + `#alias` honoured. Nested paths (`a.b`, `a[0]`) rejected. |  |  |
-| ExpressionAttributeNames (per table) | ✅ implemented |  |  |  |
-| ConsistentRead (per table) | ✅ implemented | Sets `x-ms-consistency-level: Strong` on every Cosmos read (point read or batched query) for that table; account-level consistency cap still applies. Opt-in startup probe (`DynamoDb.ConsistencyCheck` = Warn/Required, #204) flags accounts that cannot honor Strong at boot. |  |  |
-| 100-item-per-call cap | ✅ implemented | Requests over 100 keys (across all tables) rejected with ValidationException, matching the DynamoDB hard limit. |  |  |
-| Duplicate-key rejection | ✅ implemented | Same (table, pk, id) repeated in a single call → ValidationException, matching DynamoDB. |  |  |
-| Legacy AttributesToGet | ⛔ unsupported | Rejected with ValidationException — use ProjectionExpression. |  |  |
-| ReturnConsumedCapacity | ⛔ unsupported | Silently ignored; response omits ConsumedCapacity. |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| Multi-table fan-out | ✅ implemented | — | Each table's keys are grouped by Cosmos partition key. Keys that share a partition are served by a single `SELECT * FROM c WHERE c.id IN (...)` query (one round-trip per partition); a lone key keeps the cheap `GET /docs/{id}` point read. Bounded parallelism (16 concurrent calls) keeps a single multi-partition request from saturating the proxy. |  |  |
+| Single-partition batching | ✅ implemented | — | issue #185 — a BatchGetItem whose keys all share a partition (e.g. 25 sort keys under one HASH) issues one IN-list Cosmos query instead of N point reads, draining `x-ms-continuation` as needed. Roughly an order of magnitude fewer round-trips for the common single-partition shape. |  |  |
+| Per-item miss semantics | ✅ implemented | — | Missing items are omitted from `Responses` (matching DynamoDB), not surfaced as errors. In the batched-query path a requested key whose document is absent from the partition is simply left out of the result set. |  |  |
+| Throttling → UnprocessedKeys | ✅ implemented | — | A Cosmos 429 on a point read drops that key into `UnprocessedKeys`; a 429 on a batched single-partition query drops the whole partition's keys into `UnprocessedKeys`. Either way SDK retry loops re-issue only the throttled subset and the rest of the batch still returns 200. |  |  |
+| ProjectionExpression (per table) | 🟡 partial | — | Top-level attribute names + `#alias` honoured. Nested paths (`a.b`, `a[0]`) rejected. |  |  |
+| ExpressionAttributeNames (per table) | ✅ implemented | — |  |  |  |
+| ConsistentRead (per table) | ✅ implemented | — | Sets `x-ms-consistency-level: Strong` on every Cosmos read (point read or batched query) for that table; account-level consistency cap still applies. Opt-in startup probe (`DynamoDb.ConsistencyCheck` = Warn/Required, #204) flags accounts that cannot honor Strong at boot. |  |  |
+| 100-item-per-call cap | ✅ implemented | — | Requests over 100 keys (across all tables) rejected with ValidationException, matching the DynamoDB hard limit. |  |  |
+| Duplicate-key rejection | ✅ implemented | — | Same (table, pk, id) repeated in a single call → ValidationException, matching DynamoDB. |  |  |
+| Legacy AttributesToGet | ⛔ unsupported | — | Rejected with ValidationException — use ProjectionExpression. |  |  |
+| ReturnConsumedCapacity | ⛔ unsupported | — | Silently ignored; response omits ConsumedCapacity. |  |  |
 
 ### Behaviour differences
 
@@ -44,16 +44,16 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| PutRequest fan-out | ✅ implemented | Each PutRequest issues a Cosmos POST with `x-ms-documentdb-is-upsert: true`, matching the existing PutItem fast-path. Item attributes are stored flat on the Cosmos document (same shape as PutItem) for round-trip fidelity. |  |  |
-| DeleteRequest fan-out | ✅ implemented | Each DeleteRequest routes to a Cosmos DELETE on the (pk, id) derived from the key. Deletes of missing items are successful no-ops — matches DynamoDB idempotency. |  |  |
-| Bounded parallelism | ✅ implemented | Up to 10 concurrent Cosmos writes per batch (SemaphoreSlim-gated). |  |  |
-| 25-item-per-call cap | ✅ implemented | Requests over 25 writes (across all tables) rejected with ValidationException, matching the DynamoDB hard limit. |  |  |
-| Item shape validation (Put) | ✅ implemented | Every attribute in PutRequest.Item must be a single-property typed AttributeValue (same validator as PutItem). Malformed entries rejected with ValidationException before any Cosmos write. |  |  |
-| Duplicate-key rejection | ✅ implemented | Two writes targeting the same (table, pk, id) in a single call are rejected with ValidationException — matches DynamoDB. |  |  |
-| Throttling → UnprocessedItems | ✅ implemented | Cosmos 429 on any individual write surfaces the original PutRequest/DeleteRequest envelope in `UnprocessedItems`, preserving ordering within the table. Hard errors (5xx, 4xx other than 429/404) fail the whole batch. |  |  |
-| ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported | Silently ignored; responses omit ConsumedCapacity and ItemCollectionMetrics. |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| PutRequest fan-out | ✅ implemented | — | Each PutRequest issues a Cosmos POST with `x-ms-documentdb-is-upsert: true`, matching the existing PutItem fast-path. Item attributes are stored flat on the Cosmos document (same shape as PutItem) for round-trip fidelity. |  |  |
+| DeleteRequest fan-out | ✅ implemented | — | Each DeleteRequest routes to a Cosmos DELETE on the (pk, id) derived from the key. Deletes of missing items are successful no-ops — matches DynamoDB idempotency. |  |  |
+| Bounded parallelism | ✅ implemented | — | Up to 10 concurrent Cosmos writes per batch (SemaphoreSlim-gated). |  |  |
+| 25-item-per-call cap | ✅ implemented | — | Requests over 25 writes (across all tables) rejected with ValidationException, matching the DynamoDB hard limit. |  |  |
+| Item shape validation (Put) | ✅ implemented | — | Every attribute in PutRequest.Item must be a single-property typed AttributeValue (same validator as PutItem). Malformed entries rejected with ValidationException before any Cosmos write. |  |  |
+| Duplicate-key rejection | ✅ implemented | — | Two writes targeting the same (table, pk, id) in a single call are rejected with ValidationException — matches DynamoDB. |  |  |
+| Throttling → UnprocessedItems | ✅ implemented | — | Cosmos 429 on any individual write surfaces the original PutRequest/DeleteRequest envelope in `UnprocessedItems`, preserving ordering within the table. Hard errors (5xx, 4xx other than 429/404) fail the whole batch. |  |  |
+| ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported | — | Silently ignored; responses omit ConsumedCapacity and ItemCollectionMetrics. |  |  |
 
 ### Behaviour differences
 
@@ -76,17 +76,17 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| HASH key | ✅ implemented |  |  |  |
-| HASH + RANGE composite key | ✅ implemented |  |  |  |
-| PAY_PER_REQUEST + PROVISIONED billing mode (informational) | ✅ implemented |  |  |  |
-| AttributeDefinitions round-trip via sidecar metadata | ✅ implemented |  |  |  |
-| GlobalSecondaryIndexes (schema accepted + persisted) | 🟡 partial |  |  |  |
-| LocalSecondaryIndexes (schema accepted + persisted) | 🟡 partial |  |  |  |
-| StreamSpecification | ⛔ unsupported |  |  |  |
-| SSESpecification | ⛔ unsupported |  |  |  |
-| Tags | ⛔ unsupported |  |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| HASH key | ✅ implemented | — |  |  |  |
+| HASH + RANGE composite key | ✅ implemented | — |  |  |  |
+| PAY_PER_REQUEST + PROVISIONED billing mode (informational) | ✅ implemented | — |  |  |  |
+| AttributeDefinitions round-trip via sidecar metadata | ✅ implemented | — |  |  |  |
+| GlobalSecondaryIndexes (schema accepted + persisted) | 🟡 partial | — |  |  |  |
+| LocalSecondaryIndexes (schema accepted + persisted) | 🟡 partial | — |  |  |  |
+| StreamSpecification | ⛔ unsupported | — |  |  |  |
+| SSESpecification | ⛔ unsupported | — |  |  |  |
+| Tags | ⛔ unsupported | — |  |  |  |
 
 ### Behaviour differences
 
@@ -110,15 +110,15 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| HASH-only key tables | ✅ implemented |  |  |  |
-| HASH+RANGE composite key tables | ✅ implemented |  |  |  |
-| Idempotent delete (missing item returns success) | ✅ implemented | Cosmos 404 → DynamoDB 200 empty, matching DynamoDB semantics. |  |  |
-| ConditionExpression / Expected / ConditionalOperator | ✅ implemented | Conditional path performs GET → evaluate → DELETE(If-Match) with retry on 412/Conflict/404. If the condition evaluates true against a missing item, the operation returns success as a no-op. Failure returns HTTP 400 ConditionalCheckFailedException with optional Item when ReturnValuesOnConditionCheckFailure=ALL_OLD. |  |  |
-| ExpressionAttributeNames / ExpressionAttributeValues | ⛔ unsupported |  |  |  |
-| ReturnValues | 🟡 partial | Only NONE accepted; ALL_OLD rejected with ValidationException. |  |  |
-| ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported |  |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| HASH-only key tables | ✅ implemented | — |  |  |  |
+| HASH+RANGE composite key tables | ✅ implemented | — |  |  |  |
+| Idempotent delete (missing item returns success) | ✅ implemented | — | Cosmos 404 → DynamoDB 200 empty, matching DynamoDB semantics. |  |  |
+| ConditionExpression / Expected / ConditionalOperator | ✅ implemented | — | Conditional path performs GET → evaluate → DELETE(If-Match) with retry on 412/Conflict/404. If the condition evaluates true against a missing item, the operation returns success as a no-op. Failure returns HTTP 400 ConditionalCheckFailedException with optional Item when ReturnValuesOnConditionCheckFailure=ALL_OLD. |  |  |
+| ExpressionAttributeNames / ExpressionAttributeValues | ⛔ unsupported | — |  |  |  |
+| ReturnValues | 🟡 partial | — | Only NONE accepted; ALL_OLD rejected with ValidationException. |  |  |
+| ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported | — |  |  |  |
 
 ### Behaviour differences
 
@@ -137,10 +137,10 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| Synchronous delete | ✅ implemented |  |  |  |
-| TableDescription echoed (key schema, attrs) via sidecar metadata | ✅ implemented |  |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| Synchronous delete | ✅ implemented | — |  |  |  |
+| TableDescription echoed (key schema, attrs) via sidecar metadata | ✅ implemented | — |  |  |  |
 
 ### Behaviour differences
 
@@ -160,13 +160,13 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| AttributeDefinitions / KeySchema round-trip | ✅ implemented |  |  |  |
-| BillingModeSummary echo | ✅ implemented |  |  |  |
-| TableArn synthesis (azure-region pseudo-arn) | ✅ implemented |  |  |  |
-| ItemCount / TableSizeBytes (live metrics) | ⛔ unsupported |  |  |  |
-| GSI/LSI description | 🟡 partial |  |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| AttributeDefinitions / KeySchema round-trip | ✅ implemented | — |  |  |  |
+| BillingModeSummary echo | ✅ implemented | — |  |  |  |
+| TableArn synthesis (azure-region pseudo-arn) | ✅ implemented | — |  |  |  |
+| ItemCount / TableSizeBytes (live metrics) | ⛔ unsupported | — |  |  |  |
+| GSI/LSI description | 🟡 partial | — |  |  |  |
 
 ### Behaviour differences
 
@@ -187,9 +187,9 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| Reports ENABLED/DISABLED + AttributeName | ✅ implemented | Reads the proxy's per-table metadata sidecar and returns `{TimeToLiveDescription: {TimeToLiveStatus: "ENABLED"\|"DISABLED", AttributeName: <name>}}`. AttributeName is echoed only when TTL is enabled, matching DynamoDB. |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| Reports ENABLED/DISABLED + AttributeName | ✅ implemented | — | Reads the proxy's per-table metadata sidecar and returns `{TimeToLiveDescription: {TimeToLiveStatus: "ENABLED"\|"DISABLED", AttributeName: <name>}}`. AttributeName is echoed only when TTL is enabled, matching DynamoDB. |  |  |
 
 ### Behaviour differences
 
@@ -209,15 +209,15 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| HASH-only key tables | ✅ implemented |  |  |  |
-| HASH+RANGE composite key tables | ✅ implemented |  |  |  |
-| Full wire-form round-trip on response Item | ✅ implemented |  |  |  |
-| ConsistentRead | 🟡 partial | Mapped to Cosmos `x-ms-consistency-level: Strong` request header. Honoured only when the account's max consistency permits Strong; Session/weaker accounts silently downgrade. Opt-in startup probe (`DynamoDb.ConsistencyCheck` = Warn/Required, #204) detects such accounts at boot and warns or fails startup. |  |  |
-| ProjectionExpression / AttributesToGet | ⛔ unsupported | Rejected with ValidationException pending expression parser slice (#12). |  |  |
-| ExpressionAttributeNames | ⛔ unsupported |  |  |  |
-| ReturnConsumedCapacity | ⛔ unsupported |  |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| HASH-only key tables | ✅ implemented | — |  |  |  |
+| HASH+RANGE composite key tables | ✅ implemented | — |  |  |  |
+| Full wire-form round-trip on response Item | ✅ implemented | — |  |  |  |
+| ConsistentRead | 🟡 partial | — | Mapped to Cosmos `x-ms-consistency-level: Strong` request header. Honoured only when the account's max consistency permits Strong; Session/weaker accounts silently downgrade. Opt-in startup probe (`DynamoDb.ConsistencyCheck` = Warn/Required, #204) detects such accounts at boot and warns or fails startup. |  |  |
+| ProjectionExpression / AttributesToGet | ⛔ unsupported | — | Rejected with ValidationException pending expression parser slice (#12). |  |  |
+| ExpressionAttributeNames | ⛔ unsupported | — |  |  |  |
+| ReturnConsumedCapacity | ⛔ unsupported | — |  |  |  |
 
 ### Behaviour differences
 
@@ -242,11 +242,11 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| Limit (1..100) | ✅ implemented |  |  |  |
-| ExclusiveStartTableName cursor | ✅ implemented |  |  |  |
-| LastEvaluatedTableName pagination | ✅ implemented |  |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| Limit (1..100) | ✅ implemented | — |  |  |  |
+| ExclusiveStartTableName cursor | ✅ implemented | — |  |  |  |
+| LastEvaluatedTableName pagination | ✅ implemented | — |  |  |  |
 
 ### Behaviour differences
 
@@ -266,10 +266,10 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| Returns persisted TableMetadata tags | ✅ implemented | Reads tags from the aws2azure TableMetadata sidecar document written by TagResource. |  |  |
-| Pagination | 🟡 partial | The proxy returns the full tag set (DynamoDB allows at most 50 tags) and rejects NextToken instead of paginating. |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| Returns persisted TableMetadata tags | ✅ implemented | — | Reads tags from the aws2azure TableMetadata sidecar document written by TagResource. |  |  |
+| Pagination | 🟡 partial | — | The proxy returns the full tag set (DynamoDB allows at most 50 tags) and rejects NextToken instead of paginating. |  |  |
 
 ### Behaviour differences
 
@@ -288,15 +288,15 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| HASH-only key tables | ✅ implemented |  |  |  |
-| HASH+RANGE composite key tables | ✅ implemented |  |  |  |
-| Full DynamoDB wire-form round-trip (S/N/B/BOOL/NULL/M/L/SS/NS/BS) | ✅ implemented | Attributes stored as inferred Cosmos JSON (no `{S}`/`{N}` wrapping); number values are normalised to DynamoDB's canonical decimal form (no trailing zeros, no exponent, no `-0`) — matching real DDB's documented behaviour. Numbers whose canonical form exceeds IEEE 754 double round-trip safety are stored via the `{"_a2a:N":"<canonical>"}` envelope so 16–38 digit precision survives Cosmos storage byte-identical. |  |  |
-| ConditionExpression / Expected / ConditionalOperator | ✅ implemented | Conditional path performs GET → evaluate → PUT(If-Match) or POST(If-None-Match: *) with up to 4 retries on Cosmos 412/409. Failure returns HTTP 400 ConditionalCheckFailedException with optional Item when ReturnValuesOnConditionCheckFailure=ALL_OLD. attribute_not_exists(pk) is the standard idiom for first-time create. |  |  |
-| ExpressionAttributeNames / ExpressionAttributeValues | ⛔ unsupported |  |  |  |
-| ReturnValues | 🟡 partial | Only NONE accepted; ALL_OLD/UPDATED_* rejected with ValidationException. |  |  |
-| ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported | Silently ignored; response omits ConsumedCapacity / ItemCollectionMetrics. |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| HASH-only key tables | ✅ implemented | — |  |  |  |
+| HASH+RANGE composite key tables | ✅ implemented | — |  |  |  |
+| Full DynamoDB wire-form round-trip (S/N/B/BOOL/NULL/M/L/SS/NS/BS) | ✅ implemented | — | Attributes stored as inferred Cosmos JSON (no `{S}`/`{N}` wrapping); number values are normalised to DynamoDB's canonical decimal form (no trailing zeros, no exponent, no `-0`) — matching real DDB's documented behaviour. Numbers whose canonical form exceeds IEEE 754 double round-trip safety are stored via the `{"_a2a:N":"<canonical>"}` envelope so 16–38 digit precision survives Cosmos storage byte-identical. |  |  |
+| ConditionExpression / Expected / ConditionalOperator | ✅ implemented | — | Conditional path performs GET → evaluate → PUT(If-Match) or POST(If-None-Match: *) with up to 4 retries on Cosmos 412/409. Failure returns HTTP 400 ConditionalCheckFailedException with optional Item when ReturnValuesOnConditionCheckFailure=ALL_OLD. attribute_not_exists(pk) is the standard idiom for first-time create. |  |  |
+| ExpressionAttributeNames / ExpressionAttributeValues | ⛔ unsupported | — |  |  |  |
+| ReturnValues | 🟡 partial | — | Only NONE accepted; ALL_OLD/UPDATED_* rejected with ValidationException. |  |  |
+| ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported | — | Silently ignored; response omits ConsumedCapacity / ItemCollectionMetrics. |  |  |
 
 ### Behaviour differences
 
@@ -319,21 +319,21 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| KeyConditionExpression on HASH-only tables | ✅ implemented |  |  |  |
-| KeyConditionExpression on HASH+RANGE tables (= / < / <= / > / >= / BETWEEN / begins_with) | ✅ implemented | Translated to a partition-scoped Cosmos SQL query against `c.pk = <hash>` with a predicate on `c.id` (which holds the formatted RANGE value). RANGE (and HASH) key values share one order-preserving, digits-only codec with storage (S → hex(UTF-8 bytes); B → hex(raw bytes); N → fixed-width sign+exponent+mantissa digit string), so ordered comparisons, BETWEEN, and begins_with on S/B sort keys compare in correct DynamoDB byte order — `begins_with` maps to an exact prefix match because hex is prefix-preserving on byte boundaries — and ordered comparisons / BETWEEN on N sort keys compare in true numeric order. `begins_with` on an N sort key is rejected (ValidationException), matching real DDB. Query operands and stored ids share the codec, so they always agree. |  |  |
-| FilterExpression | ✅ implemented | Pushed into the Cosmos SQL WHERE clause where safe; the remainder is evaluated in-process after the Cosmos page returns. Count always reflects post-filter rows. ScannedCount reflects pre-filter rows: when nothing is pushed it is the streamed count; when a fragment is pushed (Cosmos pre-filters) a complete unbounded query recovers it with a partition-scoped server-side `SELECT VALUE COUNT(1)` over the same key scope minus the pushed filter, so it stays faithful to DynamoDB. The pushed-filter + Limit combination is a documented divergence (see behavior_differences). Predicates supported: comparison (=, <, <=, >, >=), BETWEEN, IN, attribute_exists/not_exists/type, begins_with, contains, AND/OR/NOT. Pushdown carve-outs (these stay residual): `<>` on any path (DDB cross-type semantics), ordered comparisons / BETWEEN on B (base64 lexical order ≠ underlying byte order), begins_with on B, size(), nested paths whose first segment matches the reserved `_a2a:` envelope prefix. Numeric equality (=) and IN push a hybrid IS_NUMBER / `StringToNumber(_a2a:N)` branch as a *prefilter only* — false negatives are impossible by construction (envelope values cannot exactly equal a round-trippable parameter) and the client-side evaluator re-checks the exact canonical string anyway. Numeric ordered comparisons (<, <=, >, >=) and BETWEEN widen the envelope branch to `IS_DEFINED(_a2a:N)` so every envelope-stored row reaches the residual evaluator — otherwise `StringToNumber` rounding could false-negative boundary values. |  |  |
-| ProjectionExpression | 🟡 partial | Top-level attributes and `#alias` references are honoured. Nested paths (`a.b`, `a[0]`) are not yet supported and are rejected with ValidationException. |  |  |
-| ExpressionAttributeNames / ExpressionAttributeValues | ✅ implemented |  |  |  |
-| Limit | ✅ implemented |  |  |  |
-| ExclusiveStartKey / LastEvaluatedKey | ✅ implemented | Pagination round-trips the Cosmos `x-ms-continuation` token inside a sentinel attribute `__a2a_continuation` (typed-string `S`). Most AWS SDKs treat LastEvaluatedKey as opaque and pass it back verbatim, which is what the proxy requires. |  |  |
-| ScanIndexForward | ✅ implemented | Maps to `ORDER BY c.id ASC\|DESC`; only emitted for composite-key tables (hash-only Query returns at most one item). |  |  |
-| ConsistentRead | ✅ implemented | Forwards `x-ms-consistency-level: Strong` for the Cosmos query when true; account-level consistency cap still applies. Opt-in startup probe (`DynamoDb.ConsistencyCheck` = Warn/Required, #204) flags accounts that cannot honor Strong at boot. |  |  |
-| Select | 🟡 partial | ALL_ATTRIBUTES (default for base-table queries), SPECIFIC_ATTRIBUTES, and COUNT supported. SPECIFIC_ATTRIBUTES requires a ProjectionExpression (rejected without one, matching DynamoDB). On an LSI query, ALL_PROJECTED_ATTRIBUTES (also the default when neither Select nor ProjectionExpression is supplied, matching DynamoDB) resolves against the index projection: ALL behaves like ALL_ATTRIBUTES; KEYS_ONLY projects (in-process) to the base HASH + base RANGE + the LSI sort attribute; INCLUDE adds the index's NonKeyAttributes. An explicit ProjectionExpression always takes precedence. Without IndexName, ALL_PROJECTED_ATTRIBUTES is rejected. |  |  |
-| IndexName (GSI / LSI) | 🟡 partial | Local Secondary Index (LSI) Query is supported. An LSI shares the base table HASH key, so the query stays partition-scoped (same `x-ms-documentdb-partitionkey` header as a base-table query); only the sort-key predicate and ORDER BY target the LSI's alternate sort attribute. The sort attribute is stored as a regular document attribute (raw storage form, not the key codec), so the sort-key predicate is translated against `c.<lsiSort>` by reusing the FilterExpression pushdown (Option-A) — comparison (= / < / <= / > / >=), BETWEEN, and begins_with are supported, with the same hybrid IS_NUMBER/`_a2a:N` envelope handling and residual fallback (high-precision envelope N re-checked in-process). begins_with on an N LSI sort key is rejected (ValidationException), matching real DDB. ORDER BY emits `ORDER BY c.<lsiSort> ASC\|DESC` honoring ScanIndexForward; items missing the sort attribute are excluded by an explicit IS_DEFINED guard (so sparse-index semantics hold regardless of the container indexing policy), matching LSI sparse-index behavior. ConsistentRead is accepted (LSIs are strongly consistent). LSI ScannedCount caveat: see behavior_differences. Global Secondary Index (GSI) Query is supported behind an opt-in, default-off config flag (`DynamoDb.EnableGlobalSecondaryIndexQueries=true`); when the flag is off a GSI IndexName is rejected with ValidationException ("Querying global secondary indexes is not yet supported by the proxy"). With the flag on, a GSI Query is served as a cross-partition Cosmos query (no `x-ms-documentdb-partitionkey` header; `x-ms-documentdb-query-enablecrosspartition: true`). The GSI HASH equality and optional sort-key predicate target the index's own attributes stored raw (Option-A), translated via the FilterExpression pushdown against `c.<gsiHash>` / `c.<gsiSort>` (HASH must be `=`; sort predicate supports =/</<=/>/>= , BETWEEN, begins_with with the same N envelope/residual handling; begins_with on N is rejected). IS_DEFINED guards on the index key attribute(s) enforce GSI membership (an item indexes only if it carries the key attributes); composite GSIs emit `ORDER BY c.<gsiSort> ASC\|DESC` honoring ScanIndexForward, hash-only GSIs return unordered. A composite GSI Query is ordered across partitions by a client-side fan-out + merge executor (real Cosmos cannot serve an ordered cross-partition query in one request); see behavior_differences for the per-range merge, continuation, and concurrent-mutation caveat. An ordered (non-COUNT) GSI query on a binary (B) sort key is rejected with ValidationException (B is envelope-stored and cannot be ordered by the per-range query). GSIs are eventually consistent: ConsistentRead=true is rejected with ValidationException. The base-table ScannedCount aggregate recovery is skipped for GSI queries (see behavior_differences). Because a GSI is a projected view that cannot fetch non-projected attributes from the base table, `Select=ALL_ATTRIBUTES` is rejected unless the GSI projection type is ALL, and a `ProjectionExpression` referencing an attribute not projected into the index is rejected (ValidationException), matching DynamoDB. An IndexName matching no index is rejected with ValidationException ("The table does not have the specified index"). |  |  |
-| Legacy KeyConditions / QueryFilter / ConditionalOperator | ⛔ unsupported | Legacy v1 parameters are rejected loudly with ValidationException — use KeyConditionExpression / FilterExpression. |  |  |
-| ReturnConsumedCapacity | ⛔ unsupported | Silently ignored; response omits ConsumedCapacity. |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| KeyConditionExpression on HASH-only tables | ✅ implemented | — |  |  |  |
+| KeyConditionExpression on HASH+RANGE tables (= / < / <= / > / >= / BETWEEN / begins_with) | ✅ implemented | — | Translated to a partition-scoped Cosmos SQL query against `c.pk = <hash>` with a predicate on `c.id` (which holds the formatted RANGE value). RANGE (and HASH) key values share one order-preserving, digits-only codec with storage (S → hex(UTF-8 bytes); B → hex(raw bytes); N → fixed-width sign+exponent+mantissa digit string), so ordered comparisons, BETWEEN, and begins_with on S/B sort keys compare in correct DynamoDB byte order — `begins_with` maps to an exact prefix match because hex is prefix-preserving on byte boundaries — and ordered comparisons / BETWEEN on N sort keys compare in true numeric order. `begins_with` on an N sort key is rejected (ValidationException), matching real DDB. Query operands and stored ids share the codec, so they always agree. |  |  |
+| FilterExpression | ✅ implemented | — | Pushed into the Cosmos SQL WHERE clause where safe; the remainder is evaluated in-process after the Cosmos page returns. Count always reflects post-filter rows. ScannedCount reflects pre-filter rows: when nothing is pushed it is the streamed count; when a fragment is pushed (Cosmos pre-filters) a complete unbounded query recovers it with a partition-scoped server-side `SELECT VALUE COUNT(1)` over the same key scope minus the pushed filter, so it stays faithful to DynamoDB. The pushed-filter + Limit combination is a documented divergence (see behavior_differences). Predicates supported: comparison (=, <, <=, >, >=), BETWEEN, IN, attribute_exists/not_exists/type, begins_with, contains, AND/OR/NOT. Pushdown carve-outs (these stay residual): `<>` on any path (DDB cross-type semantics), ordered comparisons / BETWEEN on B (base64 lexical order ≠ underlying byte order), begins_with on B, size(), nested paths whose first segment matches the reserved `_a2a:` envelope prefix. Numeric equality (=) and IN push a hybrid IS_NUMBER / `StringToNumber(_a2a:N)` branch as a *prefilter only* — false negatives are impossible by construction (envelope values cannot exactly equal a round-trippable parameter) and the client-side evaluator re-checks the exact canonical string anyway. Numeric ordered comparisons (<, <=, >, >=) and BETWEEN widen the envelope branch to `IS_DEFINED(_a2a:N)` so every envelope-stored row reaches the residual evaluator — otherwise `StringToNumber` rounding could false-negative boundary values. |  |  |
+| ProjectionExpression | 🟡 partial | — | Top-level attributes and `#alias` references are honoured. Nested paths (`a.b`, `a[0]`) are not yet supported and are rejected with ValidationException. |  |  |
+| ExpressionAttributeNames / ExpressionAttributeValues | ✅ implemented | — |  |  |  |
+| Limit | ✅ implemented | — |  |  |  |
+| ExclusiveStartKey / LastEvaluatedKey | ✅ implemented | — | Pagination round-trips the Cosmos `x-ms-continuation` token inside a sentinel attribute `__a2a_continuation` (typed-string `S`). Most AWS SDKs treat LastEvaluatedKey as opaque and pass it back verbatim, which is what the proxy requires. |  |  |
+| ScanIndexForward | ✅ implemented | — | Maps to `ORDER BY c.id ASC\|DESC`; only emitted for composite-key tables (hash-only Query returns at most one item). |  |  |
+| ConsistentRead | ✅ implemented | — | Forwards `x-ms-consistency-level: Strong` for the Cosmos query when true; account-level consistency cap still applies. Opt-in startup probe (`DynamoDb.ConsistencyCheck` = Warn/Required, #204) flags accounts that cannot honor Strong at boot. |  |  |
+| Select | 🟡 partial | — | ALL_ATTRIBUTES (default for base-table queries), SPECIFIC_ATTRIBUTES, and COUNT supported. SPECIFIC_ATTRIBUTES requires a ProjectionExpression (rejected without one, matching DynamoDB). On an LSI query, ALL_PROJECTED_ATTRIBUTES (also the default when neither Select nor ProjectionExpression is supplied, matching DynamoDB) resolves against the index projection: ALL behaves like ALL_ATTRIBUTES; KEYS_ONLY projects (in-process) to the base HASH + base RANGE + the LSI sort attribute; INCLUDE adds the index's NonKeyAttributes. An explicit ProjectionExpression always takes precedence. Without IndexName, ALL_PROJECTED_ATTRIBUTES is rejected. |  |  |
+| IndexName (GSI / LSI) | 🟡 partial | — | Local Secondary Index (LSI) Query is supported. An LSI shares the base table HASH key, so the query stays partition-scoped (same `x-ms-documentdb-partitionkey` header as a base-table query); only the sort-key predicate and ORDER BY target the LSI's alternate sort attribute. The sort attribute is stored as a regular document attribute (raw storage form, not the key codec), so the sort-key predicate is translated against `c.<lsiSort>` by reusing the FilterExpression pushdown (Option-A) — comparison (= / < / <= / > / >=), BETWEEN, and begins_with are supported, with the same hybrid IS_NUMBER/`_a2a:N` envelope handling and residual fallback (high-precision envelope N re-checked in-process). begins_with on an N LSI sort key is rejected (ValidationException), matching real DDB. ORDER BY emits `ORDER BY c.<lsiSort> ASC\|DESC` honoring ScanIndexForward; items missing the sort attribute are excluded by an explicit IS_DEFINED guard (so sparse-index semantics hold regardless of the container indexing policy), matching LSI sparse-index behavior. ConsistentRead is accepted (LSIs are strongly consistent). LSI ScannedCount caveat: see behavior_differences. Global Secondary Index (GSI) Query is supported behind an opt-in, default-off config flag (`DynamoDb.EnableGlobalSecondaryIndexQueries=true`); when the flag is off a GSI IndexName is rejected with ValidationException ("Querying global secondary indexes is not yet supported by the proxy"). With the flag on, a GSI Query is served as a cross-partition Cosmos query (no `x-ms-documentdb-partitionkey` header; `x-ms-documentdb-query-enablecrosspartition: true`). The GSI HASH equality and optional sort-key predicate target the index's own attributes stored raw (Option-A), translated via the FilterExpression pushdown against `c.<gsiHash>` / `c.<gsiSort>` (HASH must be `=`; sort predicate supports =/</<=/>/>= , BETWEEN, begins_with with the same N envelope/residual handling; begins_with on N is rejected). IS_DEFINED guards on the index key attribute(s) enforce GSI membership (an item indexes only if it carries the key attributes); composite GSIs emit `ORDER BY c.<gsiSort> ASC\|DESC` honoring ScanIndexForward, hash-only GSIs return unordered. A composite GSI Query is ordered across partitions by a client-side fan-out + merge executor (real Cosmos cannot serve an ordered cross-partition query in one request); see behavior_differences for the per-range merge, continuation, and concurrent-mutation caveat. An ordered (non-COUNT) GSI query on a binary (B) sort key is rejected with ValidationException (B is envelope-stored and cannot be ordered by the per-range query). GSIs are eventually consistent: ConsistentRead=true is rejected with ValidationException. The base-table ScannedCount aggregate recovery is skipped for GSI queries (see behavior_differences). Because a GSI is a projected view that cannot fetch non-projected attributes from the base table, `Select=ALL_ATTRIBUTES` is rejected unless the GSI projection type is ALL, and a `ProjectionExpression` referencing an attribute not projected into the index is rejected (ValidationException), matching DynamoDB. An IndexName matching no index is rejected with ValidationException ("The table does not have the specified index"). |  |  |
+| Legacy KeyConditions / QueryFilter / ConditionalOperator | ⛔ unsupported | — | Legacy v1 parameters are rejected loudly with ValidationException — use KeyConditionExpression / FilterExpression. |  |  |
+| ReturnConsumedCapacity | ⛔ unsupported | — | Silently ignored; response omits ConsumedCapacity. |  |  |
 
 ### Behaviour differences
 
@@ -362,20 +362,20 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| Full-table scan | ✅ implemented | Translated to a cross-partition Cosmos SQL query (`x-ms-documentdb-query-enablecrosspartition: true`). Every Scan is an O(N) walk of the container — expensive in RU. |  |  |
-| FilterExpression | ✅ implemented | Pushed into the Cosmos SQL WHERE clause where safe; the remainder is evaluated in-process after each Cosmos page returns. Count always reflects post-filter rows. ScannedCount reflects pre-filter rows: when nothing is pushed it is the streamed count; when a fragment is pushed (Cosmos pre-filters at the storage layer) a complete unbounded pass recovers it with a server-side `SELECT VALUE COUNT(1)` over the same scope minus the pushed filter, so it stays faithful to DynamoDB. The pushed-filter + Limit combination is a documented divergence (see behavior_differences). Same pushdown carve-outs as Query: `<>`, ordered comparisons / BETWEEN / begins_with on B, size(), and paths whose first segment matches the reserved `_a2a:` envelope prefix stay residual. Numeric equality (=) and IN push a hybrid IS_NUMBER / `StringToNumber(_a2a:N)` branch as a *prefilter only* (false negatives impossible by construction; client-side evaluator re-checks the exact canonical string anyway). Numeric ordered comparisons (<, <=, >, >=) and BETWEEN widen the envelope branch to `IS_DEFINED(_a2a:N)` so every envelope-stored row reaches the residual evaluator — otherwise `StringToNumber` rounding could false-negative boundary values. |  |  |
-| ProjectionExpression | 🟡 partial | Top-level attributes and `#alias` references are honoured. Nested paths (`a.b`, `a[0]`) are not yet supported and are rejected with ValidationException. |  |  |
-| ExpressionAttributeNames / ExpressionAttributeValues | ✅ implemented |  |  |  |
-| Limit | ✅ implemented | Caps the *scanned* (pre-filter) row count when the filter is residual-only; pageSize is sized to the remaining evaluation budget so the per-page continuation never skips rows. When a FilterExpression is pushed (fully or partially) into the Cosmos SQL, Cosmos pre-filters at the storage layer; an unbounded scan recovers the faithful ScannedCount via a server-side count, but a Limit cannot be reconciled with server-side pre-filtering — see behavior_differences for the page-boundary trade-off. |  |  |
-| ExclusiveStartKey / LastEvaluatedKey | ✅ implemented | Pagination round-trips the Cosmos `x-ms-continuation` token inside a sentinel attribute `__a2a_continuation` (typed-string `S`). Most AWS SDKs treat LastEvaluatedKey as opaque and pass it back verbatim. |  |  |
-| ConsistentRead | ✅ implemented | Forwards `x-ms-consistency-level: Strong` for the Cosmos query when true; account-level consistency cap still applies. Opt-in startup probe (`DynamoDb.ConsistencyCheck` = Warn/Required, #204) flags accounts that cannot honor Strong at boot. |  |  |
-| Select | 🟡 partial | ALL_ATTRIBUTES (default), SPECIFIC_ATTRIBUTES, and COUNT supported. SPECIFIC_ATTRIBUTES requires a ProjectionExpression (rejected without one, matching DynamoDB). ALL_PROJECTED_ATTRIBUTES requires IndexName: on an index scan it resolves against the index projection (ALL → all attributes; KEYS_ONLY → base keys + the index's own key attributes; INCLUDE → those keys plus the index's NonKeyAttributes, applied in-process); without IndexName it is rejected. On a non-ALL GSI, Select=ALL_ATTRIBUTES is rejected (a GSI cannot fetch non-projected attributes from the base table). |  |  |
-| IndexName (GSI / LSI) | 🟡 partial | Local Secondary Index (LSI) Scan is supported. An LSI scan is still cross-partition (Scan never scopes to a partition) but is restricted to the index's member items via an explicit `IS_DEFINED(c.<lsiSort>)` guard (sparse-index semantics hold regardless of the container indexing policy), and the index projection (ALL / KEYS_ONLY / INCLUDE) is resolved in-process. ScannedCount counts index members examined: with no pushed FilterExpression it is the streamed (post-IS_DEFINED) count; with a pushed filter on an unbounded scan it is recovered with a server-side `SELECT VALUE COUNT(1)` over the index scope (IS_DEFINED) minus the pushed filter. Global Secondary Index (GSI) Scan is supported behind the opt-in `DynamoDb.EnableGlobalSecondaryIndexQueries` flag (default off; the same flag gates GSI Query); when the flag is off a GSI IndexName is rejected with ValidationException. A GSI scan is cross-partition and restricted to index members via `IS_DEFINED(c.<gsiHash>)` (plus `IS_DEFINED(c.<gsiSort>)` when the GSI is composite — both key attributes must be defined for an item to be an index member); the index projection (ALL / KEYS_ONLY / INCLUDE) is resolved in-process and the projected-attribute set is enforced (Select=ALL_ATTRIBUTES is rejected on a non-ALL GSI and a ProjectionExpression referencing a non-projected attribute is rejected). ConsistentRead=true is rejected on a GSI (GSI reads are eventually consistent). An IndexName matching no index is rejected with ValidationException ("The table does not have the specified index"). |  |  |
-| Parallel scan (Segment / TotalSegments) | ⛔ unsupported | Rejected with ValidationException. Cosmos cross-partition queries fan out internally; explicit per-segment parallelism is deferred to a later slice. |  |  |
-| Legacy ScanFilter / ConditionalOperator / AttributesToGet | ⛔ unsupported | Legacy v1 parameters are rejected loudly with ValidationException — use FilterExpression / ProjectionExpression. |  |  |
-| ReturnConsumedCapacity | ⛔ unsupported | Silently ignored; response omits ConsumedCapacity. |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| Full-table scan | ✅ implemented | — | Translated to a cross-partition Cosmos SQL query (`x-ms-documentdb-query-enablecrosspartition: true`). Every Scan is an O(N) walk of the container — expensive in RU. |  |  |
+| FilterExpression | ✅ implemented | — | Pushed into the Cosmos SQL WHERE clause where safe; the remainder is evaluated in-process after each Cosmos page returns. Count always reflects post-filter rows. ScannedCount reflects pre-filter rows: when nothing is pushed it is the streamed count; when a fragment is pushed (Cosmos pre-filters at the storage layer) a complete unbounded pass recovers it with a server-side `SELECT VALUE COUNT(1)` over the same scope minus the pushed filter, so it stays faithful to DynamoDB. The pushed-filter + Limit combination is a documented divergence (see behavior_differences). Same pushdown carve-outs as Query: `<>`, ordered comparisons / BETWEEN / begins_with on B, size(), and paths whose first segment matches the reserved `_a2a:` envelope prefix stay residual. Numeric equality (=) and IN push a hybrid IS_NUMBER / `StringToNumber(_a2a:N)` branch as a *prefilter only* (false negatives impossible by construction; client-side evaluator re-checks the exact canonical string anyway). Numeric ordered comparisons (<, <=, >, >=) and BETWEEN widen the envelope branch to `IS_DEFINED(_a2a:N)` so every envelope-stored row reaches the residual evaluator — otherwise `StringToNumber` rounding could false-negative boundary values. |  |  |
+| ProjectionExpression | 🟡 partial | — | Top-level attributes and `#alias` references are honoured. Nested paths (`a.b`, `a[0]`) are not yet supported and are rejected with ValidationException. |  |  |
+| ExpressionAttributeNames / ExpressionAttributeValues | ✅ implemented | — |  |  |  |
+| Limit | ✅ implemented | — | Caps the *scanned* (pre-filter) row count when the filter is residual-only; pageSize is sized to the remaining evaluation budget so the per-page continuation never skips rows. When a FilterExpression is pushed (fully or partially) into the Cosmos SQL, Cosmos pre-filters at the storage layer; an unbounded scan recovers the faithful ScannedCount via a server-side count, but a Limit cannot be reconciled with server-side pre-filtering — see behavior_differences for the page-boundary trade-off. |  |  |
+| ExclusiveStartKey / LastEvaluatedKey | ✅ implemented | — | Pagination round-trips the Cosmos `x-ms-continuation` token inside a sentinel attribute `__a2a_continuation` (typed-string `S`). Most AWS SDKs treat LastEvaluatedKey as opaque and pass it back verbatim. |  |  |
+| ConsistentRead | ✅ implemented | — | Forwards `x-ms-consistency-level: Strong` for the Cosmos query when true; account-level consistency cap still applies. Opt-in startup probe (`DynamoDb.ConsistencyCheck` = Warn/Required, #204) flags accounts that cannot honor Strong at boot. |  |  |
+| Select | 🟡 partial | — | ALL_ATTRIBUTES (default), SPECIFIC_ATTRIBUTES, and COUNT supported. SPECIFIC_ATTRIBUTES requires a ProjectionExpression (rejected without one, matching DynamoDB). ALL_PROJECTED_ATTRIBUTES requires IndexName: on an index scan it resolves against the index projection (ALL → all attributes; KEYS_ONLY → base keys + the index's own key attributes; INCLUDE → those keys plus the index's NonKeyAttributes, applied in-process); without IndexName it is rejected. On a non-ALL GSI, Select=ALL_ATTRIBUTES is rejected (a GSI cannot fetch non-projected attributes from the base table). |  |  |
+| IndexName (GSI / LSI) | 🟡 partial | — | Local Secondary Index (LSI) Scan is supported. An LSI scan is still cross-partition (Scan never scopes to a partition) but is restricted to the index's member items via an explicit `IS_DEFINED(c.<lsiSort>)` guard (sparse-index semantics hold regardless of the container indexing policy), and the index projection (ALL / KEYS_ONLY / INCLUDE) is resolved in-process. ScannedCount counts index members examined: with no pushed FilterExpression it is the streamed (post-IS_DEFINED) count; with a pushed filter on an unbounded scan it is recovered with a server-side `SELECT VALUE COUNT(1)` over the index scope (IS_DEFINED) minus the pushed filter. Global Secondary Index (GSI) Scan is supported behind the opt-in `DynamoDb.EnableGlobalSecondaryIndexQueries` flag (default off; the same flag gates GSI Query); when the flag is off a GSI IndexName is rejected with ValidationException. A GSI scan is cross-partition and restricted to index members via `IS_DEFINED(c.<gsiHash>)` (plus `IS_DEFINED(c.<gsiSort>)` when the GSI is composite — both key attributes must be defined for an item to be an index member); the index projection (ALL / KEYS_ONLY / INCLUDE) is resolved in-process and the projected-attribute set is enforced (Select=ALL_ATTRIBUTES is rejected on a non-ALL GSI and a ProjectionExpression referencing a non-projected attribute is rejected). ConsistentRead=true is rejected on a GSI (GSI reads are eventually consistent). An IndexName matching no index is rejected with ValidationException ("The table does not have the specified index"). |  |  |
+| Parallel scan (Segment / TotalSegments) | ⛔ unsupported | — | Rejected with ValidationException. Cosmos cross-partition queries fan out internally; explicit per-segment parallelism is deferred to a later slice. |  |  |
+| Legacy ScanFilter / ConditionalOperator / AttributesToGet | ⛔ unsupported | — | Legacy v1 parameters are rejected loudly with ValidationException — use FilterExpression / ProjectionExpression. |  |  |
+| ReturnConsumedCapacity | ⛔ unsupported | — | Silently ignored; response omits ConsumedCapacity. |  |  |
 
 ### Behaviour differences
 
@@ -404,10 +404,10 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| Tag persistence and round-trip | ✅ implemented | Persists table tags in the aws2azure TableMetadata sidecar document inside the Cosmos container and returns them from ListTagsOfResource. |  |  |
-| Merge duplicate keys | ✅ implemented | New values overwrite existing keys while preserving unrelated tags; the final tag set is limited to 50 tags. |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| Tag persistence and round-trip | ✅ implemented | — | Persists table tags in the aws2azure TableMetadata sidecar document inside the Cosmos container and returns them from ListTagsOfResource. |  |  |
+| Merge duplicate keys | ✅ implemented | — | New values overwrite existing keys while preserving unrelated tags; the final tag set is limited to 50 tags. |  |  |
 
 ### Behaviour differences
 
@@ -426,14 +426,14 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| Per-item strong-consistency reads | ✅ implemented | Each Get fans out to a Cosmos GET with `x-ms-consistency-level: Strong`. Bounded parallelism (16) keeps the response sub-second on small batches. |  |  |
-| 100-item-per-call cap | ✅ implemented | Requests over 100 items rejected with ValidationException. |  |  |
-| Positional Responses alignment | ✅ implemented | Missing items emit an empty `{}` entry to preserve index alignment with TransactItems (matches DynamoDB). |  |  |
-| ProjectionExpression / ExpressionAttributeNames (per item) | 🟡 partial | Top-level attribute names + `#alias` honoured. Nested paths rejected. |  |  |
-| TransactionCanceledException on Cosmos error | ✅ implemented | Any non-2xx, non-404 from a fan-out call cancels the transaction with `TransactionCanceledException`. `CancellationReasons` is aligned positionally — `None` for successful items, the Cosmos-derived AWS code (e.g. `ProvisionedThroughputExceededException`, `InternalServerError`) for failed ones. |  |  |
-| ReturnConsumedCapacity | ⛔ unsupported | Silently ignored; response omits ConsumedCapacity. |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| Per-item strong-consistency reads | ✅ implemented | — | Each Get fans out to a Cosmos GET with `x-ms-consistency-level: Strong`. Bounded parallelism (16) keeps the response sub-second on small batches. |  |  |
+| 100-item-per-call cap | ✅ implemented | — | Requests over 100 items rejected with ValidationException. |  |  |
+| Positional Responses alignment | ✅ implemented | — | Missing items emit an empty `{}` entry to preserve index alignment with TransactItems (matches DynamoDB). |  |  |
+| ProjectionExpression / ExpressionAttributeNames (per item) | 🟡 partial | — | Top-level attribute names + `#alias` honoured. Nested paths rejected. |  |  |
+| TransactionCanceledException on Cosmos error | ✅ implemented | — | Any non-2xx, non-404 from a fan-out call cancels the transaction with `TransactionCanceledException`. `CancellationReasons` is aligned positionally — `None` for successful items, the Cosmos-derived AWS code (e.g. `ProvisionedThroughputExceededException`, `InternalServerError`) for failed ones. |  |  |
+| ReturnConsumedCapacity | ⛔ unsupported | — | Silently ignored; response omits ConsumedCapacity. |  |  |
 
 ### Behaviour differences
 
@@ -454,15 +454,15 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| Atomic Put / Delete / ConditionCheck | ✅ implemented | All operations run inside one Cosmos stored procedure (`atomicTransactWrite_v2`), which executes as a single server-side ACID transaction. Either every write commits or none do (any write error throws and Cosmos rolls back the sproc). |  |  |
-| ConditionExpression (Put / Delete / ConditionCheck) | ✅ implemented | Conditions are evaluated server-side in the sproc before any write. If ANY condition fails, no writes are performed and the call returns `TransactionCanceledException` with positional `CancellationReasons`. `ConditionCheck.ConditionExpression` is required (matches DynamoDB). Top-level / `#alias` attribute paths; same expression surface as PutItem/DeleteItem conditions. A condition whose ROOT attribute is a reserved Cosmos field (`id`, `ttl`, or any `_a2a` name — these are shadow-encoded or injected by storage) is rejected with `ValidationException`: the sproc evaluates against the raw Cosmos document where those keys do not hold the user's value, and unlike single-item conditional writes there is no in-process fallback to evaluate them faithfully. |  |  |
-| Update | ⛔ unsupported | Atomic in-transaction `Update` is rejected with `ValidationException`. Use `Put` to overwrite the whole item, or perform the update outside the transaction. Documented gap — server-side UpdateExpression execution inside the multi-op sproc is a planned fast-follow. |  |  |
-| 100-item-per-call cap | ✅ implemented | Requests over 100 items rejected with ValidationException. |  |  |
-| Positional CancellationReasons | ✅ implemented | On condition failure, `CancellationReasons` is aligned positionally with TransactItems — `None` for items whose condition passed, `ConditionalCheckFailed` for those that failed. |  |  |
-| ClientRequestToken (idempotency) | ⛔ unsupported | Accepted but not honoured — aws2azure has no idempotency store, so a retried token is re-executed rather than de-duplicated. |  |  |
-| ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported | Silently ignored; response omits ConsumedCapacity / ItemCollectionMetrics. |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| Atomic Put / Delete / ConditionCheck | ✅ implemented | — | All operations run inside one Cosmos stored procedure (`atomicTransactWrite_v2`), which executes as a single server-side ACID transaction. Either every write commits or none do (any write error throws and Cosmos rolls back the sproc). |  |  |
+| ConditionExpression (Put / Delete / ConditionCheck) | ✅ implemented | — | Conditions are evaluated server-side in the sproc before any write. If ANY condition fails, no writes are performed and the call returns `TransactionCanceledException` with positional `CancellationReasons`. `ConditionCheck.ConditionExpression` is required (matches DynamoDB). Top-level / `#alias` attribute paths; same expression surface as PutItem/DeleteItem conditions. A condition whose ROOT attribute is a reserved Cosmos field (`id`, `ttl`, or any `_a2a` name — these are shadow-encoded or injected by storage) is rejected with `ValidationException`: the sproc evaluates against the raw Cosmos document where those keys do not hold the user's value, and unlike single-item conditional writes there is no in-process fallback to evaluate them faithfully. |  |  |
+| Update | ⛔ unsupported | — | Atomic in-transaction `Update` is rejected with `ValidationException`. Use `Put` to overwrite the whole item, or perform the update outside the transaction. Documented gap — server-side UpdateExpression execution inside the multi-op sproc is a planned fast-follow. |  |  |
+| 100-item-per-call cap | ✅ implemented | — | Requests over 100 items rejected with ValidationException. |  |  |
+| Positional CancellationReasons | ✅ implemented | — | On condition failure, `CancellationReasons` is aligned positionally with TransactItems — `None` for items whose condition passed, `ConditionalCheckFailed` for those that failed. |  |  |
+| ClientRequestToken (idempotency) | ⛔ unsupported | — | Accepted but not honoured — aws2azure has no idempotency store, so a retried token is re-executed rather than de-duplicated. |  |  |
+| ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported | — | Silently ignored; response omits ConsumedCapacity / ItemCollectionMetrics. |  |  |
 
 ### Behaviour differences
 
@@ -486,9 +486,9 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| Remove persisted tag keys | ✅ implemented | Removes requested keys from the aws2azure TableMetadata sidecar document and invalidates the table metadata cache. |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| Remove persisted tag keys | ✅ implemented | — | Removes requested keys from the aws2azure TableMetadata sidecar document and invalidates the table metadata cache. |  |  |
 
 ### Behaviour differences
 
@@ -507,22 +507,22 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| UpdateExpression grammar (SET / REMOVE / ADD / DELETE) | ✅ implemented | Hand-rolled lexer + parser shared with the future Condition/Filter slice. |  |  |
-| SET arithmetic (`a = a + :i`, `a = :x - :y`) | ✅ implemented | Decimal arithmetic preserves up to 28-29 significant digits; DynamoDB allows 38. Overflow surfaces as ValidationException. |  |  |
-| SET functions `if_not_exists(path, fallback)` and `list_append(l1, l2)` | ✅ implemented |  |  |  |
-| SET on nested paths (`addr.zip`, `items[0].name`) | ✅ implemented | Parent path must already exist as a map/list, matching DynamoDB. Creating a deeply-nested fresh structure requires top-level SET. |  |  |
-| REMOVE on nested paths and missing attributes | ✅ implemented | REMOVE on a missing path is a no-op. |  |  |
-| ADD on numeric attribute (create-if-missing + addition) | ✅ implemented |  |  |  |
-| ADD / DELETE on string/number/binary sets (union / subtract) | ✅ implemented | Empty result set causes the attribute to be removed entirely, matching DynamoDB. |  |  |
-| AttributeUpdates (legacy) PUT / DELETE / ADD | ✅ implemented | Normalised internally into the same UpdateExpression AST. |  |  |
-| ExpressionAttributeNames / ExpressionAttributeValues (`#name`, `:value`) | ✅ implemented |  |  |  |
-| Path overlap detection | ✅ implemented | Two paths in the same expression where one is a prefix of the other are rejected with ValidationException. |  |  |
-| ReturnValues (NONE / ALL_OLD / UPDATED_OLD / ALL_NEW / UPDATED_NEW) | ✅ implemented | UPDATED_OLD/UPDATED_NEW project only the top-level attributes touched by the expression, matching AWS. |  |  |
-| Create-if-missing (upsert) semantics | ✅ implemented | Atomic create with `If-None-Match: *` when the target item does not exist; concurrent create races surface as Cosmos 409 and are replayed by the optimistic-retry loop against the winner's state. |  |  |
-| ConditionExpression / Expected / ConditionalOperator | ✅ implemented | Modern ConditionExpression and legacy Expected + ConditionalOperator both supported; mutual exclusion enforced with ValidationException. Evaluator covers comparisons, AND/OR/NOT, BETWEEN, IN, attribute_exists/not_exists/type, begins_with, contains, size(). Failure returns HTTP 400 ConditionalCheckFailedException; ReturnValuesOnConditionCheckFailure=ALL_OLD includes the prior item. |  |  |
-| ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported | Silently ignored; response omits ConsumedCapacity / ItemCollectionMetrics. |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| UpdateExpression grammar (SET / REMOVE / ADD / DELETE) | ✅ implemented | — | Hand-rolled lexer + parser shared with the future Condition/Filter slice. |  |  |
+| SET arithmetic (`a = a + :i`, `a = :x - :y`) | ✅ implemented | — | Decimal arithmetic preserves up to 28-29 significant digits; DynamoDB allows 38. Overflow surfaces as ValidationException. |  |  |
+| SET functions `if_not_exists(path, fallback)` and `list_append(l1, l2)` | ✅ implemented | — |  |  |  |
+| SET on nested paths (`addr.zip`, `items[0].name`) | ✅ implemented | — | Parent path must already exist as a map/list, matching DynamoDB. Creating a deeply-nested fresh structure requires top-level SET. |  |  |
+| REMOVE on nested paths and missing attributes | ✅ implemented | — | REMOVE on a missing path is a no-op. |  |  |
+| ADD on numeric attribute (create-if-missing + addition) | ✅ implemented | — |  |  |  |
+| ADD / DELETE on string/number/binary sets (union / subtract) | ✅ implemented | — | Empty result set causes the attribute to be removed entirely, matching DynamoDB. |  |  |
+| AttributeUpdates (legacy) PUT / DELETE / ADD | ✅ implemented | — | Normalised internally into the same UpdateExpression AST. |  |  |
+| ExpressionAttributeNames / ExpressionAttributeValues (`#name`, `:value`) | ✅ implemented | — |  |  |  |
+| Path overlap detection | ✅ implemented | — | Two paths in the same expression where one is a prefix of the other are rejected with ValidationException. |  |  |
+| ReturnValues (NONE / ALL_OLD / UPDATED_OLD / ALL_NEW / UPDATED_NEW) | ✅ implemented | — | UPDATED_OLD/UPDATED_NEW project only the top-level attributes touched by the expression, matching AWS. |  |  |
+| Create-if-missing (upsert) semantics | ✅ implemented | — | Atomic create with `If-None-Match: *` when the target item does not exist; concurrent create races surface as Cosmos 409 and are replayed by the optimistic-retry loop against the winner's state. |  |  |
+| ConditionExpression / Expected / ConditionalOperator | ✅ implemented | — | Modern ConditionExpression and legacy Expected + ConditionalOperator both supported; mutual exclusion enforced with ValidationException. Evaluator covers comparisons, AND/OR/NOT, BETWEEN, IN, attribute_exists/not_exists/type, begins_with, contains, size(). Failure returns HTTP 400 ConditionalCheckFailedException; ReturnValuesOnConditionCheckFailure=ALL_OLD includes the prior item. |  |  |
+| ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported | — | Silently ignored; response omits ConsumedCapacity / ItemCollectionMetrics. |  |  |
 
 ### Behaviour differences
 
@@ -546,11 +546,11 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| TTL enable | ✅ implemented | Arms the Cosmos container by setting `defaultTtl = -1` (TTL enabled, no blanket expiry) and persists the DynamoDB attribute name in the proxy's per-table metadata sidecar. From that point every write path (PutItem / UpdateItem / BatchWriteItem / TransactWriteItems) translates the named attribute's absolute epoch-seconds value into Cosmos' per-item relative `ttl` (`ttl = epochAttr - now`, recomputed on every write so the absolute expiry stays correct across updates). The container replace runs FIRST, then the metadata write, so a metadata-write failure leaves a benign non-expiring state rather than silently dropping items. |  |  |
-| TTL disable | ✅ implemented | Removes the container `defaultTtl` (Cosmos stops honouring per-item `ttl`) and clears the attribute name in metadata. Items keep any previously written `ttl` field but it becomes inert. |  |  |
-| AttributeName validation | ✅ implemented | Rejects an enable request that omits `TimeToLiveSpecification.AttributeName` with HTTP 400; rejects an unknown table with ResourceNotFoundException. |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| TTL enable | ✅ implemented | — | Arms the Cosmos container by setting `defaultTtl = -1` (TTL enabled, no blanket expiry) and persists the DynamoDB attribute name in the proxy's per-table metadata sidecar. From that point every write path (PutItem / UpdateItem / BatchWriteItem / TransactWriteItems) translates the named attribute's absolute epoch-seconds value into Cosmos' per-item relative `ttl` (`ttl = epochAttr - now`, recomputed on every write so the absolute expiry stays correct across updates). The container replace runs FIRST, then the metadata write, so a metadata-write failure leaves a benign non-expiring state rather than silently dropping items. |  |  |
+| TTL disable | ✅ implemented | — | Removes the container `defaultTtl` (Cosmos stops honouring per-item `ttl`) and clears the attribute name in metadata. Items keep any previously written `ttl` field but it becomes inert. |  |  |
+| AttributeName validation | ✅ implemented | — | Rejects an enable request that omits `TimeToLiveSpecification.AttributeName` with HTTP 400; rejects an unknown table with ResourceNotFoundException. |  |  |
 
 ### Behaviour differences
 

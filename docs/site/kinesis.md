@@ -7,10 +7,10 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| StreamName and synthetic StreamARN | ✅ implemented | Accepts either StreamName or the synthetic aws2azure StreamARN and resolves the backing Event Hub from stream overrides or the stream name. |  |  |
-| ExclusiveStartShardId + Limit pagination | ✅ implemented | Paginates the Event Hubs partition list and sets HasMoreShards when more mapped shards remain. |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| StreamName and synthetic StreamARN | ✅ implemented | — | Accepts either StreamName or the synthetic aws2azure StreamARN and resolves the backing Event Hub from stream overrides or the stream name. |  |  |
+| ExclusiveStartShardId + Limit pagination | ✅ implemented | — | Paginates the Event Hubs partition list and sets HasMoreShards when more mapped shards remain. |  |  |
 
 ### Behaviour differences
 
@@ -32,9 +32,9 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| StreamName and synthetic StreamARN | ✅ implemented | Accepts either StreamName or the synthetic aws2azure StreamARN and resolves the backing Event Hub from stream overrides or the stream name. |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| StreamName and synthetic StreamARN | ✅ implemented | — | Accepts either StreamName or the synthetic aws2azure StreamARN and resolves the backing Event Hub from stream overrides or the stream name. |  |  |
 
 ### Behaviour differences
 
@@ -55,10 +55,10 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| Event Hubs AMQP partition receive | ✅ implemented | Consumes Event Hubs AMQP receive links against ConsumerGroups/{group}/Partitions/{id}. |  |  |
-| Core iterator types | ✅ implemented | Supports TRIM_HORIZON, LATEST, AT_TIMESTAMP, AT_SEQUENCE_NUMBER, and AFTER_SEQUENCE_NUMBER iterators via stateless proxy-issued tokens. |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| Event Hubs AMQP partition receive | ✅ implemented | — | Consumes Event Hubs AMQP receive links against ConsumerGroups/{group}/Partitions/{id}. |  |  |
+| Core iterator types | ✅ implemented | — | Supports TRIM_HORIZON, LATEST, AT_TIMESTAMP, AT_SEQUENCE_NUMBER, and AFTER_SEQUENCE_NUMBER iterators via stateless proxy-issued tokens. |  |  |
 
 ### Behaviour differences
 
@@ -84,10 +84,10 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| Stateless HMAC-signed iterator tokens | ✅ implemented | The proxy issues opaque shard iterators signed with the configured shard-iterator signing key (or the process-local fallback) and enforces a 5-minute TTL. |  |  |
-| Core iterator types | ✅ implemented | Supports TRIM_HORIZON, LATEST, AT_TIMESTAMP, AT_SEQUENCE_NUMBER, and AFTER_SEQUENCE_NUMBER request shapes. |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| Stateless HMAC-signed iterator tokens | ✅ implemented | — | The proxy issues opaque shard iterators signed with the configured shard-iterator signing key (or the process-local fallback) and enforces a 5-minute TTL. |  |  |
+| Core iterator types | ✅ implemented | — | Supports TRIM_HORIZON, LATEST, AT_TIMESTAMP, AT_SEQUENCE_NUMBER, and AFTER_SEQUENCE_NUMBER request shapes. |  |  |
 
 ### Behaviour differences
 
@@ -109,11 +109,11 @@
 
 ### Sub-features
 
-| Name | Status | Notes | Gap | Workaround |
-|---|---|---|---|---|
-| ExclusiveStartShardId + MaxResults pagination | ✅ implemented | Paginates the Event Hubs partition list and emits aws2azure NextToken cursors when more mapped shards remain. |  |  |
-| HMAC-signed NextToken cursors | ✅ implemented | Uses the Event Hubs shard iterator signing key (or an ephemeral fallback) to sign 5-minute list-shards cursors. |  |  |
-| AT_LATEST / FROM_TRIM_HORIZON shard filters | ✅ implemented | These filter types are accepted as no-ops because Event Hubs always exposes the full open-partition set. |  |  |
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| ExclusiveStartShardId + MaxResults pagination | ✅ implemented | — | Paginates the Event Hubs partition list and emits aws2azure NextToken cursors when more mapped shards remain. |  |  |
+| HMAC-signed NextToken cursors | ✅ implemented | — | Uses the Event Hubs shard iterator signing key (or an ephemeral fallback) to sign 5-minute list-shards cursors. |  |  |
+| AT_LATEST / FROM_TRIM_HORIZON shard filters | ✅ implemented | — | These filter types are accepted as no-ops because Event Hubs always exposes the full open-partition set. |  |  |
 
 ### Behaviour differences
 
