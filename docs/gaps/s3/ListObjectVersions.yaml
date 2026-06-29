@@ -1,0 +1,21 @@
+service: s3
+operation: ListObjectVersions
+azure_equivalent: "GET {container}?restype=container&comp=list&include=versions"
+status: partial
+sub_features:
+  - name: "version listing (Version entries)"
+    status: partial
+    notes: "Azure blob versions map to S3 <Version> entries (Key, VersionId, IsLatest, LastModified, ETag, Size). Requires account-level Blob versioning; otherwise each key lists once as IsLatest with VersionId 'null'."
+  - name: "prefix / delimiter / max-keys / key-marker pagination"
+    status: partial
+  - name: "delete markers"
+    status: unsupported
+    notes: "Azure delete markers do not map 1:1 to S3 delete markers; <DeleteMarker> entries are not emitted."
+  - name: "version-id-marker pagination"
+    status: unsupported
+    notes: "Pagination keys on key-marker only; Azure's marker is opaque and key-ordered."
+behavior_differences:
+  - "VersionId 'null' is used when account versioning is off (the blob has no version id)."
+  - "Owner element omitted."
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectVersions.html

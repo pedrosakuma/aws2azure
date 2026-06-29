@@ -187,6 +187,16 @@ internal sealed partial class BlobClient
         string? delimiter,
         string? marker,
         int? maxResults,
+        CancellationToken cancellationToken) =>
+        ListBlobsAsync(container, prefix, delimiter, marker, maxResults, includeVersions: false, cancellationToken);
+
+    public Task<HttpResponseMessage> ListBlobsAsync(
+        string container,
+        string? prefix,
+        string? delimiter,
+        string? marker,
+        int? maxResults,
+        bool includeVersions,
         CancellationToken cancellationToken)
     {
         var sb = new System.Text.StringBuilder(64);
@@ -206,6 +216,10 @@ internal sealed partial class BlobClient
         if (maxResults is int max)
         {
             sb.Append("&maxresults=").Append(max.ToString(CultureInfo.InvariantCulture));
+        }
+        if (includeVersions)
+        {
+            sb.Append("&include=versions");
         }
         var uri = new Uri(_serviceEndpoint, sb.ToString());
         return SendAsync(HttpMethod.Get, uri, cancellationToken);

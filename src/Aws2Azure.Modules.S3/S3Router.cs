@@ -302,7 +302,7 @@ public static class S3Router
         new("inventory", SubresourceOperations.UnsupportedOnly),
         new("metrics", SubresourceOperations.UnsupportedOnly),
         new("uploads", SubresourceOperations.UnsupportedOnly),
-        new("versions", SubresourceOperations.UnsupportedOnly),
+        new("versions", new(get: S3Operation.ListObjectVersions)),
     };
 
     // Well-known S3 bucket subresources. Membership is checked case-insensitively

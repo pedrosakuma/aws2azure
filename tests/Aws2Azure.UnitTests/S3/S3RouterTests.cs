@@ -56,6 +56,7 @@ public class S3RouterTests
     [InlineData("GET",    "/my-bucket", "encryption", S3Operation.GetBucketEncryption)]
     [InlineData("GET",    "/my-bucket", "logging", S3Operation.GetBucketLogging)]
     [InlineData("GET",    "/my-bucket", "versioning", S3Operation.GetBucketVersioning)]
+    [InlineData("GET",    "/my-bucket", "versions", S3Operation.ListObjectVersions)]
     [InlineData("GET",    "/my-bucket", "requestPayment", S3Operation.GetBucketRequestPayment)]
     [InlineData("GET",    "/my-bucket", "object-lock", S3Operation.GetObjectLockConfiguration)]
     [InlineData("GET",    "/my-bucket", "publicAccessBlock", S3Operation.GetPublicAccessBlock)]

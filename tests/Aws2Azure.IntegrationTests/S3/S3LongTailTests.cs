@@ -180,6 +180,35 @@ public class S3LongTailTests
     // ── ACL ───────────────────────────────────────────────────────────
 
     [SkippableFact]
+    public async Task ListObjectVersions_lists_current_objects_as_versions()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
+
+        var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
+        await PutBucket(bucket);
+
+        using (var p1 = await SendAsync(HttpMethod.Put, $"/{bucket}/a.txt",
+            Encoding.UTF8.GetBytes("aaa"), contentType: "text/plain"))
+            Assert.Equal(HttpStatusCode.OK, p1.StatusCode);
+        using (var p2 = await SendAsync(HttpMethod.Put, $"/{bucket}/b.txt",
+            Encoding.UTF8.GetBytes("bbbbb"), contentType: "text/plain"))
+            Assert.Equal(HttpStatusCode.OK, p2.StatusCode);
+
+        using var resp = await SendAsync(HttpMethod.Get, $"/{bucket}?versions", Array.Empty<byte>());
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var doc = XDocument.Parse(await resp.Content.ReadAsStringAsync());
+        Assert.Equal("ListVersionsResult", doc.Root!.Name.LocalName);
+
+        var versions = doc.Root!.Elements(S3Ns + "Version").ToArray();
+        Assert.Equal(2, versions.Length);
+        var keys = versions.Select(v => v.Element(S3Ns + "Key")!.Value).OrderBy(k => k).ToArray();
+        Assert.Equal(new[] { "a.txt", "b.txt" }, keys);
+        // Unversioned Azurite account → each blob is the current version.
+        Assert.All(versions, v => Assert.Equal("true", v.Element(S3Ns + "IsLatest")!.Value));
+        Assert.All(versions, v => Assert.NotNull(v.Element(S3Ns + "VersionId")));
+    }
+
+    [SkippableFact]
     public async Task GetBucketAcl_reports_ownership_only_shape()
     {
         Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
