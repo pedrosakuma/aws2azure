@@ -559,6 +559,32 @@ public sealed class SecretsManagerServiceModuleTests
     }
 
     [Fact]
+    public async Task HandleAsync_UpdateSecret_demotes_prior_current_so_awscurrent_resolves_new_value()
+    {
+        // Prior AWSCURRENT shares a 1-second created stamp with the update; the
+        // resolver must still land on the new version because UpdateSecret demotes
+        // the old AWSCURRENT (regression #484).
+        using var http = new AzureHttpClient(new InMemoryKeyVaultHandler(
+            new SecretVersionState("old-current", "old-secret", 1_710_000_200, new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["aws2azure-version-stages"] = "AWSCURRENT",
+            })), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var updateContext = CreateContext("SecretsManager.UpdateSecret", "{\"SecretId\":\"demo\",\"SecretString\":\"new-secret\"}");
+        await module.HandleAsync(updateContext);
+        Assert.Equal(StatusCodes.Status200OK, updateContext.Response.StatusCode);
+
+        var currentContext = CreateContext("SecretsManager.GetSecretValue", "{\"SecretId\":\"demo\",\"VersionStage\":\"AWSCURRENT\"}");
+        await module.HandleAsync(currentContext);
+        Assert.Equal(StatusCodes.Status200OK, currentContext.Response.StatusCode);
+        var currentBody = await ReadBodyAsync(currentContext);
+        using var currentDocument = JsonDocument.Parse(currentBody);
+        Assert.Equal("new-version", currentDocument.RootElement.GetProperty("VersionId").GetString());
+        Assert.Equal("new-secret", currentDocument.RootElement.GetProperty("SecretString").GetString());
+    }
+
+    [Fact]
     public async Task HandleAsync_UpdateSecret_returns_not_found_when_secret_is_absent()
     {
         var putAttempted = false;

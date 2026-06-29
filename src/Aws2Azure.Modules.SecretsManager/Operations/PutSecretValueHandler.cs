@@ -73,10 +73,43 @@ internal static class PutSecretValueHandler
         bool versionStagesSpecified,
         CancellationToken cancellationToken)
     {
+        var written = await CreateVersionAsync(context, client, token, name, secretString, secretBinary, description: null, clientRequestToken, payloadSha256, versionStages, versionStagesSpecified, cancellationToken).ConfigureAwait(false);
+        if (written is null)
+        {
+            return;
+        }
+
+        var payload = new PutSecretValueResponse(
+            Arn: KeyVaultSecretClient.BuildArn(name),
+            Name: name,
+            VersionId: string.IsNullOrWhiteSpace(clientRequestToken) ? written.Value.VersionId : clientRequestToken,
+            VersionStages: versionStages);
+
+        await SecretsManagerOperationSupport.WriteJsonAsync(context, payload, SecretsManagerJsonContext.Default.PutSecretValueResponse, cancellationToken).ConfigureAwait(false);
+    }
+
+    // Writes a new Key Vault version and applies AWS stage transitions (demoting
+    // the prior AWSCURRENT to AWSPREVIOUS, removing moved labels from others).
+    // Returns the new version metadata, or null when an AWS error was written.
+    // Shared with UpdateSecret so both go through identical stage handling.
+    internal static async Task<NewVersionResult?> CreateVersionAsync(
+        HttpContext context,
+        KeyVaultSecretClient client,
+        string token,
+        string name,
+        string? secretString,
+        string? secretBinary,
+        string? description,
+        string? clientRequestToken,
+        string payloadSha256,
+        IReadOnlyList<string> versionStages,
+        bool versionStagesSpecified,
+        CancellationToken cancellationToken)
+    {
         var existingVersions = await ListVersionsAsync(context, client, token, name, cancellationToken).ConfigureAwait(false);
         if (existingVersions is null)
         {
-            return;
+            return null;
         }
 
         var internalTags = KeyVaultSecretClient.BuildInternalTags(clientRequestToken, payloadSha256, versionStages);
@@ -85,14 +118,14 @@ internal static class PutSecretValueHandler
         request.Content = new StringContent(KeyVaultSecretClient.BuildJsonBody(
             secretString,
             secretBinary,
-            null,
+            description,
             internalTags), Encoding.UTF8, "application/json");
 
         using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             await SecretsManagerOperationSupport.WriteAwsErrorAsync(context, SecretsManagerOperationSupport.MapStatusCode(response.StatusCode), SecretsManagerOperationSupport.MapErrorCode(response.StatusCode), "Key Vault request failed.").ConfigureAwait(false);
-            return;
+            return null;
         }
 
         using var secretDocument = await SecretsManagerOperationSupport.ReadJsonDocumentAsync(response.Content, cancellationToken).ConfigureAwait(false);
@@ -101,24 +134,21 @@ internal static class PutSecretValueHandler
             : string.Empty;
         var newVersionId = KeyVaultSecretClient.GetVersionId(id);
         var responseTags = KeyVaultSecretClient.GetRawTags(secretDocument.RootElement);
+        var createdDate = KeyVaultSecretClient.GetCreatedDate(secretDocument.RootElement);
         var newVersion = new SecretVersionMetadata(
             newVersionId,
             responseTags.Count == 0 ? internalTags : responseTags,
-            KeyVaultSecretClient.GetCreatedDate(secretDocument.RootElement).ToUnixTimeSeconds(),
+            createdDate.ToUnixTimeSeconds(),
             HasStoredStages: true);
         if (!await ApplyStageTransitionsAsync(context, client, token, name, existingVersions, newVersion, versionStages, versionStagesSpecified, cancellationToken).ConfigureAwait(false))
         {
-            return;
+            return null;
         }
 
-        var payload = new PutSecretValueResponse(
-            Arn: KeyVaultSecretClient.BuildArn(name),
-            Name: name,
-            VersionId: string.IsNullOrWhiteSpace(clientRequestToken) ? newVersionId : clientRequestToken,
-            VersionStages: versionStages);
-
-        await SecretsManagerOperationSupport.WriteJsonAsync(context, payload, SecretsManagerJsonContext.Default.PutSecretValueResponse, cancellationToken).ConfigureAwait(false);
+        return new NewVersionResult(newVersionId, createdDate);
     }
+
+    internal readonly record struct NewVersionResult(string VersionId, DateTimeOffset CreatedDate);
 
     private static async Task<bool> TryWriteIdempotentResponseAsync(
         HttpContext context,
