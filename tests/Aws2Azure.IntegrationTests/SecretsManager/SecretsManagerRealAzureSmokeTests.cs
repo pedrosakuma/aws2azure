@@ -205,16 +205,18 @@ public sealed class SecretsManagerRealAzureSmokeTests
 
     // Azure Key Vault does not guarantee read-your-write on the unversioned
     // GetSecret endpoint immediately after an update: the latest-version pointer
-    // can briefly resolve to the prior version (propagation lag). Poll with a
-    // short bounded retry until the expected value is observed; on timeout return
-    // the last response so the assertion fails with the actual value for
-    // diagnostics. See issue #484.
+    // can briefly resolve to the prior version (propagation lag, occasionally
+    // tens of seconds). Poll with a bounded backoff until the expected value is
+    // observed; on timeout return the last response so the assertion fails with
+    // the actual value for diagnostics. See issue #484.
     private static async Task<GetSecretValueResponse> GetSecretValueEventuallyAsync(
         IAmazonSecretsManager client,
         GetSecretValueRequest request,
         string expectedValue)
     {
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(60);
+        var delay = TimeSpan.FromMilliseconds(500);
+        var maxDelay = TimeSpan.FromSeconds(2);
         GetSecretValueResponse response;
         while (true)
         {
@@ -225,7 +227,8 @@ public sealed class SecretsManagerRealAzureSmokeTests
                 return response;
             }
 
-            await Task.Delay(500).ConfigureAwait(false);
+            await Task.Delay(delay).ConfigureAwait(false);
+            delay = delay < maxDelay ? delay + delay : maxDelay;
         }
     }
 }
