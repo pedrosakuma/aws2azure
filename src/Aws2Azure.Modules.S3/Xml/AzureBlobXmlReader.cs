@@ -422,4 +422,74 @@ internal static class AzureBlobXmlReader
 
         return sawTagSet ? tags : null;
     }
+
+    /// <summary>
+    /// Parses an S3 <c>&lt;Retention&gt;</c> body. Returns (Mode, RetainUntilDate);
+    /// either field is null when absent/invalid. Mode is normalised to
+    /// GOVERNANCE/COMPLIANCE; the date is parsed as UTC. Manual cursor: after
+    /// ReadElementContentAsString the reader is already past the element, so a
+    /// match must NOT re-Read — otherwise the sibling element is skipped.
+    /// </summary>
+    public static (string? Mode, DateTimeOffset? Until) ParseRetention(string xml)
+    {
+        if (string.IsNullOrWhiteSpace(xml)) return (null, null);
+        using var reader = XmlReader.Create(new StringReader(xml), new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
+            IgnoreWhitespace = true, IgnoreComments = true,
+        });
+        if (!reader.MoveToContent().Equals(XmlNodeType.Element)
+            || !string.Equals(reader.LocalName, "Retention", StringComparison.Ordinal))
+        {
+            return (null, null);
+        }
+        string? mode = null, until = null;
+        reader.Read();
+        while (!reader.EOF)
+        {
+            if (reader.NodeType != XmlNodeType.Element) { reader.Read(); continue; }
+            if (reader.LocalName == "Mode") mode = reader.ReadElementContentAsString();
+            else if (reader.LocalName == "RetainUntilDate") until = reader.ReadElementContentAsString();
+            else reader.Read();
+        }
+        if (mode is not ("GOVERNANCE" or "COMPLIANCE")) mode = null;
+        DateTimeOffset? parsed = null;
+        if (!string.IsNullOrEmpty(until) && DateTimeOffset.TryParse(
+            until, CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var dt))
+        {
+            parsed = dt;
+        }
+        return (mode, parsed);
+    }
+
+    /// <summary>
+    /// Parses an S3 <c>&lt;LegalHold&gt;&lt;Status&gt;ON|OFF&lt;/Status&gt;&lt;/LegalHold&gt;</c>
+    /// body. Returns true (ON), false (OFF) or null (absent/unrecognised).
+    /// </summary>
+    public static bool? ParseLegalHold(string xml)
+    {
+        if (string.IsNullOrWhiteSpace(xml)) return null;
+        using var reader = XmlReader.Create(new StringReader(xml), new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
+            IgnoreWhitespace = true, IgnoreComments = true,
+        });
+        if (!reader.MoveToContent().Equals(XmlNodeType.Element)
+            || !string.Equals(reader.LocalName, "LegalHold", StringComparison.Ordinal))
+        {
+            return null;
+        }
+        string? status = null;
+        reader.Read();
+        while (!reader.EOF)
+        {
+            if (reader.NodeType == XmlNodeType.Element && reader.LocalName == "Status")
+            {
+                status = reader.ReadElementContentAsString();
+            }
+            else { reader.Read(); }
+        }
+        return status switch { "ON" => true, "OFF" => false, _ => null };
+    }
 }

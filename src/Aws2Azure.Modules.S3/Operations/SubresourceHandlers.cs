@@ -436,38 +436,8 @@ internal static class SubresourceHandlers
         {
             body = await reader.ReadToEndAsync(ct).ConfigureAwait(false);
         }
-        if (string.IsNullOrWhiteSpace(body)) return (null, null);
-        try
-        {
-            using var xml = XmlReader.Create(new StringReader(body), new XmlReaderSettings
-            {
-                DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
-                IgnoreWhitespace = true, IgnoreComments = true,
-            });
-            if (!xml.MoveToContent().Equals(XmlNodeType.Element)
-                || !string.Equals(xml.LocalName, "Retention", StringComparison.Ordinal))
-            {
-                return (null, null);
-            }
-            string? mode = null, until = null;
-            while (xml.Read())
-            {
-                if (xml.NodeType != XmlNodeType.Element) continue;
-                if (xml.LocalName == "Mode") mode = xml.ReadElementContentAsString();
-                else if (xml.LocalName == "RetainUntilDate") until = xml.ReadElementContentAsString();
-            }
-            if (mode is not ("GOVERNANCE" or "COMPLIANCE")) return (null, null);
-            if (string.IsNullOrEmpty(until) || !DateTimeOffset.TryParse(
-                until, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed))
-            {
-                return (null, null);
-            }
-            return (mode, parsed);
-        }
-        catch (XmlException)
-        {
-            return (null, null);
-        }
+        try { return AzureBlobXmlReader.ParseRetention(body); }
+        catch (XmlException) { return (null, null); }
     }
 
     // Parses <LegalHold><Status>ON|OFF</Status></LegalHold>; null on malformed.
@@ -478,33 +448,8 @@ internal static class SubresourceHandlers
         {
             body = await reader.ReadToEndAsync(ct).ConfigureAwait(false);
         }
-        if (string.IsNullOrWhiteSpace(body)) return null;
-        try
-        {
-            using var xml = XmlReader.Create(new StringReader(body), new XmlReaderSettings
-            {
-                DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
-                IgnoreWhitespace = true, IgnoreComments = true,
-            });
-            if (!xml.MoveToContent().Equals(XmlNodeType.Element)
-                || !string.Equals(xml.LocalName, "LegalHold", StringComparison.Ordinal))
-            {
-                return null;
-            }
-            string? status = null;
-            while (xml.Read())
-            {
-                if (xml.NodeType == XmlNodeType.Element && xml.LocalName == "Status")
-                {
-                    status = xml.ReadElementContentAsString();
-                }
-            }
-            return status switch { "ON" => true, "OFF" => false, _ => null };
-        }
-        catch (XmlException)
-        {
-            return null;
-        }
+        try { return AzureBlobXmlReader.ParseLegalHold(body); }
+        catch (XmlException) { return null; }
     }
 
     // ─── Bucket tagging (container metadata blob) ─────────────────────
