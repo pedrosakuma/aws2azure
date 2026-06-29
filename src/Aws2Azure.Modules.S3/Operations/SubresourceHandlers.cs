@@ -324,7 +324,8 @@ internal static class SubresourceHandlers
     private static async Task GetObjectRetentionAsync(
         HttpContext context, BlobClient blob, string bucket, string key, CancellationToken ct)
     {
-        using var response = await blob.HeadBlobAsync(bucket, key, ct).ConfigureAwait(false);
+        var versionId = StringOrNullQuery(context, "versionId");
+        using var response = await blob.HeadBlobAsync(bucket, key, versionId, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.GetObjectRetention)).ConfigureAwait(false);
@@ -357,7 +358,8 @@ internal static class SubresourceHandlers
 
         var azureMode = mode == "COMPLIANCE" ? "Locked" : "Unlocked";
         var until = retainUntil.Value.UtcDateTime.ToString("R", CultureInfo.InvariantCulture);
-        using var response = await blob.SetBlobImmutabilityPolicyAsync(bucket, key, until, azureMode, ct).ConfigureAwait(false);
+        var versionId = StringOrNullQuery(context, "versionId");
+        using var response = await blob.SetBlobImmutabilityPolicyAsync(bucket, key, until, azureMode, versionId, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.PutObjectRetention)).ConfigureAwait(false);
@@ -369,7 +371,8 @@ internal static class SubresourceHandlers
     private static async Task GetObjectLegalHoldAsync(
         HttpContext context, BlobClient blob, string bucket, string key, CancellationToken ct)
     {
-        using var response = await blob.HeadBlobAsync(bucket, key, ct).ConfigureAwait(false);
+        var versionId = StringOrNullQuery(context, "versionId");
+        using var response = await blob.HeadBlobAsync(bucket, key, versionId, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.GetObjectLegalHold)).ConfigureAwait(false);
@@ -391,7 +394,8 @@ internal static class SubresourceHandlers
             return;
         }
 
-        using var response = await blob.SetBlobLegalHoldAsync(bucket, key, on.Value, ct).ConfigureAwait(false);
+        var versionId = StringOrNullQuery(context, "versionId");
+        using var response = await blob.SetBlobLegalHoldAsync(bucket, key, on.Value, versionId, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.PutObjectLegalHold)).ConfigureAwait(false);
@@ -403,6 +407,16 @@ internal static class SubresourceHandlers
     private static S3ErrorMapping.Mapping MalformedXml() => new(
         StatusCodes.Status400BadRequest, "MalformedXML",
         "The XML you provided was not well-formed or did not validate against our published schema.");
+
+    private static string? StringOrNullQuery(HttpContext context, string key)
+    {
+        if (context.Request.Query.TryGetValue(key, out var values) && values.Count > 0)
+        {
+            var v = values[0];
+            return string.IsNullOrEmpty(v) ? null : v;
+        }
+        return null;
+    }
 
     private static string? FirstHeader(HttpResponseMessage response, string name)
     {

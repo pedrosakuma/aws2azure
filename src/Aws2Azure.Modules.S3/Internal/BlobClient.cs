@@ -354,51 +354,49 @@ internal sealed partial class BlobClient
     /// policy-mode</c>, and <c>x-ms-legal-hold</c> headers (when set) that back
     /// S3 GetObjectRetention / GetObjectLegalHold.
     /// </summary>
-    public Task<HttpResponseMessage> HeadBlobAsync(string container, string key, CancellationToken cancellationToken)
+    public Task<HttpResponseMessage> HeadBlobAsync(string container, string key, string? versionId, CancellationToken cancellationToken)
     {
-        var uri = BuildBlobUri(container, key);
+        var uri = BuildBlobUri(container, key, VersionQuery(null, versionId));
         var request = new HttpRequestMessage(HttpMethod.Head, uri);
         return SendBlobRequestAsync(request, cancellationToken);
     }
 
-    /// <summary>
-    /// Issues <c>PUT {blob}?comp=immutabilityPolicies</c> setting a time-based
-    /// retention policy. <paramref name="mode"/> is <c>Unlocked</c> or
-    /// <c>Locked</c>; <paramref name="untilDateRfc1123"/> is the RFC1123 expiry.
-    /// Backs S3 PutObjectRetention.
-    /// </summary>
     public Task<HttpResponseMessage> SetBlobImmutabilityPolicyAsync(
-        string container, string key, string untilDateRfc1123, string mode, CancellationToken cancellationToken)
+        string container, string key, string untilDateRfc1123, string mode, string? versionId, CancellationToken cancellationToken)
     {
-        var uri = BuildBlobUri(container, key, "?comp=immutabilityPolicies");
+        var uri = BuildBlobUri(container, key, VersionQuery("comp=immutabilityPolicies", versionId));
         var request = new HttpRequestMessage(HttpMethod.Put, uri);
         request.Headers.TryAddWithoutValidation("x-ms-immutability-policy-until-date", untilDateRfc1123);
         request.Headers.TryAddWithoutValidation("x-ms-immutability-policy-mode", mode);
         return SendBlobRequestAsync(request, cancellationToken);
     }
 
-    /// <summary>
-    /// Issues <c>DELETE {blob}?comp=immutabilityPolicies</c> removing an
-    /// unlocked retention policy (fails on a locked policy, like S3).
-    /// </summary>
     public Task<HttpResponseMessage> DeleteBlobImmutabilityPolicyAsync(
-        string container, string key, CancellationToken cancellationToken)
+        string container, string key, string? versionId, CancellationToken cancellationToken)
     {
-        var uri = BuildBlobUri(container, key, "?comp=immutabilityPolicies");
+        var uri = BuildBlobUri(container, key, VersionQuery("comp=immutabilityPolicies", versionId));
         return SendAsync(HttpMethod.Delete, uri, cancellationToken);
     }
 
-    /// <summary>
-    /// Issues <c>PUT {blob}?comp=legalhold</c> setting/clearing the blob legal
-    /// hold via <c>x-ms-legal-hold</c>. Backs S3 PutObjectLegalHold.
-    /// </summary>
     public Task<HttpResponseMessage> SetBlobLegalHoldAsync(
-        string container, string key, bool hold, CancellationToken cancellationToken)
+        string container, string key, bool hold, string? versionId, CancellationToken cancellationToken)
     {
-        var uri = BuildBlobUri(container, key, "?comp=legalhold");
+        var uri = BuildBlobUri(container, key, VersionQuery("comp=legalhold", versionId));
         var request = new HttpRequestMessage(HttpMethod.Put, uri);
         request.Headers.TryAddWithoutValidation("x-ms-legal-hold", hold ? "true" : "false");
         return SendBlobRequestAsync(request, cancellationToken);
+    }
+
+    // Builds "?comp=...&versionid=..." threading the S3 versionId (opaque
+    // Azure x-ms-version-id) onto the subresource query, both parts optional.
+    private static string VersionQuery(string? comp, string? versionId)
+    {
+        var hasComp = !string.IsNullOrEmpty(comp);
+        var hasVer = !string.IsNullOrEmpty(versionId);
+        if (!hasComp && !hasVer) return string.Empty;
+        if (hasComp && !hasVer) return "?" + comp;
+        if (!hasComp) return "?versionid=" + Uri.EscapeDataString(versionId!);
+        return "?" + comp + "&versionid=" + Uri.EscapeDataString(versionId!);
     }
 
     /// <summary>

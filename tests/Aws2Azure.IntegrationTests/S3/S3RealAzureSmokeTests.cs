@@ -137,7 +137,7 @@ public sealed class S3RealAzureSmokeTests
         {
             if (bucketCreated)
             {
-                try { await client.DeleteObjectAsync(new DeleteObjectRequest { BucketName = bucket, Key = key }).ConfigureAwait(false); } catch { }
+                try { await client.DeleteObjectAsync(new DeleteObjectRequest { BucketName = bucket, Key = key, BypassGovernanceRetention = true }).ConfigureAwait(false); } catch { }
                 try { await client.DeleteBucketAsync(new DeleteBucketRequest { BucketName = bucket }).ConfigureAwait(false); } catch { }
             }
         }
