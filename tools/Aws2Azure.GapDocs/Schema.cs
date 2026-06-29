@@ -12,6 +12,11 @@ public sealed class OperationDoc
     public List<string> BehaviorDifferences { get; set; } = new();
     public List<string> References { get; set; } = new();
 
+    // Real-Azure conformance seal (Theme C / emulator caveat). When set,
+    // records that this operation was exercised against live Azure — e.g. a
+    // date or workflow run URL. Empty means "emulator-only so far".
+    public string VerifiedRealAzure { get; set; } = string.Empty;
+
     // Provenance — set by loader.
     public string SourceFile { get; set; } = string.Empty;
 }
@@ -23,6 +28,9 @@ public sealed class SubFeature
     public string Notes { get; set; } = string.Empty;
     public string Gap { get; set; } = string.Empty;
     public string Workaround { get; set; } = string.Empty;
+
+    // Per-sub-feature real-Azure seal (see OperationDoc.VerifiedRealAzure).
+    public string VerifiedRealAzure { get; set; } = string.Empty;
 }
 
 public static class StatusValues
