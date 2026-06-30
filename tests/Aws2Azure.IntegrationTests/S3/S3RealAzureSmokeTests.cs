@@ -142,4 +142,77 @@ public sealed class S3RealAzureSmokeTests
             }
         }
     }
+
+    [SkippableFact]
+    public async Task Versioning_lists_object_versions_and_reads_by_version_id()
+    {
+        Skip.IfNot(_fx.BlobConfigured,
+            "AZURE_BLOB_ACCOUNT/AZURE_BLOB_KEY not set — skipping real-Azure S3 versioning smoke.");
+
+        var bucket = "aws2azure-it-" + Guid.NewGuid().ToString("N")[..12];
+        const string key = "versioned/object.txt";
+        using var client = _fx.CreateS3Client();
+        var bucketCreated = false;
+        try
+        {
+            await client.PutBucketAsync(new PutBucketRequest { BucketName = bucket }).ConfigureAwait(false);
+            bucketCreated = true;
+
+            await client.PutBucketVersioningAsync(new PutBucketVersioningRequest
+            {
+                BucketName = bucket,
+                VersioningConfig = new S3BucketVersioningConfig { Status = VersionStatus.Enabled },
+            }).ConfigureAwait(false);
+
+            var versioning = await client.GetBucketVersioningAsync(new GetBucketVersioningRequest { BucketName = bucket }).ConfigureAwait(false);
+            Assert.Equal(VersionStatus.Enabled, versioning.VersioningConfig.Status);
+
+            var first = await client.PutObjectAsync(new PutObjectRequest
+            {
+                BucketName = bucket, Key = key, ContentBody = "v1",
+            }).ConfigureAwait(false);
+            var second = await client.PutObjectAsync(new PutObjectRequest
+            {
+                BucketName = bucket, Key = key, ContentBody = "v2",
+            }).ConfigureAwait(false);
+
+            Assert.False(string.IsNullOrWhiteSpace(first.VersionId));
+            Assert.False(string.IsNullOrWhiteSpace(second.VersionId));
+            Assert.NotEqual(first.VersionId, second.VersionId);
+
+            var versions = await client.ListVersionsAsync(new ListVersionsRequest { BucketName = bucket, Prefix = key }).ConfigureAwait(false);
+            var entries = versions.Versions.FindAll(v => string.Equals(v.Key, key, StringComparison.Ordinal));
+            Assert.True(entries.Count >= 2, $"expected ≥2 versions, got {entries.Count}");
+            Assert.Contains(entries, v => v.IsLatest == true);
+
+            using var latest = await client.GetObjectAsync(new GetObjectRequest { BucketName = bucket, Key = key }).ConfigureAwait(false);
+            Assert.Equal("v2", await new StreamReader(latest.ResponseStream).ReadToEndAsync().ConfigureAwait(false));
+
+            using var older = await client.GetObjectAsync(new GetObjectRequest
+            {
+                BucketName = bucket, Key = key, VersionId = first.VersionId,
+            }).ConfigureAwait(false);
+            Assert.Equal("v1", await new StreamReader(older.ResponseStream).ReadToEndAsync().ConfigureAwait(false));
+        }
+        finally
+        {
+            if (bucketCreated)
+            {
+                try
+                {
+                    var remaining = await client.ListVersionsAsync(new ListVersionsRequest { BucketName = bucket, Prefix = key }).ConfigureAwait(false);
+                    foreach (var v in remaining.Versions)
+                    {
+                        try { await client.DeleteObjectAsync(new DeleteObjectRequest { BucketName = bucket, Key = v.Key, VersionId = v.VersionId }).ConfigureAwait(false); } catch { }
+                    }
+                }
+                catch
+                {
+                }
+
+                try { await client.DeleteObjectAsync(new DeleteObjectRequest { BucketName = bucket, Key = key }).ConfigureAwait(false); } catch { }
+                try { await client.DeleteBucketAsync(new DeleteBucketRequest { BucketName = bucket }).ConfigureAwait(false); } catch { }
+            }
+        }
+    }
 }
