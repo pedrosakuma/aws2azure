@@ -4,7 +4,7 @@ Emulators are a necessary, not sufficient, signal: nothing is trusted as
 `implemented` without ≥1 recorded real-Azure validation. This report aggregates
 the documented behaviour differences and the real-Azure seal state.
 
-- Operations: **142** — real-Azure verified: **4**, implemented-but-unsealed: **46**
+- Operations: **142** — real-Azure verified: **7**, implemented-but-unsealed: **46**
 
 ## Implemented without a real-Azure seal
 
@@ -270,8 +270,8 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | GetBucketReplication | — | GET returns HTTP 404 with code ReplicationConfigurationNotFoundError so clients receive the same shape as a never-configured S3 bucket instead of InternalError. |
 | s3 | GetBucketRequestPayment | — | GET returns 200 with <RequestPaymentConfiguration> with <Payer>BucketOwner</Payer> (S3 default). |
 | s3 | GetBucketTagging | — | Bucket tags survive process restarts because they live on the container metadata, but they are invisible to any Azure-native tooling that does not know about the aws2azurebuckettags key. |
-| s3 | GetBucketVersioning | — | GET returns the per-bucket toggle persisted by PutBucketVersioning. Azure Blob versioning itself is account-scoped: actual version retention requires account-level versioning enabled out-of-band by the operator. |
-| s3 | GetBucketVersioning | — | MFADelete is never reported (not supported). |
+| s3 | GetBucketVersioning | ✅ | GET returns the per-bucket toggle persisted by PutBucketVersioning. Azure Blob versioning itself is account-scoped: actual version retention requires account-level versioning enabled out-of-band by the operator. |
+| s3 | GetBucketVersioning | ✅ | MFADelete is never reported (not supported). |
 | s3 | GetBucketWebsite | — | GET returns HTTP 404 with code NoSuchWebsiteConfiguration so clients receive the same shape as a never-configured S3 bucket instead of InternalError. |
 | s3 | GetObject | — | Streaming end-to-end: response body is forwarded without buffering. |
 | s3 | GetObject | — | x-amz-id-2 carries the Azure x-ms-request-id for cross-system tracing. |
@@ -295,8 +295,8 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | ListBuckets | — | Single fixed storage account per process (BlobCredentials); cross-account listing is out of scope. |
 | s3 | ListMultipartUploads | — | Returns a well-formed empty <ListMultipartUploadsResult> (IsTruncated=false, no <Upload> entries) rather than 501. This keeps SDK retry/recovery flows from erroring out, but callers cannot use this endpoint to discover orphaned uploads. |
 | s3 | ListMultipartUploads | — | Bucket existence is still validated — missing bucket → NoSuchBucket. |
-| s3 | ListObjectVersions | — | VersionId 'null' is used when account versioning is off (the blob has no version id). |
-| s3 | ListObjectVersions | — | Owner element omitted. |
+| s3 | ListObjectVersions | ✅ | VersionId 'null' is used when account versioning is off (the blob has no version id). |
+| s3 | ListObjectVersions | ✅ | Owner element omitted. |
 | s3 | ListObjects | — | Legacy V1 listing kept alongside V2 for SDKs that have not migrated. |
 | s3 | ListObjects | — | Without a delimiter, callers derive the next marker from the last Contents.Key (matches S3 docs). |
 | s3 | ListObjectsV2 | — | Pagination is server-driven against Azure; the proxy paginates internally to fill max-keys. |
@@ -322,8 +322,8 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | PutBucketReplication | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
 | s3 | PutBucketRequestPayment | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
 | s3 | PutBucketTagging | — | The metadata write replaces all container metadata on each PUT — the proxy uses no other container-metadata keys today. |
-| s3 | PutBucketVersioning | — | Stores the S3 bucket-level intent only; does not toggle account-level Azure Blob versioning (no control-plane). Operators must enable account versioning out-of-band for versionId retention to function (opt-in, documented per topology). |
-| s3 | PutBucketVersioning | — | Read-merge-write of container metadata is last-writer-wins (no If-Match), so concurrent PutBucketVersioning/PutBucketTagging may drop each other; rare control-plane op. |
+| s3 | PutBucketVersioning | ✅ | Stores the S3 bucket-level intent only; does not toggle account-level Azure Blob versioning (no control-plane). Operators must enable account versioning out-of-band for versionId retention to function (opt-in, documented per topology). |
+| s3 | PutBucketVersioning | ✅ | Read-merge-write of container metadata is last-writer-wins (no If-Match), so concurrent PutBucketVersioning/PutBucketTagging may drop each other; rare control-plane op. |
 | s3 | PutBucketWebsite | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
 | s3 | PutObject | — | ETag value comes from Azure (hex of MD5 for single-part uploads); shape matches S3 but bytes differ from a re-uploaded object. |
 | s3 | PutObject | — | PUT always overwrites an existing blob, matching S3 default semantics. |
