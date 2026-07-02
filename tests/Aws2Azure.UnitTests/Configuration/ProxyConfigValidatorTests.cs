@@ -872,4 +872,30 @@ public class ProxyConfigValidatorTests
         Environment.SetEnvironmentVariable("AZURE_CLIENT_ID", old.Client);
         Environment.SetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE", old.TokenFile);
     }
+
+    [Fact]
+    public void Accepts_valid_presigned_trusted_signing_hosts()
+    {
+        var config = ValidBase();
+        config.S3.PresignedTrustedSigningHosts.Add("s3.amazonaws.com");
+        config.S3.PresignedTrustedSigningHosts.Add("s3.us-east-1.amazonaws.com");
+
+        var ex = Record.Exception(() => ProxyConfigValidator.Validate(config));
+        Assert.Null(ex);
+    }
+
+    [Theory]
+    [InlineData("https://s3.amazonaws.com", "must be a bare host without a scheme")]
+    [InlineData("s3.amazonaws.com/bucket", "must be a bare host without a path")]
+    [InlineData("s3 .amazonaws.com", "must not contain whitespace")]
+    [InlineData("S3.Amazonaws.com", "must be lowercase")]
+    [InlineData("", "must not be empty")]
+    public void Rejects_malformed_presigned_trusted_signing_host(string host, string expectedMessage)
+    {
+        var config = ValidBase();
+        config.S3.PresignedTrustedSigningHosts.Add(host);
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+        Assert.Contains(expectedMessage, ex.Message);
+    }
 }

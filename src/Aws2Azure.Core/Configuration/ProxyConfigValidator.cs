@@ -30,6 +30,8 @@ public static class ProxyConfigValidator
             errors.Add($"dynamoDb.consistencyCheck: unknown value '{(int)config.DynamoDb.ConsistencyCheck}'.");
         }
 
+        ValidatePresignedTrustedSigningHosts(config, errors);
+
         ResolveAzureIdentities(config, errors);
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -568,6 +570,41 @@ public static class ProxyConfigValidator
     /// references, ambiguous inline+reference combinations, and malformed named
     /// identities all fail loud.
     /// </summary>
+    private static void ValidatePresignedTrustedSigningHosts(ProxyConfig config, List<string> errors)
+    {
+        var hosts = config.S3.PresignedTrustedSigningHosts;
+        for (var i = 0; i < hosts.Count; i++)
+        {
+            var prefix = $"s3.presignedTrustedSigningHosts[{i}]";
+            var host = hosts[i];
+            if (string.IsNullOrWhiteSpace(host))
+            {
+                errors.Add($"{prefix}: must not be empty.");
+                continue;
+            }
+
+            if (host.Contains("://", StringComparison.Ordinal))
+            {
+                errors.Add($"{prefix}: must be a bare host without a scheme (got '{host}').");
+            }
+
+            if (host.Contains('/', StringComparison.Ordinal))
+            {
+                errors.Add($"{prefix}: must be a bare host without a path (got '{host}').");
+            }
+
+            if (host.AsSpan().IndexOfAny(' ', '\t') >= 0)
+            {
+                errors.Add($"{prefix}: must not contain whitespace (got '{host}').");
+            }
+
+            if (!string.Equals(host, host.ToLowerInvariant(), StringComparison.Ordinal))
+            {
+                errors.Add($"{prefix}: must be lowercase (SigV4 host is case-normalized; got '{host}').");
+            }
+        }
+    }
+
     private static void ResolveAzureIdentities(ProxyConfig config, List<string> errors)
     {
         var identities = config.AzureIdentities;

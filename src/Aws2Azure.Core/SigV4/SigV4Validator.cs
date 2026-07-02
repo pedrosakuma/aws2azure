@@ -55,10 +55,35 @@ public sealed class SigV4Validator
     private readonly ICredentialResolver _credentials;
     private readonly TimeSpan _maxClockSkew;
 
-    public SigV4Validator(ICredentialResolver credentials, TimeSpan? maxClockSkew = null)
+    /// <summary>
+    /// Opt-in presigned-URL host-rewrite allowlist: AWS origin signing hosts a
+    /// presigned URL may legitimately have been signed against before its host
+    /// was rewritten to the proxy. Empty (default) = strict host binding. Stored
+    /// lowercase; see <see cref="Configuration.S3Settings.PresignedTrustedSigningHosts"/>.
+    /// </summary>
+    private readonly string[] _presignedTrustedSigningHosts;
+
+    public SigV4Validator(
+        ICredentialResolver credentials,
+        TimeSpan? maxClockSkew = null,
+        IReadOnlyList<string>? presignedTrustedSigningHosts = null)
     {
         _credentials = credentials;
         _maxClockSkew = maxClockSkew ?? TimeSpan.FromMinutes(15);
+
+        if (presignedTrustedSigningHosts is { Count: > 0 })
+        {
+            var normalized = new string[presignedTrustedSigningHosts.Count];
+            for (var i = 0; i < normalized.Length; i++)
+            {
+                normalized[i] = presignedTrustedSigningHosts[i].ToLowerInvariant();
+            }
+            _presignedTrustedSigningHosts = normalized;
+        }
+        else
+        {
+            _presignedTrustedSigningHosts = Array.Empty<string>();
+        }
     }
 
     public SigV4ValidationResult Validate(SigV4Request request)
@@ -175,10 +200,47 @@ public sealed class SigV4Validator
             }
         }
 
+        if (SignatureMatches(request, secret, scope, signedHeaders, amzDate, clientSignature,
+                request.Headers, request.RawPath))
+        {
+            return SigV4ValidationResult.Ok(scope.AccessKeyId, signedHeaders, scope.Region);
+        }
+
+        // Presigned host-rewrite fallback (opt-in): the URL may have been signed
+        // against an AWS S3 endpoint host and then had its host rewritten to the
+        // proxy. Re-check the signature against each configured trusted origin
+        // host (path-style and virtual-hosted). Header-authenticated requests are
+        // never eligible — allowExpiry is only true on the presigned path.
+        if (allowExpiry && _presignedTrustedSigningHosts.Length > 0
+            && TryPresignedHostRewrite(request, secret, scope, signedHeaders, amzDate, clientSignature))
+        {
+            return SigV4ValidationResult.Ok(scope.AccessKeyId, signedHeaders, scope.Region);
+        }
+
+        return SigV4ValidationResult.Fail(SigV4ValidationStatus.InvalidSignature, "signature mismatch");
+    }
+
+    /// <summary>
+    /// Recomputes the expected SigV4 signature for <paramref name="request"/>
+    /// using the supplied header set and path, and constant-time-compares it to
+    /// the client-presented signature. The header set / path are parameters so
+    /// the presigned host-rewrite fallback can substitute a different signed
+    /// <c>host</c> and (for virtual-hosted origins) a bucket-stripped path.
+    /// </summary>
+    private static bool SignatureMatches(
+        SigV4Request request,
+        string secret,
+        CredentialScope scope,
+        string[] signedHeaders,
+        string amzDate,
+        string clientSignature,
+        IReadOnlyList<KeyValuePair<string, string>> headers,
+        string rawPath)
+    {
         Span<byte> canonicalHash = stackalloc byte[32];
         CanonicalRequest.HashCanonicalRequest(
-            request.HttpMethod, request.RawPath, request.RawQueryString,
-            request.Headers, signedHeaders, request.PayloadHash, request.S3PathStyle,
+            request.HttpMethod, rawPath, request.RawQueryString,
+            headers, signedHeaders, request.PayloadHash, request.S3PathStyle,
             canonicalHash);
 
         Span<byte> expectedHex = stackalloc byte[64];
@@ -188,20 +250,125 @@ public sealed class SigV4Validator
         // 1:1 so a length check on the string matches the old byte-length guard.
         if (clientSignature.Length != expectedHex.Length)
         {
-            return SigV4ValidationResult.Fail(SigV4ValidationStatus.InvalidSignature,
-                "signature mismatch");
+            return false;
         }
 
         Span<byte> clientBytes = stackalloc byte[64];
         Encoding.ASCII.GetBytes(clientSignature, clientBytes);
-        if (!CryptographicOperations.FixedTimeEquals(clientBytes, expectedHex))
+        return CryptographicOperations.FixedTimeEquals(clientBytes, expectedHex);
+    }
+
+    /// <summary>
+    /// Presigned host-rewrite fallback. For each configured trusted origin host
+    /// <c>H</c>, retries the signature check against the two ways an AWS-signed
+    /// presigned URL is commonly rewritten to a path-style proxy request:
+    /// <list type="bullet">
+    /// <item>path-style origin — <c>host = H</c>, path unchanged; and</item>
+    /// <item>virtual-hosted origin — <c>host = {bucket}.H</c> with the leading
+    /// <c>/{bucket}</c> stripped from the path.</item>
+    /// </list>
+    /// The signature still requires the correct secret and every other signed
+    /// parameter; only the signed <c>host</c> (and, for vhost, the bucket path
+    /// segment) is substituted.
+    /// </summary>
+    private bool TryPresignedHostRewrite(
+        SigV4Request request,
+        string secret,
+        CredentialScope scope,
+        string[] signedHeaders,
+        string amzDate,
+        string clientSignature)
+    {
+        // The vhost candidate reconstructs the origin from a leading path segment,
+        // so it only applies when the proxy received the request path-style
+        // (/{bucket}/{key...}). Parse it once.
+        SplitLeadingSegment(request.RawPath, out var bucket, out var remainderPath);
+
+        foreach (var host in _presignedTrustedSigningHosts)
         {
-            return SigV4ValidationResult.Fail(SigV4ValidationStatus.InvalidSignature,
-                "signature mismatch");
+            // Candidate A — path-style origin: host = H, path unchanged.
+            var pathStyleHeaders = WithHostHeader(request.Headers, host);
+            if (SignatureMatches(request, secret, scope, signedHeaders, amzDate, clientSignature,
+                    pathStyleHeaders, request.RawPath))
+            {
+                return true;
+            }
+
+            // Candidate B — virtual-hosted origin: host = {bucket}.H, bucket
+            // stripped from the path.
+            if (bucket.Length > 0)
+            {
+                var vhostHeaders = WithHostHeader(request.Headers, string.Concat(bucket, ".", host));
+                if (SignatureMatches(request, secret, scope, signedHeaders, amzDate, clientSignature,
+                        vhostHeaders, remainderPath))
+                {
+                    return true;
+                }
+            }
         }
 
-        return SigV4ValidationResult.Ok(scope.AccessKeyId, signedHeaders, scope.Region);
+        return false;
     }
+
+    /// <summary>
+    /// Splits a raw request path <c>/{first}/{rest}</c> into its first segment
+    /// (candidate bucket name) and the remainder path <c>/{rest}</c>. Returns an
+    /// empty bucket when the path has no distinct leading segment (root, or a
+    /// single segment such as <c>/key</c>).
+    /// </summary>
+    internal static void SplitLeadingSegment(string rawPath, out string bucket, out string remainderPath)
+    {
+        bucket = string.Empty;
+        remainderPath = rawPath;
+
+        if (string.IsNullOrEmpty(rawPath) || rawPath[0] != '/')
+        {
+            return;
+        }
+
+        var secondSlash = rawPath.IndexOf('/', 1);
+        if (secondSlash < 0)
+        {
+            // Only one segment (e.g. "/key") — no leading bucket to strip.
+            return;
+        }
+
+        var first = rawPath.Substring(1, secondSlash - 1);
+        if (first.Length == 0)
+        {
+            // Path started with "//" — no usable bucket segment.
+            return;
+        }
+
+        bucket = first;
+        remainderPath = rawPath.Substring(secondSlash);
+    }
+
+    /// <summary>
+    /// Returns a copy of <paramref name="headers"/> with the value of the
+    /// (case-insensitive) <c>host</c> header replaced by
+    /// <paramref name="hostValue"/>. All other headers are preserved in order.
+    /// </summary>
+    private static List<KeyValuePair<string, string>> WithHostHeader(
+        IReadOnlyList<KeyValuePair<string, string>> headers,
+        string hostValue)
+    {
+        var copy = new List<KeyValuePair<string, string>>(headers.Count);
+        for (var i = 0; i < headers.Count; i++)
+        {
+            var kv = headers[i];
+            if (string.Equals(kv.Key, SigV4Constants.HostHeader, StringComparison.OrdinalIgnoreCase))
+            {
+                copy.Add(new KeyValuePair<string, string>(kv.Key, hostValue));
+            }
+            else
+            {
+                copy.Add(kv);
+            }
+        }
+        return copy;
+    }
+
 
     private static string? FindHeader(IReadOnlyList<KeyValuePair<string, string>> headers, string name)
     {

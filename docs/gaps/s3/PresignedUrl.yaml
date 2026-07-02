@@ -31,8 +31,12 @@ sub_features:
   - name: "Azure Blob SAS issuance / redirect mode"
     status: unsupported
     gap: "By design — aws2azure operates in proxy mode and never hands Azure SAS tokens to the client, so storage-account keys never leave the proxy. Clients always hit the proxy URL, not the Azure Blob endpoint."
+  - name: "Host-rewrite mode (opt-in)"
+    status: implemented
+    notes: "Opt-in via s3.presignedTrustedSigningHosts. A presigned URL signed against a trusted AWS S3 endpoint host and then host-rewritten to a path-style proxy request is re-validated against the listed origin host(s), covering both path-style (host = listed value) and virtual-hosted (host = {bucket}.{listed value}, bucket stripped from the path) origins. Empty (default) keeps strict host binding. The signature still requires the correct secret and every other signed parameter — only the host binding is relaxed to the allowlist. See docs/presigned-urls.md."
 behavior_differences:
-  - "Presigned URLs MUST be signed against the proxy host (set the AWS SDK's endpoint_url / ServiceURL to the proxy). A presigned URL signed against s3.amazonaws.com cannot be replayed at the proxy — the host is a signed header."
+  - "By default (empty s3.presignedTrustedSigningHosts) presigned URLs MUST be signed against the proxy host (set the AWS SDK's endpoint_url / ServiceURL to the proxy). A URL signed against s3.amazonaws.com cannot be replayed at the proxy — the host is a signed header."
+  - "Opt-in host-rewrite mode (s3.presignedTrustedSigningHosts) additionally accepts presigned URLs signed against listed AWS origin hosts and rewritten to a path-style proxy request; see docs/presigned-urls.md for the per-topology tradeoffs."
   - "The proxy operates in 'Option A — proxy mode': it validates the presigned signature, then proxies the operation to Azure Blob using its configured Azure credentials. No Azure SAS is returned or redirected."
   - "Body content for presigned PUT is not signature-protected (UNSIGNED-PAYLOAD) — identical to AWS S3 semantics."
   - "Tampering with any signed query parameter (including X-Amz-Date, X-Amz-Expires, X-Amz-Credential, X-Amz-SignedHeaders, or the path/method) yields 403 SignatureDoesNotMatch."
@@ -41,3 +45,4 @@ references:
   - https://docs.aws.amazon.com/AmazonS3/latest/userguide/ShareObjectPreSignedURL.html
   - https://docs.aws.amazon.com/IAM/UserGuide/create-signed-request.html
   - https://learn.microsoft.com/azure/storage/common/storage-sas-overview
+  - docs/presigned-urls.md
