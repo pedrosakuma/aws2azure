@@ -13,7 +13,8 @@ sub_features:
     status: implemented
     notes: "Missing items emit an empty `{}` entry to preserve index alignment with TransactItems (matches DynamoDB)."
   - name: ProjectionExpression / ExpressionAttributeNames (per item)
-    status: partial
+    status: implemented
+    verified_real_azure: "run 28566172080 (2026-07-02)"
     notes: "Top-level attribute names, `#alias` references, and nested document paths (`a.b`, `a[0]`, `a.b[1]`) honoured. Projected maps keep only referenced members; projected lists compact to referenced indices (ascending); non-existent/type-mismatched paths omitted; overlapping paths rejected with ValidationException."
   - name: TransactionCanceledException on Cosmos error
     status: implemented
