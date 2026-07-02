@@ -219,6 +219,23 @@ public sealed class DynamoDbRealAzureSmokeTests
             Assert.True(item.TryGetValue("l", out var l));
             Assert.Single(l.L);
             Assert.Equal("z2", l.L[0].S);
+
+            // GetItem with the same nested ProjectionExpression exercises the
+            // materialized-and-pruned GetItem read path against live Cosmos.
+            var getProjected = await client.GetItemAsync(new GetItemRequest
+            {
+                TableName = table,
+                Key = new Dictionary<string, AttributeValue> { ["pk"] = new AttributeValue { S = "item-1" } },
+                ProjectionExpression = "m.keep, l[2]",
+                ConsistentRead = true,
+            }).ConfigureAwait(false);
+
+            Assert.True(getProjected.IsItemSet);
+            Assert.False(getProjected.Item.ContainsKey("pk"));
+            Assert.True(getProjected.Item["m"].M.ContainsKey("keep"));
+            Assert.False(getProjected.Item["m"].M.ContainsKey("drop"));
+            Assert.Single(getProjected.Item["l"].L);
+            Assert.Equal("z2", getProjected.Item["l"].L[0].S);
         }
         finally
         {

@@ -115,6 +115,29 @@ public sealed class SyncIoResponseWriterGuardrailTests
         Assert.Equal(itemCount, json.RootElement.GetProperty("Items").GetArrayLength());
     }
 
+    [Fact]
+    public async Task DynamoDb_GetItem_large_projected_item_writes_full_body_without_sync_io()
+    {
+        // A projected GetItem travels the materialized path and is committed via
+        // CosmosOpsShared.WriteJsonBufferedAsync — guard that a >16 KB item lands
+        // in full without any synchronous body write/flush.
+        var item = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        for (var i = 0; i < 600; i++)
+        {
+            item[$"attribute-name-{i:D6}"] = Attr($"some-reasonably-long-attribute-value-{i:D6}");
+        }
+        var response = new GetItemResponse { Item = item };
+
+        var (context, body) = NewContext();
+        await CosmosOpsShared.WriteJsonBufferedAsync(
+            context, 200, response, ItemJsonContext.Default.GetItemResponse, default);
+        var bytes = await CompleteAndReadAsync(context, body);
+
+        Assert.True(bytes.Length > SyncFlushThresholdBytes, $"payload was only {bytes.Length} bytes");
+        using var json = JsonDocument.Parse(bytes);
+        Assert.Equal(item.Count, json.RootElement.GetProperty("Item").EnumerateObject().Count());
+    }
+
     [Theory]
     [InlineData(SqsWireProtocol.Query)]
     [InlineData(SqsWireProtocol.AwsJson)]

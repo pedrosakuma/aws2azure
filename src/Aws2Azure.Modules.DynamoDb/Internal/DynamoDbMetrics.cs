@@ -110,6 +110,7 @@ internal static class DynamoDbMetrics
     public const string OpUpdate = "update";
     public const string OpBatchGet = "batchget";
     public const string OpTransactGet = "transactget";
+    public const string OpGetItem = "getitem";
 
     /// <summary>
     /// Counts DynamoDB→Cosmos standalone document write bodies by the wire

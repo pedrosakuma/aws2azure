@@ -395,19 +395,56 @@ internal static class ItemHandlers
                 "TableName is required and must match [a-zA-Z0-9_.-]{3,255}.");
         }
 
-        if (HasContent(req.AttributesToGet)
-            || HasContent(req.ProjectionExpression)
-            || HasContent(req.ExpressionAttributeNames))
+        // Legacy AttributesToGet is rejected loudly (matching Query/Scan/
+        // BatchGetItem); clients must use ProjectionExpression instead.
+        if (HasContent(req.AttributesToGet))
         {
             return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
-                "Projection / AttributesToGet are not supported in this slice.");
+                "Legacy AttributesToGet is not supported; use ProjectionExpression.");
         }
 
-        return GetItemCoreAsync(ctx, req, cosmos, ct);
+        Projection? projection = null;
+        if (HasContent(req.ProjectionExpression))
+        {
+            IReadOnlyDictionary<string, string>? names = null;
+            if (req.ExpressionAttributeNames is { ValueKind: JsonValueKind.Object } eanEl)
+            {
+                var dict = new Dictionary<string, string>(StringComparer.Ordinal);
+                foreach (var p in eanEl.EnumerateObject())
+                {
+                    if (p.Value.ValueKind != JsonValueKind.String)
+                    {
+                        return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                            $"ExpressionAttributeNames['{p.Name}'] must be a string.");
+                    }
+                    dict[p.Name] = p.Value.GetString()!;
+                }
+                names = dict;
+            }
+
+            try
+            {
+                projection = ProjectionExpressionParser.Parse(req.ProjectionExpression!, names);
+            }
+            catch (ExpressionSyntaxException ex)
+            {
+                return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                    $"Invalid ProjectionExpression (offset {ex.Position}): {ex.Message}");
+            }
+        }
+        else if (HasContent(req.ExpressionAttributeNames))
+        {
+            // ExpressionAttributeNames is only meaningful alongside an
+            // expression; GetItem's sole expression is ProjectionExpression.
+            return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                "ExpressionAttributeNames can only be specified when using expressions.");
+        }
+
+        return GetItemCoreAsync(ctx, req, projection, cosmos, ct);
     }
 
     private static async Task GetItemCoreAsync(
-        HttpContext ctx, GetItemRequest req, CosmosClient cosmos, CancellationToken ct)
+        HttpContext ctx, GetItemRequest req, Projection? projection, CosmosClient cosmos, CancellationToken ct)
     {
         using var metaResult = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, req.TableName!, ct).ConfigureAwait(false);
         if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.CosmosError)
@@ -476,6 +513,28 @@ internal static class ItemHandlers
         if (!resp.IsSuccessStatusCode)
         {
             await CosmosOpsShared.WriteCosmosErrorAsync(ctx, resp, ct).ConfigureAwait(false);
+            return;
+        }
+
+        if (projection is not null)
+        {
+            // A ProjectionExpression forces the materialized path: extract the
+            // item into an AttributeValue map, prune it in-process, then write
+            // the result. The item-present response is item-bounded (may exceed
+            // the serializer flush threshold), so it is buffered off-pipe and
+            // committed with a single write (the GetItem error-wall invariant);
+            // the fused stream-splice path below cannot project.
+            var item = await CosmosOpsShared.ReadAndExtractItemAsync(
+                resp.Content, DynamoDbMetrics.OpGetItem, ct).ConfigureAwait(false);
+            if (item is null)
+            {
+                await CosmosOpsShared.WriteJsonAsync(ctx, 200, new GetItemResponse(),
+                    ItemJsonContext.Default.GetItemResponse).ConfigureAwait(false);
+                return;
+            }
+            var response = new GetItemResponse { Item = projection.Apply(item) };
+            await CosmosOpsShared.WriteJsonBufferedAsync(ctx, 200, response,
+                ItemJsonContext.Default.GetItemResponse, ct).ConfigureAwait(false);
             return;
         }
 

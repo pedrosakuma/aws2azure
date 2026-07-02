@@ -537,18 +537,128 @@ public class ItemHandlersTests
     }
 
     [Fact]
-    public async Task GetItem_rejects_projection_expression()
+    public async Task GetItem_projection_expression_drops_other_attributes()
+    {
+        var (ctx, body) = NewCtx();
+        var doc = DocWithItem("customer-1", "hex",
+            "{\"pk\":{\"S\":\"customer-1\"},\"v\":{\"N\":\"1\"},\"extra\":{\"S\":\"hidden\"}}");
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataDocHashOnly), CosmosOk(doc) },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"customer-1\"}},"
+                  + "\"ProjectionExpression\":\"pk, #v\","
+                  + "\"ExpressionAttributeNames\":{\"#v\":\"v\"}}";
+        await ItemHandlers.HandleGetItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        var item = resp.RootElement.GetProperty("Item");
+        Assert.True(item.TryGetProperty("pk", out _));
+        Assert.True(item.TryGetProperty("v", out _));
+        Assert.False(item.TryGetProperty("extra", out _));
+    }
+
+    [Fact]
+    public async Task GetItem_projection_expression_nested_paths_prune_map_and_list()
+    {
+        var (ctx, body) = NewCtx();
+        var doc = DocWithItem("customer-1", "hex",
+            "{\"pk\":{\"S\":\"customer-1\"},"
+            + "\"m\":{\"M\":{\"keep\":{\"S\":\"y\"},\"drop\":{\"S\":\"n\"}}},"
+            + "\"l\":{\"L\":[{\"S\":\"z0\"},{\"S\":\"z1\"},{\"S\":\"z2\"}]}}");
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataDocHashOnly), CosmosOk(doc) },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"customer-1\"}},"
+                  + "\"ProjectionExpression\":\"m.keep, l[2]\"}";
+        await ItemHandlers.HandleGetItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        var item = resp.RootElement.GetProperty("Item");
+        Assert.False(item.TryGetProperty("pk", out _));
+
+        var m = item.GetProperty("m").GetProperty("M");
+        Assert.True(m.TryGetProperty("keep", out _));
+        Assert.False(m.TryGetProperty("drop", out _));
+
+        var l = item.GetProperty("l").GetProperty("L");
+        Assert.Equal(1, l.GetArrayLength());
+        Assert.Equal("z2", l[0].GetProperty("S").GetString());
+    }
+
+    [Fact]
+    public async Task GetItem_projection_on_missing_item_returns_no_item()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDocHashOnly),
+                new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("") },
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"x\"}},"
+                  + "\"ProjectionExpression\":\"pk\"}";
+        await ItemHandlers.HandleGetItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var doc = JsonDocument.Parse(ReadResponse(body));
+        Assert.False(doc.RootElement.TryGetProperty("Item", out _));
+    }
+
+    [Fact]
+    public async Task GetItem_rejects_legacy_attributes_to_get()
     {
         var (ctx, body) = NewCtx();
         var handler = new ScriptedHandler();
         var cosmos = BuildClient(handler);
 
         var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"x\"},\"sk\":{\"S\":\"y\"}},"
-                  + "\"ProjectionExpression\":\"#a,#b\"}";
+                  + "\"AttributesToGet\":[\"pk\"]}";
         await ItemHandlers.HandleGetItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
 
         Assert.Equal(400, ctx.Response.StatusCode);
-        Assert.Contains("Projection", ReadResponse(body));
+        Assert.Contains("AttributesToGet", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task GetItem_rejects_expression_attribute_names_without_projection()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"x\"},\"sk\":{\"S\":\"y\"}},"
+                  + "\"ExpressionAttributeNames\":{\"#a\":\"attr\"}}";
+        await ItemHandlers.HandleGetItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("ExpressionAttributeNames", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task GetItem_rejects_overlapping_projection_paths()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"x\"},\"sk\":{\"S\":\"y\"}},"
+                  + "\"ProjectionExpression\":\"a, a.b\"}";
+        await ItemHandlers.HandleGetItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("overlap", ReadResponse(body), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

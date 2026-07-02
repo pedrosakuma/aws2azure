@@ -593,6 +593,33 @@ internal static class CosmosOpsShared
     }
 
     /// <summary>
+    /// Serializes a bounded JSON payload into a pooled off-pipe buffer, then
+    /// commits it with a single asynchronous <see cref="System.IO.Pipelines.PipeWriter"/>
+    /// write — the "error wall" pattern the GetItem read path uses uniformly
+    /// (see <see cref="WriteGetItemEnvelopeAsync"/>). Unlike
+    /// <see cref="WriteJsonAsync"/> (which streams to <c>Response.Body</c> and
+    /// can auto-flush a partial 200 for a multi-KB item), the whole response is
+    /// built before any byte is committed, so a mid-serialization throw leaves
+    /// the response uncommitted. Use for materialized responses whose size is
+    /// item-bounded and therefore may exceed the serializer's flush threshold.
+    /// </summary>
+    public static async Task WriteJsonBufferedAsync<T>(
+        HttpContext ctx, int status, T payload, JsonTypeInfo<T> typeInfo,
+        CancellationToken cancellationToken)
+    {
+        using var scratch = new PooledByteBufferWriter(4096);
+        using (var writer = new Utf8JsonWriter(scratch))
+        {
+            JsonSerializer.Serialize(writer, payload, typeInfo);
+        }
+
+        ctx.Response.StatusCode = status;
+        ctx.Response.ContentType = "application/x-amz-json-1.0";
+        await ctx.Response.BodyWriter.WriteAsync(scratch.WrittenMemory, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Reads the Cosmos response body into a single contiguous pooled buffer and
     /// pumps it through
     /// <see cref="Persistence.InferredAttributeStorage.WriteGetItemEnvelope(Utf8JsonWriter, ReadOnlySpan{byte})"/>
