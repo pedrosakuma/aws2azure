@@ -165,6 +165,29 @@ public class SigV4PresignedHostRewriteTests
         Assert.True(result.IsValid, result.Reason);
     }
 
+    [Fact]
+    public void Non_s3_presigned_request_is_not_eligible_for_host_rewrite()
+    {
+        // The fallback is S3-scoped: a presigned request handled by a non-S3
+        // module (S3PathStyle == false) must not benefit from the S3 allowlist.
+        var query = CanonicalQueryForSigning();
+        var sig = SignPresigned(AwsHost, "/bucket/key", query);
+
+        var validator = new SigV4Validator(Resolver(), presignedTrustedSigningHosts: [AwsHost]);
+        var result = validator.Validate(new SigV4Request
+        {
+            HttpMethod = "GET",
+            RawPath = "/bucket/key",
+            RawQueryString = query + "&X-Amz-Signature=" + sig,
+            Headers = new List<KeyValuePair<string, string>> { new("Host", ProxyHost) },
+            PayloadHash = SigV4Constants.UnsignedPayload,
+            S3PathStyle = false,
+            Now = SigningKey.TryParseAmzDate(AmzDate, out var t) ? t : DateTimeOffset.UtcNow,
+        });
+
+        Assert.Equal(SigV4ValidationStatus.InvalidSignature, result.Status);
+    }
+
     [Theory]
     [InlineData("/bucket/key", "bucket", "/key")]
     [InlineData("/bucket/dir/obj.txt", "bucket", "/dir/obj.txt")]

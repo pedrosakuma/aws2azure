@@ -210,8 +210,11 @@ public sealed class SigV4Validator
         // against an AWS S3 endpoint host and then had its host rewritten to the
         // proxy. Re-check the signature against each configured trusted origin
         // host (path-style and virtual-hosted). Header-authenticated requests are
-        // never eligible — allowExpiry is only true on the presigned path.
-        if (allowExpiry && _presignedTrustedSigningHosts.Length > 0
+        // never eligible — allowExpiry is only true on the presigned path — and
+        // the fallback is S3-only (request.S3PathStyle is set iff the S3 module is
+        // handling the request) because the allowlist config is S3-scoped and the
+        // virtual-hosted reconstruction assumes S3 bucket-in-host semantics.
+        if (allowExpiry && request.S3PathStyle && _presignedTrustedSigningHosts.Length > 0
             && TryPresignedHostRewrite(request, secret, scope, signedHeaders, amzDate, clientSignature))
         {
             return SigV4ValidationResult.Ok(scope.AccessKeyId, signedHeaders, scope.Region);
