@@ -658,6 +658,47 @@ public class QueryHandlerTests
     }
 
     [Fact]
+    public async Task Query_projection_expression_nested_paths_prune_map_and_list()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataHashOnly),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a",
+                        "{\"pk\":{\"S\":\"a\"},"
+                        + "\"m\":{\"M\":{\"keep\":{\"S\":\"y\"},\"drop\":{\"S\":\"n\"}}},"
+                        + "\"l\":{\"L\":[{\"S\":\"z0\"},{\"S\":\"z1\"},{\"S\":\"z2\"}]}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\","
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"ProjectionExpression\":\"m.keep, l[2]\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        var item = resp.RootElement.GetProperty("Items")[0];
+        Assert.False(item.TryGetProperty("pk", out _));
+
+        // Map keeps only the referenced member.
+        var m = item.GetProperty("m").GetProperty("M");
+        Assert.True(m.TryGetProperty("keep", out _));
+        Assert.False(m.TryGetProperty("drop", out _));
+
+        // List is compacted to the single referenced index.
+        var l = item.GetProperty("l").GetProperty("L");
+        Assert.Equal(1, l.GetArrayLength());
+        Assert.Equal("z2", l[0].GetProperty("S").GetString());
+    }
+
+    [Fact]
     public async Task Query_select_count_omits_items_array()
     {
         var (ctx, body) = NewCtx();

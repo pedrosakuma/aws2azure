@@ -228,7 +228,7 @@ public sealed class CrossPartitionOrderByQueryTests
 
         var result = await MergeAsync(
             backend.Ranges, Sk, forward: true, scanCap: 100, token: null,
-            backend.Fetch, residual, projection: new[] { Sk }, CancellationToken.None);
+            backend.Fetch, residual, projection: Projection.FromTopLevelNames(new[] { Sk }), CancellationToken.None);
 
         Assert.Equal(new[] { 3d, 4 }, Values(result.Items));
         Assert.Equal(4, result.Scanned); // pre-filter

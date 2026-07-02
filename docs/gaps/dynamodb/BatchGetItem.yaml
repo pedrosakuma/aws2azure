@@ -17,7 +17,7 @@ sub_features:
     notes: "A Cosmos 429 on a point read drops that key into `UnprocessedKeys`; a 429 on a batched single-partition query drops the whole partition's keys into `UnprocessedKeys`. Either way SDK retry loops re-issue only the throttled subset and the rest of the batch still returns 200."
   - name: ProjectionExpression (per table)
     status: partial
-    notes: "Top-level attribute names + `#alias` honoured. Nested paths (`a.b`, `a[0]`) rejected."
+    notes: "Top-level attribute names, `#alias` references, and nested document paths (`a.b`, `a[0]`, `a.b[1]`) honoured. Projected maps keep only referenced members; projected lists compact to referenced indices (ascending); non-existent/type-mismatched paths omitted; overlapping paths rejected with ValidationException."
   - name: ExpressionAttributeNames (per table)
     status: implemented
   - name: ConsistentRead (per table)
