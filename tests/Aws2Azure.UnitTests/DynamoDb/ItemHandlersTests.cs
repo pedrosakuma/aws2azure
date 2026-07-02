@@ -594,6 +594,89 @@ public class ItemHandlersTests
     }
 
     [Fact]
+    public async Task GetItem_projection_streaming_over_binary_fused_body()
+    {
+        // A top-level projection over a CosmosBinary response must travel the
+        // streaming fused path (TryWriteProjectedFusedBinaryEnvelope) and tag
+        // the getitem decode-path counter path="fused".
+        using var exporter = new Aws2Azure.Core.Observability.PrometheusExporter();
+        long before = ReadDecodePathCount(exporter, "fused");
+
+        var (ctx, body) = NewCtx();
+        var doc = DocWithItem("customer-1", "hex",
+            "{\"pk\":{\"S\":\"customer-1\"},\"v\":{\"N\":\"1\"},\"extra\":{\"S\":\"hidden\"}}");
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataDocHashOnly), CosmosOkBinary(doc, "\"etag-1\"") },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"customer-1\"}},"
+                  + "\"ProjectionExpression\":\"pk, v\"}";
+        await ItemHandlers.HandleGetItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        var item = resp.RootElement.GetProperty("Item");
+        Assert.True(item.TryGetProperty("pk", out _));
+        Assert.True(item.TryGetProperty("v", out _));
+        Assert.False(item.TryGetProperty("extra", out _));
+        Assert.True(ReadDecodePathCount(exporter, "fused") > before);
+    }
+
+    [Fact]
+    public async Task GetItem_projection_with_no_matching_attribute_returns_empty_item()
+    {
+        // A found item whose projected attribute is absent yields Item present
+        // but empty ({}), matching the materialized Apply path (empty map).
+        var (ctx, body) = NewCtx();
+        var doc = DocWithItem("customer-1", "hex",
+            "{\"pk\":{\"S\":\"customer-1\"},\"v\":{\"N\":\"1\"}}");
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataDocHashOnly), CosmosOk(doc) },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"customer-1\"}},"
+                  + "\"ProjectionExpression\":\"absent\"}";
+        await ItemHandlers.HandleGetItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        var item = resp.RootElement.GetProperty("Item");
+        Assert.Equal(JsonValueKind.Object, item.ValueKind);
+        Assert.Empty(item.EnumerateObject());
+    }
+
+    [Fact]
+    public async Task GetItem_projection_streaming_unmangles_shadow_encoded_id_attribute()
+    {
+        // A user attribute literally named "id" is stored shadow-encoded
+        // (_a2a$id); the streaming projection must unmangle it and keep it only
+        // when the projection names "id".
+        var (ctx, body) = NewCtx();
+        var doc = DocWithItem("customer-1", "hex",
+            "{\"pk\":{\"S\":\"customer-1\"},\"id\":{\"S\":\"user-id-value\"},\"other\":{\"S\":\"x\"}}");
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataDocHashOnly), CosmosOk(doc) },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"customer-1\"}},"
+                  + "\"ProjectionExpression\":\"id\"}";
+        await ItemHandlers.HandleGetItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, CancellationToken.None);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        var item = resp.RootElement.GetProperty("Item");
+        Assert.Equal("user-id-value", item.GetProperty("id").GetProperty("S").GetString());
+        Assert.False(item.TryGetProperty("other", out _));
+        Assert.False(item.TryGetProperty("pk", out _));
+    }
+
+    [Fact]
     public async Task GetItem_projection_on_missing_item_returns_no_item()
     {
         var (ctx, body) = NewCtx();

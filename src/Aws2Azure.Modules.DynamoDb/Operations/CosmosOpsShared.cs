@@ -763,4 +763,113 @@ internal static class CosmosOpsShared
             return false;
         }
     }
+
+    /// <summary>
+    /// Projected twin of <see cref="WriteGetItemEnvelopeAsync"/>: streams the
+    /// GetItem envelope straight off the Cosmos body while keeping only the
+    /// projection's top-level attributes, with no intermediate AttributeValue
+    /// map. The projection must be non-nested
+    /// (<see cref="Expressions.Projection.HasNestedPaths"/> is <c>false</c>);
+    /// nested projections take the materialized <c>Projection.Apply</c> path.
+    /// Same binary-fused / decode-to-text / text dispatch and single-write
+    /// error-wall discipline as the non-projected path.
+    /// </summary>
+    public static async Task WriteProjectedGetItemEnvelopeAsync(
+        HttpContext ctx, System.IO.Stream cosmosBody, Expressions.Projection projection, CancellationToken cancellationToken)
+    {
+        using var input = new PooledByteBufferWriter(4096);
+        while (true)
+        {
+            Memory<byte> mem = input.GetMemory(4096);
+            int read = await cosmosBody.ReadAsync(mem, cancellationToken).ConfigureAwait(false);
+            if (read == 0) break;
+            input.Advance(read);
+        }
+
+        ReadOnlyMemory<byte> cosmosJson = input.WrittenMemory;
+        bool isBinary = CosmosBinaryDecoder.IsBinary(cosmosJson.Span);
+        if (isBinary
+            && TryWriteProjectedFusedBinaryEnvelope(cosmosJson.Span, projection, out PooledByteBufferWriter? fused))
+        {
+            DynamoDbMetrics.RecordGetItemDecodePath(DynamoDbMetrics.PathFused);
+            using (fused)
+            {
+                ctx.Response.StatusCode = 200;
+                ctx.Response.ContentType = "application/x-amz-json-1.0";
+                await ctx.Response.BodyWriter.WriteAsync(fused!.WrittenMemory, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            return;
+        }
+
+        DynamoDbMetrics.RecordGetItemDecodePath(
+            isBinary ? DynamoDbMetrics.PathFallback : DynamoDbMetrics.PathText);
+
+        PooledByteBufferWriter? decoded = null;
+        try
+        {
+            if (isBinary)
+            {
+                decoded = new PooledByteBufferWriter(Math.Max(4096, cosmosJson.Length));
+                CosmosBinaryDecoder.Decode(cosmosJson.Span, decoded);
+                cosmosJson = decoded.WrittenMemory;
+            }
+
+            // Projection can only shrink the envelope versus the full item, so
+            // 2x the Cosmos doc length is a safe no-growth pre-size upper bound.
+            using var scratch = new PooledByteBufferWriter(Math.Max(4096, cosmosJson.Length * 2));
+            using (var writer = new Utf8JsonWriter(scratch))
+            {
+                Persistence.InferredAttributeStorage.WriteProjectedGetItemEnvelope(writer, cosmosJson.Span, projection);
+                writer.Flush();
+            }
+
+            ctx.Response.StatusCode = 200;
+            ctx.Response.ContentType = "application/x-amz-json-1.0";
+            await ctx.Response.BodyWriter.WriteAsync(scratch.WrittenMemory, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            decoded?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Projected twin of <see cref="TryWriteFusedBinaryEnvelope"/>: builds the
+    /// projected GetItem envelope straight off the binary body via
+    /// <see cref="CosmosBinaryReader"/>. Returns <c>true</c> with the caller-owned
+    /// buffer on success, or <c>false</c> (buffer disposed) when the fused reader
+    /// hits a marker it does not fast-path, so the caller falls back to
+    /// decode-to-text. Never emits a partial response.
+    /// </summary>
+    private static bool TryWriteProjectedFusedBinaryEnvelope(
+        ReadOnlySpan<byte> binaryBody, Expressions.Projection projection, out PooledByteBufferWriter? envelope)
+    {
+        var scratch = new PooledByteBufferWriter(Math.Max(4096, binaryBody.Length * 2));
+        try
+        {
+            using (var writer = new Utf8JsonWriter(scratch))
+            {
+                var reader = new CosmosBinaryReader(binaryBody);
+                try
+                {
+                    Persistence.InferredAttributeStorage.WriteProjectedGetItemEnvelope(writer, ref reader, projection);
+                }
+                finally
+                {
+                    reader.Dispose();
+                }
+                writer.Flush();
+            }
+            envelope = scratch;
+            return true;
+        }
+        catch (Exception ex) when (ex is JsonException or IndexOutOfRangeException or ArgumentOutOfRangeException)
+        {
+            scratch.Dispose();
+            envelope = null;
+            return false;
+        }
+    }
 }

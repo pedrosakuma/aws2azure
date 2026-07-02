@@ -516,14 +516,15 @@ internal static class ItemHandlers
             return;
         }
 
-        if (projection is not null)
+        if (projection is not null && projection.HasNestedPaths)
         {
-            // A ProjectionExpression forces the materialized path: extract the
-            // item into an AttributeValue map, prune it in-process, then write
-            // the result. The item-present response is item-bounded (may exceed
-            // the serializer flush threshold), so it is buffered off-pipe and
-            // committed with a single write (the GetItem error-wall invariant);
-            // the fused stream-splice path below cannot project.
+            // Nested ProjectionExpression: the materialized path (extract the
+            // item into an AttributeValue map, prune in-process, write the
+            // result). Nested pruning needs bounded lookahead to honour
+            // DynamoDB's "omit a path that does not exist" semantics, so it is
+            // not yet streamed. The item-present response is item-bounded (may
+            // exceed the serializer flush threshold), so it is buffered off-pipe
+            // and committed with a single write (the GetItem error-wall invariant).
             var item = await CosmosOpsShared.ReadAndExtractItemAsync(
                 resp.Content, DynamoDbMetrics.OpGetItem, ct).ConfigureAwait(false);
             if (item is null)
@@ -539,7 +540,19 @@ internal static class ItemHandlers
         }
 
         await using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-        await CosmosOpsShared.WriteGetItemEnvelopeAsync(ctx, stream, ct).ConfigureAwait(false);
+        if (projection is not null)
+        {
+            // Top-level (non-nested) ProjectionExpression: single-pass streaming
+            // over the Cosmos body, emitting only the projected top-level
+            // attributes — no intermediate AttributeValue map, and the discarded
+            // attributes are never materialized. Same fused/text/fallback
+            // dispatch and single-write error wall as the non-projected path.
+            await CosmosOpsShared.WriteProjectedGetItemEnvelopeAsync(ctx, stream, projection, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            await CosmosOpsShared.WriteGetItemEnvelopeAsync(ctx, stream, ct).ConfigureAwait(false);
+        }
     }
 
     public static Task HandleDeleteItemAsync(HttpContext ctx, byte[] body, CosmosClient cosmos, SprocContext? sprocCtx, CancellationToken ct)

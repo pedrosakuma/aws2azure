@@ -158,6 +158,151 @@ internal static partial class InferredAttributeStorage
         writer.WriteEndObject();
     }
 
+    // ---- Projection-filtered streaming envelope (top-level only) ----------
+    //
+    // WriteProjectedGetItemEnvelope is the projected twin of
+    // WriteGetItemEnvelope: a single forward walk of the Cosmos document that
+    // emits only the top-level attributes named by the projection, straight to
+    // the Utf8JsonWriter. Unlike the materialized path (ReadAndExtractItem →
+    // Projection.Apply), it builds no intermediate Dictionary and never
+    // materializes the discarded attributes at all — a non-projected attribute
+    // is skipped with reader.Skip() (its value subtree is walked, not
+    // allocated). Restricted to non-nested projections: a nested path would
+    // need bounded lookahead to honour DynamoDB's "omit a path that does not
+    // exist" semantics, so those still take the materialized Apply path.
+
+    /// <summary>
+    /// Streaming projected GetItem envelope over the Cosmos document's UTF-8
+    /// bytes. Emits <c>{"Item":{…}}</c> keeping only the projection's top-level
+    /// attributes. The projection must be non-nested
+    /// (<see cref="Expressions.Projection.HasNestedPaths"/> is <c>false</c>).
+    /// </summary>
+    public static void WriteProjectedGetItemEnvelope(
+        Utf8JsonWriter writer, ReadOnlySpan<byte> cosmosDocUtf8, Expressions.Projection projection)
+    {
+        var reader = new Utf8JsonTokenReader(cosmosDocUtf8);
+        WriteProjectedGetItemEnvelope(writer, ref reader, projection);
+    }
+
+    /// <summary>
+    /// Reader-agnostic projected GetItem envelope transform — the projected twin
+    /// of <see cref="WriteGetItemEnvelope{TReader}(Utf8JsonWriter, ref TReader)"/>,
+    /// driven by either the text (<see cref="Utf8JsonTokenReader"/>) or fused
+    /// binary (<c>CosmosBinaryReader</c>) encoding.
+    /// </summary>
+    public static void WriteProjectedGetItemEnvelope<TReader>(
+        Utf8JsonWriter writer, scoped ref TReader reader, Expressions.Projection projection)
+        where TReader : ITokenReader, allows ref struct
+    {
+        writer.WriteStartObject();
+        if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+        {
+            // Non-object root collapses to {} (null GetItemResponse.Item).
+            writer.WriteEndObject();
+            return;
+        }
+
+        writer.WritePropertyName(ItemPropEncoded);
+        WriteProjectedItem(writer, ref reader, projection);
+        writer.WriteEndObject();
+    }
+
+    /// <summary>
+    /// Writes the projected DynamoDB attribute-map object for the Cosmos document
+    /// the reader is currently positioned on (its <see cref="JsonTokenType.StartObject"/>
+    /// token). Keeps only the top-level attributes named by the projection; every
+    /// other attribute (including reserved routing and Cosmos system fields) is
+    /// skipped. The shadow-encoded <c>id</c>/<c>ttl</c> attributes are unmangled
+    /// and kept only when the projection names <c>id</c>/<c>ttl</c> respectively.
+    /// </summary>
+    private static void WriteProjectedItem<TReader>(
+        Utf8JsonWriter writer, scoped ref TReader reader, Expressions.Projection projection)
+        where TReader : ITokenReader, allows ref struct
+    {
+        byte[][] rootNames = projection.RootNamesUtf8;
+
+        // A user attribute literally named "id"/"ttl" is stored shadow-encoded;
+        // decide up front whether the projection asked for it (the shadow token
+        // never equals the projected plain name).
+        bool keepId = false;
+        bool keepTtl = false;
+        foreach (byte[] name in rootNames)
+        {
+            if (name.AsSpan().SequenceEqual(IdNameU8))
+            {
+                keepId = true;
+            }
+            else if (name.AsSpan().SequenceEqual(TtlNameU8))
+            {
+                keepTtl = true;
+            }
+        }
+
+        writer.WriteStartObject();
+        while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+        {
+            if (reader.ValueTextEquals(ShadowEncodedIdNameU8))
+            {
+                reader.Read();
+                if (keepId)
+                {
+                    writer.WritePropertyName(IdPropEncoded);
+                    WriteAttributeValue(writer, ref reader);
+                }
+                else
+                {
+                    reader.Skip();
+                }
+            }
+            else if (reader.ValueTextEquals(ShadowEncodedTtlNameU8))
+            {
+                reader.Read();
+                if (keepTtl)
+                {
+                    writer.WritePropertyName(TtlPropEncoded);
+                    WriteAttributeValue(writer, ref reader);
+                }
+                else
+                {
+                    reader.Skip();
+                }
+            }
+            else if (IsReservedTopLevelNameToken(ref reader) || IsCosmosSystemFieldToken(ref reader))
+            {
+                reader.Read();
+                reader.Skip();
+            }
+            else if (MatchesProjectedRoot(ref reader, rootNames))
+            {
+                WriteCurrentPropertyName(writer, ref reader);
+                reader.Read();
+                WriteAttributeValue(writer, ref reader);
+            }
+            else
+            {
+                reader.Read();
+                reader.Skip();
+            }
+        }
+        writer.WriteEndObject();
+    }
+
+    private static bool MatchesProjectedRoot<TReader>(scoped ref TReader reader, byte[][] rootNames)
+        where TReader : ITokenReader, allows ref struct
+    {
+        // ValueTextEquals transparently handles an escaped property-name token,
+        // so the comparison is against the unescaped attribute name.
+        foreach (byte[] name in rootNames)
+        {
+            if (reader.ValueTextEquals(name))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// Writes the transformed DynamoDB attribute-map object for the Cosmos
     /// document the reader is currently positioned on (its

@@ -132,6 +132,37 @@ internal static class TranslationAllocGate
         scenarios.Add(new Scenario(
             "ddb.project.nested_mixed (wide)",
             RunProjection(item, "pk, profile.name, tags[1], str0")));
+
+        // Streaming top-level fast path (WriteProjectedGetItemEnvelope): the
+        // projected twin of the decode scenarios — one forward walk over the
+        // Cosmos document emitting only the projected top-level attributes, no
+        // intermediate Dictionary and no materialization of discarded
+        // attributes. Contrast the B/op with ddb.project.toplevel (the
+        // Apply-based path over an already-materialized item map).
+        byte[] cosmosDoc = BuildProjectionCosmosDoc();
+        var streamProjection = ProjectionExpressionParser.Parse("pk, sk, str0, str5, num3, num7", names: null);
+        scenarios.Add(new Scenario(
+            "ddb.project.stream_toplevel (wide)",
+            () => StreamProjectedEnvelope(cosmosDoc, streamProjection)));
+    }
+
+    private static int StreamProjectedEnvelope(byte[] cosmosDocUtf8, Projection projection)
+    {
+        using var scratch = new PooledByteBufferWriter(1024);
+        using (var writer = new Utf8JsonWriter(scratch))
+        {
+            InferredAttributeStorage.WriteProjectedGetItemEnvelope(writer, cosmosDocUtf8, projection);
+            writer.Flush();
+        }
+
+        return scratch.WrittenMemory.Length;
+    }
+
+    private static byte[] BuildProjectionCosmosDoc()
+    {
+        using var doc = JsonDocument.Parse(Encoding.UTF8.GetBytes(BuildProjectionItem()));
+        string cosmosText = InferredAttributeStorage.BuildCosmosDocument(Id, Pk, doc.RootElement);
+        return Encoding.UTF8.GetBytes(cosmosText);
     }
 
     private static Func<int> RunProjection(Dictionary<string, JsonElement> item, string expression)
