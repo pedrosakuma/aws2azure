@@ -520,15 +520,21 @@ internal static class ItemHandlers
         {
             // A ProjectionExpression forces the materialized path: extract the
             // item into an AttributeValue map, prune it in-process, then write
-            // the result (buffered off-pipe by WriteJsonAsync). The fused
-            // stream-splice path below cannot project.
+            // the result. The item-present response is item-bounded (may exceed
+            // the serializer flush threshold), so it is buffered off-pipe and
+            // committed with a single write (the GetItem error-wall invariant);
+            // the fused stream-splice path below cannot project.
             var item = await CosmosOpsShared.ReadAndExtractItemAsync(
                 resp.Content, DynamoDbMetrics.OpGetItem, ct).ConfigureAwait(false);
-            var response = item is null
-                ? new GetItemResponse()
-                : new GetItemResponse { Item = projection.Apply(item) };
-            await CosmosOpsShared.WriteJsonAsync(ctx, 200, response,
-                ItemJsonContext.Default.GetItemResponse).ConfigureAwait(false);
+            if (item is null)
+            {
+                await CosmosOpsShared.WriteJsonAsync(ctx, 200, new GetItemResponse(),
+                    ItemJsonContext.Default.GetItemResponse).ConfigureAwait(false);
+                return;
+            }
+            var response = new GetItemResponse { Item = projection.Apply(item) };
+            await CosmosOpsShared.WriteJsonBufferedAsync(ctx, 200, response,
+                ItemJsonContext.Default.GetItemResponse, ct).ConfigureAwait(false);
             return;
         }
 
