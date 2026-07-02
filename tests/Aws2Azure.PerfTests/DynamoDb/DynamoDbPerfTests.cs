@@ -50,6 +50,36 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
     public string Secret => "perf-ddb-secret";
 
     /// <summary>
+    /// Table with a numeric Local Secondary Index (byScore on a high-precision
+    /// N sort key) for the #504 opt-in numeric-ordering A/B. Seeded with 21-digit
+    /// integers (10^20 + i) that exceed IEEE-754 double precision, so they are
+    /// stored in the {"_a2a:N":…} envelope — the regime where flag-off orders
+    /// structurally + over-fetches (residual re-check in-process) and flag-on
+    /// orders by / range-filters exactly against the encoded `_a2a$ord$score`
+    /// field. The producer emits that field on write regardless of the flag, so
+    /// the seeded data is identical between the two runs; only the query SQL
+    /// differs.
+    /// </summary>
+    public string LsiNumericTableName { get; } = "perflsinum" + Guid.NewGuid().ToString("N")[..8];
+    public int LsiNumericPartitions => 5;
+    public int LsiNumericItemsPerPartition => 100;
+    /// <summary>Big-integer base (10^20) added to a per-item index to build the
+    /// high-precision N sort values.</summary>
+    public static System.Numerics.BigInteger LsiNumericBase => System.Numerics.BigInteger.Pow(10, 20);
+
+    /// <summary>
+    /// Whether the proxy was configured with the #504 opt-in LSI numeric
+    /// ordering flag (<c>AWS2AZURE_PERF_LSI_NUMERIC_ORDER=1</c>). Read on both
+    /// emulator and real-Azure paths (unlike CosmosBinary, which is real-Azure
+    /// only). Drives the query path A/B and the PerfReport row label.
+    /// </summary>
+    public bool LsiNumericOrderingEnabled { get; private set; }
+
+    /// <summary>Row label for the #504 A/B: which LSI ordering path is active.</summary>
+    public string LsiOrderingLabel =>
+        LsiNumericOrderingEnabled ? "encoded-order ON" : "raw-order OFF";
+
+    /// <summary>
     /// Cosmos database name. The emulator path bootstraps
     /// <see cref="EmulatorDatabaseName"/>; the real-Azure path uses
     /// <c>AZURE_COSMOS_DATABASE</c> (which must already exist — the module
@@ -148,12 +178,23 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
                     bootstrap, cosmosEndpoint, cosmosKey, DatabaseName).ConfigureAwait(false);
             }
 
-            // CosmosBinary read/write paths are a top-level "dynamodb" block
-            // (DynamoDbSettings), NOT services.dynamodb (which only carries
-            // "enabled"). Mirrors RealAzureProxyFixture; emitted only for the
-            // real-Azure binary A/B.
-            var dynamoDbBlock = CosmosBinaryEnabled
-                ? "  \"dynamodb\": { \"cosmosBinaryResponses\": true, \"cosmosBinaryRequests\": true },\n"
+            // CosmosBinary read/write paths and the #504 LSI numeric-ordering
+            // flag are top-level "dynamodb" block (DynamoDbSettings) props, NOT
+            // services.dynamodb (which only carries "enabled"). Mirrors
+            // RealAzureProxyFixture. The block is emitted only when at least one
+            // opt-in prop is active so the default emulator path is unchanged.
+            var ddbProps = new List<string>();
+            if (CosmosBinaryEnabled)
+            {
+                ddbProps.Add("\"cosmosBinaryResponses\": true");
+                ddbProps.Add("\"cosmosBinaryRequests\": true");
+            }
+            if (LsiNumericOrderingEnabled)
+            {
+                ddbProps.Add("\"enableLocalSecondaryIndexNumericOrdering\": true");
+            }
+            var dynamoDbBlock = ddbProps.Count > 0
+                ? $"  \"dynamodb\": {{ {string.Join(", ", ddbProps)} }},\n"
                 : string.Empty;
 
             var config = $$"""
@@ -224,9 +265,39 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
                 BillingMode = BillingMode.PAY_PER_REQUEST,
             }).ConfigureAwait(false);
 
+            await ddb.CreateTableAsync(new CreateTableRequest
+            {
+                TableName = LsiNumericTableName,
+                AttributeDefinitions =
+                [
+                    new AttributeDefinition("pk", ScalarAttributeType.S),
+                    new AttributeDefinition("sk", ScalarAttributeType.S),
+                    new AttributeDefinition("score", ScalarAttributeType.N),
+                ],
+                KeySchema =
+                [
+                    new KeySchemaElement("pk", KeyType.HASH),
+                    new KeySchemaElement("sk", KeyType.RANGE),
+                ],
+                LocalSecondaryIndexes =
+                [
+                    new LocalSecondaryIndex
+                    {
+                        IndexName = "byScore",
+                        KeySchema =
+                        [
+                            new KeySchemaElement("pk", KeyType.HASH),
+                            new KeySchemaElement("score", KeyType.RANGE),
+                        ],
+                        Projection = new Projection { ProjectionType = ProjectionType.ALL },
+                    },
+                ],
+                BillingMode = BillingMode.PAY_PER_REQUEST,
+            }).ConfigureAwait(false);
+
             // Wait until all tables are ACTIVE.
             var deadline = DateTime.UtcNow + TimeSpan.FromMinutes(1);
-            foreach (var name in new[] { TableName, QueryTableName, LargeTableName })
+            foreach (var name in new[] { TableName, QueryTableName, LargeTableName, LsiNumericTableName })
             {
                 while (DateTime.UtcNow < deadline)
                 {
@@ -240,6 +311,8 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
             await SeedQueryTableAsync(ddb).ConfigureAwait(false);
             // Seed LargeTableName: LargeSeededPartitions × LargeSeededItemsPerPartition LARGE items.
             await SeedLargeTableAsync(ddb).ConfigureAwait(false);
+            // Seed LsiNumericTableName: high-precision N sort values for the #504 A/B.
+            await SeedLsiNumericTableAsync(ddb).ConfigureAwait(false);
             Ready = true;
         }
         catch (Exception ex)
@@ -261,7 +334,7 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
             try
             {
                 using var ddb = CreateClient();
-                foreach (var name in new[] { TableName, QueryTableName, LargeTableName })
+                foreach (var name in new[] { TableName, QueryTableName, LargeTableName, LsiNumericTableName })
                 {
                     try
                     {
@@ -310,6 +383,10 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
             DatabaseName = database!;
             CosmosBinaryEnabled = Env("AWS2AZURE_PERF_COSMOS_BINARY") == "1";
         }
+
+        // The #504 LSI numeric-ordering flag is meaningful on both backends (the
+        // query-path A/B is proxy-side, independent of emulator vs real Azure).
+        LsiNumericOrderingEnabled = Env("AWS2AZURE_PERF_LSI_NUMERIC_ORDER") == "1";
 
         static string? Env(string name)
         {
@@ -403,6 +480,40 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
             item[$"n{i:D4}"] = new AttributeValue { N = rand.Next(0, 1_000_000).ToString(System.Globalization.CultureInfo.InvariantCulture) };
         }
         return item;
+    }
+
+    private async Task SeedLsiNumericTableAsync(AmazonDynamoDBClient ddb)
+    {
+        // High-precision N sort keys (10^20 + si): 21-digit integers that exceed
+        // IEEE-754 double precision, so the storage layer keeps them in the
+        // {"_a2a:N":…} envelope. Small items → BatchWriteItem (25/call).
+        var baseValue = LsiNumericBase;
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        for (var pi = 0; pi < LsiNumericPartitions; pi++)
+        {
+            var pk = $"p{pi:D2}";
+            var pending = new List<WriteRequest>(25);
+            for (var si = 0; si < LsiNumericItemsPerPartition; si++)
+            {
+                var score = (baseValue + si).ToString(culture);
+                pending.Add(new WriteRequest(new PutRequest(new Dictionary<string, AttributeValue>
+                {
+                    ["pk"] = new() { S = pk },
+                    ["sk"] = new() { S = $"s{si:D4}" },
+                    ["score"] = new() { N = score },
+                    ["payload"] = new() { S = "seed-256-bytes-of-padding-" + new string('x', 200) },
+                })));
+                if (pending.Count == 25)
+                {
+                    await FlushBatchAsync(ddb, LsiNumericTableName, pending).ConfigureAwait(false);
+                    pending.Clear();
+                }
+            }
+            if (pending.Count > 0)
+            {
+                await FlushBatchAsync(ddb, LsiNumericTableName, pending).ConfigureAwait(false);
+            }
+        }
     }
 
     private async Task SeedLargeTableAsync(AmazonDynamoDBClient ddb)
@@ -537,6 +648,105 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
             });
 
         PerfReport.Append(result, notes: $"DynamoDB→Cosmos Scan — FilterPushdownVisitor (BETWEEN on score, Limit=100) [{fixture.BackendLabel}]");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
+    }
+
+    // #504 A/B: run the suite twice, toggling AWS2AZURE_PERF_LSI_NUMERIC_ORDER,
+    // and diff the two baseline-latest.json files. The seeded data is identical
+    // between runs (the producer writes `_a2a$ord$score` unconditionally); only
+    // the LSI query SQL differs — flag-off orders by / filters the raw envelope
+    // attribute (structural order + in-process residual over-fetch for
+    // high-precision N), flag-on orders by / range-filters the encoded field
+    // exactly. The row label carries the active path (LsiOrderingLabel).
+
+    [SkippableFact]
+    public async Task Query_lsi_numeric_ordered_throughput()
+    {
+        // Pure ORDER BY: returns the whole partition ordered by the high-precision
+        // N sort key. Isolates the SELECT * overhead (the encoded field rides back
+        // Cosmos→proxy even when stripped before the AWS response) — the case
+        // where flag-on is expected to cost marginally MORE data, not less.
+        Skip.IfNot(fixture.Ready, fixture.SkipReason);
+
+        using var client = fixture.CreateClient();
+
+        using var memProbe = fixture.CreateMemoryProbe();
+        var result = await PerfRunner.RunAsync(
+            scenario: "dynamodb.Query LSI numeric (ordered)",
+            concurrency: PerfConcurrency.Scale(8),
+            duration: TimeSpan.FromSeconds(20),
+            warmup: TimeSpan.FromSeconds(3),
+            memoryProbe: memProbe,
+            action: async (workerId, ct) =>
+            {
+                var pk = $"p{workerId % fixture.LsiNumericPartitions:D2}";
+                var resp = await client.QueryAsync(new QueryRequest
+                {
+                    TableName = fixture.LsiNumericTableName,
+                    IndexName = "byScore",
+                    KeyConditionExpression = "pk = :p",
+                    ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                    {
+                        [":p"] = new() { S = pk },
+                    },
+                    ScanIndexForward = true,
+                }, ct).ConfigureAwait(false);
+                if (resp.Items.Count == 0)
+                {
+                    throw new InvalidOperationException("LSI ordered query returned no items — seed data missing.");
+                }
+            });
+
+        PerfReport.Append(result, notes: $"DynamoDB→Cosmos LSI Query ordered by high-precision N sort key — {fixture.LsiOrderingLabel} [{fixture.BackendLabel}]");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
+    }
+
+    [SkippableFact]
+    public async Task Query_lsi_numeric_selective_throughput()
+    {
+        // Selective predicate (score >= 10^20 + half): returns ~half the
+        // partition. Flag-off cannot push the high-precision envelope comparison
+        // exactly (residual re-check in-process → over-fetch); flag-on pushes it
+        // exactly against the encoded field. This is the case where flag-on is
+        // expected to transfer FEWER docs and do LESS proxy-side work.
+        Skip.IfNot(fixture.Ready, fixture.SkipReason);
+
+        using var client = fixture.CreateClient();
+
+        var bound = (DynamoDbPerfFixture.LsiNumericBase + fixture.LsiNumericItemsPerPartition / 2)
+            .ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        using var memProbe = fixture.CreateMemoryProbe();
+        var result = await PerfRunner.RunAsync(
+            scenario: "dynamodb.Query LSI numeric (selective)",
+            concurrency: PerfConcurrency.Scale(8),
+            duration: TimeSpan.FromSeconds(20),
+            warmup: TimeSpan.FromSeconds(3),
+            memoryProbe: memProbe,
+            action: async (workerId, ct) =>
+            {
+                var pk = $"p{workerId % fixture.LsiNumericPartitions:D2}";
+                var resp = await client.QueryAsync(new QueryRequest
+                {
+                    TableName = fixture.LsiNumericTableName,
+                    IndexName = "byScore",
+                    KeyConditionExpression = "pk = :p AND score >= :b",
+                    ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                    {
+                        [":p"] = new() { S = pk },
+                        [":b"] = new() { N = bound },
+                    },
+                    ScanIndexForward = true,
+                }, ct).ConfigureAwait(false);
+                if (resp.Items.Count == 0)
+                {
+                    throw new InvalidOperationException("LSI selective query returned no items — seed data missing.");
+                }
+            });
+
+        PerfReport.Append(result, notes: $"DynamoDB→Cosmos LSI Query high-precision N range predicate (score >= 10^20+half) — {fixture.LsiOrderingLabel} [{fixture.BackendLabel}]");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
         result.AssertNoRegression();
     }
