@@ -145,6 +145,56 @@ public sealed class CrossPartitionOrderByNumericTests
         Assert.Contains("IS_DEFINED(c[\"_a2a$ord$sk\"])", sql);
     }
 
+    [Fact]
+    public void Numeric_sort_key_comparison_pushes_against_encoded_field()
+    {
+        // seq >= <high-precision N>: must push exactly against the encoded field
+        // (no residual), so a range condition + Limit does not over-scan
+        // out-of-range envelope rows.
+        const string encodedPath = "c[\"_a2a$ord$sk\"]";
+        var node = Compare(CompareOp.GreaterEqual, Sk, HiPrecHi);
+
+        var push = QueryHandler.BuildNumericSortKeyPushdown(node, encodedPath, "sk");
+
+        Assert.NotNull(push);
+        Assert.Null(push!.Residual);
+        Assert.Equal("(" + encodedPath + " >= @sk0)", push.Sql);
+        var p = Assert.Single(push.Parameters);
+        Assert.Equal("@sk0", p.Name);
+        Assert.True(KeyScalarCodec.TryEncodeNumberOrderKey(HiPrecHi, out var expected, out _));
+        Assert.Equal(expected, p.Value.GetString());
+    }
+
+    [Fact]
+    public void Numeric_sort_key_between_pushes_encoded_bounds()
+    {
+        const string encodedPath = "c[\"_a2a$ord$sk\"]";
+        var node = new BetweenCondition(
+            new ConditionPathOperand(Path(Sk)),
+            new ConditionValueOperand(new ValueRefOperand(":lo", N(HiPrecLo))),
+            new ConditionValueOperand(new ValueRefOperand(":hi", N(HiPrecHi))));
+
+        var push = QueryHandler.BuildNumericSortKeyPushdown(node, encodedPath, "sk");
+
+        Assert.NotNull(push);
+        Assert.Null(push!.Residual);
+        Assert.Equal(
+            "(" + encodedPath + " >= @sk0 AND " + encodedPath + " <= @sk1)", push.Sql);
+        Assert.Equal(2, push.Parameters.Count);
+        Assert.True(KeyScalarCodec.TryEncodeNumberOrderKey(HiPrecLo, out var encLo, out _));
+        Assert.True(KeyScalarCodec.TryEncodeNumberOrderKey(HiPrecHi, out var encHi, out _));
+        Assert.Equal(encLo, push.Parameters[0].Value.GetString());
+        Assert.Equal(encHi, push.Parameters[1].Value.GetString());
+    }
+
+    private static CompareCondition Compare(CompareOp op, string attr, string rawN) =>
+        new(op,
+            new ConditionPathOperand(Path(attr)),
+            new ConditionValueOperand(new ValueRefOperand(":v", N(rawN))));
+
+    private static DocumentPath Path(string attr) =>
+        new(new[] { new AttributePathSegment(attr) });
+
     // ---- helpers --------------------------------------------------------
 
     private async Task<List<string>> PaginateAll(

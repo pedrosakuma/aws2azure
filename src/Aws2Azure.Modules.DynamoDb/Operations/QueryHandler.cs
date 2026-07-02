@@ -375,11 +375,32 @@ internal static class QueryHandler
                     return;
                 }
 
+                // High-precision numeric sort key (#482): the raw-attribute
+                // pushdown cannot exactly filter {"_a2a:N":…} envelope values
+                // (ordered N comparisons widen to IS_DEFINED + client residual),
+                // which would over-scan under Limit and mis-paginate. Re-translate
+                // the sort-key KeyCondition against the order-preserving encoded
+                // field so it filters exactly in the same domain the ORDER BY /
+                // resume bound use — no residual, no over-scan.
+                bool numericSort = string.Equals(gsiSortType, "N", StringComparison.Ordinal);
+                if (numericSort && gsiKey.SkNode is not null)
+                {
+                    var encodedPath = CosmosPathTranslator.Translate(new DocumentPath(new[]
+                    {
+                        new AttributePathSegment(
+                            Persistence.InferredAttributeStorage.OrderKeyPropertyPrefix + gsiSortName),
+                    }));
+                    var encodedSk = BuildNumericSortKeyPushdown(gsiKey.SkNode, encodedPath, "sk");
+                    if (encodedSk is not null)
+                    {
+                        skPush = encodedSk;
+                    }
+                }
+
                 var residual = CombineResidual(
                     CombineResidual(hashPush.Residual, skPush.Residual), pushdown.Residual);
                 await CrossPartitionOrderByQuery.ExecuteAsync(
-                    ctx, req, gsiHashName!, gsiSortName,
-                    string.Equals(gsiSortType, "N", StringComparison.Ordinal), forward,
+                    ctx, req, gsiHashName!, gsiSortName, numericSort, forward,
                     hashPush, skPush, pushdown, residual, projection, cosmos, ct)
                     .ConfigureAwait(false);
                 return;
@@ -827,6 +848,76 @@ internal static class QueryHandler
             (null, ConditionNode r) => r,
             (ConditionNode l, ConditionNode r) => new AndCondition(l, r),
         };
+
+    /// <summary>
+    /// Translates a numeric (N) GSI sort-key KeyCondition (<c>=, &lt;, &lt;=,
+    /// &gt;, &gt;=, BETWEEN</c>) into an exactly-pushable Cosmos predicate over
+    /// the order-preserving encoded field (<c>_a2a$ord$&lt;attr&gt;</c>, #482).
+    /// The encoded field is an order-preserving string whose lexical order
+    /// equals numeric order, so each operand is encoded via
+    /// <see cref="KeyScalarCodec.TryEncodeNumberOrderKey"/> and compared as a
+    /// string — no envelope/residual widening, so range conditions filter
+    /// exactly (and do not over-scan under Limit). Returns <c>null</c> when the
+    /// node cannot be encoded, leaving the caller's raw-attribute pushdown +
+    /// client residual in place. The <see cref="KeyConditionAnalyser"/> has
+    /// already restricted the node to Compare/Between with a typed N value on
+    /// the sort key.
+    /// </summary>
+    internal static FilterPushdownResult? BuildNumericSortKeyPushdown(
+        ConditionNode skNode, string encodedPath, string paramPrefix)
+    {
+        switch (skNode)
+        {
+            case CompareCondition cmp when cmp.Right is ConditionValueOperand v:
+            {
+                if (!TryEncodeSortKeyOperand(v, out var enc)) return null;
+                string? op = cmp.Op switch
+                {
+                    CompareOp.Equal => " = ",
+                    CompareOp.Less => " < ",
+                    CompareOp.LessEqual => " <= ",
+                    CompareOp.Greater => " > ",
+                    CompareOp.GreaterEqual => " >= ",
+                    _ => null,
+                };
+                if (op is null) return null;
+                var p0 = "@" + paramPrefix + "0";
+                return new FilterPushdownResult(
+                    "(" + encodedPath + op + p0 + ")",
+                    new[] { new CosmosSqlParameter(p0, enc) },
+                    Residual: null);
+            }
+
+            case BetweenCondition bt
+                when bt.Lower is ConditionValueOperand lo && bt.Upper is ConditionValueOperand hi:
+            {
+                if (!TryEncodeSortKeyOperand(lo, out var encLo)
+                    || !TryEncodeSortKeyOperand(hi, out var encHi))
+                {
+                    return null;
+                }
+                var pL = "@" + paramPrefix + "0";
+                var pU = "@" + paramPrefix + "1";
+                return new FilterPushdownResult(
+                    "(" + encodedPath + " >= " + pL + " AND " + encodedPath + " <= " + pU + ")",
+                    new[] { new CosmosSqlParameter(pL, encLo), new CosmosSqlParameter(pU, encHi) },
+                    Residual: null);
+            }
+
+            default:
+                return null;
+        }
+
+        static bool TryEncodeSortKeyOperand(ConditionValueOperand operand, out string encoded)
+        {
+            encoded = string.Empty;
+            if (!ParsedAttributeValue.TryParse(operand.Value.Value, out var parsed)) return false;
+            if (!string.Equals(parsed.TypeTag, AttributeValueTypes.Number, StringComparison.Ordinal))
+                return false;
+            var raw = parsed.Value.GetString();
+            return raw is not null && KeyScalarCodec.TryEncodeNumberOrderKey(raw, out encoded, out _);
+        }
+    }
 
     internal static (string sql, List<CosmosSqlParameter> parameters) BuildSql(
         KeyConditionAnalyser.AnalysedKeyCondition keyCond, bool forward, bool composite,
