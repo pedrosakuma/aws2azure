@@ -180,6 +180,97 @@ public sealed class DynamoDbRealAzureSecondaryIndexTests
     }
 
     [SkippableFact]
+    public async Task Gsi_composite_query_orders_by_numeric_sort_key_across_real_pages()
+    {
+        Skip.IfNot(_fx.CosmosConfigured,
+            "AZURE_COSMOS_ENDPOINT/KEY/DATABASE not set — skipping real-Azure GSI/LSI validation.");
+
+        var table = NewTableName("gsinum");
+        using var client = _fx.CreateDynamoDbClient();
+        await WithTableAsync(client, table, async () =>
+        {
+            // High-precision numeric GSI sort keys: 21-digit integers (10^20 + i)
+            // exceed IEEE-754 double precision, so the storage layer keeps them in
+            // the {"_a2a:N":…} envelope. Without the Option-B synthetic order key
+            // Cosmos would sort these envelope objects structurally (not
+            // numerically) and mis-order the result. This asserts the
+            // `_a2a$ord$seq` encoded field restores true numeric order across the
+            // real cross-partition merge + continuation pagination.
+            var baseValue = System.Numerics.BigInteger.Pow(10, 20);
+            var expected = new List<string>(LargeItemCount);
+            for (int i = 0; i < LargeItemCount; i++)
+            {
+                var seq = (baseValue + i).ToString(CultureInfo.InvariantCulture);
+                expected.Add(seq);
+                await PutAsync(client, table, BaseItem($"p{i % PartitionSpread}", $"s{i:D5}", new()
+                {
+                    ["category"] = Str("num"),
+                    ["seq"] = new AttributeValue { N = seq },
+                    ["payload"] = Str(new string('x', PayloadBytes)),
+                }));
+            }
+
+            // Ascending: merge-sort across every cross-partition continuation page.
+            var asc = await QueryUntilAsync(client, new QueryRequest
+            {
+                TableName = table,
+                IndexName = "byCategoryNum",
+                KeyConditionExpression = "category = :c",
+                ExpressionAttributeValues = new() { [":c"] = Str("num") },
+                ScanIndexForward = true,
+            }, expectedCount: LargeItemCount);
+
+            Assert.Equal(expected, asc.Select(it => Canonical(it["seq"].N)).ToList());
+
+            // Descending.
+            var desc = await QueryUntilAsync(client, new QueryRequest
+            {
+                TableName = table,
+                IndexName = "byCategoryNum",
+                KeyConditionExpression = "category = :c",
+                ExpressionAttributeValues = new() { [":c"] = Str("num") },
+                ScanIndexForward = false,
+            }, expectedCount: LargeItemCount);
+
+            var expectedDesc = new List<string>(expected);
+            expectedDesc.Reverse();
+            Assert.Equal(expectedDesc, desc.Select(it => Canonical(it["seq"].N)).ToList());
+
+            // Limit + LastEvaluatedKey resume reconstructs the ordered set exactly
+            // once across real continuation pages (encoded-boundary continuation).
+            var paged = new List<string>(LargeItemCount);
+            Dictionary<string, AttributeValue>? startKey = null;
+            int guard = 0;
+            do
+            {
+                var page = await client.QueryAsync(new QueryRequest
+                {
+                    TableName = table,
+                    IndexName = "byCategoryNum",
+                    KeyConditionExpression = "category = :c",
+                    ExpressionAttributeValues = new() { [":c"] = Str("num") },
+                    ScanIndexForward = true,
+                    Limit = 17,
+                    ExclusiveStartKey = startKey,
+                }).ConfigureAwait(false);
+
+                paged.AddRange(page.Items.Select(it => Canonical(it["seq"].N)));
+                startKey = page.LastEvaluatedKey is { Count: > 0 } lek ? lek : null;
+                Assert.True(++guard < 256, "pagination did not terminate.");
+            }
+            while (startKey is not null);
+
+            Assert.Equal(expected, paged);
+        });
+    }
+
+    // Normalises a returned Number to its canonical big-integer form so the
+    // comparison is robust to any DynamoDB/Cosmos numeric formatting.
+    private static string Canonical(string n) =>
+        System.Numerics.BigInteger.Parse(n, CultureInfo.InvariantCulture)
+            .ToString(CultureInfo.InvariantCulture);
+
+    [SkippableFact]
     public async Task Lsi_query_orders_by_index_sort_key_within_partition()
     {
         Skip.IfNot(_fx.CosmosConfigured,
@@ -328,6 +419,7 @@ public sealed class DynamoDbRealAzureSecondaryIndexTests
                     new AttributeDefinition("customer", ScalarAttributeType.S),
                     new AttributeDefinition("category", ScalarAttributeType.S),
                     new AttributeDefinition("createdAt", ScalarAttributeType.S),
+                    new AttributeDefinition("seq", ScalarAttributeType.N),
                 ],
                 KeySchema =
                 [
@@ -368,6 +460,16 @@ public sealed class DynamoDbRealAzureSecondaryIndexTests
                         [
                             new KeySchemaElement("category", KeyType.HASH),
                             new KeySchemaElement("createdAt", KeyType.RANGE),
+                        ],
+                        Projection = new Projection { ProjectionType = ProjectionType.ALL },
+                    },
+                    new GlobalSecondaryIndex
+                    {
+                        IndexName = "byCategoryNum",
+                        KeySchema =
+                        [
+                            new KeySchemaElement("category", KeyType.HASH),
+                            new KeySchemaElement("seq", KeyType.RANGE),
                         ],
                         Projection = new Projection { ProjectionType = ProjectionType.ALL },
                     },

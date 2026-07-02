@@ -378,7 +378,8 @@ internal static class QueryHandler
                 var residual = CombineResidual(
                     CombineResidual(hashPush.Residual, skPush.Residual), pushdown.Residual);
                 await CrossPartitionOrderByQuery.ExecuteAsync(
-                    ctx, req, gsiHashName!, gsiSortName, forward,
+                    ctx, req, gsiHashName!, gsiSortName,
+                    string.Equals(gsiSortType, "N", StringComparison.Ordinal), forward,
                     hashPush, skPush, pushdown, residual, projection, cosmos, ct)
                     .ConfigureAwait(false);
                 return;
@@ -760,7 +761,8 @@ internal static class QueryHandler
         FilterPushdownResult hashPush, FilterPushdownResult skPush, FilterPushdownResult userPush,
         bool emitOrderBy = true,
         string? resumeFilterSql = null,
-        IReadOnlyList<CosmosSqlParameter>? resumeParams = null)
+        IReadOnlyList<CosmosSqlParameter>? resumeParams = null,
+        string? orderByPathOverride = null)
     {
         var hashPath = CosmosPathTranslator.Translate(
             new DocumentPath(new[] { new AttributePathSegment(gsiHashName) }));
@@ -772,6 +774,15 @@ internal static class QueryHandler
             var sortPath = CosmosPathTranslator.Translate(
                 new DocumentPath(new[] { new AttributePathSegment(gsiSortName) }));
             sb.Append(" AND IS_DEFINED(").Append(sortPath).Append(')');
+        }
+        // High-precision numeric sort key (#482): ordering targets the stored
+        // order-preserving `_a2a$ord$<attr>` field instead of the raw attribute
+        // (whose {"_a2a:N":…} envelope Cosmos orders as an object). Items
+        // written before that field existed lack it — exclude them from ordered
+        // results rather than mis-order them (backfill gap; documented).
+        if (orderByPathOverride is not null)
+        {
+            sb.Append(" AND IS_DEFINED(").Append(orderByPathOverride).Append(')');
         }
         if (hashPush.Sql is { } hSql)
         {
@@ -800,9 +811,9 @@ internal static class QueryHandler
         }
         if (emitOrderBy && gsiSortName is not null)
         {
-            var sortPath = CosmosPathTranslator.Translate(
+            var orderPath = orderByPathOverride ?? CosmosPathTranslator.Translate(
                 new DocumentPath(new[] { new AttributePathSegment(gsiSortName) }));
-            sb.Append(" ORDER BY ").Append(sortPath).Append(forward ? " ASC" : " DESC");
+            sb.Append(" ORDER BY ").Append(orderPath).Append(forward ? " ASC" : " DESC");
         }
         return (sb.ToString(), parameters);
     }

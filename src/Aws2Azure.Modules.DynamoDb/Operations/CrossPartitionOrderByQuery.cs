@@ -76,14 +76,18 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 /// by <see cref="PerPartitionPageSize"/>. This is the documented cost of the
 /// opt-in <c>EnableGlobalSecondaryIndexQueries</c> feature.</para>
 ///
-/// <para><b>Known divergences.</b> The merge comparator orders the sort value as
-/// Cosmos does (numbers by IEEE-754 double, strings by ordinal). High-precision
-/// numeric sort keys that the storage layer keeps in the <c>{"_a2a:N":...}</c>
-/// envelope (i.e. values that do not survive a double round-trip) are ordered by
-/// Cosmos as objects, not numbers — those are not supported as a composite GSI
-/// ordering key (a pre-existing limitation of the ORDER BY translation). Binary
-/// (<c>B</c>) sort keys are always envelope-stored and so are rejected upstream
-/// in <see cref="QueryHandler"/> before reaching this executor.</para>
+/// <para><b>Known divergences.</b> The merge comparator orders the sort value
+/// as Cosmos does (strings by ordinal). A Number sort key is compared by its
+/// stored order-preserving encoding (<c>_a2a$ord$&lt;attr&gt;</c>, #482) so
+/// high-precision values that the storage layer keeps in the
+/// <c>{"_a2a:N":...}</c> envelope (i.e. values that do not survive a double
+/// round-trip) still sort numerically — the per-range <c>ORDER BY</c> targets
+/// that field and the client recomputes the same encoding from each row's
+/// <c>{"N":…}</c> value. Items written before the field existed lack it and
+/// are excluded from ordered results (an <c>IS_DEFINED</c> membership guard)
+/// until rewritten. Binary (<c>B</c>) sort keys are always envelope-stored and
+/// so are rejected upstream in <see cref="QueryHandler"/> before reaching this
+/// executor.</para>
 /// </summary>
 internal static class CrossPartitionOrderByQuery
 {
@@ -125,6 +129,7 @@ internal static class CrossPartitionOrderByQuery
         QueryRequest req,
         string gsiHashName,
         string gsiSortName,
+        bool numericOrderKey,
         bool forward,
         FilterPushdownResult hashPush,
         FilterPushdownResult skPush,
@@ -155,20 +160,32 @@ internal static class CrossPartitionOrderByQuery
             return;
         }
 
+        // For a high-precision numeric sort key (#482) ordering targets the
+        // stored order-preserving `_a2a$ord$<attr>` string field, not the raw
+        // attribute (whose {"_a2a:N":…} envelope Cosmos orders as an object).
+        // The client comparator recomputes the same encoding from each row's
+        // {"N":…} value, so per-range SQL order and client merge order agree.
+        string? orderPath = numericOrderKey
+            ? Expressions.CosmosPathTranslator.Translate(new Expressions.DocumentPath(
+                new[] { new Expressions.AttributePathSegment(
+                    Persistence.InferredAttributeStorage.OrderKeyPropertyPrefix + gsiSortName) }))
+            : null;
+
         // Build the per-range resume filter (only on a continued page).
         string? resumeSql = null;
         List<CosmosSqlParameter>? resumeParams = null;
         if (token is not null)
         {
-            var sortPath = Expressions.CosmosPathTranslator.Translate(
+            var sortPath = orderPath ?? Expressions.CosmosPathTranslator.Translate(
                 new Expressions.DocumentPath(new[] { new Expressions.AttributePathSegment(gsiSortName) }));
             resumeParams = new List<CosmosSqlParameter>(1);
-            resumeSql = BuildResumeFilter(sortPath, forward, token.BoundaryValue, "@rv0", resumeParams);
+            resumeSql = BuildResumeFilter(sortPath, forward, token.BoundaryValue, "@rv0", resumeParams, numericOrderKey);
         }
 
         var (sql, sqlParams) = QueryHandler.BuildGsiSql(
             gsiHashName, gsiSortName, forward, hashPush, skPush, userPush,
-            emitOrderBy: true, resumeFilterSql: resumeSql, resumeParams: resumeParams);
+            emitOrderBy: true, resumeFilterSql: resumeSql, resumeParams: resumeParams,
+            orderByPathOverride: orderPath);
 
         var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + req.TableName;
         var collUri = "/" + collLink + "/docs";
@@ -207,7 +224,7 @@ internal static class CrossPartitionOrderByQuery
         try
         {
             result = await MergeAsync(
-                ranges, gsiSortName, forward, scanCap, token, Fetch, residualFilter, projection, ct)
+                ranges, gsiSortName, numericOrderKey, forward, scanCap, token, Fetch, residualFilter, projection, ct)
                 .ConfigureAwait(false);
         }
         catch (CosmosFeedException ex)
@@ -260,6 +277,7 @@ internal static class CrossPartitionOrderByQuery
     internal static async Task<MergeResult> MergeAsync(
         IReadOnlyList<PkRange> ranges,
         string gsiSortName,
+        bool numericOrderKey,
         bool forward,
         int scanCap,
         OrderByToken? token,
@@ -272,12 +290,12 @@ internal static class CrossPartitionOrderByQuery
         foreach (var r in ranges)
         {
             var first = await fetch(r.Id, null, ct).ConfigureAwait(false);
-            var cursor = new Cursor(r, gsiSortName, first);
+            var cursor = new Cursor(r, gsiSortName, numericOrderKey, first);
             await cursor.PrimeAsync(fetch, ct).ConfigureAwait(false);
             if (!cursor.IsExhausted) cursors.Add(cursor);
         }
 
-        SortValue boundary = token is null ? default : SortValue.FromAttribute(token.BoundaryValue);
+        SortValue boundary = token is null ? default : SortValue.FromAttribute(token.BoundaryValue, numericOrderKey);
         int toSkip = token?.Skip ?? 0;
 
         var items = new List<Dictionary<string, JsonElement>>();
@@ -376,6 +394,7 @@ internal static class CrossPartitionOrderByQuery
     private sealed class Cursor
     {
         private readonly string _sortName;
+        private readonly bool _numericOrderKey;
         private List<Dictionary<string, JsonElement>> _page;
         private string? _continuation;
         private int _idx;
@@ -383,17 +402,18 @@ internal static class CrossPartitionOrderByQuery
         public PkRange Range { get; }
         public bool IsExhausted { get; private set; }
 
-        public Cursor(PkRange range, string sortName, PartitionPage first)
+        public Cursor(PkRange range, string sortName, bool numericOrderKey, PartitionPage first)
         {
             Range = range;
             _sortName = sortName;
+            _numericOrderKey = numericOrderKey;
             _page = first.Items;
             _continuation = first.Continuation;
             _idx = 0;
         }
 
         public Dictionary<string, JsonElement> Head => _page[_idx];
-        public SortValue HeadValue => SortValue.FromItem(_page[_idx], _sortName);
+        public SortValue HeadValue => SortValue.FromItem(_page[_idx], _sortName, _numericOrderKey);
 
         public async Task AdvanceAsync(PartitionPageFetcher fetch, CancellationToken ct)
         {
@@ -466,12 +486,17 @@ internal static class CrossPartitionOrderByQuery
         private readonly Kind _kind;
         private readonly double _num;
         private readonly string? _str;
+        // For a #482 numeric order key: the raw DDB Number string, preserved so
+        // the continuation token round-trips the exact value ({"N":raw}) while
+        // comparison uses the order-preserving encoding held in _str.
+        private readonly string? _rawNumber;
 
-        private SortValue(Kind kind, double num, string? str)
+        private SortValue(Kind kind, double num, string? str, string? rawNumber = null)
         {
             _kind = kind;
             _num = num;
             _str = str;
+            _rawNumber = rawNumber;
         }
 
         public static SortValue Missing => new(Kind.Undefined, 0, null);
@@ -483,11 +508,15 @@ internal static class CrossPartitionOrderByQuery
 
         /// <summary>Reads the sort attribute out of a materialized AttributeValue
         /// map (e.g. <c>{"N":"42"}</c> / <c>{"S":"foo"}</c>).</summary>
-        public static SortValue FromItem(Dictionary<string, JsonElement> item, string sortName)
-            => item.TryGetValue(sortName, out var av) ? FromAttribute(av) : Missing;
+        public static SortValue FromItem(Dictionary<string, JsonElement> item, string sortName, bool numericOrderKey = false)
+            => item.TryGetValue(sortName, out var av) ? FromAttribute(av, numericOrderKey) : Missing;
 
-        /// <summary>Reads an AttributeValue element into a comparable value.</summary>
-        public static SortValue FromAttribute(JsonElement av)
+        /// <summary>Reads an AttributeValue element into a comparable value. When
+        /// <paramref name="numericOrderKey"/> is set, a Number value is reduced to
+        /// its order-preserving encoding (<see cref="KeyScalarCodec.TryEncodeNumberOrderKey"/>)
+        /// and compared as a string, matching the per-range
+        /// <c>ORDER BY c._a2a$ord$&lt;attr&gt;</c> (#482).</summary>
+        public static SortValue FromAttribute(JsonElement av, bool numericOrderKey = false)
         {
             if (av.ValueKind != JsonValueKind.Object) return Missing;
             foreach (var prop in av.EnumerateObject())
@@ -495,7 +524,13 @@ internal static class CrossPartitionOrderByQuery
                 switch (prop.Name)
                 {
                     case "N":
-                        return double.TryParse(prop.Value.GetString(), NumberStyles.Float,
+                        var rawN = prop.Value.GetString();
+                        if (numericOrderKey && rawN is not null
+                            && KeyScalarCodec.TryEncodeNumberOrderKey(rawN, out var enc, out _))
+                        {
+                            return new SortValue(Kind.String, 0, enc, rawN);
+                        }
+                        return double.TryParse(rawN, NumberStyles.Float,
                             CultureInfo.InvariantCulture, out var n)
                             ? new SortValue(Kind.Number, n, null)
                             : new SortValue(Kind.Number, 0, null);
@@ -538,23 +573,32 @@ internal static class CrossPartitionOrderByQuery
             using (var w = new Utf8JsonWriter(buffer))
             {
                 w.WriteStartObject();
-                switch (_kind)
+                if (_rawNumber is not null)
                 {
-                    case Kind.Number:
-                        w.WriteString("N", _num.ToString("R", CultureInfo.InvariantCulture));
-                        break;
-                    case Kind.String:
-                        w.WriteString("S", _str ?? string.Empty);
-                        break;
-                    case Kind.Boolean:
-                        w.WriteBoolean("BOOL", _num != 0);
-                        break;
-                    case Kind.Null:
-                        w.WriteBoolean("NULL", true);
-                        break;
-                    default:
-                        w.WriteString("S", string.Empty);
-                        break;
+                    // #482 numeric order key: preserve the exact raw Number so the
+                    // resumed page re-encodes the identical boundary value.
+                    w.WriteString("N", _rawNumber);
+                }
+                else
+                {
+                    switch (_kind)
+                    {
+                        case Kind.Number:
+                            w.WriteString("N", _num.ToString("R", CultureInfo.InvariantCulture));
+                            break;
+                        case Kind.String:
+                            w.WriteString("S", _str ?? string.Empty);
+                            break;
+                        case Kind.Boolean:
+                            w.WriteBoolean("BOOL", _num != 0);
+                            break;
+                        case Kind.Null:
+                            w.WriteBoolean("NULL", true);
+                            break;
+                        default:
+                            w.WriteString("S", string.Empty);
+                            break;
+                    }
                 }
                 w.WriteEndObject();
             }
@@ -577,8 +621,27 @@ internal static class CrossPartitionOrderByQuery
     /// </summary>
     internal static string BuildResumeFilter(
         string sortPath, bool forward, JsonElement boundaryValue, string paramName,
-        List<CosmosSqlParameter> parameters)
+        List<CosmosSqlParameter> parameters, bool numericOrderKey = false)
     {
+        // #482 numeric order key: the boundary is the raw Number; compare the
+        // stored order-preserving encoding against its encoded bound. The
+        // encoded field is uniformly a string when defined (undefined rows are
+        // excluded by the ORDER BY membership guard), so no cross-type guards
+        // are needed.
+        if (numericOrderKey)
+        {
+            string encoded = "1";
+            if (boundaryValue.ValueKind == JsonValueKind.Object
+                && boundaryValue.TryGetProperty("N", out var nEl)
+                && nEl.GetString() is { } rawN
+                && KeyScalarCodec.TryEncodeNumberOrderKey(rawN, out var enc, out _))
+            {
+                encoded = enc;
+            }
+            parameters.Add(new CosmosSqlParameter(paramName, CloneString(encoded)));
+            return "(" + sortPath + (forward ? " >= " : " <= ") + paramName + ")";
+        }
+
         var sv = SortValue.FromAttribute(boundaryValue);
         int typeIndex = sv.CosmosTypeIndex;
 
