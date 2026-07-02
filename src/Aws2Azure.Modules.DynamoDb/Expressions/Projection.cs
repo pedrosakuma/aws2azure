@@ -32,6 +32,34 @@ internal sealed class Projection
     /// false, <see cref="Apply"/> uses an allocation-free whole-attribute copy.</summary>
     public bool HasNestedPaths { get; }
 
+    private byte[][]? _rootNamesUtf8;
+
+    /// <summary>
+    /// Top-level root attribute names pre-encoded to UTF-8, for allocation-free
+    /// streaming property-name matching (<see cref="System.Text.Json.Utf8JsonReader.ValueTextEquals(System.ReadOnlySpan{byte})"/>).
+    /// Built lazily once per projection instance (each request compiles its own),
+    /// so per-item matching does no encoding. Only meaningful for the top-level
+    /// (non-nested) streaming projection fast path; every root of such a
+    /// projection is <c>KeepWhole</c>.
+    /// </summary>
+    public byte[][] RootNamesUtf8
+    {
+        get
+        {
+            if (_rootNamesUtf8 is null)
+            {
+                var names = new byte[RootNames.Count][];
+                for (var i = 0; i < RootNames.Count; i++)
+                {
+                    names[i] = System.Text.Encoding.UTF8.GetBytes(RootNames[i]);
+                }
+                _rootNamesUtf8 = names;
+            }
+
+            return _rootNamesUtf8;
+        }
+    }
+
     /// <summary>
     /// Builds a projection from parsed document paths. Rejects overlapping paths
     /// (for example <c>a</c> and <c>a.b</c>, or a duplicate) with an
