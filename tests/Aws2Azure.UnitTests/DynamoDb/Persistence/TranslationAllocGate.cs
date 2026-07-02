@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Aws2Azure.Core.Buffers;
+using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
 using Aws2Azure.Modules.DynamoDb.Persistence;
 
@@ -92,7 +93,107 @@ internal static class TranslationAllocGate
                 () => EncodeBinaryWire(itemUtf8)));
         }
 
+        AddProjectionScenarios(scenarios);
+
         return scenarios;
+    }
+
+    // ---------------- projection (ProjectionExpression apply) ----------------
+    //
+    // Projection.Apply is the in-proxy compute a ProjectionExpression drives on
+    // the materialized read path (GetItem/Query/Scan/BatchGetItem): it was
+    // previously ungated. Four scenarios isolate the distinct allocation
+    // behaviours over one representative wide item:
+    //   toplevel    — whole top-level attributes (zero-copy value references)
+    //   nested_map  — prune a subset of a map's members (BuildPruned+Materialize)
+    //   nested_list — compact a list to selected indices (BuildPruned+Materialize)
+    //   nested_mixed— a blend of whole, map-member and list-index paths
+    // The projection is compiled once here (outside the measured window) via the
+    // production parser; the measured op is a single Apply over the parsed item.
+
+    private static void AddProjectionScenarios(List<Scenario> scenarios)
+    {
+        // Kept rooted for process lifetime so the extracted JsonElements stay
+        // valid (they reference their parent JsonDocument).
+        var item = ParseItem(BuildProjectionItem());
+
+        scenarios.Add(new Scenario(
+            "ddb.project.toplevel (wide)",
+            RunProjection(item, "pk, sk, str0, str5, num3, num7, profile, tags")));
+
+        scenarios.Add(new Scenario(
+            "ddb.project.nested_map (wide)",
+            RunProjection(item, "profile.name, profile.email, profile.score")));
+
+        scenarios.Add(new Scenario(
+            "ddb.project.nested_list (wide)",
+            RunProjection(item, "tags[0], tags[2], tags[4]")));
+
+        scenarios.Add(new Scenario(
+            "ddb.project.nested_mixed (wide)",
+            RunProjection(item, "pk, profile.name, tags[1], str0")));
+    }
+
+    private static Func<int> RunProjection(Dictionary<string, JsonElement> item, string expression)
+    {
+        var projection = ProjectionExpressionParser.Parse(expression, names: null);
+        return () => projection.Apply(item).Count;
+    }
+
+    private static Dictionary<string, JsonElement> ParseItem(string json)
+    {
+        // Intentionally not disposed: the extracted JsonElements alias this
+        // document and must outlive the closure that captures them.
+        var doc = JsonDocument.Parse(json);
+        var dict = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        foreach (var prop in doc.RootElement.EnumerateObject())
+        {
+            dict[prop.Name] = prop.Value;
+        }
+        return dict;
+    }
+
+    /// <summary>
+    /// A representative DynamoDB item with a wide top-level attribute set plus a
+    /// nested map and list, so the projection scenarios exercise whole-attribute,
+    /// map-member and list-index pruning against realistic sibling counts.
+    /// </summary>
+    private static string BuildProjectionItem()
+    {
+        var inv = CultureInfo.InvariantCulture;
+        var sb = new StringBuilder();
+        sb.Append('{');
+        sb.Append("\"pk\":{\"S\":\"partition-0001\"},");
+        sb.Append("\"sk\":{\"S\":\"sort-0001\"},");
+
+        for (int i = 0; i < 10; i++)
+        {
+            sb.Append("\"str").Append(i.ToString(inv)).Append("\":{\"S\":\"value-")
+                .Append(i.ToString(inv)).Append("\"},");
+        }
+
+        for (int i = 0; i < 10; i++)
+        {
+            sb.Append("\"num").Append(i.ToString(inv)).Append("\":{\"N\":\"")
+                .Append((i * 31 + 7).ToString(inv)).Append("\"},");
+        }
+
+        sb.Append("\"profile\":{\"M\":{")
+            .Append("\"name\":{\"S\":\"Ada Lovelace\"},")
+            .Append("\"age\":{\"N\":\"37\"},")
+            .Append("\"email\":{\"S\":\"ada@example.com\"},")
+            .Append("\"active\":{\"BOOL\":true},")
+            .Append("\"score\":{\"N\":\"91\"},")
+            .Append("\"bio\":{\"S\":\"analyst and first programmer\"}")
+            .Append("}},");
+
+        sb.Append("\"tags\":{\"L\":[")
+            .Append("{\"S\":\"t0\"},{\"S\":\"t1\"},{\"S\":\"t2\"},")
+            .Append("{\"S\":\"t3\"},{\"S\":\"t4\"},{\"S\":\"t5\"}")
+            .Append("]}");
+
+        sb.Append('}');
+        return sb.ToString();
     }
 
     // ---------------- production translation ops ----------------------

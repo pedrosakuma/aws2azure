@@ -115,11 +115,14 @@ internal sealed class Projection
     /// </summary>
     public Dictionary<string, JsonElement> Apply(Dictionary<string, JsonElement> item)
     {
-        var result = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
         if (_root.AttrChildren is null)
         {
-            return result;
+            return new Dictionary<string, JsonElement>(StringComparer.Ordinal);
         }
+
+        // Pre-size to the projected root count: at most one entry per top-level
+        // child, so the result never resizes (avoids the 3→7→17 grow churn).
+        var result = new Dictionary<string, JsonElement>(_root.AttrChildren.Count, StringComparer.Ordinal);
 
         foreach (var (name, node) in _root.AttrChildren)
         {
@@ -223,6 +226,13 @@ internal sealed class Projection
         {
             WritePruned(writer, pruned);
         }
+
+        // Clone into a self-contained, dispose-free document (GC-backed, not
+        // ArrayPool) so the transient parse buffer is returned to the pool. A
+        // no-Clone variant that keeps the Parse(ReadOnlyMemory) document alive
+        // measures cheaper here but leaks its pooled metadata DB, depleting
+        // ArrayPool<byte>.Shared for the whole read path — a false economy the
+        // alloc microbench cannot see (a warm-pool rent counts as zero bytes).
         using var doc = JsonDocument.Parse(buffer.WrittenMemory);
         return doc.RootElement.Clone();
     }
