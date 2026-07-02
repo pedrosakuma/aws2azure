@@ -74,6 +74,106 @@ internal sealed class TableMetadata
     /// </summary>
     [JsonPropertyName("timeToLive")]
     public TableTimeToLive? TimeToLive { get; set; }
+
+    private IReadOnlyList<NumericIndexSortKey>? _numericGsiSortKeys;
+
+    /// <summary>
+    /// Global secondary index RANGE (sort) key attributes declared as Number
+    /// (<c>N</c>), each paired with the pre-encoded Cosmos property name
+    /// (<c>_a2a$ord$&lt;attr&gt;</c>) under which the write path stores the
+    /// order-preserving numeric key so ordered GSI queries sort high-precision
+    /// values correctly (#482). Computed once and cached on this (cached)
+    /// metadata instance so the write hot path never rescans the index schemas
+    /// per request. Empty when no GSI declares an N-typed sort key — the common
+    /// case, where the write path adds nothing.
+    /// </summary>
+    [JsonIgnore]
+    public IReadOnlyList<NumericIndexSortKey> NumericGsiSortKeys
+        => _numericGsiSortKeys ??= ComputeNumericGsiSortKeys();
+
+    private IReadOnlyList<NumericIndexSortKey> ComputeNumericGsiSortKeys()
+    {
+        if (GlobalSecondaryIndexes is not { Count: > 0 } gsis)
+        {
+            return Array.Empty<NumericIndexSortKey>();
+        }
+
+        List<NumericIndexSortKey>? result = null;
+        foreach (var gsi in gsis)
+        {
+            string? sortName = null;
+            foreach (var k in gsi.KeySchema)
+            {
+                if (string.Equals(k.KeyType, "RANGE", StringComparison.Ordinal))
+                {
+                    sortName = k.Name;
+                    break;
+                }
+            }
+
+            if (sortName is null || !IsDeclaredNumber(sortName))
+            {
+                continue;
+            }
+
+            result ??= new List<NumericIndexSortKey>();
+            // Multiple GSIs may share one sort attribute; store it once.
+            bool already = false;
+            foreach (var existing in result)
+            {
+                if (string.Equals(existing.AttributeName, sortName, StringComparison.Ordinal))
+                {
+                    already = true;
+                    break;
+                }
+            }
+
+            if (!already)
+            {
+                result.Add(new NumericIndexSortKey(sortName));
+            }
+        }
+
+        return (IReadOnlyList<NumericIndexSortKey>?)result ?? Array.Empty<NumericIndexSortKey>();
+    }
+
+    private bool IsDeclaredNumber(string attributeName)
+    {
+        foreach (var def in AttributeDefinitions)
+        {
+            if (string.Equals(def.Name, attributeName, StringComparison.Ordinal))
+            {
+                return string.Equals(def.Type, "N", StringComparison.Ordinal);
+            }
+        }
+
+        return false;
+    }
+}
+
+/// <summary>
+/// A Number-typed secondary-index sort attribute and the pre-encoded Cosmos
+/// property name (<c>_a2a$ord$&lt;attr&gt;</c>) that carries its
+/// order-preserving numeric key (#482). The UTF-8 property-name bytes are
+/// computed once so the write path emits them without re-encoding per item.
+/// </summary>
+internal readonly struct NumericIndexSortKey
+{
+    public NumericIndexSortKey(string attributeName)
+    {
+        AttributeName = attributeName;
+        OrderProperty = Persistence.InferredAttributeStorage.OrderKeyPropertyPrefix + attributeName;
+        OrderPropertyUtf8 = System.Text.Encoding.UTF8.GetBytes(OrderProperty);
+    }
+
+    /// <summary>The DynamoDB item attribute name (the GSI RANGE key).</summary>
+    public string AttributeName { get; }
+
+    /// <summary>The Cosmos property name (<c>_a2a$ord$&lt;attr&gt;</c>).</summary>
+    public string OrderProperty { get; }
+
+    /// <summary>UTF-8 bytes of <see cref="OrderProperty"/>, for the write encoders.</summary>
+    public byte[] OrderPropertyUtf8 { get; }
 }
 
 /// <summary>

@@ -496,6 +496,29 @@ internal static class KeyScalarCodec
     private const int NumberMantissaWidth = 38; // == max DDB significant digits
     private const int NumberExponentBias = 130;  // msdExponent in [-130,125]
 
+    /// <summary>
+    /// Encodes a raw DDB Number string into the order-preserving, digits-only
+    /// key used for secondary-index <c>ORDER BY</c> (#482) — the same encoding
+    /// the base-table numeric RANGE key already applies to the Cosmos <c>id</c>
+    /// (see <see cref="EncodeNumberKey"/>). Because the result is pure digits,
+    /// lexical string order equals numeric order across the bare/envelope
+    /// storage boundary, so a per-partition <c>ORDER BY c._a2a$ord$&lt;attr&gt;</c>
+    /// sorts high-precision (<c>{"_a2a:N":…}</c> envelope) values correctly where
+    /// <c>ORDER BY c.&lt;attr&gt;</c> would order them as objects. Returns
+    /// <see langword="false"/> with <paramref name="error"/> populated on a
+    /// malformed or out-of-range number.
+    /// </summary>
+    public static bool TryEncodeNumberOrderKey(string raw, out string encoded, out string error)
+    {
+        encoded = string.Empty;
+        if (!InferredAttributeStorage.TryParseDdbNumber(raw, out var parts, out error))
+        {
+            return false;
+        }
+        encoded = EncodeNumberKey(parts);
+        return true;
+    }
+
     private static string EncodeNumberKey(in InferredAttributeStorage.DdbNumberParts parts)
     {
         if (parts.IsZero) return "1";

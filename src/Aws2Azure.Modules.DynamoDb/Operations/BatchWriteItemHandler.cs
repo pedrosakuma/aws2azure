@@ -180,7 +180,8 @@ internal static class BatchWriteItemHandler
                     // re-encode the previous BuildItemDocument path incurred.
                     int? ttlSeconds = TtlTranslation.ComputeItemTtlSeconds(
                         itemEl, meta.TimeToLive, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-                    var doc = ItemHandlers.BuildItemDocumentBytes(id, pk, itemEl, cosmos.CosmosBinaryRequests, ttlSeconds);
+                    var orderKeys = SecondaryIndexOrderKeys.Compute(meta, itemEl);
+                    var doc = ItemHandlers.BuildItemDocumentBytes(id, pk, itemEl, cosmos.CosmosBinaryRequests, ttlSeconds, orderKeys);
                     // Keep only the envelope's byte range for any UnprocessedItems
                     // echo (sliced from the request buffer on demand), not a
                     // retained DOM clone.
