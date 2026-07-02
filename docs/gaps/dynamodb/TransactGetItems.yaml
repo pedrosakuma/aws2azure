@@ -13,8 +13,9 @@ sub_features:
     status: implemented
     notes: "Missing items emit an empty `{}` entry to preserve index alignment with TransactItems (matches DynamoDB)."
   - name: ProjectionExpression / ExpressionAttributeNames (per item)
-    status: partial
-    notes: "Top-level attribute names + `#alias` honoured. Nested paths rejected."
+    status: implemented
+    verified_real_azure: "run 28566172080 (2026-07-02)"
+    notes: "Top-level attribute names, `#alias` references, and nested document paths (`a.b`, `a[0]`, `a.b[1]`) honoured. Projected maps keep only referenced members; projected lists compact to referenced indices (ascending); non-existent/type-mismatched paths omitted; overlapping paths rejected with ValidationException."
   - name: TransactionCanceledException on Cosmos error
     status: implemented
     notes: "Any non-2xx, non-404 from a fan-out call cancels the transaction with `TransactionCanceledException`. `CancellationReasons` is aligned positionally — `None` for successful items, the Cosmos-derived AWS code (e.g. `ProvisionedThroughputExceededException`, `InternalServerError`) for failed ones."

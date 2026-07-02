@@ -130,7 +130,7 @@ internal static class CrossPartitionOrderByQuery
         FilterPushdownResult skPush,
         FilterPushdownResult userPush,
         Expressions.ConditionNode? residualFilter,
-        IReadOnlyList<string>? projection,
+        Projection? projection,
         CosmosClient cosmos,
         CancellationToken ct)
     {
@@ -265,7 +265,7 @@ internal static class CrossPartitionOrderByQuery
         OrderByToken? token,
         PartitionPageFetcher fetch,
         Expressions.ConditionNode? residualFilter,
-        IReadOnlyList<string>? projection,
+        Projection? projection,
         CancellationToken ct)
     {
         var cursors = new List<Cursor>(ranges.Count);
@@ -341,7 +341,7 @@ internal static class CrossPartitionOrderByQuery
             if (keep)
             {
                 matched++;
-                items.Add(projection is null ? head : Project(head, projection));
+                items.Add(projection is null ? head : projection.Apply(head));
             }
 
             await AdvanceAsync(c, cursors, min, fetch, ct).ConfigureAwait(false);
@@ -561,17 +561,6 @@ internal static class CrossPartitionOrderByQuery
             using var doc = JsonDocument.Parse(buffer.WrittenMemory);
             return doc.RootElement.Clone();
         }
-    }
-
-    private static Dictionary<string, JsonElement> Project(
-        Dictionary<string, JsonElement> item, IReadOnlyList<string> paths)
-    {
-        var result = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-        foreach (var p in paths)
-        {
-            if (item.TryGetValue(p, out var v)) result[p] = v;
-        }
-        return result;
     }
 
     // ---- Resume filter ---------------------------------------------------

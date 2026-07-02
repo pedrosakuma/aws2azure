@@ -4,22 +4,21 @@ using System.Collections.Generic;
 namespace Aws2Azure.Modules.DynamoDb.Expressions;
 
 /// <summary>
-/// Parses a DynamoDB <c>ProjectionExpression</c> into a list of
-/// top-level attribute names. This slice supports the common subset
-/// only: a comma-separated list of attribute names or <c>#alias</c>
-/// references. Nested paths (<c>a.b</c>, <c>a[0]</c>) are deferred.
+/// Parses a DynamoDB <c>ProjectionExpression</c> into a compiled
+/// <see cref="Projection"/>. Supports a comma-separated list of document paths:
+/// top-level attribute names, <c>#alias</c> references, nested map members
+/// (<c>a.b</c>) and list indices (<c>a[0]</c>). Overlapping paths are rejected.
 /// </summary>
 internal static class ProjectionExpressionParser
 {
-    public static IReadOnlyList<string> Parse(
+    public static Projection Parse(
         string expression, IReadOnlyDictionary<string, string>? names)
     {
         if (string.IsNullOrWhiteSpace(expression))
             throw new ExpressionSyntaxException(0, "ProjectionExpression cannot be empty.");
 
         var tokens = ExpressionLexer.Tokenise(expression);
-        var result = new List<string>();
-        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var paths = new List<DocumentPath>();
         int position = 0;
         while (ExpressionPathParser.Peek(tokens, position).Kind != TokenKind.EndOfInput)
         {
@@ -32,15 +31,7 @@ internal static class ProjectionExpressionParser
                 ref position,
                 names,
                 AttributeAliasErrorStyle.Projection);
-            if (!path.IsTopLevel)
-                throw new ExpressionSyntaxException(start.Position,
-                    $"Nested path '{path.Display}' is not supported in this release; use a top-level attribute or a #alias.");
-
-            string resolved = path.Root;
-            if (seen.Add(resolved))
-            {
-                result.Add(resolved);
-            }
+            paths.Add(path);
 
             var separator = ExpressionPathParser.Peek(tokens, position);
             if (separator.Kind == TokenKind.EndOfInput)
@@ -61,6 +52,7 @@ internal static class ProjectionExpressionParser
                     "Empty path in ProjectionExpression.");
             }
         }
-        return result;
+
+        return Projection.FromDocumentPaths(paths);
     }
 }

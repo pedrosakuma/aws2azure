@@ -73,7 +73,7 @@ internal static class BatchGetItemHandler
         // error; only runtime/throttling errors fall into UnprocessedKeys.
         var work = new List<WorkUnit>();
         var tableMeta = new Dictionary<string, TableMetadata>(StringComparer.Ordinal);
-        var tableProjection = new Dictionary<string, IReadOnlyList<string>?>(StringComparer.Ordinal);
+        var tableProjection = new Dictionary<string, Projection?>(StringComparer.Ordinal);
         var tableConsistent = new Dictionary<string, bool>(StringComparer.Ordinal);
         var seenKeys = new HashSet<(string Table, string Pk, string Id)>();
 
@@ -144,7 +144,7 @@ internal static class BatchGetItemHandler
             tableConsistent[tableName] = consistent;
 
             // ProjectionExpression per table.
-            IReadOnlyList<string>? projection = null;
+            Projection? projection = null;
             if (perTable.TryGetProperty("ProjectionExpression", out var peEl)
                 && peEl.ValueKind == JsonValueKind.String
                 && !string.IsNullOrWhiteSpace(peEl.GetString()))
@@ -318,7 +318,7 @@ internal static class BatchGetItemHandler
             {
                 // Projection tables always travel the map path (point reads and
                 // the map sink), so Item.Map is populated here.
-                item = new BatchGetResponseItem(Project(item.Map!, projection));
+                item = new BatchGetResponseItem(projection.Apply(item.Map!));
             }
             list.Add(item);
         }
@@ -560,20 +560,6 @@ internal static class BatchGetItemHandler
                 results[idx] = new PerItemResult(null, true, null);
             }
         }
-    }
-
-    private static Dictionary<string, JsonElement> Project(
-        Dictionary<string, JsonElement> item, IReadOnlyList<string> attrs)
-    {
-        var result = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-        for (int i = 0; i < attrs.Count; i++)
-        {
-            if (item.TryGetValue(attrs[i], out var v))
-            {
-                result[attrs[i]] = v;
-            }
-        }
-        return result;
     }
 
     private static Dictionary<string, JsonElement> JsonElementToDict(JsonElement el)

@@ -133,7 +133,7 @@ internal static class TransactGetItemsHandler
                 return;
             }
 
-            IReadOnlyList<string>? projection = null;
+            Projection? projection = null;
             if (entry.Get.TryGetProperty("ProjectionExpression", out var peEl) && peEl.ValueKind == JsonValueKind.String)
             {
                 IReadOnlyDictionary<string, string>? names = null;
@@ -207,7 +207,7 @@ internal static class TransactGetItemsHandler
             }
             if (work[i].Projection is { } projection)
             {
-                item = Project(item, projection);
+                item = projection.Apply(item);
             }
             responses.Add(new TransactGetItemResponse { Item = item });
         }
@@ -288,20 +288,6 @@ internal static class TransactGetItemsHandler
         }
     }
 
-    private static Dictionary<string, JsonElement> Project(
-        Dictionary<string, JsonElement> item, IReadOnlyList<string> attrs)
-    {
-        var result = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-        for (int i = 0; i < attrs.Count; i++)
-        {
-            if (item.TryGetValue(attrs[i], out var v))
-            {
-                result[attrs[i]] = v;
-            }
-        }
-        return result;
-    }
-
     private static async Task WriteTransactionCanceledAsync(HttpContext ctx, PerItemResult[] results)
     {
         // TransactionCanceledException — preserve positional CancellationReasons
@@ -349,7 +335,7 @@ internal static class TransactGetItemsHandler
         await ctx.Response.Body.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
     }
 
-    private readonly record struct WorkUnit(string Table, string Pk, string Id, IReadOnlyList<string>? Projection);
+    private readonly record struct WorkUnit(string Table, string Pk, string Id, Projection? Projection);
 
     private struct PerItemResult
     {

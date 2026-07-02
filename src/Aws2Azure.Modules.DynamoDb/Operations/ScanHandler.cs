@@ -236,7 +236,7 @@ internal static class ScanHandler
         }
 
         ConditionNode? filter = null;
-        IReadOnlyList<string>? projection = null;
+        Projection? projection = null;
         try
         {
             if (!string.IsNullOrWhiteSpace(req.FilterExpression))
@@ -259,8 +259,8 @@ internal static class ScanHandler
                 // above) always takes precedence; an explicit ALL_ATTRIBUTES /
                 // SPECIFIC_ATTRIBUTES / COUNT Select skips this branch.
                 projection = isGsiScan
-                    ? SecondaryIndexResolver.ResolveIndexProjection(meta, gsi!, gsiHashName!, gsiSortName)
-                    : SecondaryIndexResolver.ResolveIndexProjection(meta, lsi!, lsiSortName!);
+                    ? Wrap(SecondaryIndexResolver.ResolveIndexProjection(meta, gsi!, gsiHashName!, gsiSortName))
+                    : Wrap(SecondaryIndexResolver.ResolveIndexProjection(meta, lsi!, lsiSortName!));
             }
         }
         catch (ExpressionSyntaxException ex)
@@ -278,7 +278,7 @@ internal static class ScanHandler
         {
             var allowed = SecondaryIndexResolver.ResolveIndexProjection(
                 meta, gsi!, gsiHashName!, gsiSortName)!;
-            foreach (var path in projection!)
+            foreach (var path in projection!.RootNames)
             {
                 bool projected = false;
                 foreach (var a in allowed)
@@ -327,7 +327,7 @@ internal static class ScanHandler
 
     private static async Task ExecuteScanAsync(
         HttpContext ctx, ScanRequest req,
-        ConditionNode? filter, IReadOnlyList<string>? projection, IReadOnlyList<string>? membershipAttrs, string? continuationIn,
+        ConditionNode? filter, Projection? projection, IReadOnlyList<string>? membershipAttrs, string? continuationIn,
         CosmosClient cosmos, CancellationToken ct)
     {
         bool countOnly = string.Equals(req.Select, "COUNT", StringComparison.OrdinalIgnoreCase);
@@ -421,7 +421,7 @@ internal static class ScanHandler
                 matched++;
                 if (!countOnly)
                 {
-                    items.Add(projection is null ? itemMap : Project(itemMap, projection));
+                    items.Add(projection is null ? itemMap : projection.Apply(itemMap));
                 }
             }
 
@@ -664,16 +664,8 @@ internal static class ScanHandler
         }
     }
 
-    private static Dictionary<string, JsonElement> Project(
-        Dictionary<string, JsonElement> item, IReadOnlyList<string> paths)
-    {
-        var result = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-        foreach (var p in paths)
-        {
-            if (item.TryGetValue(p, out var v)) result[p] = v;
-        }
-        return result;
-    }
+    private static Projection? Wrap(IReadOnlyList<string>? topLevelNames)
+        => topLevelNames is null ? null : Projection.FromTopLevelNames(topLevelNames);
 
     private static string? ExtractContinuation(JsonElement? exclusiveStartKey)
     {

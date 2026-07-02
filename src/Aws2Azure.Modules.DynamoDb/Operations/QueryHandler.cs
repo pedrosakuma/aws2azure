@@ -236,7 +236,7 @@ internal static class QueryHandler
         KeyConditionAnalyser.AnalysedKeyCondition? keyCond = null;
         KeyConditionAnalyser.AnalysedGsiKeyCondition? gsiKey = null;
         ConditionNode? filter = null;
-        IReadOnlyList<string>? projection = null;
+        Projection? projection = null;
         try
         {
             var kceAst = ConditionExpressionParser.Parse(req.KeyConditionExpression!, names, values);
@@ -262,7 +262,7 @@ internal static class QueryHandler
                     // for a GSI). Reject any non-projected path.
                     var allowed = SecondaryIndexResolver.ResolveIndexProjection(
                         meta, gsi!, gsiHashKey!.Name, gsiSortKey?.Name)!;
-                    foreach (var path in projection)
+                    foreach (var path in projection.RootNames)
                     {
                         bool projected = false;
                         foreach (var a in allowed)
@@ -290,8 +290,8 @@ internal static class QueryHandler
                 // ALL_ATTRIBUTES / SPECIFIC_ATTRIBUTES / COUNT Select skips
                 // this branch.
                 projection = isGsiQuery
-                    ? SecondaryIndexResolver.ResolveIndexProjection(meta, gsi!, gsiHashKey!.Name, gsiSortKey?.Name)
-                    : SecondaryIndexResolver.ResolveIndexProjection(meta, lsi!, lsiSortKey!.Name);
+                    ? Wrap(SecondaryIndexResolver.ResolveIndexProjection(meta, gsi!, gsiHashKey!.Name, gsiSortKey?.Name))
+                    : Wrap(SecondaryIndexResolver.ResolveIndexProjection(meta, lsi!, lsiSortKey!.Name));
             }
         }
         catch (KeyConditionException ex)
@@ -329,7 +329,7 @@ internal static class QueryHandler
         KeyConditionAnalyser.AnalysedKeyCondition? keyCond,
         KeyConditionAnalyser.AnalysedGsiKeyCondition? gsiKey,
         string? gsiHashName, string? gsiSortName, string? gsiSortType,
-        ConditionNode? filter, IReadOnlyList<string>? projection, string? lsiSortName, string? continuationIn,
+        ConditionNode? filter, Projection? projection, string? lsiSortName, string? continuationIn,
         CosmosClient cosmos, CancellationToken ct)
     {
         bool forward = req.ScanIndexForward ?? true;
@@ -516,7 +516,7 @@ internal static class QueryHandler
                 matched++;
                 if (!countOnly)
                 {
-                    items.Add(projection is null ? itemMap : Project(itemMap, projection));
+                    items.Add(projection is null ? itemMap : projection.Apply(itemMap));
                 }
             }
 
@@ -876,16 +876,8 @@ internal static class QueryHandler
         }
     }
 
-    private static Dictionary<string, JsonElement> Project(
-        Dictionary<string, JsonElement> item, IReadOnlyList<string> paths)
-    {
-        var result = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-        foreach (var p in paths)
-        {
-            if (item.TryGetValue(p, out var v)) result[p] = v;
-        }
-        return result;
-    }
+    private static Projection? Wrap(IReadOnlyList<string>? topLevelNames)
+        => topLevelNames is null ? null : Projection.FromTopLevelNames(topLevelNames);
 
     internal static string? ExtractContinuation(JsonElement? exclusiveStartKey)
     {
