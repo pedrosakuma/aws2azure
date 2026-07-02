@@ -58,7 +58,8 @@ internal static class QueryHandler
     private const int MaxBatchSize = 1000;
 
     public static async Task HandleQueryAsync(
-        HttpContext ctx, byte[] body, CosmosClient cosmos, bool enableGsi, CancellationToken ct)
+        HttpContext ctx, byte[] body, CosmosClient cosmos, bool enableGsi,
+        bool enableLsiNumericOrdering, CancellationToken ct)
     {
         QueryRequest? req;
         try
@@ -320,7 +321,8 @@ internal static class QueryHandler
         }
 
         await ExecuteQueryAsync(ctx, req, meta, keyCond, gsiKey, gsiHashKey?.Name, gsiSortKey?.Name,
-            gsiSortKey?.Type, filter, projection, lsiSortKey?.Name, continuationIn, cosmos, ct)
+            gsiSortKey?.Type, filter, projection, lsiSortKey?.Name, lsiSortKey?.Type,
+            enableLsiNumericOrdering, continuationIn, cosmos, ct)
             .ConfigureAwait(false);
     }
 
@@ -329,7 +331,8 @@ internal static class QueryHandler
         KeyConditionAnalyser.AnalysedKeyCondition? keyCond,
         KeyConditionAnalyser.AnalysedGsiKeyCondition? gsiKey,
         string? gsiHashName, string? gsiSortName, string? gsiSortType,
-        ConditionNode? filter, Projection? projection, string? lsiSortName, string? continuationIn,
+        ConditionNode? filter, Projection? projection, string? lsiSortName, string? lsiSortType,
+        bool enableLsiNumericOrdering, string? continuationIn,
         CosmosClient cosmos, CancellationToken ct)
     {
         bool forward = req.ScanIndexForward ?? true;
@@ -421,9 +424,37 @@ internal static class QueryHandler
             // joins the in-process filter chain. ORDER BY targets the LSI sort
             // attribute. Items missing the attribute are excluded by an explicit
             // IS_DEFINED guard in BuildLsiSql, matching LSI sparse-index semantics.
-            var skPush = FilterPushdownVisitor.Translate(
-                keyCond!.IndexSortKeyNode, CosmosPathTranslator.DefaultRootAlias, "sk");
-            (sql, sqlParams) = BuildLsiSql(lsiSortName!, forward, skPush, pushdown);
+            //
+            // #504: for a numeric (N) LSI sort key with the opt-in flag enabled,
+            // order by (and range-filter against) the order-preserving encoded
+            // `_a2a$ord$<attr>` field instead of the raw envelope attribute, so
+            // high-precision values sort numerically. Opt-in because the encoded
+            // ORDER BY excludes items lacking the field (pre-encoded-field data),
+            // which would silently drop legacy items from this always-on feature.
+            bool lsiNumericOrder = enableLsiNumericOrdering
+                && string.Equals(lsiSortType, "N", StringComparison.Ordinal);
+            string? lsiOrderPath = null;
+            FilterPushdownResult skPush;
+            if (lsiNumericOrder)
+            {
+                lsiOrderPath = CosmosPathTranslator.Translate(new DocumentPath(new[]
+                {
+                    new AttributePathSegment(
+                        Persistence.InferredAttributeStorage.OrderKeyPropertyPrefix + lsiSortName),
+                }));
+                var rawSkPush = FilterPushdownVisitor.Translate(
+                    keyCond!.IndexSortKeyNode, CosmosPathTranslator.DefaultRootAlias, "sk");
+                var encodedSk = keyCond.IndexSortKeyNode is null
+                    ? null
+                    : BuildNumericSortKeyPushdown(keyCond.IndexSortKeyNode, lsiOrderPath, "sk");
+                skPush = encodedSk ?? rawSkPush;
+            }
+            else
+            {
+                skPush = FilterPushdownVisitor.Translate(
+                    keyCond!.IndexSortKeyNode, CosmosPathTranslator.DefaultRootAlias, "sk");
+            }
+            (sql, sqlParams) = BuildLsiSql(lsiSortName!, forward, skPush, pushdown, lsiOrderPath);
             filter = CombineResidual(skPush.Residual, pushdown.Residual);
         }
         else
@@ -744,13 +775,21 @@ internal static class QueryHandler
     /// </summary>
     internal static (string sql, List<CosmosSqlParameter> parameters) BuildLsiSql(
         string lsiSortName, bool forward,
-        FilterPushdownResult skPush, FilterPushdownResult userPush)
+        FilterPushdownResult skPush, FilterPushdownResult userPush,
+        string? orderByPathOverride = null)
     {
         var lsiPath = CosmosPathTranslator.Translate(
             new DocumentPath(new[] { new AttributePathSegment(lsiSortName) }));
         var sb = new StringBuilder("SELECT * FROM c WHERE c._a2a = 'item'");
         var parameters = new List<CosmosSqlParameter>();
         sb.Append(" AND IS_DEFINED(").Append(lsiPath).Append(')');
+        // #504 numeric ordering: also require the encoded order field so items
+        // written before it existed are excluded rather than mis-ordered (the
+        // opt-in flag's documented backfill contract).
+        if (orderByPathOverride is not null)
+        {
+            sb.Append(" AND IS_DEFINED(").Append(orderByPathOverride).Append(')');
+        }
         if (skPush.Sql is { } skSql)
         {
             sb.Append(" AND ").Append(skSql);
@@ -761,7 +800,8 @@ internal static class QueryHandler
             sb.Append(" AND ").Append(fSql);
             foreach (var fp in userPush.Parameters) parameters.Add(fp);
         }
-        sb.Append(" ORDER BY ").Append(lsiPath).Append(forward ? " ASC" : " DESC");
+        var orderPath = orderByPathOverride ?? lsiPath;
+        sb.Append(" ORDER BY ").Append(orderPath).Append(forward ? " ASC" : " DESC");
         return (sb.ToString(), parameters);
     }
 

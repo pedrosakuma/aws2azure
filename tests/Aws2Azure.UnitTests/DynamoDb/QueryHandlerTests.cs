@@ -299,7 +299,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}},"
                   + "\"Limit\":3}";
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         Assert.Equal("application/x-amz-json-1.0", ctx.Response.ContentType);
@@ -337,7 +337,7 @@ public class QueryHandlerTests
                 Responses = { CosmosOk(MetadataHashOnly), wrap(page) },
             };
             var cosmos = BuildClient(handler);
-            await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+            await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
             Assert.Equal(200, ctx.Response.StatusCode);
             return ReadResponse(body);
         }
@@ -376,7 +376,7 @@ public class QueryHandlerTests
                   + "\"FilterExpression\":\"v > :min\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":min\":{\"N\":\"3\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         using var resp = JsonDocument.Parse(ReadResponse(body));
         Assert.Equal(2, resp.RootElement.GetProperty("Count").GetInt32());
@@ -421,7 +421,7 @@ public class QueryHandlerTests
                 Responses = { CosmosOk(MetadataHashOnly), wrap(page) },
             };
             var cosmos = BuildClient(handler);
-            await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+            await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
             Assert.Equal(200, ctx.Response.StatusCode);
             return ReadResponse(body);
         }
@@ -454,7 +454,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var resp = JsonDocument.Parse(ReadResponse(body));
@@ -481,7 +481,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :v\","
                   + "\"ExpressionAttributeValues\":{\":v\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         var queryReq = handler.Requests[1];
@@ -521,7 +521,7 @@ public class QueryHandlerTests
                   + "\"ExpressionAttributeValues\":{"
                   + "\":p\":{\"S\":\"a\"},\":lo\":{\"S\":\"b\"},\":hi\":{\"S\":\"c\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         var queryReq = handler.Requests[1];
@@ -555,7 +555,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p AND begins_with(sk, :pre)\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":pre\":{\"S\":\"ord#\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         var queryReq = handler.Requests[1];
@@ -586,7 +586,7 @@ public class QueryHandlerTests
                   + "\"FilterExpression\":\"size(v) > :min\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":min\":{\"N\":\"3\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var resp = JsonDocument.Parse(ReadResponse(body));
@@ -616,7 +616,7 @@ public class QueryHandlerTests
                   + "\"FilterExpression\":\"v > :min\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":min\":{\"N\":\"2\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         var queryReq = handler.Requests[1];
@@ -647,7 +647,7 @@ public class QueryHandlerTests
                   + "\"ExpressionAttributeNames\":{\"#v\":\"v\"},"
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var resp = JsonDocument.Parse(ReadResponse(body));
@@ -680,7 +680,7 @@ public class QueryHandlerTests
                   + "\"ProjectionExpression\":\"m.keep, l[2]\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var resp = JsonDocument.Parse(ReadResponse(body));
@@ -718,7 +718,7 @@ public class QueryHandlerTests
                   + "\"Select\":\"COUNT\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         using var resp = JsonDocument.Parse(ReadResponse(body));
         Assert.Equal(1, resp.RootElement.GetProperty("Count").GetInt32());
@@ -744,7 +744,7 @@ public class QueryHandlerTests
                   + "\"ConsistentRead\":true,"
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         Assert.Equal("Strong", handler.Requests[1].Headers["x-ms-consistency-level"]);
@@ -769,7 +769,7 @@ public class QueryHandlerTests
                   + "\"ScanIndexForward\":false,"
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Contains("ORDER BY c.id DESC", handler.Requests[1].Body);
     }
@@ -796,7 +796,7 @@ public class QueryHandlerTests
                   + "\"Limit\":2,"
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         using var resp = JsonDocument.Parse(ReadResponse(body));
         Assert.True(resp.RootElement.TryGetProperty("LastEvaluatedKey", out var lek));
@@ -825,7 +825,7 @@ public class QueryHandlerTests
                   + "\"ExclusiveStartKey\":{\"__a2a_continuation\":{\"S\":\"" + b64 + "\"}},"
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         Assert.Equal("RESUME-1", handler.Requests[1].Headers["x-ms-continuation"]);
@@ -851,7 +851,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p AND createdAt > :c\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":c\":{\"S\":\"2024-01\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         var queryReq = handler.Requests[1];
@@ -889,7 +889,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p AND createdAt = :c\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":c\":{\"S\":\"2024-02\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         var queryReq = handler.Requests[1];
@@ -920,7 +920,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p AND begins_with(createdAt, :pre)\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":pre\":{\"S\":\"2024-02\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         var queryReq = handler.Requests[1];
@@ -943,10 +943,74 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p AND begins_with(score, :pre)\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":pre\":{\"N\":\"5\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("begins_with", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task Query_lsi_numeric_sort_key_uses_encoded_order_field_when_flag_on()
+    {
+        // #504 opt-in flag ON: an ordered LSI query on a high-precision Number
+        // sort key targets the order-preserving encoded field for both ORDER BY
+        // and the sort-key range predicate, and guards it with IS_DEFINED so
+        // pre-encoded (legacy) items are excluded rather than mis-ordered.
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataLsiNumberKeysOnly),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "x", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"x\"},\"score\":{\"N\":\"1\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byScore\","
+                  + "\"KeyConditionExpression\":\"pk = :p AND score > :s\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":s\":{\"N\":\"5\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: true, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        var sql = QuerySql(handler.Requests[1].Body);
+        Assert.Contains("ORDER BY c[\"_a2a$ord$score\"] ASC", sql);
+        Assert.Contains("IS_DEFINED(c[\"_a2a$ord$score\"])", sql);
+        // The N sort-key predicate targets the encoded field (exact, no over-scan).
+        Assert.Contains("c[\"_a2a$ord$score\"] > @sk0", sql);
+        // Raw envelope path is not used for ordering.
+        Assert.DoesNotContain("ORDER BY c[\"score\"]", sql);
+    }
+
+    [Fact]
+    public async Task Query_lsi_numeric_sort_key_uses_raw_field_when_flag_off()
+    {
+        // #504 flag OFF (default): ordered LSI query keeps the raw envelope path,
+        // never referencing the encoded order field (legacy behaviour preserved).
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataLsiNumberKeysOnly),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "x", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"x\"},\"score\":{\"N\":\"1\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byScore\","
+                  + "\"KeyConditionExpression\":\"pk = :p AND score > :s\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":s\":{\"N\":\"5\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        var sql = QuerySql(handler.Requests[1].Body);
+        Assert.Contains("ORDER BY c[\"score\"] ASC", sql);
+        Assert.DoesNotContain("_a2a$ord$", sql);
     }
 
     [Fact]
@@ -963,7 +1027,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"customer = :p\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("global secondary indexes is not yet supported", ReadResponse(body));
@@ -989,7 +1053,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"customer = :c\","
                   + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         var queryReq = handler.Requests[1];
@@ -1027,7 +1091,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"customer = :c AND createdAt > :d\","
                   + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"},\":d\":{\"S\":\"2024-01\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         // Composite GSI diverts to the cross-partition ordered executor:
@@ -1061,7 +1125,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"customer = :c\","
                   + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("binary (B) sort key", ReadResponse(body));
@@ -1089,7 +1153,7 @@ public class QueryHandlerTests
                   + "\"ScanIndexForward\":false,"
                   + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         Assert.Contains("ORDER BY c[\"createdAt\"] DESC", QuerySql(handler.Requests[2].Body));
@@ -1114,7 +1178,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"customer = :c AND createdAt BETWEEN :lo AND :hi\","
                   + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"},\":lo\":{\"S\":\"2024-01\"},\":hi\":{\"S\":\"2024-12\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         var sql = QuerySql(handler.Requests[2].Body);
@@ -1136,7 +1200,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"customer = :c AND begins_with(amount, :p)\","
                   + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"},\":p\":{\"N\":\"1\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
     }
@@ -1156,7 +1220,7 @@ public class QueryHandlerTests
                   + "\"ConsistentRead\":true,"
                   + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("Consistent reads are not supported on global secondary indexes", ReadResponse(body));
@@ -1177,7 +1241,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"customer = :c\","
                   + "\"ExpressionAttributeValues\":{\":c\":{\"N\":\"1\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
     }
@@ -1202,7 +1266,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"customer = :c\","
                   + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var resp = JsonDocument.Parse(ReadResponse(body));
@@ -1234,7 +1298,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"customer = :c\","
                   + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var resp = JsonDocument.Parse(ReadResponse(body));
@@ -1261,7 +1325,7 @@ public class QueryHandlerTests
                   + "\"Select\":\"ALL_ATTRIBUTES\","
                   + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("ALL_ATTRIBUTES is not supported on global secondary index", ReadResponse(body));
@@ -1287,7 +1351,7 @@ public class QueryHandlerTests
                   + "\"Select\":\"ALL_ATTRIBUTES\","
                   + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var resp = JsonDocument.Parse(ReadResponse(body));
@@ -1311,7 +1375,7 @@ public class QueryHandlerTests
                   + "\"ProjectionExpression\":\"customer, extra\","
                   + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("not projected into index", ReadResponse(body));
@@ -1338,7 +1402,7 @@ public class QueryHandlerTests
                   + "\"ProjectionExpression\":\"customer, amount\","
                   + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var resp = JsonDocument.Parse(ReadResponse(body));
@@ -1366,7 +1430,7 @@ public class QueryHandlerTests
                   + "\"Select\":\"SPECIFIC_ATTRIBUTES\","
                   + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("SPECIFIC_ATTRIBUTES without providing the ProjectionExpression", ReadResponse(body));
@@ -1386,7 +1450,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("does not have the specified index", ReadResponse(body));
@@ -1413,7 +1477,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var resp = JsonDocument.Parse(ReadResponse(body));
@@ -1443,7 +1507,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         Assert.Contains("ORDER BY c[\"createdAt\"] DESC", QuerySql(handler.Requests[1].Body));
@@ -1464,7 +1528,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p AND createdAt > :c\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":c\":{\"N\":\"1\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("ValidationException", ReadResponse(body));
@@ -1492,7 +1556,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(200, ctx.Response.StatusCode);
         using var resp = JsonDocument.Parse(ReadResponse(body));
@@ -1513,7 +1577,7 @@ public class QueryHandlerTests
                   + "\"KeyConditions\":{\"pk\":{\"AttributeValueList\":[{\"S\":\"a\"}],\"ComparisonOperator\":\"EQ\"}},"
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("Legacy KeyConditions", ReadResponse(body));
@@ -1536,7 +1600,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("ResourceNotFoundException", ReadResponse(body));
@@ -1556,7 +1620,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk > :p\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("ValidationException", ReadResponse(body));
@@ -1576,7 +1640,7 @@ public class QueryHandlerTests
                   + "\"KeyConditionExpression\":\"pk = :p AND sk = :s\","
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":s\":{\"S\":\"b\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(400, ctx.Response.StatusCode);
     }
@@ -1611,7 +1675,7 @@ public class QueryHandlerTests
                   + "\"Limit\":2,"
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":min\":{\"N\":\"3\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         // Exactly one Cosmos query call (no second-page fetch).
         Assert.Equal(2, handler.Requests.Count);
@@ -1651,7 +1715,7 @@ public class QueryHandlerTests
                   + "\"Limit\":5,"
                   + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"},\":min\":{\"N\":\"2\"}}}";
 
-        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, default);
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: false, enableLsiNumericOrdering: false, default);
 
         Assert.Equal(2, handler.Requests.Count);
         using var resp = JsonDocument.Parse(ReadResponse(body));

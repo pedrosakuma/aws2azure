@@ -308,6 +308,84 @@ public sealed class DynamoDbRealAzureSecondaryIndexTests
     }
 
     [SkippableFact]
+    public async Task Lsi_query_orders_by_numeric_sort_key()
+    {
+        Skip.IfNot(_fx.CosmosConfigured,
+            "AZURE_COSMOS_ENDPOINT/KEY/DATABASE not set — skipping real-Azure GSI/LSI validation.");
+
+        var table = NewTableName("lsinum");
+        using var client = _fx.CreateDynamoDbClient();
+        await WithTableAsync(client, table, async () =>
+        {
+            // High-precision numeric LSI sort keys: 21-digit integers (10^20 + i)
+            // exceed IEEE-754 double precision, so the storage layer keeps them in
+            // the {"_a2a:N":…} envelope. Without the Option-B synthetic order key
+            // Cosmos would sort these envelope objects structurally (not
+            // numerically) and mis-order the result. With the opt-in
+            // EnableLocalSecondaryIndexNumericOrdering flag (set by the fixture)
+            // the query orders by the `_a2a$ord$score` encoded field, restoring
+            // true numeric order. LSI is partition-scoped, so all items share one
+            // base partition and the values are inserted out of order.
+            var baseValue = System.Numerics.BigInteger.Pow(10, 20);
+            const int count = 25;
+            var order = new[] { 7, 0, 23, 11, 4, 19, 2, 15, 9, 21, 1, 13, 6, 24, 3, 17, 10, 20, 5, 22, 8, 16, 12, 18, 14 };
+            var expected = new List<string>(count);
+            for (int i = 0; i < count; i++)
+            {
+                expected.Add((baseValue + i).ToString(CultureInfo.InvariantCulture));
+            }
+            foreach (var i in order)
+            {
+                await PutAsync(client, table, BaseItem("p1", $"s{i:D5}", new()
+                {
+                    ["score"] = new AttributeValue { N = (baseValue + i).ToString(CultureInfo.InvariantCulture) },
+                }));
+            }
+
+            var asc = await QueryUntilAsync(client, new QueryRequest
+            {
+                TableName = table,
+                IndexName = "byScore",
+                KeyConditionExpression = "pk = :p",
+                ExpressionAttributeValues = new() { [":p"] = Str("p1") },
+                ScanIndexForward = true,
+            }, expectedCount: count);
+
+            Assert.Equal(expected, asc.Select(it => Canonical(it["score"].N)).ToList());
+
+            var desc = await QueryUntilAsync(client, new QueryRequest
+            {
+                TableName = table,
+                IndexName = "byScore",
+                KeyConditionExpression = "pk = :p",
+                ExpressionAttributeValues = new() { [":p"] = Str("p1") },
+                ScanIndexForward = false,
+            }, expectedCount: count);
+
+            var expectedDesc = new List<string>(expected);
+            expectedDesc.Reverse();
+            Assert.Equal(expectedDesc, desc.Select(it => Canonical(it["score"].N)).ToList());
+
+            // A numeric range predicate on the encoded field filters exactly.
+            var bound = (baseValue + 15).ToString(CultureInfo.InvariantCulture);
+            var ranged = await QueryUntilAsync(client, new QueryRequest
+            {
+                TableName = table,
+                IndexName = "byScore",
+                KeyConditionExpression = "pk = :p AND score >= :b",
+                ExpressionAttributeValues = new()
+                {
+                    [":p"] = Str("p1"),
+                    [":b"] = new AttributeValue { N = bound },
+                },
+                ScanIndexForward = true,
+            }, expectedCount: count - 15);
+
+            Assert.Equal(expected.Skip(15).ToList(), ranged.Select(it => Canonical(it["score"].N)).ToList());
+        });
+    }
+
+    [SkippableFact]
     public async Task Gsi_scan_returns_only_index_members_with_projection()
     {
         Skip.IfNot(_fx.CosmosConfigured,

@@ -117,6 +117,35 @@ public sealed class QueryHandlerSqlBuilderTests
         Assert.Equal(JsonValueKind.True, p[0].GetProperty("value").ValueKind);
         Assert.Equal(JsonValueKind.Null, p[1].GetProperty("value").ValueKind);
     }
+
+    private static FilterPushdownResult Empty() =>
+        new(null, System.Array.Empty<CosmosSqlParameter>(), null);
+
+    [Fact]
+    public void Lsi_sql_without_override_orders_by_raw_sort_path()
+    {
+        // #504 flag OFF: raw ORDER BY on the LSI sort attribute, no encoded-field
+        // IS_DEFINED guard (legacy items remain visible and ordered as before).
+        var (sql, _) = QueryHandler.BuildLsiSql(
+            "lsk", forward: true, Empty(), Empty(), orderByPathOverride: null);
+        Assert.Equal(
+            "SELECT * FROM c WHERE c._a2a = 'item' AND IS_DEFINED(c[\"lsk\"]) ORDER BY c[\"lsk\"] ASC",
+            sql);
+    }
+
+    [Fact]
+    public void Lsi_sql_with_override_orders_by_encoded_field_and_guards_it()
+    {
+        // #504 flag ON: ORDER BY the encoded order field, plus an IS_DEFINED guard
+        // so pre-encoded (legacy) items are excluded rather than mis-ordered.
+        var encoded = "c[\"_a2a$ord$lsk\"]";
+        var (sql, _) = QueryHandler.BuildLsiSql(
+            "lsk", forward: false, Empty(), Empty(), orderByPathOverride: encoded);
+        Assert.Equal(
+            "SELECT * FROM c WHERE c._a2a = 'item' AND IS_DEFINED(c[\"lsk\"]) "
+            + "AND IS_DEFINED(c[\"_a2a$ord$lsk\"]) ORDER BY c[\"_a2a$ord$lsk\"] DESC",
+            sql);
+    }
 }
 
 public sealed class ScanHandlerSqlBuilderTests

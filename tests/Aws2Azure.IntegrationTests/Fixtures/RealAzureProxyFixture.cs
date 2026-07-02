@@ -404,7 +404,7 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         // against real Cosmos, so the nightly proxy enables the flag to let the
         // secondary-index validation suite exercise the live query machinery.
         var dynamoDbBlock = (CosmosConfigured || CosmosWorkloadIdentityConfigured)
-            ? "  \"dynamodb\": { \"cosmosBinaryResponses\": true, \"cosmosBinaryRequests\": true, \"enableGlobalSecondaryIndexQueries\": true },\n"
+            ? "  \"dynamodb\": { \"cosmosBinaryResponses\": true, \"cosmosBinaryRequests\": true, \"enableGlobalSecondaryIndexQueries\": true, \"enableLocalSecondaryIndexNumericOrdering\": true },\n"
             : string.Empty;
 
         return $$"""

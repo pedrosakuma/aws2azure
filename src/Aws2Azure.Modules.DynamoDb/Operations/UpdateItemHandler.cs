@@ -173,14 +173,15 @@ internal static class UpdateItemHandler
         // removes the TTL attribute would leave a stale/absent expiry. The C#
         // GET → apply → PUT fallback below recomputes `ttl` from the merged item.
         //
-        // Likewise skipped when the table has N-typed GSI sort keys: the sproc
-        // merges the update server-side and cannot emit the order-preserving
-        // `_a2a$ord$<attr>` fields (#482), so an update that changes such a sort
-        // attribute would leave a stale order key and mis-order ordered GSI
-        // queries. The C# fallback rebuilds those fields from the merged item.
+        // Likewise skipped when the table has N-typed secondary-index sort keys
+        // (GSI #482 or LSI #504): the sproc merges the update server-side and
+        // cannot emit the order-preserving `_a2a$ord$<attr>` fields, so an update
+        // that changes such a sort attribute would leave a stale order key and
+        // mis-order ordered index queries. The C# fallback rebuilds those fields
+        // from the merged item.
         if (sprocCtx is { IsSprocEnabled: true }
             && meta.TimeToLive is not { Enabled: true }
-            && meta.NumericGsiSortKeys.Count == 0)
+            && meta.NumericIndexSortKeys.Count == 0)
         {
             // For UpdateItem upsert case, pass the key attributes so sproc can
             // build a new item. Written straight into a pooled UTF-8 buffer (no
