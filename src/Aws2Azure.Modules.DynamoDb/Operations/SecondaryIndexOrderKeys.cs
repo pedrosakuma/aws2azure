@@ -9,7 +9,7 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 /// <summary>
 /// Builds the per-item order-preserving numeric keys that let ordered secondary
 /// index queries sort high-precision (<c>{"_a2a:N":…}</c> envelope) values
-/// correctly (#482). For every Number-typed GSI sort attribute present in the
+/// correctly (#482). For every Number-typed GSI or LSI sort attribute present in the
 /// item as a valid <c>{"N":…}</c> value, emits an <see cref="OrderKeyField"/>
 /// (<c>_a2a$ord$&lt;attr&gt;</c> → digits-only order key) that the write path
 /// stores alongside the item; a Cosmos <c>ORDER BY c._a2a$ord$&lt;attr&gt;</c>
@@ -17,21 +17,21 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 /// order the envelope objects structurally.
 ///
 /// <para>Driven by the table's declared index schema
-/// (<see cref="TableMetadata.NumericGsiSortKeys"/>), so it is a no-op — returns
+/// (<see cref="TableMetadata.NumericIndexSortKeys"/>), so it is a no-op — returns
 /// <see langword="null"/>, allocating nothing — for the overwhelmingly common
-/// table with no N-typed GSI sort key.</para>
+/// table with no N-typed secondary-index sort key.</para>
 /// </summary>
 internal static class SecondaryIndexOrderKeys
 {
     /// <summary>
     /// Computes the order-key fields for <paramref name="item"/> (a DynamoDB
     /// AttributeValue map). Returns <see langword="null"/> when the table
-    /// declares no N-typed GSI sort key or none of them is present as a valid
+    /// declares no N-typed secondary-index sort key or none of them is present as a valid
     /// Number in the item (sparse index), so the write path appends nothing.
     /// </summary>
     public static OrderKeyField[]? Compute(TableMetadata meta, JsonElement item)
     {
-        var specs = meta.NumericGsiSortKeys;
+        var specs = meta.NumericIndexSortKeys;
         if (specs.Count == 0 || item.ValueKind != JsonValueKind.Object)
         {
             return null;

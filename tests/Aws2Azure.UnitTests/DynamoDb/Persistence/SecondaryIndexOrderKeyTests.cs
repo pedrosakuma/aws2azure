@@ -86,6 +86,35 @@ public class SecondaryIndexOrderKeyTests
         },
     };
 
+    /// <summary>Table with a composite LSI whose RANGE key <c>lsk</c> is Number.</summary>
+    private static TableMetadata NumericLsiMeta(string sortAttr = "lsk") => new()
+    {
+        TableName = "t",
+        AttributeDefinitions = new List<TableAttributeDefinition>
+        {
+            new() { Name = "pk", Type = "S" },
+            new() { Name = "sk", Type = "S" },
+            new() { Name = sortAttr, Type = "N" },
+        },
+        KeySchema = new List<TableKeySchemaElement>
+        {
+            new() { Name = "pk", KeyType = "HASH" },
+            new() { Name = "sk", KeyType = "RANGE" },
+        },
+        LocalSecondaryIndexes = new List<TableIndexDefinition>
+        {
+            new()
+            {
+                IndexName = "lsi1",
+                KeySchema = new List<TableKeySchemaElement>
+                {
+                    new() { Name = "pk", KeyType = "HASH" },
+                    new() { Name = sortAttr, KeyType = "RANGE" },
+                },
+            },
+        },
+    };
+
     private static string WriteText(TableMetadata meta, string itemJson)
     {
         var item = Parse(itemJson);
@@ -93,6 +122,26 @@ public class SecondaryIndexOrderKeyTests
         var bw = new ArrayBufferWriter<byte>();
         InferredAttributeStorage.WriteCosmosDocument(bw, "id", "pk", item, null, orderKeys);
         return Encoding.UTF8.GetString(bw.WrittenSpan);
+    }
+
+    [Fact]
+    public void Emits_order_key_for_numeric_lsi_sort_attribute()
+    {
+        // #504: the encoded field is emitted unconditionally for LSI numeric
+        // sort keys too (same producer as GSI), so ordered LSI queries can sort
+        // high-precision values once the opt-in flag is enabled.
+        var json = WriteText(NumericLsiMeta(), "{\"sk\":{\"S\":\"r\"},\"lsk\":{\"N\":\"42\"}}");
+        using var doc = JsonDocument.Parse(json);
+        Assert.True(doc.RootElement.TryGetProperty(OrderProp + "lsk", out var ord));
+        Assert.Equal(JsonValueKind.String, ord.ValueKind);
+        Assert.NotEmpty(ord.GetString()!);
+    }
+
+    [Fact]
+    public void Does_not_emit_when_lsi_sort_attribute_absent_from_item()
+    {
+        var json = WriteText(NumericLsiMeta(), "{\"sk\":{\"S\":\"r\"},\"other\":{\"S\":\"x\"}}");
+        Assert.DoesNotContain(OrderProp, json, StringComparison.Ordinal);
     }
 
     [Fact]

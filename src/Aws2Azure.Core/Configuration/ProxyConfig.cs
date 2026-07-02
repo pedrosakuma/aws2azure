@@ -163,6 +163,24 @@ public sealed class DynamoDbSettings
     /// a GSI <c>IndexName</c> is rejected with ValidationException.
     /// </summary>
     public bool EnableGlobalSecondaryIndexQueries { get; set; }
+
+    /// <summary>
+    /// Opts DynamoDB Local Secondary Index (LSI) <c>Query</c> ordering on a
+    /// Number (<c>N</c>) sort key into the order-preserving encoded field
+    /// (<c>_a2a$ord$&lt;attr&gt;</c>) so high-precision values (kept in the
+    /// <c>{"_a2a:N":…}</c> envelope, which Cosmos orders structurally) sort in
+    /// true numeric order (#504). Disabled by default. When disabled, LSI
+    /// ordering targets the raw attribute (correct for normal-precision N,
+    /// mis-orders only high-precision N — the pre-#504 behaviour). <b>Enable
+    /// only for tables whose items were all written with the encoded field</b>
+    /// (i.e. new tables, or after a backfill rewrite): the encoded
+    /// <c>ORDER BY</c> excludes items that lack the field, so turning it on
+    /// against a table with pre-existing items would drop those items from
+    /// ordered LSI query results until they are rewritten. The write path emits
+    /// the field unconditionally, so items written after the proxy upgrade are
+    /// always covered.
+    /// </summary>
+    public bool EnableLocalSecondaryIndexNumericOrdering { get; set; }
 }
 
 /// <summary>

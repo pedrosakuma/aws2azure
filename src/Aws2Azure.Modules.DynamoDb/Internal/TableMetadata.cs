@@ -75,34 +75,46 @@ internal sealed class TableMetadata
     [JsonPropertyName("timeToLive")]
     public TableTimeToLive? TimeToLive { get; set; }
 
-    private IReadOnlyList<NumericIndexSortKey>? _numericGsiSortKeys;
+    private IReadOnlyList<NumericIndexSortKey>? _numericIndexSortKeys;
 
     /// <summary>
-    /// Global secondary index RANGE (sort) key attributes declared as Number
-    /// (<c>N</c>), each paired with the pre-encoded Cosmos property name
+    /// Secondary index RANGE (sort) key attributes declared as Number
+    /// (<c>N</c>) — across both Global (GSI) and Local (LSI) secondary indexes —
+    /// each paired with the pre-encoded Cosmos property name
     /// (<c>_a2a$ord$&lt;attr&gt;</c>) under which the write path stores the
-    /// order-preserving numeric key so ordered GSI queries sort high-precision
-    /// values correctly (#482). Computed once and cached on this (cached)
-    /// metadata instance so the write hot path never rescans the index schemas
-    /// per request. Empty when no GSI declares an N-typed sort key — the common
-    /// case, where the write path adds nothing.
+    /// order-preserving numeric key so ordered index queries sort high-precision
+    /// values correctly (#482 for GSI, #504 for LSI). The field is emitted
+    /// unconditionally at write time (independent of the query-side opt-in
+    /// flags) so that once ordering is enabled, freshly-written items already
+    /// carry it. Computed once and cached on this (cached) metadata instance so
+    /// the write hot path never rescans the index schemas per request. Empty
+    /// when no index declares an N-typed sort key — the common case, where the
+    /// write path adds nothing.
     /// </summary>
     [JsonIgnore]
-    public IReadOnlyList<NumericIndexSortKey> NumericGsiSortKeys
-        => _numericGsiSortKeys ??= ComputeNumericGsiSortKeys();
+    public IReadOnlyList<NumericIndexSortKey> NumericIndexSortKeys
+        => _numericIndexSortKeys ??= ComputeNumericIndexSortKeys();
 
-    private IReadOnlyList<NumericIndexSortKey> ComputeNumericGsiSortKeys()
+    private IReadOnlyList<NumericIndexSortKey> ComputeNumericIndexSortKeys()
     {
-        if (GlobalSecondaryIndexes is not { Count: > 0 } gsis)
+        List<NumericIndexSortKey>? result = null;
+        CollectNumericSortKeys(GlobalSecondaryIndexes, ref result);
+        CollectNumericSortKeys(LocalSecondaryIndexes, ref result);
+        return (IReadOnlyList<NumericIndexSortKey>?)result ?? Array.Empty<NumericIndexSortKey>();
+    }
+
+    private void CollectNumericSortKeys(
+        List<TableIndexDefinition>? indexes, ref List<NumericIndexSortKey>? result)
+    {
+        if (indexes is not { Count: > 0 })
         {
-            return Array.Empty<NumericIndexSortKey>();
+            return;
         }
 
-        List<NumericIndexSortKey>? result = null;
-        foreach (var gsi in gsis)
+        foreach (var index in indexes)
         {
             string? sortName = null;
-            foreach (var k in gsi.KeySchema)
+            foreach (var k in index.KeySchema)
             {
                 if (string.Equals(k.KeyType, "RANGE", StringComparison.Ordinal))
                 {
@@ -117,7 +129,7 @@ internal sealed class TableMetadata
             }
 
             result ??= new List<NumericIndexSortKey>();
-            // Multiple GSIs may share one sort attribute; store it once.
+            // Multiple indexes may share one sort attribute; store it once.
             bool already = false;
             foreach (var existing in result)
             {
@@ -133,8 +145,6 @@ internal sealed class TableMetadata
                 result.Add(new NumericIndexSortKey(sortName));
             }
         }
-
-        return (IReadOnlyList<NumericIndexSortKey>?)result ?? Array.Empty<NumericIndexSortKey>();
     }
 
     private bool IsDeclaredNumber(string attributeName)
