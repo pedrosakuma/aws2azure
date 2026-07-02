@@ -105,7 +105,9 @@ builder.Services.AddSingleton(proxyConfig);
 var credentialResolver = new StaticCredentialResolver(proxyConfig);
 builder.Services.AddSingleton<ICredentialResolver>(credentialResolver);
 
-var sigV4Validator = new SigV4Validator(credentialResolver);
+var sigV4Validator = new SigV4Validator(
+    credentialResolver,
+    presignedTrustedSigningHosts: proxyConfig.S3.PresignedTrustedSigningHosts);
 builder.Services.AddSingleton(sigV4Validator);
 
 // Observability: ProxyMetrics collects counters/histograms, PrometheusExporter

@@ -11,6 +11,7 @@ public sealed class ProxyConfig
     public Dictionary<string, ServiceToggle> Services { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public SnsSettings Sns { get; set; } = new();
     public DynamoDbSettings DynamoDb { get; set; } = new();
+    public S3Settings S3 { get; set; } = new();
     public List<CredentialEntry> Credentials { get; set; } = new();
 
     /// <summary>
@@ -63,6 +64,36 @@ public interface IAadAuthCredentials
 public sealed class ServiceToggle
 {
     public bool Enabled { get; set; }
+}
+
+/// <summary>
+/// S3-module-scoped settings.
+/// </summary>
+public sealed class S3Settings
+{
+    /// <summary>
+    /// Opt-in presigned-URL host rewrite (default: empty = strict host binding).
+    /// A presigned URL binds the <c>host</c> header into its SigV4 signature. When
+    /// an application generates a presigned URL <em>without</em> pointing the AWS
+    /// SDK's <c>endpoint_url</c>/<c>ServiceURL</c> at the proxy, the URL is signed
+    /// against an AWS S3 endpoint host (for example <c>s3.amazonaws.com</c>,
+    /// <c>s3.us-east-1.amazonaws.com</c>, or virtual-hosted
+    /// <c>{bucket}.s3.us-east-1.amazonaws.com</c>). If a front-end then rewrites
+    /// that URL's host to the proxy, the recomputed signature no longer matches
+    /// and the request is rejected — the risk of presigned URLs silently bypassing
+    /// the proxy.
+    /// <para>
+    /// Listing the trusted AWS <em>origin signing host(s)</em> here lets the
+    /// validator additionally re-check the presigned signature against those
+    /// hosts, covering both path-style (host = the listed value) and
+    /// virtual-hosted (host = <c>{bucket}.{listed value}</c>, bucket stripped from
+    /// the path) origins. The signature still requires the correct AWS secret and
+    /// every other signed parameter — this only relaxes the host binding to an
+    /// explicit operator-declared allowlist. See <c>docs/presigned-urls.md</c> for
+    /// the per-topology tradeoffs.
+    /// </para>
+    /// </summary>
+    public List<string> PresignedTrustedSigningHosts { get; set; } = new();
 }
 
 public sealed class SnsSettings

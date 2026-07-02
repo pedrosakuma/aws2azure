@@ -306,7 +306,8 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | ListParts | — | <LastModified> for every part is the UploadId's creation timestamp (no per-block timestamp exists in Azure). |
 | s3 | ListParts | — | <Owner> / <Initiator> are omitted (S3 sources them from the IAM principal; aws2azure does not model IAM). |
 | s3 | ListParts | — | Empty / missing blob → empty ListPartsResult (S3 returns 404 NoSuchUpload only when the UploadId is unknown; aws2azure already rejects unknown UploadIds at the HMAC check). |
-| s3 | PresignedUrl | — | Presigned URLs MUST be signed against the proxy host (set the AWS SDK's endpoint_url / ServiceURL to the proxy). A presigned URL signed against s3.amazonaws.com cannot be replayed at the proxy — the host is a signed header. |
+| s3 | PresignedUrl | — | By default (empty s3.presignedTrustedSigningHosts) presigned URLs MUST be signed against the proxy host (set the AWS SDK's endpoint_url / ServiceURL to the proxy). A URL signed against s3.amazonaws.com cannot be replayed at the proxy — the host is a signed header. |
+| s3 | PresignedUrl | — | Opt-in host-rewrite mode (s3.presignedTrustedSigningHosts) additionally accepts presigned URLs signed against listed AWS origin hosts and rewritten to a path-style proxy request; see docs/presigned-urls.md for the per-topology tradeoffs. |
 | s3 | PresignedUrl | — | The proxy operates in 'Option A — proxy mode': it validates the presigned signature, then proxies the operation to Azure Blob using its configured Azure credentials. No Azure SAS is returned or redirected. |
 | s3 | PresignedUrl | — | Body content for presigned PUT is not signature-protected (UNSIGNED-PAYLOAD) — identical to AWS S3 semantics. |
 | s3 | PresignedUrl | — | Tampering with any signed query parameter (including X-Amz-Date, X-Amz-Expires, X-Amz-Credential, X-Amz-SignedHeaders, or the path/method) yields 403 SignatureDoesNotMatch. |
