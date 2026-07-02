@@ -23,11 +23,11 @@ internal static partial class InferredAttributeStorage
     /// validated key-attribute presence/type and reserved-name conflicts
     /// (via <see cref="IsReservedTopLevelName"/>).
     /// </summary>
-    public static void WriteCosmosDocument(IBufferWriter<byte> output, string id, string pk, JsonElement item, int? ttlSeconds = null)
+    public static void WriteCosmosDocument(IBufferWriter<byte> output, string id, string pk, JsonElement item, int? ttlSeconds = null, OrderKeyField[]? orderKeys = null)
     {
         ArgumentNullException.ThrowIfNull(output);
         using var writer = new Utf8JsonWriter(output, WriterOptions);
-        WriteCosmosDocumentCore(new Utf8JsonTokenWriter(writer), id, pk, item, ttlSeconds);
+        WriteCosmosDocumentCore(new Utf8JsonTokenWriter(writer), id, pk, item, ttlSeconds, orderKeys);
     }
 
     /// <summary>
@@ -37,11 +37,11 @@ internal static partial class InferredAttributeStorage
     /// the <see cref="ITokenWriter"/> back-end, so the two are semantically
     /// symmetric (verified by the decode round-trip golden corpus).
     /// </summary>
-    public static void WriteCosmosDocumentBinary(IBufferWriter<byte> output, string id, string pk, JsonElement item, int? ttlSeconds = null)
+    public static void WriteCosmosDocumentBinary(IBufferWriter<byte> output, string id, string pk, JsonElement item, int? ttlSeconds = null, OrderKeyField[]? orderKeys = null)
     {
         ArgumentNullException.ThrowIfNull(output);
         using var writer = new CosmosBinaryWriter(output);
-        WriteCosmosDocumentCore(writer, id, pk, item, ttlSeconds);
+        WriteCosmosDocumentCore(writer, id, pk, item, ttlSeconds, orderKeys);
     }
 
     /// <summary>
@@ -51,12 +51,12 @@ internal static partial class InferredAttributeStorage
     /// directly (no copy into a second buffer). The caller <b>owns the returned
     /// writer</b> and must dispose it once the send completes.
     /// </summary>
-    public static CosmosBinaryWriter WriteCosmosDocumentBinary(string id, string pk, JsonElement item, int? ttlSeconds = null)
+    public static CosmosBinaryWriter WriteCosmosDocumentBinary(string id, string pk, JsonElement item, int? ttlSeconds = null, OrderKeyField[]? orderKeys = null)
     {
         var writer = new CosmosBinaryWriter();
         try
         {
-            WriteCosmosDocumentCore(writer, id, pk, item, ttlSeconds);
+            WriteCosmosDocumentCore(writer, id, pk, item, ttlSeconds, orderKeys);
         }
         catch
         {
@@ -103,12 +103,12 @@ internal static partial class InferredAttributeStorage
     /// no intermediate <see cref="JsonElement"/> or per-attribute string
     /// materialization. Output is byte-identical to the JsonElement overload.
     /// </summary>
-    public static void WriteCosmosDocument(IBufferWriter<byte> output, string id, string pk, ReadOnlySpan<byte> itemUtf8, int? ttlSeconds = null)
+    public static void WriteCosmosDocument(IBufferWriter<byte> output, string id, string pk, ReadOnlySpan<byte> itemUtf8, int? ttlSeconds = null, OrderKeyField[]? orderKeys = null)
     {
         ArgumentNullException.ThrowIfNull(output);
         using var writer = new Utf8JsonWriter(output, WriterOptions);
         var reader = new Utf8JsonReader(itemUtf8, WireReaderOptions);
-        WriteCosmosDocumentCore(new Utf8JsonTokenWriter(writer), id, pk, ref reader, ttlSeconds);
+        WriteCosmosDocumentCore(new Utf8JsonTokenWriter(writer), id, pk, ref reader, ttlSeconds, orderKeys);
     }
 
     /// <summary>
@@ -118,12 +118,12 @@ internal static partial class InferredAttributeStorage
     /// attribute-map bytes. Decode round-trip is identical to the JsonElement
     /// overload (golden corpus).
     /// </summary>
-    public static void WriteCosmosDocumentBinary(IBufferWriter<byte> output, string id, string pk, ReadOnlySpan<byte> itemUtf8, int? ttlSeconds = null)
+    public static void WriteCosmosDocumentBinary(IBufferWriter<byte> output, string id, string pk, ReadOnlySpan<byte> itemUtf8, int? ttlSeconds = null, OrderKeyField[]? orderKeys = null)
     {
         ArgumentNullException.ThrowIfNull(output);
         using var writer = new CosmosBinaryWriter(output);
         var reader = new Utf8JsonReader(itemUtf8, WireReaderOptions);
-        WriteCosmosDocumentCore(writer, id, pk, ref reader, ttlSeconds);
+        WriteCosmosDocumentCore(writer, id, pk, ref reader, ttlSeconds, orderKeys);
     }
 
     /// <summary>
@@ -133,13 +133,13 @@ internal static partial class InferredAttributeStorage
     /// <see cref="CosmosBinaryWriter.WrittenMemory"/> for a zero-copy send. The
     /// caller owns and must dispose the returned writer once the send completes.
     /// </summary>
-    public static CosmosBinaryWriter WriteCosmosDocumentBinary(string id, string pk, ReadOnlySpan<byte> itemUtf8, int? ttlSeconds = null)
+    public static CosmosBinaryWriter WriteCosmosDocumentBinary(string id, string pk, ReadOnlySpan<byte> itemUtf8, int? ttlSeconds = null, OrderKeyField[]? orderKeys = null)
     {
         var writer = new CosmosBinaryWriter();
         try
         {
             var reader = new Utf8JsonReader(itemUtf8, WireReaderOptions);
-            WriteCosmosDocumentCore(writer, id, pk, ref reader, ttlSeconds);
+            WriteCosmosDocumentCore(writer, id, pk, ref reader, ttlSeconds, orderKeys);
         }
         catch
         {
@@ -174,7 +174,31 @@ internal static partial class InferredAttributeStorage
         writer.WriteNumberRaw(buffer[..written]);
     }
 
-    private static void WriteCosmosDocumentCore<TWriter>(TWriter writer, string id, string pk, ref Utf8JsonReader reader, int? ttlSeconds = null)
+    /// <summary>
+    /// Emits the per-item secondary-index order-preserving numeric keys (#482)
+    /// as reserved <c>_a2a$ord$&lt;attr&gt;</c> string properties immediately
+    /// after the reserved fields and before the user attributes. Both the name
+    /// and the digits-only value are pre-encoded UTF-8, forwarded verbatim to
+    /// either writer back-end (text re-escapes the name; the value is pure ASCII
+    /// digits and needs none). A <see langword="null"/>/empty list — the common
+    /// table with no N-typed GSI sort key — emits nothing.
+    /// </summary>
+    private static void WriteOrderKeys<TWriter>(TWriter writer, OrderKeyField[]? orderKeys)
+        where TWriter : ITokenWriter
+    {
+        if (orderKeys is null)
+        {
+            return;
+        }
+
+        foreach (var field in orderKeys)
+        {
+            writer.WritePropertyName(field.PropertyNameUtf8);
+            writer.WriteStringValue(field.ValueUtf8);
+        }
+    }
+
+    private static void WriteCosmosDocumentCore<TWriter>(TWriter writer, string id, string pk, ref Utf8JsonReader reader, int? ttlSeconds = null, OrderKeyField[]? orderKeys = null)
         where TWriter : ITokenWriter
     {
         if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
@@ -185,6 +209,7 @@ internal static partial class InferredAttributeStorage
         writer.WriteString(PkPropName, pk);
         writer.WriteString(DiscPropName, DiscValueItemName);
         WriteItemTtl(writer, ttlSeconds);
+        WriteOrderKeys(writer, orderKeys);
 
         while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
         {
@@ -525,7 +550,7 @@ internal static partial class InferredAttributeStorage
             EncodeNumberFromRaw(writer, source.GetStringValue());
     }
 
-    private static void WriteCosmosDocumentCore<TWriter>(TWriter writer, string id, string pk, JsonElement item, int? ttlSeconds = null)
+    private static void WriteCosmosDocumentCore<TWriter>(TWriter writer, string id, string pk, JsonElement item, int? ttlSeconds = null, OrderKeyField[]? orderKeys = null)
         where TWriter : ITokenWriter
     {
         if (item.ValueKind != JsonValueKind.Object)
@@ -536,6 +561,7 @@ internal static partial class InferredAttributeStorage
         writer.WriteString(PkPropName, pk);
         writer.WriteString(DiscPropName, DiscValueItemName);
         WriteItemTtl(writer, ttlSeconds);
+        WriteOrderKeys(writer, orderKeys);
 
         foreach (var prop in item.EnumerateObject())
         {

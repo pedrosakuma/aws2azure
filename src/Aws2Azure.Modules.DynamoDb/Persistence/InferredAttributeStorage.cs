@@ -108,6 +108,18 @@ internal static partial class InferredAttributeStorage
     public const string EnvelopeTagNS = "_a2a:NS";
     public const string EnvelopeTagBS = "_a2a:BS";
 
+    /// <summary>
+    /// Property-name prefix for the per-item order-preserving numeric key that
+    /// secondary-index ordered queries sort on (#482). For a Number-typed index
+    /// sort attribute <c>x</c>, the write path stores
+    /// <c>"_a2a$ord$x": "&lt;digits-only order key&gt;"</c> so a Cosmos
+    /// <c>ORDER BY c._a2a$ord$x</c> compares high-precision
+    /// (<c>{"_a2a:N":…}</c> envelope) values numerically. Lives in the reserved
+    /// <c>_a2a</c> namespace, so the read transform strips it automatically and
+    /// a user attribute can never collide with it.
+    /// </summary>
+    public const string OrderKeyPropertyPrefix = "_a2a$ord$";
+
     // Pre-encoded property names — avoids JS-escape work and per-call
     // allocations on the hot path. IdPropEncoded is still consumed by the
     // read path (Cosmos → DDB); the remaining write-path names moved to the

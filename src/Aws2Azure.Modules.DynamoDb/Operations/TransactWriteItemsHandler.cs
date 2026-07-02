@@ -306,7 +306,8 @@ internal static class TransactWriteItemsHandler
                     // (bytes overload) — no string round-trip.
                     int? ttlSeconds = TtlTranslation.ComputeItemTtlSeconds(
                         keyBearer, meta.TimeToLive, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-                    docBytes = ItemHandlers.BuildItemDocumentBytes(id, pk, keyBearer, binary: false, ttlSeconds);
+                    var orderKeys = SecondaryIndexOrderKeys.Compute(meta, keyBearer);
+                    docBytes = ItemHandlers.BuildItemDocumentBytes(id, pk, keyBearer, binary: false, ttlSeconds, orderKeys);
                 }
                 catch (ArgumentException ex)
                 {
