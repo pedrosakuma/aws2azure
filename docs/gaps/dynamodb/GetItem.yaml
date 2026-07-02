@@ -13,7 +13,8 @@ sub_features:
     status: partial
     notes: "Mapped to Cosmos `x-ms-consistency-level: Strong` request header. Honoured only when the account's max consistency permits Strong; Session/weaker accounts silently downgrade. Opt-in startup probe (`DynamoDb.ConsistencyCheck` = Warn/Required, #204) detects such accounts at boot and warns or fails startup."
   - name: ProjectionExpression
-    status: partial
+    status: implemented
+    verified_real_azure: "run 28590964134 (2026-07-02)"
     notes: "Top-level attributes, `#alias` references, and nested document paths (`a.b` map members, `a[0]` list indices, and combinations like `a.b[1]`) are honoured. A projected map keeps only the referenced members; a projected list is compacted to the referenced indices in ascending order (positions are not preserved, matching DynamoDB); paths that do not exist or whose type does not match are silently omitted. Overlapping paths (e.g. `a` and `a.b`, or a duplicate) are rejected with ValidationException. A ProjectionExpression forces the materialized read path (extract → prune → buffered write); a plain GetItem keeps the fused stream-splice fast path."
   - name: AttributesToGet
     status: unsupported
