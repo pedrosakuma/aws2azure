@@ -216,6 +216,36 @@ jobs:
             --filter "Category=RelativeGate" \
             --logger "console;verbosity=normal"
 
+      # #504 LSI numeric-ordering A/B: run ONLY the LSI numeric scenarios twice —
+      # flag off (raw envelope ORDER BY + in-process residual over-fetch for
+      # high-precision N) then flag on (encoded `_a2a$ord$<attr>` ORDER BY +
+      # exact server-side range pushdown) — against real Cosmos. Seeded data is
+      # identical between the two (the producer writes the encoded field
+      # unconditionally); only the query SQL differs, so the diff isolates the
+      # over-fetch/transfer effect. Binary is held off in both so the LSI flag is
+      # the sole variable. Emulator A/B (2 reps) showed the selective predicate
+      # win big (~+26% tput, -46% alloc/op) while pure ORDER BY was neutral; this
+      # seals whether that survives real-Azure IO. Rows self-label via
+      # LsiOrderingLabel ("raw-order OFF" / "encoded-order ON").
+      - name: Perf — LSI numeric ordering OFF
+        if: ${{ !cancelled() && steps.gate.outputs.enabled == 'true' && steps.export.outcome == 'success' }}
+        env:
+          AWS2AZURE_PERF_DIR: ${{ runner.temp }}/perf-real-azure/lsi-off
+        run: |
+          dotnet test tests/Aws2Azure.PerfTests -c Release --no-build --nologo \
+            --filter "FullyQualifiedName~Query_lsi_numeric" \
+            --logger "console;verbosity=normal"
+
+      - name: Perf — LSI numeric ordering ON
+        if: ${{ !cancelled() && steps.gate.outputs.enabled == 'true' && steps.export.outcome == 'success' }}
+        env:
+          AWS2AZURE_PERF_DIR: ${{ runner.temp }}/perf-real-azure/lsi-on
+          AWS2AZURE_PERF_LSI_NUMERIC_ORDER: "1"
+        run: |
+          dotnet test tests/Aws2Azure.PerfTests -c Release --no-build --nologo \
+            --filter "FullyQualifiedName~Query_lsi_numeric" \
+            --logger "console;verbosity=normal"
+
       - name: Upload real-Azure perf A/B results
         if: always() && steps.gate.outputs.enabled == 'true'
         uses: actions/upload-artifact@v4
