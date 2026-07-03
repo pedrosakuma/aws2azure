@@ -1,0 +1,52 @@
+service: secretsmanager
+design_gaps:
+  - area: Versioning and staging modelled on Key Vault version tags
+    status: partial
+    summary: >-
+      Secrets Manager version stages (AWSCURRENT / AWSPREVIOUS / custom labels)
+      are modelled with Key Vault secret versions plus per-version tags. Key
+      Vault's created timestamp has one-second granularity, so stage resolution
+      relies on tag bookkeeping rather than a native staging concept.
+    impact: >-
+      Two versions created within the same second could tie on created-time,
+      so stage transitions must be applied carefully (e.g. UpdateSecret demotes
+      the previous AWSCURRENT) to avoid resolving the wrong version.
+    workaround: >-
+      Rely on the proxy's stage-tag bookkeeping; avoid out-of-band edits to Key
+      Vault version tags.
+  - area: Rotation has no Lambda equivalent
+    status: partial
+    summary: >-
+      Secrets Manager rotation is driven by a customer Lambda function; Azure
+      Key Vault has no equivalent in-line rotation-function contract, so
+      RotateSecret cannot execute an arbitrary rotation workflow.
+    impact: >-
+      Automatic, function-driven credential rotation as configured in AWS is not
+      reproduced end-to-end.
+    workaround: >-
+      Rotate secrets via an external process (e.g. an Azure Function / pipeline)
+      that calls PutSecretValue through the proxy.
+  - area: Deletion recovery semantics differ
+    status: by_design
+    summary: >-
+      DeleteSecret's RecoveryWindowInDays / ForceDeleteWithoutRecovery map onto
+      Key Vault soft-delete and purge, whose retention model and immediate-purge
+      permissions are governed by the vault, not by AWS parameters.
+    impact: >-
+      Recovery-window timing and force-delete behaviour follow the Key Vault
+      soft-delete configuration rather than the exact AWS window semantics.
+    workaround: >-
+      Configure the Key Vault soft-delete retention to match the intended
+      recovery window; grant purge permission only where force-delete is needed.
+  - area: No resource policies or cross-account access
+    status: unsupported
+    summary: >-
+      Secrets Manager resource policies and cross-account secret sharing have no
+      Key Vault equivalent in the wire-protocol path; authorization is the
+      static AWS-key-to-Azure-credential mapping, not server-side IAM.
+    impact: >-
+      Policy-based or cross-account access patterns cannot be expressed through
+      the proxy.
+    workaround: >-
+      Use Key Vault RBAC / access policies at the Azure level for
+      authorization.

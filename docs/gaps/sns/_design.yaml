@@ -1,0 +1,57 @@
+service: sns
+design_gaps:
+  - area: Two backends with different fidelity
+    status: by_design
+    summary: >-
+      A topic can be backed by Service Bus Topics (AMQP) or Event Grid, and the
+      two backends do not offer identical semantics. On Event Grid the proxy
+      emits the classic Event Grid schema (eventType=aws.sns.Message), the
+      subject is always the TopicArn, and PublishBatch uses proxied per-entry
+      outcomes; on Service Bus the delivery model and partial-failure shape
+      differ.
+    impact: >-
+      The same SNS Publish/PublishBatch can behave differently depending on the
+      configured backend; partial-failure semantics may diverge from SNS.
+    workaround: >-
+      Pick the backend per topic based on the delivery semantics required and
+      test partial-failure handling against it.
+    references:
+      - https://learn.microsoft.com/azure/event-grid/post-to-custom-topic
+  - area: FIFO topics are deferred
+    status: partial
+    summary: >-
+      SNS FIFO topic semantics are only approximated. FifoTopic is inferred
+      from a .fifo suffix or RequiresDuplicateDetection; MessageGroupId /
+      MessageDeduplicationId are not honoured on the Event Grid backend (dropped
+      with a warning), and strict FIFO ordering/dedup is not modelled.
+    impact: >-
+      Applications relying on SNS FIFO ordering and content-based deduplication
+      cannot depend on it through the proxy.
+    workaround: >-
+      Use the Service Bus backend with duplicate detection where approximate
+      dedup is acceptable; do not rely on strict FIFO ordering.
+  - area: No AWS region / account namespace
+    status: by_design
+    summary: >-
+      Topic and subscription ARNs are synthesised as
+      arn:aws:sns:{sigv4-region}:000000000000:{name}; the account id is a stable
+      placeholder because the proxy is not backed by an AWS account namespace.
+    impact: >-
+      Applications that parse account id or cross-account references out of an
+      ARN will see placeholder values.
+    workaround: >-
+      Do not depend on the account/region portion of returned ARNs.
+    references:
+      - https://github.com/pedrosakuma/aws2azure/issues/267
+  - area: No IAM-backed policy surface
+    status: unsupported
+    summary: >-
+      DeliveryPolicy, RedrivePolicy, and SubscriptionRoleArn are accepted as
+      no-ops because Service Bus / Event Grid expose no matching SNS attribute
+      contract, and there is no server-side IAM evaluation.
+    impact: >-
+      Retry/redrive policy and role-based delivery configured via these
+      attributes have no effect.
+    workaround: >-
+      Configure delivery reliability at the Azure backend level; do not rely on
+      SNS policy attributes being enforced.

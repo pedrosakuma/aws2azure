@@ -1,0 +1,92 @@
+service: dynamodb
+design_gaps:
+  - area: Transaction scope is single-partition, single-table
+    status: by_design
+    summary: >-
+      TransactWriteItems / TransactGetItems are translated to a Cosmos DB
+      stored-procedure transaction, which is scoped to one container and one
+      logical partition. Operations spanning more than one table, or more than
+      one partition-key value, are rejected with ValidationException.
+    impact: >-
+      DynamoDB's cross-table / cross-partition ACID surface (up to 100 items
+      across tables and partitions) is not reproducible. Applications that rely
+      on multi-entity transactions must be remodelled so all transacted items
+      share a partition key.
+    workaround: >-
+      Co-locate transacted items under a single partition key, or fall back to
+      idempotent application-level compensation.
+    references:
+      - https://learn.microsoft.com/azure/cosmos-db/nosql/stored-procedures-triggers-udfs
+  - area: Consistency and read-your-writes
+    status: by_design
+    summary: >-
+      The proxy issues independent Cosmos REST calls and does not propagate
+      Cosmos session tokens between requests, so read-your-write determinism
+      depends on the account's default consistency level (Strong is required
+      for the conditional-write stored procedures to behave like DynamoDB).
+      ConsistentRead effectiveness is therefore account-dependent.
+    impact: >-
+      A DynamoDB client that assumes strong read-your-writes may observe stale
+      reads if the Cosmos account is configured for Session/Eventual
+      consistency. GSI reads are always eventually consistent (ConsistentRead=true
+      is rejected, matching DynamoDB).
+    workaround: >-
+      Provision the Cosmos account with Strong (or at least Bounded Staleness)
+      default consistency for workloads that need DynamoDB-equivalent semantics;
+      record the chosen level per deployment.
+  - area: Throughput and throttling model
+    status: by_design
+    summary: >-
+      Capacity is Cosmos RU/s, not DynamoDB RCU/WCU. Cosmos 429 (throttled) is
+      surfaced to clients as ProvisionedThroughputExceededException (or as
+      UnprocessedKeys for BatchGetItem), so the AWS SDK's native retry/backoff
+      still engages, but the underlying accounting and limits are Azure's.
+    impact: >-
+      ConsumedCapacity figures, burst behaviour, and adaptive-capacity dynamics
+      differ from DynamoDB. Large Scans throttle differently than on DynamoDB.
+    workaround: >-
+      Size the Cosmos container/database RU/s (or use autoscale/serverless) for
+      the workload; do not rely on DynamoDB capacity semantics.
+  - area: Secondary indexes (GSI / LSI)
+    status: partial
+    summary: >-
+      All attributes live in one base container; GSI/LSI queries are opt-in and
+      run as Cosmos queries over that container. GSI Query is a cross-partition
+      fan-out (unlike a base-table Query's single-partition guarantee); string
+      sort keys follow Cosmos code-point collation rather than DynamoDB UTF-8
+      byte order; numeric ordering relies on a synthetic order-preserving field
+      written at item-write time.
+    impact: >-
+      Items written before the encoded-ordering field existed are excluded from
+      ordered numeric-GSI results until rewritten (a backfill gap). Binary sort
+      keys cannot be ordered. IndexSizeBytes / ItemCount / Backfilling are not
+      populated.
+    workaround: >-
+      Keep GSI Query default-off unless the collation and backfill caveats are
+      acceptable; rewrite pre-existing items to populate ordering fields.
+  - area: Key encoding and on-disk storage format
+    status: by_design
+    summary: >-
+      DynamoDB key attribute values are encoded into the internal Cosmos
+      id/partition-key (S -> hex(UTF-8), B -> hex(raw), N -> order-preserving
+      digit string) to accept Cosmos-forbidden characters and fix binary
+      byte-ordering. Effective raw key limit is ~127 bytes.
+    impact: >-
+      Keys longer than the limit are rejected with ValidationException. The
+      storage layout is a proxy-owned format, not portable to a raw Cosmos
+      client, and changed across earlier builds (a breaking on-disk change).
+    workaround: >-
+      Keep key attributes within the size limit; treat the backing container as
+      proxy-managed, not directly queryable with DynamoDB semantics.
+  - area: Absent DynamoDB features
+    status: unsupported
+    summary: >-
+      DynamoDB Streams, DAX, point-in-time recovery / on-demand backups,
+      global tables, and auto-scaling have no in-scope Cosmos translation and
+      are not exposed by the proxy.
+    impact: >-
+      Applications depending on these control-plane / streaming features cannot
+      run through the proxy for those code paths.
+    workaround: >-
+      Use the corresponding Azure Cosmos capability directly (change feed,
+      continuous backup, multi-region writes) outside the AWS wire protocol.

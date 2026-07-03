@@ -6,9 +6,12 @@ theme:
 nav:
   - Overview: index.md
   - Coverage matrix: coverage.md
+  - Design gaps: design-gaps.md
+  - Real-Azure divergences: divergences.md
   - Services:
       - S3: s3.md
       - SQS: sqs.md
       - DynamoDB: dynamodb.md
       - Kinesis: kinesis.md
       - SNS: sns.md
+      - Secrets Manager: secretsmanager.md

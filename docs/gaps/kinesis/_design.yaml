@@ -1,0 +1,48 @@
+service: kinesis
+design_gaps:
+  - area: Synthetic sequence numbers and iterator positioning
+    status: by_design
+    summary: >-
+      Kinesis sequence numbers are minted by the proxy as (unixMs << 20) |
+      counter and mapped to an Event Hubs enqueue-time position.
+      AT_SEQUENCE_NUMBER / AFTER_SEQUENCE_NUMBER are therefore best-effort at
+      millisecond granularity, and MillisBehindLatest is derived from the last
+      record's enqueue timestamp versus the proxy clock.
+    impact: >-
+      Records sharing a millisecond may be returned together at a sequence-based
+      boundary; exact per-record sequence positioning is not reproducible.
+      ExplicitHashKey and SequenceNumberForOrdering are accepted for wire
+      compatibility but ignored.
+    workaround: >-
+      Prefer TRIM_HORIZON / LATEST / AT_TIMESTAMP iterators where exact sequence
+      positioning is not required.
+    references:
+      - https://learn.microsoft.com/rest/api/eventhub/
+  - area: Shared broker cursor per consumer group
+    status: by_design
+    summary: >-
+      Concurrent GetRecords callers on the same (connection, partition,
+      consumer-group) share a pooled AMQP link and a single broker cursor. The
+      proxy serialises the ReceiveBatch calls for internal consistency, but two
+      callers holding distinct AWS shard iterators cannot independently replay
+      or split records — whichever call drains the link first advances the
+      cursor for the other.
+    impact: >-
+      This deviates from Kinesis, where each shard iterator is independent and
+      replayable.
+    workaround: >-
+      Use the AWS-recommended single-consumer-per-shard pattern, or assign
+      distinct consumer groups to independent consumers.
+  - area: No resharding / enhanced fan-out / KCL lease model
+    status: unsupported
+    summary: >-
+      Kinesis shards map to Event Hubs partitions, which are fixed at the hub
+      level. Dynamic resharding (SplitShard/MergeShards), enhanced fan-out
+      (SubscribeToShard), and the KCL DynamoDB lease/checkpoint model have no
+      in-scope translation.
+    impact: >-
+      Applications that resize streams at runtime or rely on enhanced-fan-out
+      throughput isolation cannot drive those code paths through the proxy.
+    workaround: >-
+      Provision Event Hubs partition count for peak load up front; use consumer
+      groups for isolation.

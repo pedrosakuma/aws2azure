@@ -54,10 +54,35 @@ or Workload Identity — see
 Coverage is **not** 100% of each AWS service. Every operation and sub-feature is
 documented exhaustively under [`docs/gaps/`](./docs/gaps/), with the rendered
 coverage matrix published from [`docs/site/`](./docs/site/). Gaps are documented,
-never hidden.
+never hidden. Cross-cutting, architectural limitations that do not map to a
+single operation — consistency model, transaction scope, absent control-plane
+surfaces — are collected in [**Design gaps**](./docs/site/design-gaps.md).
 
 Architecture decisions that explain the project constraints are recorded in
 [`docs/adr/`](./docs/adr/).
+
+## Documentation
+
+Start broad, then drill down — the map below is layered so you only open what you
+need:
+
+- **Get running:** [Getting Started](./docs/getting-started.md) ·
+  [Azure authentication](./docs/azure-authentication.md) ·
+  [Presigned URLs](./docs/presigned-urls.md)
+- **What works & what doesn't:**
+  [coverage matrix](./docs/site/coverage.md) (one screen) →
+  per-service pages under [`docs/site/`](./docs/site/) (operation detail) →
+  [design gaps](./docs/site/design-gaps.md) (architectural limits) →
+  [real-Azure divergences](./docs/site/divergences.md) (verification state)
+- **Why it's built this way:** [Architecture Decision Records](./docs/adr/)
+- **Run it in production:** [sidecar deployment](./docs/deployment/sidecar.md) ·
+  [build-time module selection](./docs/deployment/module-selection.md)
+- **Performance & testing:** [perf baseline](./docs/perf/README.md) ·
+  [nightly real-Azure tests](./docs/testing/real-azure-nightly.md)
+
+The gap docs render into a browsable site via `mkdocs serve` (config in
+[`mkdocs.yml`](./mkdocs.yml)); they are the single source of truth, validated and
+regenerated in CI.
 
 ## Configuration
 
