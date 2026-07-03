@@ -1,56 +1,68 @@
 # Azure authentication: Managed Identity & Workload Identity
 
-By default each AAD-capable backend block authenticates to Azure with a
-**client-secret** service principal (`tenantId` + `clientId` + `clientSecret`).
-That secret is long-lived and has to be stored in the proxy config. On Azure
-compute you can drop the secret entirely and let the platform mint short-lived
-tokens for you via **Managed Identity** (IMDS) or **AKS Workload Identity**
-(federated service-account token). This page documents how to configure each
-mode per hosting scenario.
+Each Azure backend in a binding splits its **non-secret** topology (`target`)
+from its **secret** (`auth`). The `auth.mode` discriminator selects the auth
+shape. For AAD-capable backends the default is a **client-secret** service
+principal (`tenantId` + `clientId` + `clientSecret`). That secret is long-lived
+and has to be stored in the proxy config. On Azure compute you can drop the
+secret entirely and let the platform mint short-lived tokens for you via
+**Managed Identity** (IMDS) or **AKS Workload Identity** (federated
+service-account token). This page documents how to configure each mode per
+hosting scenario.
 
 > **Scope.** Token-based AAD auth — and therefore Managed / Workload Identity —
 > applies to the **five AAD-capable backends**:
 >
-> | AWS service | Azure backend | Config block |
+> | AWS service | Azure backend (`kind`) | Binding path |
 > |---|---|---|
-> | DynamoDB | Cosmos DB | `azure.cosmos` |
-> | Kinesis | Event Hubs | `azure.eventHubs` |
-> | SNS (topics) | Service Bus topics | `azure.serviceBusTopics` |
-> | SNS (topics) | Event Grid | `azure.eventGrid` |
-> | Secrets Manager | Key Vault | `azure.keyVault` |
+> | DynamoDB | Cosmos DB (`cosmos`) | `bindings[].azure.dynamodb` |
+> | Kinesis | Event Hubs (`eventHubs`) | `bindings[].azure.kinesis` |
+> | SNS (topics) | Service Bus topics (`serviceBusTopics`) | `bindings[].azure.sns` |
+> | SNS (topics) | Event Grid (`eventGrid`) | `bindings[].azure.sns` |
+> | Secrets Manager | Key Vault (`keyVault`) | `bindings[].azure.secretsmanager` |
 >
-> S3 → Blob (`azure.blob`, account key) and SQS → Service Bus queues
-> (`azure.serviceBus`, SAS) do **not** yet support token-based AAD auth; they
-> remain key/SAS-only. Those are tracked separately and are out of scope here.
+> S3 → Blob (`kind: blob`, `auth.mode: "sharedKey"`) and SQS → Service Bus
+> queues (`kind: serviceBus`, `auth.mode: "sas"`) do **not** yet support
+> token-based AAD auth; they remain key/SAS-only. Those are tracked separately
+> and are out of scope here.
 
 ---
 
-## The three auth modes
+## The `auth.mode` selector
 
-Every AAD-capable block carries an `authMode` field:
+Every backend's `auth` block carries a `mode` field. The full set of modes is:
 
 ```jsonc
-"authMode": "clientSecret"     // default — service principal + secret
-"authMode": "managedIdentity"  // IMDS (system- or user-assigned MI)
-"authMode": "workloadIdentity" // AKS federated service-account token
+"auth": { "mode": "sharedKey" }       // account/master/access key (blob, cosmos, eventGrid)
+"auth": { "mode": "sas" }             // SAS keyName + key (serviceBus, serviceBusTopics, eventHubs)
+"auth": { "mode": "clientSecret" }    // AAD service principal + secret
+"auth": { "mode": "managedIdentity" } // AAD via IMDS (system- or user-assigned MI)
+"auth": { "mode": "workloadIdentity" }// AAD via AKS federated service-account token
+"auth": { "mode": "reference" }       // reuse a shared azureIdentities pool entry
 ```
 
-The JSON value is camel-case and case-insensitive. Omitting `authMode` is
-identical to `"clientSecret"`, so existing configs keep working unchanged.
+The JSON value is camel-case and case-insensitive. The three AAD modes
+(`clientSecret`, `managedIdentity`, `workloadIdentity`) are covered below; they
+apply only to the five AAD-capable backends in the scope table above.
 
-### 1. `clientSecret` (default)
+### 1. `clientSecret`
 
 The classic Entra ID *client credentials* flow. Requires all three fields
 together:
 
 ```jsonc
-"cosmos": {
-  "endpoint": "https://my-cosmos.documents.azure.com:443/",
-  "databaseName": "aws2azure",
-  "authMode": "clientSecret",        // optional; this is the default
-  "tenantId":     "00000000-0000-0000-0000-000000000000",
-  "clientId":     "11111111-1111-1111-1111-111111111111",
-  "clientSecret": "the-app-registration-secret"
+"dynamodb": {
+  "kind": "cosmos",
+  "target": {
+    "endpoint": "https://my-cosmos.documents.azure.com:443/",
+    "databaseName": "aws2azure"
+  },
+  "auth": {
+    "mode": "clientSecret",
+    "tenantId":     "00000000-0000-0000-0000-000000000000",
+    "clientId":     "11111111-1111-1111-1111-111111111111",
+    "clientSecret": "the-app-registration-secret"
+  }
 }
 ```
 
@@ -67,10 +79,10 @@ Service, Container Apps, AKS pod with the kubelet identity, …).
 - **System-assigned MI** — omit `clientId` (and `tenantId`/`clientSecret`):
 
   ```jsonc
-  "cosmos": {
-    "endpoint": "https://my-cosmos.documents.azure.com:443/",
-    "databaseName": "aws2azure",
-    "authMode": "managedIdentity"
+  "dynamodb": {
+    "kind": "cosmos",
+    "target": { "endpoint": "https://my-cosmos.documents.azure.com:443/", "databaseName": "aws2azure" },
+    "auth":   { "mode": "managedIdentity" }
   }
   ```
 
@@ -78,11 +90,10 @@ Service, Container Apps, AKS pod with the kubelet identity, …).
   id so IMDS knows which identity to issue a token for:
 
   ```jsonc
-  "cosmos": {
-    "endpoint": "https://my-cosmos.documents.azure.com:443/",
-    "databaseName": "aws2azure",
-    "authMode": "managedIdentity",
-    "clientId": "22222222-2222-2222-2222-222222222222"
+  "dynamodb": {
+    "kind": "cosmos",
+    "target": { "endpoint": "https://my-cosmos.documents.azure.com:443/", "databaseName": "aws2azure" },
+    "auth":   { "mode": "managedIdentity", "clientId": "22222222-2222-2222-2222-222222222222" }
   }
   ```
 
@@ -94,7 +105,7 @@ secret).
 > token endpoint via the `IDENTITY_ENDPOINT` and `IDENTITY_HEADER` environment
 > variables instead of the IMDS IP. The proxy auto-detects them: when both are
 > present it uses that endpoint, otherwise it falls back to the IMDS address. No
-> extra config is needed — the same `"authMode": "managedIdentity"` works.
+> extra config is needed — the same `"mode": "managedIdentity"` works.
 
 ### 3. `workloadIdentity` (AKS)
 
@@ -102,14 +113,14 @@ Implements the AKS **Workload Identity** federated-credential exchange: the
 proxy reads a kubelet-projected service-account JWT and exchanges it for an
 Entra ID token (no secret). The tenant, client id and token-file path all come
 from the standard `AZURE_*` environment variables that the Workload Identity
-webhook injects into the pod — so the config block carries **only**
-`"authMode": "workloadIdentity"`:
+webhook injects into the pod — so the `auth` block carries **only**
+`"mode": "workloadIdentity"`:
 
 ```jsonc
-"cosmos": {
-  "endpoint": "https://my-cosmos.documents.azure.com:443/",
-  "databaseName": "aws2azure",
-  "authMode": "workloadIdentity"
+"dynamodb": {
+  "kind": "cosmos",
+  "target": { "endpoint": "https://my-cosmos.documents.azure.com:443/", "databaseName": "aws2azure" },
+  "auth":   { "mode": "workloadIdentity" }
 }
 ```
 
@@ -124,7 +135,7 @@ is annotated and labelled for Workload Identity):
 | `AZURE_AUTHORITY_HOST` | *(optional)* authority; defaults to `https://login.microsoftonline.com/` |
 
 Setting `tenantId`/`clientId`/`clientSecret` inline alongside
-`"authMode": "workloadIdentity"` is a startup error — they would be ignored, so
+`"mode": "workloadIdentity"` is a startup error — they would be ignored, so
 the proxy refuses to start rather than mislead you. Startup validation also
 fails loudly if `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` or
 `AZURE_FEDERATED_TOKEN_FILE` are missing.
@@ -134,8 +145,9 @@ fails loudly if `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` or
 ## Sharing one identity across backends: the `azureIdentities` pool
 
 If several backends use the **same** identity you can name it once in a
-top-level `azureIdentities` map and reference it by name from each block's
-`identity` field, instead of repeating `authMode`/`clientId` everywhere:
+top-level `azureIdentities` map and reference it from each backend's `auth`
+block with `"mode": "reference"` + `identity`, instead of repeating the AAD
+shape everywhere:
 
 ```jsonc
 {
@@ -145,19 +157,22 @@ top-level `azureIdentities` map and reference it by name from each block's
       "clientId": "22222222-2222-2222-2222-222222222222"
     }
   },
-  "credentials": [
+  "bindings": [
     {
-      "awsAccessKeyId": "AKIA...",
-      "awsSecretAccessKey": "...",
+      "aws": {
+        "accessKeyId": "AKIA...",
+        "secretAccessKey": "..."
+      },
       "azure": {
-        "cosmos": {
-          "endpoint": "https://my-cosmos.documents.azure.com:443/",
-          "databaseName": "aws2azure",
-          "identity": "prod-mi"
+        "dynamodb": {
+          "kind": "cosmos",
+          "target": { "endpoint": "https://my-cosmos.documents.azure.com:443/", "databaseName": "aws2azure" },
+          "auth":   { "mode": "reference", "identity": "prod-mi" }
         },
-        "keyVault": {
-          "vaultUrl": "https://my-vault.vault.azure.net/",
-          "identity": "prod-mi"
+        "secretsmanager": {
+          "kind": "keyVault",
+          "target": { "vaultUrl": "https://my-vault.vault.azure.net/" },
+          "auth":   { "mode": "reference", "identity": "prod-mi" }
         }
       }
     }
@@ -167,13 +182,13 @@ top-level `azureIdentities` map and reference it by name from each block's
 
 Rules (all enforced at startup):
 
-- A named identity carries exactly the AAD shape: `authMode`, `tenantId`,
-  `clientId`, `clientSecret`. It is resolved into each referencing block before
-  the modules read the config.
-- Name lookup is **case-sensitive**. A reference to a name not present in
-  `azureIdentities` fails startup (dangling reference).
-- A block may use **either** an `identity` reference **or** inline AAD fields —
-  not both. Combining them is a startup error.
+- A named identity carries the AAD shape under `authMode`, `tenantId`,
+  `clientId`, `clientSecret`. It is resolved into each referencing backend
+  before the modules read the config.
+- Name lookup is **case-sensitive**. A `"mode": "reference"` whose `identity`
+  is not present in `azureIdentities` fails startup (dangling reference).
+- A backend uses **either** `"mode": "reference"` **or** an inline AAD mode —
+  not both.
 
 ---
 
@@ -210,8 +225,8 @@ booting with an ambiguous credential shape:
 - `workloadIdentity`: `tenantId`/`clientId`/`clientSecret` must be absent;
   `AZURE_TENANT_ID` + `AZURE_CLIENT_ID` + `AZURE_FEDERATED_TOKEN_FILE` must be
   present in the environment.
-- `identity` reference: must resolve to an entry in `azureIdentities` and must
-  not be combined with inline AAD fields.
+- `reference`: `auth.identity` must resolve to an entry in `azureIdentities`
+  and must not be combined with inline AAD fields.
 
 ---
 

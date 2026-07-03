@@ -79,15 +79,13 @@ public class SqsTransportConfigTests : IDisposable
     {
         File.WriteAllText(_tempFile, """
         {
-          "credentials": [ {
-            "awsAccessKeyId": "AKIA",
-            "awsSecretAccessKey": "s",
+          "bindings": [ {
+            "aws": { "accessKeyId": "AKIA", "secretAccessKey": "s" },
             "azure": {
-              "serviceBus": {
-                "namespace": "ns",
-                "sasKeyName": "kn",
-                "sasKey": "kv",
-                "transport": "amqp",
+              "sqs": {
+                "kind": "serviceBus",
+                "target": { "namespace": "ns", "transport": "amqp" },
+                "auth": { "mode": "sas", "keyName": "kn", "key": "kv" },
                 "queues": {
                   "legacy": { "transport": "rest" },
                   "modern": { "transport": "amqp" }
@@ -114,13 +112,14 @@ public class SqsTransportConfigTests : IDisposable
     {
         var env = new Dictionary<string, string?>(StringComparer.Ordinal)
         {
-            ["AWS2AZURE__CREDENTIALS__0__AWSACCESSKEYID"] = "AKIA",
-            ["AWS2AZURE__CREDENTIALS__0__AWSSECRETACCESSKEY"] = "s",
-            ["AWS2AZURE__CREDENTIALS__0__AZURE__SERVICEBUS__NAMESPACE"] = "ns",
-            ["AWS2AZURE__CREDENTIALS__0__AZURE__SERVICEBUS__SASKEYNAME"] = "kn",
-            ["AWS2AZURE__CREDENTIALS__0__AZURE__SERVICEBUS__SASKEY"] = "kv",
-            ["AWS2AZURE__CREDENTIALS__0__AZURE__SERVICEBUS__TRANSPORT"] = "amqp",
-            ["AWS2AZURE__CREDENTIALS__0__AZURE__SERVICEBUS__QUEUES__myqueue__TRANSPORT"] = "rest",
+            ["AWS2AZURE__BINDINGS__0__AWS__ACCESSKEYID"] = "AKIA",
+            ["AWS2AZURE__BINDINGS__0__AWS__SECRETACCESSKEY"] = "s",
+            ["AWS2AZURE__BINDINGS__0__AZURE__SQS__KIND"] = "serviceBus",
+            ["AWS2AZURE__BINDINGS__0__AZURE__SQS__TARGET__NAMESPACE"] = "ns",
+            ["AWS2AZURE__BINDINGS__0__AZURE__SQS__AUTH__KEYNAME"] = "kn",
+            ["AWS2AZURE__BINDINGS__0__AZURE__SQS__AUTH__KEY"] = "kv",
+            ["AWS2AZURE__BINDINGS__0__AZURE__SQS__TARGET__TRANSPORT"] = "amqp",
+            ["AWS2AZURE__BINDINGS__0__AZURE__SQS__QUEUES__myqueue__TRANSPORT"] = "rest",
         };
 
         var config = ProxyConfigLoader.Load(jsonFilePath: null, envVars: env);
@@ -137,12 +136,13 @@ public class SqsTransportConfigTests : IDisposable
     {
         var env = new Dictionary<string, string?>(StringComparer.Ordinal)
         {
-            ["AWS2AZURE__CREDENTIALS__0__AWSACCESSKEYID"] = "AKIA",
-            ["AWS2AZURE__CREDENTIALS__0__AWSSECRETACCESSKEY"] = "s",
-            ["AWS2AZURE__CREDENTIALS__0__AZURE__SERVICEBUS__NAMESPACE"] = "ns",
-            ["AWS2AZURE__CREDENTIALS__0__AZURE__SERVICEBUS__SASKEYNAME"] = "kn",
-            ["AWS2AZURE__CREDENTIALS__0__AZURE__SERVICEBUS__SASKEY"] = "kv",
-            ["AWS2AZURE__CREDENTIALS__0__AZURE__SERVICEBUS__QUEUES__orders__dlq__TRANSPORT"] = "amqp",
+            ["AWS2AZURE__BINDINGS__0__AWS__ACCESSKEYID"] = "AKIA",
+            ["AWS2AZURE__BINDINGS__0__AWS__SECRETACCESSKEY"] = "s",
+            ["AWS2AZURE__BINDINGS__0__AZURE__SQS__KIND"] = "serviceBus",
+            ["AWS2AZURE__BINDINGS__0__AZURE__SQS__TARGET__NAMESPACE"] = "ns",
+            ["AWS2AZURE__BINDINGS__0__AZURE__SQS__AUTH__KEYNAME"] = "kn",
+            ["AWS2AZURE__BINDINGS__0__AZURE__SQS__AUTH__KEY"] = "kv",
+            ["AWS2AZURE__BINDINGS__0__AZURE__SQS__QUEUES__orders__dlq__TRANSPORT"] = "amqp",
         };
 
         var config = ProxyConfigLoader.Load(jsonFilePath: null, envVars: env);

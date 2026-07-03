@@ -86,12 +86,14 @@ regenerated in CI.
 
 ## Configuration
 
-The proxy reads a JSON config file pointed to by `AWS2AZURE_CONFIG_FILE`. Each
-AWS access key your clients sign with maps to a set of Azure credentials; the
-proxy validates the incoming SigV4 signature, then calls Azure with the mapped
-credentials. See [`docker/config.json`](./docker/config.json) for an example and
-the [Getting Started guide](./docs/getting-started.md#configuration) for the full
-schema.
+The proxy reads a JSON config file pointed to by `AWS2AZURE_CONFIG_FILE`. It is
+organized around **bindings**: each binding maps one AWS identity (the access
+key your clients sign with) to a set of Azure backends, where every backend
+splits non-secret topology (`target`) from its secret (`auth`). The proxy
+validates the incoming SigV4 signature, then calls Azure with the matching
+backend's credentials. See [`docker/config.json`](./docker/config.json) for an
+example and the [Getting Started guide](./docs/getting-started.md#configuration)
+for the full schema.
 
 ## Operational endpoints
 

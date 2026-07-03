@@ -95,67 +95,82 @@ Stop the stack with `docker compose down`.
 ## Configuration
 
 The proxy reads a single JSON config file pointed to by the
-`AWS2AZURE_CONFIG_FILE` environment variable. Its shape:
+`AWS2AZURE_CONFIG_FILE` environment variable. It has **three** top-level
+concerns, kept separate on purpose:
+
+| Section | Answers | Contains |
+|---|---|---|
+| `services` | *which* modules run, and how they behave | per-service `enabled` + behavior knobs |
+| `bindings` | *who* maps to *what* | each AWS access key → its Azure backends |
+| `azureIdentities` *(optional)* | shared AAD identities | a named pool referenced from `bindings` |
+
+The **binding** is the central concept: each entry maps one AWS identity
+(`aws`) to a set of Azure backends (`azure`). Inside every backend, the
+non-secret **`target`** (where — commit-safe topology) is split from the secret
+**`auth`** (how — keys / identity), and a `kind` says which Azure backend it is.
 
 ```jsonc
 {
+  // 1) Which modules run (+ their behavior settings, folded per service).
   "services": {
     "s3":       { "enabled": true },
     "sqs":      { "enabled": true },
     "dynamodb": { "enabled": true },
-    "sns":      { "enabled": true },
+    "sns":      { "enabled": true, "defaultBackend": "ServiceBusTopics" },
     "kinesis":  { "enabled": false },  // no local emulator — see the table below
     "secretsmanager": { "enabled": false }  // Key Vault; no local emulator — real Azure only
   },
-  "credentials": [
+  // 2) Bindings: one AWS identity -> its Azure backends. Add more entries to
+  //    map different AWS keys to different Azure accounts.
+  "bindings": [
     {
       // AWS-facing identity your clients sign with (SigV4).
-      "awsAccessKeyId": "AKIADEVEXAMPLE",
-      "awsSecretAccessKey": "dev-secret-key-change-me",
-      // Azure credentials this access key maps to, per backend. Only include
-      // the blocks for the services you enable above.
+      "aws": {
+        "accessKeyId": "AKIADEVEXAMPLE",
+        "secretAccessKey": "dev-secret-key-change-me"
+      },
+      // Azure backends this identity maps to. Only include the services you
+      // enable above. Each entry = kind + target (topology) + auth (secret).
       "azure": {
-        // S3 -> Blob. serviceEndpoint is optional; omit it for real Azure to
+        // S3 -> Blob. target.endpoint is optional; omit it for real Azure to
         // use https://<accountName>.blob.core.windows.net.
-        "blob": {
-          "accountName": "devstoreaccount1",
-          "accountKey": "...",
-          "serviceEndpoint": "http://azurite:10000/devstoreaccount1"
+        "s3": {
+          "kind": "blob",
+          "target": { "accountName": "devstoreaccount1", "endpoint": "http://azurite:10000/devstoreaccount1" },
+          "auth":   { "mode": "sharedKey", "key": "..." }
         },
         // SQS -> Service Bus (queues).
-        "serviceBus": {
-          "namespace": "http://servicebus-emulator:5672/",
-          "sasKeyName": "RootManageSharedAccessKey",
-          "sasKey": "...",
-          "transport": "Amqp"
+        "sqs": {
+          "kind": "serviceBus",
+          "target": { "namespace": "http://servicebus-emulator:5672/", "transport": "Amqp" },
+          "auth":   { "mode": "sas", "keyName": "RootManageSharedAccessKey", "key": "..." }
         },
         // SNS -> Service Bus (topics).
-        "serviceBusTopics": {
-          "namespace": "sbemulatorns",
-          "endpoint": "http://servicebus-emulator:5672/",
-          "managementEndpoint": "http://servicebus-emulator:5300/",
-          "sasKeyName": "RootManageSharedAccessKey",
-          "sasKey": "..."
+        "sns": {
+          "kind": "serviceBusTopics",
+          "target": { "namespace": "sbemulatorns", "endpoint": "http://servicebus-emulator:5672/", "managementEndpoint": "http://servicebus-emulator:5300/" },
+          "auth":   { "mode": "sas", "keyName": "RootManageSharedAccessKey", "key": "..." }
         },
         // DynamoDB -> Cosmos DB (NoSQL). The database must already exist.
-        "cosmos": {
-          "endpoint": "http://cosmos:8081/",
-          "primaryKey": "...",
-          "databaseName": "aws2azure"
+        "dynamodb": {
+          "kind": "cosmos",
+          "target": { "endpoint": "http://cosmos:8081/", "databaseName": "aws2azure" },
+          "auth":   { "mode": "sharedKey", "key": "..." }
         },
         // Kinesis -> Event Hubs (no local emulator; real Azure only).
-        "eventHubs": {
-          "namespace": "...",
-          "sasKeyName": "RootManageSharedAccessKey",
-          "sasKey": "..."
+        "kinesis": {
+          "kind": "eventHubs",
+          "target": { "namespace": "..." },
+          "auth":   { "mode": "sas", "keyName": "RootManageSharedAccessKey", "key": "..." }
         },
         // Secrets Manager -> Key Vault (no local emulator; real Azure only).
-        // Key Vault uses Entra ID (AAD) auth, not a shared key — see
-        // docs/azure-authentication.md for the full keyVault block and the
-        // managed-identity / workload-identity / client-secret options.
-        "keyVault": {
-          "vaultUrl": "https://my-vault.vault.azure.net/",
-          "authMode": "ManagedIdentity"
+        // Key Vault uses Entra ID (AAD), not a shared key — see
+        // docs/azure-authentication.md for the managed-identity /
+        // workload-identity / client-secret options.
+        "secretsmanager": {
+          "kind": "keyVault",
+          "target": { "vaultUrl": "https://my-vault.vault.azure.net/" },
+          "auth":   { "mode": "managedIdentity" }
         }
       }
     }
@@ -163,20 +178,27 @@ The proxy reads a single JSON config file pointed to by the
 }
 ```
 
-The committed [`docker/config.json`](../docker/config.json) is exactly this,
-wired to the Compose emulator hostnames, with `kinesis` disabled (no emulator).
+The committed [`docker/config.json`](../docker/config.json) is this shape wired
+to the Compose emulator hostnames (S3, SQS, SNS and DynamoDB), with `kinesis`
+and `secretsmanager` disabled (no emulator).
 
 Key points:
 
-- **Credential mapping is the core idea.** Each `awsAccessKeyId` /
-  `awsSecretAccessKey` pair (what your clients present and sign with) maps to a
-  set of Azure credentials. The proxy validates the incoming SigV4 signature
-  against the AWS secret, then calls Azure with the mapped Azure credentials.
-- You can define **multiple** credential entries to map different AWS keys to
-  different Azure accounts.
+- **The binding is the core idea.** Each binding's `aws` half (what your clients
+  present and sign with) maps to its `azure` half. The proxy validates the
+  incoming SigV4 signature against `aws.secretAccessKey`, then calls Azure using
+  the matching backend's `auth`.
+- **`target` vs `auth`.** Topology (`target`) is non-secret and safe to commit;
+  keys and identities live under `auth`, selected by `auth.mode`
+  (`sharedKey` / `sas` / `managedIdentity` / `clientSecret` / `workloadIdentity`
+  / `reference`). See [Azure authentication](./azure-authentication.md).
+- You can define **multiple** bindings to map different AWS keys to different
+  Azure accounts.
 - The config is **validated on startup** — the proxy fails loud and refuses to
   start on a malformed or ambiguous config.
-- Settings can be overridden with environment variables.
+- Settings can be overridden with environment variables, mirroring the JSON
+  shape (e.g. `AWS2AZURE__SERVICES__S3__ENABLED=true`,
+  `AWS2AZURE__BINDINGS__0__AZURE__S3__AUTH__KEY=...`).
 
 ---
 
@@ -320,18 +342,21 @@ dotnet publish src/Aws2Azure.Proxy -c Release -r linux-x64
 
 ## Pointing at real Azure
 
-Replace the emulator credentials in your config with real Azure values:
+Replace the emulator values in each binding's `azure` backends with real Azure
+values:
 
-- **Blob:** set `accountName` + `accountKey` and drop `serviceEndpoint` (the
-  proxy uses the public `https://<accountName>.blob.core.windows.net` endpoint).
-- **Cosmos:** set `endpoint` to your account URI, `primaryKey` to an account
-  key (or use `tenantId` + `clientId` + `clientSecret` for Entra ID), and
-  `databaseName` to a database that already exists.
-- **Service Bus / Service Bus Topics / Event Hubs:** set `namespace` to the
-  real namespace and supply `sasKeyName` + `sasKey` (or Entra ID credentials);
-  drop the emulator `endpoint` / `managementEndpoint` overrides.
+- **Blob (`kind: blob`):** set `target.accountName` and `auth.key` (the account
+  key) and drop `target.endpoint` (the proxy uses the public
+  `https://<accountName>.blob.core.windows.net` endpoint).
+- **Cosmos (`kind: cosmos`):** set `target.endpoint` to your account URI,
+  `auth.mode: "sharedKey"` + `auth.key` to an account key (or use an AAD mode —
+  see below), and `target.databaseName` to a database that already exists.
+- **Service Bus / Service Bus Topics / Event Hubs:** set `target.namespace` to
+  the real namespace and supply `auth.mode: "sas"` with `auth.keyName` +
+  `auth.key` (or an AAD mode); drop the emulator `target.endpoint` /
+  `target.managementEndpoint` overrides.
 
-The AWS-facing `awsAccessKeyId` / `awsSecretAccessKey` are arbitrary values you
+The AWS-facing `aws.accessKeyId` / `aws.secretAccessKey` are arbitrary values you
 choose — they are the identity your clients sign with and are independent of any
 real AWS account.
 
@@ -339,7 +364,7 @@ real AWS account.
 
 On Azure compute you can drop the long-lived `clientSecret` and let the proxy
 acquire short-lived tokens via **Managed Identity** (IMDS) or **AKS Workload
-Identity** instead. Each AAD-capable backend block takes an `authMode`
+Identity** instead. Each AAD-capable backend's `auth` block takes a `mode`
 (`clientSecret` / `managedIdentity` / `workloadIdentity`), and a shared identity
 can be named once in a top-level `azureIdentities` pool. See
 [Azure authentication: Managed Identity & Workload Identity](./azure-authentication.md)

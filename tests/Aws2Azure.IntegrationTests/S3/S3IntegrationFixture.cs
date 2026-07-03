@@ -70,15 +70,23 @@ public sealed class S3IntegrationFixture : IAsyncLifetime
         var config = $$"""
         {
           "services": { "s3": { "enabled": true } },
-          "credentials": [
+          "bindings": [
             {
-              "awsAccessKeyId": "{{AccessKeyId}}",
-              "awsSecretAccessKey": "{{Secret}}",
+              "aws": {
+                "accessKeyId": "{{AccessKeyId}}",
+                "secretAccessKey": "{{Secret}}"
+              },
               "azure": {
-                "blob": {
-                  "accountName": "{{Fixtures.AzuriteFixture.AccountName}}",
-                  "accountKey":  "{{Fixtures.AzuriteFixture.AccountKey}}",
-                  "serviceEndpoint": "{{BlobEndpoint}}"
+                "s3": {
+                  "kind": "blob",
+                  "target": {
+                    "accountName": "{{Fixtures.AzuriteFixture.AccountName}}",
+                    "endpoint": "{{BlobEndpoint}}"
+                  },
+                  "auth": {
+                    "mode": "sharedKey",
+                    "key":  "{{Fixtures.AzuriteFixture.AccountKey}}"
+                  }
                 }
               }
             }

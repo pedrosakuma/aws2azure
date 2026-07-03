@@ -63,17 +63,25 @@ public sealed class SnsServiceBusProxyFixture : IAsyncLifetime
                 "kinesis": { "enabled": false },
                 "sns": { "enabled": true }
               },
-              "credentials": [
+              "bindings": [
                 {
-                  "awsAccessKeyId": "{{AwsAccessKey}}",
-                  "awsSecretAccessKey": "{{AwsSecret}}",
+                  "aws": {
+                    "accessKeyId": "{{AwsAccessKey}}",
+                    "secretAccessKey": "{{AwsSecret}}"
+                  },
                   "azure": {
-                    "serviceBusTopics": {
-                      "namespace": "{{ServiceBusEmulatorFixture.Namespace}}",
-                      "endpoint": "{{amqpUrl}}",
-                      "managementEndpoint": "{{managementUrl}}",
-                      "sasKeyName": "{{ServiceBusEmulatorFixture.SasKeyName}}",
-                      "sasKey": "{{ServiceBusEmulatorFixture.WellKnownSasKey}}"
+                    "sns": {
+                      "kind": "serviceBusTopics",
+                      "target": {
+                        "namespace": "{{ServiceBusEmulatorFixture.Namespace}}",
+                        "endpoint": "{{amqpUrl}}",
+                        "managementEndpoint": "{{managementUrl}}"
+                      },
+                      "auth": {
+                        "mode": "sas",
+                        "keyName": "{{ServiceBusEmulatorFixture.SasKeyName}}",
+                        "key": "{{ServiceBusEmulatorFixture.WellKnownSasKey}}"
+                      }
                     }
                   }
                 }

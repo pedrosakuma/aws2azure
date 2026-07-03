@@ -105,20 +105,28 @@ public sealed class DynamoDbSprocFixture : IAsyncLifetime
           "services": {
             "s3":       { "enabled": false },
             "sqs":      { "enabled": false },
-            "dynamodb": { "enabled": true }
+            "dynamodb": {
+              "enabled": true,
+              "useStoredProcedures": "Preferred"
+            }
           },
-          "dynamoDb": {
-            "useStoredProcedures": "Preferred"
-          },
-          "credentials": [
+          "bindings": [
             {
-              "awsAccessKeyId": "{{AccessKeyId}}",
-              "awsSecretAccessKey": "{{Secret}}",
+              "aws": {
+                "accessKeyId": "{{AccessKeyId}}",
+                "secretAccessKey": "{{Secret}}"
+              },
               "azure": {
-                "cosmos": {
-                  "endpoint":     "{{CosmosEndpoint}}",
-                  "primaryKey":   "{{CosmosKey}}",
-                  "databaseName": "{{DatabaseName}}"
+                "dynamodb": {
+                  "kind": "cosmos",
+                  "target": {
+                    "endpoint":     "{{CosmosEndpoint}}",
+                    "databaseName": "{{DatabaseName}}"
+                  },
+                  "auth": {
+                    "mode": "sharedKey",
+                    "key":  "{{CosmosKey}}"
+                  }
                 }
               }
             }

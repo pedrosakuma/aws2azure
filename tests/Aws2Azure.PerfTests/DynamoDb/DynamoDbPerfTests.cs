@@ -194,7 +194,7 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
                 ddbProps.Add("\"enableLocalSecondaryIndexNumericOrdering\": true");
             }
             var dynamoDbBlock = ddbProps.Count > 0
-                ? $"  \"dynamodb\": {{ {string.Join(", ", ddbProps)} }},\n"
+                ? $", {string.Join(", ", ddbProps)}"
                 : string.Empty;
 
             var config = $$"""
@@ -202,17 +202,25 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
                   "services": {
                     "s3":       { "enabled": false },
                     "sqs":      { "enabled": false },
-                    "dynamodb": { "enabled": true }
+                    "dynamodb": { "enabled": true{{dynamoDbBlock}} }
                   },
-                {{dynamoDbBlock}}  "credentials": [
+                  "bindings": [
                     {
-                      "awsAccessKeyId": "{{AccessKeyId}}",
-                      "awsSecretAccessKey": "{{Secret}}",
+                      "aws": {
+                        "accessKeyId": "{{AccessKeyId}}",
+                        "secretAccessKey": "{{Secret}}"
+                      },
                       "azure": {
-                        "cosmos": {
-                          "endpoint":     "{{cosmosEndpoint}}",
-                          "primaryKey":   "{{cosmosKey}}",
-                          "databaseName": "{{DatabaseName}}"
+                        "dynamodb": {
+                          "kind": "cosmos",
+                          "target": {
+                            "endpoint": "{{cosmosEndpoint}}",
+                            "databaseName": "{{DatabaseName}}"
+                          },
+                          "auth": {
+                            "mode": "sharedKey",
+                            "key": "{{cosmosKey}}"
+                          }
                         }
                       }
                     }

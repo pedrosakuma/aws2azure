@@ -167,16 +167,24 @@ public sealed class KinesisEmulatorProxyFixture : IAsyncLifetime
                     "dynamodb": { "enabled": false },
                     "kinesis": { "enabled": true }
                   },
-                  "credentials": [
+                  "bindings": [
                     {
-                      "awsAccessKeyId": "{{AwsAccessKey}}",
-                      "awsSecretAccessKey": "{{AwsSecret}}",
+                      "aws": {
+                        "accessKeyId": "{{AwsAccessKey}}",
+                        "secretAccessKey": "{{AwsSecret}}"
+                      },
                       "azure": {
-                        "eventHubs": {
-                          "namespace": "{{Namespace}}",
-                          "endpoint": "http://{{amqpHost}}:{{amqpPort}}/",
-                          "sasKeyName": "{{SasKeyName}}",
-                          "sasKey": "{{SasKey}}",
+                        "kinesis": {
+                          "kind": "eventHubs",
+                          "target": {
+                            "namespace": "{{Namespace}}",
+                            "endpoint": "http://{{amqpHost}}:{{amqpPort}}/"
+                          },
+                          "auth": {
+                            "mode": "sas",
+                            "keyName": "{{SasKeyName}}",
+                            "key": "{{SasKey}}"
+                          },
                           "shardIteratorSigningKey": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
                           "streams": {
                             "{{StreamName}}": {

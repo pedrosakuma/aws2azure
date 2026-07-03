@@ -37,13 +37,18 @@ config:
     services:
       s3:
         enabled: true
-    credentials:
-      - awsAccessKeyId: AKIADEVEXAMPLE
-        awsSecretAccessKey: change-me
+    bindings:
+      - aws:
+          accessKeyId: AKIADEVEXAMPLE
+          secretAccessKey: change-me
         azure:
-          blob:
-            accountName: ""
-            accountKey: ""
+          s3:
+            kind: blob
+            target:
+              accountName: ""
+            auth:
+              mode: sharedKey
+              key: ""
 
 # -- Extra environment variables for the proxy container.
 extraEnv: []

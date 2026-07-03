@@ -25,8 +25,10 @@ public class ProxyConfigLoaderTests : IDisposable
         File.WriteAllText(_tempFile, """
         {
           "services": { "s3": { "enabled": true } },
-          "credentials": [ { "awsAccessKeyId": "AKIA", "awsSecretAccessKey": "s",
-                             "azure": { "blob": { "accountName": "a", "accountKey": "k" } } } ]
+          "bindings": [ {
+            "aws": { "accessKeyId": "AKIA", "secretAccessKey": "s" },
+            "azure": { "s3": { "kind": "blob", "target": { "accountName": "a" }, "auth": { "mode": "sharedKey", "key": "k" } } }
+          } ]
         }
         """);
 
@@ -53,16 +55,18 @@ public class ProxyConfigLoaderTests : IDisposable
         File.WriteAllText(_tempFile, """
         {
           "services": { "s3": { "enabled": false } },
-          "credentials": [ { "awsAccessKeyId": "AKIA-FILE", "awsSecretAccessKey": "secret-file",
-                             "azure": { "blob": { "accountName": "acc-file", "accountKey": "key-file" } } } ]
+          "bindings": [ {
+            "aws": { "accessKeyId": "AKIA-FILE", "secretAccessKey": "secret-file" },
+            "azure": { "s3": { "kind": "blob", "target": { "accountName": "acc-file" }, "auth": { "mode": "sharedKey", "key": "key-file" } } }
+          } ]
         }
         """);
 
         var env = new Dictionary<string, string?>
         {
-            ["AWS2AZURE__SERVICES__S3__ENABLED"]                    = "true",
-            ["AWS2AZURE__CREDENTIALS__0__AWSACCESSKEYID"]           = "AKIA-ENV",
-            ["AWS2AZURE__CREDENTIALS__0__AZURE__BLOB__ACCOUNTNAME"] = "acc-env",
+            ["AWS2AZURE__SERVICES__S3__ENABLED"]                       = "true",
+            ["AWS2AZURE__BINDINGS__0__AWS__ACCESSKEYID"]               = "AKIA-ENV",
+            ["AWS2AZURE__BINDINGS__0__AZURE__S3__TARGET__ACCOUNTNAME"] = "acc-env",
         };
 
         var config = ProxyConfigLoader.Load(_tempFile, env);
@@ -76,15 +80,16 @@ public class ProxyConfigLoaderTests : IDisposable
     }
 
     [Fact]
-    public void Env_vars_can_introduce_new_credential_entry()
+    public void Env_vars_can_introduce_new_binding()
     {
         var env = new Dictionary<string, string?>
         {
-            ["AWS2AZURE__CREDENTIALS__0__AWSACCESSKEYID"]                = "AKIA-NEW",
-            ["AWS2AZURE__CREDENTIALS__0__AWSSECRETACCESSKEY"]            = "secret-new",
-            ["AWS2AZURE__CREDENTIALS__0__AZURE__SERVICEBUS__NAMESPACE"]  = "ns",
-            ["AWS2AZURE__CREDENTIALS__0__AZURE__SERVICEBUS__SASKEYNAME"] = "RootManageSharedAccessKey",
-            ["AWS2AZURE__CREDENTIALS__0__AZURE__SERVICEBUS__SASKEY"]     = "sb-key",
+            ["AWS2AZURE__BINDINGS__0__AWS__ACCESSKEYID"]            = "AKIA-NEW",
+            ["AWS2AZURE__BINDINGS__0__AWS__SECRETACCESSKEY"]        = "secret-new",
+            ["AWS2AZURE__BINDINGS__0__AZURE__SQS__KIND"]            = "serviceBus",
+            ["AWS2AZURE__BINDINGS__0__AZURE__SQS__TARGET__NAMESPACE"] = "ns",
+            ["AWS2AZURE__BINDINGS__0__AZURE__SQS__AUTH__KEYNAME"]   = "RootManageSharedAccessKey",
+            ["AWS2AZURE__BINDINGS__0__AZURE__SQS__AUTH__KEY"]       = "sb-key",
         };
 
         var config = ProxyConfigLoader.Load(jsonFilePath: null, env);
@@ -100,7 +105,7 @@ public class ProxyConfigLoaderTests : IDisposable
     {
         var env = new Dictionary<string, string?>
         {
-            ["AWS2AZURE__DYNAMODB__CONSISTENCYCHECK"] = "required",
+            ["AWS2AZURE__SERVICES__DYNAMODB__CONSISTENCYCHECK"] = "required",
         };
 
         var config = ProxyConfigLoader.Load(jsonFilePath: null, env);
@@ -113,11 +118,12 @@ public class ProxyConfigLoaderTests : IDisposable
     {
         var env = new Dictionary<string, string?>
         {
-            ["AWS2AZURE__CREDENTIALS__0__AZURE__COSMOS__ENDPOINT"] = "https://acct.documents.azure.com/",
-            ["AWS2AZURE__CREDENTIALS__0__AZURE__COSMOS__DATABASENAME"] = "main",
-            ["AWS2AZURE__CREDENTIALS__0__AZURE__COSMOS__PRIMARYKEY"] = "key",
-            ["AWS2AZURE__CREDENTIALS__0__AZURE__COSMOS__PREFERREDREGIONS__0"] = "West US",
-            ["AWS2AZURE__CREDENTIALS__0__AZURE__COSMOS__PREFERREDREGIONS__1"] = "East US",
+            ["AWS2AZURE__BINDINGS__0__AZURE__DYNAMODB__KIND"] = "cosmos",
+            ["AWS2AZURE__BINDINGS__0__AZURE__DYNAMODB__TARGET__ENDPOINT"] = "https://acct.documents.azure.com/",
+            ["AWS2AZURE__BINDINGS__0__AZURE__DYNAMODB__TARGET__DATABASENAME"] = "main",
+            ["AWS2AZURE__BINDINGS__0__AZURE__DYNAMODB__AUTH__KEY"] = "key",
+            ["AWS2AZURE__BINDINGS__0__AZURE__DYNAMODB__TARGET__PREFERREDREGIONS__0"] = "West US",
+            ["AWS2AZURE__BINDINGS__0__AZURE__DYNAMODB__TARGET__PREFERREDREGIONS__1"] = "East US",
         };
 
         var config = ProxyConfigLoader.Load(jsonFilePath: null, env);
@@ -131,7 +137,7 @@ public class ProxyConfigLoaderTests : IDisposable
     {
         var env = new Dictionary<string, string?>
         {
-            ["AWS2AZURE__DYNAMODB__CONSISTENCYCHECK"] = "banana",
+            ["AWS2AZURE__SERVICES__DYNAMODB__CONSISTENCYCHECK"] = "banana",
         };
 
         var config = ProxyConfigLoader.Load(jsonFilePath: null, env);
@@ -144,7 +150,7 @@ public class ProxyConfigLoaderTests : IDisposable
     {
         var env = new Dictionary<string, string?>
         {
-            ["AWS2AZURE__DYNAMODB__COSMOSBINARYREQUESTS"] = "true",
+            ["AWS2AZURE__SERVICES__DYNAMODB__COSMOSBINARYREQUESTS"] = "true",
         };
 
         var config = ProxyConfigLoader.Load(jsonFilePath: null, env);

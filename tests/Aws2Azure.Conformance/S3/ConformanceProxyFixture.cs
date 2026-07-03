@@ -28,14 +28,22 @@ public sealed class ConformanceProxyFixture : IDisposable
         var config = $$"""
         {
           "services": { "s3": { "enabled": true } },
-          "credentials": [
+          "bindings": [
             {
-              "awsAccessKeyId": "{{AccessKeyId}}",
-              "awsSecretAccessKey": "{{Secret}}",
+              "aws": {
+                "accessKeyId": "{{AccessKeyId}}",
+                "secretAccessKey": "{{Secret}}"
+              },
               "azure": {
-                "blob": {
-                  "accountName": "conformancedummy",
-                  "accountKey":  "ZHVtbXlrZXlmb3Jjb25mb3JtYW5jZXRlc3Rpbmc="
+                "s3": {
+                  "kind": "blob",
+                  "target": {
+                    "accountName": "conformancedummy"
+                  },
+                  "auth": {
+                    "mode": "sharedKey",
+                    "key":  "ZHVtbXlrZXlmb3Jjb25mb3JtYW5jZXRlc3Rpbmc="
+                  }
                 }
               }
             }

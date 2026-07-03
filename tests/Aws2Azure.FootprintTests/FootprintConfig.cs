@@ -25,50 +25,87 @@ internal static class FootprintConfig
             "s3": { "enabled": true },
             "sqs": { "enabled": true },
             "dynamodb": { "enabled": true },
-            "sns": { "enabled": true },
+            "sns": { "enabled": true, "defaultBackend": "ServiceBusTopics" },
             "kinesis": { "enabled": true },
             "secretsmanager": { "enabled": true }
           },
-          "sns": { "defaultBackend": "ServiceBusTopics" },
-          "credentials": [
+          "bindings": [
             {
-              "awsAccessKeyId": "AKIA-FOOTPRINT-EXAMPLE",
-              "awsSecretAccessKey": "footprint-secret-not-used",
+              "aws": {
+                "accessKeyId": "AKIA-FOOTPRINT-EXAMPLE",
+                "secretAccessKey": "footprint-secret-not-used"
+              },
               "azure": {
-                "blob": {
-                  "accountName": "devstoreaccount1",
-                  "accountKey": "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
-                  "serviceEndpoint": "http://127.0.0.1:10000/devstoreaccount1"
+                "s3": {
+                  "kind": "blob",
+                  "target": {
+                    "accountName": "devstoreaccount1",
+                    "endpoint": "http://127.0.0.1:10000/devstoreaccount1"
+                  },
+                  "auth": {
+                    "mode": "sharedKey",
+                    "key": "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+                  }
                 },
-                "serviceBus": {
-                  "namespace": "http://127.0.0.1:5672/",
-                  "sasKeyName": "RootManageSharedAccessKey",
-                  "sasKey": "SAS_KEY_VALUE",
-                  "transport": "Amqp"
+                "sqs": {
+                  "kind": "serviceBus",
+                  "target": {
+                    "namespace": "http://127.0.0.1:5672/",
+                    "transport": "Amqp"
+                  },
+                  "auth": {
+                    "mode": "sas",
+                    "keyName": "RootManageSharedAccessKey",
+                    "key": "SAS_KEY_VALUE"
+                  }
                 },
-                "serviceBusTopics": {
-                  "namespace": "sbemulatorns",
-                  "endpoint": "http://127.0.0.1:5672/",
-                  "managementEndpoint": "http://127.0.0.1:5300/",
-                  "sasKeyName": "RootManageSharedAccessKey",
-                  "sasKey": "SAS_KEY_VALUE"
+                "sns": {
+                  "kind": "serviceBusTopics",
+                  "target": {
+                    "namespace": "sbemulatorns",
+                    "endpoint": "http://127.0.0.1:5672/",
+                    "managementEndpoint": "http://127.0.0.1:5300/"
+                  },
+                  "auth": {
+                    "mode": "sas",
+                    "keyName": "RootManageSharedAccessKey",
+                    "key": "SAS_KEY_VALUE"
+                  }
                 },
-                "cosmos": {
-                  "endpoint": "http://127.0.0.1:8081/",
-                  "primaryKey": "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==",
-                  "databaseName": "aws2azure"
+                "dynamodb": {
+                  "kind": "cosmos",
+                  "target": {
+                    "endpoint": "http://127.0.0.1:8081/",
+                    "databaseName": "aws2azure"
+                  },
+                  "auth": {
+                    "mode": "sharedKey",
+                    "key": "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
+                  }
                 },
-                "eventHubs": {
-                  "namespace": "footprint-eh",
-                  "endpoint": "https://footprint-eh.servicebus.windows.net/",
-                  "sasKeyName": "RootManageSharedAccessKey",
-                  "sasKey": "SAS_KEY_VALUE"
+                "kinesis": {
+                  "kind": "eventHubs",
+                  "target": {
+                    "namespace": "footprint-eh",
+                    "endpoint": "https://footprint-eh.servicebus.windows.net/"
+                  },
+                  "auth": {
+                    "mode": "sas",
+                    "keyName": "RootManageSharedAccessKey",
+                    "key": "SAS_KEY_VALUE"
+                  }
                 },
-                "keyVault": {
-                  "vaultUrl": "https://footprint.vault.azure.net/",
-                  "tenantId": "00000000-0000-0000-0000-000000000000",
-                  "clientId": "00000000-0000-0000-0000-000000000000",
-                  "clientSecret": "footprint-secret-not-used"
+                "secretsmanager": {
+                  "kind": "keyVault",
+                  "target": {
+                    "vaultUrl": "https://footprint.vault.azure.net/"
+                  },
+                  "auth": {
+                    "mode": "clientSecret",
+                    "tenantId": "00000000-0000-0000-0000-000000000000",
+                    "clientId": "00000000-0000-0000-0000-000000000000",
+                    "clientSecret": "footprint-secret-not-used"
+                  }
                 }
               }
             }

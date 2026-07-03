@@ -31,15 +31,23 @@ public sealed class DynamoDbConformanceFixture : IDisposable
         var config = $$"""
         {
           "services": { "dynamodb": { "enabled": true } },
-          "credentials": [
+          "bindings": [
             {
-              "awsAccessKeyId": "{{AccessKeyId}}",
-              "awsSecretAccessKey": "{{Secret}}",
+              "aws": {
+                "accessKeyId": "{{AccessKeyId}}",
+                "secretAccessKey": "{{Secret}}"
+              },
               "azure": {
-                "cosmos": {
-                  "endpoint":     "https://conformancedummy.documents.azure.com:443/",
-                  "primaryKey":   "ZHVtbXlrZXlmb3Jjb25mb3JtYW5jZXRlc3Rpbmc=",
-                  "databaseName": "conformance"
+                "dynamodb": {
+                  "kind": "cosmos",
+                  "target": {
+                    "endpoint":     "https://conformancedummy.documents.azure.com:443/",
+                    "databaseName": "conformance"
+                  },
+                  "auth": {
+                    "mode": "sharedKey",
+                    "key":  "ZHVtbXlrZXlmb3Jjb25mb3JtYW5jZXRlc3Rpbmc="
+                  }
                 }
               }
             }

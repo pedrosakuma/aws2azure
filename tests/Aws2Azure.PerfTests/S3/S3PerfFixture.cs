@@ -63,15 +63,23 @@ public sealed class S3PerfFixture : IAsyncLifetime
             var config = $$"""
                 {
                   "services": { "s3": { "enabled": true } },
-                  "credentials": [
+                  "bindings": [
                     {
-                      "awsAccessKeyId": "{{AccessKeyId}}",
-                      "awsSecretAccessKey": "{{Secret}}",
+                      "aws": {
+                        "accessKeyId": "{{AccessKeyId}}",
+                        "secretAccessKey": "{{Secret}}"
+                      },
                       "azure": {
-                        "blob": {
-                          "accountName": "{{AzuriteFixture.AccountName}}",
-                          "accountKey":  "{{AzuriteFixture.AccountKey}}",
-                          "serviceEndpoint": "{{blobEndpoint}}"
+                        "s3": {
+                          "kind": "blob",
+                          "target": {
+                            "accountName": "{{AzuriteFixture.AccountName}}",
+                            "endpoint": "{{blobEndpoint}}"
+                          },
+                          "auth": {
+                            "mode": "sharedKey",
+                            "key": "{{AzuriteFixture.AccountKey}}"
+                          }
                         }
                       }
                     }
