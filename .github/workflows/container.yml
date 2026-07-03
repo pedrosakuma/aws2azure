@@ -62,10 +62,15 @@ jobs:
           cat > /tmp/config.json << 'EOF'
           {
             "services": { "s3": { "enabled": true } },
-            "credentials": [{
-              "awsAccessKeyId": "test",
-              "awsSecretAccessKey": "test",
-              "azure": { "blob": { "accountName": "test", "accountKey": "dGVzdA==" } }
+            "bindings": [{
+              "aws": { "accessKeyId": "test", "secretAccessKey": "test" },
+              "azure": {
+                "s3": {
+                  "kind": "blob",
+                  "target": { "accountName": "test" },
+                  "auth": { "mode": "sharedKey", "key": "dGVzdA==" }
+                }
+              }
             }]
           }
           EOF

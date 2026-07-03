@@ -34,18 +34,23 @@ config:
   content:
     services:
       s3: { enabled: true }
-    credentials:
-      - awsAccessKeyId: AKIADEVEXAMPLE
-        awsSecretAccessKey: a-strong-secret
+    bindings:
+      - aws:
+          accessKeyId: AKIADEVEXAMPLE
+          secretAccessKey: a-strong-secret
         azure:
-          blob:
-            accountName: mystorageaccount
-            accountKey: "<azure-storage-key>"
+          s3:
+            kind: blob
+            target:
+              accountName: mystorageaccount
+            auth:
+              mode: sharedKey
+              key: "<azure-storage-key>"
 ```
 
 See the [Configuration reference](../../../docs/getting-started.md#configuration)
 for the full schema (SQS/SNS/DynamoDB/Kinesis/Secrets Manager backends, multiple
-credential entries, etc.).
+bindings, etc.).
 
 ### 2. Reference a Secret you manage yourself
 

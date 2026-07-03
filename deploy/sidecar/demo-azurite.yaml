@@ -26,15 +26,23 @@ stringData:
   config.json: |
     {
       "services": { "s3": { "enabled": true } },
-      "credentials": [
+      "bindings": [
         {
-          "awsAccessKeyId": "AKIADEVEXAMPLE",
-          "awsSecretAccessKey": "dev-secret-key-change-me",
+          "aws": {
+            "accessKeyId": "AKIADEVEXAMPLE",
+            "secretAccessKey": "dev-secret-key-change-me"
+          },
           "azure": {
-            "blob": {
-              "accountName": "devstoreaccount1",
-              "accountKey": "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
-              "serviceEndpoint": "http://localhost:10000/devstoreaccount1"
+            "s3": {
+              "kind": "blob",
+              "target": {
+                "accountName": "devstoreaccount1",
+                "endpoint": "http://localhost:10000/devstoreaccount1"
+              },
+              "auth": {
+                "mode": "sharedKey",
+                "key": "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+              }
             }
           }
         }

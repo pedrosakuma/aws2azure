@@ -62,14 +62,21 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
               "services": {
                 "secretsmanager": { "enabled": true }
               },
-              "credentials": [
+              "bindings": [
                 {
-                  "awsAccessKeyId": "{{AwsAccessKey}}",
-                  "awsSecretAccessKey": "{{AwsSecret}}",
+                  "aws": {
+                    "accessKeyId": "{{AwsAccessKey}}",
+                    "secretAccessKey": "{{AwsSecret}}"
+                  },
                   "azure": {
-                    "keyVault": {
-                      "vaultUrl": "{{vaultUrl}}",
-                      "authMode": "WorkloadIdentity"
+                    "secretsmanager": {
+                      "kind": "keyVault",
+                      "target": {
+                        "vaultUrl": "{{vaultUrl}}"
+                      },
+                      "auth": {
+                        "mode": "WorkloadIdentity"
+                      }
                     }
                   }
                 }

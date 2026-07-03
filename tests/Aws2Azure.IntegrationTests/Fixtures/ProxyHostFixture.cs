@@ -24,16 +24,28 @@ public sealed class ProxyHostFixture : WebApplicationFactory<Program>, IAsyncLif
         _configFile = Path.Combine(Path.GetTempPath(), "aws2azure-it-" + Guid.NewGuid().ToString("N") + ".json");
         File.WriteAllText(_configFile, """
             {
-              "listen": "http://127.0.0.1:0",
               "services": {
-                "s3":  { "azureService": "blob",  "account": "devstoreaccount1" },
-                "sqs": { "azureService": "servicebus", "namespace": "aws2azure" }
+                "s3":  { "enabled": true },
+                "sqs": { "enabled": true }
               },
-              "credentials": [
+              "bindings": [
                 {
-                  "awsAccessKeyId": "DEVSTOREACCOUNT1",
-                  "awsSecretAccessKey": "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
-                  "azureAccountKey": "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+                  "aws": {
+                    "accessKeyId": "DEVSTOREACCOUNT1",
+                    "secretAccessKey": "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+                  },
+                  "azure": {
+                    "s3": {
+                      "kind": "blob",
+                      "target": {
+                        "accountName": "devstoreaccount1"
+                      },
+                      "auth": {
+                        "mode": "sharedKey",
+                        "key": "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+                      }
+                    }
+                  }
                 }
               ]
             }

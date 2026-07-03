@@ -117,15 +117,23 @@ public sealed class S3BackendDifferentialFixture : IAsyncLifetime
         var config = $$"""
         {
           "services": { "s3": { "enabled": true } },
-          "credentials": [
+          "bindings": [
             {
-              "awsAccessKeyId": "{{AccessKeyId}}",
-              "awsSecretAccessKey": "{{Secret}}",
+              "aws": {
+                "accessKeyId": "{{AccessKeyId}}",
+                "secretAccessKey": "{{Secret}}"
+              },
               "azure": {
-                "blob": {
-                  "accountName": "{{AzuriteAccountName}}",
-                  "accountKey":  "{{AzuriteAccountKey}}",
-                  "serviceEndpoint": "{{blobEndpoint}}"
+                "s3": {
+                  "kind": "blob",
+                  "target": {
+                    "accountName": "{{AzuriteAccountName}}",
+                    "endpoint": "{{blobEndpoint}}"
+                  },
+                  "auth": {
+                    "mode": "sharedKey",
+                    "key":  "{{AzuriteAccountKey}}"
+                  }
                 }
               }
             }

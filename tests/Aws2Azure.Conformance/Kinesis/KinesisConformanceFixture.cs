@@ -31,15 +31,23 @@ public sealed class KinesisConformanceFixture : IDisposable
         var config = $$"""
         {
           "services": { "kinesis": { "enabled": true } },
-          "credentials": [
+          "bindings": [
             {
-              "awsAccessKeyId": "{{AccessKeyId}}",
-              "awsSecretAccessKey": "{{Secret}}",
+              "aws": {
+                "accessKeyId": "{{AccessKeyId}}",
+                "secretAccessKey": "{{Secret}}"
+              },
               "azure": {
-                "eventHubs": {
-                  "namespace":  "conformancedummy",
-                  "sasKeyName": "RootManageSharedAccessKey",
-                  "sasKey":     "ZHVtbXlrZXlmb3Jjb25mb3JtYW5jZXRlc3Rpbmc="
+                "kinesis": {
+                  "kind": "eventHubs",
+                  "target": {
+                    "namespace": "conformancedummy"
+                  },
+                  "auth": {
+                    "mode": "sas",
+                    "keyName": "RootManageSharedAccessKey",
+                    "key":     "ZHVtbXlrZXlmb3Jjb25mb3JtYW5jZXRlc3Rpbmc="
+                  }
                 }
               }
             }

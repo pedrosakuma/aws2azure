@@ -81,15 +81,23 @@ public sealed class DynamoDbIntegrationFixture : IAsyncLifetime
             "sqs":      { "enabled": false },
             "dynamodb": { "enabled": true }
           },
-          "credentials": [
+          "bindings": [
             {
-              "awsAccessKeyId": "{{AccessKeyId}}",
-              "awsSecretAccessKey": "{{Secret}}",
+              "aws": {
+                "accessKeyId": "{{AccessKeyId}}",
+                "secretAccessKey": "{{Secret}}"
+              },
               "azure": {
-                "cosmos": {
-                  "endpoint":     "{{CosmosEndpoint}}",
-                  "primaryKey":   "{{CosmosKey}}",
-                  "databaseName": "{{DatabaseName}}"
+                "dynamodb": {
+                  "kind": "cosmos",
+                  "target": {
+                    "endpoint":     "{{CosmosEndpoint}}",
+                    "databaseName": "{{DatabaseName}}"
+                  },
+                  "auth": {
+                    "mode": "sharedKey",
+                    "key":  "{{CosmosKey}}"
+                  }
                 }
               }
             }

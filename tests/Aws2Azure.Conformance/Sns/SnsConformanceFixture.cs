@@ -30,15 +30,23 @@ public sealed class SnsConformanceFixture : IDisposable
         var config = $$"""
         {
           "services": { "sns": { "enabled": true } },
-          "credentials": [
+          "bindings": [
             {
-              "awsAccessKeyId": "{{AccessKeyId}}",
-              "awsSecretAccessKey": "{{Secret}}",
+              "aws": {
+                "accessKeyId": "{{AccessKeyId}}",
+                "secretAccessKey": "{{Secret}}"
+              },
               "azure": {
-                "serviceBusTopics": {
-                  "namespace":  "conformancedummy",
-                  "sasKeyName": "RootManageSharedAccessKey",
-                  "sasKey":     "ZHVtbXlrZXlmb3Jjb25mb3JtYW5jZXRlc3Rpbmc="
+                "sns": {
+                  "kind": "serviceBusTopics",
+                  "target": {
+                    "namespace": "conformancedummy"
+                  },
+                  "auth": {
+                    "mode": "sas",
+                    "keyName": "RootManageSharedAccessKey",
+                    "key":     "ZHVtbXlrZXlmb3Jjb25mb3JtYW5jZXRlc3Rpbmc="
+                  }
                 }
               }
             }

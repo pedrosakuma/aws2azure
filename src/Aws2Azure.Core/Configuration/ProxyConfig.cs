@@ -593,15 +593,3 @@ public sealed class KinesisStreamSettings
     /// </summary>
     public int? PartitionCount { get; set; }
 }
-
-/// <summary>
-/// System.Text.Json source-generated context for <see cref="ProxyConfig"/>.
-/// </summary>
-[JsonSourceGenerationOptions(
-    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
-    PropertyNameCaseInsensitive = true,
-    AllowTrailingCommas = true)]
-[JsonSerializable(typeof(ProxyConfig))]
-public sealed partial class ProxyConfigJsonContext : JsonSerializerContext
-{
-}

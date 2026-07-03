@@ -63,18 +63,26 @@ public sealed class SqsPerfFixture : IAsyncLifetime
                   "listen": "http://127.0.0.1:0",
                   "services": {
                     "s3":  { "enabled": false },
-                    "sqs": { "azureService": "servicebus", "namespace": "{{ServiceBusEmulatorFixture.Namespace}}" }
+                    "sqs": { "enabled": true }
                   },
-                  "credentials": [
+                  "bindings": [
                     {
-                      "awsAccessKeyId": "{{AwsAccessKey}}",
-                      "awsSecretAccessKey": "{{AwsSecret}}",
+                      "aws": {
+                        "accessKeyId": "{{AwsAccessKey}}",
+                        "secretAccessKey": "{{AwsSecret}}"
+                      },
                       "azure": {
-                        "serviceBus": {
-                          "namespace": "{{amqpUrl}}",
-                          "sasKeyName": "{{ServiceBusEmulatorFixture.SasKeyName}}",
-                          "sasKey": "{{ServiceBusEmulatorFixture.WellKnownSasKey}}",
-                          "transport": "Amqp"
+                        "sqs": {
+                          "kind": "serviceBus",
+                          "target": {
+                            "namespace": "{{amqpUrl}}",
+                            "transport": "Amqp"
+                          },
+                          "auth": {
+                            "mode": "sas",
+                            "keyName": "{{ServiceBusEmulatorFixture.SasKeyName}}",
+                            "key": "{{ServiceBusEmulatorFixture.WellKnownSasKey}}"
+                          }
                         }
                       }
                     }

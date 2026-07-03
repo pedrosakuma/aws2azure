@@ -45,7 +45,7 @@ decisions below; uphold them with that intent.
 | Process model | Single binary; services multiplexed by Host header / path |
 | Azure integration | **Direct REST calls — no Azure SDK** dependency |
 | AWS integration | Wire protocol only — **no AWS SDK** dependency |
-| Credential mapping | Static config: `AWS access_key_id → Azure credentials per service` |
+| Credential mapping | Binding-centric config: `bindings[]` map one `aws` identity → `azure.<svc>` backends, each splitting `kind` + `target` (topology) + `auth` (secret) |
 | Gap docs | YAML per operation → generated Markdown site (first-class artifact) |
 | Reused code | **None** — built from scratch (s3proxy, MinIO, etc. are reference only, never imported) |
 | DI | Manual composition or source-gen-friendly subset; no reflection-based DI |
@@ -137,12 +137,16 @@ bounded. A `SyncThrowingStream`-backed unit test guards each large-response writ
 ## Configuration
 
 - POCOs + `JsonSerializerContext` source-gen. JSON + env-var overrides.
-- Shape (see issue #3 for full schema):
+- Shape (see issue #3 and #508 for full schema):
   ```jsonc
   {
-    "services":   { "s3": { "enabled": true } },
-    "credentials":[ { "awsAccessKeyId": "AKIA...", "awsSecretAccessKey": "...",
-                      "azure": { "blob": { "accountName": "...", "accountKey": "..." } } } ]
+    "services": { "s3": { "enabled": true } },
+    "bindings": [ {
+      "aws":   { "accessKeyId": "AKIA...", "secretAccessKey": "..." },
+      "azure": { "s3": { "kind": "blob",
+                         "target": { "accountName": "..." },
+                         "auth":   { "mode": "sharedKey", "key": "..." } } }
+    } ]
   }
   ```
 - `ICredentialResolver` exposes:

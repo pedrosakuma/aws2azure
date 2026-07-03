@@ -31,15 +31,23 @@ public sealed class SqsConformanceFixture : IDisposable
         var config = $$"""
         {
           "services": { "sqs": { "enabled": true } },
-          "credentials": [
+          "bindings": [
             {
-              "awsAccessKeyId": "{{AccessKeyId}}",
-              "awsSecretAccessKey": "{{Secret}}",
+              "aws": {
+                "accessKeyId": "{{AccessKeyId}}",
+                "secretAccessKey": "{{Secret}}"
+              },
               "azure": {
-                "serviceBus": {
-                  "namespace":  "conformancedummy",
-                  "sasKeyName": "RootManageSharedAccessKey",
-                  "sasKey":     "ZHVtbXlrZXlmb3Jjb25mb3JtYW5jZXRlc3Rpbmc="
+                "sqs": {
+                  "kind": "serviceBus",
+                  "target": {
+                    "namespace": "conformancedummy"
+                  },
+                  "auth": {
+                    "mode": "sas",
+                    "keyName": "RootManageSharedAccessKey",
+                    "key":     "ZHVtbXlrZXlmb3Jjb25mb3JtYW5jZXRlc3Rpbmc="
+                  }
                 }
               }
             }

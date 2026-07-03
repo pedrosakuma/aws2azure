@@ -331,7 +331,10 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         var services = new StringBuilder();
         var azure = new StringBuilder();
         AppendService(services, "s3", BlobConfigured);
-        AppendService(services, "dynamodb", CosmosConfigured || CosmosWorkloadIdentityConfigured);
+        var dynamoDbServiceOptions = (CosmosConfigured || CosmosWorkloadIdentityConfigured)
+            ? ", \"cosmosBinaryResponses\": true, \"cosmosBinaryRequests\": true, \"enableGlobalSecondaryIndexQueries\": true, \"enableLocalSecondaryIndexNumericOrdering\": true"
+            : string.Empty;
+        AppendService(services, "dynamodb", CosmosConfigured || CosmosWorkloadIdentityConfigured, dynamoDbServiceOptions);
         AppendService(services, "sqs", ServiceBusConfigured);
         AppendService(services, "kinesis", EventHubsConfigured || EventHubsWorkloadIdentityConfigured);
 
@@ -339,30 +342,30 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         {
             var endpoint = string.IsNullOrWhiteSpace(_blobEndpoint)
                 ? string.Empty
-                : $$""", "serviceEndpoint": "{{JsonEscape(_blobEndpoint!)}}" """;
+                : $$""", "endpoint": "{{JsonEscape(_blobEndpoint!)}}" """;
             AppendAzure(azure, $$"""
-                "blob": { "accountName": "{{JsonEscape(_blobAccount!)}}", "accountKey": "{{JsonEscape(_blobKey!)}}"{{endpoint}} }
+                "s3": { "kind": "blob", "target": { "accountName": "{{JsonEscape(_blobAccount!)}}"{{endpoint}} }, "auth": { "mode": "sharedKey", "key": "{{JsonEscape(_blobKey!)}}" } }
                 """);
         }
 
         if (CosmosConfigured)
         {
             AppendAzure(azure, $$"""
-                "cosmos": { "endpoint": "{{JsonEscape(_cosmosEndpoint!)}}", "primaryKey": "{{JsonEscape(_cosmosKey!)}}", "databaseName": "{{JsonEscape(_cosmosDatabase!)}}" }
+                "dynamodb": { "kind": "cosmos", "target": { "endpoint": "{{JsonEscape(_cosmosEndpoint!)}}", "databaseName": "{{JsonEscape(_cosmosDatabase!)}}" }, "auth": { "mode": "sharedKey", "key": "{{JsonEscape(_cosmosKey!)}}" } }
                 """);
         }
 
         if (ServiceBusConfigured)
         {
             AppendAzure(azure, $$"""
-                "serviceBus": { "namespace": "{{JsonEscape(_sbNamespace!)}}", "sasKeyName": "{{JsonEscape(_sbSasKeyName!)}}", "sasKey": "{{JsonEscape(_sbSasKey!)}}", "transport": "Rest" }
+                "sqs": { "kind": "serviceBus", "target": { "namespace": "{{JsonEscape(_sbNamespace!)}}", "transport": "Rest" }, "auth": { "mode": "sas", "keyName": "{{JsonEscape(_sbSasKeyName!)}}", "key": "{{JsonEscape(_sbSasKey!)}}" } }
                 """);
         }
 
         if (EventHubsConfigured)
         {
             AppendAzure(azure, $$"""
-                "eventHubs": { "namespace": "{{JsonEscape(_ehNamespace!)}}", "sasKeyName": "{{JsonEscape(_ehSasKeyName!)}}", "sasKey": "{{JsonEscape(_ehSasKey!)}}" }
+                "kinesis": { "kind": "eventHubs", "target": { "namespace": "{{JsonEscape(_ehNamespace!)}}" }, "auth": { "mode": "sas", "keyName": "{{JsonEscape(_ehSasKeyName!)}}", "key": "{{JsonEscape(_ehSasKey!)}}" } }
                 """);
         }
 
@@ -372,14 +375,14 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         if (CosmosWorkloadIdentityConfigured)
         {
             AppendAzure(wiAzure, $$"""
-                "cosmos": { "endpoint": "{{JsonEscape(_cosmosEndpoint!)}}", "databaseName": "{{JsonEscape(_cosmosDatabase!)}}", "authMode": "workloadIdentity" }
+                "dynamodb": { "kind": "cosmos", "target": { "endpoint": "{{JsonEscape(_cosmosEndpoint!)}}", "databaseName": "{{JsonEscape(_cosmosDatabase!)}}" }, "auth": { "mode": "workloadIdentity" } }
                 """);
         }
 
         if (EventHubsWorkloadIdentityConfigured)
         {
             AppendAzure(wiAzure, $$"""
-                "eventHubs": { "namespace": "{{JsonEscape(_ehNamespace!)}}", "authMode": "workloadIdentity" }
+                "kinesis": { "kind": "eventHubs", "target": { "namespace": "{{JsonEscape(_ehNamespace!)}}" }, "auth": { "mode": "workloadIdentity" } }
                 """);
         }
 
@@ -394,25 +397,12 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
             AppendCredential(credentials, WiAwsAccessKey, WiAwsSecret, wiAzure.ToString());
         }
 
-        // Exercise BOTH opt-in CosmosBinary paths end-to-end against real Azure
-        // Cosmos DB (the CI Linux emulator neither emits nor reliably accepts
-        // CosmosBinary): responses (#268/#321) drive the fused GetItem reader,
-        // and requests (#336/#337) send 0x80 write bodies the gateway must parse
-        // + index. Both are response-/request-only opt-ins, default-off in prod.
-        // Also opt into Global Secondary Index access (#461): GSI/LSI cross-
-        // partition ORDER BY, pagination and eventual consistency only manifest
-        // against real Cosmos, so the nightly proxy enables the flag to let the
-        // secondary-index validation suite exercise the live query machinery.
-        var dynamoDbBlock = (CosmosConfigured || CosmosWorkloadIdentityConfigured)
-            ? "  \"dynamodb\": { \"cosmosBinaryResponses\": true, \"cosmosBinaryRequests\": true, \"enableGlobalSecondaryIndexQueries\": true, \"enableLocalSecondaryIndexNumericOrdering\": true },\n"
-            : string.Empty;
-
         return $$"""
             {
               "services": {
             {{services}}
               },
-            {{dynamoDbBlock}}  "credentials": [
+              "bindings": [
             {{credentials}}
               ]
             }
@@ -428,8 +418,10 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
 
         sb.Append($$"""
                 {
-                  "awsAccessKeyId": "{{accessKey}}",
-                  "awsSecretAccessKey": "{{secret}}",
+                  "aws": {
+                    "accessKeyId": "{{accessKey}}",
+                    "secretAccessKey": "{{secret}}"
+                  },
                   "azure": {
             {{azureBlock}}
                   }
@@ -437,14 +429,14 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
             """);
     }
 
-    private static void AppendService(StringBuilder sb, string name, bool enabled)
+    private static void AppendService(StringBuilder sb, string name, bool enabled, string extraProperties = "")
     {
         if (sb.Length > 0)
         {
             sb.Append(",\n");
         }
 
-        sb.Append($"    \"{name}\": {{ \"enabled\": {(enabled ? "true" : "false")} }}");
+        sb.Append($"    \"{name}\": {{ \"enabled\": {(enabled ? "true" : "false")}{extraProperties} }}");
     }
 
     private static void AppendAzure(StringBuilder sb, string block)
