@@ -124,4 +124,37 @@ public class ProxyConfigJsonTests
         Assert.Equal("user-mi-client", identity.ClientId);
         Assert.Equal("prod-mi", Assert.Single(config.Credentials).Azure.Cosmos!.Identity);
     }
+
+    [Theory]
+    // Blob is shared-key only.
+    [InlineData("s3", "blob", "clientSecret")]
+    [InlineData("s3", "blob", "sas")]
+    // Service Bus queues are SAS only.
+    [InlineData("sqs", "serviceBus", "sharedKey")]
+    [InlineData("sqs", "serviceBus", "managedIdentity")]
+    // Cosmos is shared-key or AAD, never SAS.
+    [InlineData("dynamodb", "cosmos", "sas")]
+    // Event Hubs is SAS or AAD, never shared-key.
+    [InlineData("kinesis", "eventHubs", "sharedKey")]
+    // Key Vault is AAD only.
+    [InlineData("secretsmanager", "keyVault", "sharedKey")]
+    [InlineData("secretsmanager", "keyVault", "sas")]
+    public void Rejects_auth_mode_not_valid_for_backend(string service, string kind, string mode)
+    {
+        var json = $$"""
+        {
+          "bindings": [
+            {
+              "aws": { "accessKeyId": "AKIA", "secretAccessKey": "secret" },
+              "azure": {
+                "{{service}}": { "kind": "{{kind}}", "target": {}, "auth": { "mode": "{{mode}}" } }
+              }
+            }
+          ]
+        }
+        """;
+
+        var ex = Assert.Throws<ProxyConfigException>(() => Translate(json));
+        Assert.Contains($"bindings[0].azure.{service}.auth.mode", ex.Message);
+    }
 }

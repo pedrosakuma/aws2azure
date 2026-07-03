@@ -88,6 +88,7 @@ public class ProxyConfigLoaderTests : IDisposable
             ["AWS2AZURE__BINDINGS__0__AWS__SECRETACCESSKEY"]        = "secret-new",
             ["AWS2AZURE__BINDINGS__0__AZURE__SQS__KIND"]            = "serviceBus",
             ["AWS2AZURE__BINDINGS__0__AZURE__SQS__TARGET__NAMESPACE"] = "ns",
+            ["AWS2AZURE__BINDINGS__0__AZURE__SQS__AUTH__MODE"]      = "sas",
             ["AWS2AZURE__BINDINGS__0__AZURE__SQS__AUTH__KEYNAME"]   = "RootManageSharedAccessKey",
             ["AWS2AZURE__BINDINGS__0__AZURE__SQS__AUTH__KEY"]       = "sb-key",
         };

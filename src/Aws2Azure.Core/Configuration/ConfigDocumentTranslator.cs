@@ -126,9 +126,32 @@ public static class ConfigDocumentTranslator
         return entry;
     }
 
+    // Which auth.mode values each backend accepts. Enforced up front so a mode that
+    // is meaningless for the backend (e.g. clientSecret on Blob, sharedKey on Event
+    // Hubs) is rejected at startup instead of being silently coerced into key/SAS
+    // auth once the resolved model drops the AzureAuthKind discriminator.
+    private static readonly AzureAuthKind[] KeyOnly = { AzureAuthKind.SharedKey };
+    private static readonly AzureAuthKind[] SasOnly = { AzureAuthKind.Sas };
+    private static readonly AzureAuthKind[] KeyOrAad =
+    {
+        AzureAuthKind.SharedKey, AzureAuthKind.ManagedIdentity, AzureAuthKind.ClientSecret,
+        AzureAuthKind.WorkloadIdentity, AzureAuthKind.Reference,
+    };
+    private static readonly AzureAuthKind[] SasOrAad =
+    {
+        AzureAuthKind.Sas, AzureAuthKind.ManagedIdentity, AzureAuthKind.ClientSecret,
+        AzureAuthKind.WorkloadIdentity, AzureAuthKind.Reference,
+    };
+    private static readonly AzureAuthKind[] AadOnly =
+    {
+        AzureAuthKind.ManagedIdentity, AzureAuthKind.ClientSecret,
+        AzureAuthKind.WorkloadIdentity, AzureAuthKind.Reference,
+    };
+
     private static BlobCredentials TranslateBlob(AzureBackendConfig backend, string path)
     {
         RequireKind(backend, path, "blob");
+        RequireMode(backend.Auth, path, KeyOnly);
         return new BlobCredentials
         {
             AccountName = backend.Target.AccountName ?? string.Empty,
@@ -140,6 +163,7 @@ public static class ConfigDocumentTranslator
     private static ServiceBusCredentials TranslateServiceBus(AzureBackendConfig backend, string path)
     {
         RequireKind(backend, path, "serviceBus");
+        RequireMode(backend.Auth, path, SasOnly);
         return new ServiceBusCredentials
         {
             Namespace = backend.Target.Namespace ?? string.Empty,
@@ -153,6 +177,7 @@ public static class ConfigDocumentTranslator
     private static CosmosCredentials TranslateCosmos(AzureBackendConfig backend, string path)
     {
         RequireKind(backend, path, "cosmos");
+        RequireMode(backend.Auth, path, KeyOrAad);
         var cosmos = new CosmosCredentials
         {
             Endpoint = backend.Target.Endpoint ?? string.Empty,
@@ -169,6 +194,7 @@ public static class ConfigDocumentTranslator
         switch (kind)
         {
             case "servicebustopics":
+                RequireMode(backend.Auth, path, SasOrAad);
                 var topics = new ServiceBusTopicsCredentials
                 {
                     Namespace = backend.Target.Namespace ?? string.Empty,
@@ -182,6 +208,7 @@ public static class ConfigDocumentTranslator
                 azure.ServiceBusTopics = topics;
                 return;
             case "eventgrid":
+                RequireMode(backend.Auth, path, KeyOrAad);
                 var grid = new EventGridCredentials
                 {
                     Endpoint = backend.Target.Endpoint ?? string.Empty,
@@ -199,6 +226,7 @@ public static class ConfigDocumentTranslator
     private static EventHubsCredentials TranslateEventHubs(AzureBackendConfig backend, string path)
     {
         RequireKind(backend, path, "eventHubs");
+        RequireMode(backend.Auth, path, SasOrAad);
         var eventHubs = new EventHubsCredentials
         {
             Namespace = backend.Target.Namespace ?? string.Empty,
@@ -215,6 +243,7 @@ public static class ConfigDocumentTranslator
     private static KeyVaultCredentials TranslateKeyVault(AzureBackendConfig backend, string path)
     {
         RequireKind(backend, path, "keyVault");
+        RequireMode(backend.Auth, path, AadOnly);
         var keyVault = new KeyVaultCredentials
         {
             VaultUrl = backend.Target.VaultUrl ?? string.Empty,
@@ -280,6 +309,35 @@ public static class ConfigDocumentTranslator
             throw Invalid(path, backend.Kind, expected);
         }
     }
+
+    private static void RequireMode(AzureAuthConfig auth, string path, AzureAuthKind[] allowed)
+    {
+        if (Array.IndexOf(allowed, auth.Mode) >= 0)
+        {
+            return;
+        }
+
+        var expected = new string[allowed.Length];
+        for (var i = 0; i < allowed.Length; i++)
+        {
+            expected[i] = ModeName(allowed[i]);
+        }
+
+        throw new ProxyConfigException(
+            $"{path}.auth.mode '{ModeName(auth.Mode)}' is not valid for this backend; expected {string.Join(" or ", expected)}.");
+    }
+
+    /// <summary>camelCase JSON spelling of an <see cref="AzureAuthKind"/>, for error messages.</summary>
+    private static string ModeName(AzureAuthKind mode) => mode switch
+    {
+        AzureAuthKind.SharedKey => "sharedKey",
+        AzureAuthKind.Sas => "sas",
+        AzureAuthKind.ManagedIdentity => "managedIdentity",
+        AzureAuthKind.ClientSecret => "clientSecret",
+        AzureAuthKind.WorkloadIdentity => "workloadIdentity",
+        AzureAuthKind.Reference => "reference",
+        _ => mode.ToString(),
+    };
 
     private static string NormalizeKind(string kind, string path)
     {
