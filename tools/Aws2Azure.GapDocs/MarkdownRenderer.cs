@@ -7,7 +7,7 @@ namespace Aws2Azure.GapDocs;
 
 public static class MarkdownRenderer
 {
-    public static void Render(IReadOnlyList<OperationDoc> docs, string siteRoot)
+    public static void Render(IReadOnlyList<OperationDoc> docs, IReadOnlyList<ServiceDesignDoc> designDocs, string siteRoot)
     {
         Directory.CreateDirectory(siteRoot);
 
@@ -16,32 +16,46 @@ public static class MarkdownRenderer
             .OrderBy(g => g.Key, System.StringComparer.Ordinal)
             .ToList();
 
-        WriteIndex(byService, siteRoot);
+        WriteIndex(byService, designDocs, siteRoot);
         WriteCoverage(byService, siteRoot);
         WriteDivergences(byService, siteRoot);
+        WriteDesignGaps(designDocs, siteRoot);
         foreach (var group in byService)
         {
             WriteServicePage(group.Key, group.OrderBy(o => o.Operation, System.StringComparer.Ordinal).ToList(), siteRoot);
         }
     }
 
-    private static void WriteIndex(IList<IGrouping<string, OperationDoc>> byService, string siteRoot)
+    private static void WriteIndex(IList<IGrouping<string, OperationDoc>> byService, IReadOnlyList<ServiceDesignDoc> designDocs, string siteRoot)
     {
+        var designByService = designDocs
+            .GroupBy(d => d.Service.ToLowerInvariant())
+            .ToDictionary(g => g.Key, g => g.SelectMany(d => d.DesignGaps).Count(), System.StringComparer.OrdinalIgnoreCase);
+
         var sb = new StringBuilder();
         sb.AppendLine("# aws2azure — gap documentation");
         sb.AppendLine();
         sb.AppendLine("Authoritative inventory of which AWS operations the proxy translates, with the Azure mapping and the known behavioural gaps.");
         sb.AppendLine();
+        sb.AppendLine("Start with the [coverage matrix](coverage.md) for a one-screen overview, then drill");
+        sb.AppendLine("into a service for per-operation detail. Cross-cutting, architectural limitations");
+        sb.AppendLine("that do not map to a single operation live in [design gaps](design-gaps.md).");
+        sb.AppendLine();
         sb.AppendLine("## Services");
         sb.AppendLine();
         foreach (var group in byService)
         {
-            sb.AppendLine($"- [{group.Key}]({group.Key}.md) — {group.Count()} operation(s)");
+            var extra = designByService.TryGetValue(group.Key, out var n) && n > 0
+                ? $", {n} design gap(s)"
+                : string.Empty;
+            sb.AppendLine($"- [{group.Key}]({group.Key}.md) — {group.Count()} operation(s){extra}");
         }
         sb.AppendLine();
-        sb.AppendLine("See [coverage matrix](coverage.md) for a one-screen overview.");
+        sb.AppendLine("## Cross-cutting");
         sb.AppendLine();
-        sb.AppendLine("See [real-Azure conformance & divergences](divergences.md) for verification state.");
+        sb.AppendLine("- [Coverage matrix](coverage.md) — every operation and status on one screen.");
+        sb.AppendLine("- [Design gaps](design-gaps.md) — architectural limitations spanning operations.");
+        sb.AppendLine("- [Real-Azure conformance & divergences](divergences.md) — verification state.");
         File.WriteAllText(Path.Combine(siteRoot, "index.md"), sb.ToString());
     }
 
@@ -110,6 +124,91 @@ public static class MarkdownRenderer
         }
         File.WriteAllText(Path.Combine(siteRoot, service + ".md"), sb.ToString());
     }
+
+    // Cross-cutting design gaps: architectural limitations that span operations
+    // (consistency model, transaction scope, absent control-plane surfaces...).
+    // Rendered as its own page so the per-operation matrix stays focused and the
+    // reader can drill in only when they need the "why can't I do X at all" story.
+    private static void WriteDesignGaps(IReadOnlyList<ServiceDesignDoc> designDocs, string siteRoot)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("# Design gaps");
+        sb.AppendLine();
+        sb.AppendLine("Architectural limitations that do **not** map to a single operation — the");
+        sb.AppendLine("consistency model, transaction scope, and control-plane surfaces that differ");
+        sb.AppendLine("between the AWS service and its Azure target. Per-operation behaviour lives on");
+        sb.AppendLine("each [service page](index.md); this page is the cross-cutting story.");
+        sb.AppendLine();
+        sb.AppendLine("Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned");
+        sb.AppendLine();
+
+        var ordered = designDocs
+            .OrderBy(d => d.Service.ToLowerInvariant(), System.StringComparer.Ordinal)
+            .ToList();
+
+        if (ordered.Count == 0)
+        {
+            sb.AppendLine("_No design gaps documented yet._");
+            File.WriteAllText(Path.Combine(siteRoot, "design-gaps.md"), sb.ToString());
+            return;
+        }
+
+        sb.AppendLine("## Summary");
+        sb.AppendLine();
+        sb.AppendLine("| Service | Area | Status |");
+        sb.AppendLine("|---|---|---|");
+        foreach (var doc in ordered)
+        {
+            foreach (var g in doc.DesignGaps)
+            {
+                sb.AppendLine($"| [{doc.Service.ToLowerInvariant()}](#{doc.Service.ToLowerInvariant()}) | {Esc(g.Area)} | {DesignBadge(g.Status)} |");
+            }
+        }
+        sb.AppendLine();
+
+        foreach (var doc in ordered)
+        {
+            sb.AppendLine($"## {doc.Service.ToLowerInvariant()}");
+            sb.AppendLine();
+            foreach (var g in doc.DesignGaps)
+            {
+                sb.AppendLine($"### {Esc(g.Area)}");
+                sb.AppendLine();
+                sb.AppendLine($"- **Status:** {DesignBadge(g.Status)}");
+                sb.AppendLine();
+                sb.AppendLine(g.Summary);
+                sb.AppendLine();
+                if (!string.IsNullOrWhiteSpace(g.Impact))
+                {
+                    sb.AppendLine($"**Impact.** {g.Impact}");
+                    sb.AppendLine();
+                }
+                if (!string.IsNullOrWhiteSpace(g.Workaround))
+                {
+                    sb.AppendLine($"**Workaround.** {g.Workaround}");
+                    sb.AppendLine();
+                }
+                if (g.References.Count > 0)
+                {
+                    sb.AppendLine("References:");
+                    sb.AppendLine();
+                    foreach (var r in g.References) sb.AppendLine($"- <{r}>");
+                    sb.AppendLine();
+                }
+            }
+        }
+
+        File.WriteAllText(Path.Combine(siteRoot, "design-gaps.md"), sb.ToString());
+    }
+
+    private static string DesignBadge(string status) => status.ToLowerInvariant() switch
+    {
+        "by_design" => "🔵 by design",
+        "partial" => "🟡 partial",
+        "unsupported" => "⛔ unsupported",
+        "planned" => "🗓️ planned",
+        _ => status
+    };
 
     private static string StatusBadge(string status) => status.ToLowerInvariant() switch
     {

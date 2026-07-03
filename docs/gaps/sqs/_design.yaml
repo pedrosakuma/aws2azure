@@ -1,0 +1,75 @@
+service: sqs
+design_gaps:
+  - area: FIFO ordering requires the AMQP transport
+    status: partial
+    summary: >-
+      Strict per-MessageGroupId ordering is implemented only when a queue is
+      configured with transport: Amqp — the receive path acquires a
+      broker-assigned Service Bus session and holds the session lock so a
+      group's in-flight messages stay pinned to one consumer. The REST
+      transport cannot express session-receive and therefore does not provide
+      strict per-group ordering (it surfaces MessageGroupId but does not block
+      concurrent delivery of the same group).
+    impact: >-
+      Workloads that need SQS FIFO guarantees must use the AMQP transport. FIFO
+      settle is connection-affine: an in-flight FIFO message cannot be settled
+      from a different live connection while its session lock is held.
+    workaround: >-
+      Set transport: Amqp for .fifo queues; keep the receive-then-delete cycle
+      on the same connection.
+    references:
+      - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-amqp-protocol-guide
+  - area: No AWS region / account namespace
+    status: by_design
+    summary: >-
+      The proxy is not backed by an AWS account, so queue ARNs are synthesised
+      with a placeholder account id (000000000000) and the region taken from
+      the SigV4 credential scope. Dead-letter source ARNs use us-east-1 as a
+      placeholder.
+    impact: >-
+      Applications that parse the account id or region out of a queue ARN, or
+      that assert cross-account/cross-region topology, will see placeholder
+      values rather than real AWS identifiers.
+    workaround: >-
+      Do not depend on the account/region portion of returned ARNs. Region
+      awareness is tracked as opt-in future work.
+    references:
+      - https://github.com/pedrosakuma/aws2azure/issues/267
+  - area: PurgeQueue is best-effort emulation
+    status: by_design
+    summary: >-
+      Service Bus has no native purge. The proxy emulates it by draining
+      peek-locked messages and deleting them within a bounded 60s budget, so
+      the queue is best-effort empty rather than guaranteed empty at the end of
+      the call.
+    impact: >-
+      Under sustained high producer rates the drain may not keep up, so a purge
+      can leave residual messages — unlike the SQS contract, which guarantees
+      all messages enqueued at the time of the call are deleted.
+    workaround: >-
+      Pause producers before purging when a hard empty is required.
+  - area: Queue lifecycle eventual-consistency
+    status: by_design
+    summary: >-
+      Service Bus deletes queues synchronously, whereas SQS may take up to 60s
+      of eventual consistency and returns QueueDeletedRecently on immediate
+      re-create. The proxy does not currently synthesise QueueDeletedRecently.
+    impact: >-
+      Delete-then-recreate-within-seconds patterns that expect the AWS
+      eventual-consistency error will instead succeed immediately.
+    workaround: >-
+      Do not rely on QueueDeletedRecently timing behaviour.
+  - area: Transport-dependent capability differences
+    status: by_design
+    summary: >-
+      REST and AMQP transports differ beyond FIFO: receipt-handle formats,
+      VisibilityTimeout=0 immediate release (AMQP only, via Abandon), per-entry
+      partial-failure granularity on batch sends (real on AMQP, coarser on
+      REST), and dead-letter attribution (AMQP only).
+    impact: >-
+      The same SQS operation can behave differently depending on the queue's
+      configured transport; receipt handles are not interchangeable across
+      transports.
+    workaround: >-
+      Choose the transport per queue based on the semantics required and keep
+      receive/settle on the same transport.

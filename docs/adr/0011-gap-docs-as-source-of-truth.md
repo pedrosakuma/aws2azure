@@ -18,6 +18,13 @@ Every implemented or stubbed operation has a YAML gap document under
 for operation status, sub-features, behavioural differences, references, rendered
 Markdown, and generated capability constants.
 
+Cross-cutting limitations that do not belong to any single operation — the
+consistency model, transaction scope, or absent control-plane surfaces of a
+service — are captured in an optional `docs/gaps/<service>/_design.yaml` and
+rendered into `docs/site/design-gaps.md`, so the per-operation matrix stays
+focused and the architectural story is still checked-in and validated. See
+[`docs/gaps/README.md`](../gaps/README.md) for the schema.
+
 ## Consequences
 
 - Changing operation support requires updating the YAML in the same PR as the

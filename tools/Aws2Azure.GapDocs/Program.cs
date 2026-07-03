@@ -15,21 +15,24 @@ foreach (var a in args)
 
 Console.WriteLine($"[gap-docs] loading YAMLs under {gapsRoot}");
 var docs = Loader.LoadAll(gapsRoot);
-var errors = Validator.Validate(docs);
+var designDocs = Loader.LoadDesignDocs(gapsRoot);
+var errors = new System.Collections.Generic.List<string>();
+errors.AddRange(Validator.Validate(docs));
+errors.AddRange(Validator.ValidateDesign(designDocs, docs));
 if (errors.Count > 0)
 {
     Console.Error.WriteLine($"[gap-docs] {errors.Count} validation error(s):");
     foreach (var e in errors) Console.Error.WriteLine("  - " + e);
     return 1;
 }
-Console.WriteLine($"[gap-docs] {docs.Count} operation(s) validated OK");
+Console.WriteLine($"[gap-docs] {docs.Count} operation(s) and {designDocs.Count} service design doc(s) validated OK");
 
 if (validateOnly)
 {
     return 0;
 }
 
-MarkdownRenderer.Render(docs, siteRoot);
+MarkdownRenderer.Render(docs, designDocs, siteRoot);
 Console.WriteLine($"[gap-docs] markdown written under {siteRoot}");
 CodeRenderer.Render(docs, generatedCode);
 Console.WriteLine($"[gap-docs] generated {generatedCode}");

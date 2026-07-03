@@ -1,0 +1,79 @@
+service: s3
+design_gaps:
+  - area: No IAM / ACL / bucket-policy authorization model
+    status: by_design
+    summary: >-
+      Authorization is the static AWS-key-to-Azure-credential mapping validated
+      by SigV4; there is no server-side IAM. ACLs are synthesised as
+      owner-only (non-'private' canned ACLs and x-amz-grant-* headers are
+      rejected or ignored), GetBucketPolicy / GetBucketPolicyStatus return 404
+      NoSuchBucketPolicy, and public-access-block is a no-op.
+    impact: >-
+      Fine-grained S3 access control (ACL grants, bucket policies,
+      block-public-access enforcement) is not translated. Access is entirely
+      governed by the mapped Azure Storage credential.
+    workaround: >-
+      Enforce authorization at the Azure Storage account level (RBAC, SAS,
+      network rules); do not rely on S3 ACLs or bucket policies being honoured.
+    references:
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketPolicy.html
+  - area: No server-side-encryption configuration surface
+    status: by_design
+    summary: >-
+      Azure Blob Storage encrypts at rest transparently, so there is no
+      SSE-S3 / SSE-KMS / SSE-C configuration to expose. GetBucketEncryption
+      returns 404 ServerSideEncryptionConfigurationNotFoundError and SSE request
+      headers are not honoured as distinct key material.
+    impact: >-
+      Applications that assert a specific SSE mode, customer-provided keys
+      (SSE-C), or per-bucket KMS configuration cannot drive those semantics.
+    workaround: >-
+      Configure encryption (including customer-managed keys) at the Azure
+      Storage account level.
+    references:
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketEncryption.html
+  - area: Region derived from the signed scope only
+    status: by_design
+    summary: >-
+      The proxy does not model AWS regions; region-sensitive behaviour such as
+      CreateBucket idempotency (200 in us-east-1 vs 409 elsewhere) is
+      reproduced from the SigV4 credential scope, and Azure cannot distinguish
+      'owned by someone else', so BucketAlreadyExists is always treated as
+      owned-by-you.
+    impact: >-
+      Multi-region S3 topology, location constraints, and foreign-owner bucket
+      conflicts are not represented.
+    workaround: >-
+      Treat the deployment as single-region; region awareness is tracked as
+      opt-in future work.
+    references:
+      - https://github.com/pedrosakuma/aws2azure/issues/267
+  - area: Stateless multipart upload without per-part ETag validation
+    status: by_design
+    summary: >-
+      UploadId is a stateless HMAC-bound token (no Azure call on initiate) and
+      blocks are addressed by (uploadId, PartNumber) only. Client-supplied
+      per-part ETags are not validated, so re-uploading a PartNumber with
+      different bytes commits the latest version regardless of the ETag the
+      client sends (S3 would reject with InvalidPart).
+    impact: >-
+      Workflows that overwrite a part within an upload and rely on ETag
+      rejection behave differently from S3.
+    workaround: >-
+      Do not re-upload a PartNumber with different content within one upload.
+  - area: Bucket sub-resource configs are not translated
+    status: unsupported
+    summary: >-
+      Lifecycle, replication, website hosting, event notifications, request
+      payment, and logging bucket configurations have no Blob-storage
+      equivalent in the wire-protocol path; the corresponding Get operations
+      return the S3 'not configured' shape and Put/Delete are no-ops or
+      unsupported.
+    impact: >-
+      Automated tiering/expiry, cross-region replication, static-website
+      hosting, and S3 event notifications configured via these APIs have no
+      effect.
+    workaround: >-
+      Use Azure Blob lifecycle-management policies, object replication, static
+      website, and Event Grid subscriptions configured directly on the storage
+      account.

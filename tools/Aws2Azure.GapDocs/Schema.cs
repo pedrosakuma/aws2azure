@@ -33,6 +33,34 @@ public sealed class SubFeature
     public string VerifiedRealAzure { get; set; } = string.Empty;
 }
 
+/// <summary>
+/// A cross-cutting, architectural gap for a whole service — the kind of
+/// limitation that does not map to a single operation (e.g. "no cross-partition
+/// transactions", "eventual consistency", "no server-side IAM"). Authored in
+/// <c>docs/gaps/&lt;service&gt;/_design.yaml</c> and aggregated into
+/// <c>docs/site/design-gaps.md</c>. Kept separate from <see cref="OperationDoc"/>
+/// so the per-operation coverage matrix and the design-level story each stay
+/// readable on their own (drill-down, not one overwhelming page).
+/// </summary>
+public sealed class ServiceDesignDoc
+{
+    public string Service { get; set; } = string.Empty;
+    public List<DesignGap> DesignGaps { get; set; } = new();
+
+    // Provenance — set by loader.
+    public string SourceFile { get; set; } = string.Empty;
+}
+
+public sealed class DesignGap
+{
+    public string Area { get; set; } = string.Empty;
+    public string Status { get; set; } = "by_design";
+    public string Summary { get; set; } = string.Empty;
+    public string Impact { get; set; } = string.Empty;
+    public string Workaround { get; set; } = string.Empty;
+    public List<string> References { get; set; } = new();
+}
+
 public static class StatusValues
 {
     public static readonly HashSet<string> Operation = new(System.StringComparer.OrdinalIgnoreCase)
@@ -42,5 +70,14 @@ public static class StatusValues
     public static readonly HashSet<string> SubFeature = new(System.StringComparer.OrdinalIgnoreCase)
     {
         "implemented", "partial", "unsupported"
+    };
+    // Design gaps describe intent, not implementation completeness:
+    //   by_design   — a deliberate, permanent divergence (locked decision)
+    //   partial     — partially bridged; caveats apply
+    //   unsupported — no Azure equivalent; surfaced but not translated
+    //   planned     — a known gap with intended future work
+    public static readonly HashSet<string> DesignGap = new(System.StringComparer.OrdinalIgnoreCase)
+    {
+        "by_design", "partial", "unsupported", "planned"
     };
 }
