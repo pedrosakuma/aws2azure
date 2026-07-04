@@ -32,6 +32,7 @@ Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned
 | [sns](#sns) | Two backends with different fidelity | 🔵 by design |
 | [sns](#sns) | FIFO topics are deferred | 🟡 partial |
 | [sns](#sns) | No AWS region / account namespace | 🔵 by design |
+| [sns](#sns) | serviceBusTopics and eventGrid are mutually exclusive per binding | 🗓️ planned |
 | [sns](#sns) | No IAM-backed policy surface | ⛔ unsupported |
 | [sqs](#sqs) | FIFO ordering requires the AMQP transport | 🟡 partial |
 | [sqs](#sqs) | No AWS region / account namespace | 🔵 by design |
@@ -286,6 +287,21 @@ Topic and subscription ARNs are synthesised as arn:aws:sns:{sigv4-region}:000000
 References:
 
 - <https://github.com/pedrosakuma/aws2azure/issues/267>
+
+### serviceBusTopics and eventGrid are mutually exclusive per binding
+
+- **Status:** 🗓️ planned
+
+Each binding's azure.sns block resolves via a single kind discriminator (serviceBusTopics XOR eventGrid), so a binding can never populate both ServiceBusTopicsCredentials and EventGridCredentials at once. Before the binding-centric config redesign (#508/#509), a credential entry could set both blocks independently, letting Service Bus Topics serve as SNS's primary transport while a global Event Grid destination/credentials block existed alongside it for services.sns.defaultBackend=EventGrid or as the fallback for a per-topic backend=EventGrid override that omits its own destination/key.
+
+**Impact.** A binding configured with kind=serviceBusTopics can never satisfy services.sns.defaultBackend=EventGrid, nor a per-topic backend=EventGrid override that relies on a shared/global destination — those validation errors are structurally unfixable for that binding today. Only per-topic overrides that set their own eventGridTopicEndpoint/eventGridAccessKey work when the binding's azure.sns kind is serviceBusTopics.
+
+**Workaround.** Set eventGridTopicEndpoint and eventGridAccessKey directly on every topic that needs Event Grid delivery rather than relying on services.sns.defaultBackend=EventGrid or a shared azure.sns destination.
+
+References:
+
+- <https://github.com/pedrosakuma/aws2azure/issues/511>
+- <https://github.com/pedrosakuma/aws2azure/issues/508>
 
 ### No IAM-backed policy surface
 
