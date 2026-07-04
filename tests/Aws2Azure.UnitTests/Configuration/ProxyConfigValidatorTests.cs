@@ -32,7 +32,7 @@ public class ProxyConfigValidatorTests
     public void Throws_when_no_credentials_configured()
     {
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(new ProxyConfig()));
-        Assert.Contains("credentials: at least one entry", ex.Message);
+        Assert.Contains("bindings: at least one entry", ex.Message);
     }
 
     [Fact]
@@ -78,22 +78,22 @@ public class ProxyConfigValidatorTests
         };
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-        Assert.Contains("awsAccessKeyId: required", ex.Message);
-        Assert.Contains("awsSecretAccessKey: required", ex.Message);
-        Assert.Contains("blob.accountName: required", ex.Message);
-        Assert.Contains("blob.accountKey: required", ex.Message);
-        Assert.Contains("serviceBus.namespace: required", ex.Message);
-        Assert.Contains("serviceBus.sasKeyName: required", ex.Message);
-        Assert.Contains("serviceBus.sasKey: required", ex.Message);
-        Assert.Contains("serviceBusTopics.namespace: required", ex.Message);
-        Assert.Contains("serviceBusTopics: either (sasKeyName+sasKey) OR (tenantId+clientId+clientSecret)", ex.Message);
-        Assert.Contains("cosmos.endpoint: required", ex.Message);
-        Assert.Contains("cosmos.databaseName: required", ex.Message);
-        Assert.Contains("either primaryKey OR (tenantId+clientId+clientSecret)", ex.Message);
-        Assert.Contains("eventHubs.namespace: required", ex.Message);
-        Assert.Contains("eventHubs: either (sasKeyName+sasKey) OR (tenantId+clientId+clientSecret)", ex.Message);
-        Assert.Contains("eventGrid: either endpoint OR (namespace+topicName) is required", ex.Message);
-        Assert.Contains("eventGrid: either accessKey OR (tenantId+clientId+clientSecret)", ex.Message);
+        Assert.Contains("bindings[0].aws.accessKeyId: required", ex.Message);
+        Assert.Contains("bindings[0].aws.secretAccessKey: required", ex.Message);
+        Assert.Contains("bindings[0].azure.s3.target.accountName: required", ex.Message);
+        Assert.Contains("bindings[0].azure.s3.auth.key: required", ex.Message);
+        Assert.Contains("bindings[0].azure.sqs.target.namespace: required", ex.Message);
+        Assert.Contains("bindings[0].azure.sqs.auth.keyName: required", ex.Message);
+        Assert.Contains("bindings[0].azure.sqs.auth.key: required", ex.Message);
+        Assert.Contains("bindings[0].azure.sns.target.namespace: required", ex.Message);
+        Assert.Contains("bindings[0].azure.sns: either (auth.keyName+auth.key) OR (auth.tenantId+auth.clientId+auth.clientSecret)", ex.Message);
+        Assert.Contains("bindings[0].azure.dynamodb.target.endpoint: required", ex.Message);
+        Assert.Contains("bindings[0].azure.dynamodb.target.databaseName: required", ex.Message);
+        Assert.Contains("either auth.key OR (auth.tenantId+auth.clientId+auth.clientSecret)", ex.Message);
+        Assert.Contains("bindings[0].azure.kinesis.target.namespace: required", ex.Message);
+        Assert.Contains("bindings[0].azure.kinesis: either (auth.keyName+auth.key) OR (auth.tenantId+auth.clientId+auth.clientSecret)", ex.Message);
+        Assert.Contains("bindings[0].azure.sns: either target.endpoint OR (target.namespace+target.topicName) is required", ex.Message);
+        Assert.Contains("bindings[0].azure.sns: either auth.key OR (auth.tenantId+auth.clientId+auth.clientSecret)", ex.Message);
     }
 
     [Fact]
@@ -122,7 +122,7 @@ public class ProxyConfigValidatorTests
         };
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-        Assert.Contains("eventHubs: SAS and AAD fields are mutually exclusive", ex.Message);
+        Assert.Contains("azure.kinesis: auth.keyName/auth.key and AAD fields are mutually exclusive", ex.Message);
     }
 
     [Fact]
@@ -194,7 +194,7 @@ public class ProxyConfigValidatorTests
         };
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-        Assert.Contains("AAD requires tenantId, clientId, and clientSecret together", ex.Message);
+        Assert.Contains("AAD requires auth.tenantId, auth.clientId, and auth.clientSecret together", ex.Message);
     }
 
     [Fact]
@@ -251,7 +251,7 @@ public class ProxyConfigValidatorTests
         };
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-        Assert.Contains("eventGrid: AccessKey and AAD fields are mutually exclusive", ex.Message);
+        Assert.Contains("azure.sns: auth.key and AAD fields are mutually exclusive", ex.Message);
     }
 
     [Fact]
@@ -278,7 +278,7 @@ public class ProxyConfigValidatorTests
         };
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-        Assert.Contains("eventGrid.endpoint: must use https scheme.", ex.Message);
+        Assert.Contains("azure.sns.target.endpoint: must use https scheme.", ex.Message);
     }
 
     [Fact]
@@ -390,7 +390,7 @@ public class ProxyConfigValidatorTests
         };
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-        Assert.Contains("keyVault: tenantId, clientId, and clientSecret are required together", ex.Message);
+        Assert.Contains("azure.secretsmanager: auth.tenantId, auth.clientId, and auth.clientSecret are required together for Key Vault AAD auth.", ex.Message);
     }
 
     [Fact]
@@ -425,8 +425,8 @@ public class ProxyConfigValidatorTests
         };
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-        Assert.Contains("topics.orders: EventGrid backend requires either eventGridTopicEndpoint or azure.eventGrid endpoint/(namespace+topicName)", ex.Message);
-        Assert.Contains("topics.orders: EventGrid backend requires either eventGridAccessKey or azure.eventGrid accessKey/(tenantId+clientId+clientSecret)", ex.Message);
+        Assert.Contains("azure.sns.topics.orders: EventGrid backend requires either eventGridTopicEndpoint or this binding's azure.sns to use kind=eventGrid with target.endpoint/(target.namespace+target.topicName)", ex.Message);
+        Assert.Contains("azure.sns.topics.orders: EventGrid backend requires either eventGridAccessKey or this binding's azure.sns to use kind=eventGrid with auth.key/(auth.tenantId+auth.clientId+auth.clientSecret)", ex.Message);
     }
 
     [Fact]
@@ -455,7 +455,7 @@ public class ProxyConfigValidatorTests
         };
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-        Assert.Contains("serviceBusTopics: sns.defaultBackend=EventGrid: EventGrid backend requires either eventGridTopicEndpoint or azure.eventGrid endpoint/(namespace+topicName)", ex.Message);
+        Assert.Contains("azure.sns: services.sns.defaultBackend=EventGrid: EventGrid backend requires either eventGridTopicEndpoint or this binding's azure.sns to use kind=eventGrid with target.endpoint/(target.namespace+target.topicName)", ex.Message);
     }
 
     [Fact]
@@ -484,7 +484,7 @@ public class ProxyConfigValidatorTests
         };
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-        Assert.Contains("serviceBusTopics: SAS and AAD fields are mutually exclusive", ex.Message);
+        Assert.Contains("azure.sns: auth.keyName/auth.key and AAD fields are mutually exclusive", ex.Message);
     }
 
     [Fact]
@@ -511,8 +511,8 @@ public class ProxyConfigValidatorTests
         };
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-        Assert.Contains("serviceBusTopics.namespace: required.", ex.Message);
-        Assert.Contains("serviceBusTopics: SAS auth requires both sasKeyName and sasKey.", ex.Message);
+        Assert.Contains("azure.sns.target.namespace: required.", ex.Message);
+        Assert.Contains("azure.sns: SAS auth requires both auth.keyName and auth.key.", ex.Message);
     }
 
     [Fact]
@@ -564,7 +564,7 @@ public class ProxyConfigValidatorTests
         };
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-        Assert.Contains("eventHubs: authMode 'ManagedIdentity' must not specify clientSecret.", ex.Message);
+        Assert.Contains("azure.kinesis: auth.mode 'ManagedIdentity' must not specify auth.clientSecret.", ex.Message);
     }
 
     [Fact]
@@ -704,7 +704,7 @@ public class ProxyConfigValidatorTests
         };
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-        Assert.Contains("keyVault: identity reference 'missing' was not found in azureIdentities.", ex.Message);
+        Assert.Contains("azure.secretsmanager.auth: identity reference 'missing' was not found in azureIdentities.", ex.Message);
     }
 
     [Fact]
@@ -723,7 +723,7 @@ public class ProxyConfigValidatorTests
         };
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-        Assert.Contains("keyVault: identity reference 'prod-mi' cannot be combined with inline authMode/tenantId/clientId/clientSecret fields.", ex.Message);
+        Assert.Contains("azure.secretsmanager.auth: identity reference 'prod-mi' cannot be combined with inline auth.mode/auth.tenantId/auth.clientId/auth.clientSecret fields.", ex.Message);
     }
 
     [Fact]
@@ -802,7 +802,7 @@ public class ProxyConfigValidatorTests
             };
 
             var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-            Assert.Contains("keyVault: authMode 'WorkloadIdentity' takes tenant/client/token from AZURE_* environment variables", ex.Message);
+            Assert.Contains("azure.secretsmanager: auth.mode 'WorkloadIdentity' takes tenant/client/token from AZURE_* environment variables", ex.Message);
         }
         finally
         {
@@ -824,7 +824,7 @@ public class ProxyConfigValidatorTests
             };
 
             var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-            Assert.Contains("keyVault: authMode 'WorkloadIdentity' requires the AZURE_TENANT_ID, AZURE_CLIENT_ID and AZURE_FEDERATED_TOKEN_FILE environment variables.", ex.Message);
+            Assert.Contains("azure.secretsmanager: auth.mode 'WorkloadIdentity' requires the AZURE_TENANT_ID, AZURE_CLIENT_ID and AZURE_FEDERATED_TOKEN_FILE environment variables.", ex.Message);
             Assert.Contains("AZURE_TENANT_ID", ex.Message);
             Assert.Contains("AZURE_CLIENT_ID", ex.Message);
             Assert.Contains("AZURE_FEDERATED_TOKEN_FILE", ex.Message);
@@ -848,7 +848,7 @@ public class ProxyConfigValidatorTests
         };
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-        Assert.Contains("eventHubs: authMode 'ManagedIdentity' cannot be combined with SAS auth", ex.Message);
+        Assert.Contains("azure.kinesis: auth.mode 'ManagedIdentity' cannot be combined with auth.keyName/auth.key auth", ex.Message);
     }
 
     private static (string? Tenant, string? Client, string? TokenFile) ClearAndSetWorkloadIdentityEnvironment(

@@ -157,4 +157,43 @@ public class ProxyConfigJsonTests
         var ex = Assert.Throws<ProxyConfigException>(() => Translate(json));
         Assert.Contains($"bindings[0].azure.{service}.auth.mode", ex.Message);
     }
+
+    /// <summary>
+    /// End-to-end regression for #510: <see cref="ProxyConfigValidator"/> runs
+    /// against the *resolved* <see cref="ProxyConfig"/> model, but its error
+    /// messages must still speak the on-disk binding-centric vocabulary the
+    /// user actually authored — not the old <c>credentials[i]</c>/
+    /// <c>awsAccessKeyId</c>/<c>azure.blob.accountName</c> shape. Exercises the
+    /// full <see cref="ConfigDocumentTranslator"/> + <see cref="ProxyConfigValidator"/>
+    /// pipeline (not just direct <see cref="ProxyConfig"/> construction) so a
+    /// future validator change that regresses to old-schema wording fails here.
+    /// </summary>
+    [Fact]
+    public void Validator_errors_use_new_schema_vocabulary_end_to_end()
+    {
+        const string json = """
+        {
+          "bindings": [
+            {
+              "aws": { "accessKeyId": "", "secretAccessKey": "" },
+              "azure": {
+                "s3": { "kind": "blob", "target": {}, "auth": { "mode": "sharedKey" } }
+              }
+            }
+          ]
+        }
+        """;
+
+        var config = Translate(json);
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+
+        Assert.Contains("bindings[0].aws.accessKeyId: required", ex.Message);
+        Assert.Contains("bindings[0].aws.secretAccessKey: required", ex.Message);
+        Assert.Contains("bindings[0].azure.s3.target.accountName: required", ex.Message);
+        Assert.Contains("bindings[0].azure.s3.auth.key: required", ex.Message);
+
+        Assert.DoesNotContain("credentials[0]", ex.Message);
+        Assert.DoesNotContain("awsAccessKeyId:", ex.Message);
+        Assert.DoesNotContain("blob.accountName", ex.Message);
+    }
 }

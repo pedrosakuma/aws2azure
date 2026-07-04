@@ -7,6 +7,16 @@ namespace Aws2Azure.Core.Configuration;
 /// every issue and throws <see cref="ProxyConfigException"/> with all of
 /// them so misconfigurations don't have to be fixed one at a time.
 /// </summary>
+/// <remarks>
+/// Error paths speak the on-disk binding-centric vocabulary
+/// (<c>bindings[i].aws.*</c>, <c>bindings[i].azure.&lt;service&gt;.target.*</c> /
+/// <c>.auth.*</c>) even though validation runs against the resolved
+/// <see cref="ProxyConfig"/> model, so a misconfigured field name always matches
+/// what the user actually wrote. The <c>azureIdentities</c> pool is the one
+/// exception: its entries keep the flat <c>authMode</c>/<c>tenantId</c>/
+/// <c>clientId</c>/<c>clientSecret</c> shape (it isn't a <c>target</c>/<c>auth</c>
+/// backend block), so its own validation messages use that vocabulary instead.
+/// </remarks>
 public static class ProxyConfigValidator
 {
     public static void Validate(ProxyConfig config)
@@ -17,17 +27,17 @@ public static class ProxyConfigValidator
 
         if (config.Credentials.Count == 0)
         {
-            errors.Add("credentials: at least one entry is required.");
+            errors.Add("bindings: at least one entry is required.");
         }
 
         if (!Enum.IsDefined(typeof(SnsTopicBackend), config.Sns.DefaultBackend))
         {
-            errors.Add($"sns.defaultBackend: unknown value '{(int)config.Sns.DefaultBackend}'.");
+            errors.Add($"services.sns.defaultBackend: unknown value '{(int)config.Sns.DefaultBackend}'.");
         }
 
         if (!Enum.IsDefined(typeof(ConsistencyCheckMode), config.DynamoDb.ConsistencyCheck))
         {
-            errors.Add($"dynamoDb.consistencyCheck: unknown value '{(int)config.DynamoDb.ConsistencyCheck}'.");
+            errors.Add($"services.dynamodb.consistencyCheck: unknown value '{(int)config.DynamoDb.ConsistencyCheck}'.");
         }
 
         ValidatePresignedTrustedSigningHosts(config, errors);
@@ -38,20 +48,20 @@ public static class ProxyConfigValidator
         for (var i = 0; i < config.Credentials.Count; i++)
         {
             var entry = config.Credentials[i];
-            var prefix = $"credentials[{i}]";
+            var prefix = $"bindings[{i}]";
 
             if (string.IsNullOrWhiteSpace(entry.AwsAccessKeyId))
             {
-                errors.Add($"{prefix}.awsAccessKeyId: required.");
+                errors.Add($"{prefix}.aws.accessKeyId: required.");
             }
             else if (!seen.Add(entry.AwsAccessKeyId))
             {
-                errors.Add($"{prefix}.awsAccessKeyId: duplicate value '{entry.AwsAccessKeyId}'.");
+                errors.Add($"{prefix}.aws.accessKeyId: duplicate value '{entry.AwsAccessKeyId}'.");
             }
 
             if (string.IsNullOrWhiteSpace(entry.AwsSecretAccessKey))
             {
-                errors.Add($"{prefix}.awsSecretAccessKey: required.");
+                errors.Add($"{prefix}.aws.secretAccessKey: required.");
             }
 
             ValidateAzure(entry.Azure, config.Sns, prefix + ".azure", errors);
@@ -81,37 +91,39 @@ public static class ProxyConfigValidator
     {
         if (azure.Blob is { } blob)
         {
+            var s3Prefix = prefix + ".s3";
             if (string.IsNullOrWhiteSpace(blob.AccountName))
             {
-                errors.Add($"{prefix}.blob.accountName: required.");
+                errors.Add($"{s3Prefix}.target.accountName: required.");
             }
             if (string.IsNullOrWhiteSpace(blob.AccountKey))
             {
-                errors.Add($"{prefix}.blob.accountKey: required.");
+                errors.Add($"{s3Prefix}.auth.key: required.");
             }
             if (!string.IsNullOrWhiteSpace(blob.ServiceEndpoint))
             {
-                ValidateAbsoluteUri(blob.ServiceEndpoint, $"{prefix}.blob.serviceEndpoint", errors, Uri.UriSchemeHttp, Uri.UriSchemeHttps);
+                ValidateAbsoluteUri(blob.ServiceEndpoint, $"{s3Prefix}.target.endpoint", errors, Uri.UriSchemeHttp, Uri.UriSchemeHttps);
             }
         }
 
         if (azure.ServiceBus is { } sb)
         {
+            var sqsPrefix = prefix + ".sqs";
             if (string.IsNullOrWhiteSpace(sb.Namespace))
             {
-                errors.Add($"{prefix}.serviceBus.namespace: required.");
+                errors.Add($"{sqsPrefix}.target.namespace: required.");
             }
             if (string.IsNullOrWhiteSpace(sb.SasKeyName))
             {
-                errors.Add($"{prefix}.serviceBus.sasKeyName: required.");
+                errors.Add($"{sqsPrefix}.auth.keyName: required.");
             }
             if (string.IsNullOrWhiteSpace(sb.SasKey))
             {
-                errors.Add($"{prefix}.serviceBus.sasKey: required.");
+                errors.Add($"{sqsPrefix}.auth.key: required.");
             }
             if (!Enum.IsDefined(typeof(SqsTransport), sb.Transport))
             {
-                errors.Add($"{prefix}.serviceBus.transport: unknown value '{(int)sb.Transport}'.");
+                errors.Add($"{sqsPrefix}.target.transport: unknown value '{(int)sb.Transport}'.");
             }
             if (sb.Queues is { } queues)
             {
@@ -119,17 +131,17 @@ public static class ProxyConfigValidator
                 {
                     if (string.IsNullOrWhiteSpace(name))
                     {
-                        errors.Add($"{prefix}.serviceBus.queues: queue name must be non-empty.");
+                        errors.Add($"{sqsPrefix}.queues: queue name must be non-empty.");
                         continue;
                     }
                     if (settings is null)
                     {
-                        errors.Add($"{prefix}.serviceBus.queues.{name}: entry is null.");
+                        errors.Add($"{sqsPrefix}.queues.{name}: entry is null.");
                         continue;
                     }
                     if (settings.Transport is { } t && !Enum.IsDefined(typeof(SqsTransport), t))
                     {
-                        errors.Add($"{prefix}.serviceBus.queues.{name}.transport: unknown value '{(int)t}'.");
+                        errors.Add($"{sqsPrefix}.queues.{name}.transport: unknown value '{(int)t}'.");
                     }
                 }
             }
@@ -137,18 +149,19 @@ public static class ProxyConfigValidator
 
         if (azure.ServiceBusTopics is { } serviceBusTopics)
         {
-            ValidateServiceBusTopics(serviceBusTopics, azure.EventGrid, snsSettings, prefix + ".serviceBusTopics", errors);
+            ValidateServiceBusTopics(serviceBusTopics, azure.EventGrid, snsSettings, prefix + ".sns", errors);
         }
 
         if (azure.Cosmos is { } cosmos)
         {
+            var dynamoDbPrefix = prefix + ".dynamodb";
             if (string.IsNullOrWhiteSpace(cosmos.Endpoint))
             {
-                errors.Add($"{prefix}.cosmos.endpoint: required.");
+                errors.Add($"{dynamoDbPrefix}.target.endpoint: required.");
             }
             if (string.IsNullOrWhiteSpace(cosmos.DatabaseName))
             {
-                errors.Add($"{prefix}.cosmos.databaseName: required.");
+                errors.Add($"{dynamoDbPrefix}.target.databaseName: required.");
             }
             if (cosmos.PreferredRegions is { } preferredRegions)
             {
@@ -156,19 +169,19 @@ public static class ProxyConfigValidator
                 {
                     if (string.IsNullOrWhiteSpace(preferredRegions[r]))
                     {
-                        errors.Add($"{prefix}.cosmos.preferredRegions[{r}]: region name must be non-empty.");
+                        errors.Add($"{dynamoDbPrefix}.target.preferredRegions[{r}]: region name must be non-empty.");
                     }
                 }
             }
 
             ValidateDualAuth(
-                prefix + ".cosmos",
+                dynamoDbPrefix,
                 errors,
-                sasLabel: "primaryKey",
-                authShapeLabel: "PrimaryKey",
+                sasLabel: "auth.key",
+                authShapeLabel: "auth.key",
                 hasSasPart1: !string.IsNullOrWhiteSpace(cosmos.PrimaryKey),
                 hasSasPart2: !string.IsNullOrWhiteSpace(cosmos.PrimaryKey),
-                sasRequirementMessage: "either primaryKey OR (tenantId+clientId+clientSecret) is required.",
+                sasRequirementMessage: "either auth.key OR (auth.tenantId+auth.clientId+auth.clientSecret) is required.",
                 sasPairRequirementMessage: null,
                 hasTenant: !string.IsNullOrWhiteSpace(cosmos.TenantId),
                 hasClientId: !string.IsNullOrWhiteSpace(cosmos.ClientId),
@@ -178,26 +191,27 @@ public static class ProxyConfigValidator
 
         if (azure.EventHubs is { } eh)
         {
+            var kinesisPrefix = prefix + ".kinesis";
             if (string.IsNullOrWhiteSpace(eh.Namespace))
             {
-                errors.Add($"{prefix}.eventHubs.namespace: required.");
+                errors.Add($"{kinesisPrefix}.target.namespace: required.");
             }
 
             if (!string.IsNullOrEmpty(eh.Endpoint))
             {
-                ValidateAbsoluteUri(eh.Endpoint, $"{prefix}.eventHubs.endpoint", errors,
+                ValidateAbsoluteUri(eh.Endpoint, $"{kinesisPrefix}.target.endpoint", errors,
                     Uri.UriSchemeHttp, Uri.UriSchemeHttps, "amqp", "amqps");
             }
 
             ValidateDualAuth(
-                prefix + ".eventHubs",
+                kinesisPrefix,
                 errors,
-                sasLabel: "SAS",
-                authShapeLabel: "SAS",
+                sasLabel: "auth.keyName/auth.key",
+                authShapeLabel: "auth.keyName/auth.key",
                 hasSasPart1: !string.IsNullOrWhiteSpace(eh.SasKeyName),
                 hasSasPart2: !string.IsNullOrWhiteSpace(eh.SasKey),
-                sasRequirementMessage: "either (sasKeyName+sasKey) OR (tenantId+clientId+clientSecret) is required.",
-                sasPairRequirementMessage: "SAS auth requires both sasKeyName and sasKey.",
+                sasRequirementMessage: "either (auth.keyName+auth.key) OR (auth.tenantId+auth.clientId+auth.clientSecret) is required.",
+                sasPairRequirementMessage: "SAS auth requires both auth.keyName and auth.key.",
                 hasTenant: !string.IsNullOrWhiteSpace(eh.TenantId),
                 hasClientId: !string.IsNullOrWhiteSpace(eh.ClientId),
                 hasClientSecret: !string.IsNullOrWhiteSpace(eh.ClientSecret),
@@ -209,18 +223,18 @@ public static class ProxyConfigValidator
                 {
                     if (string.IsNullOrWhiteSpace(name))
                     {
-                        errors.Add($"{prefix}.eventHubs.streams: stream name must be non-empty.");
+                        errors.Add($"{kinesisPrefix}.streams: stream name must be non-empty.");
                         continue;
                     }
                     if (settings is null)
                     {
-                        errors.Add($"{prefix}.eventHubs.streams.{name}: entry is null.");
+                        errors.Add($"{kinesisPrefix}.streams.{name}: entry is null.");
                         continue;
                     }
 
                     if (settings.PartitionCount is <= 0)
                     {
-                        errors.Add($"{prefix}.eventHubs.streams.{name}.partitionCount: must be greater than zero when set.");
+                        errors.Add($"{kinesisPrefix}.streams.{name}.partitionCount: must be greater than zero when set.");
                     }
                 }
             }
@@ -228,31 +242,32 @@ public static class ProxyConfigValidator
 
         if (azure.EventGrid is { } eventGrid)
         {
-            ValidateEventGrid(eventGrid, prefix + ".eventGrid", errors);
+            ValidateEventGrid(eventGrid, prefix + ".sns", errors);
         }
 
         if (azure.KeyVault is { } keyVault)
         {
+            var keyVaultPrefix = prefix + ".secretsmanager";
             if (string.IsNullOrWhiteSpace(keyVault.VaultUrl))
             {
-                errors.Add($"{prefix}.keyVault.vaultUrl: required.");
+                errors.Add($"{keyVaultPrefix}.target.vaultUrl: required.");
             }
             else
             {
-                ValidateAbsoluteUri(keyVault.VaultUrl, $"{prefix}.keyVault.vaultUrl", errors, Uri.UriSchemeHttps);
+                ValidateAbsoluteUri(keyVault.VaultUrl, $"{keyVaultPrefix}.target.vaultUrl", errors, Uri.UriSchemeHttps);
             }
 
             var hasTenant = !string.IsNullOrWhiteSpace(keyVault.TenantId);
             var hasClientId = !string.IsNullOrWhiteSpace(keyVault.ClientId);
             var hasClientSecret = !string.IsNullOrWhiteSpace(keyVault.ClientSecret);
             ValidateAadShape(
-                prefix + ".keyVault",
+                keyVaultPrefix,
                 keyVault.AuthMode,
                 hasTenant,
                 hasClientId,
                 hasClientSecret,
                 errors,
-                clientSecretRequirementMessage: "tenantId, clientId, and clientSecret are required together for Key Vault AAD auth.");
+                clientSecretRequirementMessage: "auth.tenantId, auth.clientId, and auth.clientSecret are required together for Key Vault AAD auth.");
         }
     }
 
@@ -265,30 +280,30 @@ public static class ProxyConfigValidator
     {
         if (string.IsNullOrWhiteSpace(credentials.Namespace))
         {
-            errors.Add($"{prefix}.namespace: required.");
+            errors.Add($"{prefix}.target.namespace: required.");
         }
 
         if (!string.IsNullOrWhiteSpace(credentials.Endpoint))
         {
-            ValidateAbsoluteUri(credentials.Endpoint, $"{prefix}.endpoint", errors,
+            ValidateAbsoluteUri(credentials.Endpoint, $"{prefix}.target.endpoint", errors,
                 Uri.UriSchemeHttp, Uri.UriSchemeHttps, "amqp", "amqps");
         }
 
         if (!string.IsNullOrWhiteSpace(credentials.ManagementEndpoint))
         {
-            ValidateAbsoluteUri(credentials.ManagementEndpoint, $"{prefix}.managementEndpoint", errors,
+            ValidateAbsoluteUri(credentials.ManagementEndpoint, $"{prefix}.target.managementEndpoint", errors,
                 Uri.UriSchemeHttp, Uri.UriSchemeHttps);
         }
 
         ValidateDualAuth(
             prefix,
             errors,
-            sasLabel: "SAS",
-            authShapeLabel: "SAS",
+            sasLabel: "auth.keyName/auth.key",
+            authShapeLabel: "auth.keyName/auth.key",
             hasSasPart1: !string.IsNullOrWhiteSpace(credentials.SasKeyName),
             hasSasPart2: !string.IsNullOrWhiteSpace(credentials.SasKey),
-            sasRequirementMessage: "either (sasKeyName+sasKey) OR (tenantId+clientId+clientSecret) is required.",
-            sasPairRequirementMessage: "SAS auth requires both sasKeyName and sasKey.",
+            sasRequirementMessage: "either (auth.keyName+auth.key) OR (auth.tenantId+auth.clientId+auth.clientSecret) is required.",
+            sasPairRequirementMessage: "SAS auth requires both auth.keyName and auth.key.",
             hasTenant: !string.IsNullOrWhiteSpace(credentials.TenantId),
             hasClientId: !string.IsNullOrWhiteSpace(credentials.ClientId),
             hasClientSecret: !string.IsNullOrWhiteSpace(credentials.ClientSecret),
@@ -296,7 +311,7 @@ public static class ProxyConfigValidator
 
         if (snsSettings.DefaultBackend == SnsTopicBackend.EventGrid)
         {
-            ValidateSnsEventGridRoute(prefix + ": sns.defaultBackend=EventGrid", eventGrid, endpointOverride: null, accessKeyOverride: null, errors);
+            ValidateSnsEventGridRoute(prefix + ": services.sns.defaultBackend=EventGrid", eventGrid, endpointOverride: null, accessKeyOverride: null, errors);
         }
 
         if (credentials.Topics is { } topics)
@@ -348,7 +363,7 @@ public static class ProxyConfigValidator
             || HasEventGridEndpoint(credentials);
         if (!hasEndpoint)
         {
-            errors.Add($"{prefix}: EventGrid backend requires either eventGridTopicEndpoint or azure.eventGrid endpoint/(namespace+topicName).");
+            errors.Add($"{prefix}: EventGrid backend requires either eventGridTopicEndpoint or this binding's azure.sns to use kind=eventGrid with target.endpoint/(target.namespace+target.topicName) set.");
         }
 
         var hasOverrideKey = !string.IsNullOrWhiteSpace(accessKeyOverride);
@@ -367,12 +382,12 @@ public static class ProxyConfigValidator
         };
         if (!hasAccessKey && !hasCompleteAad)
         {
-            errors.Add($"{prefix}: EventGrid backend requires either eventGridAccessKey or azure.eventGrid accessKey/(tenantId+clientId+clientSecret).");
+            errors.Add($"{prefix}: EventGrid backend requires either eventGridAccessKey or this binding's azure.sns to use kind=eventGrid with auth.key/(auth.tenantId+auth.clientId+auth.clientSecret) set.");
         }
 
         // A per-topic eventGridAccessKey override is pure key-auth at runtime
         // (SnsTopicRouting prefers it and EventGridPublisher short-circuits before AAD),
-        // so it is independent of the global azure.eventGrid authMode/AAD shape.
+        // so it is independent of the global azure.sns authMode/AAD shape.
         if (hasOverrideKey)
         {
             return;
@@ -383,7 +398,7 @@ public static class ProxyConfigValidator
         }
         else
         {
-            ValidateKeyShape(prefix, errors, "accessKey", mode, hasTenant || hasClientId || hasClientSecret, "AccessKey");
+            ValidateKeyShape(prefix, errors, "auth.key", mode, hasTenant || hasClientId || hasClientSecret, "auth.key");
         }
     }
 
@@ -391,30 +406,30 @@ public static class ProxyConfigValidator
     {
         if (!HasEventGridEndpoint(credentials))
         {
-            errors.Add($"{prefix}: either endpoint OR (namespace+topicName) is required.");
+            errors.Add($"{prefix}: either target.endpoint OR (target.namespace+target.topicName) is required.");
         }
         else if (!string.IsNullOrWhiteSpace(credentials.Endpoint))
         {
-            ValidateAbsoluteUri(credentials.Endpoint, $"{prefix}.endpoint", errors, Uri.UriSchemeHttps);
+            ValidateAbsoluteUri(credentials.Endpoint, $"{prefix}.target.endpoint", errors, Uri.UriSchemeHttps);
         }
 
         if (credentials.Namespace is not null && string.IsNullOrWhiteSpace(credentials.Namespace))
         {
-            errors.Add($"{prefix}.namespace: must be non-empty when set.");
+            errors.Add($"{prefix}.target.namespace: must be non-empty when set.");
         }
         if (credentials.TopicName is not null && string.IsNullOrWhiteSpace(credentials.TopicName))
         {
-            errors.Add($"{prefix}.topicName: must be non-empty when set.");
+            errors.Add($"{prefix}.target.topicName: must be non-empty when set.");
         }
 
         ValidateDualAuth(
             prefix,
             errors,
-            sasLabel: "AccessKey",
-            authShapeLabel: "accessKey",
+            sasLabel: "auth.key",
+            authShapeLabel: "auth.key",
             hasSasPart1: !string.IsNullOrWhiteSpace(credentials.AccessKey),
             hasSasPart2: !string.IsNullOrWhiteSpace(credentials.AccessKey),
-            sasRequirementMessage: "either accessKey OR (tenantId+clientId+clientSecret) is required.",
+            sasRequirementMessage: "either auth.key OR (auth.tenantId+auth.clientId+auth.clientSecret) is required.",
             sasPairRequirementMessage: null,
             hasTenant: !string.IsNullOrWhiteSpace(credentials.TenantId),
             hasClientId: !string.IsNullOrWhiteSpace(credentials.ClientId),
@@ -476,7 +491,7 @@ public static class ProxyConfigValidator
             }
             else if (hasAnyAad && !hasCompleteAad)
             {
-                errors.Add($"{prefix}: AAD requires tenantId, clientId, and clientSecret together.");
+                errors.Add($"{prefix}: AAD requires auth.tenantId, auth.clientId, and auth.clientSecret together.");
             }
             else
             {
@@ -500,13 +515,13 @@ public static class ProxyConfigValidator
     {
         if (!Enum.IsDefined(typeof(AzureAuthMode), mode))
         {
-            errors.Add($"{prefix}.authMode: unknown value '{(int)mode}'.");
+            errors.Add($"{prefix}.auth.mode: unknown value '{(int)mode}'.");
             return;
         }
 
         if (mode != AzureAuthMode.ClientSecret)
         {
-            errors.Add($"{prefix}: authMode '{mode}' cannot be combined with {authShapeLabel} auth — managed/workload identity replaces the secret, not the key.");
+            errors.Add($"{prefix}: auth.mode '{mode}' cannot be combined with {authShapeLabel} auth — managed/workload identity replaces the secret, not the key.");
         }
 
         if (hasAnyAad)
@@ -523,11 +538,15 @@ public static class ProxyConfigValidator
         bool hasClientSecret,
         List<string> errors,
         string? clientSecretRequirementMessage = null,
-        bool checkWorkloadEnvironment = true)
+        bool checkWorkloadEnvironment = true,
+        string modeField = "auth.mode",
+        string tenantField = "auth.tenantId",
+        string clientIdField = "auth.clientId",
+        string clientSecretField = "auth.clientSecret")
     {
         if (!Enum.IsDefined(typeof(AzureAuthMode), mode))
         {
-            errors.Add($"{prefix}.authMode: unknown value '{(int)mode}'.");
+            errors.Add($"{prefix}.{modeField}: unknown value '{(int)mode}'.");
             return;
         }
 
@@ -536,27 +555,27 @@ public static class ProxyConfigValidator
             case AzureAuthMode.ClientSecret:
                 if (!hasTenant || !hasClientId || !hasClientSecret)
                 {
-                    errors.Add($"{prefix}: {clientSecretRequirementMessage ?? "AAD requires tenantId, clientId, and clientSecret together."}");
+                    errors.Add($"{prefix}: {clientSecretRequirementMessage ?? $"AAD requires {tenantField}, {clientIdField}, and {clientSecretField} together."}");
                 }
                 break;
             case AzureAuthMode.ManagedIdentity:
                 if (hasClientSecret)
                 {
-                    errors.Add($"{prefix}: authMode 'ManagedIdentity' must not specify clientSecret.");
+                    errors.Add($"{prefix}: {modeField} 'ManagedIdentity' must not specify {clientSecretField}.");
                 }
                 if (hasTenant)
                 {
-                    errors.Add($"{prefix}: authMode 'ManagedIdentity' must not specify tenantId.");
+                    errors.Add($"{prefix}: {modeField} 'ManagedIdentity' must not specify {tenantField}.");
                 }
                 break;
             case AzureAuthMode.WorkloadIdentity:
                 if (hasTenant || hasClientId || hasClientSecret)
                 {
-                    errors.Add($"{prefix}: authMode 'WorkloadIdentity' takes tenant/client/token from AZURE_* environment variables; do not set tenantId/clientId/clientSecret.");
+                    errors.Add($"{prefix}: {modeField} 'WorkloadIdentity' takes tenant/client/token from AZURE_* environment variables; do not set {tenantField}/{clientIdField}/{clientSecretField}.");
                 }
                 if (checkWorkloadEnvironment)
                 {
-                    ValidateWorkloadIdentityEnvironment(prefix, errors);
+                    ValidateWorkloadIdentityEnvironment(prefix, modeField, errors);
                 }
                 break;
         }
@@ -575,7 +594,7 @@ public static class ProxyConfigValidator
         var hosts = config.S3.PresignedTrustedSigningHosts;
         for (var i = 0; i < hosts.Count; i++)
         {
-            var prefix = $"s3.presignedTrustedSigningHosts[{i}]";
+            var prefix = $"services.s3.presignedTrustedSigningHosts[{i}]";
             var host = hosts[i];
             if (string.IsNullOrWhiteSpace(host))
             {
@@ -622,6 +641,9 @@ public static class ProxyConfigValidator
                 // WorkloadIdentity environment check: an unreferenced WI identity
                 // must not fail startup on a host that simply isn't using it. The
                 // env check runs at the consuming block once the reference is applied.
+                // The pool entry itself keeps the flat authMode/tenantId/clientId/
+                // clientSecret shape (it isn't a target/auth backend block), so its
+                // messages use that vocabulary rather than auth.*.
                 ValidateAadShape(
                     $"azureIdentities.{name}",
                     identity.AuthMode,
@@ -629,19 +651,23 @@ public static class ProxyConfigValidator
                     !string.IsNullOrWhiteSpace(identity.ClientId),
                     !string.IsNullOrWhiteSpace(identity.ClientSecret),
                     errors,
-                    checkWorkloadEnvironment: false);
+                    checkWorkloadEnvironment: false,
+                    modeField: "authMode",
+                    tenantField: "tenantId",
+                    clientIdField: "clientId",
+                    clientSecretField: "clientSecret");
             }
         }
 
         for (var i = 0; i < config.Credentials.Count; i++)
         {
             var azure = config.Credentials[i].Azure;
-            var prefix = $"credentials[{i}].azure";
-            ResolveBlockIdentity(identities, azure.Cosmos, prefix + ".cosmos", errors);
-            ResolveBlockIdentity(identities, azure.EventHubs, prefix + ".eventHubs", errors);
-            ResolveBlockIdentity(identities, azure.ServiceBusTopics, prefix + ".serviceBusTopics", errors);
-            ResolveBlockIdentity(identities, azure.EventGrid, prefix + ".eventGrid", errors);
-            ResolveBlockIdentity(identities, azure.KeyVault, prefix + ".keyVault", errors);
+            var prefix = $"bindings[{i}].azure";
+            ResolveBlockIdentity(identities, azure.Cosmos, prefix + ".dynamodb", errors);
+            ResolveBlockIdentity(identities, azure.EventHubs, prefix + ".kinesis", errors);
+            ResolveBlockIdentity(identities, azure.ServiceBusTopics, prefix + ".sns", errors);
+            ResolveBlockIdentity(identities, azure.EventGrid, prefix + ".sns", errors);
+            ResolveBlockIdentity(identities, azure.KeyVault, prefix + ".secretsmanager", errors);
         }
     }
 
@@ -665,13 +691,13 @@ public static class ProxyConfigValidator
             || !string.IsNullOrWhiteSpace(block.ClientId)
             || !string.IsNullOrWhiteSpace(block.ClientSecret))
         {
-            errors.Add($"{prefix}: identity reference '{name}' cannot be combined with inline authMode/tenantId/clientId/clientSecret fields.");
+            errors.Add($"{prefix}.auth: identity reference '{name}' cannot be combined with inline auth.mode/auth.tenantId/auth.clientId/auth.clientSecret fields.");
             return;
         }
 
         if (identities is null || !identities.TryGetValue(name, out var identity) || identity is null)
         {
-            errors.Add($"{prefix}: identity reference '{name}' was not found in azureIdentities.");
+            errors.Add($"{prefix}.auth: identity reference '{name}' was not found in azureIdentities.");
             return;
         }
 
@@ -691,7 +717,7 @@ public static class ProxyConfigValidator
             && !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("AZURE_CLIENT_ID"))
             && !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE"));
 
-    private static void ValidateWorkloadIdentityEnvironment(string prefix, List<string> errors)
+    private static void ValidateWorkloadIdentityEnvironment(string prefix, string modeField, List<string> errors)
     {
         var missing = new List<string>(3);
         if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("AZURE_TENANT_ID"))) missing.Add("AZURE_TENANT_ID");
@@ -699,7 +725,7 @@ public static class ProxyConfigValidator
         if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE"))) missing.Add("AZURE_FEDERATED_TOKEN_FILE");
         if (missing.Count > 0)
         {
-            errors.Add($"{prefix}: authMode 'WorkloadIdentity' requires the AZURE_TENANT_ID, AZURE_CLIENT_ID and AZURE_FEDERATED_TOKEN_FILE environment variables. Missing: {string.Join(", ", missing)}.");
+            errors.Add($"{prefix}: {modeField} 'WorkloadIdentity' requires the AZURE_TENANT_ID, AZURE_CLIENT_ID and AZURE_FEDERATED_TOKEN_FILE environment variables. Missing: {string.Join(", ", missing)}.");
         }
     }
 
