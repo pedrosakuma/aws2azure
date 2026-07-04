@@ -205,6 +205,6 @@ public class SqsTransportConfigTests : IDisposable
         };
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-        Assert.Contains("serviceBus.transport", ex.Message);
+        Assert.Contains("azure.sqs.target.transport", ex.Message);
     }
 }
