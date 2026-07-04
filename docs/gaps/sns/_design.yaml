@@ -43,6 +43,32 @@ design_gaps:
       Do not depend on the account/region portion of returned ARNs.
     references:
       - https://github.com/pedrosakuma/aws2azure/issues/267
+  - area: serviceBusTopics and eventGrid are mutually exclusive per binding
+    status: planned
+    summary: >-
+      Each binding's azure.sns block resolves via a single kind discriminator
+      (serviceBusTopics XOR eventGrid), so a binding can never populate both
+      ServiceBusTopicsCredentials and EventGridCredentials at once. Before the
+      binding-centric config redesign (#508/#509), a credential entry could set
+      both blocks independently, letting Service Bus Topics serve as SNS's
+      primary transport while a global Event Grid destination/credentials block
+      existed alongside it for services.sns.defaultBackend=EventGrid or as the
+      fallback for a per-topic backend=EventGrid override that omits its own
+      destination/key.
+    impact: >-
+      A binding configured with kind=serviceBusTopics can never satisfy
+      services.sns.defaultBackend=EventGrid, nor a per-topic backend=EventGrid
+      override that relies on a shared/global destination — those validation
+      errors are structurally unfixable for that binding today. Only per-topic
+      overrides that set their own eventGridTopicEndpoint/eventGridAccessKey
+      work when the binding's azure.sns kind is serviceBusTopics.
+    workaround: >-
+      Set eventGridTopicEndpoint and eventGridAccessKey directly on every topic
+      that needs Event Grid delivery rather than relying on
+      services.sns.defaultBackend=EventGrid or a shared azure.sns destination.
+    references:
+      - https://github.com/pedrosakuma/aws2azure/issues/511
+      - https://github.com/pedrosakuma/aws2azure/issues/508
   - area: No IAM-backed policy surface
     status: unsupported
     summary: >-
