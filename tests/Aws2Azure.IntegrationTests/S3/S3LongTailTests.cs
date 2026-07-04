@@ -333,8 +333,6 @@ public class S3LongTailTests
 
     [SkippableTheory]
     [InlineData("torrent", HttpMethodEnum.Get)]
-    [InlineData("retention", HttpMethodEnum.Get)]
-    [InlineData("legal-hold", HttpMethodEnum.Get)]
     public async Task GetObject_subresource_stub_returns_501(string sub, HttpMethodEnum method)
     {
         Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
@@ -346,6 +344,41 @@ public class S3LongTailTests
         var m = method == HttpMethodEnum.Get ? HttpMethod.Get : HttpMethod.Put;
         using var resp = await SendAsync(m, $"/{bucket}/k?{sub}", Array.Empty<byte>());
         Assert.Equal(HttpStatusCode.NotImplemented, resp.StatusCode);
+    }
+
+    // retention/legal-hold are real blob-WORM translations (SubresourceHandlers.
+    // GetObjectRetentionAsync/GetObjectLegalHoldAsync), not 501 stubs — validated
+    // against real Azure only, since Azurite does not emit the immutability /
+    // legal-hold headers these handlers read. Against Azurite (used here), an
+    // object with no retention/legal-hold set surfaces AWS's own "not configured"
+    // representation for each: retention → 404 NoSuchObjectLockConfiguration,
+    // legal-hold → 200 OK with Status=OFF.
+    [SkippableFact]
+    public async Task GetObjectRetention_without_immutability_policy_returns_NoSuchObjectLockConfiguration()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
+
+        var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
+        await PutBucket(bucket);
+        await PutObject(bucket, "k", "x"u8.ToArray());
+
+        using var resp = await SendAsync(HttpMethod.Get, $"/{bucket}/k?retention", Array.Empty<byte>());
+        Assert.Equal(HttpStatusCode.NotFound, resp.StatusCode);
+        Assert.Contains("NoSuchObjectLockConfiguration", await resp.Content.ReadAsStringAsync());
+    }
+
+    [SkippableFact]
+    public async Task GetObjectLegalHold_without_hold_returns_status_off()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
+
+        var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
+        await PutBucket(bucket);
+        await PutObject(bucket, "k", "x"u8.ToArray());
+
+        using var resp = await SendAsync(HttpMethod.Get, $"/{bucket}/k?legal-hold", Array.Empty<byte>());
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Contains("OFF", await resp.Content.ReadAsStringAsync());
     }
 
     // ── Review-finding coverage (Slice 9) ─────────────────────────────
