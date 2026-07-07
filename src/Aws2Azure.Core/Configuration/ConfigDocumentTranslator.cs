@@ -206,21 +206,37 @@ public static class ConfigDocumentTranslator
                 };
                 ApplyAadOnly(backend.Auth, topics);
                 azure.ServiceBusTopics = topics;
+                if (backend.EventGridFallback is { } fallback)
+                {
+                    var fallbackPath = path + ".eventGridFallback";
+                    RequireKind(fallback, fallbackPath, "eventGrid");
+                    azure.EventGrid = TranslateEventGridBackend(fallback, fallbackPath);
+                }
                 return;
             case "eventgrid":
-                RequireMode(backend.Auth, path, KeyOrAad);
-                var grid = new EventGridCredentials
+                if (backend.EventGridFallback is not null)
                 {
-                    Endpoint = backend.Target.Endpoint ?? string.Empty,
-                    Namespace = backend.Target.Namespace,
-                    TopicName = backend.Target.TopicName,
-                };
-                ApplyKeyOrAad(backend.Auth, path, key => grid.AccessKey = key, grid);
-                azure.EventGrid = grid;
+                    throw new ProxyConfigException(
+                        $"{path}.eventGridFallback: not allowed when kind=eventGrid; this binding is already Event Grid.");
+                }
+                azure.EventGrid = TranslateEventGridBackend(backend, path);
                 return;
             default:
                 throw Invalid(path, backend.Kind, "serviceBusTopics", "eventGrid");
         }
+    }
+
+    private static EventGridCredentials TranslateEventGridBackend(AzureBackendConfig backend, string path)
+    {
+        RequireMode(backend.Auth, path, KeyOrAad);
+        var grid = new EventGridCredentials
+        {
+            Endpoint = backend.Target.Endpoint ?? string.Empty,
+            Namespace = backend.Target.Namespace,
+            TopicName = backend.Target.TopicName,
+        };
+        ApplyKeyOrAad(backend.Auth, path, key => grid.AccessKey = key, grid);
+        return grid;
     }
 
     private static EventHubsCredentials TranslateEventHubs(AzureBackendConfig backend, string path)

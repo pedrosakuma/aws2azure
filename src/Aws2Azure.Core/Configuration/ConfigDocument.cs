@@ -159,6 +159,18 @@ public sealed class AzureBackendConfig
     /// decode to at least 32 bytes when set.
     /// </summary>
     public string? ShardIteratorSigningKey { get; set; }
+
+    /// <summary>
+    /// Optional secondary Event Grid destination for an SNS binding whose primary
+    /// <see cref="Kind"/> is <c>serviceBusTopics</c> (must itself have
+    /// <c>kind: eventGrid</c>). Lets ServiceBusTopics remain the primary SNS
+    /// transport while <c>services.sns.defaultBackend: EventGrid</c> or a per-topic
+    /// <c>backend: EventGrid</c> override (without its own
+    /// <c>eventGridTopicEndpoint</c>/<c>eventGridAccessKey</c>) still resolves to a
+    /// destination. Ignored (and rejected by the translator) on an
+    /// <c>eventGrid</c>-kind SNS binding, since that binding is already Event Grid.
+    /// </summary>
+    public AzureBackendConfig? EventGridFallback { get; set; }
 }
 
 /// <summary>

@@ -159,6 +159,105 @@ public class ProxyConfigJsonTests
     }
 
     /// <summary>
+    /// #511: a serviceBusTopics-kind SNS binding may carry an optional
+    /// eventGridFallback (itself kind=eventGrid) so ServiceBusTopics stays the
+    /// primary transport while services.sns.defaultBackend=EventGrid or a
+    /// per-topic backend=EventGrid override without its own destination/key
+    /// still resolves — restoring the pre-#509 coexistence.
+    /// </summary>
+    [Fact]
+    public void Translates_sns_service_bus_topics_with_event_grid_fallback()
+    {
+        const string json = """
+        {
+          "bindings": [
+            {
+              "aws": { "accessKeyId": "AKIA1", "secretAccessKey": "secret1" },
+              "azure": {
+                "sns": {
+                  "kind": "serviceBusTopics",
+                  "target": { "namespace": "myns" },
+                  "auth": { "mode": "sas", "keyName": "RootManageSharedAccessKey", "key": "sb1" },
+                  "eventGridFallback": {
+                    "kind": "eventGrid",
+                    "target": { "endpoint": "https://topic.region-1.eventgrid.azure.net/api/events" },
+                    "auth": { "mode": "sharedKey", "key": "eg1" }
+                  }
+                }
+              }
+            }
+          ]
+        }
+        """;
+
+        var config = Translate(json);
+        var entry = Assert.Single(config.Credentials);
+
+        Assert.Equal("myns", entry.Azure.ServiceBusTopics!.Namespace);
+        Assert.Equal("sb1", entry.Azure.ServiceBusTopics.SasKey);
+        Assert.Equal("https://topic.region-1.eventgrid.azure.net/api/events", entry.Azure.EventGrid!.Endpoint);
+        Assert.Equal("eg1", entry.Azure.EventGrid.AccessKey);
+    }
+
+    [Fact]
+    public void Rejects_event_grid_fallback_with_wrong_kind()
+    {
+        const string json = """
+        {
+          "bindings": [
+            {
+              "aws": { "accessKeyId": "AKIA1", "secretAccessKey": "secret1" },
+              "azure": {
+                "sns": {
+                  "kind": "serviceBusTopics",
+                  "target": { "namespace": "myns" },
+                  "auth": { "mode": "sas", "keyName": "RootManageSharedAccessKey", "key": "sb1" },
+                  "eventGridFallback": {
+                    "kind": "serviceBusTopics",
+                    "target": {},
+                    "auth": { "mode": "sas" }
+                  }
+                }
+              }
+            }
+          ]
+        }
+        """;
+
+        var ex = Assert.Throws<ProxyConfigException>(() => Translate(json));
+        Assert.Contains("bindings[0].azure.sns.eventGridFallback", ex.Message);
+    }
+
+    [Fact]
+    public void Rejects_event_grid_fallback_on_event_grid_kind_binding()
+    {
+        const string json = """
+        {
+          "bindings": [
+            {
+              "aws": { "accessKeyId": "AKIA1", "secretAccessKey": "secret1" },
+              "azure": {
+                "sns": {
+                  "kind": "eventGrid",
+                  "target": { "endpoint": "https://topic.region-1.eventgrid.azure.net/api/events" },
+                  "auth": { "mode": "sharedKey", "key": "eg1" },
+                  "eventGridFallback": {
+                    "kind": "eventGrid",
+                    "target": { "endpoint": "https://other.region-1.eventgrid.azure.net/api/events" },
+                    "auth": { "mode": "sharedKey", "key": "eg2" }
+                  }
+                }
+              }
+            }
+          ]
+        }
+        """;
+
+        var ex = Assert.Throws<ProxyConfigException>(() => Translate(json));
+        Assert.Contains("bindings[0].azure.sns.eventGridFallback: not allowed when kind=eventGrid", ex.Message);
+    }
+
+    /// <summary>
     /// End-to-end regression for #510: <see cref="ProxyConfigValidator"/> runs
     /// against the *resolved* <see cref="ProxyConfig"/> model, but its error
     /// messages must still speak the on-disk binding-centric vocabulary the
