@@ -145,7 +145,12 @@ non-secret **`target`** (where — commit-safe topology) is split from the secre
           "target": { "namespace": "http://servicebus-emulator:5672/", "transport": "Amqp" },
           "auth":   { "mode": "sas", "keyName": "RootManageSharedAccessKey", "key": "..." }
         },
-        // SNS -> Service Bus (topics).
+        // SNS -> Service Bus (topics). Optionally set eventGridFallback
+        // (kind: eventGrid, its own target+auth) alongside a
+        // serviceBusTopics-kind binding to give services.sns.defaultBackend
+        // = "EventGrid" or a per-topic backend: "EventGrid" override (that
+        // doesn't set its own eventGridTopicEndpoint/eventGridAccessKey) a
+        // shared destination to resolve against.
         "sns": {
           "kind": "serviceBusTopics",
           "target": { "namespace": "sbemulatorns", "endpoint": "http://servicebus-emulator:5672/", "managementEndpoint": "http://servicebus-emulator:5300/" },
