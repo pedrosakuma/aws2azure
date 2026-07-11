@@ -64,6 +64,7 @@
 - Order is preserved within a table when echoing into `UnprocessedItems`, but Cosmos calls execute in parallel — no guarantee that writes within a table commit in the order they were submitted.
 - Only validated against scripted Cosmos REST fakes; not yet exercised against real Azure Cosmos.
 - Each Put unit's standalone document body is sent as CosmosBinary (the `0x80` format) when the opt-in `DynamoDb.CosmosBinaryRequests` is enabled (default off); each unit is its own `POST /docs` upsert, so the gateway auto-detects the marker (no negotiation header or special Content-Type). Delete units carry no body. The chosen format is observable on `aws2azure_dynamodb_write_body_total{format=binary|text}`. The Cosmos DB Linux emulator neither emits nor reliably accepts CosmosBinary, so the binary write path is validated against real Azure only — confirmed parsed + indexed by the nightly acceptance test.
+- Perf baseline throughput for this operation (~5/s for 25-item batches, see `docs/perf/baseline-latest.md`) is an inherent cost of the fan-out design, not a regression: each of the 25 Put/Delete units is its own Cosmos REST call (bounded parallelism, see 'Bounded parallelism' above), and the perf harness additionally retries `UnprocessedItems` with backoff within the measured window. Confirmed stable across historical runs (`docs/perf/history.csv`) and within the perf-gate floor (`docs/perf/baseline-reference.json`). Investigated and closed via issue #519 — do not re-flag as a regression without new evidence.
 
 ### References
 
