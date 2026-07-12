@@ -29,6 +29,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Aws2Azure.Core\Aws2Azure.Core.csproj" />
     <ProjectReference Include="..\..\src\Aws2Azure.Modules.DynamoDb\Aws2Azure.Modules.DynamoDb.csproj" />
   </ItemGroup>
 
