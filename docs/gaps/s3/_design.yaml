@@ -77,3 +77,80 @@ design_gaps:
       Use Azure Blob lifecycle-management policies, object replication, static
       website, and Event Grid subscriptions configured directly on the storage
       account.
+workload_patterns:
+  - name: Basic object CRUD
+    compatibility: supported
+    summary: >-
+      Upload, download, inspect, list, and delete ordinary objects through the
+      standard S3 data-plane operations.
+    operations:
+      - PutObject
+      - GetObject
+      - HeadObject
+      - ListObjectsV2
+      - DeleteObject
+    guidance: >-
+      Suitable when the application does not depend on AWS IAM, bucket policies,
+      lifecycle configuration, or an AWS-specific encryption mode.
+  - name: Multipart upload
+    compatibility: conditional
+    summary: >-
+      Multipart initiation, part upload/listing, completion, and abort are
+      translated to Azure block operations.
+    operations:
+      - CreateMultipartUpload
+      - UploadPart
+      - ListParts
+      - CompleteMultipartUpload
+      - AbortMultipartUpload
+    design_gaps:
+      - Stateless multipart upload without per-part ETag validation
+    guidance: >-
+      Accept only if clients do not overwrite a part number with different
+      content and then depend on CompleteMultipartUpload rejecting the old ETag.
+  - name: Versioning and object-lock administration
+    compatibility: conditional
+    summary: >-
+      Object versions, retention, and legal holds are exposed, but account-level
+      Blob features must already be configured and bucket-level lock setup has
+      no data-plane equivalent.
+    operations:
+      - GetBucketVersioning
+      - PutBucketVersioning
+      - ListObjectVersions
+      - GetObjectRetention
+      - PutObjectRetention
+      - GetObjectLegalHold
+      - PutObjectLegalHold
+      - GetObjectLockConfiguration
+      - PutObjectLockConfiguration
+    guidance: >-
+      Validate the exact flow against real Azure and configure Blob versioning
+      and immutability outside the proxy before adoption.
+  - name: Bucket policy, lifecycle, and event automation
+    compatibility: blocked
+    summary: >-
+      Workloads that configure authorization, lifecycle, replication, website,
+      logging, or notifications through S3 APIs cannot preserve those semantics.
+    operations:
+      - GetBucketPolicy
+      - PutBucketPolicy
+      - GetBucketLifecycleConfiguration
+      - PutBucketLifecycleConfiguration
+      - DeleteBucketLifecycle
+      - GetBucketWebsite
+      - PutBucketWebsite
+      - DeleteBucketWebsite
+      - GetBucketLogging
+      - PutBucketLogging
+      - GetBucketNotificationConfiguration
+      - PutBucketNotificationConfiguration
+      - GetBucketReplication
+      - PutBucketReplication
+      - DeleteBucketReplication
+    design_gaps:
+      - No IAM / ACL / bucket-policy authorization model
+      - Bucket sub-resource configs are not translated
+    guidance: >-
+      Move these controls to Azure RBAC, Storage lifecycle policies, object
+      replication, static website settings, and Event Grid before migration.

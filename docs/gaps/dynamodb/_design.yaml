@@ -90,3 +90,74 @@ design_gaps:
     workaround: >-
       Use the corresponding Azure Cosmos capability directly (change feed,
       continuous backup, multi-region writes) outside the AWS wire protocol.
+workload_patterns:
+  - name: Basic table and item CRUD
+    compatibility: conditional
+    summary: >-
+      Table lifecycle and item CRUD are translated, with expression, consistency,
+      key-encoding, and Cosmos storage-model caveats.
+    operations:
+      - CreateTable
+      - DescribeTable
+      - PutItem
+      - GetItem
+      - UpdateItem
+      - DeleteItem
+      - DeleteTable
+    design_gaps:
+      - Consistency and read-your-writes
+      - Key encoding and on-disk storage format
+    guidance: >-
+      Use a proxy-managed Cosmos database, keep keys within the documented limit,
+      and select an account consistency level that matches the workload.
+  - name: Query, Scan, and secondary-index reads
+    compatibility: conditional
+    summary: >-
+      Query and Scan work for documented expression subsets; GSI/LSI reads add
+      cross-partition, collation, ordering, and backfill caveats.
+    operations:
+      - Query
+      - Scan
+      - DescribeTable
+    design_gaps:
+      - Secondary indexes (GSI / LSI)
+      - Throughput and throttling model
+    guidance: >-
+      Validate every expression and index access pattern against representative
+      data before migration.
+  - name: Single-partition transactions
+    compatibility: conditional
+    summary: >-
+      TransactGetItems and TransactWriteItems can be atomic only when every item
+      belongs to one table and one logical partition.
+    operations:
+      - TransactGetItems
+      - TransactWriteItems
+    design_gaps:
+      - Transaction scope is single-partition, single-table
+    guidance: >-
+      Co-locate all transaction items under one partition key and test the
+      supported condition-expression subset.
+  - name: Cross-table or cross-partition transactions
+    compatibility: blocked
+    summary: >-
+      Cosmos stored procedures cannot reproduce DynamoDB ACID transactions
+      spanning tables or logical partitions.
+    operations:
+      - TransactGetItems
+      - TransactWriteItems
+    design_gaps:
+      - Transaction scope is single-partition, single-table
+    guidance: >-
+      Remodel the data or implement idempotent application-level compensation
+      before routing this workload through the proxy.
+  - name: Streams, global tables, backups, DAX, or auto-scaling control plane
+    compatibility: blocked
+    summary: >-
+      These DynamoDB control-plane and streaming capabilities are outside the
+      translated wire-protocol surface.
+    design_gaps:
+      - Absent DynamoDB features
+    guidance: >-
+      Integrate directly with the corresponding Azure capabilities outside the
+      proxy.

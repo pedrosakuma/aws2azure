@@ -127,6 +127,13 @@ public static class Validator
             operationDocs.Select(o => o.Service.ToLowerInvariant()),
             StringComparer.OrdinalIgnoreCase);
         var seenServices = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var operationsByService = operationDocs
+            .GroupBy(o => o.Service, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g => g.GroupBy(o => o.Operation, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(ops => ops.Key, ops => ops.First(), StringComparer.OrdinalIgnoreCase),
+                StringComparer.OrdinalIgnoreCase);
 
         foreach (var doc in designDocs)
         {
@@ -168,6 +175,84 @@ public static class Validator
                 if (!StatusValues.DesignGap.Contains(g.Status))
                 {
                     Err($"design_gaps[{i}] invalid status '{g.Status}'; allowed: {string.Join(", ", StatusValues.DesignGap)}");
+                }
+            }
+
+            var designGapsByArea = new Dictionary<string, DesignGap>(StringComparer.OrdinalIgnoreCase);
+            foreach (var gap in doc.DesignGaps.Where(g => !string.IsNullOrWhiteSpace(g.Area)))
+            {
+                if (!designGapsByArea.TryAdd(gap.Area, gap))
+                {
+                    Err($"duplicate design gap area '{gap.Area}'");
+                }
+            }
+            var seenPatterns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            operationsByService.TryGetValue(service, out var serviceOperations);
+
+            for (var i = 0; i < doc.WorkloadPatterns.Count; i++)
+            {
+                var pattern = doc.WorkloadPatterns[i];
+                var prefix = $"workload_patterns[{i}]";
+                if (string.IsNullOrWhiteSpace(pattern.Name))
+                {
+                    Err($"{prefix}.name missing");
+                }
+                else if (!seenPatterns.Add(pattern.Name))
+                {
+                    Err($"{prefix} duplicates workload pattern '{pattern.Name}'");
+                }
+
+                if (!StatusValues.WorkloadCompatibility.Contains(pattern.Compatibility))
+                {
+                    Err($"{prefix} invalid compatibility '{pattern.Compatibility}'; allowed: {string.Join(", ", StatusValues.WorkloadCompatibility)}");
+                }
+                if (string.IsNullOrWhiteSpace(pattern.Summary)) Err($"{prefix}.summary missing");
+                if (string.IsNullOrWhiteSpace(pattern.Guidance)) Err($"{prefix}.guidance missing");
+                if (pattern.Operations.Count == 0 && pattern.DesignGaps.Count == 0)
+                {
+                    Err($"{prefix} must reference at least one operation or design gap");
+                }
+
+                var seenOperations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var operation in pattern.Operations)
+                {
+                    if (!seenOperations.Add(operation))
+                    {
+                        Err($"{prefix} repeats operation '{operation}'");
+                    }
+                    if (serviceOperations is null || !serviceOperations.ContainsKey(operation))
+                    {
+                        Err($"{prefix} references unknown operation '{operation}' for service '{service}'");
+                    }
+                }
+                var seenDesignGaps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var area in pattern.DesignGaps)
+                {
+                    if (!seenDesignGaps.Add(area))
+                    {
+                        Err($"{prefix} repeats design gap '{area}'");
+                    }
+                    if (!designGapsByArea.ContainsKey(area))
+                    {
+                        Err($"{prefix} references unknown design gap '{area}' for service '{service}'");
+                    }
+                }
+
+                if (pattern.Compatibility.Equals("supported", StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (var operation in pattern.Operations)
+                    {
+                        if (serviceOperations is not null
+                            && serviceOperations.TryGetValue(operation, out var operationDoc)
+                            && !operationDoc.Status.Equals("implemented", StringComparison.OrdinalIgnoreCase))
+                        {
+                            Err($"{prefix} cannot be supported because operation '{operation}' is '{operationDoc.Status}'");
+                        }
+                    }
+                    if (pattern.DesignGaps.Count > 0)
+                    {
+                        Err($"{prefix} cannot be supported while referencing design gaps");
+                    }
                 }
             }
         }

@@ -42,21 +42,23 @@ or Workload Identity — see
 
 ## Services
 
-| AWS Service | Azure Target | Status |
-|---|---|---|
-| S3 | Blob Storage | Implemented |
-| SQS | Service Bus | Implemented |
-| DynamoDB | Cosmos DB (NoSQL API) | Implemented |
-| Kinesis | Event Hubs | Implemented |
-| SNS | Service Bus Topics / Event Grid | Implemented |
-| Secrets Manager | Key Vault | Implemented |
+| AWS Service | Azure Target | Module | Compatibility |
+|---|---|---|---|
+| S3 | Blob Storage | Available | Workload-dependent — [review profile](./docs/site/workload-compatibility.md#s3) |
+| SQS | Service Bus | Available | Workload-dependent — [review profile](./docs/site/workload-compatibility.md#sqs) |
+| DynamoDB | Cosmos DB (NoSQL API) | Available | Workload-dependent — [review profile](./docs/site/workload-compatibility.md#dynamodb) |
+| Kinesis | Event Hubs | Available | Workload-dependent — [review profile](./docs/site/workload-compatibility.md#kinesis) |
+| SNS | Service Bus Topics / Event Grid | Available | Workload-dependent — [review profile](./docs/site/workload-compatibility.md#sns) |
+| Secrets Manager | Key Vault | Available | Workload-dependent — [review profile](./docs/site/workload-compatibility.md#secretsmanager) |
 
-Coverage is **not** 100% of each AWS service. Every operation and sub-feature is
-documented exhaustively under [`docs/gaps/`](./docs/gaps/), with the rendered
-coverage matrix published from [`docs/site/`](./docs/site/). Gaps are documented,
-never hidden. Cross-cutting, architectural limitations that do not map to a
-single operation — consistency model, transaction scope, absent control-plane
-surfaces — are collected in [**Design gaps**](./docs/site/design-gaps.md).
+An available module means the proxy can route that service's AWS wire protocol;
+it does **not** imply full AWS service parity. Start with the generated
+[**workload compatibility guide**](./docs/site/workload-compatibility.md), then
+confirm every operation in the [coverage matrix](./docs/site/coverage.md).
+Every operation and sub-feature is documented exhaustively under
+[`docs/gaps/`](./docs/gaps/). Cross-cutting limitations — consistency model,
+transaction scope, absent control-plane surfaces — are collected in
+[**Design gaps**](./docs/site/design-gaps.md).
 
 Architecture decisions that explain the project constraints are recorded in
 [`docs/adr/`](./docs/adr/).
@@ -70,7 +72,8 @@ need:
   [Azure authentication](./docs/azure-authentication.md) ·
   [Presigned URLs](./docs/presigned-urls.md)
 - **What works & what doesn't:**
-  [coverage matrix](./docs/site/coverage.md) (one screen) →
+  [workload compatibility](./docs/site/workload-compatibility.md) (go/no-go) →
+  [coverage matrix](./docs/site/coverage.md) (every operation) →
   per-service pages under [`docs/site/`](./docs/site/) (operation detail) →
   [design gaps](./docs/site/design-gaps.md) (architectural limits) →
   [real-Azure divergences](./docs/site/divergences.md) (verification state)

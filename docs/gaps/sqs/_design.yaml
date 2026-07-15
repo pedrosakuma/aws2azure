@@ -73,3 +73,63 @@ design_gaps:
     workaround: >-
       Choose the transport per queue based on the semantics required and keep
       receive/settle on the same transport.
+workload_patterns:
+  - name: Standard queue messaging
+    compatibility: conditional
+    summary: >-
+      Create, discover, send, receive, settle, and delete standard queues and
+      messages through the core SQS operations.
+    operations:
+      - CreateQueue
+      - GetQueueUrl
+      - ListQueues
+      - SendMessage
+      - SendMessageBatch
+      - ReceiveMessage
+      - DeleteMessage
+      - DeleteMessageBatch
+      - DeleteQueue
+    design_gaps:
+      - Transport-dependent capability differences
+    guidance: >-
+      Suitable for standard queues after validating visibility timeout and
+      dead-letter behavior with the selected Service Bus transport.
+  - name: FIFO queue messaging
+    compatibility: conditional
+    summary: >-
+      FIFO group ordering is available only through the AMQP transport and
+      receipt settlement remains connection-affine.
+    operations:
+      - CreateQueue
+      - SendMessage
+      - SendMessageBatch
+      - ReceiveMessage
+      - DeleteMessage
+    design_gaps:
+      - FIFO ordering requires the AMQP transport
+      - Transport-dependent capability differences
+    guidance: >-
+      Configure transport: Amqp and test the full receive/delete lifecycle under
+      concurrency before production.
+  - name: Hard queue purge
+    compatibility: conditional
+    summary: >-
+      PurgeQueue is emulated with a bounded drain and may leave messages while
+      producers remain active.
+    operations:
+      - PurgeQueue
+    design_gaps:
+      - PurgeQueue is best-effort emulation
+    guidance: >-
+      Pause producers before purge when the workload requires a guaranteed empty
+      queue.
+  - name: Queue permission administration
+    compatibility: blocked
+    summary: >-
+      AddPermission and RemovePermission validate the queue but cannot reproduce
+      the SQS IAM permission model.
+    operations:
+      - AddPermission
+      - RemovePermission
+    guidance: >-
+      Enforce access through Azure RBAC, SAS credentials, and network controls.

@@ -11,6 +11,27 @@ minutes, then shows how to enable the other services and point at real Azure.
 
 ---
 
+## Before adopting it for a workload
+
+An available service module does not provide full AWS service parity. Before
+staging or production:
+
+1. Find the closest pattern in the generated
+   [workload compatibility guide](./site/workload-compatibility.md).
+2. Inventory the AWS operations and semantic requirements your application
+   actually uses.
+3. Confirm every operation in the [coverage matrix](./site/coverage.md).
+4. Read the linked [design gaps](./site/design-gaps.md), especially for
+   transactions, consistency, ordering, authorization, and lifecycle behavior.
+5. Treat an absent [real-Azure seal](./site/divergences.md) as validation work
+   required in your own staging environment.
+
+Do not proceed unchanged when a required pattern is marked **blocked**.
+Conditional patterns require accepting the documented constraints and testing
+them against the selected Azure topology.
+
+---
+
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) with the Compose plugin
