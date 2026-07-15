@@ -78,7 +78,9 @@ need:
   [design gaps](./docs/site/design-gaps.md) (architectural limits) →
   [real-Azure divergences](./docs/site/divergences.md) (verification state)
 - **Why it's built this way:** [Architecture Decision Records](./docs/adr/)
-- **Run it in production:** [sidecar deployment](./docs/deployment/sidecar.md) ·
+- **Run it in production:** [production runbook](./docs/deployment/production-runbook.md)
+  (qualification, go/no-go, canary, incidents, rollback) ·
+  [sidecar deployment](./docs/deployment/sidecar.md) ·
   [build-time module selection](./docs/deployment/module-selection.md)
 - **Performance & testing:** [perf baseline](./docs/perf/README.md) ·
   [nightly real-Azure tests](./docs/testing/real-azure-nightly.md)
