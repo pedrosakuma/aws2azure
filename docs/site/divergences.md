@@ -8,54 +8,54 @@ the documented behaviour differences and the real-Azure seal state.
 
 ## Implemented without a real-Azure seal
 
-| Service | Operation |
-|---|---|
-| dynamodb | CreateTable |
-| dynamodb | DeleteTable |
-| dynamodb | DescribeTable |
-| dynamodb | ListTables |
-| dynamodb | ListTagsOfResource |
-| dynamodb | TagResource |
-| dynamodb | UntagResource |
-| s3 | AbortMultipartUpload |
-| s3 | CompleteMultipartUpload |
-| s3 | CopyObject |
-| s3 | CreateBucket |
-| s3 | CreateMultipartUpload |
-| s3 | DeleteBucket |
-| s3 | DeleteBucketTagging |
-| s3 | DeleteObject |
-| s3 | DeleteObjectTagging |
-| s3 | DeleteObjects |
-| s3 | GetObject |
-| s3 | GetObjectTagging |
-| s3 | HeadBucket |
-| s3 | HeadObject |
-| s3 | ListBuckets |
-| s3 | ListObjects |
-| s3 | ListObjectsV2 |
-| s3 | ListParts |
-| s3 | PresignedUrl |
-| s3 | PutObject |
-| s3 | PutObjectTagging |
-| s3 | UploadPart |
-| s3 | UploadPartCopy |
-| secretsmanager | CreateSecret |
-| secretsmanager | DeleteSecret |
-| secretsmanager | DescribeSecret |
-| secretsmanager | GetSecretValue |
-| secretsmanager | ListSecrets |
-| secretsmanager | UpdateSecret |
-| sqs | CreateQueue |
-| sqs | DeleteMessage |
-| sqs | DeleteMessageBatch |
-| sqs | DeleteQueue |
-| sqs | GetQueueUrl |
-| sqs | ListDeadLetterSourceQueues |
-| sqs | ListQueues |
-| sqs | ReceiveMessage |
-| sqs | SendMessage |
-| sqs | SendMessageBatch |
+| Service | Operation | Tracking issue | Expires |
+|---|---|---|---|
+| dynamodb | CreateTable | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| dynamodb | DeleteTable | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| dynamodb | DescribeTable | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| dynamodb | ListTables | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| dynamodb | ListTagsOfResource | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| dynamodb | TagResource | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| dynamodb | UntagResource | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | AbortMultipartUpload | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | CompleteMultipartUpload | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | CopyObject | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | CreateBucket | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | CreateMultipartUpload | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | DeleteBucket | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | DeleteBucketTagging | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | DeleteObject | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | DeleteObjectTagging | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | DeleteObjects | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | GetObject | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | GetObjectTagging | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | HeadBucket | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | HeadObject | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | ListBuckets | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | ListObjects | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | ListObjectsV2 | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | ListParts | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | PresignedUrl | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | PutObject | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | PutObjectTagging | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | UploadPart | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| s3 | UploadPartCopy | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| secretsmanager | CreateSecret | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| secretsmanager | DeleteSecret | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| secretsmanager | DescribeSecret | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| secretsmanager | GetSecretValue | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| secretsmanager | ListSecrets | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| secretsmanager | UpdateSecret | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| sqs | CreateQueue | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| sqs | DeleteMessage | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| sqs | DeleteMessageBatch | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| sqs | DeleteQueue | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| sqs | GetQueueUrl | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| sqs | ListDeadLetterSourceQueues | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| sqs | ListQueues | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| sqs | ReceiveMessage | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| sqs | SendMessage | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+| sqs | SendMessageBatch | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
 
 ## Documented behaviour differences
 

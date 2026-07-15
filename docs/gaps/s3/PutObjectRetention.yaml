@@ -2,11 +2,17 @@ service: s3
 operation: PutObjectRetention
 azure_equivalent: "Set Blob Immutability Policy (PUT blob ?comp=immutabilityPolicies)"
 status: implemented
-verified_real_azure: "run 28346494642 (2026-06-29)"
+verified_real_azure:
+  date: "2026-06-29"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/28346494642
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/28346494642
 sub_features:
   - name: "mode + retain-until"
     status: implemented
-    verified_real_azure: "run 28346494642 (2026-06-29)"
+    verified_real_azure:
+      date: "2026-06-29"
+      evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/28346494642
+      workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/28346494642
     notes: "GOVERNANCE->Unlocked, COMPLIANCE->Locked; RetainUntilDate (ISO8601) -> x-ms-immutability-policy-until-date (RFC1123). Requires the object to exist."
 behavior_differences:
   - "Azure locked policies are irreversible and extend-only; bypassing/shortening COMPLIANCE is rejected by Azure as in S3."

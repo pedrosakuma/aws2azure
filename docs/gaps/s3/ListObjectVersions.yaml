@@ -2,15 +2,24 @@ service: s3
 operation: ListObjectVersions
 azure_equivalent: "GET {container}?restype=container&comp=list&include=versions"
 status: partial
-verified_real_azure: "run 28477441131 (2026-06-30)"
+verified_real_azure:
+  date: "2026-06-30"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/28477441131
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/28477441131
 sub_features:
   - name: "version listing (Version entries)"
     status: implemented
-    verified_real_azure: "run 28477441131 (2026-06-30)"
+    verified_real_azure:
+      date: "2026-06-30"
+      evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/28477441131
+      workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/28477441131
     notes: "Azure blob versions map to S3 <Version> entries (Key, VersionId, IsLatest, LastModified, ETag, Size). Requires account-level Blob versioning; otherwise each key lists once as IsLatest with VersionId 'null'."
   - name: "prefix / delimiter / max-keys / key-marker pagination"
     status: implemented
-    verified_real_azure: "run 28477441131 (2026-06-30)"
+    verified_real_azure:
+      date: "2026-06-30"
+      evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/28477441131
+      workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/28477441131
   - name: "delete markers"
     status: unsupported
     notes: "Azure delete markers do not map 1:1 to S3 delete markers; <DeleteMarker> entries are not emitted."

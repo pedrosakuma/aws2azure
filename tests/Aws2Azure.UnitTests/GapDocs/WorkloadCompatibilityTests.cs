@@ -69,7 +69,11 @@ public sealed class WorkloadCompatibilityTests
     public void Render_writes_generated_workload_assessment()
     {
         var operation = Operation("s3", "PutObject", "implemented");
-        operation.VerifiedRealAzure = "2026-07-15";
+        operation.VerifiedRealAzure = new RealAzureVerification
+        {
+            Date = "2026-07-15",
+            Evidence = "https://github.com/pedrosakuma/aws2azure/issues/532"
+        };
         var design = Design("s3", "Known gap");
         design.WorkloadPatterns.Add(new WorkloadPattern
         {
@@ -92,7 +96,7 @@ public sealed class WorkloadCompatibilityTests
 
         try
         {
-            MarkdownRenderer.Render([operation], [design], output);
+            MarkdownRenderer.Render([operation], [design], new RealAzureMigrationDoc(), output);
 
             var markdown = File.ReadAllText(Path.Combine(output, "workload-compatibility.md"));
             Assert.Contains("| Basic writes | ✅ supported | 1 implemented | 1/1 |", markdown, StringComparison.Ordinal);

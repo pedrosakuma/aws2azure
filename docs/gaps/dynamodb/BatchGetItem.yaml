@@ -17,7 +17,10 @@ sub_features:
     notes: "A Cosmos 429 on a point read drops that key into `UnprocessedKeys`; a 429 on a batched single-partition query drops the whole partition's keys into `UnprocessedKeys`. Either way SDK retry loops re-issue only the throttled subset and the rest of the batch still returns 200."
   - name: ProjectionExpression (per table)
     status: implemented
-    verified_real_azure: "run 28566172080 (2026-07-02)"
+    verified_real_azure:
+      date: "2026-07-02"
+      evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/28566172080
+      workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/28566172080
     notes: "Top-level attribute names, `#alias` references, and nested document paths (`a.b`, `a[0]`, `a.b[1]`) honoured. Projected maps keep only referenced members; projected lists compact to referenced indices (ascending); non-existent/type-mismatched paths omitted; overlapping paths rejected with ValidationException."
   - name: ExpressionAttributeNames (per table)
     status: implemented

@@ -7,7 +7,11 @@ namespace Aws2Azure.GapDocs;
 
 public static class MarkdownRenderer
 {
-    public static void Render(IReadOnlyList<OperationDoc> docs, IReadOnlyList<ServiceDesignDoc> designDocs, string siteRoot)
+    public static void Render(
+        IReadOnlyList<OperationDoc> docs,
+        IReadOnlyList<ServiceDesignDoc> designDocs,
+        RealAzureMigrationDoc migration,
+        string siteRoot)
     {
         Directory.CreateDirectory(siteRoot);
 
@@ -19,7 +23,7 @@ public static class MarkdownRenderer
         WriteIndex(byService, designDocs, siteRoot);
         WriteCoverage(byService, siteRoot);
         WriteWorkloadCompatibility(byService, designDocs, siteRoot);
-        WriteDivergences(byService, siteRoot);
+        WriteDivergences(byService, migration, siteRoot);
         WriteDesignGaps(designDocs, siteRoot);
         foreach (var group in byService)
         {
@@ -109,7 +113,7 @@ public static class MarkdownRenderer
                 $"| [{group.Key}]({group.Key}.md) | Available | " +
                 $"{CountStatus(ops, "implemented")} | {CountStatus(ops, "partial")} | " +
                 $"{CountStatus(ops, "stub")} | {CountStatus(ops, "unsupported")} | " +
-                $"{ops.Count(o => !string.IsNullOrEmpty(o.VerifiedRealAzure))}/{ops.Count} |");
+                $"{ops.Count(o => o.VerifiedRealAzure is not null)}/{ops.Count} |");
         }
         sb.AppendLine();
         sb.AppendLine("## Adoption decision");
@@ -147,7 +151,7 @@ public static class MarkdownRenderer
                         .Select(g => $"{g.Count()} {g.Key}"));
                 var seals = referencedOperations.Count == 0
                     ? "—"
-                    : $"{referencedOperations.Count(o => !string.IsNullOrEmpty(o.VerifiedRealAzure))}/{referencedOperations.Count}";
+                    : $"{referencedOperations.Count(o => o.VerifiedRealAzure is not null)}/{referencedOperations.Count}";
                 var details = new List<string> { Esc(pattern.Summary), Esc(pattern.Guidance) };
                 foreach (var operation in referencedOperations.Where(o => !o.Status.Equals("implemented", System.StringComparison.OrdinalIgnoreCase)))
                 {
@@ -181,9 +185,9 @@ public static class MarkdownRenderer
             sb.AppendLine();
             sb.AppendLine($"- **Status:** {StatusBadge(op.Status)}");
             sb.AppendLine($"- **Azure equivalent:** `{op.AzureEquivalent}`");
-            if (!string.IsNullOrEmpty(op.VerifiedRealAzure))
+            if (op.VerifiedRealAzure is not null)
             {
-                sb.AppendLine($"- **Real-Azure verified:** ✅ {Esc(op.VerifiedRealAzure)}");
+                sb.AppendLine($"- **Real-Azure verified:** ✅ {VerificationDetails(op.VerifiedRealAzure)}");
             }
             sb.AppendLine();
 
@@ -315,7 +319,7 @@ public static class MarkdownRenderer
         _ => status
     };
 
-    private static string Seal(string verified) => string.IsNullOrEmpty(verified) ? "—" : "✅";
+    private static string Seal(RealAzureVerification? verified) => verified is null ? "—" : "✅";
 
     private static string CompatibilityBadge(string compatibility) => compatibility.ToLowerInvariant() switch
     {
@@ -354,15 +358,26 @@ public static class MarkdownRenderer
     // real-Azure seal, so implemented-but-unsealed ops are surfaced as the
     // backlog to close. Generated alongside the site so the conformance
     // workflow can upload it as the run's divergence artifact.
-    private static void WriteDivergences(IList<IGrouping<string, OperationDoc>> byService, string siteRoot)
+    private static void WriteDivergences(
+        IList<IGrouping<string, OperationDoc>> byService,
+        RealAzureMigrationDoc migration,
+        string siteRoot)
     {
         var all = byService.SelectMany(g => g).ToList();
-        var sealed_ = all.Count(o => !string.IsNullOrEmpty(o.VerifiedRealAzure));
+        var sealed_ = all.Count(o => o.VerifiedRealAzure is not null);
         var unsealedImplemented = all
             .Where(o => o.Status.Equals("implemented", System.StringComparison.OrdinalIgnoreCase)
-                        && string.IsNullOrEmpty(o.VerifiedRealAzure))
+                        && o.VerifiedRealAzure is null)
             .OrderBy(o => o.Service + "/" + o.Operation, System.StringComparer.Ordinal)
             .ToList();
+        var migrationByOperation = migration.Services
+            .SelectMany(service => service.Operations.Select(operation => new
+            {
+                Key = service.Service + "/" + operation,
+                service.TrackingIssue,
+                service.ExpiresOn
+            }))
+            .ToDictionary(entry => entry.Key, System.StringComparer.OrdinalIgnoreCase);
 
         var sb = new StringBuilder();
         sb.AppendLine("# Real-Azure conformance & divergences");
@@ -382,9 +397,15 @@ public static class MarkdownRenderer
         }
         else
         {
-            sb.AppendLine("| Service | Operation |");
-            sb.AppendLine("|---|---|");
-            foreach (var o in unsealedImplemented) sb.AppendLine($"| {o.Service} | {o.Operation} |");
+            sb.AppendLine("| Service | Operation | Tracking issue | Expires |");
+            sb.AppendLine("|---|---|---|---|");
+            foreach (var o in unsealedImplemented)
+            {
+                migrationByOperation.TryGetValue(o.Service + "/" + o.Operation, out var debt);
+                var tracking = debt is null ? "—" : $"[issue]({debt.TrackingIssue})";
+                var expires = debt?.ExpiresOn ?? "—";
+                sb.AppendLine($"| {o.Service} | {o.Operation} | {tracking} | {expires} |");
+            }
         }
         sb.AppendLine();
 
@@ -400,6 +421,20 @@ public static class MarkdownRenderer
             }
         }
         File.WriteAllText(Path.Combine(siteRoot, "divergences.md"), sb.ToString());
+    }
+
+    private static string VerificationDetails(RealAzureVerification verification)
+    {
+        var details = new List<string>
+        {
+            Esc(verification.Date),
+            $"[evidence]({verification.Evidence})"
+        };
+        if (!string.IsNullOrEmpty(verification.WorkflowRun))
+        {
+            details.Add($"[workflow run]({verification.WorkflowRun})");
+        }
+        return string.Join(" · ", details);
     }
 
     private static string Esc(string s) => string.IsNullOrEmpty(s) ? "" : s.Replace("|", "\\|").Replace("\n", " ");

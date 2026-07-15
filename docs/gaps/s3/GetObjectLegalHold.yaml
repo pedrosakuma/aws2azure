@@ -2,11 +2,17 @@ service: s3
 operation: GetObjectLegalHold
 azure_equivalent: "Blob legal hold (HEAD blob: x-ms-legal-hold)"
 status: implemented
-verified_real_azure: "run 28346494642 (2026-06-29)"
+verified_real_azure:
+  date: "2026-06-29"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/28346494642
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/28346494642
 sub_features:
   - name: "status ON/OFF"
     status: implemented
-    verified_real_azure: "run 28346494642 (2026-06-29)"
+    verified_real_azure:
+      date: "2026-06-29"
+      evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/28346494642
+      workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/28346494642
     notes: "Reads x-ms-legal-hold from HEAD; true->ON, absent/false->OFF."
 behavior_differences:
   - "Verified against real Azure only - Azurite does not support legal hold."
