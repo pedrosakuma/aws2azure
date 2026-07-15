@@ -14,6 +14,12 @@ configuration schema see [getting-started.md](../getting-started.md#configuratio
 for standalone (non-sidecar) Kubernetes deployment use the
 [Helm chart](../../deploy/helm/aws2azure).
 
+Before promoting a workload, use the
+[production runbook](./production-runbook.md) for compatibility qualification,
+explicit go/no-go gates, real-Azure staging, canary, monitoring, incident
+response, credential rotation, and rollback. Those procedures are
+topology-neutral; this page supplies the sidecar-specific mechanics.
+
 Copy-pasteable manifests live in [`deploy/sidecar/`](../../deploy/sidecar/):
 
 | File | What it is |
