@@ -46,3 +46,55 @@ design_gaps:
     workaround: >-
       Provision Event Hubs partition count for peak load up front; use consumer
       groups for isolation.
+workload_patterns:
+  - name: Basic record ingestion
+    compatibility: conditional
+    summary: >-
+      PutRecord and PutRecords publish to provisioned Event Hubs partitions, but
+      ordering-related request fields and returned sequence numbers differ.
+    operations:
+      - PutRecord
+      - PutRecords
+    design_gaps:
+      - Synthetic sequence numbers and iterator positioning
+    guidance: >-
+      Use partition keys for routing and do not depend on
+      SequenceNumberForOrdering or exact AWS sequence-number semantics.
+  - name: Single consumer per shard
+    compatibility: conditional
+    summary: >-
+      Shard discovery and polling work best with one consumer loop per partition
+      and timestamp/latest iterator positioning.
+    operations:
+      - ListShards
+      - GetShardIterator
+      - GetRecords
+    design_gaps:
+      - Synthetic sequence numbers and iterator positioning
+      - Shared broker cursor per consumer group
+    guidance: >-
+      Prefer TRIM_HORIZON, LATEST, or AT_TIMESTAMP and dedicate a consumer group
+      to each independent consumer.
+  - name: Independent replaying consumers on one consumer group
+    compatibility: blocked
+    summary: >-
+      Distinct AWS shard iterators cannot maintain independent replay positions
+      when they share the pooled broker cursor.
+    operations:
+      - GetShardIterator
+      - GetRecords
+    design_gaps:
+      - Shared broker cursor per consumer group
+    guidance: >-
+      Assign distinct Event Hubs consumer groups or redesign around one consumer
+      per shard.
+  - name: Resharding, enhanced fan-out, or KCL lease management
+    compatibility: blocked
+    summary: >-
+      Dynamic shard topology and enhanced fan-out have no equivalent in the
+      exposed proxy surface.
+    design_gaps:
+      - No resharding / enhanced fan-out / KCL lease model
+    guidance: >-
+      Provision partitions for peak demand and manage consumer isolation with
+      Event Hubs consumer groups.

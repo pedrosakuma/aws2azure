@@ -27,6 +27,7 @@
     <ProjectReference Include="..\..\src\Aws2Azure.Modules.Kinesis\Aws2Azure.Modules.Kinesis.csproj" />
     <ProjectReference Include="..\..\src\Aws2Azure.Modules.Sns\Aws2Azure.Modules.Sns.csproj" />
     <ProjectReference Include="..\..\src\Aws2Azure.Modules.SecretsManager\Aws2Azure.Modules.SecretsManager.csproj" />
+    <ProjectReference Include="..\..\tools\Aws2Azure.GapDocs\Aws2Azure.GapDocs.csproj" />
   </ItemGroup>
 
 </Project>

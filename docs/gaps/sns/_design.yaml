@@ -55,3 +55,63 @@ design_gaps:
     workaround: >-
       Configure delivery reliability at the Azure backend level; do not rely on
       SNS policy attributes being enforced.
+workload_patterns:
+  - name: Standard topic publish
+    compatibility: conditional
+    summary: >-
+      Publish and PublishBatch route through Service Bus Topics or Event Grid,
+      whose delivery and partial-failure semantics differ.
+    operations:
+      - CreateTopic
+      - Publish
+      - PublishBatch
+      - DeleteTopic
+    design_gaps:
+      - Two backends with different fidelity
+    guidance: >-
+      Select the backend deliberately and validate message shape, delivery, and
+      partial failures against that backend.
+  - name: Subscription management
+    compatibility: conditional
+    summary: >-
+      Subscription lifecycle and attributes are translated through Service Bus
+      management APIs with synthetic AWS identifiers.
+    operations:
+      - Subscribe
+      - ConfirmSubscription
+      - ListSubscriptions
+      - ListSubscriptionsByTopic
+      - GetSubscriptionAttributes
+      - SetSubscriptionAttributes
+      - Unsubscribe
+    design_gaps:
+      - Two backends with different fidelity
+      - No AWS region / account namespace
+    guidance: >-
+      Avoid parsing AWS account identity from returned ARNs and test the selected
+      backend's subscription behavior.
+  - name: FIFO topic ordering and deduplication
+    compatibility: blocked
+    summary: >-
+      Strict SNS FIFO ordering and deduplication are not reproduced end to end.
+    operations:
+      - Publish
+      - PublishBatch
+    design_gaps:
+      - FIFO topics are deferred
+    guidance: >-
+      Use a Service Bus-native design when strict FIFO and duplicate detection
+      are mandatory.
+  - name: IAM delivery and redrive policy administration
+    compatibility: blocked
+    summary: >-
+      SNS policy attributes are accepted as no-ops and do not configure Azure
+      delivery authorization or reliability.
+    operations:
+      - SetTopicAttributes
+      - SetSubscriptionAttributes
+    design_gaps:
+      - No IAM-backed policy surface
+    guidance: >-
+      Configure authorization, retry, and dead-letter behavior directly on the
+      Azure backend.

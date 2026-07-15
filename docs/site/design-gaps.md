@@ -41,6 +41,8 @@ Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned
 
 ## dynamodb
 
+<a id="dynamodb-transaction-scope-is-single-partition-single-table"></a>
+
 ### Transaction scope is single-partition, single-table
 
 - **Status:** 🔵 by design
@@ -55,6 +57,8 @@ References:
 
 - <https://learn.microsoft.com/azure/cosmos-db/nosql/stored-procedures-triggers-udfs>
 
+<a id="dynamodb-consistency-and-read-your-writes"></a>
+
 ### Consistency and read-your-writes
 
 - **Status:** 🔵 by design
@@ -64,6 +68,8 @@ The proxy issues independent Cosmos REST calls and does not propagate Cosmos ses
 **Impact.** A DynamoDB client that assumes strong read-your-writes may observe stale reads if the Cosmos account is configured for Session/Eventual consistency. GSI reads are always eventually consistent (ConsistentRead=true is rejected, matching DynamoDB).
 
 **Workaround.** Provision the Cosmos account with Strong (or at least Bounded Staleness) default consistency for workloads that need DynamoDB-equivalent semantics; record the chosen level per deployment.
+
+<a id="dynamodb-throughput-and-throttling-model"></a>
 
 ### Throughput and throttling model
 
@@ -75,6 +81,8 @@ Capacity is Cosmos RU/s, not DynamoDB RCU/WCU. Cosmos 429 (throttled) is surface
 
 **Workaround.** Size the Cosmos container/database RU/s (or use autoscale/serverless) for the workload; do not rely on DynamoDB capacity semantics.
 
+<a id="dynamodb-secondary-indexes--gsi---lsi"></a>
+
 ### Secondary indexes (GSI / LSI)
 
 - **Status:** 🟡 partial
@@ -85,6 +93,8 @@ All attributes live in one base container; GSI/LSI queries are opt-in and run as
 
 **Workaround.** Keep GSI Query default-off unless the collation and backfill caveats are acceptable; rewrite pre-existing items to populate ordering fields.
 
+<a id="dynamodb-key-encoding-and-on-disk-storage-format"></a>
+
 ### Key encoding and on-disk storage format
 
 - **Status:** 🔵 by design
@@ -94,6 +104,8 @@ DynamoDB key attribute values are encoded into the internal Cosmos id/partition-
 **Impact.** Keys longer than the limit are rejected with ValidationException. The storage layout is a proxy-owned format, not portable to a raw Cosmos client, and changed across earlier builds (a breaking on-disk change).
 
 **Workaround.** Keep key attributes within the size limit; treat the backing container as proxy-managed, not directly queryable with DynamoDB semantics.
+
+<a id="dynamodb-absent-dynamodb-features"></a>
 
 ### Absent DynamoDB features
 
@@ -106,6 +118,8 @@ DynamoDB Streams, DAX, point-in-time recovery / on-demand backups, global tables
 **Workaround.** Use the corresponding Azure Cosmos capability directly (change feed, continuous backup, multi-region writes) outside the AWS wire protocol.
 
 ## kinesis
+
+<a id="kinesis-synthetic-sequence-numbers-and-iterator-positioning"></a>
 
 ### Synthetic sequence numbers and iterator positioning
 
@@ -121,6 +135,8 @@ References:
 
 - <https://learn.microsoft.com/rest/api/eventhub/>
 
+<a id="kinesis-shared-broker-cursor-per-consumer-group"></a>
+
 ### Shared broker cursor per consumer group
 
 - **Status:** 🔵 by design
@@ -130,6 +146,8 @@ Concurrent GetRecords callers on the same (connection, partition, consumer-group
 **Impact.** This deviates from Kinesis, where each shard iterator is independent and replayable.
 
 **Workaround.** Use the AWS-recommended single-consumer-per-shard pattern, or assign distinct consumer groups to independent consumers.
+
+<a id="kinesis-no-resharding---enhanced-fan-out---kcl-lease-model"></a>
 
 ### No resharding / enhanced fan-out / KCL lease model
 
@@ -142,6 +160,8 @@ Kinesis shards map to Event Hubs partitions, which are fixed at the hub level. D
 **Workaround.** Provision Event Hubs partition count for peak load up front; use consumer groups for isolation.
 
 ## s3
+
+<a id="s3-no-iam---acl---bucket-policy-authorization-model"></a>
 
 ### No IAM / ACL / bucket-policy authorization model
 
@@ -157,6 +177,8 @@ References:
 
 - <https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketPolicy.html>
 
+<a id="s3-no-server-side-encryption-configuration-surface"></a>
+
 ### No server-side-encryption configuration surface
 
 - **Status:** 🔵 by design
@@ -170,6 +192,8 @@ Azure Blob Storage encrypts at rest transparently, so there is no SSE-S3 / SSE-K
 References:
 
 - <https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketEncryption.html>
+
+<a id="s3-region-derived-from-the-signed-scope-only"></a>
 
 ### Region derived from the signed scope only
 
@@ -185,6 +209,8 @@ References:
 
 - <https://github.com/pedrosakuma/aws2azure/issues/267>
 
+<a id="s3-stateless-multipart-upload-without-per-part-etag-validation"></a>
+
 ### Stateless multipart upload without per-part ETag validation
 
 - **Status:** 🔵 by design
@@ -194,6 +220,8 @@ UploadId is a stateless HMAC-bound token (no Azure call on initiate) and blocks 
 **Impact.** Workflows that overwrite a part within an upload and rely on ETag rejection behave differently from S3.
 
 **Workaround.** Do not re-upload a PartNumber with different content within one upload.
+
+<a id="s3-bucket-sub-resource-configs-are-not-translated"></a>
 
 ### Bucket sub-resource configs are not translated
 
@@ -207,6 +235,8 @@ Lifecycle, replication, website hosting, event notifications, request payment, a
 
 ## secretsmanager
 
+<a id="secretsmanager-versioning-and-staging-modelled-on-key-vault-version-tags"></a>
+
 ### Versioning and staging modelled on Key Vault version tags
 
 - **Status:** 🟡 partial
@@ -216,6 +246,8 @@ Secrets Manager version stages (AWSCURRENT / AWSPREVIOUS / custom labels) are mo
 **Impact.** Two versions created within the same second could tie on created-time, so stage transitions must be applied carefully (e.g. UpdateSecret demotes the previous AWSCURRENT) to avoid resolving the wrong version.
 
 **Workaround.** Rely on the proxy's stage-tag bookkeeping; avoid out-of-band edits to Key Vault version tags.
+
+<a id="secretsmanager-rotation-has-no-lambda-equivalent"></a>
 
 ### Rotation has no Lambda equivalent
 
@@ -227,6 +259,8 @@ Secrets Manager rotation is driven by a customer Lambda function; Azure Key Vaul
 
 **Workaround.** Rotate secrets via an external process (e.g. an Azure Function / pipeline) that calls PutSecretValue through the proxy.
 
+<a id="secretsmanager-deletion-recovery-semantics-differ"></a>
+
 ### Deletion recovery semantics differ
 
 - **Status:** 🔵 by design
@@ -236,6 +270,8 @@ DeleteSecret's RecoveryWindowInDays / ForceDeleteWithoutRecovery map onto Key Va
 **Impact.** Recovery-window timing and force-delete behaviour follow the Key Vault soft-delete configuration rather than the exact AWS window semantics.
 
 **Workaround.** Configure the Key Vault soft-delete retention to match the intended recovery window; grant purge permission only where force-delete is needed.
+
+<a id="secretsmanager-no-resource-policies-or-cross-account-access"></a>
 
 ### No resource policies or cross-account access
 
@@ -248,6 +284,8 @@ Secrets Manager resource policies and cross-account secret sharing have no Key V
 **Workaround.** Use Key Vault RBAC / access policies at the Azure level for authorization.
 
 ## sns
+
+<a id="sns-two-backends-with-different-fidelity"></a>
 
 ### Two backends with different fidelity
 
@@ -263,6 +301,8 @@ References:
 
 - <https://learn.microsoft.com/azure/event-grid/post-to-custom-topic>
 
+<a id="sns-fifo-topics-are-deferred"></a>
+
 ### FIFO topics are deferred
 
 - **Status:** 🟡 partial
@@ -272,6 +312,8 @@ SNS FIFO topic semantics are only approximated. FifoTopic is inferred from a .fi
 **Impact.** Applications relying on SNS FIFO ordering and content-based deduplication cannot depend on it through the proxy.
 
 **Workaround.** Use the Service Bus backend with duplicate detection where approximate dedup is acceptable; do not rely on strict FIFO ordering.
+
+<a id="sns-no-aws-region---account-namespace"></a>
 
 ### No AWS region / account namespace
 
@@ -287,6 +329,8 @@ References:
 
 - <https://github.com/pedrosakuma/aws2azure/issues/267>
 
+<a id="sns-no-iam-backed-policy-surface"></a>
+
 ### No IAM-backed policy surface
 
 - **Status:** ⛔ unsupported
@@ -298,6 +342,8 @@ DeliveryPolicy, RedrivePolicy, and SubscriptionRoleArn are accepted as no-ops be
 **Workaround.** Configure delivery reliability at the Azure backend level; do not rely on SNS policy attributes being enforced.
 
 ## sqs
+
+<a id="sqs-fifo-ordering-requires-the-amqp-transport"></a>
 
 ### FIFO ordering requires the AMQP transport
 
@@ -313,6 +359,8 @@ References:
 
 - <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-amqp-protocol-guide>
 
+<a id="sqs-no-aws-region---account-namespace"></a>
+
 ### No AWS region / account namespace
 
 - **Status:** 🔵 by design
@@ -327,6 +375,8 @@ References:
 
 - <https://github.com/pedrosakuma/aws2azure/issues/267>
 
+<a id="sqs-purgequeue-is-best-effort-emulation"></a>
+
 ### PurgeQueue is best-effort emulation
 
 - **Status:** 🔵 by design
@@ -337,6 +387,8 @@ Service Bus has no native purge. The proxy emulates it by draining peek-locked m
 
 **Workaround.** Pause producers before purging when a hard empty is required.
 
+<a id="sqs-queue-lifecycle-eventual-consistency"></a>
+
 ### Queue lifecycle eventual-consistency
 
 - **Status:** 🔵 by design
@@ -346,6 +398,8 @@ Service Bus deletes queues synchronously, whereas SQS may take up to 60s of even
 **Impact.** Delete-then-recreate-within-seconds patterns that expect the AWS eventual-consistency error will instead succeed immediately.
 
 **Workaround.** Do not rely on QueueDeletedRecently timing behaviour.
+
+<a id="sqs-transport-dependent-capability-differences"></a>
 
 ### Transport-dependent capability differences
 

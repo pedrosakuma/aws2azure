@@ -50,3 +50,55 @@ design_gaps:
     workaround: >-
       Use Key Vault RBAC / access policies at the Azure level for
       authorization.
+workload_patterns:
+  - name: Basic secret lifecycle
+    compatibility: conditional
+    summary: >-
+      Create, inspect, retrieve, update, list, and delete secrets through the
+      corresponding Key Vault data-plane APIs.
+    operations:
+      - CreateSecret
+      - DescribeSecret
+      - GetSecretValue
+      - UpdateSecret
+      - ListSecrets
+      - DeleteSecret
+    design_gaps:
+      - Deletion recovery semantics differ
+    guidance: >-
+      Suitable after configuring Entra ID authentication and validating Key
+      Vault soft-delete behavior for the deployment.
+  - name: Version stages
+    compatibility: conditional
+    summary: >-
+      AWS version stages are represented through Key Vault versions and tags
+      rather than a native staging model.
+    operations:
+      - PutSecretValue
+      - GetSecretValue
+      - UpdateSecret
+    design_gaps:
+      - Versioning and staging modelled on Key Vault version tags
+    guidance: >-
+      Avoid out-of-band edits to version tags and test rapid successive version
+      creation.
+  - name: Lambda-driven managed rotation
+    compatibility: blocked
+    summary: >-
+      RotateSecret cannot execute an AWS Lambda-compatible rotation workflow.
+    operations:
+      - RotateSecret
+    design_gaps:
+      - Rotation has no Lambda equivalent
+    guidance: >-
+      Run rotation from an external Azure Function or pipeline that writes the
+      new version through the proxy.
+  - name: Resource policies and cross-account sharing
+    compatibility: blocked
+    summary: >-
+      Secrets Manager resource-policy and cross-account authorization semantics
+      are not exposed.
+    design_gaps:
+      - No resource policies or cross-account access
+    guidance: >-
+      Use Key Vault RBAC and separate bindings to enforce access.

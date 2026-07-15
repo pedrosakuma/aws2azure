@@ -1,5 +1,7 @@
 # Coverage matrix
 
+For adoption decisions, start with the generated [workload compatibility](workload-compatibility.md) guide.
+
 | Service | Operation | Status | Real-Azure | Azure equivalent |
 |---|---|---|---|---|
 | dynamodb | [BatchGetItem](dynamodb.md#batchgetitem) | 🟡 partial | — | `Azure Cosmos DB (Core SQL API)` |

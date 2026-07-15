@@ -18,5 +18,6 @@ that do not map to a single operation live in [design gaps](design-gaps.md).
 ## Cross-cutting
 
 - [Coverage matrix](coverage.md) — every operation and status on one screen.
+- [Workload compatibility](workload-compatibility.md) — adoption patterns and go/no-go guidance.
 - [Design gaps](design-gaps.md) — architectural limitations spanning operations.
 - [Real-Azure conformance & divergences](divergences.md) — verification state.

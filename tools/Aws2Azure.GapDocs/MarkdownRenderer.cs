@@ -18,6 +18,7 @@ public static class MarkdownRenderer
 
         WriteIndex(byService, designDocs, siteRoot);
         WriteCoverage(byService, siteRoot);
+        WriteWorkloadCompatibility(byService, designDocs, siteRoot);
         WriteDivergences(byService, siteRoot);
         WriteDesignGaps(designDocs, siteRoot);
         foreach (var group in byService)
@@ -54,6 +55,7 @@ public static class MarkdownRenderer
         sb.AppendLine("## Cross-cutting");
         sb.AppendLine();
         sb.AppendLine("- [Coverage matrix](coverage.md) — every operation and status on one screen.");
+        sb.AppendLine("- [Workload compatibility](workload-compatibility.md) — adoption patterns and go/no-go guidance.");
         sb.AppendLine("- [Design gaps](design-gaps.md) — architectural limitations spanning operations.");
         sb.AppendLine("- [Real-Azure conformance & divergences](divergences.md) — verification state.");
         File.WriteAllText(Path.Combine(siteRoot, "index.md"), sb.ToString());
@@ -63,6 +65,8 @@ public static class MarkdownRenderer
     {
         var sb = new StringBuilder();
         sb.AppendLine("# Coverage matrix");
+        sb.AppendLine();
+        sb.AppendLine("For adoption decisions, start with the generated [workload compatibility](workload-compatibility.md) guide.");
         sb.AppendLine();
         sb.AppendLine("| Service | Operation | Status | Real-Azure | Azure equivalent |");
         sb.AppendLine("|---|---|---|---|---|");
@@ -74,6 +78,96 @@ public static class MarkdownRenderer
             }
         }
         File.WriteAllText(Path.Combine(siteRoot, "coverage.md"), sb.ToString());
+    }
+
+    private static void WriteWorkloadCompatibility(
+        IList<IGrouping<string, OperationDoc>> byService,
+        IReadOnlyList<ServiceDesignDoc> designDocs,
+        string siteRoot)
+    {
+        var operationsByService = byService.ToDictionary(
+            g => g.Key,
+            g => g.ToDictionary(o => o.Operation, System.StringComparer.OrdinalIgnoreCase),
+            System.StringComparer.OrdinalIgnoreCase);
+        var sb = new StringBuilder();
+        sb.AppendLine("# Workload compatibility");
+        sb.AppendLine();
+        sb.AppendLine("Use this page before adopting the proxy. A module being available means it can");
+        sb.AppendLine("route that AWS wire protocol; it does **not** mean full AWS service parity.");
+        sb.AppendLine("The assessments below are generated from the operation and design-gap YAMLs.");
+        sb.AppendLine();
+        sb.AppendLine("Legend: ✅ supported · 🟡 conditional · ⛔ blocked");
+        sb.AppendLine();
+        sb.AppendLine("## Service coverage profile");
+        sb.AppendLine();
+        sb.AppendLine("| Service | Module | Implemented | Partial | Stub | Unsupported | Real-Azure sealed |");
+        sb.AppendLine("|---|---|---:|---:|---:|---:|---:|");
+        foreach (var group in byService)
+        {
+            var ops = group.ToList();
+            sb.AppendLine(
+                $"| [{group.Key}]({group.Key}.md) | Available | " +
+                $"{CountStatus(ops, "implemented")} | {CountStatus(ops, "partial")} | " +
+                $"{CountStatus(ops, "stub")} | {CountStatus(ops, "unsupported")} | " +
+                $"{ops.Count(o => !string.IsNullOrEmpty(o.VerifiedRealAzure))}/{ops.Count} |");
+        }
+        sb.AppendLine();
+        sb.AppendLine("## Adoption decision");
+        sb.AppendLine();
+        sb.AppendLine("1. Find the closest workload pattern below.");
+        sb.AppendLine("2. Confirm every operation your application calls in the [coverage matrix](coverage.md).");
+        sb.AppendLine("3. Read each linked design gap and decide whether its workaround is acceptable.");
+        sb.AppendLine("4. Treat missing real-Azure seals as validation work required in your own staging environment.");
+        sb.AppendLine("5. Stop the migration when a required pattern is blocked; do not assume the proxy emulates it.");
+        sb.AppendLine();
+
+        foreach (var serviceDoc in designDocs.OrderBy(d => d.Service, System.StringComparer.Ordinal))
+        {
+            if (serviceDoc.WorkloadPatterns.Count == 0) continue;
+            operationsByService.TryGetValue(serviceDoc.Service, out var serviceOperations);
+            var gapsByArea = serviceDoc.DesignGaps.ToDictionary(
+                g => g.Area,
+                System.StringComparer.OrdinalIgnoreCase);
+
+            sb.AppendLine($"## {serviceDoc.Service.ToLowerInvariant()}");
+            sb.AppendLine();
+            sb.AppendLine("| Workload pattern | Assessment | Operation coverage | Real-Azure | Decision guidance |");
+            sb.AppendLine("|---|---|---|---:|---|");
+            foreach (var pattern in serviceDoc.WorkloadPatterns)
+            {
+                var referencedOperations = pattern.Operations
+                    .Where(name => serviceOperations is not null && serviceOperations.ContainsKey(name))
+                    .Select(name => serviceOperations![name])
+                    .ToList();
+                var coverage = referencedOperations.Count == 0
+                    ? "Design-level requirement"
+                    : string.Join(", ", referencedOperations
+                        .GroupBy(o => o.Status.ToLowerInvariant())
+                        .OrderBy(g => StatusOrder(g.Key))
+                        .Select(g => $"{g.Count()} {g.Key}"));
+                var seals = referencedOperations.Count == 0
+                    ? "—"
+                    : $"{referencedOperations.Count(o => !string.IsNullOrEmpty(o.VerifiedRealAzure))}/{referencedOperations.Count}";
+                var details = new List<string> { Esc(pattern.Summary), Esc(pattern.Guidance) };
+                foreach (var operation in referencedOperations.Where(o => !o.Status.Equals("implemented", System.StringComparison.OrdinalIgnoreCase)))
+                {
+                    details.Add($"[{operation.Operation}]({serviceDoc.Service.ToLowerInvariant()}.md#{operation.Operation.ToLowerInvariant()}) is {operation.Status}");
+                }
+                foreach (var area in pattern.DesignGaps)
+                {
+                    if (gapsByArea.TryGetValue(area, out var gap))
+                    {
+                        details.Add($"[Design gap](design-gaps.md#{Anchor(serviceDoc.Service + "-" + area)}): {gap.Area}");
+                    }
+                }
+                sb.AppendLine(
+                    $"| {Esc(pattern.Name)} | {CompatibilityBadge(pattern.Compatibility)} | " +
+                    $"{coverage} | {seals} | {string.Join("<br>", details)} |");
+            }
+            sb.AppendLine();
+        }
+
+        File.WriteAllText(Path.Combine(siteRoot, "workload-compatibility.md"), sb.ToString());
     }
 
     private static void WriteServicePage(string service, IList<OperationDoc> ops, string siteRoot)
@@ -172,6 +266,8 @@ public static class MarkdownRenderer
             sb.AppendLine();
             foreach (var g in doc.DesignGaps)
             {
+                sb.AppendLine($"<a id=\"{Anchor(doc.Service + "-" + g.Area)}\"></a>");
+                sb.AppendLine();
                 sb.AppendLine($"### {Esc(g.Area)}");
                 sb.AppendLine();
                 sb.AppendLine($"- **Status:** {DesignBadge(g.Status)}");
@@ -220,6 +316,37 @@ public static class MarkdownRenderer
     };
 
     private static string Seal(string verified) => string.IsNullOrEmpty(verified) ? "—" : "✅";
+
+    private static string CompatibilityBadge(string compatibility) => compatibility.ToLowerInvariant() switch
+    {
+        "supported" => "✅ supported",
+        "conditional" => "🟡 conditional",
+        "blocked" => "⛔ blocked",
+        _ => compatibility
+    };
+
+    private static int CountStatus(IEnumerable<OperationDoc> docs, string status) =>
+        docs.Count(o => o.Status.Equals(status, System.StringComparison.OrdinalIgnoreCase));
+
+    private static int StatusOrder(string status) => status switch
+    {
+        "implemented" => 0,
+        "partial" => 1,
+        "stub" => 2,
+        "unsupported" => 3,
+        _ => 4
+    };
+
+    private static string Anchor(string value)
+    {
+        var sb = new StringBuilder(value.Length);
+        foreach (var c in value.ToLowerInvariant())
+        {
+            if (char.IsLetterOrDigit(c) || c == '-') sb.Append(c);
+            else if (c == ' ' || c == '/' || c == '(' || c == ')') sb.Append('-');
+        }
+        return sb.ToString().Trim('-');
+    }
 
     // Theme C divergence report: a one-screen dossier of every documented
     // behaviour difference plus the real-Azure verification state. The
