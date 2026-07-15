@@ -16,8 +16,9 @@ foreach (var a in args)
 Console.WriteLine($"[gap-docs] loading YAMLs under {gapsRoot}");
 var docs = Loader.LoadAll(gapsRoot);
 var designDocs = Loader.LoadDesignDocs(gapsRoot);
+var migration = Loader.LoadRealAzureMigration(gapsRoot);
 var errors = new System.Collections.Generic.List<string>();
-errors.AddRange(Validator.Validate(docs));
+errors.AddRange(Validator.Validate(docs, migration, DateOnly.FromDateTime(DateTime.UtcNow)));
 errors.AddRange(Validator.ValidateDesign(designDocs, docs));
 if (errors.Count > 0)
 {
@@ -32,7 +33,7 @@ if (validateOnly)
     return 0;
 }
 
-MarkdownRenderer.Render(docs, designDocs, siteRoot);
+MarkdownRenderer.Render(docs, designDocs, migration, siteRoot);
 Console.WriteLine($"[gap-docs] markdown written under {siteRoot}");
 CodeRenderer.Render(docs, generatedCode);
 Console.WriteLine($"[gap-docs] generated {generatedCode}");

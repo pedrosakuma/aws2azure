@@ -2,11 +2,17 @@ service: s3
 operation: GetBucketVersioning
 azure_equivalent: "Container metadata (per-bucket toggle); reflects stored PutBucketVersioning intent"
 status: partial
-verified_real_azure: "run 28477441131 (2026-06-30)"
+verified_real_azure:
+  date: "2026-06-30"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/28477441131
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/28477441131
 sub_features:
   - name: "configuration storage"
     status: implemented
-    verified_real_azure: "run 28477441131 (2026-06-30)"
+    verified_real_azure:
+      date: "2026-06-30"
+      evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/28477441131
+      workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/28477441131
     notes: "The bucket-level versioning intent (Enabled/Suspended) is stored in container metadata and echoed back. Returns the empty 'never configured' document when unset."
 behavior_differences:
   - "GET returns the per-bucket toggle persisted by PutBucketVersioning. Azure Blob versioning itself is account-scoped: actual version retention requires account-level versioning enabled out-of-band by the operator."

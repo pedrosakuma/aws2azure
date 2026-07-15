@@ -2,11 +2,17 @@ service: s3
 operation: PutBucketVersioning
 azure_equivalent: "Container metadata (per-bucket toggle); account-level Blob versioning assumed pre-enabled"
 status: partial
-verified_real_azure: "run 28477441131 (2026-06-30)"
+verified_real_azure:
+  date: "2026-06-30"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/28477441131
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/28477441131
 sub_features:
   - name: "configuration storage"
     status: implemented
-    verified_real_azure: "run 28477441131 (2026-06-30)"
+    verified_real_azure:
+      date: "2026-06-30"
+      evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/28477441131
+      workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/28477441131
     notes: "Persists the bucket-level Status (Enabled/Suspended) in container metadata. Malformed/unrecognised bodies rejected with MalformedXML."
   - name: "MFADelete"
     status: unsupported
