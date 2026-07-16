@@ -6,10 +6,9 @@ namespace Aws2Azure.PerfTests;
 /// <summary>
 /// Reference thresholds loaded from <c>docs/perf/baseline-reference.json</c>.
 /// Used by <see cref="PerfResult.AssertNoRegression"/> to fail the run when a
-/// scenario degrades beyond the committed floor / ceiling. Scenarios absent
-/// from the JSON are treated as not gated — they always pass the regression
-/// check so newly added scenarios don't break CI before an operator captures
-/// a reference number.
+/// scenario degrades beyond the committed floor / ceiling. Static scenarios
+/// absent from the JSON fail their regression check; zero-value thresholds are
+/// the explicit waiver used while an operator captures a reference number.
 /// </summary>
 internal static class PerfReferenceBaseline
 {

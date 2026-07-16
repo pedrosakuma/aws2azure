@@ -14,20 +14,40 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - id: filter
+        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
+        with:
+          filters: |
+            relevant:
+              - 'src/**'
+              - 'tests/Aws2Azure.Conformance/**'
+              - 'tests/Aws2Azure.TestSupport/**'
+              - 'docs/gaps/**'
+              - '.github/workflows/conformance.yml'
+
   conformance-tier2:
+    needs: changes
     # Tier-2 LocalStack differential is non-blocking: runs on nightly schedule,
-    # manual dispatch, or PRs carrying the `run-integration` label (reused so a
-    # single label opts a sensitive PR into all emulator-backed suites). The
-    # blocking Tier-1 offline conformance step still runs on every PR in ci.yml.
+    # manual dispatch, relevant PR changes, or the `run-integration` label as an
+    # explicit override. Tier-1 remains blocking on every PR in ci.yml.
     if: >-
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' &&
-       contains(github.event.pull_request.labels.*.name, 'run-integration'))
+      always() &&
+      (github.event_name == 'schedule' ||
+       github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'pull_request' &&
+        (needs.changes.outputs.relevant == 'true' ||
+         contains(github.event.pull_request.labels.*.name, 'run-integration'))))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: ./.github/actions/dotnet-setup
       - name: Verify Docker available
         run: docker info

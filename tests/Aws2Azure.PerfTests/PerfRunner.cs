@@ -287,9 +287,10 @@ internal sealed record PerfResult(
     /// <summary>
     /// Compares throughput, p99, and under-load memory against the committed
     /// reference in <c>docs/perf/baseline-reference.json</c>. No-op when the
-    /// scenario is not listed there (newly added scenarios stay non-gated until
-    /// an operator records a reference number). Each individual ceiling/floor
-    /// is also independently opt-out: a value of 0 disables that dimension, and
+    /// scenario is not listed there. Every static scenario must have an explicit
+    /// reference entry; use zero thresholds to opt out during initial bring-up.
+    /// Each individual ceiling/floor is independently opt-out: a value of 0
+    /// disables that dimension, and
     /// the memory ceilings additionally no-op when memory was not measured for
     /// the run (probe absent or unreachable).
     /// <para>When <c>AWS2AZURE_PERF_RESOURCE_ONLY=1</c> (the Tier 2 real-Azure
@@ -302,7 +303,12 @@ internal sealed record PerfResult(
     public void AssertNoRegression()
     {
         var entry = PerfReferenceBaseline.TryGet(Scenario);
-        if (entry is null) return;
+        if (entry is null)
+        {
+            throw new Xunit.Sdk.XunitException(
+                $"{Scenario}: missing from docs/perf/baseline-reference.json. " +
+                "Register the scenario with measured thresholds or explicit zero-value waivers.");
+        }
 
         var resourceOnly = ResourceOnly;
 

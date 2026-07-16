@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Xunit;
 
 namespace Aws2Azure.PerfTests;
@@ -21,7 +22,7 @@ namespace Aws2Azure.PerfTests;
 /// reference JSON; their A/B verdict comes from diffing the two real-Azure
 /// passes' knee rows in the artifacts, not from this guard.</para>
 /// </summary>
-public sealed class KnownPerfScenariosTests
+public sealed partial class KnownPerfScenariosTests
 {
     /// <summary>
     /// Canonical list of every <c>scenario:</c> argument passed to
@@ -37,17 +38,27 @@ public sealed class KnownPerfScenariosTests
         // S3
         "s3.PutObject (4 KiB)",
         "s3.GetObject (64 KiB)",
+        "s3.ListObjectsV2 (500 keys)",
+        "s3.PutObject (1 KiB)",
+        "s3.PutObject (1 MiB)",
+        "s3.PutObject (10 MiB)",
         "s3.CopyObject (4 KiB)",
+        "s3.DeleteObject (idempotent)",
+        "s3.DeleteObjects (100 keys)",
         "azure-sdk.Blob.UploadAsync (4 KiB)",
 
         // SQS
         "sqs.SendMessage (256 B)",
         "sqs.ReceiveMessage+Delete (1)",
+        "sqs.ReceiveMessage+ChangeVisibility (0)",
+        "sqs.ReceiveMessage+DeleteMessageBatch (10)",
         "azure-sdk.ServiceBus.SendMessage (256 B, queue)",
         "azure-sdk.ServiceBus.ReceiveMessage+Complete (1)",
 
         // SNS
         "sns.Publish (256 B)",
+        "sns.Subscribe+Unsubscribe",
+        "sns.ListSubscriptionsByTopic (20 subs)",
         "azure-sdk.ServiceBusTopics.SendMessage (256 B)",
 
         // DynamoDB
@@ -55,8 +66,16 @@ public sealed class KnownPerfScenariosTests
         "dynamodb.GetItem (small)",
         "dynamodb.Query (pushable filter)",
         "dynamodb.Scan (pushable filter)",
+        "dynamodb.Query LSI numeric (ordered)",
+        "dynamodb.Query LSI numeric (selective)",
         "dynamodb.BatchWriteItem (25 items)",
         "dynamodb.BatchGetItem (25 items)",
+        "dynamodb.UpdateItem (SET expression)",
+        "dynamodb.DeleteItem (idempotent)",
+        "dynamodb.GetItem (large)",
+        "dynamodb.PutItem (large)",
+        "dynamodb.Query (large items)",
+        "dynamodb.BatchGetItem (large items)",
         "dynamodb.CosmosJsonParse (synthetic page)",
         "dynamodb.CosmosBinaryDecode (synthetic page)",
         "azure-sdk.Cosmos.UpsertItem (small)",
@@ -82,6 +101,28 @@ public sealed class KnownPerfScenariosTests
         var missing = All.Where(s => !doc!.Scenarios!.ContainsKey(s)).ToArray();
         Assert.True(missing.Length == 0,
             "Scenarios missing from docs/perf/baseline-reference.json:\n  - " +
+            string.Join("\n  - ", missing));
+    }
+
+    [Fact]
+    public void Every_literal_perf_runner_scenario_is_registered()
+    {
+        var root = FindRepoRoot();
+        var perfProject = Path.Combine(root, "tests", "Aws2Azure.PerfTests");
+        var discovered = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var path in Directory.EnumerateFiles(perfProject, "*.cs", SearchOption.AllDirectories))
+        {
+            var source = File.ReadAllText(path);
+            foreach (Match match in PerfRunnerScenarioRegex().Matches(source))
+            {
+                discovered.Add(match.Groups[1].Value);
+            }
+        }
+
+        var known = new HashSet<string>(All, StringComparer.Ordinal);
+        var missing = discovered.Where(s => !known.Contains(s)).Order().ToArray();
+        Assert.True(missing.Length == 0,
+            "Literal PerfRunner scenarios missing from KnownPerfScenariosTests.All:\n  - " +
             string.Join("\n  - ", missing));
     }
 
@@ -124,6 +165,9 @@ public sealed class KnownPerfScenariosTests
     }
 
     private static string FindRepoPath(params string[] segments)
+        => Path.Combine(new[] { FindRepoRoot() }.Concat(segments).ToArray());
+
+    private static string FindRepoRoot()
     {
         var dir = AppContext.BaseDirectory;
         while (!string.IsNullOrEmpty(dir))
@@ -131,10 +175,14 @@ public sealed class KnownPerfScenariosTests
             if (Directory.Exists(Path.Combine(dir, "docs")) &&
                 Directory.Exists(Path.Combine(dir, "src")))
             {
-                return Path.Combine(new[] { dir }.Concat(segments).ToArray());
+                return dir;
             }
             dir = Path.GetDirectoryName(dir);
         }
         throw new InvalidOperationException("Could not locate repo root.");
     }
+
+    [GeneratedRegex("PerfRunner\\.RunAsync\\(\\s*scenario:\\s*\"([^\"]+)\"",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex PerfRunnerScenarioRegex();
 }

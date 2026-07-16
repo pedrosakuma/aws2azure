@@ -24,7 +24,7 @@ and emits a single Markdown table with throughput + p50/p95/p99/max.
 
 **The numbers below are emulator-bound and tell you about proxy overhead,
 not real-Azure throughput.** Emulators diverge from real Azure on
-throttling, consistency, and feature surface (per CONTRIBUTING). Use these
+throttling, consistency, and feature surface. Use these
 indicators to:
 
 1. catch **regressions** of the proxy itself (compare two runs of the same
@@ -108,7 +108,9 @@ Runs inside each scenario. `AssertHealthy()` fails on no completions or a
 >10% failure rate — a genuinely broken proxy path. `AssertNoRegression()`
 compares against per-scenario floors/ceilings in
 [`baseline-reference.json`](baseline-reference.json) (`minThroughputPerSec`
-/ `maxP99Ms`). **On emulator-bound AMQP paths these absolutes are set to
+/ `maxP99Ms`). Every static scenario must have an entry; zero thresholds are
+an explicit bring-up waiver, while a missing entry fails. **On emulator-bound
+AMQP paths these absolutes are set to
 `0` (disabled)** because the emulator's multi-second cold-connect tail
 stalls move p99 by 20× run-to-run — an absolute ceiling there only produces
 chronic false reds. Those paths are gated relatively instead (below). REST
@@ -468,8 +470,9 @@ The per-tier scenarios quantify and gate the
 [build-time module selection](../deployment/module-selection.md) delta (e.g.
 `aws2azure (s3 only)`).
 
-CI runs this on the perf cadence — nightly, `workflow_dispatch`, and PRs that
-carry the **`run-footprint`** (or **`run-perf`**) label — via
+CI runs this on the perf cadence — nightly, `workflow_dispatch`, automatically
+for relevant PR changes, and through the **`run-footprint`** or **`run-perf`**
+labels as explicit overrides — via
 [`.github/workflows/footprint.yml`](../../.github/workflows/footprint.yml).
 The image-size ceiling stays at 0 (silent passthrough) until the first CI run
 records the number; tighten it deliberately afterwards, same as the perf

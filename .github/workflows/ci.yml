@@ -16,16 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: ./.github/actions/dotnet-setup
-      - name: Restore + build
-        run: dotnet build -c Release --nologo
-      - name: Unit tests
-        run: dotnet test tests/Aws2Azure.UnitTests -c Release --no-build --nologo
-      - name: Conformance tests (Tier 1, offline)
-        run: dotnet test tests/Aws2Azure.Conformance -c Release --no-build --nologo
-      - name: AOT/trim warning gate (linux-x64)
-        run: >-
-          dotnet publish src/Aws2Azure.Proxy -c Release -r linux-x64 --nologo
-          -p:ILLinkTreatWarningsAsErrors=true
-          -p:IlcTreatWarningsAsErrors=true
+      - name: PR validation
+        shell: pwsh
+        run: ./eng/validate.ps1 pr -RuntimeIdentifier linux-x64 -RequireAot
