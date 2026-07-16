@@ -42,12 +42,65 @@ jobs:
       - name: Relative regression gate (proxy vs SDK baseline)
         if: always()
         run: dotnet test tests/Aws2Azure.PerfTests -c Release --no-build --nologo --filter "Category=RelativeGate" --logger "console;verbosity=normal"
-      - name: Upload perf baseline + history
+      - name: Generate emulator qualification artifact
+        if: always()
+        shell: bash
+        run: |
+          output="artifacts/perf/emulator-qualification.yaml"
+          proxy_output="src/Aws2Azure.Proxy/bin/Release/net10.0"
+          candidate_manifest="artifacts/perf/candidate-sha256.txt"
+          mkdir -p "$(dirname "$output")"
+
+          (
+            cd "$proxy_output"
+            find . -maxdepth 1 -type f \
+              \( -name '*.dll' -o -name '*.json' -o -name 'Aws2Azure.Proxy' \) \
+              -print0 |
+              sort -z |
+              xargs -0 sha256sum
+          ) > "$GITHUB_WORKSPACE/$candidate_manifest"
+          artifact_digest="sha256:$(sha256sum "$candidate_manifest" | cut -d' ' -f1)"
+          config_digest="sha256:$(sha256sum docs/perf/baseline-reference.json | cut -d' ' -f1)"
+
+          set +e
+          dotnet run --project tools/Aws2Azure.GapDocs -c Release --no-build -- \
+            generate-emulator-qualification \
+            --reference docs/perf/baseline-reference.json \
+            --latest docs/perf/baseline-latest.json \
+            --output "$output" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --git-sha "$(git rev-parse HEAD)" \
+            --artifact-digest "$artifact_digest" \
+            --config-digest "$config_digest"
+          qualification_status=$?
+          set -e
+
+          if [[ -f "$output" ]]; then
+            verdict="$(sed -n 's/^verdict: //p' "$output" | head -n 1)"
+            {
+              echo "### Emulator regression qualification"
+              echo
+              echo "- Verdict: \`$verdict\`"
+              echo "- Evidence class: proxy overhead against local emulators"
+              echo "- Azure capacity claim: none"
+            } >> "$GITHUB_STEP_SUMMARY"
+            if [[ "$qualification_status" -eq 0 && "$verdict" != "passed" ]]; then
+              qualification_status=4
+            fi
+          elif [[ "$qualification_status" -eq 0 ]]; then
+            qualification_status=2
+          fi
+
+          exit "$qualification_status"
+      - name: Upload perf baseline + qualification + history
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: perf-results
           path: |
+            artifacts/perf/candidate-sha256.txt
+            artifacts/perf/emulator-qualification.yaml
             docs/perf/baseline-latest.md
             docs/perf/baseline-latest.json
             docs/perf/history.csv

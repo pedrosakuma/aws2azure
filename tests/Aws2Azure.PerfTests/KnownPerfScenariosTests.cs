@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Xunit;
 
 namespace Aws2Azure.PerfTests;
@@ -21,7 +22,7 @@ namespace Aws2Azure.PerfTests;
 /// reference JSON; their A/B verdict comes from diffing the two real-Azure
 /// passes' knee rows in the artifacts, not from this guard.</para>
 /// </summary>
-public sealed class KnownPerfScenariosTests
+public sealed partial class KnownPerfScenariosTests
 {
     /// <summary>
     /// Canonical list of every <c>scenario:</c> argument passed to
@@ -35,28 +36,46 @@ public sealed class KnownPerfScenariosTests
         "entra.GetToken (cache hit, 64 keys, c=64)",
 
         // S3
+        "s3.PutObject (1 KiB)",
         "s3.PutObject (4 KiB)",
+        "s3.PutObject (1 MiB)",
+        "s3.PutObject (10 MiB)",
         "s3.GetObject (64 KiB)",
+        "s3.ListObjectsV2 (500 keys)",
         "s3.CopyObject (4 KiB)",
+        "s3.DeleteObject (idempotent)",
+        "s3.DeleteObjects (100 keys)",
         "azure-sdk.Blob.UploadAsync (4 KiB)",
 
         // SQS
         "sqs.SendMessage (256 B)",
         "sqs.ReceiveMessage+Delete (1)",
+        "sqs.ReceiveMessage+ChangeVisibility (0)",
+        "sqs.ReceiveMessage+DeleteMessageBatch (10)",
         "azure-sdk.ServiceBus.SendMessage (256 B, queue)",
         "azure-sdk.ServiceBus.ReceiveMessage+Complete (1)",
 
         // SNS
         "sns.Publish (256 B)",
+        "sns.Subscribe+Unsubscribe",
+        "sns.ListSubscriptionsByTopic (20 subs)",
         "azure-sdk.ServiceBusTopics.SendMessage (256 B)",
 
         // DynamoDB
         "dynamodb.PutItem (small)",
+        "dynamodb.PutItem (large)",
         "dynamodb.GetItem (small)",
+        "dynamodb.GetItem (large)",
         "dynamodb.Query (pushable filter)",
+        "dynamodb.Query (large items)",
+        "dynamodb.Query LSI numeric (ordered)",
+        "dynamodb.Query LSI numeric (selective)",
         "dynamodb.Scan (pushable filter)",
         "dynamodb.BatchWriteItem (25 items)",
         "dynamodb.BatchGetItem (25 items)",
+        "dynamodb.BatchGetItem (large items)",
+        "dynamodb.UpdateItem (SET expression)",
+        "dynamodb.DeleteItem (idempotent)",
         "dynamodb.CosmosJsonParse (synthetic page)",
         "dynamodb.CosmosBinaryDecode (synthetic page)",
         "azure-sdk.Cosmos.UpsertItem (small)",
@@ -82,6 +101,25 @@ public sealed class KnownPerfScenariosTests
         var missing = All.Where(s => !doc!.Scenarios!.ContainsKey(s)).ToArray();
         Assert.True(missing.Length == 0,
             "Scenarios missing from docs/perf/baseline-reference.json:\n  - " +
+            string.Join("\n  - ", missing));
+    }
+
+    [Fact]
+    public void Every_literal_perf_runner_scenario_is_known()
+    {
+        var projectRoot = FindRepoPath("tests", "Aws2Azure.PerfTests");
+        var discovered = Directory
+            .EnumerateFiles(projectRoot, "*.cs", SearchOption.AllDirectories)
+            .SelectMany(path => LiteralPerfRunnerScenarioRegex()
+                .Matches(File.ReadAllText(path))
+                .Select(match => match.Groups[1].Value))
+            .ToHashSet(StringComparer.Ordinal);
+        var known = new HashSet<string>(All, StringComparer.Ordinal);
+        var missing = discovered.Where(scenario => !known.Contains(scenario)).Order().ToArray();
+
+        Assert.True(
+            missing.Length == 0,
+            "Literal PerfRunner scenarios missing from KnownPerfScenariosTests.All:\n  - " +
             string.Join("\n  - ", missing));
     }
 
@@ -137,4 +175,7 @@ public sealed class KnownPerfScenariosTests
         }
         throw new InvalidOperationException("Could not locate repo root.");
     }
+
+    [GeneratedRegex("PerfRunner\\.RunAsync\\(\\s*scenario:\\s*\"([^\"]+)\"")]
+    private static partial Regex LiteralPerfRunnerScenarioRegex();
 }
