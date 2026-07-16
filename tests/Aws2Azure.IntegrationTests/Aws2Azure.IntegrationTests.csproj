@@ -29,6 +29,14 @@
     <ProjectReference Include="..\..\src\Aws2Azure.Proxy\Aws2Azure.Proxy.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="..\Aws2Azure.Conformance\Canonicalization\AwsErrorCanonicalizer.cs"
+             Link="FailureConformance\Canonicalization\AwsErrorCanonicalizer.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\Canonicalization\CanonicalizationPolicy.cs"
+             Link="FailureConformance\Canonicalization\CanonicalizationPolicy.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\Canonicalization\CanonicalResponse.cs"
+             Link="FailureConformance\Canonicalization\CanonicalResponse.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <Using Include="Aws2Azure.IntegrationTests.Fixtures" />
   </ItemGroup>
   <ItemGroup>

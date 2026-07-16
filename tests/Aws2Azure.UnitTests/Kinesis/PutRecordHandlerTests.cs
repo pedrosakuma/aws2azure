@@ -186,6 +186,61 @@ public sealed class PutRecordHandlerTests
         Assert.Contains("ProvisionedThroughputExceededException", ReadBody(context));
     }
 
+    [Theory]
+    [InlineData((int)EventHubsAmqpFailureKind.Transient, null)]
+    [InlineData((int)EventHubsAmqpFailureKind.ServerFatal, null)]
+    [InlineData((int)EventHubsAmqpFailureKind.Transient, "amqp:timeout")]
+    public async Task HandleAsync_maps_amqp_transient_failures_to_retryable_kinesis_error(
+        int failureKind,
+        string? condition)
+    {
+        var context = CreateContext();
+
+        await PutRecordHandler.HandleAsync(
+            context,
+            NewParseResult("{" + "\"StreamName\":\"orders\",\"Data\":\"YQ==\",\"PartitionKey\":\"pk\"}"),
+            NewCredentials(),
+            new FakeMetadataCache((_, _, _, _) => ValueTask.FromResult(new EventHubDescription(1, ["0"], 1, DateTimeOffset.UtcNow))),
+            new FakeAmqpSender((_, _, _, _, _, _) => throw new EventHubsAmqpException(
+                "injected failure",
+                new InvalidOperationException(),
+                (EventHubsAmqpFailureKind)failureKind,
+                condition)),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status500InternalServerError, context.Response.StatusCode);
+        Assert.Contains("InternalFailureException", ReadBody(context));
+    }
+
+    [Fact]
+    public async Task HandleAsync_propagates_amqp_cancellation_without_success_body()
+    {
+        var context = CreateContext();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var requestObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sender = new FakeAmqpSender(async (_, _, _, _, _, cancellationToken) =>
+        {
+            requestObserved.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        });
+
+        var pending = PutRecordHandler.HandleAsync(
+            context,
+            NewParseResult("{" + "\"StreamName\":\"orders\",\"Data\":\"YQ==\",\"PartitionKey\":\"pk\"}"),
+            NewCredentials(),
+            new FakeMetadataCache((_, _, _, _) => ValueTask.FromResult(new EventHubDescription(1, ["0"], 1, DateTimeOffset.UtcNow))),
+            sender,
+            cancellation.Token);
+
+        await requestObserved.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => pending.WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.False(context.Response.HasStarted);
+        Assert.Equal(0, context.Response.Body.Length);
+    }
+
     private static EventHubsCredentials NewCredentials() => new()
     {
         Namespace = "myns",

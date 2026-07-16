@@ -1,0 +1,204 @@
+using Amazon.Kinesis;
+using System.Text;
+using Amazon.Kinesis.Model;
+using Xunit;
+
+namespace Aws2Azure.IntegrationTests.Kinesis;
+
+[Trait("Category", "RealAzure")]
+[Collection(RealAzureCollection.Name)]
+public sealed class KinesisRealAzureConformanceTests(RealAzureProxyFixture fixture)
+{
+    [SkippableFact]
+    public async Task GetRecords_reads_from_real_event_hubs()
+    {
+        Skip.IfNot(fixture.EventHubsConfigured,
+            "AZURE_EVENTHUBS_* / AZURE_EVENTHUBS_STREAM not set — skipping real-Azure Kinesis conformance.");
+
+        using var client = fixture.CreateKinesisClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var target = await ResolvePartitionTargetAsync(client, fixture.EventHubStream, timeout.Token).ConfigureAwait(false);
+        var iterator = await client.GetShardIteratorAsync(new GetShardIteratorRequest
+        {
+            StreamName = fixture.EventHubStream,
+            ShardId = target.ShardId,
+            ShardIteratorType = "LATEST",
+        }, timeout.Token).ConfigureAwait(false);
+        var primedIterator = await PrimeIteratorAsync(client, iterator.ShardIterator, timeout.Token).ConfigureAwait(false);
+
+        var payload = "read-" + Guid.NewGuid().ToString("N");
+        using var data = new MemoryStream(Encoding.UTF8.GetBytes(payload));
+        await client.PutRecordAsync(new PutRecordRequest
+        {
+            StreamName = fixture.EventHubStream,
+            PartitionKey = target.PartitionKey,
+            Data = data,
+        }, timeout.Token).ConfigureAwait(false);
+
+        var records = await KinesisTestHelpers.ReadUntilAsync(
+            client,
+            primedIterator,
+            record => KinesisTestHelpers.Utf8(record) == payload,
+            TimeSpan.FromSeconds(45)).ConfigureAwait(false);
+        Assert.Contains(records, record => KinesisTestHelpers.Utf8(record) == payload);
+    }
+
+    [SkippableFact]
+    public async Task ListShards_paginates_against_real_event_hubs()
+    {
+        Skip.IfNot(fixture.EventHubsConfigured,
+            "AZURE_EVENTHUBS_* / AZURE_EVENTHUBS_STREAM not set — skipping real-Azure Kinesis conformance.");
+
+        using var client = fixture.CreateKinesisClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+        var shardIds = new List<string>();
+        string? nextToken = null;
+        var pages = 0;
+        do
+        {
+            var response = await client.ListShardsAsync(new ListShardsRequest
+            {
+                StreamName = nextToken is null ? fixture.EventHubStream : null,
+                MaxResults = 1,
+                NextToken = nextToken,
+            }, timeout.Token).ConfigureAwait(false);
+            pages++;
+            Assert.InRange(pages, 1, 8);
+            Assert.Single(response.Shards);
+            shardIds.Add(response.Shards[0].ShardId);
+            nextToken = response.NextToken;
+        } while (!string.IsNullOrWhiteSpace(nextToken));
+
+        Assert.True(pages > 1,
+            "The real-Azure Event Hub needs at least two provisioned partitions to exercise ListShards continuation.");
+        Assert.Equal(shardIds.Count, shardIds.Distinct(StringComparer.Ordinal).Count());
+    }
+
+    [SkippableFact]
+    public async Task PutRecords_reports_real_event_hubs_results()
+    {
+        Skip.IfNot(fixture.EventHubsConfigured,
+            "AZURE_EVENTHUBS_* / AZURE_EVENTHUBS_STREAM not set — skipping real-Azure Kinesis conformance.");
+
+        using var client = fixture.CreateKinesisClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+        var run = Guid.NewGuid().ToString("N");
+        var entries = Enumerable.Range(0, 4)
+            .Select(i => new PutRecordsRequestEntry
+            {
+                PartitionKey = $"batch-{i % 2}",
+                Data = new MemoryStream(Encoding.UTF8.GetBytes($"batch-{run}-{i}")),
+            })
+            .ToList();
+        entries.Add(new PutRecordsRequestEntry
+        {
+            PartitionKey = "invalid-without-data",
+        });
+
+        try
+        {
+            var response = await client.PutRecordsAsync(new PutRecordsRequest
+            {
+                StreamName = fixture.EventHubStream,
+                Records = entries,
+            }, timeout.Token).ConfigureAwait(false);
+
+            Assert.Equal(1, response.FailedRecordCount);
+            Assert.Equal(entries.Count, response.Records.Count);
+            Assert.All(response.Records.Take(4), result =>
+            {
+                Assert.False(string.IsNullOrWhiteSpace(result.ShardId));
+                Assert.False(string.IsNullOrWhiteSpace(result.SequenceNumber));
+                Assert.True(string.IsNullOrWhiteSpace(result.ErrorCode));
+            });
+            Assert.False(string.IsNullOrWhiteSpace(response.Records[4].ErrorCode));
+            Assert.False(string.IsNullOrWhiteSpace(response.Records[4].ErrorMessage));
+        }
+        finally
+        {
+            foreach (var entry in entries)
+            {
+                entry.Data?.Dispose();
+            }
+        }
+    }
+
+    [SkippableFact]
+    public async Task Concurrent_consumers_maintain_iterator_progress()
+    {
+        Skip.IfNot(fixture.EventHubsConfigured,
+            "AZURE_EVENTHUBS_* / AZURE_EVENTHUBS_STREAM not set — skipping real-Azure Kinesis conformance.");
+
+        using var client = fixture.CreateKinesisClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var target = await ResolvePartitionTargetAsync(client, fixture.EventHubStream, timeout.Token).ConfigureAwait(false);
+        async Task<string> CreateIteratorAsync()
+        {
+            var response = await client.GetShardIteratorAsync(new GetShardIteratorRequest
+            {
+                StreamName = fixture.EventHubStream,
+                ShardId = target.ShardId,
+                ShardIteratorType = "LATEST",
+            }, timeout.Token).ConfigureAwait(false);
+            return response.ShardIterator;
+        }
+
+        var firstIterator = await CreateIteratorAsync().ConfigureAwait(false);
+        var secondIterator = await CreateIteratorAsync().ConfigureAwait(false);
+        Assert.NotEqual(firstIterator, secondIterator);
+        var primedIterators = await Task.WhenAll(
+            PrimeIteratorAsync(client, firstIterator, timeout.Token),
+            PrimeIteratorAsync(client, secondIterator, timeout.Token)).ConfigureAwait(false);
+
+        var payload = "concurrent-" + Guid.NewGuid().ToString("N");
+        using var data = new MemoryStream(Encoding.UTF8.GetBytes(payload));
+        await client.PutRecordAsync(new PutRecordRequest
+        {
+            StreamName = fixture.EventHubStream,
+            PartitionKey = target.PartitionKey,
+            Data = data,
+        }, timeout.Token).ConfigureAwait(false);
+
+        var reads = await Task.WhenAll(
+            KinesisTestHelpers.ReadUntilAsync(
+                client, primedIterators[0], record => KinesisTestHelpers.Utf8(record) == payload, TimeSpan.FromSeconds(45)),
+            KinesisTestHelpers.ReadUntilAsync(
+                client, primedIterators[1], record => KinesisTestHelpers.Utf8(record) == payload, TimeSpan.FromSeconds(45)))
+            .ConfigureAwait(false);
+
+        Assert.All(reads, records =>
+            Assert.Contains(records, record => KinesisTestHelpers.Utf8(record) == payload));
+    }
+
+    private static async Task<(string ShardId, string PartitionKey)> ResolvePartitionTargetAsync(
+        IAmazonKinesis client,
+        string streamName,
+        CancellationToken cancellationToken)
+    {
+        var response = await client.ListShardsAsync(new ListShardsRequest
+        {
+            StreamName = streamName,
+            MaxResults = 100,
+        }, cancellationToken).ConfigureAwait(false);
+        Assert.NotEmpty(response.Shards);
+
+        var selected = Assert.Single(KinesisTestHelpers.PickPartitionKeys(
+            response.Shards.Count,
+            totalRecords: 1,
+            requiredPartitions: 1));
+        return ($"shardId-{selected.Key:D12}", Assert.Single(selected.Value));
+    }
+
+    private static async Task<string> PrimeIteratorAsync(
+        IAmazonKinesis client,
+        string shardIterator,
+        CancellationToken cancellationToken)
+    {
+        var response = await client.GetRecordsAsync(new GetRecordsRequest
+        {
+            ShardIterator = shardIterator,
+            Limit = 1,
+        }, cancellationToken).ConfigureAwait(false);
+        return response.NextShardIterator;
+    }
+}

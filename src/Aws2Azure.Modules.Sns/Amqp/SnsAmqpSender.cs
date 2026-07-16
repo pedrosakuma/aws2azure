@@ -145,7 +145,9 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
                     outcomes[i] = CreateBatchOutcome(new SnsAmqpException(
                         "Azure Service Bus Topics rejected the AMQP transfer.",
                         sendException,
-                        MapOutcome(sendException.Outcome)));
+                        MapSendFailure(sendException),
+                        sendException.ErrorCondition,
+                        sendException.ErrorDescription));
                 }
                 catch (Exception ex) when (TryWrap(ex, out var wrapped))
                 {
@@ -292,13 +294,20 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
     }
 
     internal static SnsBatchSendOutcome CreateBatchOutcome(SnsAmqpException exception)
-        => exception.Kind == SnsAmqpFailureKind.Throttled
-            ? new SnsBatchSendOutcome(
+        => exception.Kind switch
+        {
+            SnsAmqpFailureKind.Throttled => new SnsBatchSendOutcome(
                 false,
                 "Throttled",
                 "Azure Service Bus Topics throttled the publish request; retry with back-off.",
-                SenderFault: true)
-            : new SnsBatchSendOutcome(false, "InternalFailure", SnsAmqpFailureMessages.Build(exception), false);
+                SenderFault: true),
+            SnsAmqpFailureKind.ClientFatal => new SnsBatchSendOutcome(
+                false,
+                "InvalidParameter",
+                "Azure Service Bus Topics rejected the publish request as invalid.",
+                SenderFault: true),
+            _ => new SnsBatchSendOutcome(false, "InternalFailure", SnsAmqpFailureMessages.Build(exception), false),
+        };
 
     internal static bool TryWrap(Exception exception, out SnsAmqpException wrapped)
     {
@@ -328,7 +337,9 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
                 wrapped = new SnsAmqpException(
                     "Service Bus Topics rejected the AMQP transfer.",
                     sendException,
-                    MapOutcome(sendException.Outcome));
+                    MapSendFailure(sendException),
+                    sendException.ErrorCondition,
+                    sendException.ErrorDescription);
                 return true;
             case AmqpLinkException linkException:
                 wrapped = new SnsAmqpException(
@@ -382,6 +393,14 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
         AmqpDispositionOutcome.Modified => SnsAmqpFailureKind.Throttled,
         _ => SnsAmqpFailureKind.Unknown,
     };
+
+    private static SnsAmqpFailureKind MapSendFailure(ServiceBusSendException exception)
+    {
+        var classified = MapKind(AmqpErrorClassifier.Classify(exception.ErrorCondition));
+        return classified == SnsAmqpFailureKind.Unknown
+            ? MapOutcome(exception.Outcome)
+            : classified;
+    }
 
     private static IAmqpTokenProvider CreateTokenProvider(EntraIdTokenProvider tokenProvider, ServiceBusTopicsCredentials credentials)
     {

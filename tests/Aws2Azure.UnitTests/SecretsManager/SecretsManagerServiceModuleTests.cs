@@ -714,6 +714,7 @@ public sealed class SecretsManagerServiceModuleTests
     [InlineData(HttpStatusCode.BadRequest, StatusCodes.Status400BadRequest, "InvalidParameterException")]
     [InlineData(HttpStatusCode.Unauthorized, StatusCodes.Status403Forbidden, "AccessDeniedException")]
     [InlineData(HttpStatusCode.Forbidden, StatusCodes.Status403Forbidden, "AccessDeniedException")]
+    [InlineData(HttpStatusCode.RequestTimeout, StatusCodes.Status503ServiceUnavailable, "InternalServiceError")]
     [InlineData(HttpStatusCode.TooManyRequests, StatusCodes.Status429TooManyRequests, "ThrottlingException")]
     [InlineData(HttpStatusCode.InternalServerError, StatusCodes.Status503ServiceUnavailable, "InternalServiceError")]
     [InlineData(HttpStatusCode.Accepted, StatusCodes.Status400BadRequest, "InvalidParameterException")]

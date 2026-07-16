@@ -221,6 +221,7 @@ public sealed class GetShardIteratorHandlerTests
         var codec = codecFactory.Create(NewCredentials());
         Assert.True(codec.TryDecode(encoded!, out var token, out var error));
         Assert.Equal(ShardIteratorVerifyError.None, error);
+        Assert.False(string.IsNullOrWhiteSpace(token.IteratorId));
         return token;
     }
 

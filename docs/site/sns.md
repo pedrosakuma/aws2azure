@@ -25,6 +25,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Service Bus Topics management REST API`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -50,6 +51,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Service Bus Topics management REST API`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -120,6 +122,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Service Bus topic subscriptions`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -161,6 +164,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Service Bus Topics management REST API`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -184,6 +188,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Service Bus Topics / Azure Event Grid`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -217,6 +222,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Service Bus Topics / Azure Event Grid`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -298,6 +304,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Service Bus topic subscriptions`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -326,6 +333,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Service Bus topic subscriptions`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 

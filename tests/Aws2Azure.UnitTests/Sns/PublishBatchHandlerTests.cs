@@ -238,6 +238,7 @@ public sealed class PublishBatchHandlerTests
 
     [Theory]
     [InlineData("Throttled", "Throttled", true)]
+    [InlineData("ClientFatal", "InvalidParameter", true)]
     [InlineData("Transient", "InternalFailure", false)]
     [InlineData("ServerFatal", "InternalFailure", false)]
     public void CreateBatchOutcome_maps_failure_kind_to_faithful_wire_code(

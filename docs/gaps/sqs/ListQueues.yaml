@@ -2,6 +2,10 @@ service: sqs
 operation: ListQueues
 azure_equivalent: "GET https://{namespace}.servicebus.windows.net/$Resources/queues?api-version=2021-05&$skip=N&$top=M"
 status: implemented
+verified_real_azure:
+  date: "2026-07-16"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
 sub_features:
   - name: QueueNamePrefix
     status: implemented
@@ -15,7 +19,7 @@ sub_features:
 behavior_differences:
   - "Service Bus iteration is by $skip/$top; the cursor is not stable across queue deletions. AWS SQS tokens are likewise opaque, so no public contract is broken."
   - "Prefix filtering happens after the page is returned, so the same NextToken may visit a partially-filtered page. This is consistent with AWS-SDK pagination but may surface fewer than MaxResults entries per call."
-  - "Verified against Service Bus emulator only; real-Azure validation pending."
+  - "Pagination is validated against real Azure Service Bus across multiple management API pages."
 references:
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListQueues.html
   - https://learn.microsoft.com/rest/api/servicebus/list-queues

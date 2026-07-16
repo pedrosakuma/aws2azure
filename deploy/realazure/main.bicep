@@ -5,7 +5,7 @@
 //
 //   S3       -> Blob Storage   (Storage account; module creates containers)
 //   DynamoDB -> Cosmos DB      (serverless SQL account + a pre-created database)
-//   SQS      -> Service Bus    (Standard namespace; module creates queues)
+//   SQS/SNS  -> Service Bus    (Standard namespace; modules create queues/topics)
 //   Kinesis  -> Event Hubs     (Standard namespace + a pre-created hub;
 //                               CreateStream is unimplemented so the hub must
 //                               already exist)
@@ -145,7 +145,9 @@ resource eventHub 'Microsoft.EventHub/namespaces/eventhubs@2024-01-01' = {
   parent: eventHubs
   name: eventHubName
   properties: {
-    partitionCount: 1
+    // Two partitions are the minimum topology that can exercise Kinesis
+    // ListShards continuation (MaxResults=1) without standing resources.
+    partitionCount: 2
     messageRetentionInDays: 1
   }
 }

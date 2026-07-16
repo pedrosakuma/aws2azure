@@ -1,0 +1,462 @@
+schema_version: 1
+services:
+  - service: s3
+    scenarios:
+      - id: object-lifecycle
+        priority: p0
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Object and bucket create, write, read, delete lifecycle.
+        operations: [CreateBucket, PutObject, GetObject, DeleteObject, DeleteBucket]
+        tests:
+          - Aws2Azure.IntegrationTests.S3.S3RealAzureSmokeTests.Object_lifecycle_round_trips_against_real_blob_storage
+      - id: object-list-pagination
+        priority: p0
+        category: pagination
+        evidence_source: real_azure
+        establishes_verification: true
+        description: ListObjectsV2 continuation across multiple real Blob pages.
+        operations: [ListObjectsV2]
+        tests:
+          - Aws2Azure.IntegrationTests.S3.S3RealAzureConformanceTests.ListObjectsV2_paginates_against_real_blob_storage
+      - id: multi-object-delete
+        priority: p1
+        category: batch
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Mixed-result multi-object delete against real Blob Storage.
+        operations: [DeleteObjects]
+        tests:
+          - Aws2Azure.IntegrationTests.S3.S3RealAzureConformanceTests.DeleteObjects_reports_real_blob_batch_results
+      - id: write-throttled
+        priority: p1
+        category: throttling
+        evidence_source: deterministic
+        establishes_verification: false
+        description: A test-only backend deterministically injects Azure HTTP 429 and verifies the native retryable S3 envelope; this is not a naturally observed Azure throttle.
+        operations: [ListBuckets]
+        tests:
+          - Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.S3_injected_backend_failures_return_native_retryable_errors
+      - id: read-timeout
+        priority: p1
+        category: timeout
+        evidence_source: deterministic
+        establishes_verification: false
+        description: A test-only backend deterministically injects Azure HTTP 408 and verifies the native retryable S3 timeout envelope; this is not a naturally observed Azure timeout.
+        operations: [ListBuckets]
+        tests:
+          - Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.S3_injected_backend_failures_return_native_retryable_errors
+      - id: read-service-unavailable
+        priority: p1
+        category: service_unavailable
+        evidence_source: deterministic
+        establishes_verification: false
+        description: A test-only backend deterministically injects Azure HTTP 503 and verifies the native retryable S3 envelope; this is not a naturally observed Azure outage.
+        operations: [ListBuckets]
+        tests:
+          - Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.S3_injected_backend_failures_return_native_retryable_errors
+      - id: invalid-credentials
+        priority: p0
+        category: invalid_credentials
+        evidence_source: real_azure
+        establishes_verification: false
+        description: An isolated binding sends a deterministic invalid shared key to real Azure Blob Storage and verifies the native non-retryable S3 error without revoking shared credentials.
+        operations: [ListBuckets]
+        tests:
+          - Aws2Azure.IntegrationTests.FailureConformance.RealAzureInvalidCredentialConformanceTests.S3_invalid_shared_key_returns_native_non_retryable_error
+      - id: client-cancellation
+        priority: p1
+        category: cancellation
+        evidence_source: deterministic
+        establishes_verification: false
+        description: The test-only HTTP backend blocks until RequestAborted is cancelled, proving prompt propagation and that no successful response body is committed.
+        operations: [ListBuckets]
+        tests:
+          - Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.Http_client_cancellation_propagates_without_committed_success
+
+  - service: dynamodb
+    scenarios:
+      - id: item-lifecycle
+        priority: p0
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Table and item create, write, consistent read, delete lifecycle.
+        operations: [CreateTable, DescribeTable, PutItem, GetItem, DeleteItem, DeleteTable]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureSmokeTests.Item_lifecycle_round_trips_against_real_cosmos_db
+      - id: query-pagination
+        priority: p0
+        category: pagination
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Indexed Query preserves ordering and continuation across real Cosmos pages.
+        operations: [Query]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureSecondaryIndexTests.Gsi_composite_query_orders_by_sort_key_across_real_pages
+      - id: batch-read-write
+        priority: p0
+        category: batch
+        evidence_source: real_azure
+        establishes_verification: true
+        description: BatchGetItem and BatchWriteItem preserve per-item results on real Cosmos.
+        operations: [BatchGetItem, BatchWriteItem]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureConformanceTests.Batch_operations_round_trip_against_real_cosmos
+      - id: write-throttled
+        priority: p1
+        category: throttling
+        evidence_source: deterministic
+        establishes_verification: false
+        description: A test-only backend deterministically injects Cosmos HTTP 429 and verifies ProvisionedThroughputExceededException plus an AWS SDK retry; this is not a naturally observed Cosmos throttle.
+        operations: [ListTables]
+        tests:
+          - Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.DynamoDb_injected_backend_failures_return_native_retryable_errors
+      - id: read-timeout
+        priority: p1
+        category: timeout
+        evidence_source: deterministic
+        establishes_verification: false
+        description: A test-only backend deterministically injects Cosmos HTTP 408 and verifies the native retryable DynamoDB error; this is not a naturally observed Cosmos timeout.
+        operations: [ListTables]
+        tests:
+          - Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.DynamoDb_injected_backend_failures_return_native_retryable_errors
+      - id: read-service-unavailable
+        priority: p1
+        category: service_unavailable
+        evidence_source: deterministic
+        establishes_verification: false
+        description: A test-only backend deterministically injects Cosmos HTTP 503 and verifies the native retryable DynamoDB error; this is not a naturally observed Cosmos outage.
+        operations: [ListTables]
+        tests:
+          - Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.DynamoDb_injected_backend_failures_return_native_retryable_errors
+      - id: invalid-credentials
+        priority: p0
+        category: invalid_credentials
+        evidence_source: real_azure
+        establishes_verification: false
+        description: An isolated binding sends a deterministic invalid primary key to real Cosmos DB and verifies the native non-retryable DynamoDB error without revoking shared credentials.
+        operations: [ListTables]
+        tests:
+          - Aws2Azure.IntegrationTests.FailureConformance.RealAzureInvalidCredentialConformanceTests.DynamoDb_invalid_primary_key_returns_native_non_retryable_error
+      - id: conditional-write-concurrency
+        priority: p0
+        category: concurrency
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Concurrent conditional updates admit exactly one winner.
+        operations: [UpdateItem]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureConformanceTests.Concurrent_conditional_updates_admit_one_winner
+
+  - service: sqs
+    scenarios:
+      - id: message-lifecycle
+        priority: p0
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Queue and message create, send, receive, acknowledge, delete lifecycle.
+        operations: [CreateQueue, SendMessage, ReceiveMessage, DeleteMessage, DeleteQueue]
+        tests:
+          - Aws2Azure.IntegrationTests.Sqs.SqsRealAzureSmokeTests.Message_lifecycle_round_trips_against_real_service_bus
+      - id: queue-list-pagination
+        priority: p1
+        category: pagination
+        evidence_source: real_azure
+        establishes_verification: true
+        description: ListQueues continuation spans real Service Bus pages.
+        operations: [ListQueues]
+        tests:
+          - Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.ListQueues_paginates_against_real_service_bus
+      - id: message-batches
+        priority: p0
+        category: batch
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Send and delete batches preserve entry-level success and failure.
+        operations: [SendMessageBatch, DeleteMessageBatch]
+        tests:
+          - Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.Message_batches_report_real_service_bus_results
+      - id: send-throttled
+        priority: p1
+        category: throttling
+        evidence_source: deterministic
+        establishes_verification: false
+        description: Test-only REST injection and the existing AMQP mapping seam deterministically verify retryable native SQS throttling errors; this is not a naturally observed Service Bus throttle.
+        operations: [ListQueues, SendMessage]
+        tests:
+          - Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.Sqs_injected_rest_failures_cover_query_xml_and_sdk_json_retryability
+          - Aws2Azure.UnitTests.Sqs.AmqpSendMessageHandlersTests.SendMessage_maps_server_busy_to_503_so_aws_sdk_retries
+      - id: receive-timeout
+        priority: p1
+        category: timeout
+        evidence_source: deterministic
+        establishes_verification: false
+        description: A test-only Service Bus REST backend deterministically injects HTTP 408 and verifies the native retryable SQS error; this is not a naturally observed Service Bus timeout.
+        operations: [ListQueues]
+        tests:
+          - Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.Sqs_injected_rest_failures_cover_query_xml_and_sdk_json_retryability
+      - id: receive-service-unavailable
+        priority: p1
+        category: service_unavailable
+        evidence_source: deterministic
+        establishes_verification: false
+        description: Test-only REST injection and the existing AMQP mapping seam deterministically verify retryable native SQS transient errors; this is not a naturally observed Service Bus outage.
+        operations: [ListQueues, SendMessage]
+        tests:
+          - Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.Sqs_injected_rest_failures_cover_query_xml_and_sdk_json_retryability
+          - Aws2Azure.UnitTests.Sqs.AmqpSendMessageHandlersTests.SendMessage_propagates_broker_reject_as_error
+      - id: invalid-credentials
+        priority: p0
+        category: invalid_credentials
+        evidence_source: real_azure
+        establishes_verification: false
+        description: An isolated binding sends a deterministic invalid SAS key to the real Service Bus management API and verifies the native non-retryable SQS error without revoking shared credentials.
+        operations: [ListQueues]
+        tests:
+          - Aws2Azure.IntegrationTests.FailureConformance.RealAzureInvalidCredentialConformanceTests.Sqs_invalid_sas_key_returns_native_non_retryable_error
+      - id: fifo-session-receive
+        priority: p0
+        category: core
+        evidence_source: real_azure
+        establishes_verification: false
+        description: FIFO receive through broker-assigned Service Bus sessions remains explicitly skipped after AcceptNextSession timed out for both one ready group and concurrent groups; the skipped result blocks SendMessage and ReceiveMessage verification seals.
+        operations: [SendMessage, ReceiveMessage]
+        tests:
+          - Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.Fifo_session_receive_is_not_yet_conformant_on_real_azure
+
+  - service: kinesis
+    scenarios:
+      - id: record-write
+        priority: p0
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: PutRecord writes through the proxy to a real Event Hub.
+        operations: [PutRecord]
+        tests:
+          - Aws2Azure.IntegrationTests.Kinesis.KinesisRealAzureSmokeTests.PutRecord_writes_to_real_event_hubs
+      - id: record-read
+        priority: p0
+        category: read
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Shard iterator and record reads round-trip against a real Event Hub.
+        operations: [GetShardIterator, GetRecords]
+        tests:
+          - Aws2Azure.IntegrationTests.Kinesis.KinesisRealAzureConformanceTests.GetRecords_reads_from_real_event_hubs
+      - id: shard-list-pagination
+        priority: p1
+        category: pagination
+        evidence_source: real_azure
+        establishes_verification: true
+        description: ListShards continuation spans real Event Hubs pages.
+        operations: [ListShards]
+        tests:
+          - Aws2Azure.IntegrationTests.Kinesis.KinesisRealAzureConformanceTests.ListShards_paginates_against_real_event_hubs
+      - id: record-batch
+        priority: p0
+        category: batch
+        evidence_source: real_azure
+        establishes_verification: true
+        description: PutRecords preserves per-record success and failure.
+        operations: [PutRecords]
+        tests:
+          - Aws2Azure.IntegrationTests.Kinesis.KinesisRealAzureConformanceTests.PutRecords_reports_real_event_hubs_results
+      - id: write-throttled
+        priority: p1
+        category: throttling
+        evidence_source: deterministic
+        establishes_verification: false
+        description: The existing AMQP fake seam deterministically injects an Event Hubs throttle and verifies the native retryable Kinesis error; this is not a naturally observed Event Hubs throttle.
+        operations: [PutRecord]
+        tests:
+          - Aws2Azure.UnitTests.Kinesis.PutRecordHandlerTests.HandleAsync_maps_amqp_throttling_to_provisioned_throughput_exceeded
+      - id: read-timeout
+        priority: p1
+        category: timeout
+        evidence_source: deterministic
+        establishes_verification: false
+        description: The existing AMQP fake seam deterministically injects a timeout condition and verifies the native retryable Kinesis error; this is not a naturally observed Event Hubs timeout.
+        operations: [PutRecord]
+        tests:
+          - Aws2Azure.UnitTests.Kinesis.PutRecordHandlerTests.HandleAsync_maps_amqp_transient_failures_to_retryable_kinesis_error
+      - id: write-service-unavailable
+        priority: p1
+        category: service_unavailable
+        evidence_source: deterministic
+        establishes_verification: false
+        description: The existing AMQP fake seam deterministically injects transient and server-fatal failures and verifies the native retryable Kinesis error; this is not a naturally observed Event Hubs outage.
+        operations: [PutRecord]
+        tests:
+          - Aws2Azure.UnitTests.Kinesis.PutRecordHandlerTests.HandleAsync_maps_amqp_transient_failures_to_retryable_kinesis_error
+      - id: invalid-credentials
+        priority: p0
+        category: invalid_credentials
+        evidence_source: real_azure
+        establishes_verification: false
+        description: An isolated binding sends a deterministic invalid SAS key to the real Event Hubs management API and verifies the native non-retryable Kinesis error without revoking shared credentials.
+        operations: [PutRecord]
+        tests:
+          - Aws2Azure.IntegrationTests.FailureConformance.RealAzureInvalidCredentialConformanceTests.Kinesis_invalid_sas_key_returns_native_non_retryable_error
+      - id: client-cancellation
+        priority: p1
+        category: cancellation
+        evidence_source: deterministic
+        establishes_verification: false
+        description: The test-only AMQP sender blocks until cancellation, proving prompt propagation and that no Kinesis success body is committed.
+        operations: [PutRecord]
+        tests:
+          - Aws2Azure.UnitTests.Kinesis.PutRecordHandlerTests.HandleAsync_propagates_amqp_cancellation_without_success_body
+      - id: consumer-concurrency
+        priority: p0
+        category: concurrency
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Concurrent consumers maintain independent iterator progress.
+        operations: [GetShardIterator, GetRecords]
+        tests:
+          - Aws2Azure.IntegrationTests.Kinesis.KinesisRealAzureConformanceTests.Concurrent_consumers_maintain_iterator_progress
+
+  - service: sns
+    scenarios:
+      - id: topic-subscription-lifecycle
+        priority: p0
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Topic creation, subscription, publish, unsubscribe, and delete lifecycle.
+        operations: [CreateTopic, Subscribe, Publish, Unsubscribe, DeleteTopic]
+        tests:
+          - Aws2Azure.IntegrationTests.Sns.SnsRealAzureConformanceTests.Topic_subscription_lifecycle_round_trips_against_real_service_bus
+      - id: topic-list-pagination
+        priority: p1
+        category: pagination
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Topic and subscription listing continues across real Service Bus pages.
+        operations: [ListTopics, ListSubscriptions]
+        tests:
+          - Aws2Azure.IntegrationTests.Sns.SnsRealAzureConformanceTests.Topic_and_subscription_lists_paginate
+      - id: publish-batch
+        priority: p0
+        category: batch
+        evidence_source: real_azure
+        establishes_verification: true
+        description: PublishBatch preserves entry-level success and failure.
+        operations: [PublishBatch]
+        tests:
+          - Aws2Azure.IntegrationTests.Sns.SnsRealAzureConformanceTests.PublishBatch_reports_real_service_bus_results
+      - id: publish-throttled
+        priority: p1
+        category: throttling
+        evidence_source: deterministic
+        establishes_verification: false
+        description: The existing AMQP fake seam deterministically injects Service Bus throttling and verifies the native retryable SNS envelope; this is not a naturally observed Service Bus throttle.
+        operations: [Publish]
+        tests:
+          - Aws2Azure.UnitTests.Sns.PublishHandlerTests.HandleAsync_maps_amqp_throttle_to_sns_throttled_error
+      - id: publish-timeout
+        priority: p1
+        category: timeout
+        evidence_source: deterministic
+        establishes_verification: false
+        description: The existing AMQP fake seam deterministically injects an AMQP timeout condition and verifies the native retryable SNS envelope; this is not a naturally observed Service Bus timeout.
+        operations: [Publish]
+        tests:
+          - Aws2Azure.UnitTests.Sns.PublishHandlerTests.HandleAsync_maps_amqp_timeout_to_retryable_sns_error
+      - id: publish-service-unavailable
+        priority: p1
+        category: service_unavailable
+        evidence_source: deterministic
+        establishes_verification: false
+        description: The existing AMQP fake seam deterministically injects a transient publish failure and verifies the native retryable SNS envelope; this is not a naturally observed Service Bus outage.
+        operations: [Publish]
+        tests:
+          - Aws2Azure.UnitTests.Sns.PublishHandlerTests.HandleAsync_maps_amqp_send_failure_to_sns_error
+      - id: invalid-credentials
+        priority: p0
+        category: invalid_credentials
+        evidence_source: real_azure
+        establishes_verification: false
+        description: An isolated binding sends a deterministic invalid SAS key through AMQP to a real Service Bus topic and verifies the native non-retryable SNS error without revoking shared credentials.
+        operations: [Publish]
+        tests:
+          - Aws2Azure.IntegrationTests.FailureConformance.RealAzureInvalidCredentialConformanceTests.Sns_invalid_sas_key_returns_native_non_retryable_error
+      - id: client-cancellation
+        priority: p1
+        category: cancellation
+        evidence_source: deterministic
+        establishes_verification: false
+        description: The test-only AMQP sender blocks until cancellation, proving prompt propagation and that no SNS success body is committed.
+        operations: [Publish]
+        tests:
+          - Aws2Azure.UnitTests.Sns.PublishHandlerTests.HandleAsync_propagates_amqp_cancellation_without_success_body
+
+  - service: secretsmanager
+    scenarios:
+      - id: secret-lifecycle
+        priority: p0
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Secret create, describe, read, update, list, and delete lifecycle.
+        operations: [CreateSecret, DescribeSecret, GetSecretValue, UpdateSecret, ListSecrets, DeleteSecret]
+        tests:
+          - Aws2Azure.IntegrationTests.SecretsManager.SecretsManagerRealAzureSmokeTests.Secret_lifecycle_round_trip_uses_real_key_vault_backend
+      - id: secret-version-write
+        priority: p0
+        category: write
+        evidence_source: real_azure
+        establishes_verification: true
+        description: PutSecretValue version staging and idempotency against real Key Vault.
+        operations: [PutSecretValue, GetSecretValue]
+        tests:
+          - Aws2Azure.IntegrationTests.SecretsManager.SecretsManagerRealAzureSmokeTests.PutSecretValue_versioning_and_idempotency_against_real_key_vault
+      - id: secret-list-pagination
+        priority: p1
+        category: pagination
+        evidence_source: real_azure
+        establishes_verification: true
+        description: ListSecrets continuation spans real Key Vault pages.
+        operations: [ListSecrets]
+        tests:
+          - Aws2Azure.IntegrationTests.SecretsManager.SecretsManagerRealAzureConformanceTests.ListSecrets_paginates_against_real_key_vault
+      - id: write-throttled
+        priority: p1
+        category: throttling
+        evidence_source: deterministic
+        establishes_verification: false
+        description: A test-only backend deterministically injects Key Vault HTTP 429 and verifies the native retryable Secrets Manager error; this is not a naturally observed Key Vault throttle.
+        operations: [GetSecretValue]
+        tests:
+          - Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.SecretsManager_injected_backend_failures_return_native_retryable_errors
+      - id: read-timeout
+        priority: p1
+        category: timeout
+        evidence_source: deterministic
+        establishes_verification: false
+        description: A test-only backend deterministically injects Key Vault HTTP 408 and verifies the native retryable Secrets Manager error; this is not a naturally observed Key Vault timeout.
+        operations: [GetSecretValue]
+        tests:
+          - Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.SecretsManager_injected_backend_failures_return_native_retryable_errors
+      - id: read-service-unavailable
+        priority: p1
+        category: service_unavailable
+        evidence_source: deterministic
+        establishes_verification: false
+        description: A test-only backend deterministically injects Key Vault HTTP 503 and verifies the native retryable Secrets Manager error; this is not a naturally observed Key Vault outage.
+        operations: [GetSecretValue]
+        tests:
+          - Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.SecretsManager_injected_backend_failures_return_native_retryable_errors
+      - id: invalid-credentials
+        priority: p0
+        category: invalid_credentials
+        evidence_source: real_azure
+        establishes_verification: false
+        description: An isolated binding sends a deterministic invalid client secret to the real Entra token endpoint for Key Vault and verifies the native non-retryable Secrets Manager error without revoking shared credentials.
+        operations: [GetSecretValue]
+        tests:
+          - Aws2Azure.IntegrationTests.FailureConformance.SecretsManagerRealAzureInvalidCredentialConformanceTests.Invalid_client_secret_returns_native_non_retryable_error

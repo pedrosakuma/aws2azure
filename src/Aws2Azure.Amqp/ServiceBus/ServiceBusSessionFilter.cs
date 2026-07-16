@@ -9,25 +9,16 @@ namespace Aws2Azure.Amqp.ServiceBus;
 /// SQS queues).
 /// <para>
 /// On the wire the filter is a single-entry map keyed by the symbol
-/// <c>com.microsoft:session-filter</c>; the value is a described type
-/// using the ulong descriptor <c>0x0000_0137_0000_000C</c> (the canonical
-/// Service Bus code for the session-filter, matching the Microsoft AMQP
-/// libraries), wrapping either an AMQP string (the session-id the
-/// receiver is binding to) or null (meaning "any available session",
-/// which the broker will then echo back on the attach response with
-/// the assigned session-id).
+/// <c>com.microsoft:session-filter</c>; the value is either an AMQP string
+/// (the session-id the receiver is binding to) or null (meaning "any
+/// available session", which the broker will then echo back on the attach
+/// response with the assigned session-id).
 /// </para>
 /// </summary>
 internal static class ServiceBusSessionFilter
 {
     /// <summary>Symbol the source.filter map key uses.</summary>
     public const string FilterSymbol = "com.microsoft:session-filter";
-
-    /// <summary>
-    /// Canonical Service Bus descriptor for the session-filter described
-    /// type (see Microsoft.Azure.Amqp / go-amqp Service Bus session code).
-    /// </summary>
-    public const ulong FilterDescriptor = 0x0000_0137_0000_000CUL;
 
     /// <summary>
     /// Maximum session-id length we will accept before refusing to
@@ -61,24 +52,16 @@ internal static class ServiceBusSessionFilter
                 nameof(sessionId));
         }
 
-        // Worst-case sizing: key symbol header(2) + symbol body + described
-        // marker(1) + ulong descriptor (≤ 9) + value string header(5) +
-        // value bytes (worst-case 4 bytes per UTF-16 char) + padding.
-        var valBytes = (sessionId?.Length ?? 0) * 4 + 16;
+        // Worst-case sizing: key symbol header(2) + symbol body + value
+        // string header(5) + UTF-8 bytes (up to 4 per UTF-16 char) + padding.
+        var valBytes = (sessionId?.Length ?? 0) * 4 + 5;
         var elementsCap = 2 + FilterSymbol.Length      // key sym8
-                        + 1                            // described marker
-                        + 9                            // ulong descriptor (worst case)
-                        + 5 + valBytes;                // value (string or null)
+                        + valBytes;                    // value (string or null)
         Span<byte> elements = stackalloc byte[elementsCap];
         int o = 0;
 
         AmqpVariableWriter.WriteSymbol(elements[o..], FilterSymbol, out var keyLen);
         o += keyLen;
-
-        // Described value: 0x00 + ulong descriptor + (string|null).
-        elements[o++] = AmqpFormatCode.Described;
-        AmqpPrimitiveWriter.WriteULong(elements[o..], FilterDescriptor, out var descLen);
-        o += descLen;
 
         if (sessionId is null)
         {

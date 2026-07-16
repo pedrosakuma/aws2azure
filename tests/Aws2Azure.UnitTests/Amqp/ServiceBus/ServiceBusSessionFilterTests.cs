@@ -60,41 +60,19 @@ public sealed class ServiceBusSessionFilterTests
     }
 
     [Fact]
-    public void Encode_uses_ulong_descriptor_for_described_value()
+    public void Encode_uses_verbatim_string_value_expected_by_service_bus()
     {
-        // The described value's descriptor MUST be the canonical
-        // Service Bus session-filter ulong code 0x0000_0137_0000_000C
-        // — not the symbol. Microsoft's AMQP libraries and the Azure
-        // SDKs (go-amqp, .NET Service Bus client) all emit and expect
-        // the ulong form.
         var encoded = ServiceBusSessionFilter.Encode("s1").ToArray();
 
-        // Locate the described-type marker (0x00). Skip the map header
-        // (map8 = 3 bytes) and the key symbol header (sym8 + 1 length
-        // byte + N body bytes).
         var span = encoded.AsSpan();
         Assert.Equal(0xC1, span[0]); // map8
-        // key sym8: span[3]=0xA3, span[4]=keyLen, body follows.
         Assert.Equal(0xA3, span[3]);
         var keyLen = span[4];
         var afterKey = 5 + keyLen;
-        Assert.Equal(0x00, span[afterKey]); // described constructor
-
-        // Descriptor at span[afterKey+1] should be the ulong form: either
-        // smallulong (0x53 + 1 byte) — won't fit, the code is 9 bytes — or
-        // ulong (0x80 + 8 bytes big-endian). The code is > 255 so we
-        // expect the full ulong form.
-        Assert.Equal(0x80, span[afterKey + 1]);
-        var descriptor =
-            ((ulong)span[afterKey + 2] << 56) |
-            ((ulong)span[afterKey + 3] << 48) |
-            ((ulong)span[afterKey + 4] << 40) |
-            ((ulong)span[afterKey + 5] << 32) |
-            ((ulong)span[afterKey + 6] << 24) |
-            ((ulong)span[afterKey + 7] << 16) |
-            ((ulong)span[afterKey + 8] << 8) |
-             (ulong)span[afterKey + 9];
-        Assert.Equal(ServiceBusSessionFilter.FilterDescriptor, descriptor);
+        Assert.Equal(0xA1, span[afterKey]); // str8
+        Assert.Equal(2, span[afterKey + 1]);
+        Assert.Equal((byte)'s', span[afterKey + 2]);
+        Assert.Equal((byte)'1', span[afterKey + 3]);
     }
 
     [Fact]

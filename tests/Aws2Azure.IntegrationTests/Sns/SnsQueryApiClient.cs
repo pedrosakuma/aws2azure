@@ -24,7 +24,9 @@ internal static class SnsQueryApiClient
     public static async Task<SnsXmlResponse> SendActionAsync(
         HttpClient client,
         string action,
-        IEnumerable<KeyValuePair<string, string>> parameters)
+        IEnumerable<KeyValuePair<string, string>> parameters,
+        string accessKey = SnsServiceBusProxyFixture.AwsAccessKey,
+        string secret = SnsServiceBusProxyFixture.AwsSecret)
     {
         var payloadPairs = new List<KeyValuePair<string, string>>
         {
@@ -47,8 +49,8 @@ internal static class SnsQueryApiClient
         TestSigV4Signer.SignHeader(
             request,
             payload,
-            SnsServiceBusProxyFixture.AwsAccessKey,
-            SnsServiceBusProxyFixture.AwsSecret,
+            accessKey,
+            secret,
             region: "us-east-1",
             service: "sns",
             extraSignedHeaders: ["content-type"]);
@@ -103,6 +105,9 @@ internal static class SnsQueryApiClient
     public static IReadOnlyList<string> ReadTopicArns(SnsXmlResponse response)
         => response.Xml?.Descendants(Ns + "TopicArn").Select(x => x.Value).ToArray()
            ?? Array.Empty<string>();
+
+    public static string? ReadNextToken(SnsXmlResponse response)
+        => response.Xml?.Descendants(Ns + "NextToken").FirstOrDefault()?.Value;
 
     public static Dictionary<string, string> ReadAttributes(SnsXmlResponse response)
         => response.Xml?

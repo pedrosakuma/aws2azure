@@ -113,6 +113,7 @@ internal static class GetRecordsHandler
                     eventHubName,
                     KinesisMetadataSupport.ResolveConsumerGroup(credentials, token.Stream),
                     partitionId,
+                    token.IteratorId,
                     TranslatePosition(token),
                     limit,
                     TimeSpan.FromMilliseconds(500),
@@ -323,7 +324,8 @@ internal static class GetRecordsHandler
             current.Shard,
             ShardIteratorType.AfterSequenceNumber,
             position,
-            issuedAt));
+            issuedAt,
+            current.IteratorId));
     }
 
     private static bool TryBuildContinuationPosition(EventHubsReceivedMessage message, out string position)

@@ -5,8 +5,8 @@ namespace Aws2Azure.Modules.Kinesis.ShardIterators;
 public sealed class ShardIteratorTokenCodec
 {
     internal const string Prefix = "aws2az-it-";
-    private const int MaxAgeSeconds = 300;
-    private const int FieldCount = 5;
+    internal const int MaxAgeSeconds = 300;
+    private const int FieldCount = 6;
 
     private readonly HmacTokenCodec _codec;
     private readonly TimeProvider _timeProvider;
@@ -35,6 +35,7 @@ public sealed class ShardIteratorTokenCodec
             ((int)token.Type).ToString(CultureInfo.InvariantCulture),
             token.Position ?? string.Empty,
             token.IssuedAtUnixSeconds.ToString(CultureInfo.InvariantCulture),
+            token.IteratorId,
         ];
         return _codec.Encode(fields);
     }
@@ -65,7 +66,7 @@ public sealed class ShardIteratorTokenCodec
             return false;
         }
 
-        var decoded = new ShardIteratorToken(fields[0], fields[1], type, position, issuedAtUnixSeconds);
+        var decoded = new ShardIteratorToken(fields[0], fields[1], type, position, issuedAtUnixSeconds, fields[5]);
         var ageSeconds = _timeProvider.GetUtcNow().ToUnixTimeSeconds() - decoded.IssuedAtUnixSeconds;
         if (ageSeconds > MaxAgeSeconds)
         {

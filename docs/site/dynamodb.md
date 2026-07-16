@@ -4,6 +4,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -31,7 +32,7 @@
 - Cosmos 429 maps to `UnprocessedKeys` rather than `ProvisionedThroughputExceededException`; matches DDB SDK retry behaviour. For a single-partition batched query, a 429 throttles the keys not yet returned (a first-page 429 throttles the whole partition group; items already fetched on earlier continuation pages stay in `Responses`).
 - Cosmos binary JSON response bodies are supported only when explicitly enabled with `DynamoDb.CosmosBinaryResponses=true`; the proxy sends `x-ms-cosmos-supported-serialization-formats: CosmosBinary` on point reads and partition-batched queries, decodes `0x80` CosmosBinary bodies back to JSON before the normal DynamoDB response transform, and falls back to the unchanged text path whenever Cosmos returns text. Emulator-unverified: the Cosmos DB Linux emulator used by CI does not emit CosmosBinary bodies.
 - Singleton-group point reads (`GET /docs/{id}`) build the AttributeValue map straight off a CosmosBinary body via `CosmosBinaryReader` (no binary→text decode + JsonDocument DOM), falling back to decode-to-text on an unsupported marker; observable on `aws2azure_dynamodb_read_decode_path_total{op="batchget",path=binary|fallback|text}`. The partition-batched IN query page still decodes to text (binary-direct multi-doc walk is a later increment).
-- Only validated against scripted Cosmos REST fakes; not yet exercised against real Azure Cosmos.
+- Core multi-table BatchGetItem behavior is validated against real Azure Cosmos DB; specialized projection, consistency, throttling, regional failover, and CosmosBinary paths retain their narrower per-feature coverage noted above.
 
 ### References
 
@@ -41,6 +42,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -62,7 +64,7 @@
 - Per-item 400 KB cap not enforced — bounded only by Cosmos document size limits.
 - Cosmos 429 maps to `UnprocessedItems` rather than `ProvisionedThroughputExceededException`; matches DDB SDK retry behaviour.
 - Order is preserved within a table when echoing into `UnprocessedItems`, but Cosmos calls execute in parallel — no guarantee that writes within a table commit in the order they were submitted.
-- Only validated against scripted Cosmos REST fakes; not yet exercised against real Azure Cosmos.
+- Core batch put/delete behavior is validated against real Azure Cosmos DB; throttling and specialized edge paths retain their narrower deterministic coverage.
 - Each Put unit's standalone document body is sent as CosmosBinary (the `0x80` format) when the opt-in `DynamoDb.CosmosBinaryRequests` is enabled (default off); each unit is its own `POST /docs` upsert, so the gateway auto-detects the marker (no negotiation header or special Content-Type). Delete units carry no body. The chosen format is observable on `aws2azure_dynamodb_write_body_total{format=binary|text}`. The Cosmos DB Linux emulator neither emits nor reliably accepts CosmosBinary, so the binary write path is validated against real Azure only — confirmed parsed + indexed by the nightly acceptance test.
 - Perf baseline throughput for this operation (~5/s for 25-item batches, see `docs/perf/baseline-latest.md`) is an inherent cost of the fan-out design, not a regression: each of the 25 Put/Delete units is its own Cosmos REST call (bounded parallelism, see 'Bounded parallelism' above), and the perf harness additionally retries `UnprocessedItems` with backoff within the measured window. Confirmed stable across historical runs (`docs/perf/history.csv`) and within the perf-gate floor (`docs/perf/baseline-reference.json`). Investigated and closed via issue #519 — do not re-flag as a regression without new evidence.
 
@@ -74,6 +76,7 @@
 
 - **Status:** ✅ implemented
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API) — POST /dbs/{db}/colls`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -97,7 +100,7 @@
 - On metadata-sidecar persist failure the container is best-effort deleted to avoid orphan containers.
 - GSI/LSI schemas are validated (key arity, HASH/RANGE roles, LSI HASH must match the table HASH, required Projection with projection type + INCLUDE NonKeyAttributes rules and limits (<=20 per index, <=100 total, names <=255 chars), attribute-definition references, name uniqueness, service limits) and persisted into the sidecar metadata. Index Query/Scan execution lands in later slices; until then a table can be created with indexes but querying them still returns ValidationException.
 - GSI/LSI ProvisionedThroughput on an index is accepted but not enforced, mirroring base-table throughput handling.
-- Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB.
+- Core table creation is validated against real Azure Cosmos DB; index execution and other partial sub-features retain their narrower coverage noted above.
 
 ### References
 
@@ -108,6 +111,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -135,6 +139,7 @@
 
 - **Status:** ✅ implemented
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API) — DELETE /dbs/{db}/colls/{name}`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -147,7 +152,7 @@
 
 - DynamoDB DeleteTable is asynchronous (returns DELETING). The proxy returns the same DELETING status for SDK parity even though the Cosmos delete is synchronous.
 - On a non-existent table the proxy returns ResourceNotFoundException.
-- Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB.
+- DeleteTable is validated against real Azure Cosmos DB through the item-lifecycle conformance scenario.
 
 ### References
 
@@ -158,6 +163,7 @@
 
 - **Status:** ✅ implemented
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API) — GET /dbs/{db}/colls/{name} + sidecar metadata`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -207,6 +213,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -287,6 +294,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -318,6 +326,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -506,6 +515,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 

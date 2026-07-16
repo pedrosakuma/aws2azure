@@ -16,6 +16,7 @@ public class S3ErrorMappingTests
     [InlineData(400, "InvalidResourceName", 400, "InvalidBucketName")]
     [InlineData(400, "OutOfRangeInput", 400, "InvalidBucketName")]
     [InlineData(403, "AuthenticationFailed", 403, "AccessDenied")]
+    [InlineData(408, null, 400, "RequestTimeout")]
     [InlineData(429, null, 503, "SlowDown")]
     [InlineData(503, "ServerBusy", 503, "SlowDown")]
     [InlineData(503, "OperationTimedOut", 503, "ServiceUnavailable")]

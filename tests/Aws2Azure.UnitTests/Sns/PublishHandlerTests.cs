@@ -264,6 +264,32 @@ public sealed class PublishHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_maps_amqp_timeout_to_retryable_sns_error()
+    {
+        var context = NewContext();
+        var sender = new FakeSnsAmqpSender(sendHandler: (_, _, _, _, _) => throw new SnsAmqpException(
+            "timed out",
+            new TimeoutException(),
+            SnsAmqpFailureKind.Transient,
+            condition: "amqp:timeout"));
+
+        await PublishHandler.HandleAsync(
+            context,
+            NewParseResult(("TopicArn", "arn:aws:sns:us-west-2:000000000000:orders"), ("Message", "hello")),
+            NewCredentials(),
+            eventGridCredentials: null,
+            new SnsSettings(),
+            sender,
+            new FakeEventGridPublisher(),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status500InternalServerError, context.Response.StatusCode);
+        var body = ReadBody(context);
+        Assert.Contains("InternalFailure", body);
+        Assert.Contains("<Type>Receiver</Type>", body);
+    }
+
+    [Fact]
     public async Task HandleAsync_maps_amqp_throttle_to_sns_throttled_error()
     {
         var context = NewContext();
@@ -286,6 +312,62 @@ public sealed class PublishHandlerTests
         var body = ReadBody(context);
         Assert.Contains("Throttled", body);
         Assert.Contains("<Type>Sender</Type>", body);
+    }
+
+    [Fact]
+    public async Task HandleAsync_maps_amqp_auth_failure_to_non_retryable_sns_error()
+    {
+        var context = NewContext();
+        var sender = new FakeSnsAmqpSender(sendHandler: (_, _, _, _, _) => throw new SnsAmqpException(
+            "denied",
+            new InvalidOperationException(),
+            SnsAmqpFailureKind.Auth));
+
+        await PublishHandler.HandleAsync(
+            context,
+            NewParseResult(("TopicArn", "arn:aws:sns:us-west-2:000000000000:orders"), ("Message", "hello")),
+            NewCredentials(),
+            eventGridCredentials: null,
+            new SnsSettings(),
+            sender,
+            new FakeEventGridPublisher(),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+        var body = ReadBody(context);
+        Assert.Contains("AuthorizationError", body);
+        Assert.Contains("<Type>Sender</Type>", body);
+    }
+
+    [Fact]
+    public async Task HandleAsync_propagates_amqp_cancellation_without_success_body()
+    {
+        var context = NewContext();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var requestObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sender = new FakeSnsAmqpSender(sendHandler: async (_, _, _, _, cancellationToken) =>
+        {
+            requestObserved.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        });
+
+        var pending = PublishHandler.HandleAsync(
+            context,
+            NewParseResult(("TopicArn", "arn:aws:sns:us-west-2:000000000000:orders"), ("Message", "hello")),
+            NewCredentials(),
+            eventGridCredentials: null,
+            new SnsSettings(),
+            sender,
+            new FakeEventGridPublisher(),
+            cancellation.Token);
+
+        await requestObserved.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => pending.WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.False(context.Response.HasStarted);
+        Assert.Equal(0, context.Response.Body.Length);
     }
 
     private static ServiceBusTopicsCredentials NewCredentials() => new()

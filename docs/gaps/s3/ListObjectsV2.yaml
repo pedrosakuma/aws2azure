@@ -2,6 +2,10 @@ service: s3
 operation: ListObjectsV2
 azure_equivalent: "GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list"
 status: implemented
+verified_real_azure:
+  date: "2026-07-16"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
 sub_features:
   - name: prefix
     status: implemented
@@ -29,4 +33,3 @@ behavior_differences:
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
   - https://learn.microsoft.com/rest/api/storageservices/list-blobs
-

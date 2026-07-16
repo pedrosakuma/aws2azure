@@ -2,6 +2,10 @@ service: kinesis
 operation: ListShards
 azure_equivalent: "Azure Event Hubs Service Bus management REST API"
 status: partial
+verified_real_azure:
+  date: "2026-07-16"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
 sub_features:
   - name: ExclusiveStartShardId + MaxResults pagination
     status: implemented
@@ -17,7 +21,7 @@ behavior_differences:
   - "HashKeyRange values are a uniform even split of the 128-bit Kinesis hash space; Event Hubs does not expose AWS-compatible hash-key assignments."
   - "NextToken is an aws2azure-specific cursor, not an AWS-issued token; it encodes stream name + last shard id and expires after 5 minutes."
   - "Shard filter types other than AT_LATEST and FROM_TRIM_HORIZON currently return ValidationException."
-  - "Verified against Event Hubs emulator only, not yet against a live Event Hubs namespace."
+  - "Core shard listing and pagination are validated against a live Azure Event Hubs namespace."
   - "Stream lifecycle (CreateStream / DeleteStream / IncreaseStreamRetentionPeriod) is out of scope — Event Hubs entities are provisioned out-of-band via ARM."
 references:
   - https://docs.aws.amazon.com/kinesis/latest/APIReference/API_ListShards.html

@@ -2,6 +2,10 @@ service: s3
 operation: CreateBucket
 azure_equivalent: "PUT https://{account}.blob.core.windows.net/{container}?restype=container"
 status: implemented
+verified_real_azure:
+  date: "2026-07-16"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
 sub_features:
   - name: CreateBucketConfiguration.LocationConstraint
     status: unsupported
