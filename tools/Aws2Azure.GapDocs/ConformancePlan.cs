@@ -47,14 +47,16 @@ public sealed class ConformanceTestProjectPlan
     public List<string> Tests { get; set; } = new();
 }
 
-public static class ConformancePlanGenerator
+public sealed class ConformanceMatrixSelection
 {
-    private const string IntegrationTestPrefix = "Aws2Azure.IntegrationTests.";
-    private const string UnitTestPrefix = "Aws2Azure.UnitTests.";
-    private const string IntegrationTestProject = "tests/Aws2Azure.IntegrationTests";
-    private const string UnitTestProject = "tests/Aws2Azure.UnitTests";
+    public RealAzureConformanceMatrix Matrix { get; set; } = new();
+    public string? Service { get; set; }
+    public string? Scenario { get; set; }
+}
 
-    public static ConformanceExecutionPlan Generate(
+public static class ConformanceMatrixSelector
+{
+    public static ConformanceMatrixSelection Select(
         RealAzureConformanceMatrix matrix,
         string? service = null,
         string? scenario = null)
@@ -96,7 +98,73 @@ public static class ConformancePlanGenerator
             }
         }
 
-        var orderedScenarios = selectedScenarios
+        var selectedMatrix = new RealAzureConformanceMatrix
+        {
+            SchemaVersion = matrix.SchemaVersion,
+            SourceFile = matrix.SourceFile,
+            Services = selectedScenarios
+                .GroupBy(entry => entry.Service, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(group => group.Key, StringComparer.Ordinal)
+                .Select(group => new RealAzureService
+                {
+                    Service = group.First().Service,
+                    Scenarios = group
+                        .Select(entry => entry.Scenario)
+                        .OrderBy(entry => entry.Id, StringComparer.Ordinal)
+                        .ToList()
+                })
+                .ToList()
+        };
+
+        return new ConformanceMatrixSelection
+        {
+            Matrix = selectedMatrix,
+            Service = service,
+            Scenario = scenario
+        };
+    }
+
+    private static IReadOnlyList<RealAzureService> SelectServices(
+        RealAzureConformanceMatrix matrix,
+        string? service)
+    {
+        if (service is null)
+        {
+            return matrix.Services;
+        }
+
+        var selected = matrix.Services
+            .Where(entry => string.Equals(entry.Service, service, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (selected.Count == 0)
+        {
+            throw new ArgumentException($"Unknown conformance service '{service}'.", nameof(service));
+        }
+
+        return selected;
+    }
+
+    private static string? NormalizeSelector(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToLowerInvariant();
+}
+
+public static class ConformancePlanGenerator
+{
+    private const string IntegrationTestPrefix = "Aws2Azure.IntegrationTests.";
+    private const string UnitTestPrefix = "Aws2Azure.UnitTests.";
+    private const string IntegrationTestProject = "tests/Aws2Azure.IntegrationTests";
+    private const string UnitTestProject = "tests/Aws2Azure.UnitTests";
+
+    public static ConformanceExecutionPlan Generate(
+        RealAzureConformanceMatrix matrix,
+        string? service = null,
+        string? scenario = null)
+    {
+        var selection = ConformanceMatrixSelector.Select(matrix, service, scenario);
+        var orderedScenarios = selection.Matrix.Services
+            .SelectMany(
+                matrixService => matrixService.Scenarios.Select(
+                    matrixScenario => (Service: matrixService.Service, Scenario: matrixScenario)))
             .OrderBy(entry => entry.Service, StringComparer.Ordinal)
             .ThenBy(entry => entry.Scenario.Id, StringComparer.Ordinal)
             .ToList();
@@ -104,8 +172,8 @@ public static class ConformancePlanGenerator
         {
             Selection = new ConformancePlanSelection
             {
-                Service = service,
-                Scenario = scenario
+                Service = selection.Service,
+                Scenario = selection.Scenario
             },
             HasPositiveRealAzureEvidence = orderedScenarios.Any(
                 entry => entry.Scenario.EstablishesVerification == true
@@ -173,26 +241,6 @@ public static class ConformancePlanGenerator
         return plan;
     }
 
-    private static IReadOnlyList<RealAzureService> SelectServices(
-        RealAzureConformanceMatrix matrix,
-        string? service)
-    {
-        if (service is null)
-        {
-            return matrix.Services;
-        }
-
-        var selected = matrix.Services
-            .Where(entry => string.Equals(entry.Service, service, StringComparison.OrdinalIgnoreCase))
-            .ToList();
-        if (selected.Count == 0)
-        {
-            throw new ArgumentException($"Unknown conformance service '{service}'.", nameof(service));
-        }
-
-        return selected;
-    }
-
     private static void AddProjectPlan(
         ConformanceExecutionPlan plan,
         IReadOnlyList<string> tests,
@@ -214,8 +262,6 @@ public static class ConformancePlanGenerator
         });
     }
 
-    private static string? NormalizeSelector(string? value) =>
-        string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToLowerInvariant();
 }
 
 public static class ConformancePlanRenderer

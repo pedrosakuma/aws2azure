@@ -122,7 +122,8 @@ When no backend at all is configured the proxy process is never started.
   failure here points at real-Azure-only divergence).
 - On **`workflow_dispatch`**, optionally limited to one service and one
   scenario id. Scenario ids reused by multiple services require the service
-  selector.
+  selector. `require_real_azure` defaults to true and rejects a run that
+  produces no passing live-Azure scenario eligible to establish verification.
 - On PRs labelled **`run-real-azure`** (apply the label to validate a change
   against real Azure before merge).
 
@@ -133,7 +134,9 @@ The nightly and labelled-PR paths always execute the full matrix. A directed
 manual run writes the selected plan into the evidence artifact. Before any
 filter runs, the workflow discovers tests from each planned project and fails
 if a matrix identity matches no test; this prevents VSTest's zero-match
-success behavior from hiding stale references.
+success behavior from hiding stale references. Nightly runs also require
+positive real-Azure verification evidence. Labelled PR runs keep the gate off
+so forks without secrets remain truthful, green non-evidence runs.
 
 ## One-time operator setup (OIDC)
 
@@ -444,10 +447,16 @@ dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- \
   --trx TestResults/real-azure \
   --run-id "$GITHUB_RUN_ID" \
   --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-  --evidence-output TestResults/real-azure-conformance
+  --evidence-output TestResults/real-azure-conformance \
+  --service s3 \
+  --require-real-azure
 ```
 
-`--trx` accepts a file or directory and may be repeated. The output contains
+`--trx` accepts a file or directory and may be repeated. `--service` and
+`--scenario` apply the same selector rules as `plan-conformance`.
+`--require-real-azure` writes the evidence and then exits non-zero unless at
+least one selected, passing `real_azure` scenario has
+`establishes_verification: true`. The output contains
 `real-azure-evidence.json`, an overall `summary.md`, and one Markdown report per
 service under `services/`. An operation is only listed as eligible when every
 referencing scenario passed and at least one passing reference is `real_azure`
