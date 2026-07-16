@@ -117,20 +117,30 @@ proxy ([`RealAzureProxyFixture`](../../tests/Aws2Azure.IntegrationTests/Fixtures
 Every real backend is gated **independently** on its environment: a backend
 whose values are absent **skips** (it does not fail), so fork PRs, local
 `dotnet test`, and the no-OIDC case stay honest and green when the
-credential-independent checks pass. The deterministic failure and focused AMQP
-tests still run. When no backend at all is configured the proxy process is
-never started.
+credential-independent checks pass. Selected deterministic tests still run.
+When no backend at all is configured the proxy process is never started.
 
 ## When it runs
 
 - **Nightly** at 05:00 UTC (one hour after the emulator `integration` job, so a
   failure here points at real-Azure-only divergence).
-- On **`workflow_dispatch`**.
+- On **`workflow_dispatch`**, optionally limited to one service and one
+  scenario id. Scenario ids reused by multiple services require the service
+  selector. `require_real_azure` defaults to true and rejects a run that
+  produces no passing live-Azure scenario eligible to establish verification.
 - On PRs labelled **`run-real-azure`** (apply the label to validate a change
   against real Azure before merge).
 
 A concurrency guard (`group: integration-real-azure`,
 `cancel-in-progress: false`) prevents two runs from racing.
+
+The nightly and labelled-PR paths always execute the full matrix. A directed
+manual run writes the selected plan into the evidence artifact. Before any
+filter runs, the workflow discovers tests from each planned project and fails
+if a matrix identity matches no test; this prevents VSTest's zero-match
+success behavior from hiding stale references. Nightly runs also require
+positive real-Azure verification evidence. Labelled PR runs keep the gate off
+so forks without secrets remain truthful, green non-evidence runs.
 
 ## One-time operator setup (OIDC)
 
@@ -407,10 +417,31 @@ Azure run. Evidence generation itself never edits a seal.
 machine-readable coverage plan for all registered services. Each scenario has a
 priority, category, strict `evidence_source`, explicit
 `establishes_verification`, affected gap-doc operations, and one or more
-fully-qualified xUnit test identities. Planned identities are allowed: until
-they appear in a TRX file they are reported as `not_run`. `--validate` checks
-the matrix schema, the complete six-service set, and every operation reference
-together with the normal gap docs.
+fully-qualified xUnit test identities. Optional topology/encoding coverage may
+set `optional_coverage: true`; it remains visible in evidence but a skip or
+failure does not block the base operation's seal. Optional coverage is accepted
+only for positive real-Azure categories that do not establish verification, so
+deterministic and failure-path guards cannot be downgraded. Planned identities
+are allowed: until they appear in a TRX file they are reported as `not_run`.
+`--validate` checks the matrix schema, the complete six-service set, and every
+operation reference together with the normal gap docs.
+
+Inspect the executable plan for the full matrix, one service, or one scenario:
+
+```bash
+dotnet run --project tools/Aws2Azure.GapDocs -- plan-conformance
+dotnet run --project tools/Aws2Azure.GapDocs -- plan-conformance --service s3
+dotnet run --project tools/Aws2Azure.GapDocs -- \
+  plan-conformance --service s3 --scenario object-lifecycle
+```
+
+The deterministic JSON output includes selected scenarios and operations,
+whether the selection contains positive real-Azure verification evidence, and
+deduplicated test identities grouped by test project. A scenario id may be used
+without `--service` only when it is unique across the matrix. The workflow
+integration must verify that every planned identity is discovered before
+constructing `dotnet test` filters; VSTest otherwise exits successfully when a
+filter matches zero tests.
 
 Generate immutable run evidence from one or more TRX files with:
 
@@ -420,10 +451,16 @@ dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- \
   --trx TestResults/real-azure \
   --run-id "$GITHUB_RUN_ID" \
   --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-  --evidence-output TestResults/real-azure-conformance
+  --evidence-output TestResults/real-azure-conformance \
+  --service s3 \
+  --require-real-azure
 ```
 
-`--trx` accepts a file or directory and may be repeated. The output contains
+`--trx` accepts a file or directory and may be repeated. `--service` and
+`--scenario` apply the same selector rules as `plan-conformance`.
+`--require-real-azure` writes the evidence and then exits non-zero unless at
+least one selected, passing `real_azure` scenario has
+`establishes_verification: true`. The output contains
 `real-azure-evidence.json`, an overall `summary.md`, and one Markdown report per
 service under `services/`. An operation is only listed as eligible when every
 referencing scenario passed and at least one passing reference is `real_azure`

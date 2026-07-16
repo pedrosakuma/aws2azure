@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using Aws2Azure.GapDocs;
 using YamlDotNet.Core;
 
@@ -16,6 +17,24 @@ Console.OutputEncoding = Encoding.UTF8;
 if (args.Length > 0 && args[0] == "check-workload")
 {
     return CheckWorkload(args[1..], gapsRoot);
+}
+
+if (args.Length > 0 && args[0] == "plan-conformance")
+{
+    return PlanConformance(
+        args[1..],
+        gapsRoot,
+        Path.Combine(repoRoot, "docs", "testing", "real-azure-conformance.yaml"));
+}
+
+if (args.Length > 0 && args[0] == "validate-qualification")
+{
+    return ValidateQualification(args[1..]);
+}
+
+if (args.Length > 0 && args[0] == "generate-emulator-qualification")
+{
+    return GenerateEmulatorQualification(args[1..]);
 }
 
 return RunGapDocs(args, repoRoot, gapsRoot, siteRoot, generatedCode);
@@ -59,13 +78,19 @@ static int RunGapDocs(
 
         if (options.GenerateEvidence)
         {
+            var selection = ConformanceMatrixSelector.Select(
+                matrix,
+                options.Service,
+                options.Scenario);
             var trxFiles = ExpandTrxPaths(options.TrxPaths);
             var trxResults = TrxParser.ParseFiles(trxFiles);
             var evidence = ConformanceEvidenceGenerator.Generate(
-                matrix,
+                selection.Matrix,
                 trxResults,
                 options.RunId!,
-                options.RunUrl!);
+                options.RunUrl!,
+                selectedService: selection.Service,
+                selectedScenario: selection.Scenario);
             evidence.TrxFiles = trxFiles
                 .Select(path => Path.GetFileName(path)!)
                 .OrderBy(path => path, StringComparer.Ordinal)
@@ -77,6 +102,12 @@ static int RunGapDocs(
             Console.WriteLine(
                 $"[gap-docs] ingested {trxResults.Count} result(s) from {trxFiles.Count} TRX file(s)");
             Console.WriteLine($"[gap-docs] real-Azure evidence written under {outputRoot}");
+            if (options.RequireRealAzure && !evidence.HasPositiveRealAzureEvidence)
+            {
+                Console.Error.WriteLine(
+                    "[gap-docs] required positive real-Azure verification evidence was not produced.");
+                return 3;
+            }
             return 0;
         }
 
@@ -214,6 +245,210 @@ static int CheckWorkload(string[] args, string gapsRoot)
     return failOnBlocked && report.Compatibility == "blocked" ? 2 : 0;
 }
 
+static int PlanConformance(string[] args, string gapsRoot, string defaultMatrixPath)
+{
+    string? matrixPath = null;
+    string? service = null;
+    string? scenario = null;
+    string? outputPath = null;
+    for (var i = 0; i < args.Length; i++)
+    {
+        switch (args[i])
+        {
+            case "--matrix" when i + 1 < args.Length
+                                 && !args[i + 1].StartsWith("--", StringComparison.Ordinal):
+                matrixPath = args[++i];
+                break;
+            case "--service" when i + 1 < args.Length
+                                  && !args[i + 1].StartsWith("--", StringComparison.Ordinal):
+                service = args[++i];
+                break;
+            case "--scenario" when i + 1 < args.Length
+                                   && !args[i + 1].StartsWith("--", StringComparison.Ordinal):
+                scenario = args[++i];
+                break;
+            case "--output" when i + 1 < args.Length
+                                 && !args[i + 1].StartsWith("--", StringComparison.Ordinal):
+                outputPath = args[++i];
+                break;
+            default:
+                Console.Error.WriteLine($"Unknown or incomplete option '{args[i]}'.");
+                return 1;
+        }
+    }
+
+    try
+    {
+        var docs = Loader.LoadAll(gapsRoot);
+        var resolvedMatrixPath = Path.GetFullPath(matrixPath ?? defaultMatrixPath);
+        var matrix = ConformanceMatrixLoader.Load(resolvedMatrixPath);
+        var errors = ConformanceMatrixValidator.Validate(matrix, docs);
+        if (errors.Count > 0)
+        {
+            WriteErrors("real-Azure conformance matrix", errors);
+            return 1;
+        }
+
+        var plan = ConformancePlanGenerator.Generate(matrix, service, scenario);
+        var content = ConformancePlanRenderer.RenderJson(plan) + Environment.NewLine;
+        if (outputPath is null)
+        {
+            Console.Write(content);
+        }
+        else
+        {
+            File.WriteAllText(outputPath, content);
+        }
+        return 0;
+    }
+    catch (Exception exception) when (exception is ArgumentException
+                                      or FileNotFoundException
+                                      or InvalidDataException
+                                      or InvalidOperationException
+                                      or IOException
+                                      or UnauthorizedAccessException
+                                      or YamlException)
+    {
+        Console.Error.WriteLine("[gap-docs] " + exception.Message);
+        return 2;
+    }
+}
+
+static int ValidateQualification(string[] args)
+{
+    if (args.Length != 1 || args[0].StartsWith("--", StringComparison.Ordinal))
+    {
+        Console.Error.WriteLine(
+            "Usage: Aws2Azure.GapDocs validate-qualification <artifact.yaml>");
+        return 1;
+    }
+
+    try
+    {
+        var document = SloQualificationLoader.Load(args[0]);
+        var errors = SloQualificationValidator.Validate(document, DateTimeOffset.UtcNow);
+        if (errors.Count > 0)
+        {
+            WriteErrors("SLO qualification artifact", errors);
+            return 1;
+        }
+
+        Console.WriteLine("[gap-docs] SLO qualification artifact validated OK");
+        return 0;
+    }
+    catch (Exception exception) when (exception is FileNotFoundException
+                                      or InvalidDataException
+                                      or IOException
+                                      or UnauthorizedAccessException
+                                      or YamlException)
+    {
+        Console.Error.WriteLine("[gap-docs] " + exception.Message);
+        return 2;
+    }
+}
+
+static int GenerateEmulatorQualification(string[] args)
+{
+    var values = new Dictionary<string, string>(StringComparer.Ordinal);
+    var maxRowAgeHours = 2;
+    for (var index = 0; index < args.Length; index++)
+    {
+        var option = args[index];
+        if (option == "--max-row-age-hours")
+        {
+            if (++index >= args.Length || args[index].StartsWith("--", StringComparison.Ordinal))
+            {
+                Console.Error.WriteLine($"{option} requires a value.");
+                return 1;
+            }
+            var raw = args[index];
+            if (!int.TryParse(raw, out maxRowAgeHours))
+            {
+                Console.Error.WriteLine($"{option} requires an integer.");
+                return 1;
+            }
+            continue;
+        }
+        if (option is "--reference"
+            or "--latest"
+            or "--output"
+            or "--run-id"
+            or "--run-url"
+            or "--git-sha"
+            or "--artifact-digest"
+            or "--config-digest")
+        {
+            if (++index >= args.Length || args[index].StartsWith("--", StringComparison.Ordinal))
+            {
+                Console.Error.WriteLine($"{option} requires a value.");
+                return 1;
+            }
+            values[option] = args[index];
+            continue;
+        }
+
+        Console.Error.WriteLine($"Unknown option '{option}'.");
+        return 1;
+    }
+
+    var required = new[]
+    {
+        "--reference",
+        "--latest",
+        "--output",
+        "--run-id",
+        "--run-url",
+        "--git-sha",
+        "--artifact-digest",
+        "--config-digest"
+    };
+    var missing = required.Where(option => !values.ContainsKey(option)).ToList();
+    if (missing.Count > 0)
+    {
+        Console.Error.WriteLine(
+            "Missing required option(s): " + string.Join(", ", missing));
+        return 1;
+    }
+
+    try
+    {
+        var document = EmulatorQualificationGenerator.Generate(
+            values["--reference"],
+            values["--latest"],
+            new EmulatorQualificationMetadata
+            {
+                RunId = values["--run-id"],
+                RunUrl = values["--run-url"],
+                GitSha = values["--git-sha"],
+                ArtifactDigest = values["--artifact-digest"],
+                ConfigDigest = values["--config-digest"],
+                GeneratedAtUtc = DateTimeOffset.UtcNow,
+                MaxRowAgeHours = maxRowAgeHours
+            });
+        var errors = SloQualificationValidator.Validate(document, DateTimeOffset.UtcNow);
+        if (errors.Count > 0)
+        {
+            WriteErrors("generated emulator qualification", errors);
+            return 1;
+        }
+
+        EmulatorQualificationGenerator.RenderYaml(document, values["--output"]);
+        Console.WriteLine(
+            $"[gap-docs] emulator qualification '{document.Verdict}' written to {values["--output"]}");
+        return document.Verdict == "failed" ? 3 : 0;
+    }
+    catch (Exception exception) when (exception is ArgumentException
+                                      or FileNotFoundException
+                                      or InvalidDataException
+                                      or IOException
+                                      or UnauthorizedAccessException
+                                      or JsonException)
+    {
+        Console.Error.WriteLine("[gap-docs] " + exception.Message);
+        return 2;
+    }
+}
+
 static IReadOnlyList<string> ExpandTrxPaths(IReadOnlyList<string> paths)
 {
     var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -281,6 +516,9 @@ file sealed class CommandLineOptions
     public string? RunId { get; private set; }
     public string? RunUrl { get; private set; }
     public string? EvidenceOutput { get; private set; }
+    public string? Service { get; private set; }
+    public string? Scenario { get; private set; }
+    public bool RequireRealAzure { get; private set; }
 
     public static CommandLineOptions Parse(string[] args)
     {
@@ -310,6 +548,15 @@ file sealed class CommandLineOptions
                 case "--evidence-output":
                     options.EvidenceOutput = ReadValue(args, ref index, "--evidence-output");
                     break;
+                case "--service":
+                    options.Service = ReadValue(args, ref index, "--service");
+                    break;
+                case "--scenario":
+                    options.Scenario = ReadValue(args, ref index, "--scenario");
+                    break;
+                case "--require-real-azure":
+                    options.RequireRealAzure = true;
+                    break;
                 default:
                     throw new ArgumentException($"Unknown argument '{args[index]}'.");
             }
@@ -337,10 +584,14 @@ file sealed class CommandLineOptions
         else if (options.TrxPaths.Count > 0
                  || options.RunId is not null
                  || options.RunUrl is not null
-                 || options.EvidenceOutput is not null)
+                 || options.EvidenceOutput is not null
+                 || options.Service is not null
+                 || options.Scenario is not null
+                 || options.RequireRealAzure)
         {
             throw new ArgumentException(
-                "--trx, --run-id, --run-url, and --evidence-output require --generate-evidence.");
+                "--trx, --run-id, --run-url, --evidence-output, --service, --scenario, and " +
+                "--require-real-azure require --generate-evidence.");
         }
 
         return options;

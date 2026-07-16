@@ -38,6 +38,7 @@ public sealed class ConformanceEvidenceTests
         Assert.False(deterministicOnly.EligibleForVerifiedRealAzure);
         Assert.Equal(["no_positive_real_azure_evidence"], deterministicOnly.BlockingOutcomes);
         Assert.Equal(["Tests.Unmapped.Result"], evidence.UnmappedTests);
+        Assert.True(evidence.HasPositiveRealAzureEvidence);
     }
 
     [Fact]
@@ -73,6 +74,55 @@ public sealed class ConformanceEvidenceTests
     }
 
     [Fact]
+    public void Generate_reports_non_blocking_optional_scenario_without_affecting_operation_eligibility()
+    {
+        var matrix = Matrix();
+        var optionalScenario = matrix.Services[0].Scenarios.Single(scenario => scenario.Id == "missing");
+        optionalScenario.EvidenceSource = "real_azure";
+        optionalScenario.Category = "read";
+        optionalScenario.OptionalCoverage = true;
+
+        var evidence = ConformanceEvidenceGenerator.Generate(
+            matrix,
+            [
+                new("Tests.Core.Passes", ConformanceOutcome.Passed, TimeSpan.Zero, "run.trx"),
+                new("Tests.Core.Fails", ConformanceOutcome.Passed, TimeSpan.Zero, "run.trx")
+            ],
+            "run-optional",
+            "https://github.com/example/repo/actions/runs/optional");
+
+        var service = Assert.Single(evidence.Services);
+        var optional = Assert.Single(service.Scenarios, scenario => scenario.Id == "missing");
+        Assert.True(optional.OptionalCoverage);
+        Assert.Equal("not_run", optional.Outcome);
+
+        var operation = Assert.Single(
+            service.Operations,
+            operation => operation.Operation == "GetObject");
+        Assert.True(operation.EligibleForVerifiedRealAzure);
+        Assert.Equal(["core"], operation.Scenarios);
+        Assert.Empty(operation.BlockingOutcomes);
+    }
+
+    [Fact]
+    public void Generate_marks_skipped_live_scenarios_as_missing_positive_real_azure_evidence()
+    {
+        var evidence = ConformanceEvidenceGenerator.Generate(
+            Matrix(),
+            [
+                new("Tests.Core.Passes", ConformanceOutcome.Skipped, TimeSpan.Zero, "run.trx"),
+                new("Tests.Core.Fails", ConformanceOutcome.Skipped, TimeSpan.Zero, "run.trx")
+            ],
+            "run-skipped",
+            "https://github.com/example/repo/actions/runs/skipped",
+            selectedService: "s3");
+
+        Assert.False(evidence.HasPositiveRealAzureEvidence);
+        Assert.Equal("s3", evidence.Selection.Service);
+        Assert.Equal(2, evidence.Summary.Skipped);
+    }
+
+    [Fact]
     public void Render_includes_run_totals_scenarios_and_eligibility_without_mutation_claim()
     {
         var evidence = ConformanceEvidenceGenerator.Generate(
@@ -105,7 +155,9 @@ public sealed class ConformanceEvidenceTests
             [new("Tests.Core.Passes", ConformanceOutcome.Passed, TimeSpan.FromSeconds(1), "run.trx")],
             "run-8",
             "https://github.com/example/repo/actions/runs/8",
-            DateTimeOffset.Parse("2026-07-15T12:00:00Z"));
+            DateTimeOffset.Parse("2026-07-15T12:00:00Z"),
+            selectedService: "s3",
+            selectedScenario: "core");
         var output = Path.Combine(AppContext.BaseDirectory, $"conformance-evidence-{Guid.NewGuid():N}");
 
         try
@@ -118,6 +170,9 @@ public sealed class ConformanceEvidenceTests
             Assert.True(File.Exists(Path.Combine(output, "services", "s3.md")));
             using var json = JsonDocument.Parse(File.ReadAllText(jsonPath));
             Assert.Equal("run-8", json.RootElement.GetProperty("run_id").GetString());
+            Assert.Equal("s3", json.RootElement.GetProperty("selection").GetProperty("service").GetString());
+            Assert.Equal("core", json.RootElement.GetProperty("selection").GetProperty("scenario").GetString());
+            Assert.True(json.RootElement.GetProperty("has_positive_real_azure_evidence").GetBoolean());
             Assert.Equal("s3", json.RootElement.GetProperty("services")[0].GetProperty("service").GetString());
             Assert.Equal(
                 "real_azure",
