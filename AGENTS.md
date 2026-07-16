@@ -251,6 +251,42 @@ Repo-wide meta-workflows that have paid off here. Declarative on purpose —
 the goal is to bias decisions, not to script every turn. Skip them when the
 task is genuinely trivial (typo fix, one-line config, doc-only).
 
+- **One session/worktree = one branch = one PR.** A session is the sole writer
+  for its worktree and branch. Never let two agents edit the same checkout,
+  move commits between agent-owned branches, or reuse a worktree for a second
+  PR. The coordinator owns decomposition, branch dependencies, validation
+  labels, shared-file assignments, merge order, and final merges; worker
+  sessions implement and validate their assigned PR but do not merge it.
+- **Keep the active wave small.** Prefer 3–4 active PRs at a time. Fan out only
+  work that can merge independently without shared files or schema/generated
+  dependencies. Stack PRs only for real code dependencies, state the parent
+  branch explicitly, and retarget/rebase each surviving PR onto `main` as its
+  predecessors merge.
+- **Single writer for shared surfaces.** In each wave the coordinator assigns
+  exactly one branch to workflows, Bicep/deployment templates, gap manifests
+  and their generated outputs, qualification/conformance matrices, and
+  performance/footprint baselines or histories. Other branches treat those
+  files as read-only and report the needed follow-up to the coordinator.
+- **Rebase, then regenerate.** The assigned gap-doc writer fetches and rebases
+  onto current `origin/main`, discards branch-side edits to `docs/site/*` and
+  `src/Aws2Azure.Core/Generated/CapabilityRegistry.g.cs`, runs
+  `dotnet run --project tools/Aws2Azure.GapDocs`, and reviews the regenerated
+  diff. Never hand-merge generated output. Dependent branches rebase after the
+  generator-owning PR merges and regenerate again only if they own new source
+  YAML changes.
+- **Classify validation mechanically.** After fetching `main`, run
+  `dotnet run --project tools/Aws2Azure.ChangeAwareValidation -- --base main --pretty`.
+  Its JSON lists every gate as `required`, `optional`, or `not-applicable` and
+  returns the labels required by the diff. Hot request paths require
+  `run-perf`; authentication and transport require `run-integration` plus
+  `run-real-azure`; startup, packaging, and build-graph changes require
+  `run-footprint`. Apply every returned required label before merge.
+- **Diagnose regressions against `main`.** Reproduce a failed gate on the
+  merge-base/current `main` under the same runner, dependencies, configuration,
+  and backend before calling it a PR regression. Never automatically raise a
+  threshold, rewrite a baseline/qualification, or repeatedly rerun a failure.
+  Investigate first; permit at most one evidence-backed diagnostic rerun when
+  there is a concrete flake hypothesis.
 - **Independent review before merging a non-trivial PR.** Review the branch
   diff against `main` with a separate reviewer context (human or
   read-only code-review agent), address every real finding, and let required
