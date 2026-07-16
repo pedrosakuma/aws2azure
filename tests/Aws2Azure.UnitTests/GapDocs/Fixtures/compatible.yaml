@@ -1,0 +1,7 @@
+schema_version: 1
+workload: object-storage
+operations:
+  - s3:PutObject
+  - s3:GetObject
+requirements:
+  s3_basic_object_crud: true

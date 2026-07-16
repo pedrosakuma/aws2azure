@@ -1,0 +1,7 @@
+schema_version: 1
+workload: bucket-automation
+operations:
+  - s3:PutBucketPolicy
+  - s3:PutBucketLifecycleConfiguration
+requirements:
+  s3_policy_lifecycle_automation: true

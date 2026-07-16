@@ -2,11 +2,17 @@ service: s3
 operation: GetObjectRetention
 azure_equivalent: "Blob immutability policy (HEAD blob: x-ms-immutability-policy-mode/-until-date)"
 status: implemented
-verified_real_azure: "run 28346494642 (2026-06-29)"
+verified_real_azure:
+  date: "2026-06-29"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/28346494642
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/28346494642
 sub_features:
   - name: "mode + retain-until"
     status: implemented
-    verified_real_azure: "run 28346494642 (2026-06-29)"
+    verified_real_azure:
+      date: "2026-06-29"
+      evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/28346494642
+      workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/28346494642
     notes: "Reads the blob immutability policy via HEAD: x-ms-immutability-policy-mode (locked->COMPLIANCE, unlocked->GOVERNANCE) and x-ms-immutability-policy-until-date. Returns 404 NoSuchObjectLockConfiguration when no policy is set."
 behavior_differences:
   - "Mode mapping: GOVERNANCE<->unlocked, COMPLIANCE<->locked. Azure locked is irreversible and extend-only, like S3 COMPLIANCE."

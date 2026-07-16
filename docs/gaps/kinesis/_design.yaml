@@ -47,7 +47,8 @@ design_gaps:
       Provision Event Hubs partition count for peak load up front; use consumer
       groups for isolation.
 workload_patterns:
-  - name: Basic record ingestion
+  - id: kinesis_record_ingestion
+    name: Basic record ingestion
     compatibility: conditional
     summary: >-
       PutRecord and PutRecords publish to provisioned Event Hubs partitions, but
@@ -60,7 +61,8 @@ workload_patterns:
     guidance: >-
       Use partition keys for routing and do not depend on
       SequenceNumberForOrdering or exact AWS sequence-number semantics.
-  - name: Single consumer per shard
+  - id: kinesis_single_consumer_per_shard
+    name: Single consumer per shard
     compatibility: conditional
     summary: >-
       Shard discovery and polling work best with one consumer loop per partition
@@ -75,7 +77,8 @@ workload_patterns:
     guidance: >-
       Prefer TRIM_HORIZON, LATEST, or AT_TIMESTAMP and dedicate a consumer group
       to each independent consumer.
-  - name: Independent replaying consumers on one consumer group
+  - id: kinesis_shared_consumer_group_replay
+    name: Independent replaying consumers on one consumer group
     compatibility: blocked
     summary: >-
       Distinct AWS shard iterators cannot maintain independent replay positions
@@ -88,7 +91,8 @@ workload_patterns:
     guidance: >-
       Assign distinct Event Hubs consumer groups or redesign around one consumer
       per shard.
-  - name: Resharding, enhanced fan-out, or KCL lease management
+  - id: kinesis_resharding_enhanced_fanout_kcl
+    name: Resharding, enhanced fan-out, or KCL lease management
     compatibility: blocked
     summary: >-
       Dynamic shard topology and enhanced fan-out have no equivalent in the
