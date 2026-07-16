@@ -21,6 +21,10 @@ One file per AWS operation the proxy handles (implemented, partial, stub, or
 unsupported). Unknown keys **fail validation** (a typo must not silently drop
 documented content).
 
+The operation statuses below are capability metadata. Their relationship to
+module availability, real-Azure seals, conditional workloads, and workload GA
+is defined in [Project maturity and support terms](../project-maturity.md).
+
 ```yaml
 service: dynamodb            # required — must match the directory name
 operation: Query             # required — AWS operation name

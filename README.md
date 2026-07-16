@@ -52,7 +52,10 @@ or Workload Identity — see
 | Secrets Manager | Key Vault | Available | Workload-dependent — [review profile](./docs/site/workload-compatibility.md#secretsmanager) |
 
 An available module means the proxy can route that service's AWS wire protocol;
-it does **not** imply full AWS service parity. Start with the generated
+it does **not** imply full AWS service parity. The project-level meanings of
+module, operation, real-Azure, conditional, and GA claims are defined in
+[**Project maturity and support terms**](./docs/project-maturity.md). Start with
+the generated
 [**workload compatibility guide**](./docs/site/workload-compatibility.md), then
 confirm every operation in the [coverage matrix](./docs/site/coverage.md).
 Every operation and sub-feature is documented exhaustively under
@@ -143,9 +146,13 @@ limits, readiness/ordering, and secret delivery.
 
 ## Project Tracking
 
-The canonical source of truth for scope, phases, and status is the pinned
-**[Project Roadmap](https://github.com/pedrosakuma/aws2azure/issues/16)** issue.
-All work is tracked via GitHub issues and milestones.
+The pinned **[Project Roadmap](https://github.com/pedrosakuma/aws2azure/issues/16)**
+is the durable source of truth for scope and completed phases. Active
+production-maturity and workload-GA work is tracked in
+**[#542](https://github.com/pedrosakuma/aws2azure/issues/542)**. See
+[Project maturity and support terms](./docs/project-maturity.md) for the
+governance model and normative terminology. All work is tracked through GitHub
+issues and milestones.
 
 ## License
 
