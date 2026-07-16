@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
+using YamlDotNet.Core;
+using YamlDotNet.Core.Events;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -117,6 +120,47 @@ public static class SloQualificationLoader
         document.SourceFile = path;
         SloQualificationValidator.Normalize(document);
         return document;
+    }
+}
+
+public static class SloQualificationRenderer
+{
+    public static void RenderYaml(SloQualificationDocument document, string outputPath)
+    {
+        var serializer = new SerializerBuilder()
+            .WithNamingConvention(UnderscoredNamingConvention.Instance)
+            .WithTypeConverter(new DateTimeOffsetYamlTypeConverter())
+            .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull)
+            .Build();
+        var directory = Path.GetDirectoryName(Path.GetFullPath(outputPath));
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+        File.WriteAllText(outputPath, serializer.Serialize(document));
+    }
+
+    private sealed class DateTimeOffsetYamlTypeConverter : IYamlTypeConverter
+    {
+        public bool Accepts(Type type) => type == typeof(DateTimeOffset);
+
+        public object ReadYaml(IParser parser, Type type, ObjectDeserializer rootDeserializer)
+        {
+            return DateTimeOffset.Parse(
+                parser.Consume<Scalar>().Value,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal);
+        }
+
+        public void WriteYaml(
+            IEmitter emitter,
+            object? value,
+            Type type,
+            ObjectSerializer serializer)
+        {
+            var timestamp = ((DateTimeOffset)value!).ToUniversalTime();
+            emitter.Emit(new Scalar(timestamp.ToString("O", CultureInfo.InvariantCulture)));
+        }
     }
 }
 
@@ -358,6 +402,11 @@ public static class SloQualificationValidator
     {
         if (document.Signals.Count == 0)
         {
+            if (document.ArtifactKind == "real_azure_workload_qualification"
+                && document.Verdict != "qualified")
+            {
+                return;
+            }
             err("signals must contain at least one signal");
             return;
         }
@@ -469,6 +518,7 @@ public static class SloQualificationValidator
         }
 
         if (document.ArtifactKind == "real_azure_workload_qualification"
+            && document.Verdict == "qualified"
             && !document.Signals.Any(signal => signal.Disposition == "blocking"))
         {
             err("real-Azure qualification requires at least one blocking signal");
@@ -534,6 +584,11 @@ public static class SloQualificationValidator
     {
         if (document.Scenarios.Count == 0)
         {
+            if (document.ArtifactKind == "real_azure_workload_qualification"
+                && document.Verdict == "inconclusive")
+            {
+                return;
+            }
             err("scenarios must contain at least one scenario");
             return;
         }
@@ -618,6 +673,10 @@ public static class SloQualificationValidator
             .ToList();
         if (realAzureScenarios.Count == 0)
         {
+            if (document.Verdict is "inconclusive" or "blocked")
+            {
+                return;
+            }
             err("real-Azure qualification requires at least one real_azure scenario");
             return;
         }

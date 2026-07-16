@@ -37,6 +37,11 @@ if (args.Length > 0 && args[0] == "generate-emulator-qualification")
     return GenerateEmulatorQualification(args[1..]);
 }
 
+if (args.Length > 0 && args[0] == "generate-real-azure-workload-qualification")
+{
+    return GenerateRealAzureWorkloadQualification(args[1..]);
+}
+
 return RunGapDocs(args, repoRoot, gapsRoot, siteRoot, generatedCode);
 
 static int RunGapDocs(
@@ -436,6 +441,131 @@ static int GenerateEmulatorQualification(string[] args)
         Console.WriteLine(
             $"[gap-docs] emulator qualification '{document.Verdict}' written to {values["--output"]}");
         return document.Verdict == "failed" ? 3 : 0;
+    }
+    catch (Exception exception) when (exception is ArgumentException
+                                      or FileNotFoundException
+                                      or InvalidDataException
+                                      or IOException
+                                      or UnauthorizedAccessException
+                                      or JsonException)
+    {
+        Console.Error.WriteLine("[gap-docs] " + exception.Message);
+        return 2;
+    }
+}
+
+static int GenerateRealAzureWorkloadQualification(string[] args)
+{
+    var values = new Dictionary<string, string>(StringComparer.Ordinal);
+    var operations = new List<RealAzureWorkloadOperation>();
+    for (var index = 0; index < args.Length; index++)
+    {
+        var option = args[index];
+        if (option == "--operation")
+        {
+            if (++index >= args.Length || args[index].StartsWith("--", StringComparison.Ordinal))
+            {
+                Console.Error.WriteLine($"{option} requires a service:Operation value.");
+                return 1;
+            }
+            var separator = args[index].IndexOf(':');
+            if (separator <= 0 || separator == args[index].Length - 1)
+            {
+                Console.Error.WriteLine($"{option} requires a service:Operation value.");
+                return 1;
+            }
+            operations.Add(new RealAzureWorkloadOperation
+            {
+                Service = args[index][..separator],
+                Operation = args[index][(separator + 1)..]
+            });
+            continue;
+        }
+        if (option is "--evidence"
+            or "--output"
+            or "--profile-id"
+            or "--profile-version"
+            or "--git-sha"
+            or "--artifact-digest"
+            or "--config-digest"
+            or "--region"
+            or "--backend-description")
+        {
+            if (++index >= args.Length || args[index].StartsWith("--", StringComparison.Ordinal))
+            {
+                Console.Error.WriteLine($"{option} requires a value.");
+                return 1;
+            }
+            values[option] = args[index];
+            continue;
+        }
+
+        Console.Error.WriteLine($"Unknown option '{option}'.");
+        return 1;
+    }
+
+    var required = new[]
+    {
+        "--evidence",
+        "--output",
+        "--profile-id",
+        "--profile-version",
+        "--git-sha",
+        "--artifact-digest",
+        "--config-digest",
+        "--region",
+        "--backend-description"
+    };
+    var missing = required.Where(option => !values.ContainsKey(option)).ToList();
+    if (missing.Count > 0 || operations.Count == 0)
+    {
+        if (operations.Count == 0)
+        {
+            missing.Add("--operation");
+        }
+        Console.Error.WriteLine(
+            "Missing required option(s): " + string.Join(", ", missing));
+        return 1;
+    }
+    if (!int.TryParse(values["--profile-version"], out var profileVersion))
+    {
+        Console.Error.WriteLine("--profile-version requires an integer.");
+        return 1;
+    }
+
+    try
+    {
+        var document = RealAzureWorkloadQualificationGenerator.Generate(
+            values["--evidence"],
+            operations,
+            new RealAzureWorkloadQualificationMetadata
+            {
+                ProfileId = values["--profile-id"],
+                ProfileVersion = profileVersion,
+                GitSha = values["--git-sha"],
+                ArtifactDigest = values["--artifact-digest"],
+                ConfigDigest = values["--config-digest"],
+                Region = values["--region"],
+                BackendDescription = values["--backend-description"],
+                GeneratedAtUtc = DateTimeOffset.UtcNow
+            });
+        var errors = SloQualificationValidator.Validate(document, DateTimeOffset.UtcNow);
+        if (errors.Count > 0)
+        {
+            WriteErrors("generated real-Azure workload qualification", errors);
+            return 1;
+        }
+
+        SloQualificationRenderer.RenderYaml(document, values["--output"]);
+        Console.WriteLine(
+            $"[gap-docs] real-Azure workload qualification '{document.Verdict}' " +
+            $"written to {values["--output"]}");
+        return document.Verdict switch
+        {
+            "blocked" => 3,
+            "inconclusive" => 4,
+            _ => 0
+        };
     }
     catch (Exception exception) when (exception is ArgumentException
                                       or FileNotFoundException
