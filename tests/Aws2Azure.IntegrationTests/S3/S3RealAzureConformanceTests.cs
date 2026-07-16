@@ -108,10 +108,10 @@ public sealed class S3RealAzureConformanceTests(RealAzureProxyFixture fixture)
                 ],
             }, timeout.Token).ConfigureAwait(false);
 
-            Assert.Empty(response.DeleteErrors);
+            Assert.True(response.DeleteErrors is null or { Count: 0 });
             Assert.Equal(
                 existingKeys.Append(missingKey).Order(StringComparer.Ordinal).ToArray(),
-                response.DeletedObjects.Select(item => item.Key).Order(StringComparer.Ordinal).ToArray());
+                (response.DeletedObjects ?? []).Select(item => item.Key).Order(StringComparer.Ordinal).ToArray());
 
             var listed = await client.ListObjectsV2Async(new ListObjectsV2Request
             {

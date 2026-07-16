@@ -93,7 +93,8 @@ internal static class GetShardIteratorHandler
             request.ShardId!,
             iteratorType,
             position,
-            codecFactory.TimeProvider.GetUtcNow().ToUnixTimeSeconds()));
+            codecFactory.TimeProvider.GetUtcNow().ToUnixTimeSeconds(),
+            Guid.NewGuid().ToString("N")));
 
         await KinesisMetadataSupport.WriteJsonAsync(
                 context,

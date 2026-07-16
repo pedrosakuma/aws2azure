@@ -5,4 +5,5 @@ public sealed record ShardIteratorToken(
     string Shard,
     ShardIteratorType Type,
     string? Position,
-    long IssuedAtUnixSeconds);
+    long IssuedAtUnixSeconds,
+    string IteratorId = "");

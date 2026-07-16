@@ -62,7 +62,7 @@ public sealed class GetRecordsHandlerResponseLimitTests
 
     private sealed class FakeReceiver(IReadOnlyList<EventHubsReceivedMessage> messages) : IEventHubsAmqpReceiver
     {
-        public Task<EventHubsReceiveResult> ReceiveAsync(EventHubsCredentials credentials, string namespaceFqdn, string entityPath, string consumerGroup, int partitionId, EventHubsReceivePosition position, int maxMessages, TimeSpan quiescentTimeout, CancellationToken cancellationToken)
+        public Task<EventHubsReceiveResult> ReceiveAsync(EventHubsCredentials credentials, string namespaceFqdn, string entityPath, string consumerGroup, int partitionId, string iteratorId, EventHubsReceivePosition position, int maxMessages, TimeSpan quiescentTimeout, CancellationToken cancellationToken)
             => Task.FromResult(new EventHubsReceiveResult(messages));
     }
 

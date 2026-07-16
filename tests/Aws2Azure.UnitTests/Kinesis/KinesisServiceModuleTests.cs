@@ -246,6 +246,7 @@ public class KinesisServiceModuleTests
             string entityPath,
             string consumerGroup,
             int partitionId,
+            string iteratorId,
             EventHubsReceivePosition position,
             int maxMessages,
             TimeSpan quiescentTimeout,

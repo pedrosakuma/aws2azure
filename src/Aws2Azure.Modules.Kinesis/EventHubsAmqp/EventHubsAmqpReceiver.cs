@@ -6,6 +6,7 @@ using Aws2Azure.Amqp.Connection;
 using Aws2Azure.Amqp.Framing;
 using Aws2Azure.Amqp.ServiceBus;
 using Aws2Azure.Core.Configuration;
+using Aws2Azure.Modules.Kinesis.ShardIterators;
 
 namespace Aws2Azure.Modules.Kinesis.EventHubsAmqp;
 
@@ -17,6 +18,7 @@ public interface IEventHubsAmqpReceiver
         string entityPath,
         string consumerGroup,
         int partitionId,
+        string iteratorId,
         EventHubsReceivePosition position,
         int maxMessages,
         TimeSpan quiescentTimeout,
@@ -66,6 +68,7 @@ internal sealed class EventHubsAmqpReceiver : IEventHubsAmqpReceiver, IAsyncDisp
         string entityPath,
         string consumerGroup,
         int partitionId,
+        string iteratorId,
         EventHubsReceivePosition position,
         int maxMessages,
         TimeSpan quiescentTimeout,
@@ -75,6 +78,7 @@ internal sealed class EventHubsAmqpReceiver : IEventHubsAmqpReceiver, IAsyncDisp
         ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
         ArgumentException.ThrowIfNullOrWhiteSpace(entityPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(consumerGroup);
+        ArgumentNullException.ThrowIfNull(iteratorId);
         ArgumentNullException.ThrowIfNull(position);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxMessages, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(quiescentTimeout, TimeSpan.Zero);
@@ -88,8 +92,9 @@ internal sealed class EventHubsAmqpReceiver : IEventHubsAmqpReceiver, IAsyncDisp
         try
         {
             var audience = EventHubsAmqpEndpointResolver.BuildAudience(namespaceFqdn, receiverAddress);
-            var receiverKey = new ReceiverKey(lease.Key, receiverAddress);
-            var receiverSlot = GetOrCreateReceiverSlot(receiverKey);
+            var receiverKey = new ReceiverKey(lease.Key, receiverAddress, iteratorId);
+            await EvictIdleReceiversAsync().ConfigureAwait(false);
+            var receiverSlot = GetOrCreateReservedReceiverSlot(receiverKey);
 
             var messages = new List<EventHubsReceivedMessage>(Math.Min(maxMessages, 256));
             try
@@ -120,6 +125,10 @@ internal sealed class EventHubsAmqpReceiver : IEventHubsAmqpReceiver, IAsyncDisp
             {
                 await InvalidateReceiverAsync(receiverKey, receiverSlot).ConfigureAwait(false);
                 throw;
+            }
+            finally
+            {
+                receiverSlot.ReleaseReservation();
             }
 
             return new EventHubsReceiveResult(messages);
@@ -161,10 +170,36 @@ internal sealed class EventHubsAmqpReceiver : IEventHubsAmqpReceiver, IAsyncDisp
         }
     }
 
-    private ReceiverSlot GetOrCreateReceiverSlot(ReceiverKey key)
+    private ReceiverSlot GetOrCreateReservedReceiverSlot(ReceiverKey key)
     {
         ThrowIfDisposed();
-        return _receivers.GetOrAdd(key, static _ => new ReceiverSlot());
+        while (true)
+        {
+            var slot = _receivers.GetOrAdd(key, static _ => new ReceiverSlot());
+            if (slot.TryReserve())
+            {
+                return slot;
+            }
+
+            Thread.Yield();
+        }
+    }
+
+    private async Task EvictIdleReceiversAsync()
+    {
+        var now = Environment.TickCount64;
+        foreach (var entry in _receivers.ToArray())
+        {
+            if (!entry.Value.TryBeginIdleEviction(now, ShardIteratorTokenCodec.MaxAgeSeconds * 1000L))
+            {
+                continue;
+            }
+
+            if (((ICollection<KeyValuePair<ReceiverKey, ReceiverSlot>>)_receivers).Remove(entry))
+            {
+                await entry.Value.DisposeAsync().ConfigureAwait(false);
+            }
+        }
     }
 
     private async Task InvalidateReceiverAsync(ReceiverKey key, ReceiverSlot? expected = null)
@@ -273,14 +308,21 @@ internal sealed class EventHubsAmqpReceiver : IEventHubsAmqpReceiver, IAsyncDisp
         }
     }
 
-    private readonly record struct ReceiverKey(EventHubsAmqpConnectionKey Connection, string ReceiverAddress)
+    private readonly record struct ReceiverKey(
+        EventHubsAmqpConnectionKey Connection,
+        string ReceiverAddress,
+        string IteratorId)
     {
         public bool Equals(ReceiverKey other)
             => Connection.Equals(other.Connection)
-                && string.Equals(ReceiverAddress, other.ReceiverAddress, StringComparison.OrdinalIgnoreCase);
+                && string.Equals(ReceiverAddress, other.ReceiverAddress, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(IteratorId, other.IteratorId, StringComparison.Ordinal);
 
         public override int GetHashCode()
-            => HashCode.Combine(Connection, StringComparer.OrdinalIgnoreCase.GetHashCode(ReceiverAddress));
+            => HashCode.Combine(
+                Connection,
+                StringComparer.OrdinalIgnoreCase.GetHashCode(ReceiverAddress),
+                StringComparer.Ordinal.GetHashCode(IteratorId));
     }
 
     private sealed class ReceiverSlot : IAsyncDisposable
@@ -288,7 +330,51 @@ internal sealed class EventHubsAmqpReceiver : IEventHubsAmqpReceiver, IAsyncDisp
         private readonly SemaphoreSlim _gate = new(1, 1);
         private readonly SemaphoreSlim _receiveGate = new(1, 1);
         private ServiceBusReceiver? _receiver;
+        private long _lastUsedTick = Environment.TickCount64;
+        private int _reservations;
+        private int _evicting;
         private int _disposed;
+
+        public bool TryReserve()
+        {
+            if (Volatile.Read(ref _disposed) != 0 || Volatile.Read(ref _evicting) != 0)
+            {
+                return false;
+            }
+
+            Interlocked.Increment(ref _reservations);
+            if (Volatile.Read(ref _disposed) == 0 && Volatile.Read(ref _evicting) == 0)
+            {
+                Volatile.Write(ref _lastUsedTick, Environment.TickCount64);
+                return true;
+            }
+
+            Interlocked.Decrement(ref _reservations);
+            return false;
+        }
+
+        public void ReleaseReservation()
+        {
+            Volatile.Write(ref _lastUsedTick, Environment.TickCount64);
+            Interlocked.Decrement(ref _reservations);
+        }
+
+        public bool TryBeginIdleEviction(long now, long idleMilliseconds)
+        {
+            if (unchecked(now - Volatile.Read(ref _lastUsedTick)) < idleMilliseconds
+                || Interlocked.CompareExchange(ref _evicting, 1, 0) != 0)
+            {
+                return false;
+            }
+
+            if (Volatile.Read(ref _reservations) == 0)
+            {
+                return true;
+            }
+
+            Volatile.Write(ref _evicting, 0);
+            return false;
+        }
 
         public async Task<T> ExecuteReceiveAsync<T>(
             ServiceBusAmqpConnection connection,

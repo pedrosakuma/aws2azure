@@ -129,11 +129,12 @@ public sealed class KinesisRealAzureConformanceTests(RealAzureProxyFixture fixtu
         using var client = fixture.CreateKinesisClient();
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         var payload = "concurrent-" + Guid.NewGuid().ToString("N");
+        using var data = new MemoryStream(Encoding.UTF8.GetBytes(payload));
         var put = await client.PutRecordAsync(new PutRecordRequest
         {
             StreamName = fixture.EventHubStream,
             PartitionKey = "concurrent-" + Guid.NewGuid().ToString("N"),
-            Data = new MemoryStream(Encoding.UTF8.GetBytes(payload)),
+            Data = data,
         }, timeout.Token).ConfigureAwait(false);
 
         async Task<string> CreateIteratorAsync()
@@ -150,6 +151,7 @@ public sealed class KinesisRealAzureConformanceTests(RealAzureProxyFixture fixtu
 
         var firstIterator = await CreateIteratorAsync().ConfigureAwait(false);
         var secondIterator = await CreateIteratorAsync().ConfigureAwait(false);
+        Assert.NotEqual(firstIterator, secondIterator);
         var reads = await Task.WhenAll(
             KinesisTestHelpers.ReadUntilAsync(
                 client, firstIterator, record => KinesisTestHelpers.Utf8(record) == payload, TimeSpan.FromSeconds(45)),

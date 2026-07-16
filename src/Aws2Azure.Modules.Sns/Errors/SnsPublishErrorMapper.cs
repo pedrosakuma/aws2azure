@@ -31,6 +31,15 @@ internal static class SnsPublishErrorMapper
                 errorMessage: "Azure Service Bus Topics throttled the publish request; retry with back-off.");
         }
 
+        if (exception.Kind == SnsAmqpFailureKind.ClientFatal)
+        {
+            return SnsPublishOutcome.Failure(
+                StatusCodes.Status400BadRequest,
+                errorType: "Sender",
+                errorCode: "InvalidParameter",
+                errorMessage: "Azure Service Bus Topics rejected the publish request as invalid.");
+        }
+
         return SnsPublishOutcome.Failure(
             StatusCodes.Status500InternalServerError,
             errorType: "Receiver",
@@ -80,6 +89,15 @@ internal static class SnsPublishErrorMapper
                 false,
                 "Throttled",
                 "Azure Service Bus Topics throttled the publish request; retry with back-off.",
+                SenderFault: true);
+        }
+
+        if (exception.Kind == SnsAmqpFailureKind.ClientFatal)
+        {
+            return new SnsBatchSendOutcome(
+                false,
+                "InvalidParameter",
+                "Azure Service Bus Topics rejected the publish request as invalid.",
                 SenderFault: true);
         }
 

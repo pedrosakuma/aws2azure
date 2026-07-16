@@ -42,7 +42,7 @@ public sealed class DynamoDbRealAzureConformanceTests(RealAzureProxyFixture fixt
                     }).ToList(),
                 },
             }, timeout.Token).ConfigureAwait(false);
-            Assert.Empty(write.UnprocessedItems);
+            Assert.True(write.UnprocessedItems is null or { Count: 0 });
 
             var read = await client.BatchGetItemAsync(new BatchGetItemRequest
             {
@@ -61,7 +61,7 @@ public sealed class DynamoDbRealAzureConformanceTests(RealAzureProxyFixture fixt
                 },
             }, timeout.Token).ConfigureAwait(false);
 
-            Assert.Empty(read.UnprocessedKeys);
+            Assert.True(read.UnprocessedKeys is null or { Count: 0 });
             Assert.Equal(
                 new[] { "item-0", "item-1", "item-2" },
                 read.Responses[table].Select(item => item["pk"].S).Order(StringComparer.Ordinal).ToArray());
@@ -100,7 +100,7 @@ public sealed class DynamoDbRealAzureConformanceTests(RealAzureProxyFixture fixt
                     ],
                 },
             }, timeout.Token).ConfigureAwait(false);
-            Assert.Empty(mutate.UnprocessedItems);
+            Assert.True(mutate.UnprocessedItems is null or { Count: 0 });
 
             var verify = await client.BatchGetItemAsync(new BatchGetItemRequest
             {
