@@ -73,6 +73,37 @@ public sealed class ConformanceEvidenceTests
     }
 
     [Fact]
+    public void Generate_reports_non_blocking_optional_scenario_without_affecting_operation_eligibility()
+    {
+        var matrix = Matrix();
+        var optionalScenario = matrix.Services[0].Scenarios.Single(scenario => scenario.Id == "missing");
+        optionalScenario.EvidenceSource = "real_azure";
+        optionalScenario.Category = "read";
+        optionalScenario.OptionalCoverage = true;
+
+        var evidence = ConformanceEvidenceGenerator.Generate(
+            matrix,
+            [
+                new("Tests.Core.Passes", ConformanceOutcome.Passed, TimeSpan.Zero, "run.trx"),
+                new("Tests.Core.Fails", ConformanceOutcome.Passed, TimeSpan.Zero, "run.trx")
+            ],
+            "run-optional",
+            "https://github.com/example/repo/actions/runs/optional");
+
+        var service = Assert.Single(evidence.Services);
+        var optional = Assert.Single(service.Scenarios, scenario => scenario.Id == "missing");
+        Assert.True(optional.OptionalCoverage);
+        Assert.Equal("not_run", optional.Outcome);
+
+        var operation = Assert.Single(
+            service.Operations,
+            operation => operation.Operation == "GetObject");
+        Assert.True(operation.EligibleForVerifiedRealAzure);
+        Assert.Equal(["core"], operation.Scenarios);
+        Assert.Empty(operation.BlockingOutcomes);
+    }
+
+    [Fact]
     public void Render_includes_run_totals_scenarios_and_eligibility_without_mutation_claim()
     {
         var evidence = ConformanceEvidenceGenerator.Generate(

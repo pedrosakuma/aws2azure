@@ -22,6 +22,7 @@ public sealed class RealAzureScenario
     public string Category { get; set; } = string.Empty;
     public string EvidenceSource { get; set; } = string.Empty;
     public bool? EstablishesVerification { get; set; }
+    public bool? OptionalCoverage { get; set; }
     public string Description { get; set; } = string.Empty;
     public List<string> Operations { get; set; } = new();
     public List<string> Tests { get; set; } = new();

@@ -41,6 +41,24 @@ on:
     # job so a failure here points at real-Azure-only divergence.
     - cron: '0 5 * * *'
   workflow_dispatch:
+    inputs:
+      service:
+        description: Service to run, or all services
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - s3
+          - dynamodb
+          - sqs
+          - kinesis
+          - sns
+          - secretsmanager
+      scenario:
+        description: Optional scenario id (use service when the id is ambiguous)
+        required: false
+        type: string
   pull_request:
     types: [labeled, synchronize, reopened]
 
@@ -75,6 +93,7 @@ jobs:
       AZURE_EVENTHUBS_STREAM: kinesis-smoke
       TEST_RESULTS_DIR: TestResults/real-azure
       EVIDENCE_DIR: TestResults/real-azure-conformance
+      CONFORMANCE_PLAN: TestResults/real-azure-conformance-plan.json
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
@@ -111,6 +130,84 @@ jobs:
       - name: Validate conformance matrix
         run: dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- --validate
 
+      - name: Plan selected conformance scenarios
+        id: plan
+        env:
+          SELECTED_SERVICE: ${{ inputs.service || 'all' }}
+          SELECTED_SCENARIO: ${{ inputs.scenario || '' }}
+        run: |
+          args=()
+          if [ "$SELECTED_SERVICE" != "all" ]; then
+            args+=(--service "$SELECTED_SERVICE")
+          fi
+          if [ -n "$SELECTED_SCENARIO" ]; then
+            args+=(--scenario "$SELECTED_SCENARIO")
+          fi
+
+          mkdir -p "$(dirname "$CONFORMANCE_PLAN")"
+          dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- \
+            plan-conformance "${args[@]}" --output "$CONFORMANCE_PLAN"
+
+          requires_real_azure="$(
+            jq -r 'any(.scenarios[]; .evidence_source == "real_azure")' "$CONFORMANCE_PLAN"
+          )"
+          echo "requires_real_azure=$requires_real_azure" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Selected conformance plan"
+            echo
+            echo "- Service: \`$SELECTED_SERVICE\`"
+            echo "- Scenario: \`${SELECTED_SCENARIO:-all}\`"
+            echo "- Scenarios: $(jq '.scenarios | length' "$CONFORMANCE_PLAN")"
+            echo "- Requires real Azure: \`$requires_real_azure\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # VSTest exits zero when a filter matches no tests. Discover first and
+      # require every matrix identity to match exactly (or a theory case with
+      # the identity followed by its argument list) before constructing filters.
+      - name: Verify planned test discovery
+        run: |
+          failed=0
+          while IFS= read -r project; do
+            discovered="$RUNNER_TEMP/$(basename "$project")-discovered.txt"
+            dotnet test "$project" -c Release --no-build --nologo --list-tests > "$discovered"
+
+            while IFS= read -r identity; do
+              if ! awk -v expected="$identity" '
+                {
+                  line = $0
+                  sub(/^[[:space:]]+/, "", line)
+                  sub(/\r$/, "", line)
+                  if (line == expected || index(line, expected "(") == 1) found = 1
+                }
+                END { exit found ? 0 : 1 }
+              ' "$discovered"; then
+                echo "::error::Planned test was not discovered in $project: $identity"
+                failed=1
+              fi
+            done < <(
+              jq -r --arg project "$project" \
+                '.test_projects[] | select(.project == $project) | .tests[]' \
+                "$CONFORMANCE_PLAN"
+            )
+          done < <(jq -r '.test_projects[].project' "$CONFORMANCE_PLAN")
+          exit "$failed"
+
+      - name: Build planned test filters
+        id: filters
+        run: |
+          filter_for() {
+            jq -r --arg project "$1" '
+              [.test_projects[]
+               | select(.project == $project)
+               | .tests[]
+               | "FullyQualifiedName=" + .]
+              | join("|")
+            ' "$CONFORMANCE_PLAN"
+          }
+
+          echo "integration=$(filter_for tests/Aws2Azure.IntegrationTests)" >> "$GITHUB_OUTPUT"
+          echo "unit=$(filter_for tests/Aws2Azure.UnitTests)" >> "$GITHUB_OUTPUT"
+
       # The empty TRX is a truthful fallback: if a test host cannot start,
       # evidence generation still records matrix entries as not_run instead of
       # silently omitting the report.
@@ -122,32 +219,25 @@ jobs:
           <TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010" />
           EOF
 
-      - name: Run deterministic failure conformance tests
-        id: deterministic_tests
+      - name: Run planned unit conformance tests
+        id: unit_tests
+        env:
+          FILTER: ${{ steps.filters.outputs.unit }}
         run: |
-          FILTER='FullyQualifiedName=Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.S3_injected_backend_failures_return_native_retryable_errors|FullyQualifiedName=Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.DynamoDb_injected_backend_failures_return_native_retryable_errors|FullyQualifiedName=Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.Sqs_injected_rest_failures_cover_query_xml_and_sdk_json_retryability|FullyQualifiedName=Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.SecretsManager_injected_backend_failures_return_native_retryable_errors|FullyQualifiedName=Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.SecretsManager_injected_invalid_client_secret_returns_native_non_retryable_error|FullyQualifiedName=Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.Http_client_cancellation_propagates_without_committed_success'
           status=0
-          dotnet test tests/Aws2Azure.IntegrationTests \
-            -c Release --no-build --nologo \
-            --filter "$FILTER" \
-            --results-directory "$TEST_RESULTS_DIR" \
-            --logger "trx;LogFileName=deterministic-failures.trx" || status=$?
-          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
-
-      - name: Run focused matrix AMQP unit tests
-        id: matrix_unit_tests
-        run: |
-          FILTER='FullyQualifiedName=Aws2Azure.UnitTests.Sqs.AmqpSendMessageHandlersTests.SendMessage_maps_server_busy_to_503_so_aws_sdk_retries|FullyQualifiedName=Aws2Azure.UnitTests.Sqs.AmqpSendMessageHandlersTests.SendMessage_propagates_broker_reject_as_error|FullyQualifiedName=Aws2Azure.UnitTests.Kinesis.PutRecordHandlerTests.HandleAsync_maps_amqp_throttling_to_provisioned_throughput_exceeded|FullyQualifiedName=Aws2Azure.UnitTests.Kinesis.PutRecordHandlerTests.HandleAsync_maps_amqp_transient_failures_to_retryable_kinesis_error|FullyQualifiedName=Aws2Azure.UnitTests.Kinesis.PutRecordHandlerTests.HandleAsync_propagates_amqp_cancellation_without_success_body|FullyQualifiedName=Aws2Azure.UnitTests.Sns.PublishHandlerTests.HandleAsync_maps_amqp_throttle_to_sns_throttled_error|FullyQualifiedName=Aws2Azure.UnitTests.Sns.PublishHandlerTests.HandleAsync_maps_amqp_timeout_to_retryable_sns_error|FullyQualifiedName=Aws2Azure.UnitTests.Sns.PublishHandlerTests.HandleAsync_maps_amqp_send_failure_to_sns_error|FullyQualifiedName=Aws2Azure.UnitTests.Sns.PublishHandlerTests.HandleAsync_propagates_amqp_cancellation_without_success_body'
-          status=0
-          dotnet test tests/Aws2Azure.UnitTests \
-            -c Release --no-build --nologo \
-            --filter "$FILTER" \
-            --results-directory "$TEST_RESULTS_DIR" \
-            --logger "trx;LogFileName=matrix-amqp-unit.trx" || status=$?
+          if [ -n "$FILTER" ]; then
+            dotnet test tests/Aws2Azure.UnitTests \
+              -c Release --no-build --nologo \
+              --filter "$FILTER" \
+              --results-directory "$TEST_RESULTS_DIR" \
+              --logger "trx;LogFileName=matrix-unit.trx" || status=$?
+          else
+            echo "::notice::Selected conformance plan contains no unit tests."
+          fi
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
 
       - name: Azure login (OIDC)
-        if: steps.gate.outputs.enabled == 'true'
+        if: steps.gate.outputs.enabled == 'true' && steps.plan.outputs.requires_real_azure == 'true'
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -155,7 +245,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Provision ephemeral Azure backends
-        if: steps.gate.outputs.enabled == 'true'
+        if: steps.gate.outputs.enabled == 'true' && steps.plan.outputs.requires_real_azure == 'true'
         env:
           # Object id of the OIDC service principal, for the data-plane RBAC role
           # assignments the WorkloadIdentity E2E scenario needs (issue #307). When
@@ -177,7 +267,7 @@ jobs:
             -o none
 
       - name: Export connection info
-        if: steps.gate.outputs.enabled == 'true'
+        if: steps.gate.outputs.enabled == 'true' && steps.plan.outputs.requires_real_azure == 'true'
         run: |
           set -euo pipefail
           out() {
@@ -218,7 +308,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Mint federated token for workload identity scenarios
-        if: steps.gate.outputs.wi_enabled == 'true'
+        if: steps.gate.outputs.wi_enabled == 'true' && steps.plan.outputs.requires_real_azure == 'true'
         env:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -248,22 +338,26 @@ jobs:
             echo "AZURE_CLIENT_ID=$AZURE_CLIENT_ID"
           } >> "$GITHUB_ENV"
 
-      - name: Run real-Azure matrix tests
-        id: real_azure_tests
+      - name: Run planned integration conformance tests
+        id: integration_tests
         if: always()
+        env:
+          FILTER: ${{ steps.filters.outputs.integration }}
         run: |
           # AZURE_KEYVAULT_URL is exported from the ephemeral deployment output by
           # the "Export connection info" step (Secrets Manager -> Key Vault). When
           # provisioning is skipped (no OIDC) it stays unset and the SecretsManager
           # smoke skips. Workload-Identity auth uses the OIDC token minted above.
-          # Deterministic failures were run separately so every result has one
-          # stable TRX identity and real-Azure skips remain explicit.
           status=0
-          dotnet test tests/Aws2Azure.IntegrationTests \
-            -c Release --no-build --nologo \
-            --filter "Category=RealAzure&FullyQualifiedName!~FailureConformance.DeterministicHttpFailureConformanceTests" \
-            --results-directory "$TEST_RESULTS_DIR" \
-            --logger "trx;LogFileName=real-azure.trx" || status=$?
+          if [ -n "$FILTER" ]; then
+            dotnet test tests/Aws2Azure.IntegrationTests \
+              -c Release --no-build --nologo \
+              --filter "$FILTER" \
+              --results-directory "$TEST_RESULTS_DIR" \
+              --logger "trx;LogFileName=matrix-integration.trx" || status=$?
+          else
+            echo "::notice::Selected conformance plan contains no integration tests."
+          fi
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
 
       # Generate immutable matrix evidence from every available TRX and refresh
@@ -307,6 +401,7 @@ jobs:
         with:
           name: real-azure-conformance
           path: |
+            TestResults/real-azure-conformance-plan.json
             TestResults/real-azure/*.trx
             TestResults/real-azure-conformance/**
           if-no-files-found: error
@@ -323,7 +418,10 @@ jobs:
       # provisioning or the tests failed. --no-wait returns immediately; the
       # reaper workflow is the backstop for force-cancelled runs.
       - name: Deallocate ephemeral Azure backends
-        if: always() && steps.gate.outputs.enabled == 'true'
+        if: >-
+          always() &&
+          steps.gate.outputs.enabled == 'true' &&
+          steps.plan.outputs.requires_real_azure == 'true'
         run: |
           # Key Vault soft-delete is mandatory and cannot be disabled, so deleting
           # the resource group alone leaves the vault name reserved (7-day minimum
@@ -350,8 +448,7 @@ jobs:
               failed=1
             fi
           }
-          check "Deterministic failure tests" "${{ steps.deterministic_tests.outputs.exit_code }}"
-          check "Focused matrix unit tests" "${{ steps.matrix_unit_tests.outputs.exit_code }}"
-          check "Real-Azure integration tests" "${{ steps.real_azure_tests.outputs.exit_code }}"
+          check "Planned unit tests" "${{ steps.unit_tests.outputs.exit_code }}"
+          check "Planned integration tests" "${{ steps.integration_tests.outputs.exit_code }}"
           check "Evidence/report generation" "${{ steps.reports.outputs.exit_code }}"
           exit "$failed"

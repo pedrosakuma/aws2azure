@@ -90,6 +90,29 @@ public sealed class ConformanceMatrixTests
             StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData("real_azure", "core", true)]
+    [InlineData("deterministic", "core", false)]
+    [InlineData("real_azure", "invalid_credentials", false)]
+    public void Validate_rejects_optional_coverage_outside_non_establishing_positive_real_azure_scenarios(
+        string evidenceSource,
+        string category,
+        bool establishesVerification)
+    {
+        var (matrix, operations) = ValidMatrix();
+        var scenario = matrix.Services[0].Scenarios[0];
+        scenario.EvidenceSource = evidenceSource;
+        scenario.Category = category;
+        scenario.EstablishesVerification = establishesVerification;
+        scenario.OptionalCoverage = true;
+
+        var errors = ConformanceMatrixValidator.Validate(matrix, operations);
+
+        Assert.Contains(errors, error => error.Contains(
+            "optional_coverage may be true only for non-establishing positive real-Azure scenarios",
+            StringComparison.Ordinal));
+    }
+
     private static (RealAzureConformanceMatrix Matrix, IReadOnlyList<OperationDoc> Operations) ValidMatrix()
     {
         var matrix = new RealAzureConformanceMatrix
