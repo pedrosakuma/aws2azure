@@ -320,23 +320,14 @@ jobs:
           if-no-files-found: warn
 
       # The deallocate guarantee: delete the ephemeral resource group even when
-      # provisioning or the tests failed. --no-wait returns immediately; the
-      # reaper workflow is the backstop for force-cancelled runs.
+      # provisioning or the tests failed. Immutable storage with versioning
+      # protects an account from deletion while it contains containers, so the
+      # shared cleanup permanently deletes every blob version and waits for
+      # Azure to confirm the resource-group deletion. The reaper backstops
+      # force-cancelled runs.
       - name: Deallocate ephemeral Azure backends
         if: always() && steps.gate.outputs.enabled == 'true'
-        run: |
-          # Key Vault soft-delete is mandatory and cannot be disabled, so deleting
-          # the resource group alone leaves the vault name reserved (7-day minimum
-          # retention). Discover any vault in the RG independently of the export
-          # step (so a mid-export failure can't leak a soft-deleted name), then
-          # delete (sync) + purge each to free the unique name immediately. Purge
-          # protection is OFF on these vaults; best-effort, and the reaper backstops
-          # force-cancelled runs.
-          for kv in $(az keyvault list -g "$RG_NAME" --query "[].name" -o tsv 2>/dev/null || true); do
-            az keyvault delete -n "$kv" -g "$RG_NAME" || true
-            az keyvault purge -n "$kv" --no-wait || true
-          done
-          az group delete -n "$RG_NAME" --yes --no-wait || true
+        run: bash .github/scripts/cleanup-real-azure-resource-groups.sh "$RG_NAME"
 
       - name: Enforce test and report results
         if: always()
