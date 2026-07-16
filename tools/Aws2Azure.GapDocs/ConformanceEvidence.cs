@@ -14,6 +14,8 @@ public sealed class ConformanceEvidence
     public string RunId { get; set; } = string.Empty;
     public string RunUrl { get; set; } = string.Empty;
     public DateTimeOffset GeneratedAtUtc { get; set; }
+    public ConformancePlanSelection Selection { get; set; } = new();
+    public bool HasPositiveRealAzureEvidence { get; set; }
     public List<string> TrxFiles { get; set; } = new();
     public EvidenceTotals Summary { get; set; } = new();
     public List<ServiceEvidence> Services { get; set; } = new();
@@ -75,7 +77,9 @@ public static class ConformanceEvidenceGenerator
         IReadOnlyList<TrxTestResult> trxResults,
         string runId,
         string runUrl,
-        DateTimeOffset? generatedAtUtc = null)
+        DateTimeOffset? generatedAtUtc = null,
+        string? selectedService = null,
+        string? selectedScenario = null)
     {
         if (string.IsNullOrWhiteSpace(runId))
         {
@@ -96,6 +100,11 @@ public static class ConformanceEvidenceGenerator
             RunId = runId,
             RunUrl = runUrl,
             GeneratedAtUtc = (generatedAtUtc ?? DateTimeOffset.UtcNow).ToUniversalTime(),
+            Selection = new ConformancePlanSelection
+            {
+                Service = selectedService,
+                Scenario = selectedScenario
+            },
             TrxFiles = trxResults.Select(r => Path.GetFileName(r.SourceFile)).Distinct(StringComparer.Ordinal).OrderBy(v => v, StringComparer.Ordinal).ToList()
         };
 
@@ -141,6 +150,11 @@ public static class ConformanceEvidenceGenerator
             evidence.Services.SelectMany(s => s.Scenarios.SelectMany(sc => sc.Tests))
                 .GroupBy(t => t.Identity, StringComparer.Ordinal)
                 .Select(g => g.First()));
+        evidence.HasPositiveRealAzureEvidence = evidence.Services
+            .SelectMany(service => service.Scenarios)
+            .Any(scenario => scenario.EvidenceSource == "real_azure"
+                             && scenario.EstablishesVerification
+                             && scenario.Outcome == "passed");
         evidence.UnmappedTests = trxResults.Select(r => r.TestIdentity)
             .Where(identity => !mappedIdentities.Contains(identity))
             .Distinct(StringComparer.Ordinal)
@@ -278,6 +292,14 @@ public static class ConformanceEvidenceRenderer
         builder.AppendLine();
         builder.Append("- Run: [").Append(Escape(evidence.RunId)).Append("](").Append(evidence.RunUrl).AppendLine(")");
         builder.Append("- Generated: `").Append(evidence.GeneratedAtUtc.ToString("O")).AppendLine("`");
+        builder.Append("- Selection: service `")
+            .Append(evidence.Selection.Service ?? "all")
+            .Append("`, scenario `")
+            .Append(evidence.Selection.Scenario ?? "all")
+            .AppendLine("`");
+        builder.Append("- Positive real-Azure verification evidence: **")
+            .Append(evidence.HasPositiveRealAzureEvidence ? "yes" : "no")
+            .AppendLine("**");
         builder.AppendLine("- This report is evidence only. It does **not** edit `verified_real_azure`.");
         builder.AppendLine("- Outcome totals combine `real_azure` and `deterministic` scenario tests; see each service report for the source.");
         builder.AppendLine();

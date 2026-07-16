@@ -59,6 +59,11 @@ on:
         description: Optional scenario id (use service when the id is ambiguous)
         required: false
         type: string
+      require_real_azure:
+        description: Fail unless positive live-Azure verification evidence is produced
+        required: false
+        default: true
+        type: boolean
   pull_request:
     types: [labeled, synchronize, reopened]
 
@@ -135,6 +140,8 @@ jobs:
         env:
           SELECTED_SERVICE: ${{ inputs.service || 'all' }}
           SELECTED_SCENARIO: ${{ inputs.scenario || '' }}
+          REQUESTED_REQUIRE_REAL_AZURE: ${{ inputs.require_real_azure || false }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           args=()
           if [ "$SELECTED_SERVICE" != "all" ]; then
@@ -151,7 +158,15 @@ jobs:
           requires_real_azure="$(
             jq -r 'any(.scenarios[]; .evidence_source == "real_azure")' "$CONFORMANCE_PLAN"
           )"
+          if [ "$EVENT_NAME" = "schedule" ]; then
+            require_real_azure=true
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            require_real_azure="$REQUESTED_REQUIRE_REAL_AZURE"
+          else
+            require_real_azure=false
+          fi
           echo "requires_real_azure=$requires_real_azure" >> "$GITHUB_OUTPUT"
+          echo "require_real_azure=$require_real_azure" >> "$GITHUB_OUTPUT"
           {
             echo "## Selected conformance plan"
             echo
@@ -159,6 +174,7 @@ jobs:
             echo "- Scenario: \`${SELECTED_SCENARIO:-all}\`"
             echo "- Scenarios: $(jq '.scenarios | length' "$CONFORMANCE_PLAN")"
             echo "- Requires real Azure: \`$requires_real_azure\`"
+            echo "- Enforce positive real-Azure evidence: \`$require_real_azure\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       # VSTest exits zero when a filter matches no tests. Discover first and
@@ -368,12 +384,26 @@ jobs:
         if: always()
         run: |
           status=0
+          evidence_args=()
+          selected_service="$(jq -r '.selection.service // empty' "$CONFORMANCE_PLAN")"
+          selected_scenario="$(jq -r '.selection.scenario // empty' "$CONFORMANCE_PLAN")"
+          if [ -n "$selected_service" ]; then
+            evidence_args+=(--service "$selected_service")
+          fi
+          if [ -n "$selected_scenario" ]; then
+            evidence_args+=(--scenario "$selected_scenario")
+          fi
+          if [ "${{ steps.plan.outputs.require_real_azure }}" = "true" ]; then
+            evidence_args+=(--require-real-azure)
+          fi
+
           dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- \
             --generate-evidence \
             --trx "$TEST_RESULTS_DIR" \
             --run-id "${{ github.run_id }}" \
             --run-url "$RUN_URL" \
-            --evidence-output "$EVIDENCE_DIR" || status=$?
+            --evidence-output "$EVIDENCE_DIR" \
+            "${evidence_args[@]}" || status=$?
           dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release || status=$?
 
           if [ -f "$EVIDENCE_DIR/summary.md" ]; then

@@ -67,13 +67,19 @@ static int RunGapDocs(
 
         if (options.GenerateEvidence)
         {
+            var selection = ConformanceMatrixSelector.Select(
+                matrix,
+                options.Service,
+                options.Scenario);
             var trxFiles = ExpandTrxPaths(options.TrxPaths);
             var trxResults = TrxParser.ParseFiles(trxFiles);
             var evidence = ConformanceEvidenceGenerator.Generate(
-                matrix,
+                selection.Matrix,
                 trxResults,
                 options.RunId!,
-                options.RunUrl!);
+                options.RunUrl!,
+                selectedService: selection.Service,
+                selectedScenario: selection.Scenario);
             evidence.TrxFiles = trxFiles
                 .Select(path => Path.GetFileName(path)!)
                 .OrderBy(path => path, StringComparer.Ordinal)
@@ -85,6 +91,12 @@ static int RunGapDocs(
             Console.WriteLine(
                 $"[gap-docs] ingested {trxResults.Count} result(s) from {trxFiles.Count} TRX file(s)");
             Console.WriteLine($"[gap-docs] real-Azure evidence written under {outputRoot}");
+            if (options.RequireRealAzure && !evidence.HasPositiveRealAzureEvidence)
+            {
+                Console.Error.WriteLine(
+                    "[gap-docs] required positive real-Azure verification evidence was not produced.");
+                return 3;
+            }
             return 0;
         }
 
@@ -358,6 +370,9 @@ file sealed class CommandLineOptions
     public string? RunId { get; private set; }
     public string? RunUrl { get; private set; }
     public string? EvidenceOutput { get; private set; }
+    public string? Service { get; private set; }
+    public string? Scenario { get; private set; }
+    public bool RequireRealAzure { get; private set; }
 
     public static CommandLineOptions Parse(string[] args)
     {
@@ -387,6 +402,15 @@ file sealed class CommandLineOptions
                 case "--evidence-output":
                     options.EvidenceOutput = ReadValue(args, ref index, "--evidence-output");
                     break;
+                case "--service":
+                    options.Service = ReadValue(args, ref index, "--service");
+                    break;
+                case "--scenario":
+                    options.Scenario = ReadValue(args, ref index, "--scenario");
+                    break;
+                case "--require-real-azure":
+                    options.RequireRealAzure = true;
+                    break;
                 default:
                     throw new ArgumentException($"Unknown argument '{args[index]}'.");
             }
@@ -414,10 +438,14 @@ file sealed class CommandLineOptions
         else if (options.TrxPaths.Count > 0
                  || options.RunId is not null
                  || options.RunUrl is not null
-                 || options.EvidenceOutput is not null)
+                 || options.EvidenceOutput is not null
+                 || options.Service is not null
+                 || options.Scenario is not null
+                 || options.RequireRealAzure)
         {
             throw new ArgumentException(
-                "--trx, --run-id, --run-url, and --evidence-output require --generate-evidence.");
+                "--trx, --run-id, --run-url, --evidence-output, --service, --scenario, and " +
+                "--require-real-azure require --generate-evidence.");
         }
 
         return options;
