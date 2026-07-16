@@ -180,6 +180,18 @@ scenario step (merged in place by scenario name, each row stamped
 `capturedAtUtc`) and is **gitignored** — it is fresh per run. The
 human-readable `baseline-latest.md` snapshot stays tracked.
 
+After the absolute and relative gates run, `perf.yml` converts the reference
+and latest JSON files into `artifacts/perf/emulator-qualification.yaml` and
+uploads it with the other perf results. The artifact carries the exact checked
+out commit, a digest over the complete proxy runtime output manifest,
+reference-config digest, run URL, measurement window, numeric signals, and
+explicit findings for missing, stale, untracked, failed, or unevaluable
+scenarios. The manifest is uploaded as `candidate-sha256.txt` beside the YAML.
+The workflow is green only for a `passed` verdict; `failed` and `inconclusive`
+artifacts remain available for diagnosis. Its evidence class is always
+`proxy_overhead`: a passing emulator artifact detects proxy regressions but
+does not establish Azure workload capacity or a GA workload qualification.
+
 To adjust a gate, edit `baseline-reference.json` deliberately — bump a ratio
 only when a code change is an understood, accepted trade-off. The guard
 tests in `KnownPerfScenariosTests` fail the build if a pairing references an
