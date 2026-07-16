@@ -135,31 +135,51 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
             });
     }
 
+    public async Task RestartAsync()
+    {
+        if (!Configured || _configFile is null)
+        {
+            throw new InvalidOperationException("The real-Azure Secrets Manager proxy is not running.");
+        }
+
+        var port = new Uri(ProxyServiceUrl).Port;
+        await StopProxyAsync().ConfigureAwait(false);
+        _proxyProcess = StartProxyProcess(port, _configFile);
+        await WaitForProxyAsync(port, TimeSpan.FromMinutes(2)).ConfigureAwait(false);
+    }
+
     public async Task DisposeAsync()
     {
-        if (_proxyProcess is not null)
-        {
-            try
-            {
-                if (!_proxyProcess.HasExited)
-                {
-                    _proxyProcess.Kill(entireProcessTree: true);
-                    await _proxyProcess.WaitForExitAsync().ConfigureAwait(false);
-                }
-            }
-            catch
-            {
-            }
-
-            _proxyProcess.Dispose();
-            _proxyProcess = null;
-        }
+        await StopProxyAsync().ConfigureAwait(false);
 
         if (_configFile is not null)
         {
             try { File.Delete(_configFile); } catch { }
             _configFile = null;
         }
+    }
+
+    private async Task StopProxyAsync()
+    {
+        if (_proxyProcess is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!_proxyProcess.HasExited)
+            {
+                _proxyProcess.Kill(entireProcessTree: true);
+                await _proxyProcess.WaitForExitAsync().ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+        }
+
+        _proxyProcess.Dispose();
+        _proxyProcess = null;
     }
 
     private Process StartProxyProcess(int port, string configFile)

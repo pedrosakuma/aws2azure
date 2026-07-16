@@ -7,6 +7,7 @@ using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
 using Amazon.Runtime;
 using Amazon.S3;
+using Amazon.S3.Model;
 using Amazon.SecretsManager;
 using Amazon.SecretsManager.Model;
 using Amazon.SQS;
@@ -192,7 +193,62 @@ public sealed class DeterministicHttpFailureConformanceTests
         Assert.Equal(0, exchange.ResponseBodyLength);
     }
 
-    private static AmazonS3Client CreateS3Client(DeterministicFailureHarness harness) =>
+    [Fact]
+    public async Task Aws_sdk_retry_exhaustion_is_bounded_for_candidate_profile_operations()
+    {
+        await AssertRetryExhaustionAsync(
+            "s3",
+            async harness =>
+            {
+                using var sdk = CreateS3Client(harness, maxErrorRetry: 2);
+                await sdk.PutObjectAsync(new PutObjectRequest
+                {
+                    BucketName = "retry-exhaustion",
+                    Key = "object",
+                    ContentBody = "payload",
+                }).ConfigureAwait(false);
+            });
+        await AssertRetryExhaustionAsync(
+            "dynamodb",
+            async harness =>
+            {
+                using var sdk = CreateDynamoDbClient(harness, maxErrorRetry: 2);
+                await sdk.PutItemAsync(new PutItemRequest
+                {
+                    TableName = "retry-exhaustion",
+                    Item = new Dictionary<string, AttributeValue>
+                    {
+                        ["pk"] = new() { S = "value" },
+                    },
+                }).ConfigureAwait(false);
+            });
+        await AssertRetryExhaustionAsync(
+            "sqs",
+            async harness =>
+            {
+                using var sdk = CreateSqsClient(harness, maxErrorRetry: 2);
+                await sdk.SendMessageAsync(new SendMessageRequest
+                {
+                    QueueUrl =
+                        "https://sqs.us-east-1.amazonaws.com/000000000000/retry-exhaustion",
+                    MessageBody = "payload",
+                }).ConfigureAwait(false);
+            });
+        await AssertRetryExhaustionAsync(
+            "secretsmanager",
+            async harness =>
+            {
+                using var sdk = CreateSecretsManagerClient(harness, maxErrorRetry: 2);
+                await sdk.GetSecretValueAsync(new GetSecretValueRequest
+                {
+                    SecretId = "retry-exhaustion",
+                }).ConfigureAwait(false);
+            });
+    }
+
+    private static AmazonS3Client CreateS3Client(
+        DeterministicFailureHarness harness,
+        int maxErrorRetry = 1) =>
         new(
             DeterministicFailureHarness.AccessKey,
             DeterministicFailureHarness.SecretKey,
@@ -202,11 +258,13 @@ public sealed class DeterministicHttpFailureConformanceTests
                 ForcePathStyle = true,
                 UseHttp = true,
                 AuthenticationRegion = DeterministicFailureHarness.Region,
-                MaxErrorRetry = 1,
+                MaxErrorRetry = maxErrorRetry,
                 HttpClientFactory = harness.AwsHttpClientFactory,
             });
 
-    private static AmazonDynamoDBClient CreateDynamoDbClient(DeterministicFailureHarness harness) =>
+    private static AmazonDynamoDBClient CreateDynamoDbClient(
+        DeterministicFailureHarness harness,
+        int maxErrorRetry = 1) =>
         new(
             DeterministicFailureHarness.AccessKey,
             DeterministicFailureHarness.SecretKey,
@@ -215,11 +273,13 @@ public sealed class DeterministicHttpFailureConformanceTests
                 ServiceURL = harness.RawClient.BaseAddress!.GetLeftPart(UriPartial.Authority),
                 UseHttp = true,
                 AuthenticationRegion = DeterministicFailureHarness.Region,
-                MaxErrorRetry = 1,
+                MaxErrorRetry = maxErrorRetry,
                 HttpClientFactory = harness.AwsHttpClientFactory,
             });
 
-    private static AmazonSQSClient CreateSqsClient(DeterministicFailureHarness harness) =>
+    private static AmazonSQSClient CreateSqsClient(
+        DeterministicFailureHarness harness,
+        int maxErrorRetry = 1) =>
         new(
             DeterministicFailureHarness.AccessKey,
             DeterministicFailureHarness.SecretKey,
@@ -228,12 +288,13 @@ public sealed class DeterministicHttpFailureConformanceTests
                 ServiceURL = harness.RawClient.BaseAddress!.GetLeftPart(UriPartial.Authority),
                 UseHttp = true,
                 AuthenticationRegion = DeterministicFailureHarness.Region,
-                MaxErrorRetry = 1,
+                MaxErrorRetry = maxErrorRetry,
                 HttpClientFactory = harness.AwsHttpClientFactory,
             });
 
     private static AmazonSecretsManagerClient CreateSecretsManagerClient(
-        DeterministicFailureHarness harness) =>
+        DeterministicFailureHarness harness,
+        int maxErrorRetry = 1) =>
         new(
             DeterministicFailureHarness.AccessKey,
             DeterministicFailureHarness.SecretKey,
@@ -243,7 +304,7 @@ public sealed class DeterministicHttpFailureConformanceTests
                 ServiceURL = harness.RawClient.BaseAddress!.GetLeftPart(UriPartial.Authority),
                 UseHttp = true,
                 AuthenticationRegion = DeterministicFailureHarness.Region,
-                MaxErrorRetry = 1,
+                MaxErrorRetry = maxErrorRetry,
                 HttpClientFactory = harness.AwsHttpClientFactory,
             });
 
@@ -347,6 +408,18 @@ public sealed class DeterministicHttpFailureConformanceTests
     private static void AssertSdkRetriedOnce(DeterministicFailureHarness harness)
     {
         // One raw wire assertion, then the SDK's initial attempt plus one retry.
+        Assert.Equal(3, harness.Backend.BackendRequestCount);
+    }
+
+    private static async Task AssertRetryExhaustionAsync(
+        string service,
+        Func<DeterministicFailureHarness, Task> operation)
+    {
+        using var harness = DeterministicFailureHarness.Create(service);
+        harness.Backend.PlanStatus(HttpStatusCode.ServiceUnavailable);
+
+        await Assert.ThrowsAnyAsync<AmazonServiceException>(() => operation(harness));
+
         Assert.Equal(3, harness.Backend.BackendRequestCount);
     }
 

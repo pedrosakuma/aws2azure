@@ -10,6 +10,10 @@ dotnet run --project tools/Aws2Azure.GapDocs -- \
 The manifest declares the exact required operations, contextual workload
 requirements, explicitly accepted partial operations and design gaps, maximum
 real-Azure seal age, minimum proxy version, and required operational scenarios.
+`evidence.required_real_azure_scenarios` identifies the subset (representative
+load, restart, rollback, and profile-specific live behavior) that cannot be
+satisfied by deterministic injection. Other required reliability scenarios may
+use deterministic evidence, but never emulator evidence.
 `evidence.qualification_artifact` remains empty until a reviewed,
 production-shaped real-Azure artifact is committed under
 `docs/workloads/evidence/` and referenced with its repository-relative path.

@@ -15,6 +15,7 @@ public sealed class RealAzureWorkloadQualificationMetadata
     public string ConfigDigest { get; set; } = string.Empty;
     public string Region { get; set; } = string.Empty;
     public string BackendDescription { get; set; } = string.Empty;
+    public int RunAttempt { get; set; } = 1;
     public DateTimeOffset GeneratedAtUtc { get; set; }
 }
 
@@ -97,6 +98,7 @@ public static class RealAzureWorkloadQualificationGenerator
             {
                 RunId = evidence.RunId,
                 RunUrl = evidence.RunUrl,
+                RunAttempt = metadata.RunAttempt,
                 GeneratedAtUtc = generatedAtUtc,
                 WindowStartUtc = capturedAtUtc,
                 WindowEndUtc = capturedAtUtc.AddTicks(1),

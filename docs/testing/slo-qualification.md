@@ -65,6 +65,100 @@ failed required conformance scenario produces `blocked`. It never emits
 `qualified`: that verdict requires a later production-shaped load artifact with
 reviewed thresholds, sample counts, duration, and capacity signals.
 
+The nightly workflow generates one candidate per workload manifest and uploads
+it with two immutable siblings:
+
+- `runtime-sha256.txt`: sorted hashes of the complete proxy runtime output;
+- `config-manifest.json`: the non-secret region, deployment inputs, selected
+  conformance plan, and hashes of the matrix, Bicep, and workflow.
+
+The candidate's `artifact_digest` and `config_digest` are hashes of those files.
+The manifests are evidence, not substitutes for production-shaped load.
+
+Generate a final qualification from a reviewed policy, a correctness candidate,
+and repeated immutable load evidence with:
+
+```bash
+dotnet run --project tools/Aws2Azure.GapDocs -- \
+  generate-real-azure-load-qualification \
+  --manifest docs/workloads/s3-basic-object-crud.yaml \
+  --candidate artifacts/correctness/s3-basic-object-crud.yaml \
+  --policy docs/workloads/qualification/s3-basic-object-crud.yaml \
+  --evidence artifacts/load/run-1/load-evidence.json \
+  --evidence artifacts/load/run-2/load-evidence.json \
+  --evidence artifacts/load/run-3/load-evidence.json \
+  --output artifacts/qualification/s3-basic-object-crud.yaml \
+  --trend-output artifacts/qualification/s3-basic-object-crud-trend.csv \
+  --run-id "$GITHUB_RUN_ID" \
+  --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+  --run-attempt "$GITHUB_RUN_ATTEMPT"
+```
+
+Every load evidence file represents one immutable GitHub Actions run/attempt
+and carries the exact candidate/config digests, region/SKU description, run
+window, scenario counts, and raw measured signals. The generator rejects drift
+between runs, duplicate attempts, missing required scenarios, zero-completion
+runs, insufficient samples/duration, excessive failures, and threshold misses.
+It aggregates capacity gates conservatively (the worst run wins) rather than
+averaging a bad run away. A valid policy must include a blocking real-Azure
+backend-capacity throughput or latency threshold; emulator floors and A/B ratios
+cannot be reused.
+
+Minimal runner output (values are measurements, never policy thresholds):
+
+```json
+{
+  "schema_version": 1,
+  "profile": {
+    "id": "s3-basic-object-crud",
+    "version": 1,
+    "services": [{ "service": "s3", "operations": ["PutObject"] }]
+  },
+  "candidate": {
+    "git_sha": "0123456789abcdef",
+    "artifact_digest": "sha256:runtime-manifest",
+    "config_digest": "sha256:config-manifest"
+  },
+  "provenance": {
+    "run_id": "123451",
+    "run_url": "https://github.com/pedrosakuma/aws2azure/actions/runs/123451",
+    "run_attempt": 1,
+    "generated_at_utc": "2026-07-16T15:35:00Z",
+    "window_start_utc": "2026-07-16T15:30:00Z",
+    "window_end_utc": "2026-07-16T15:35:00Z",
+    "region": "eastus2",
+    "backend_description": "Blob Storage Standard_LRS"
+  },
+  "scenarios": [{
+    "id": "representative-load",
+    "service": "s3",
+    "operation": "PutObject",
+    "evidence_source": "real_azure",
+    "completions": 1000,
+    "failures": 0,
+    "skipped": 0,
+    "duration_seconds": 300,
+    "captured_at_utc": "2026-07-16T15:35:00Z"
+  }],
+  "signals": [{
+    "id": "representative-load-p99",
+    "scenario_id": "representative-load",
+    "metric": "p99_ms",
+    "measured_value": 420,
+    "samples": 1000,
+    "captured_at_utc": "2026-07-16T15:35:00Z"
+  }]
+}
+```
+
+The manual
+[`qualification-real-azure`](../../.github/workflows/qualification-real-azure.yml)
+workflow downloads a correctness candidate and multiple
+`real-azure-workload-load-<profile>` artifacts by immutable run id, emits the
+qualification plus a workload-only CSV trend, and fails unless the verdict is
+`qualified`. It never downloads `perf-results` (emulator regression) or
+`perf-real-azure-results` (A/B experiments).
+
 ## Version 1 shape
 
 ```yaml
@@ -87,11 +181,46 @@ candidate:
 provenance:
   run_id: "123456"
   run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/123456
+  run_attempt: 1
   generated_at_utc: 2026-07-16T16:00:00Z
-  window_start_utc: 2026-07-16T15:50:00Z
+  window_start_utc: 2026-07-16T15:40:00Z
   window_end_utc: 2026-07-16T15:59:00Z
   region: eastus2
   backend_description: Blob Storage Standard_LRS
+  correctness_run:
+    run_id: "123450"
+    run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/123450
+    run_attempt: 1
+    window_start_utc: 2026-07-16T15:35:00Z
+    window_end_utc: 2026-07-16T15:39:00Z
+    git_sha: 0123456789abcdef
+    artifact_digest: sha256:binary-or-image
+    config_digest: sha256:resolved-non-secret-config
+  source_runs:
+    - run_id: "123451"
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/123451
+      run_attempt: 1
+      window_start_utc: 2026-07-16T15:40:00Z
+      window_end_utc: 2026-07-16T15:45:00Z
+      git_sha: 0123456789abcdef
+      artifact_digest: sha256:binary-or-image
+      config_digest: sha256:resolved-non-secret-config
+    - run_id: "123452"
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/123452
+      run_attempt: 1
+      window_start_utc: 2026-07-16T15:47:00Z
+      window_end_utc: 2026-07-16T15:52:00Z
+      git_sha: 0123456789abcdef
+      artifact_digest: sha256:binary-or-image
+      config_digest: sha256:resolved-non-secret-config
+    - run_id: "123453"
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/123453
+      run_attempt: 1
+      window_start_utc: 2026-07-16T15:54:00Z
+      window_end_utc: 2026-07-16T15:59:00Z
+      git_sha: 0123456789abcdef
+      artifact_digest: sha256:binary-or-image
+      config_digest: sha256:resolved-non-secret-config
 
 rules:
   max_artifact_age_hours: 72
@@ -100,6 +229,7 @@ rules:
   max_failure_rate: 0.001
   zero_completions_disqualify: true
   only_skipped_real_azure_disqualifies: true
+  min_distinct_runs: 3
 
 signals:
   - id: latency-p99
@@ -140,9 +270,9 @@ findings:
 ## Validation rules
 
 - `qualified` real-Azure artifacts require immutable candidate and run
-  provenance, a region/backend description, fresh measurements, minimum samples
-  and duration, at least one blocking signal, and at least one real-Azure
-  scenario.
+  provenance, every repeated source run/attempt, a region/backend description,
+  fresh measurements, minimum samples and duration, a blocking backend-capacity
+  throughput or latency signal, and at least one real-Azure scenario.
 - Zero completions, only skipped live evidence, stale measurements, insufficient
   samples/duration, or a failure rate above the published maximum prevent a
   `qualified` verdict.

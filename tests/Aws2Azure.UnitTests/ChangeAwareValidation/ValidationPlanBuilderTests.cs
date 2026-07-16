@@ -45,6 +45,13 @@ public sealed class ValidationPlanBuilderTests
         "required")]
     [InlineData("docs/perf/microbench-reference.json", "unit", "required")]
     [InlineData(".github/workflows/conformance.yml", "conformance", "required")]
+    [InlineData(".github/workflows/qualification-real-azure.yml", "perf", "required")]
+    [InlineData(".github/workflows/qualification-real-azure.yml", "real-azure", "required")]
+    [InlineData("docs/workloads/qualification/s3.yaml", "real-azure", "required")]
+    [InlineData(
+        "tests/Aws2Azure.IntegrationTests/OperationalQualification/SecretsManagerRestartQualificationTests.cs",
+        "real-azure",
+        "required")]
     [InlineData("eng/validate.ps1", "integration", "required")]
     [InlineData(".github/copilot-instructions.md", "build", "optional")]
     [InlineData(".github/copilot-instructions.md", "integration", "not-applicable")]

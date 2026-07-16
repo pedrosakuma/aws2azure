@@ -44,7 +44,7 @@ public static class RealAzureConformanceValues
     {
         "core", "read", "write", "list", "pagination", "batch",
         "throttling", "timeout", "service_unavailable", "invalid_credentials",
-        "cancellation", "concurrency"
+        "cancellation", "concurrency", "restart", "retry_exhaustion", "rollback"
     };
 
     public static readonly HashSet<string> EvidenceSources = new(System.StringComparer.OrdinalIgnoreCase)

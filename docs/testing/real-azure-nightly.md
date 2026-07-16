@@ -37,9 +37,13 @@ and no long-lived account-key secrets:
 6. **Run** the real-Azure matrix tests and write a separate TRX. If OIDC is
    unavailable, the tests execute their normal skip gates, so evidence records
    `skipped`/`not_run` rather than pretending Azure was observed.
-7. **Generate evidence** and the divergence report from every available TRX
-   under `if: always()`, then upload both reports.
-8. **Deallocate** — the shared cleanup first permanently deletes every Blob
+7. **Generate evidence**, the divergence report, and one correctness-only
+   workload candidate per GA manifest from every available TRX. The workflow
+   seals the complete runtime output and a non-secret config/source manifest;
+   candidates can never claim load qualification.
+8. **Upload** the TRX/evidence, candidates, runtime hashes, and config manifest
+   as the immutable `real-azure-conformance` artifact.
+9. **Deallocate** — the shared cleanup first permanently deletes every Blob
    version (required because immutable storage with versioning protects
    non-empty accounts from deletion), deletes/purges Key Vault, requests
    resource-group deletion, and waits for Azure to confirm it. This runs in an
