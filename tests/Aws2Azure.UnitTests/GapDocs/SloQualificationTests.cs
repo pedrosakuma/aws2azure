@@ -99,6 +99,34 @@ public sealed class SloQualificationTests
     }
 
     [Fact]
+    public void Validate_allows_real_azure_candidate_without_numeric_signals()
+    {
+        var document = Valid("real_azure_workload_qualification", "candidate");
+        document.Signals.Clear();
+        document.Findings.Add(new SloQualificationFinding
+        {
+            Code = "load_evidence_missing",
+            Disposition = "blocking",
+            Message = "Load evidence is required before qualification."
+        });
+
+        var errors = SloQualificationValidator.Validate(document, Now);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void Validate_still_requires_capacity_gates_for_qualified_real_azure_artifact()
+    {
+        var document = Valid("real_azure_workload_qualification", "qualified");
+        document.Signals.Clear();
+
+        var errors = SloQualificationValidator.Validate(document, Now);
+
+        Assert.Contains(errors, error => error.Contains("signals must contain", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Validate_rejects_qualified_real_azure_run_with_zero_completions_or_low_samples()
     {
         var document = Valid("real_azure_workload_qualification", "qualified");
@@ -248,7 +276,7 @@ public sealed class SloQualificationTests
 
             Assert.NotEmpty(errors);
             Assert.Contains(errors, error => error.Contains("profile.id missing", StringComparison.Ordinal));
-            Assert.Contains(errors, error => error.Contains("signals must contain", StringComparison.Ordinal));
+            Assert.Contains(errors, error => error.Contains("scenarios must contain", StringComparison.Ordinal));
         }
         finally
         {

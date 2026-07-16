@@ -38,6 +38,33 @@ configured proxy-to-SDK throughput/p50/p99 ratios. Missing, stale, untracked,
 zero-completion, or unevaluable measurements are retained as explicit
 `findings`; they are not silently converted into passing evidence.
 
+Generate a real-Azure workload candidate from the conformance evidence for an
+explicit operation set with:
+
+```bash
+dotnet run --project tools/Aws2Azure.GapDocs -- \
+  generate-real-azure-workload-qualification \
+  --evidence TestResults/evidence/real-azure-evidence.json \
+  --output TestResults/real-azure-workload-qualification.yaml \
+  --profile-id s3-basic-object-crud \
+  --profile-version 1 \
+  --operation s3:CreateBucket \
+  --operation s3:PutObject \
+  --operation s3:GetObject \
+  --git-sha "$GITHUB_SHA" \
+  --artifact-digest "sha256:<published-binary-or-image>" \
+  --config-digest "sha256:<resolved-non-secret-config>" \
+  --region eastus2 \
+  --backend-description "Blob Storage Standard_LRS"
+```
+
+This adapter classifies correctness evidence only. Passing real-Azure
+conformance produces `candidate` with a blocking `load_evidence_missing`
+finding; skipped or absent operation evidence produces `inconclusive`, and a
+failed required conformance scenario produces `blocked`. It never emits
+`qualified`: that verdict requires a later production-shaped load artifact with
+reviewed thresholds, sample counts, duration, and capacity signals.
+
 ## Version 1 shape
 
 ```yaml
@@ -127,9 +154,12 @@ findings:
   Signal source is also explicit: `proxy_overhead`, `backend_capacity`, or
   `network_noise`.
 - Findings preserve adapter-level reasons that cannot be represented as a
-  numeric signal. A blocking finding makes the generated verdict at least
-  `inconclusive`; an observed threshold breach or disqualifying run result makes
-  it `failed`.
+  numeric signal. A blocking finding prevents a passing or `qualified` verdict;
+  each adapter maps it to the artifact-specific non-success state (`candidate`,
+  `inconclusive`, `blocked`, or `failed`).
+- A non-qualified real-Azure candidate may contain correctness scenarios and
+  blocking findings without numeric signals. `qualified` still requires
+  blocking real-Azure capacity signals and all workload gates.
 
 This contract does not choose profile thresholds. Thresholds are introduced by
 reviewed profile artifacts after anomalous baseline results are investigated;

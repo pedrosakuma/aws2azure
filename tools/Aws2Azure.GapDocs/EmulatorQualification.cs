@@ -1,14 +1,9 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using YamlDotNet.Core;
-using YamlDotNet.Core.Events;
-using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
 
 namespace Aws2Azure.GapDocs;
 
@@ -355,17 +350,7 @@ public static class EmulatorQualificationGenerator
 
     public static void RenderYaml(SloQualificationDocument document, string outputPath)
     {
-        var serializer = new SerializerBuilder()
-            .WithNamingConvention(UnderscoredNamingConvention.Instance)
-            .WithTypeConverter(new DateTimeOffsetYamlTypeConverter())
-            .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull)
-            .Build();
-        var directory = Path.GetDirectoryName(Path.GetFullPath(outputPath));
-        if (!string.IsNullOrEmpty(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
-        File.WriteAllText(outputPath, serializer.Serialize(document));
+        SloQualificationRenderer.RenderYaml(document, outputPath);
     }
 
     private static EmulatorReferenceDocument LoadReference(string path)
@@ -535,28 +520,6 @@ public static class EmulatorQualificationGenerator
         }
     }
 
-    private sealed class DateTimeOffsetYamlTypeConverter : IYamlTypeConverter
-    {
-        public bool Accepts(Type type) => type == typeof(DateTimeOffset);
-
-        public object ReadYaml(IParser parser, Type type, ObjectDeserializer rootDeserializer)
-        {
-            return DateTimeOffset.Parse(
-                parser.Consume<Scalar>().Value,
-                CultureInfo.InvariantCulture,
-                DateTimeStyles.AssumeUniversal);
-        }
-
-        public void WriteYaml(
-            IEmitter emitter,
-            object? value,
-            Type type,
-            ObjectSerializer serializer)
-        {
-            var timestamp = ((DateTimeOffset)value!).ToUniversalTime();
-            emitter.Emit(new Scalar(timestamp.ToString("O", CultureInfo.InvariantCulture)));
-        }
-    }
 }
 
 public sealed class EmulatorReferenceDocument
