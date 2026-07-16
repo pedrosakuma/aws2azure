@@ -102,10 +102,11 @@ public sealed class PerfReportMergeTests
 public sealed class PerfRegressionGateTests
 {
     [Fact]
-    public void Asserts_pass_when_scenario_absent_from_reference()
+    public void Throws_when_scenario_absent_from_reference()
     {
         var result = MakeResult("not.in.reference.json", throughput: 0.01, p99Us: long.MaxValue);
-        result.AssertNoRegression(); // no throw
+        var ex = Assert.Throws<Xunit.Sdk.XunitException>(result.AssertNoRegression);
+        Assert.Contains("missing from docs/perf/baseline-reference.json", ex.Message);
     }
 
     [Fact]

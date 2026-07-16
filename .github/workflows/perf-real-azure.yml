@@ -100,7 +100,7 @@ jobs:
       # the scenario step (it runs as a dedicated step per mode below).
       PERF_FILTER: "FullyQualifiedName~DynamoDb&Category!=RelativeGate"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: ./.github/actions/dotnet-setup
 
       # Provisioning needs the OIDC client id. When absent (fork PRs, or before
@@ -124,7 +124,7 @@ jobs:
 
       - name: Azure login (OIDC)
         if: steps.gate.outputs.enabled == 'true'
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -248,7 +248,7 @@ jobs:
 
       - name: Upload real-Azure perf A/B results
         if: always() && steps.gate.outputs.enabled == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: perf-real-azure-results
           path: ${{ runner.temp }}/perf-real-azure

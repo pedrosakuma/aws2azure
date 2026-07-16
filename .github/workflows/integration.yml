@@ -13,20 +13,41 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - id: filter
+        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
+        with:
+          filters: |
+            relevant:
+              - 'src/**'
+              - 'tests/Aws2Azure.IntegrationTests/**'
+              - 'tests/Aws2Azure.TestSupport/**'
+              - 'deploy/emulators/**'
+              - 'deploy/docker-compose.yml'
+              - 'docker-compose.yml'
+              - '.github/workflows/integration.yml'
+
   integration:
-    # Run on nightly schedule, manual dispatch, or PRs that carry the
-    # `run-integration` label. The label gate keeps PR cost low while
-    # still allowing on-demand runs for sensitive changes (SigV4, Azure
-    # REST client, auth, etc.).
+    needs: changes
+    # Run on nightly schedule, manual dispatch, relevant PR changes, or the
+    # `run-integration` label as an explicit override.
     if: >-
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' &&
-       contains(github.event.pull_request.labels.*.name, 'run-integration'))
+      always() &&
+      (github.event_name == 'schedule' ||
+       github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'pull_request' &&
+        (needs.changes.outputs.relevant == 'true' ||
+         contains(github.event.pull_request.labels.*.name, 'run-integration'))))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: ./.github/actions/dotnet-setup
       - name: Verify Docker available
         run: docker info

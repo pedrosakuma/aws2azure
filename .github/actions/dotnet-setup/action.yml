@@ -4,7 +4,7 @@ inputs:
   dotnet-version:
     description: .NET SDK version passed to actions/setup-dotnet.
     required: false
-    default: 10.0.x
+    default: 10.0.302
   cache-prefix:
     description: Optional cache-key segment for jobs that need isolation.
     required: false
@@ -13,11 +13,11 @@ runs:
   using: composite
   steps:
     - name: Set up .NET
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
       with:
         dotnet-version: ${{ inputs.dotnet-version }}
     - name: Cache NuGet packages
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ~/.nuget/packages
         key: ${{ runner.os }}-nuget-${{ inputs.cache-prefix }}-${{ hashFiles('**/*.csproj', '**/*.fsproj', '**/*.vbproj', '**/*.sln', '**/*.slnx', 'Directory.Build.props', 'Directory.Build.targets', 'global.json', 'NuGet.config', 'nuget.config') }}

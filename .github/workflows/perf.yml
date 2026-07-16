@@ -14,24 +14,41 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - id: filter
+        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
+        with:
+          filters: |
+            relevant:
+              - 'src/**'
+              - 'deploy/emulators/**'
+              - 'deploy/docker-compose.yml'
+              - 'docker-compose.yml'
+
   perf:
-    # Runs on nightly schedule, manual dispatch, or PRs that carry the
-    # `run-perf` label. Default PRs do NOT trigger it — apply the label
-    # when changing transport hot paths (Kestrel routing, SigV4 hot
-    # loop, any module's per-call code) to surface regressions before
-    # merge.
+    needs: changes
+    # Runs on nightly schedule, manual dispatch, relevant PR changes, or the
+    # `run-perf` label as an explicit override.
     if: >-
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' &&
-       contains(github.event.pull_request.labels.*.name, 'run-perf'))
+      always() &&
+      (github.event_name == 'schedule' ||
+       github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'pull_request' &&
+        (needs.changes.outputs.relevant == 'true' ||
+         contains(github.event.pull_request.labels.*.name, 'run-perf'))))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
       AWS2AZURE_PERF: "1"
       AWS2AZURE_PERF_UPDATE_DOCS: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: ./.github/actions/dotnet-setup
       - name: Verify Docker available
         run: docker info
@@ -95,7 +112,7 @@ jobs:
           exit "$qualification_status"
       - name: Upload perf baseline + qualification + history
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: perf-results
           path: |

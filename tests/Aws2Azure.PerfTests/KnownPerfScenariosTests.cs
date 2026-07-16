@@ -68,9 +68,9 @@ public sealed partial class KnownPerfScenariosTests
         "dynamodb.GetItem (large)",
         "dynamodb.Query (pushable filter)",
         "dynamodb.Query (large items)",
+        "dynamodb.Scan (pushable filter)",
         "dynamodb.Query LSI numeric (ordered)",
         "dynamodb.Query LSI numeric (selective)",
-        "dynamodb.Scan (pushable filter)",
         "dynamodb.BatchWriteItem (25 items)",
         "dynamodb.BatchGetItem (25 items)",
         "dynamodb.BatchGetItem (large items)",
@@ -162,6 +162,9 @@ public sealed partial class KnownPerfScenariosTests
     }
 
     private static string FindRepoPath(params string[] segments)
+        => Path.Combine(new[] { FindRepoRoot() }.Concat(segments).ToArray());
+
+    private static string FindRepoRoot()
     {
         var dir = AppContext.BaseDirectory;
         while (!string.IsNullOrEmpty(dir))
@@ -169,7 +172,7 @@ public sealed partial class KnownPerfScenariosTests
             if (Directory.Exists(Path.Combine(dir, "docs")) &&
                 Directory.Exists(Path.Combine(dir, "src")))
             {
-                return Path.Combine(new[] { dir }.Concat(segments).ToArray());
+                return dir;
             }
             dir = Path.GetDirectoryName(dir);
         }
