@@ -408,6 +408,23 @@ they appear in a TRX file they are reported as `not_run`. `--validate` checks
 the matrix schema, the complete six-service set, and every operation reference
 together with the normal gap docs.
 
+Inspect the executable plan for the full matrix, one service, or one scenario:
+
+```bash
+dotnet run --project tools/Aws2Azure.GapDocs -- plan-conformance
+dotnet run --project tools/Aws2Azure.GapDocs -- plan-conformance --service s3
+dotnet run --project tools/Aws2Azure.GapDocs -- \
+  plan-conformance --service s3 --scenario object-lifecycle
+```
+
+The deterministic JSON output includes selected scenarios and operations,
+whether the selection contains positive real-Azure verification evidence, and
+deduplicated test identities grouped by test project. A scenario id may be used
+without `--service` only when it is unique across the matrix. The workflow
+integration must verify that every planned identity is discovered before
+constructing `dotnet test` filters; VSTest otherwise exits successfully when a
+filter matches zero tests.
+
 Generate immutable run evidence from one or more TRX files with:
 
 ```bash
