@@ -101,20 +101,29 @@ public sealed class S3RealAzureSmokeTests
         const string key = "lock/object.txt";
         using var client = _fx.CreateS3Client();
         var bucketCreated = false;
+        var legalHoldEnabled = false;
+        var retentionExpiresAt = DateTime.MinValue;
+        string? versionId = null;
         try
         {
             await client.PutBucketAsync(new PutBucketRequest { BucketName = bucket }).ConfigureAwait(false);
             bucketCreated = true;
-            await client.PutObjectAsync(new PutObjectRequest
+            var put = await client.PutObjectAsync(new PutObjectRequest
             {
                 BucketName = bucket, Key = key, ContentBody = "worm",
             }).ConfigureAwait(false);
+            versionId = put.VersionId;
+            Assert.False(string.IsNullOrWhiteSpace(versionId));
 
-            var until = DateTime.UtcNow.AddMinutes(2);
+            retentionExpiresAt = DateTime.UtcNow.AddSeconds(15);
             await client.PutObjectRetentionAsync(new PutObjectRetentionRequest
             {
                 BucketName = bucket, Key = key,
-                Retention = new ObjectLockRetention { Mode = ObjectLockRetentionMode.Governance, RetainUntilDate = until },
+                Retention = new ObjectLockRetention
+                {
+                    Mode = ObjectLockRetentionMode.Governance,
+                    RetainUntilDate = retentionExpiresAt,
+                },
             }).ConfigureAwait(false);
             var ret = await client.GetObjectRetentionAsync(new GetObjectRetentionRequest { BucketName = bucket, Key = key }).ConfigureAwait(false);
             Assert.Equal(ObjectLockRetentionMode.Governance, ret.Retention.Mode);
@@ -124,6 +133,7 @@ public sealed class S3RealAzureSmokeTests
                 BucketName = bucket, Key = key,
                 LegalHold = new ObjectLockLegalHold { Status = ObjectLockLegalHoldStatus.On },
             }).ConfigureAwait(false);
+            legalHoldEnabled = true;
             var hold = await client.GetObjectLegalHoldAsync(new GetObjectLegalHoldRequest { BucketName = bucket, Key = key }).ConfigureAwait(false);
             Assert.Equal(ObjectLockLegalHoldStatus.On, hold.LegalHold.Status);
 
@@ -132,12 +142,47 @@ public sealed class S3RealAzureSmokeTests
                 BucketName = bucket, Key = key,
                 LegalHold = new ObjectLockLegalHold { Status = ObjectLockLegalHoldStatus.Off },
             }).ConfigureAwait(false);
+            legalHoldEnabled = false;
         }
         finally
         {
             if (bucketCreated)
             {
-                try { await client.DeleteObjectAsync(new DeleteObjectRequest { BucketName = bucket, Key = key, BypassGovernanceRetention = true }).ConfigureAwait(false); } catch { }
+                if (legalHoldEnabled)
+                {
+                    try
+                    {
+                        await client.PutObjectLegalHoldAsync(new PutObjectLegalHoldRequest
+                        {
+                            BucketName = bucket,
+                            Key = key,
+                            LegalHold = new ObjectLockLegalHold { Status = ObjectLockLegalHoldStatus.Off },
+                        }).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                var retentionDelay = retentionExpiresAt - DateTime.UtcNow + TimeSpan.FromSeconds(2);
+                if (retentionDelay > TimeSpan.Zero)
+                {
+                    await Task.Delay(retentionDelay).ConfigureAwait(false);
+                }
+
+                try
+                {
+                    await client.DeleteObjectAsync(new DeleteObjectRequest
+                    {
+                        BucketName = bucket,
+                        Key = key,
+                        VersionId = versionId,
+                        BypassGovernanceRetention = true,
+                    }).ConfigureAwait(false);
+                }
+                catch
+                {
+                }
                 try { await client.DeleteBucketAsync(new DeleteBucketRequest { BucketName = bucket }).ConfigureAwait(false); } catch { }
             }
         }

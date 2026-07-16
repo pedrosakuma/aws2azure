@@ -39,16 +39,20 @@ and no long-lived account-key secrets:
    `skipped`/`not_run` rather than pretending Azure was observed.
 7. **Generate evidence** and the divergence report from every available TRX
    under `if: always()`, then upload both reports.
-8. **Deallocate** — Key Vault delete/purge plus
-   `az group delete --yes --no-wait` in an `if: always()`
-   teardown, so the resource group is removed even when provisioning or the
-   tests fail. A final gate then restores the captured test/report exit codes;
-   report generation and cleanup never turn a failing test green.
+8. **Deallocate** — the shared cleanup first permanently deletes every Blob
+   version (required because immutable storage with versioning protects
+   non-empty accounts from deletion), deletes/purges Key Vault, requests
+   resource-group deletion, and waits for Azure to confirm it. This runs in an
+   `if: always()` teardown, so cleanup is attempted even when provisioning or
+   tests fail, and a rejected or incomplete deletion fails visibly. A final
+   gate then restores the captured test/report exit codes; report generation
+   and cleanup never turn a failing test green.
 
 A [`real-azure-reaper`](../../.github/workflows/real-azure-reaper.yml) workflow
-runs every 6 hours as a backstop, deleting any `purpose=aws2azure-nightly`
-resource group older than `MAX_AGE_HOURS` (default 6) — covering the rare case
-where a force-cancelled run skips its teardown.
+runs every 6 hours as a backstop, permanently deleting blob versions from
+immutable-versioned storage accounts and deleting any
+`purpose=aws2azure-nightly` resource group older than `MAX_AGE_HOURS` (default
+6) — covering the rare case where a force-cancelled run skips its teardown.
 
 Cosmos DB account creation dominates the run (normally ~5–10 min). The job has
 a hard **60-minute timeout**, global fixed concurrency
