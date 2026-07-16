@@ -118,7 +118,7 @@ public sealed class S3RealAzureConformanceTests(RealAzureProxyFixture fixture)
                 BucketName = bucket,
                 Prefix = "batch/",
             }, timeout.Token).ConfigureAwait(false);
-            Assert.Empty(listed.S3Objects);
+            Assert.True(listed.S3Objects is null or { Count: 0 });
         }
         finally
         {

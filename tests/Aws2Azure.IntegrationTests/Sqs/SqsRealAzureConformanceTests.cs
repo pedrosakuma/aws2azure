@@ -153,18 +153,22 @@ public sealed class SqsRealAzureConformanceTests(RealAzureProxyFixture fixture)
                 SendFifoGroupAsync(client, queueUrl, "group-b-" + run, groupB, timeout.Token))
                 .ConfigureAwait(false);
 
+            static ReceiveMessageRequest NewReceiveRequest(string url) => new()
+            {
+                QueueUrl = url,
+                MaxNumberOfMessages = 10,
+                WaitTimeSeconds = 20,
+                MessageSystemAttributeNames = ["All"],
+            };
+
+            var pages = await Task.WhenAll(
+                client.ReceiveMessageAsync(NewReceiveRequest(queueUrl), timeout.Token),
+                client.ReceiveMessageAsync(NewReceiveRequest(queueUrl), timeout.Token))
+                .ConfigureAwait(false);
             var expected = groupA.Concat(groupB).ToHashSet(StringComparer.Ordinal);
             var received = new List<(string Body, string GroupId, string ReceiptHandle)>();
-            while (received.Count < expected.Count && !timeout.IsCancellationRequested)
+            foreach (var page in pages)
             {
-                var page = await client.ReceiveMessageAsync(new ReceiveMessageRequest
-                {
-                    QueueUrl = queueUrl,
-                    MaxNumberOfMessages = 10,
-                    WaitTimeSeconds = 5,
-                    MessageSystemAttributeNames = ["All"],
-                }, timeout.Token).ConfigureAwait(false);
-
                 foreach (var message in page.Messages)
                 {
                     if (expected.Contains(message.Body))
