@@ -217,24 +217,15 @@ services:
         operations: [ListQueues]
         tests:
           - Aws2Azure.IntegrationTests.FailureConformance.RealAzureInvalidCredentialConformanceTests.Sqs_invalid_sas_key_returns_native_non_retryable_error
-      - id: fifo-order-deduplication
+      - id: fifo-session-receive
         priority: p0
         category: core
         evidence_source: real_azure
-        establishes_verification: true
-        description: A real Service Bus session preserves FIFO order and suppresses a repeated MessageDeduplicationId.
-        operations: [SendMessage, ReceiveMessage]
-        tests:
-          - Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.Fifo_messages_preserve_order_and_deduplicate
-      - id: fifo-concurrency
-        priority: p0
-        category: concurrency
-        evidence_source: real_azure
         establishes_verification: false
-        description: Concurrent FIFO groups need independent broker-assigned Service Bus sessions; retained as an explicit skipped divergence until the second AcceptNextSession no longer times out.
+        description: FIFO receive through broker-assigned Service Bus sessions remains explicitly skipped after AcceptNextSession timed out for both one ready group and concurrent groups; the skipped result blocks SendMessage and ReceiveMessage verification seals.
         operations: [SendMessage, ReceiveMessage]
         tests:
-          - Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.Concurrent_fifo_groups_acquire_independent_sessions
+          - Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.Fifo_session_receive_is_not_yet_conformant_on_real_azure
 
   - service: kinesis
     scenarios:
