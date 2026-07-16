@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using Aws2Azure.GapDocs;
 using YamlDotNet.Core;
 
@@ -29,6 +30,11 @@ if (args.Length > 0 && args[0] == "plan-conformance")
 if (args.Length > 0 && args[0] == "validate-qualification")
 {
     return ValidateQualification(args[1..]);
+}
+
+if (args.Length > 0 && args[0] == "generate-emulator-qualification")
+{
+    return GenerateEmulatorQualification(args[1..]);
 }
 
 return RunGapDocs(args, repoRoot, gapsRoot, siteRoot, generatedCode);
@@ -335,6 +341,108 @@ static int ValidateQualification(string[] args)
                                       or IOException
                                       or UnauthorizedAccessException
                                       or YamlException)
+    {
+        Console.Error.WriteLine("[gap-docs] " + exception.Message);
+        return 2;
+    }
+}
+
+static int GenerateEmulatorQualification(string[] args)
+{
+    var values = new Dictionary<string, string>(StringComparer.Ordinal);
+    var maxRowAgeHours = 2;
+    for (var index = 0; index < args.Length; index++)
+    {
+        var option = args[index];
+        if (option == "--max-row-age-hours")
+        {
+            if (++index >= args.Length || args[index].StartsWith("--", StringComparison.Ordinal))
+            {
+                Console.Error.WriteLine($"{option} requires a value.");
+                return 1;
+            }
+            var raw = args[index];
+            if (!int.TryParse(raw, out maxRowAgeHours))
+            {
+                Console.Error.WriteLine($"{option} requires an integer.");
+                return 1;
+            }
+            continue;
+        }
+        if (option is "--reference"
+            or "--latest"
+            or "--output"
+            or "--run-id"
+            or "--run-url"
+            or "--git-sha"
+            or "--artifact-digest"
+            or "--config-digest")
+        {
+            if (++index >= args.Length || args[index].StartsWith("--", StringComparison.Ordinal))
+            {
+                Console.Error.WriteLine($"{option} requires a value.");
+                return 1;
+            }
+            values[option] = args[index];
+            continue;
+        }
+
+        Console.Error.WriteLine($"Unknown option '{option}'.");
+        return 1;
+    }
+
+    var required = new[]
+    {
+        "--reference",
+        "--latest",
+        "--output",
+        "--run-id",
+        "--run-url",
+        "--git-sha",
+        "--artifact-digest",
+        "--config-digest"
+    };
+    var missing = required.Where(option => !values.ContainsKey(option)).ToList();
+    if (missing.Count > 0)
+    {
+        Console.Error.WriteLine(
+            "Missing required option(s): " + string.Join(", ", missing));
+        return 1;
+    }
+
+    try
+    {
+        var document = EmulatorQualificationGenerator.Generate(
+            values["--reference"],
+            values["--latest"],
+            new EmulatorQualificationMetadata
+            {
+                RunId = values["--run-id"],
+                RunUrl = values["--run-url"],
+                GitSha = values["--git-sha"],
+                ArtifactDigest = values["--artifact-digest"],
+                ConfigDigest = values["--config-digest"],
+                GeneratedAtUtc = DateTimeOffset.UtcNow,
+                MaxRowAgeHours = maxRowAgeHours
+            });
+        var errors = SloQualificationValidator.Validate(document, DateTimeOffset.UtcNow);
+        if (errors.Count > 0)
+        {
+            WriteErrors("generated emulator qualification", errors);
+            return 1;
+        }
+
+        EmulatorQualificationGenerator.RenderYaml(document, values["--output"]);
+        Console.WriteLine(
+            $"[gap-docs] emulator qualification '{document.Verdict}' written to {values["--output"]}");
+        return document.Verdict == "failed" ? 3 : 0;
+    }
+    catch (Exception exception) when (exception is ArgumentException
+                                      or FileNotFoundException
+                                      or InvalidDataException
+                                      or IOException
+                                      or UnauthorizedAccessException
+                                      or JsonException)
     {
         Console.Error.WriteLine("[gap-docs] " + exception.Message);
         return 2;

@@ -17,6 +17,27 @@ dotnet run --project tools/Aws2Azure.GapDocs -- \
   validate-qualification qualification.yaml
 ```
 
+Generate an emulator regression artifact from the committed perf contract and a
+machine-readable run snapshot with:
+
+```bash
+dotnet run --project tools/Aws2Azure.GapDocs -- \
+  generate-emulator-qualification \
+  --reference docs/perf/baseline-reference.json \
+  --latest docs/perf/baseline-latest.json \
+  --output qualification.yaml \
+  --run-id "$GITHUB_RUN_ID" \
+  --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+  --git-sha "$GITHUB_SHA" \
+  --artifact-digest "sha256:<published-binary-or-image>" \
+  --config-digest "sha256:<resolved-non-secret-perf-config>"
+```
+
+The adapter emits absolute throughput, latency, and resource signals plus the
+configured proxy-to-SDK throughput/p50/p99 ratios. Missing, stale, untracked,
+zero-completion, or unevaluable measurements are retained as explicit
+`findings`; they are not silently converted into passing evidence.
+
 ## Version 1 shape
 
 ```yaml
@@ -82,6 +103,11 @@ scenarios:
     skipped: 0
     duration_seconds: 300
     captured_at_utc: 2026-07-16T15:59:00Z
+
+findings:
+  - code: untracked_scenario
+    disposition: blocking
+    message: "Latest results contain a scenario absent from baseline-reference.json"
 ```
 
 ## Validation rules
@@ -100,6 +126,10 @@ scenarios:
 - Signal disposition is explicit: `blocking`, `advisory`, or `report_only`.
   Signal source is also explicit: `proxy_overhead`, `backend_capacity`, or
   `network_noise`.
+- Findings preserve adapter-level reasons that cannot be represented as a
+  numeric signal. A blocking finding makes the generated verdict at least
+  `inconclusive`; an observed threshold breach or disqualifying run result makes
+  it `failed`.
 
 This contract does not choose profile thresholds. Thresholds are introduced by
 reviewed profile artifacts after anomalous baseline results are investigated;

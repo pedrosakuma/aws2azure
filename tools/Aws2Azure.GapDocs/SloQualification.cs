@@ -18,6 +18,8 @@ public sealed class SloQualificationDocument
     public SloQualificationRules Rules { get; set; } = new();
     public List<SloQualificationSignal> Signals { get; set; } = new();
     public List<SloQualificationScenario> Scenarios { get; set; } = new();
+    public List<SloQualificationFinding> Findings { get; set; } = new();
+    [YamlIgnore]
     public string SourceFile { get; set; } = string.Empty;
 }
 
@@ -74,6 +76,14 @@ public sealed class SloQualificationSignal
     public double? MeasuredValue { get; set; }
     public long Samples { get; set; }
     public DateTimeOffset CapturedAtUtc { get; set; }
+}
+
+public sealed class SloQualificationFinding
+{
+    public string Code { get; set; } = string.Empty;
+    public string Disposition { get; set; } = string.Empty;
+    public string? ScenarioId { get; set; }
+    public string Message { get; set; } = string.Empty;
 }
 
 public sealed class SloQualificationScenario
@@ -142,6 +152,7 @@ public static class SloQualificationValidator
         ValidateRules(document.Rules, Err);
         ValidateSignals(document, nowUtc.ToUniversalTime(), Err);
         ValidateScenarios(document, nowUtc.ToUniversalTime(), Err);
+        ValidateFindings(document, Err);
         return errors;
     }
 
@@ -153,6 +164,7 @@ public static class SloQualificationValidator
         document.Rules ??= new SloQualificationRules();
         document.Signals ??= new List<SloQualificationSignal>();
         document.Scenarios ??= new List<SloQualificationScenario>();
+        document.Findings ??= new List<SloQualificationFinding>();
         document.Profile.Services ??= new List<SloQualificationProfileService>();
 
         for (var index = 0; index < document.Profile.Services.Count; index++)
@@ -167,6 +179,10 @@ public static class SloQualificationValidator
         for (var index = 0; index < document.Scenarios.Count; index++)
         {
             document.Scenarios[index] ??= new SloQualificationScenario();
+        }
+        for (var index = 0; index < document.Findings.Count; index++)
+        {
+            document.Findings[index] ??= new SloQualificationFinding();
         }
     }
 
@@ -470,7 +486,7 @@ public static class SloQualificationValidator
         var gatesMustPass = (document.ArtifactKind == "real_azure_workload_qualification"
                              && document.Verdict == "qualified")
                             || (document.ArtifactKind == "emulator_regression"
-                                && document.Verdict == "passed");
+                                && document.Verdict != "failed");
         if (!gatesMustPass)
         {
             return;
@@ -665,6 +681,43 @@ public static class SloQualificationValidator
     private static bool HasValidMaxAge(SloQualificationRules rules) =>
         rules.MaxArtifactAgeHours > 0
         && rules.MaxArtifactAgeHours <= TimeSpan.MaxValue.TotalHours;
+
+    private static void ValidateFindings(
+        SloQualificationDocument document,
+        Action<string> err)
+    {
+        if (document.Verdict is "passed" or "qualified"
+            && document.Findings.Any(finding => finding.Disposition == "blocking"))
+        {
+            err($"verdict '{document.Verdict}' must not contain blocking findings");
+        }
+
+        var scenarioIds = new HashSet<string>(
+            document.Scenarios.Select(scenario => scenario.Id),
+            StringComparer.OrdinalIgnoreCase);
+        for (var index = 0; index < document.Findings.Count; index++)
+        {
+            var finding = document.Findings[index];
+            var prefix = $"findings[{index}]";
+            if (string.IsNullOrWhiteSpace(finding.Code))
+            {
+                err($"{prefix}.code missing");
+            }
+            if (!SloQualificationValues.Dispositions.Contains(finding.Disposition))
+            {
+                err($"{prefix}.disposition invalid: '{finding.Disposition}'");
+            }
+            if (!string.IsNullOrWhiteSpace(finding.ScenarioId)
+                && !scenarioIds.Contains(finding.ScenarioId))
+            {
+                err($"{prefix} references unknown scenario_id '{finding.ScenarioId}'");
+            }
+            if (string.IsNullOrWhiteSpace(finding.Message))
+            {
+                err($"{prefix}.message missing");
+            }
+        }
+    }
 }
 
 public static class SloQualificationValues
@@ -709,6 +762,9 @@ public static class SloQualificationValues
         "p95_ms",
         "p99_ms",
         "throughput_per_sec",
+        "throughput_ratio",
+        "p50_ratio",
+        "p99_ratio",
         "throttle_rate",
         "peak_working_set_mb",
         "alloc_bytes_per_op"
