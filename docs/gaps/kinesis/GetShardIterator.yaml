@@ -2,6 +2,10 @@ service: kinesis
 operation: GetShardIterator
 azure_equivalent: "Azure Event Hubs (AMQP 1.0 data plane)"
 status: partial
+verified_real_azure:
+  date: "2026-07-16"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
 sub_features:
   - name: Stateless HMAC-signed iterator tokens
     status: implemented

@@ -2,6 +2,10 @@ service: s3
 operation: GetObject
 azure_equivalent: "GET https://{account}.blob.core.windows.net/{container}/{blob}"
 status: implemented
+verified_real_azure:
+  date: "2026-07-16"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
 sub_features:
   - name: Range requests (bytes=X-Y)
     status: implemented

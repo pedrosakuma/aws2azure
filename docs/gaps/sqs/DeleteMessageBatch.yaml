@@ -2,6 +2,10 @@ service: sqs
 operation: DeleteMessageBatch
 azure_equivalent: "Azure Service Bus queue runtime REST API — N parallel DELETE /{queue}/messages/{messageId}/{lockToken}?api-version=2021-05"
 status: implemented
+verified_real_azure:
+  date: "2026-07-16"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
 sub_features:
   - {name: "1..10 entries per batch", status: implemented, notes: "Matches SQS limit; enforced before any SB call."}
   - {name: "Per-entry Id validation (alnum/_/-, 1..80 chars, unique)", status: implemented, notes: "Returns the AWS-shaped EmptyBatchRequest / TooManyEntriesInBatchRequest / BatchEntryIdsNotDistinct / InvalidBatchEntryId on the whole call."}
@@ -11,7 +15,7 @@ sub_features:
 behavior_differences:
   - "SB REST has no native batch-delete; the proxy fans out parallel DELETEs. A failing entry never aborts the batch — callers see per-entry results matching SQS semantics."
   - "Expired-lock vs already-deleted ambiguity from DeleteMessage applies per entry (see DeleteMessage.yaml behavior_differences)."
-  - "Verified against in-process fakes; emulator-backed end-to-end validation lands with the SbEmulatorFixture build-out (tracked in p2-sb-emulator-fixture)."
+  - "Standard-queue batch deletion is validated against real Azure Service Bus with per-entry success and failure evidence; FIFO AMQP settlement remains subject to the separate FIFO gap."
   - "AMQP transport (Phase 2.5): when a queue is configured with `transport: Amqp`, DeleteMessageBatch routes to the AMQP path — each entry decodes the v2/v3 AMQP receipt handle minted by AMQP ReceiveMessage, looks up the cached (session) receiver via the lock-token cache, and calls `ServiceBusReceiver.CompleteAsync`. FIFO-aware: entries with different session-ids fan out to their own cached session receivers in parallel. Per-entry failures (stale handle, queue mismatch, cache miss, transport error) are surfaced as BatchResultErrorEntry items just like the REST path."
 references:
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteMessageBatch.html

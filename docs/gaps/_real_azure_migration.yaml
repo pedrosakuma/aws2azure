@@ -3,9 +3,6 @@ services:
     tracking_issue: https://github.com/pedrosakuma/aws2azure/issues/532
     expires_on: "2026-10-31"
     operations:
-      - CreateTable
-      - DeleteTable
-      - DescribeTable
       - ListTables
       - ListTagsOfResource
       - TagResource
@@ -17,47 +14,24 @@ services:
       - AbortMultipartUpload
       - CompleteMultipartUpload
       - CopyObject
-      - CreateBucket
       - CreateMultipartUpload
-      - DeleteBucket
       - DeleteBucketTagging
-      - DeleteObject
       - DeleteObjectTagging
-      - DeleteObjects
-      - GetObject
       - GetObjectTagging
       - HeadBucket
       - HeadObject
       - ListBuckets
       - ListObjects
-      - ListObjectsV2
       - ListParts
       - PresignedUrl
-      - PutObject
       - PutObjectTagging
       - UploadPart
       - UploadPartCopy
-  - service: secretsmanager
-    tracking_issue: https://github.com/pedrosakuma/aws2azure/issues/532
-    expires_on: "2026-10-31"
-    operations:
-      - CreateSecret
-      - DeleteSecret
-      - DescribeSecret
-      - GetSecretValue
-      - ListSecrets
-      - UpdateSecret
   - service: sqs
     tracking_issue: https://github.com/pedrosakuma/aws2azure/issues/532
     expires_on: "2026-10-31"
     operations:
-      - CreateQueue
-      - DeleteMessage
-      - DeleteMessageBatch
-      - DeleteQueue
       - GetQueueUrl
       - ListDeadLetterSourceQueues
-      - ListQueues
       - ReceiveMessage
       - SendMessage
-      - SendMessageBatch

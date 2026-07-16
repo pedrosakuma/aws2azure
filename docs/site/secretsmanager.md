@@ -4,6 +4,7 @@
 
 - **Status:** ✅ implemented
 - **Azure equivalent:** `PUT https://{vault}.vault.azure.net/secrets/{name}`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Behaviour differences
 
@@ -22,6 +23,7 @@
 
 - **Status:** ✅ implemented
 - **Azure equivalent:** `DELETE https://{vault}.vault.azure.net/secrets/{name}`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Behaviour differences
 
@@ -38,6 +40,7 @@
 
 - **Status:** ✅ implemented
 - **Azure equivalent:** `GET https://{vault}.vault.azure.net/secrets/{name}?api-version=7.4`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Behaviour differences
 
@@ -55,6 +58,7 @@
 
 - **Status:** ✅ implemented
 - **Azure equivalent:** `GET https://{vault}.vault.azure.net/secrets/{name}/versions/{version?}`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Behaviour differences
 
@@ -73,6 +77,7 @@
 
 - **Status:** ✅ implemented
 - **Azure equivalent:** `GET https://{vault}.vault.azure.net/secrets?api-version=7.4`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Behaviour differences
 
@@ -91,6 +96,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `PUT https://{vault}.vault.azure.net/secrets/{name}`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -140,6 +146,7 @@
 
 - **Status:** ✅ implemented
 - **Azure equivalent:** `PUT https://{vault}.vault.azure.net/secrets/{name}/versions`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Behaviour differences
 

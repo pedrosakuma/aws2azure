@@ -2,6 +2,10 @@ service: dynamodb
 operation: CreateTable
 azure_equivalent: "Azure Cosmos DB (Core SQL API) — POST /dbs/{db}/colls"
 status: implemented
+verified_real_azure:
+  date: "2026-07-16"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
 sub_features:
   - { name: "HASH key", status: implemented }
   - { name: "HASH + RANGE composite key", status: implemented }
@@ -19,7 +23,7 @@ behavior_differences:
   - "On metadata-sidecar persist failure the container is best-effort deleted to avoid orphan containers."
   - "GSI/LSI schemas are validated (key arity, HASH/RANGE roles, LSI HASH must match the table HASH, required Projection with projection type + INCLUDE NonKeyAttributes rules and limits (<=20 per index, <=100 total, names <=255 chars), attribute-definition references, name uniqueness, service limits) and persisted into the sidecar metadata. Index Query/Scan execution lands in later slices; until then a table can be created with indexes but querying them still returns ValidationException."
   - "GSI/LSI ProvisionedThroughput on an index is accepted but not enforced, mirroring base-table throughput handling."
-  - "Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; not yet exercised against real Azure Cosmos DB."
+  - "Core table creation is validated against real Azure Cosmos DB; index execution and other partial sub-features retain their narrower coverage noted above."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_CreateTable.html
   - https://learn.microsoft.com/rest/api/cosmos-db/create-a-collection

@@ -52,6 +52,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Event Hubs (AMQP 1.0 data plane)`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -81,6 +82,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Event Hubs (AMQP 1.0 data plane)`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -106,6 +108,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Event Hubs Service Bus management REST API`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -121,7 +124,7 @@
 - HashKeyRange values are a uniform even split of the 128-bit Kinesis hash space; Event Hubs does not expose AWS-compatible hash-key assignments.
 - NextToken is an aws2azure-specific cursor, not an AWS-issued token; it encodes stream name + last shard id and expires after 5 minutes.
 - Shard filter types other than AT_LATEST and FROM_TRIM_HORIZON currently return ValidationException.
-- Verified against Event Hubs emulator only, not yet against a live Event Hubs namespace.
+- Core shard listing and pagination are validated against a live Azure Event Hubs namespace.
 - Stream lifecycle (CreateStream / DeleteStream / IncreaseStreamRetentionPeriod) is out of scope — Event Hubs entities are provisioned out-of-band via ARM.
 
 ### References
@@ -133,6 +136,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Event Hubs (AMQP 1.0 data plane)`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Behaviour differences
 
@@ -140,7 +144,7 @@
 - ShardId is derived client-side by hashing PartitionKey with MD5 and routing to {eventHub}/Partitions/{id}. This matches Event Hubs' historical partitioning algorithm, but the broker may diverge if Azure changes its internal hashing in the future.
 - ExplicitHashKey and SequenceNumberForOrdering are accepted for wire compatibility but ignored.
 - EncryptionType is always reported as NONE.
-- Verified against Event Hubs emulator; not yet validated against production Azure Event Hubs.
+- Record publication is validated against production Azure Event Hubs through the real-Azure conformance workflow.
 
 ### References
 
@@ -150,6 +154,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Event Hubs (AMQP 1.0 data plane)`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Behaviour differences
 
@@ -157,7 +162,7 @@
 - ShardId values are derived client-side by hashing PartitionKey with MD5 and mapping the result modulo the Event Hubs partition count.
 - Batch sends are still grouped per partition, but broker dispositions are tracked per message; records accepted before a later reject remain successful in the PutRecords response so callers do not retry already-committed messages.
 - ExplicitHashKey is ignored; partition routing always follows the PartitionKey hash.
-- Verified against Event Hubs emulator; not yet validated against production Azure Event Hubs.
+- Batch record publication and per-entry result handling are validated against production Azure Event Hubs through the real-Azure conformance workflow.
 
 ### References
 

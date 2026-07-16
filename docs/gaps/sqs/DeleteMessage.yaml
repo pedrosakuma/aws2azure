@@ -2,12 +2,16 @@ service: sqs
 operation: DeleteMessage
 azure_equivalent: "Azure Service Bus queue runtime REST API — DELETE /{queue}/messages/{messageId}/{lockToken}?api-version=2021-05"
 status: implemented
+verified_real_azure:
+  date: "2026-07-16"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
 sub_features:
   - {name: "ReceiptHandle round-trip", status: implemented, notes: "Decoded back into (messageId, lockToken) — opaque to the client."}
   - {name: "Idempotent behaviour on expired lock / already-deleted message", status: partial, notes: "SB 404 surfaces as SQS ReceiptHandleIsInvalid; AWS treats DeleteMessage as idempotent on already-deleted messages but errors on expired locks. The proxy currently surfaces the SB 404 verbatim — see behavior_differences."}
 behavior_differences:
   - "If the SB lock has expired before DeleteMessage arrives, the proxy returns ReceiptHandleIsInvalid (404). AWS SQS would return success (idempotent) for already-deleted messages and an error only for genuinely invalid handles — these two cases are indistinguishable on SB REST without an extra round-trip."
-  - "Verified against in-process fakes; emulator-backed end-to-end validation lands with Slice 4's emulator fixture build-out."
+  - "The standard-queue delete path is validated against real Azure Service Bus through the message-lifecycle conformance scenario; FIFO settlement remains covered by the separate FIFO gap."
   - "AMQP transport (Phase 2.5 slice 8b.4c): when the queue is configured with `transport: Amqp`, DeleteMessage settles the in-flight delivery via the AMQP `accepted` outcome against the cached receiver (via the lock-token in-flight cache landed in slice 8b.4b). Cache miss — already settled, lock expired, sender-settled at receive, or delivery came from a torn-down receiver instance — surfaces as ReceiptHandleIsInvalid, identical to the REST path's 404→ReceiptHandleIsInvalid mapping. Receipt handles minted by the AMQP path (version `2`) are rejected if presented to a REST-configured queue and vice versa — a queue's transport setting is part of the handle's contract."
 references:
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteMessage.html

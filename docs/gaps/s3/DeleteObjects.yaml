@@ -2,6 +2,10 @@ service: s3
 operation: DeleteObjects
 azure_equivalent: "Multiple DELETEs against Blob (no native batch endpoint)"
 status: implemented
+verified_real_azure:
+  date: "2026-07-16"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
 sub_features:
   - name: quiet-mode
     status: implemented

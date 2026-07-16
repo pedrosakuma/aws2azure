@@ -2,11 +2,15 @@ service: sqs
 operation: DeleteQueue
 azure_equivalent: "DELETE https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05"
 status: implemented
+verified_real_azure:
+  date: "2026-07-16"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
 sub_features: []
 behavior_differences:
   - "Service Bus deletes the queue synchronously; AWS SQS may take up to 60 seconds of eventual consistency before the queue stops accepting messages. Callers that delete-then-recreate within seconds may need to retry on QueueDeletedRecently — not currently surfaced by the proxy."
   - "Unknown-queue 404 is mapped to AWS.SimpleQueueService.NonExistentQueue (HTTP 400) per SQS spec."
-  - "Verified against Service Bus emulator only; real-Azure validation pending."
+  - "Validated against real Azure Service Bus through the standard queue/message lifecycle scenario."
 references:
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteQueue.html
   - https://learn.microsoft.com/rest/api/servicebus/delete-queue
