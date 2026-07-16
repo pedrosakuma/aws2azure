@@ -1,0 +1,138 @@
+[
+  {
+    "schema_version": 1,
+    "profile_id": "dynamodb-basic-crud",
+    "profile_version": 1,
+    "name": "DynamoDB basic table and item CRUD",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "candidate",
+    "findings": [
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:DeleteItem",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:GetItem",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:PutItem",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:UpdateItem",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:Consistency and read-your-writes",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_basic_crud\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:Key encoding and on-disk storage format",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_basic_crud\u0027."
+      },
+      {
+        "code": "qualification_evidence_missing",
+        "disposition": "blocking",
+        "subject": "dynamodb-basic-crud",
+        "message": "No reviewed real-Azure workload qualification artifact is referenced."
+      }
+    ]
+  },
+  {
+    "schema_version": 1,
+    "profile_id": "s3-basic-object-crud",
+    "profile_version": 1,
+    "name": "S3 basic object CRUD",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "conditional",
+    "findings": [
+      {
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "s3:HeadObject",
+        "message": "Required operation has no real-Azure verification seal."
+      }
+    ]
+  },
+  {
+    "schema_version": 1,
+    "profile_id": "secretsmanager-basic-lifecycle",
+    "profile_version": 1,
+    "name": "Secrets Manager basic lifecycle",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "candidate",
+    "findings": [
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "secretsmanager:PutSecretValue",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "secretsmanager:Deletion recovery semantics differ",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027secretsmanager_basic_lifecycle\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "secretsmanager:Versioning and staging modelled on Key Vault version tags",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027secretsmanager_version_stages\u0027."
+      },
+      {
+        "code": "qualification_evidence_missing",
+        "disposition": "blocking",
+        "subject": "secretsmanager-basic-lifecycle",
+        "message": "No reviewed real-Azure workload qualification artifact is referenced."
+      }
+    ]
+  },
+  {
+    "schema_version": 1,
+    "profile_id": "sqs-standard-messaging",
+    "profile_version": 1,
+    "name": "SQS standard messaging",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "conditional",
+    "findings": [
+      {
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:GetQueueUrl",
+        "message": "Required operation has no real-Azure verification seal."
+      },
+      {
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:ReceiveMessage",
+        "message": "Required operation has no real-Azure verification seal."
+      },
+      {
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:SendMessage",
+        "message": "Required operation has no real-Azure verification seal."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sqs:Transport-dependent capability differences",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_standard_messaging\u0027."
+      }
+    ]
+  }
+]

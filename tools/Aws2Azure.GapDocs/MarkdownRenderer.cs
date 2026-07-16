@@ -60,6 +60,7 @@ public static class MarkdownRenderer
         sb.AppendLine();
         sb.AppendLine("- [Coverage matrix](coverage.md) — every operation and status on one screen.");
         sb.AppendLine("- [Workload compatibility](workload-compatibility.md) — adoption patterns and go/no-go guidance.");
+        sb.AppendLine("- [Workload GA certification](workload-ga.md) — mechanical verdicts for versioned support profiles.");
         sb.AppendLine("- [Design gaps](design-gaps.md) — architectural limitations spanning operations.");
         sb.AppendLine("- [Real-Azure conformance & divergences](divergences.md) — verification state.");
         File.WriteAllText(Path.Combine(siteRoot, "index.md"), sb.ToString());

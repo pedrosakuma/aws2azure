@@ -1,0 +1,29 @@
+schema_version: 1
+id: s3-basic-object-crud
+version: 1
+name: S3 basic object CRUD
+minimum_proxy_version: 0.1.0
+real_azure_seal_max_age_days: 90
+operations:
+  - s3:CreateBucket
+  - s3:PutObject
+  - s3:GetObject
+  - s3:HeadObject
+  - s3:ListObjectsV2
+  - s3:DeleteObject
+  - s3:DeleteBucket
+requirements:
+  - s3_basic_object_crud
+accepted_partial_operations: []
+accepted_design_gaps: []
+evidence:
+  qualification_artifact: ""
+  required_scenarios:
+    - representative-load
+    - throttling
+    - timeout
+    - service-unavailable
+    - cancellation
+    - restart
+    - retry-exhaustion
+    - rollback

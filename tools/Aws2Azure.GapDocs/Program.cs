@@ -9,6 +9,7 @@ using YamlDotNet.Core;
 
 var repoRoot = FindRepoRoot();
 var gapsRoot = Path.Combine(repoRoot, "docs", "gaps");
+var workloadsRoot = Path.Combine(repoRoot, "docs", "workloads");
 var siteRoot = Path.Combine(repoRoot, "docs", "site");
 var generatedCode = Path.Combine(repoRoot, "src", "Aws2Azure.Core", "Generated", "CapabilityRegistry.g.cs");
 
@@ -17,6 +18,11 @@ Console.OutputEncoding = Encoding.UTF8;
 if (args.Length > 0 && args[0] == "check-workload")
 {
     return CheckWorkload(args[1..], gapsRoot);
+}
+
+if (args.Length > 0 && args[0] == "certify-workload")
+{
+    return CertifyWorkload(args[1..], repoRoot, gapsRoot);
 }
 
 if (args.Length > 0 && args[0] == "plan-conformance")
@@ -42,12 +48,13 @@ if (args.Length > 0 && args[0] == "generate-real-azure-workload-qualification")
     return GenerateRealAzureWorkloadQualification(args[1..]);
 }
 
-return RunGapDocs(args, repoRoot, gapsRoot, siteRoot, generatedCode);
+return RunGapDocs(args, repoRoot, gapsRoot, workloadsRoot, siteRoot, generatedCode);
 
 static int RunGapDocs(
     string[] args,
     string repoRoot,
     string gapsRoot,
+    string workloadsRoot,
     string siteRoot,
     string generatedCode)
 {
@@ -63,10 +70,15 @@ static int RunGapDocs(
         var designDocs = Loader.LoadDesignDocs(gapsRoot);
         var migration = Loader.LoadRealAzureMigration(gapsRoot);
         var matrix = ConformanceMatrixLoader.Load(matrixPath);
+        var workloadManifests = WorkloadGaManifestLoader.LoadAll(workloadsRoot);
         var errors = new List<string>();
         errors.AddRange(Validator.Validate(docs, migration, DateOnly.FromDateTime(DateTime.UtcNow)));
         errors.AddRange(Validator.ValidateDesign(designDocs, docs));
         errors.AddRange(ConformanceMatrixValidator.Validate(matrix, docs));
+        foreach (var manifest in workloadManifests)
+        {
+            errors.AddRange(WorkloadGaManifestValidator.Validate(manifest, docs, designDocs));
+        }
         if (errors.Count > 0)
         {
             WriteErrors("gap-doc validation", errors);
@@ -118,6 +130,19 @@ static int RunGapDocs(
 
         MarkdownRenderer.Render(docs, designDocs, migration, siteRoot);
         Console.WriteLine($"[gap-docs] markdown written under {siteRoot}");
+        var workloadReports = workloadManifests
+            .Select(manifest => WorkloadGaEvaluator.Evaluate(
+                manifest,
+                docs,
+                designDocs,
+                repoRoot,
+                DateOnly.FromDateTime(DateTime.UtcNow)))
+            .ToList();
+        WorkloadGaRenderer.RenderIndex(
+            workloadReports,
+            Path.Combine(siteRoot, "workload-ga.md"),
+            Path.Combine(siteRoot, "workload-ga.json"));
+        Console.WriteLine($"[gap-docs] workload GA verdicts written under {siteRoot}");
         CodeRenderer.Render(docs, generatedCode);
         Console.WriteLine($"[gap-docs] generated {generatedCode}");
         return 0;
@@ -125,6 +150,96 @@ static int RunGapDocs(
     catch (Exception exception) when (exception is ArgumentException
                                       or FileNotFoundException
                                       or InvalidDataException
+                                      or UnauthorizedAccessException
+                                      or YamlException)
+    {
+        Console.Error.WriteLine("[gap-docs] " + exception.Message);
+        return 2;
+    }
+}
+
+static int CertifyWorkload(string[] args, string repoRoot, string gapsRoot)
+{
+    if (args.Length == 0 || args[0].StartsWith("--", StringComparison.Ordinal))
+    {
+        Console.Error.WriteLine(
+            "Usage: Aws2Azure.GapDocs certify-workload <manifest.yaml> [--format markdown|json] [--output <path>] [--require-verdict blocked|conditional|candidate|ga]");
+        return 1;
+    }
+
+    var manifestPath = args[0];
+    var format = "markdown";
+    string? outputPath = null;
+    string? requiredVerdict = null;
+    for (var index = 1; index < args.Length; index++)
+    {
+        switch (args[index])
+        {
+            case "--format" when index + 1 < args.Length:
+                format = args[++index].ToLowerInvariant();
+                break;
+            case "--output" when index + 1 < args.Length:
+                outputPath = args[++index];
+                break;
+            case "--require-verdict" when index + 1 < args.Length:
+                requiredVerdict = args[++index].ToLowerInvariant();
+                break;
+            default:
+                Console.Error.WriteLine($"Unknown or incomplete option '{args[index]}'.");
+                return 1;
+        }
+    }
+    if (format is not ("markdown" or "json"))
+    {
+        Console.Error.WriteLine($"Unknown format '{format}'; expected markdown or json.");
+        return 1;
+    }
+    if (requiredVerdict is not null
+        && requiredVerdict is not ("blocked" or "conditional" or "candidate" or "ga"))
+    {
+        Console.Error.WriteLine($"Unknown required verdict '{requiredVerdict}'.");
+        return 1;
+    }
+
+    try
+    {
+        var docs = Loader.LoadAll(gapsRoot);
+        var designDocs = Loader.LoadDesignDocs(gapsRoot);
+        var migration = Loader.LoadRealAzureMigration(gapsRoot);
+        var errors = new List<string>();
+        errors.AddRange(Validator.Validate(docs, migration, DateOnly.FromDateTime(DateTime.UtcNow)));
+        errors.AddRange(Validator.ValidateDesign(designDocs, docs));
+        var manifest = WorkloadGaManifestLoader.Load(manifestPath);
+        errors.AddRange(WorkloadGaManifestValidator.Validate(manifest, docs, designDocs));
+        if (errors.Count > 0)
+        {
+            WriteErrors("workload GA certification", errors);
+            return 1;
+        }
+
+        var report = WorkloadGaEvaluator.Evaluate(
+            manifest,
+            docs,
+            designDocs,
+            repoRoot,
+            DateOnly.FromDateTime(DateTime.UtcNow));
+        var content = format == "json"
+            ? WorkloadGaRenderer.RenderJson(report) + Environment.NewLine
+            : WorkloadGaRenderer.RenderMarkdown(report);
+        if (outputPath is null)
+        {
+            Console.Write(content);
+        }
+        else
+        {
+            File.WriteAllText(outputPath, content);
+        }
+        return requiredVerdict is null || report.Verdict == requiredVerdict ? 0 : 3;
+    }
+    catch (Exception exception) when (exception is FileNotFoundException
+                                      or DirectoryNotFoundException
+                                      or InvalidDataException
+                                      or IOException
                                       or UnauthorizedAccessException
                                       or YamlException)
     {

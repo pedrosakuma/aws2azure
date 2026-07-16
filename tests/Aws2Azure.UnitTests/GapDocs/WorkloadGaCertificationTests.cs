@@ -1,0 +1,336 @@
+using System.Text.Json;
+using Aws2Azure.GapDocs;
+
+namespace Aws2Azure.UnitTests.GapDocs;
+
+public sealed class WorkloadGaCertificationTests
+{
+    private static readonly string RepoRoot = FindRepoRoot();
+    private static readonly IReadOnlyList<OperationDoc> Operations =
+        Loader.LoadAll(Path.Combine(RepoRoot, "docs", "gaps"));
+    private static readonly IReadOnlyList<ServiceDesignDoc> Designs =
+        Loader.LoadDesignDocs(Path.Combine(RepoRoot, "docs", "gaps"));
+
+    [Theory]
+    [InlineData("s3-basic-object-crud.yaml", "conditional")]
+    [InlineData("secretsmanager-basic-lifecycle.yaml", "candidate")]
+    [InlineData("sqs-standard-messaging.yaml", "conditional")]
+    [InlineData("dynamodb-basic-crud.yaml", "candidate")]
+    public void Repository_profiles_have_expected_mechanical_verdict(
+        string fileName,
+        string expectedVerdict)
+    {
+        var manifest = LoadManifest(fileName);
+
+        Assert.Empty(WorkloadGaManifestValidator.Validate(manifest, Operations, Designs));
+        var report = WorkloadGaEvaluator.Evaluate(
+            manifest,
+            Operations,
+            Designs,
+            RepoRoot,
+            new DateOnly(2026, 7, 16));
+
+        Assert.Equal(expectedVerdict, report.Verdict);
+    }
+
+    [Fact]
+    public void New_unaccepted_partial_operation_blocks_profile()
+    {
+        var manifest = LoadManifest("dynamodb-basic-crud.yaml");
+        manifest.AcceptedPartialOperations.Remove("dynamodb:PutItem");
+
+        var report = WorkloadGaEvaluator.Evaluate(
+            manifest,
+            Operations,
+            Designs,
+            RepoRoot,
+            new DateOnly(2026, 7, 16));
+
+        Assert.Equal("blocked", report.Verdict);
+        Assert.Contains(
+            report.Findings,
+            finding => finding.Code == "partial_operation_not_accepted"
+                       && finding.Subject == "dynamodb:PutItem");
+    }
+
+    [Fact]
+    public void New_unaccepted_design_gap_blocks_profile()
+    {
+        var manifest = LoadManifest("secretsmanager-basic-lifecycle.yaml");
+        manifest.AcceptedDesignGaps.Remove(
+            "secretsmanager:Versioning and staging modelled on Key Vault version tags");
+
+        var report = WorkloadGaEvaluator.Evaluate(
+            manifest,
+            Operations,
+            Designs,
+            RepoRoot,
+            new DateOnly(2026, 7, 16));
+
+        Assert.Equal("blocked", report.Verdict);
+        Assert.Contains(
+            report.Findings,
+            finding => finding.Code == "design_gap_not_accepted"
+                       && finding.Subject.Contains("Versioning and staging", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Expired_real_azure_seal_yields_conditional()
+    {
+        var manifest = LoadManifest("dynamodb-basic-crud.yaml");
+        manifest.RealAzureSealMaxAgeDays = 1;
+
+        var report = WorkloadGaEvaluator.Evaluate(
+            manifest,
+            Operations,
+            Designs,
+            RepoRoot,
+            new DateOnly(2026, 7, 18));
+
+        Assert.Equal("conditional", report.Verdict);
+        Assert.Contains(report.Findings, finding => finding.Code == "real_azure_seal_expired");
+    }
+
+    [Fact]
+    public void Json_renderer_is_deterministic_and_machine_readable()
+    {
+        var manifest = LoadManifest("s3-basic-object-crud.yaml");
+        var report = WorkloadGaEvaluator.Evaluate(
+            manifest,
+            Operations,
+            Designs,
+            RepoRoot,
+            new DateOnly(2026, 7, 16));
+
+        var first = WorkloadGaRenderer.RenderJson(report);
+        var second = WorkloadGaRenderer.RenderJson(report);
+
+        Assert.Equal(first, second);
+        using var document = JsonDocument.Parse(first);
+        Assert.Equal("s3-basic-object-crud", document.RootElement.GetProperty("profile_id").GetString());
+        Assert.Equal("conditional", document.RootElement.GetProperty("verdict").GetString());
+    }
+
+    [Fact]
+    public void Validate_requires_every_pattern_operation_in_profile()
+    {
+        var manifest = LoadManifest("dynamodb-basic-crud.yaml");
+        manifest.Operations.Remove("dynamodb:DeleteItem");
+
+        var errors = WorkloadGaManifestValidator.Validate(manifest, Operations, Designs);
+
+        Assert.Contains(
+            errors,
+            error => error.Contains(
+                "requirement 'dynamodb_basic_crud' operation 'dynamodb:DeleteItem' is missing",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Required_scenario_must_be_backed_by_real_azure_evidence()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"aws2azure-ga-{Guid.NewGuid():N}");
+        var evidencePath = Path.Combine(
+            tempRoot,
+            "docs",
+            "workloads",
+            "evidence",
+            "qualification.yaml");
+        Directory.CreateDirectory(Path.GetDirectoryName(evidencePath)!);
+        var manifest = MinimalManifest();
+        var qualification = QualifiedDocument();
+        qualification.Scenarios.Insert(
+            0,
+            new SloQualificationScenario
+            {
+                Id = "required-load",
+                Service = "s3",
+                Operation = "PutObject",
+                EvidenceSource = "emulator",
+                Completions = 1000,
+                DurationSeconds = 300,
+                CapturedAtUtc = new DateTimeOffset(2026, 7, 16, 15, 59, 0, TimeSpan.Zero),
+            });
+        SloQualificationRenderer.RenderYaml(qualification, evidencePath);
+
+        try
+        {
+            var report = WorkloadGaEvaluator.Evaluate(
+                manifest,
+                MinimalOperations(),
+                [],
+                tempRoot,
+                new DateOnly(2026, 7, 16));
+
+            Assert.Equal("candidate", report.Verdict);
+            Assert.Contains(
+                report.Findings,
+                finding => finding.Code == "required_scenario_missing"
+                           && finding.Subject == "required-load");
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Matching_qualified_real_azure_evidence_yields_ga()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"aws2azure-ga-{Guid.NewGuid():N}");
+        var evidencePath = Path.Combine(
+            tempRoot,
+            "docs",
+            "workloads",
+            "evidence",
+            "qualification.yaml");
+        Directory.CreateDirectory(Path.GetDirectoryName(evidencePath)!);
+        var qualification = QualifiedDocument();
+        qualification.Scenarios[0].Id = "required-load";
+        qualification.Signals.ForEach(signal => signal.ScenarioId = "required-load");
+        SloQualificationRenderer.RenderYaml(qualification, evidencePath);
+
+        try
+        {
+            var report = WorkloadGaEvaluator.Evaluate(
+                MinimalManifest(),
+                MinimalOperations(),
+                [],
+                tempRoot,
+                new DateOnly(2026, 7, 16));
+
+            Assert.Equal("ga", report.Verdict);
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    private static WorkloadGaManifest MinimalManifest() => new()
+    {
+        SchemaVersion = 1,
+        Id = "s3-basic-object-crud",
+        Version = 1,
+        Name = "S3 basic object CRUD",
+        MinimumProxyVersion = "0.1.0",
+        RealAzureSealMaxAgeDays = 90,
+        Operations = ["s3:PutObject"],
+        Evidence = new WorkloadGaEvidence
+        {
+            QualificationArtifact = "docs/workloads/evidence/qualification.yaml",
+            RequiredScenarios = ["required-load"],
+        },
+    };
+
+    private static IReadOnlyList<OperationDoc> MinimalOperations() =>
+    [
+        new OperationDoc
+        {
+            Service = "s3",
+            Operation = "PutObject",
+            AzureEquivalent = "PUT blob",
+            Status = "implemented",
+            VerifiedRealAzure = new RealAzureVerification
+            {
+                Date = "2026-07-16",
+                Evidence = "https://example.com/evidence",
+            },
+        },
+    ];
+
+    private static SloQualificationDocument QualifiedDocument()
+    {
+        var capturedAt = new DateTimeOffset(2026, 7, 16, 15, 59, 0, TimeSpan.Zero);
+        return new SloQualificationDocument
+        {
+            SchemaVersion = 1,
+            ArtifactKind = "real_azure_workload_qualification",
+            Verdict = "qualified",
+            Profile = new SloQualificationProfile
+            {
+                Id = "s3-basic-object-crud",
+                Version = 1,
+                Services =
+                [
+                    new SloQualificationProfileService
+                    {
+                        Service = "s3",
+                        Operations = ["PutObject"],
+                    },
+                ],
+            },
+            Candidate = new SloQualificationCandidate
+            {
+                GitSha = "0123456789abcdef",
+                ArtifactDigest = "sha256:artifact",
+                ConfigDigest = "sha256:config",
+            },
+            Provenance = new SloQualificationProvenance
+            {
+                RunId = "123",
+                RunUrl = "https://github.com/example/repo/actions/runs/123",
+                GeneratedAtUtc = capturedAt,
+                WindowStartUtc = capturedAt.AddMinutes(-5),
+                WindowEndUtc = capturedAt,
+                Region = "eastus2",
+                BackendDescription = "Blob Storage Standard_LRS",
+            },
+            Rules = new SloQualificationRules
+            {
+                MaxArtifactAgeHours = 72,
+                MinSamplesPerScenario = 100,
+                MinDurationSeconds = 300,
+                MaxFailureRate = 0.001,
+                ZeroCompletionsDisqualify = true,
+                OnlySkippedRealAzureDisqualifies = true,
+            },
+            Signals =
+            [
+                new SloQualificationSignal
+                {
+                    Id = "p99",
+                    ScenarioId = "real-load",
+                    Source = "backend_capacity",
+                    Disposition = "blocking",
+                    Metric = "p99_ms",
+                    MaxValue = 1000,
+                    MeasuredValue = 500,
+                    Samples = 1000,
+                    CapturedAtUtc = capturedAt,
+                },
+            ],
+            Scenarios =
+            [
+                new SloQualificationScenario
+                {
+                    Id = "real-load",
+                    Service = "s3",
+                    Operation = "PutObject",
+                    EvidenceSource = "real_azure",
+                    Completions = 1000,
+                    DurationSeconds = 300,
+                    CapturedAtUtc = capturedAt,
+                },
+            ],
+        };
+    }
+
+    private static WorkloadGaManifest LoadManifest(string fileName) =>
+        WorkloadGaManifestLoader.Load(Path.Combine(RepoRoot, "docs", "workloads", fileName));
+
+    private static string FindRepoRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "aws2azure.slnx")))
+            {
+                return directory.FullName;
+            }
+            directory = directory.Parent;
+        }
+
+        throw new InvalidOperationException("Could not locate repository root.");
+    }
+}
