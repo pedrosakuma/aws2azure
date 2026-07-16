@@ -22,6 +22,53 @@ public sealed class SloQualificationTests
     }
 
     [Fact]
+    public void Validate_rejects_passing_verdict_with_blocking_finding()
+    {
+        var document = Valid("emulator_regression", "passed");
+        document.Scenarios[0].EvidenceSource = "emulator";
+        document.Findings.Add(new SloQualificationFinding
+        {
+            Code = "missing_scenario",
+            Disposition = "blocking",
+            Message = "A required scenario was missing."
+        });
+
+        var errors = SloQualificationValidator.Validate(document, Now);
+
+        Assert.Contains(
+            errors,
+            error => error.Contains("must not contain blocking findings", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Validate_rejects_inconclusive_emulator_verdict_with_breached_gate()
+    {
+        var document = Valid("emulator_regression", "inconclusive");
+        document.Scenarios[0].EvidenceSource = "emulator";
+        document.Signals[0].MeasuredValue = 49;
+        document.Signals[0].MinValue = 50;
+
+        var errors = SloQualificationValidator.Validate(document, Now);
+
+        Assert.Contains(
+            errors,
+            error => error.Contains("below minimum", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Validate_normalizes_null_finding_to_validation_errors()
+    {
+        var document = Valid("emulator_regression", "inconclusive");
+        document.Scenarios[0].EvidenceSource = "emulator";
+        document.Findings = [null!];
+
+        var errors = SloQualificationValidator.Validate(document, Now);
+
+        Assert.Contains(errors, error => error.Contains("findings[0].code missing", StringComparison.Ordinal));
+        Assert.Contains(errors, error => error.Contains("findings[0].message missing", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Validate_rejects_emulator_capacity_claim_and_blocking_ab_experiment()
     {
         var emulator = Valid("emulator_regression", "passed");
