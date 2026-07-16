@@ -113,20 +113,27 @@ proxy ([`RealAzureProxyFixture`](../../tests/Aws2Azure.IntegrationTests/Fixtures
 Every real backend is gated **independently** on its environment: a backend
 whose values are absent **skips** (it does not fail), so fork PRs, local
 `dotnet test`, and the no-OIDC case stay honest and green when the
-credential-independent checks pass. The deterministic failure and focused AMQP
-tests still run. When no backend at all is configured the proxy process is
-never started.
+credential-independent checks pass. Selected deterministic tests still run.
+When no backend at all is configured the proxy process is never started.
 
 ## When it runs
 
 - **Nightly** at 05:00 UTC (one hour after the emulator `integration` job, so a
   failure here points at real-Azure-only divergence).
-- On **`workflow_dispatch`**.
+- On **`workflow_dispatch`**, optionally limited to one service and one
+  scenario id. Scenario ids reused by multiple services require the service
+  selector.
 - On PRs labelled **`run-real-azure`** (apply the label to validate a change
   against real Azure before merge).
 
 A concurrency guard (`group: integration-real-azure`,
 `cancel-in-progress: false`) prevents two runs from racing.
+
+The nightly and labelled-PR paths always execute the full matrix. A directed
+manual run writes the selected plan into the evidence artifact. Before any
+filter runs, the workflow discovers tests from each planned project and fails
+if a matrix identity matches no test; this prevents VSTest's zero-match
+success behavior from hiding stale references.
 
 ## One-time operator setup (OIDC)
 
@@ -403,10 +410,14 @@ Azure run. Evidence generation itself never edits a seal.
 machine-readable coverage plan for all registered services. Each scenario has a
 priority, category, strict `evidence_source`, explicit
 `establishes_verification`, affected gap-doc operations, and one or more
-fully-qualified xUnit test identities. Planned identities are allowed: until
-they appear in a TRX file they are reported as `not_run`. `--validate` checks
-the matrix schema, the complete six-service set, and every operation reference
-together with the normal gap docs.
+fully-qualified xUnit test identities. Optional topology/encoding coverage may
+set `optional_coverage: true`; it remains visible in evidence but a skip or
+failure does not block the base operation's seal. Optional coverage is accepted
+only for positive real-Azure categories that do not establish verification, so
+deterministic and failure-path guards cannot be downgraded. Planned identities
+are allowed: until they appear in a TRX file they are reported as `not_run`.
+`--validate` checks the matrix schema, the complete six-service set, and every
+operation reference together with the normal gap docs.
 
 Inspect the executable plan for the full matrix, one service, or one scenario:
 

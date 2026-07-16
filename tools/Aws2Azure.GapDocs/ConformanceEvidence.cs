@@ -35,6 +35,7 @@ public sealed class ScenarioEvidence
     public string Category { get; set; } = string.Empty;
     public string EvidenceSource { get; set; } = string.Empty;
     public bool EstablishesVerification { get; set; }
+    public bool OptionalCoverage { get; set; }
     public string Description { get; set; } = string.Empty;
     public List<string> Operations { get; set; } = new();
     public List<TestEvidence> Tests { get; set; } = new();
@@ -112,6 +113,7 @@ public static class ConformanceEvidenceGenerator
                     Category = matrixScenario.Category.ToLowerInvariant(),
                     EvidenceSource = matrixScenario.EvidenceSource.ToLowerInvariant(),
                     EstablishesVerification = matrixScenario.EstablishesVerification == true,
+                    OptionalCoverage = matrixScenario.OptionalCoverage == true,
                     Description = matrixScenario.Description,
                     Operations = matrixScenario.Operations.ToList()
                 };
@@ -172,6 +174,7 @@ public static class ConformanceEvidenceGenerator
     private static List<OperationEvidence> BuildOperations(IReadOnlyList<ScenarioEvidence> scenarios)
     {
         return scenarios
+            .Where(scenario => !scenario.OptionalCoverage)
             .SelectMany(s => s.Operations.Select(operation => (Operation: operation, Scenario: s)))
             .GroupBy(pair => pair.Operation, StringComparer.OrdinalIgnoreCase)
             .OrderBy(group => group.Key, StringComparer.Ordinal)
@@ -291,7 +294,7 @@ public static class ConformanceEvidenceRenderer
                 .Append(service.Operations.Count(o => o.EligibleForVerifiedRealAzure)).AppendLine(" |");
         }
         builder.AppendLine();
-        builder.AppendLine("An operation is eligible only when every matrix scenario that references it passed and at least one passing scenario has `real_azure` evidence with `establishes_verification: true`. Failure-only and deterministic scenarios never establish verification; without positive live-Azure evidence, the blocker is `no_positive_real_azure_evidence`.");
+        builder.AppendLine("An operation is eligible only when every blocking matrix scenario that references it passed and at least one passing scenario has `real_azure` evidence with `establishes_verification: true`. Failure-only and deterministic scenarios never establish verification; explicitly non-blocking optional coverage is reported but does not affect operation eligibility. Without positive live-Azure evidence, the blocker is `no_positive_real_azure_evidence`.");
         return builder.ToString();
     }
 
@@ -307,18 +310,19 @@ public static class ConformanceEvidenceRenderer
             .Append(service.Summary.NotRun).AppendLine(" not run**");
         builder.Append("- Duration: **").Append(FormatDuration(service.Summary.DurationMilliseconds)).AppendLine("**");
         builder.AppendLine("- Evidence only: `verified_real_azure` is never modified automatically.");
-        builder.AppendLine("- Eligibility requires every referencing scenario to pass and at least one passing `real_azure` scenario with `establishes_verification: true`; failure-only and deterministic passes are insufficient.");
+        builder.AppendLine("- Eligibility requires every blocking referencing scenario to pass and at least one passing `real_azure` scenario with `establishes_verification: true`; explicitly non-blocking optional coverage is reported but does not affect eligibility.");
         builder.AppendLine();
         builder.AppendLine("## Scenarios");
         builder.AppendLine();
-        builder.AppendLine("| Priority | Category | Evidence source | Establishes verification | Scenario | Outcome | Duration | Operations |");
-        builder.AppendLine("|---|---|---|---|---|---|---:|---|");
+        builder.AppendLine("| Priority | Category | Evidence source | Establishes verification | Optional coverage | Scenario | Outcome | Duration | Operations |");
+        builder.AppendLine("|---|---|---|---|---|---|---|---:|---|");
         foreach (var scenario in service.Scenarios)
         {
             builder.Append("| ").Append(Escape(scenario.Priority.ToUpperInvariant())).Append(" | ")
                 .Append(Escape(scenario.Category)).Append(" | ")
                 .Append(Escape(scenario.EvidenceSource)).Append(" | ")
                 .Append(scenario.EstablishesVerification ? "yes" : "no").Append(" | ")
+                .Append(scenario.OptionalCoverage ? "yes" : "no").Append(" | ")
                 .Append(Escape(scenario.Id)).Append(" | ")
                 .Append(OutcomeLabel(scenario.Outcome)).Append(" | ")
                 .Append(FormatDuration(scenario.DurationMilliseconds)).Append(" | ")

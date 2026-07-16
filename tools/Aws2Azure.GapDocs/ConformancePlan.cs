@@ -30,6 +30,7 @@ public sealed class PlannedConformanceScenario
     public string Category { get; set; } = string.Empty;
     public string EvidenceSource { get; set; } = string.Empty;
     public bool EstablishesVerification { get; set; }
+    public bool OptionalCoverage { get; set; }
     public List<string> Operations { get; set; } = new();
     public List<string> Tests { get; set; } = new();
 }
@@ -124,6 +125,7 @@ public static class ConformancePlanGenerator
                 Category = entry.Scenario.Category.ToLowerInvariant(),
                 EvidenceSource = entry.Scenario.EvidenceSource.ToLowerInvariant(),
                 EstablishesVerification = entry.Scenario.EstablishesVerification == true,
+                OptionalCoverage = entry.Scenario.OptionalCoverage == true,
                 Operations = entry.Scenario.Operations
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .OrderBy(value => value, StringComparer.Ordinal)

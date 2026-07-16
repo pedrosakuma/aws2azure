@@ -20,6 +20,24 @@ services:
         operations: [ListObjectsV2]
         tests:
           - Aws2Azure.IntegrationTests.S3.S3RealAzureConformanceTests.ListObjectsV2_paginates_against_real_blob_storage
+      - id: object-lock-retention-legal-hold
+        priority: p1
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Object retention and legal-hold state round-trip against real Blob Storage.
+        operations: [PutObjectRetention, GetObjectRetention, PutObjectLegalHold, GetObjectLegalHold]
+        tests:
+          - Aws2Azure.IntegrationTests.S3.S3RealAzureSmokeTests.ObjectLock_retention_and_legal_hold_round_trip
+      - id: object-versioning
+        priority: p1
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Bucket versioning, version listing, and reads by version id against real Blob Storage.
+        operations: [PutBucketVersioning, GetBucketVersioning, ListObjectVersions, GetObject]
+        tests:
+          - Aws2Azure.IntegrationTests.S3.S3RealAzureSmokeTests.Versioning_lists_object_versions_and_reads_by_version_id
       - id: multi-object-delete
         priority: p1
         category: batch
@@ -95,6 +113,70 @@ services:
         operations: [Query]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureSecondaryIndexTests.Gsi_composite_query_orders_by_sort_key_across_real_pages
+      - id: secondary-index-query-scan
+        priority: p0
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: GSI and LSI query and scan semantics cover hash-only, numeric ordering, membership, and projection against real Cosmos.
+        operations: [Query, Scan]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureSecondaryIndexTests.Gsi_composite_query_orders_by_numeric_sort_key_across_real_pages
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureSecondaryIndexTests.Gsi_hash_only_query_returns_members_across_partitions
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureSecondaryIndexTests.Gsi_scan_returns_only_index_members_with_projection
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureSecondaryIndexTests.Lsi_query_orders_by_index_sort_key_within_partition
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureSecondaryIndexTests.Lsi_query_orders_by_numeric_sort_key
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureSecondaryIndexTests.Lsi_scan_returns_only_index_members
+      - id: nested-projection
+        priority: p1
+        category: read
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Nested map and list ProjectionExpression paths prune a real Cosmos item correctly.
+        operations: [GetItem]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureSmokeTests.Nested_projection_expression_prunes_map_and_list_against_real_cosmos_db
+      - id: ttl-control-and-item-translation
+        priority: p1
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: TTL control-plane state and per-item expiry translation round-trip against real Cosmos.
+        operations: [DescribeTimeToLive, UpdateTimeToLive, PutItem, GetItem]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTimeToLiveTests.Ttl_control_plane_and_item_translation_against_real_cosmos_db
+      - id: cosmos-binary-response
+        priority: p1
+        category: read
+        evidence_source: real_azure
+        establishes_verification: false
+        optional_coverage: true
+        description: Opt-in CosmosBinary response negotiation and fused GetItem decoding are exercised against real Cosmos.
+        operations: [GetItem]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureCosmosBinaryTests.Fused_GetItem_round_trips_against_real_cosmos_with_binary_enabled
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureCosmosBinaryTests.RealAzure_point_read_emits_CosmosBinary_body
+      - id: cosmos-binary-request
+        priority: p1
+        category: write
+        evidence_source: real_azure
+        establishes_verification: false
+        optional_coverage: true
+        description: Opt-in CosmosBinary request bodies are accepted, parsed, and indexed by real Cosmos.
+        operations: [PutItem]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureCosmosBinaryRequestTests.RealAzure_production_binary_body_is_accepted_parsed_and_indexed
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureCosmosBinaryRequestTests.RealAzure_proxy_PutItem_binary_body_is_parsed_and_indexed
+      - id: workload-identity-item-data-path
+        priority: p0
+        category: core
+        evidence_source: real_azure
+        establishes_verification: false
+        optional_coverage: true
+        description: DynamoDB item CRUD uses an Entra workload identity against the real Cosmos data plane.
+        operations: [DescribeTable, PutItem, GetItem, DeleteItem]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureWorkloadIdentityTests.Item_data_path_round_trips_via_workload_identity
       - id: batch-read-write
         priority: p0
         category: batch
@@ -247,6 +329,16 @@ services:
         operations: [GetShardIterator, GetRecords]
         tests:
           - Aws2Azure.IntegrationTests.Kinesis.KinesisRealAzureConformanceTests.GetRecords_reads_from_real_event_hubs
+      - id: workload-identity-record-write
+        priority: p0
+        category: write
+        evidence_source: real_azure
+        establishes_verification: false
+        optional_coverage: true
+        description: PutRecord authenticates with an Entra workload identity against a real Event Hub.
+        operations: [PutRecord]
+        tests:
+          - Aws2Azure.IntegrationTests.Kinesis.KinesisRealAzureWorkloadIdentityTests.PutRecord_writes_to_real_event_hubs_via_workload_identity
       - id: shard-list-pagination
         priority: p1
         category: pagination
@@ -460,3 +552,12 @@ services:
         operations: [GetSecretValue]
         tests:
           - Aws2Azure.IntegrationTests.FailureConformance.SecretsManagerRealAzureInvalidCredentialConformanceTests.Invalid_client_secret_returns_native_non_retryable_error
+      - id: token-invalid-credentials
+        priority: p1
+        category: invalid_credentials
+        evidence_source: deterministic
+        establishes_verification: false
+        description: A test-only Entra token endpoint rejects the configured client secret and verifies the native non-retryable Secrets Manager error.
+        operations: [GetSecretValue]
+        tests:
+          - Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.SecretsManager_injected_invalid_client_secret_returns_native_non_retryable_error

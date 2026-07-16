@@ -134,6 +134,16 @@ public static class ConformanceMatrixValidator
                 {
                     Err($"{prefix}.establishes_verification may be true only for positive real-Azure core, read, write, list, pagination, batch, or concurrency scenarios");
                 }
+                if (scenario.OptionalCoverage == true
+                    && (scenario.EstablishesVerification == true
+                        || !string.Equals(
+                            scenario.EvidenceSource,
+                            "real_azure",
+                            StringComparison.OrdinalIgnoreCase)
+                        || !IsPositiveVerificationCategory(scenario.Category)))
+                {
+                    Err($"{prefix}.optional_coverage may be true only for non-establishing positive real-Azure scenarios");
+                }
                 if (string.IsNullOrWhiteSpace(scenario.Description))
                 {
                     Err($"{prefix}.description missing");
