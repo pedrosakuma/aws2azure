@@ -1,0 +1,36 @@
+schema_version: 1
+id: dynamodb-basic-crud
+version: 1
+name: DynamoDB basic table and item CRUD
+minimum_proxy_version: 0.1.0
+real_azure_seal_max_age_days: 90
+operations:
+  - dynamodb:CreateTable
+  - dynamodb:DescribeTable
+  - dynamodb:PutItem
+  - dynamodb:GetItem
+  - dynamodb:UpdateItem
+  - dynamodb:DeleteItem
+  - dynamodb:DeleteTable
+requirements:
+  - dynamodb_basic_crud
+accepted_partial_operations:
+  - dynamodb:PutItem
+  - dynamodb:GetItem
+  - dynamodb:UpdateItem
+  - dynamodb:DeleteItem
+accepted_design_gaps:
+  - "dynamodb:Consistency and read-your-writes"
+  - "dynamodb:Key encoding and on-disk storage format"
+evidence:
+  qualification_artifact: ""
+  required_scenarios:
+    - representative-load
+    - conditional-write-concurrency
+    - throttling
+    - timeout
+    - service-unavailable
+    - read-after-write
+    - restart
+    - retry-exhaustion
+    - rollback

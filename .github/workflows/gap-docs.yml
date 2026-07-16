@@ -5,6 +5,7 @@ on:
     paths:
       - 'docs/gaps/**'
       - 'docs/testing/real-azure-conformance.yaml'
+      - 'docs/workloads/**'
       - 'docs/site/**'
       - 'tools/Aws2Azure.GapDocs/**'
       - 'src/Aws2Azure.Core/Generated/**'
@@ -13,6 +14,7 @@ on:
     paths:
       - 'docs/gaps/**'
       - 'docs/testing/real-azure-conformance.yaml'
+      - 'docs/workloads/**'
       - 'docs/site/**'
       - 'tools/Aws2Azure.GapDocs/**'
       - 'src/Aws2Azure.Core/Generated/**'
@@ -31,11 +33,22 @@ jobs:
       - uses: ./.github/actions/dotnet-setup
       - name: Validate YAML schema
         run: dotnet run --project tools/Aws2Azure.GapDocs -- --validate
+      - name: Evaluate workload GA profiles
+        run: |
+          mkdir -p "$RUNNER_TEMP/workload-ga"
+          for manifest in docs/workloads/*.yaml; do
+            profile="$(basename "$manifest" .yaml)"
+            dotnet run --project tools/Aws2Azure.GapDocs -- \
+              certify-workload "$manifest" \
+              --format json \
+              --output "$RUNNER_TEMP/workload-ga/$profile.json"
+          done
       - name: Regenerate and ensure no diff
         run: |
           dotnet run --project tools/Aws2Azure.GapDocs
-          if ! git diff --quiet -- docs/site src/Aws2Azure.Core/Generated; then
+          if [ -n "$(git status --porcelain --untracked-files=all -- docs/site src/Aws2Azure.Core/Generated)" ]; then
             echo "::error::Generated artefacts are out of date. Run 'dotnet run --project tools/Aws2Azure.GapDocs' and commit the result."
             git --no-pager diff -- docs/site src/Aws2Azure.Core/Generated
+            git status --short --untracked-files=all -- docs/site src/Aws2Azure.Core/Generated
             exit 1
           fi

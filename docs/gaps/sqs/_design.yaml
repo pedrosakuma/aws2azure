@@ -85,10 +85,8 @@ workload_patterns:
       - GetQueueUrl
       - ListQueues
       - SendMessage
-      - SendMessageBatch
       - ReceiveMessage
       - DeleteMessage
-      - DeleteMessageBatch
       - DeleteQueue
     design_gaps:
       - Transport-dependent capability differences

@@ -1,0 +1,31 @@
+schema_version: 1
+id: sqs-standard-messaging
+version: 1
+name: SQS standard messaging
+minimum_proxy_version: 0.1.0
+real_azure_seal_max_age_days: 90
+operations:
+  - sqs:CreateQueue
+  - sqs:GetQueueUrl
+  - sqs:ListQueues
+  - sqs:SendMessage
+  - sqs:ReceiveMessage
+  - sqs:DeleteMessage
+  - sqs:DeleteQueue
+requirements:
+  - sqs_standard_messaging
+accepted_partial_operations: []
+accepted_design_gaps:
+  - "sqs:Transport-dependent capability differences"
+evidence:
+  qualification_artifact: ""
+  required_scenarios:
+    - representative-load
+    - redelivery
+    - throttling
+    - timeout
+    - service-unavailable
+    - concurrency
+    - restart
+    - retry-exhaustion
+    - rollback
