@@ -36,12 +36,12 @@ public sealed partial class KnownPerfScenariosTests
         "entra.GetToken (cache hit, 64 keys, c=64)",
 
         // S3
-        "s3.PutObject (4 KiB)",
-        "s3.GetObject (64 KiB)",
-        "s3.ListObjectsV2 (500 keys)",
         "s3.PutObject (1 KiB)",
+        "s3.PutObject (4 KiB)",
         "s3.PutObject (1 MiB)",
         "s3.PutObject (10 MiB)",
+        "s3.GetObject (64 KiB)",
+        "s3.ListObjectsV2 (500 keys)",
         "s3.CopyObject (4 KiB)",
         "s3.DeleteObject (idempotent)",
         "s3.DeleteObjects (100 keys)",
@@ -63,19 +63,19 @@ public sealed partial class KnownPerfScenariosTests
 
         // DynamoDB
         "dynamodb.PutItem (small)",
+        "dynamodb.PutItem (large)",
         "dynamodb.GetItem (small)",
+        "dynamodb.GetItem (large)",
         "dynamodb.Query (pushable filter)",
+        "dynamodb.Query (large items)",
         "dynamodb.Scan (pushable filter)",
         "dynamodb.Query LSI numeric (ordered)",
         "dynamodb.Query LSI numeric (selective)",
         "dynamodb.BatchWriteItem (25 items)",
         "dynamodb.BatchGetItem (25 items)",
+        "dynamodb.BatchGetItem (large items)",
         "dynamodb.UpdateItem (SET expression)",
         "dynamodb.DeleteItem (idempotent)",
-        "dynamodb.GetItem (large)",
-        "dynamodb.PutItem (large)",
-        "dynamodb.Query (large items)",
-        "dynamodb.BatchGetItem (large items)",
         "dynamodb.CosmosJsonParse (synthetic page)",
         "dynamodb.CosmosBinaryDecode (synthetic page)",
         "azure-sdk.Cosmos.UpsertItem (small)",
@@ -105,23 +105,20 @@ public sealed partial class KnownPerfScenariosTests
     }
 
     [Fact]
-    public void Every_literal_perf_runner_scenario_is_registered()
+    public void Every_literal_perf_runner_scenario_is_known()
     {
-        var root = FindRepoRoot();
-        var perfProject = Path.Combine(root, "tests", "Aws2Azure.PerfTests");
-        var discovered = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var path in Directory.EnumerateFiles(perfProject, "*.cs", SearchOption.AllDirectories))
-        {
-            var source = File.ReadAllText(path);
-            foreach (Match match in PerfRunnerScenarioRegex().Matches(source))
-            {
-                discovered.Add(match.Groups[1].Value);
-            }
-        }
-
+        var projectRoot = FindRepoPath("tests", "Aws2Azure.PerfTests");
+        var discovered = Directory
+            .EnumerateFiles(projectRoot, "*.cs", SearchOption.AllDirectories)
+            .SelectMany(path => LiteralPerfRunnerScenarioRegex()
+                .Matches(File.ReadAllText(path))
+                .Select(match => match.Groups[1].Value))
+            .ToHashSet(StringComparer.Ordinal);
         var known = new HashSet<string>(All, StringComparer.Ordinal);
-        var missing = discovered.Where(s => !known.Contains(s)).Order().ToArray();
-        Assert.True(missing.Length == 0,
+        var missing = discovered.Where(scenario => !known.Contains(scenario)).Order().ToArray();
+
+        Assert.True(
+            missing.Length == 0,
             "Literal PerfRunner scenarios missing from KnownPerfScenariosTests.All:\n  - " +
             string.Join("\n  - ", missing));
     }
@@ -182,7 +179,6 @@ public sealed partial class KnownPerfScenariosTests
         throw new InvalidOperationException("Could not locate repo root.");
     }
 
-    [GeneratedRegex("PerfRunner\\.RunAsync\\(\\s*scenario:\\s*\"([^\"]+)\"",
-        RegexOptions.CultureInvariant)]
-    private static partial Regex PerfRunnerScenarioRegex();
+    [GeneratedRegex("PerfRunner\\.RunAsync\\(\\s*scenario:\\s*\"([^\"]+)\"")]
+    private static partial Regex LiteralPerfRunnerScenarioRegex();
 }
