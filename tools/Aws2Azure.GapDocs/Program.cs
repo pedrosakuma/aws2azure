@@ -26,6 +26,11 @@ if (args.Length > 0 && args[0] == "plan-conformance")
         Path.Combine(repoRoot, "docs", "testing", "real-azure-conformance.yaml"));
 }
 
+if (args.Length > 0 && args[0] == "validate-qualification")
+{
+    return ValidateQualification(args[1..]);
+}
+
 return RunGapDocs(args, repoRoot, gapsRoot, siteRoot, generatedCode);
 
 static int RunGapDocs(
@@ -294,6 +299,39 @@ static int PlanConformance(string[] args, string gapsRoot, string defaultMatrixP
                                       or FileNotFoundException
                                       or InvalidDataException
                                       or InvalidOperationException
+                                      or IOException
+                                      or UnauthorizedAccessException
+                                      or YamlException)
+    {
+        Console.Error.WriteLine("[gap-docs] " + exception.Message);
+        return 2;
+    }
+}
+
+static int ValidateQualification(string[] args)
+{
+    if (args.Length != 1 || args[0].StartsWith("--", StringComparison.Ordinal))
+    {
+        Console.Error.WriteLine(
+            "Usage: Aws2Azure.GapDocs validate-qualification <artifact.yaml>");
+        return 1;
+    }
+
+    try
+    {
+        var document = SloQualificationLoader.Load(args[0]);
+        var errors = SloQualificationValidator.Validate(document, DateTimeOffset.UtcNow);
+        if (errors.Count > 0)
+        {
+            WriteErrors("SLO qualification artifact", errors);
+            return 1;
+        }
+
+        Console.WriteLine("[gap-docs] SLO qualification artifact validated OK");
+        return 0;
+    }
+    catch (Exception exception) when (exception is FileNotFoundException
+                                      or InvalidDataException
                                       or IOException
                                       or UnauthorizedAccessException
                                       or YamlException)
