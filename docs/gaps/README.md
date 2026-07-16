@@ -58,6 +58,17 @@ design_gaps:                 # required — at least one entry
     workaround: "…"          # optional — how to live with it
     references:
       - https://learn.microsoft.com/…
+workload_patterns:             # optional — machine-checkable adoption profiles
+  - id: sqs_fifo               # required, globally unique [a-z][a-z0-9_]*
+    name: FIFO queue messaging
+    compatibility: conditional # supported | conditional | blocked
+    summary: "…"
+    operations:
+      - SendMessage
+      - ReceiveMessage
+    design_gaps:
+      - FIFO ordering requires the AMQP transport
+    guidance: "Set transport: Amqp and validate the settle lifecycle."
 ```
 
 Status meanings for design gaps:
@@ -68,3 +79,47 @@ Status meanings for design gaps:
 | `partial`     | Partially bridged; caveats apply. |
 | `unsupported` | No Azure equivalent; surfaced but not translated. |
 | `planned`     | A known gap with intended future work. |
+
+Workload pattern IDs are the stable machine contract consumed by workload
+manifests. Rename one only as a deliberate schema-breaking change. A profile
+must reference at least one operation or design gap, and a `supported` profile
+may reference only implemented operations and no design gaps.
+
+## Workload compatibility checker
+
+Create a YAML manifest using schema version 1:
+
+```yaml
+schema_version: 1
+workload: checkout
+operations:
+  - dynamodb:TransactWriteItems
+  - sqs:SendMessage
+  - s3:PutObject
+requirements:
+  sqs_fifo: true
+  cross_partition_transactions: true
+```
+
+Operations use `service:Operation` and must exist in the operation gap docs.
+Requirement keys must be IDs declared by `workload_patterns`; unknown keys fail
+validation even when their value is `false`. False requirements are validated
+but omitted from the report.
+
+Generate the Markdown discovery report on stdout:
+
+```bash
+dotnet run --project tools/Aws2Azure.GapDocs -- check-workload workload.yaml
+```
+
+Generate deterministic JSON for CI and fail only when a blocker is present:
+
+```bash
+dotnet run --project tools/Aws2Azure.GapDocs -- check-workload workload.yaml \
+  --format json --output compatibility.json --fail-on-blocked
+```
+
+The checker returns `0` after producing a compatible or conditional report,
+`1` for an invalid command/manifest, and `2` for a blocked report when
+`--fail-on-blocked` is enabled. Without that option, blocked reports are still
+rendered and return `0` so discovery remains inspectable.

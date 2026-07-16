@@ -11,6 +11,7 @@ public sealed class WorkloadCompatibilityTests
         var design = Design("s3", "Known gap");
         design.WorkloadPatterns.Add(new WorkloadPattern
         {
+            Id = "invalid_references",
             Name = "Invalid",
             Compatibility = "conditional",
             Summary = "Invalid references.",
@@ -32,6 +33,7 @@ public sealed class WorkloadCompatibilityTests
         var design = Design("s3", "Known gap");
         design.WorkloadPatterns.Add(new WorkloadPattern
         {
+            Id = "object_writes",
             Name = "Object writes",
             Compatibility = "supported",
             Summary = "Writes objects.",
@@ -51,6 +53,7 @@ public sealed class WorkloadCompatibilityTests
         var design = Design("s3", "Known gap");
         design.WorkloadPatterns.Add(new WorkloadPattern
         {
+            Id = "duplicate_references",
             Name = "Duplicate references",
             Compatibility = "conditional",
             Summary = "Repeats references.",
@@ -66,6 +69,39 @@ public sealed class WorkloadCompatibilityTests
     }
 
     [Fact]
+    public void ValidateDesign_rejects_invalid_and_globally_duplicate_pattern_ids()
+    {
+        var operation = Operation("s3", "PutObject", "implemented");
+        var first = Design("s3", "Known gap");
+        first.WorkloadPatterns.Add(new WorkloadPattern
+        {
+            Id = "Invalid-Id",
+            Name = "First",
+            Compatibility = "conditional",
+            Summary = "First pattern.",
+            Guidance = "Review it.",
+            Operations = ["PutObject"]
+        });
+        var second = Design("s3", "Another gap");
+        second.Service = "other";
+        second.SourceFile = Path.Combine("repo", "docs", "gaps", "other", "_design.yaml");
+        second.WorkloadPatterns.Add(new WorkloadPattern
+        {
+            Id = "Invalid-Id",
+            Name = "Second",
+            Compatibility = "conditional",
+            Summary = "Second pattern.",
+            Guidance = "Review it.",
+            Operations = ["PutObject"]
+        });
+
+        var errors = Validator.ValidateDesign([first, second], [operation]);
+
+        Assert.Contains(errors, error => error.Contains("must use lowercase letters", StringComparison.Ordinal));
+        Assert.Contains(errors, error => error.Contains("duplicates workload pattern id 'Invalid-Id'", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Render_writes_generated_workload_assessment()
     {
         var operation = Operation("s3", "PutObject", "implemented");
@@ -77,6 +113,7 @@ public sealed class WorkloadCompatibilityTests
         var design = Design("s3", "Known gap");
         design.WorkloadPatterns.Add(new WorkloadPattern
         {
+            Id = "basic_writes",
             Name = "Basic writes",
             Compatibility = "supported",
             Summary = "Writes an object.",
@@ -85,6 +122,7 @@ public sealed class WorkloadCompatibilityTests
         });
         design.WorkloadPatterns.Add(new WorkloadPattern
         {
+            Id = "conditional_writes",
             Name = "Conditional writes",
             Compatibility = "conditional",
             Summary = "Writes with a caveat.",

@@ -74,7 +74,8 @@ design_gaps:
       Choose the transport per queue based on the semantics required and keep
       receive/settle on the same transport.
 workload_patterns:
-  - name: Standard queue messaging
+  - id: sqs_standard_messaging
+    name: Standard queue messaging
     compatibility: conditional
     summary: >-
       Create, discover, send, receive, settle, and delete standard queues and
@@ -94,7 +95,8 @@ workload_patterns:
     guidance: >-
       Suitable for standard queues after validating visibility timeout and
       dead-letter behavior with the selected Service Bus transport.
-  - name: FIFO queue messaging
+  - id: sqs_fifo
+    name: FIFO queue messaging
     compatibility: conditional
     summary: >-
       FIFO group ordering is available only through the AMQP transport and
@@ -111,7 +113,8 @@ workload_patterns:
     guidance: >-
       Configure transport: Amqp and test the full receive/delete lifecycle under
       concurrency before production.
-  - name: Hard queue purge
+  - id: sqs_hard_purge
+    name: Hard queue purge
     compatibility: conditional
     summary: >-
       PurgeQueue is emulated with a bounded drain and may leave messages while
@@ -123,7 +126,8 @@ workload_patterns:
     guidance: >-
       Pause producers before purge when the workload requires a guaranteed empty
       queue.
-  - name: Queue permission administration
+  - id: sqs_permission_administration
+    name: Queue permission administration
     compatibility: blocked
     summary: >-
       AddPermission and RemovePermission validate the queue but cannot reproduce
