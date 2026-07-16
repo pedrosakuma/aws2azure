@@ -92,6 +92,7 @@ internal static class SecretsManagerOperationSupport
             HttpStatusCode.BadRequest => StatusCodes.Status400BadRequest,
             HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => StatusCodes.Status403Forbidden,
             HttpStatusCode.TooManyRequests => StatusCodes.Status429TooManyRequests,
+            HttpStatusCode.RequestTimeout => StatusCodes.Status503ServiceUnavailable,
             >= HttpStatusCode.InternalServerError => StatusCodes.Status503ServiceUnavailable,
             _ => StatusCodes.Status400BadRequest,
         };
@@ -104,6 +105,7 @@ internal static class SecretsManagerOperationSupport
             HttpStatusCode.BadRequest => "InvalidParameterException",
             HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => "AccessDeniedException",
             HttpStatusCode.TooManyRequests => "ThrottlingException",
+            HttpStatusCode.RequestTimeout => "InternalServiceError",
             >= HttpStatusCode.InternalServerError => "InternalServiceError",
             _ => "InvalidParameterException",
         };

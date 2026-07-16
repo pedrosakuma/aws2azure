@@ -28,6 +28,8 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
 {
     public const string AwsAccessKey = "AKIA-REAL-KEYVAULT";
     public const string AwsSecret = "smoke-secret";
+    public const string InvalidBackendAwsAccessKey = "AKIA-REAL-KEYVAULT-INVALID";
+    public const string InvalidBackendAwsSecret = "invalid-backend-secret";
 
     private const string ProxyHostName = "secretsmanager.127.0.0.1.nip.io";
 
@@ -43,10 +45,12 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
     public async Task InitializeAsync()
     {
         var vaultUrl = Environment.GetEnvironmentVariable("AZURE_KEYVAULT_URL");
+        var tenantId = Environment.GetEnvironmentVariable("AZURE_TENANT_ID");
+        var clientId = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
 
         if (string.IsNullOrWhiteSpace(vaultUrl)
-            || string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("AZURE_TENANT_ID"))
-            || string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("AZURE_CLIENT_ID"))
+            || string.IsNullOrWhiteSpace(tenantId)
+            || string.IsNullOrWhiteSpace(clientId)
             || string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE")))
         {
             SkipReason = "AZURE_KEYVAULT_URL or workload identity env vars not set — skipping real-Azure Secrets Manager smoke.";
@@ -76,6 +80,26 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
                       },
                       "auth": {
                         "mode": "WorkloadIdentity"
+                      }
+                    }
+                  }
+                },
+                {
+                  "aws": {
+                    "accessKeyId": "{{InvalidBackendAwsAccessKey}}",
+                    "secretAccessKey": "{{InvalidBackendAwsSecret}}"
+                  },
+                  "azure": {
+                    "secretsmanager": {
+                      "kind": "keyVault",
+                      "target": {
+                        "vaultUrl": "{{vaultUrl}}"
+                      },
+                      "auth": {
+                        "mode": "clientSecret",
+                        "tenantId": "{{tenantId}}",
+                        "clientId": "{{clientId}}",
+                        "clientSecret": "aws2azure-deterministic-invalid-client-secret"
                       }
                     }
                   }

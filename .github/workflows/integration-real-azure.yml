@@ -1,29 +1,34 @@
 name: integration-real-azure
 
-# Real-Azure integration coverage for the service modules (issues #153, #257).
+# Real-Azure integration coverage and evidence for the service modules
+# (issues #153, #257, #533).
 #
 # Emulators (Azurite, Service Bus / Event Hubs / Cosmos emulators) are
 # necessary but NOT sufficient — they diverge from real Azure on auth,
 # default ports, throttling and feature surface. This scheduled job runs
-# CRUD smoke round-trips through the proxy against LIVE Azure to catch
+# the bounded six-service conformance matrix through the proxy against LIVE
+# Azure, plus credential-independent deterministic failure checks, to catch
 # real-Azure-only regressions (e.g. the AMQP port-defaulting bug fixed in
 # 1560d11 that emulators never surfaced).
 #
 # Ephemeral provision -> test -> deallocate (issue #257): the job logs into
 # Azure via OIDC (no stored client secret), provisions a per-run, uniquely
 # named resource group from deploy/realazure/main.bicep, exports the freshly
-# minted connection details into the test environment, runs the
-# Category=RealAzure suite, then deletes the resource group in an
+# minted connection details into the test environment, runs the real-Azure
+# suite, generates TRX-backed evidence, then deletes the resource group in an
 # `if: always()` teardown. There are no standing Azure resources and no
 # long-lived account-key secrets to manage.
 #
-# Coverage (each gated independently; a backend whose env is absent skips
-# rather than fails):
-#   S3        -> Blob Storage   (CreateBucket -> Put/Get/Delete object -> DeleteBucket)
-#   DynamoDB  -> Cosmos DB      (CreateTable -> Put/Get/Delete item -> DeleteTable)
-#   SQS       -> Service Bus    (CreateQueue -> Send/Receive/Delete -> DeleteQueue)
-#   Kinesis   -> Event Hubs     (PutRecord to a provisioned hub)
-#   Secrets   -> Key Vault      (secret lifecycle against an ephemeral, per-run
+# Coverage (each real backend is gated independently; a backend whose env is
+# absent skips rather than fails). Deterministic failure-injection tests and
+# the focused AMQP mapping tests run without Azure credentials:
+#   S3        -> Blob Storage   (lifecycle + list pagination + multi-delete)
+#   DynamoDB  -> Cosmos DB      (lifecycle + query/batch + conditional concurrency)
+#   SQS       -> Service Bus    (lifecycle + list/batch + FIFO concurrency)
+#   Kinesis   -> Event Hubs     (write/read/list/batch + consumer concurrency)
+#   SNS       -> Service Bus    (topic/subscription lifecycle + lists + publish batch)
+#   Secrets   -> Key Vault      (lifecycle + version write + list pagination against
+#                                an ephemeral, per-run
 #                                RBAC vault provisioned by the Bicep; the proxy
 #                                authenticates via GitHub OIDC workload identity,
 #                                so no client secret is stored)
@@ -68,13 +73,16 @@ jobs:
       # and the fixture targets these names.
       AZURE_COSMOS_DATABASE: dynamodb
       AZURE_EVENTHUBS_STREAM: kinesis-smoke
+      TEST_RESULTS_DIR: TestResults/real-azure
+      EVIDENCE_DIR: TestResults/real-azure-conformance
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/dotnet-setup
 
       # Provisioning needs the OIDC client id. When it is absent (fork PRs, or
       # before an operator has wired up OIDC) we skip provision/login/teardown;
-      # the test step then skips every RealAzure test and the job stays green.
+      # live-backend tests then skip while credential-independent checks run.
       - name: Check provisioning credentials
         id: gate
         env:
@@ -99,6 +107,44 @@ jobs:
 
       - name: Restore + build
         run: dotnet build -c Release --nologo
+
+      - name: Validate conformance matrix
+        run: dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- --validate
+
+      # The empty TRX is a truthful fallback: if a test host cannot start,
+      # evidence generation still records matrix entries as not_run instead of
+      # silently omitting the report.
+      - name: Initialize deterministic results directory
+        run: |
+          mkdir -p "$TEST_RESULTS_DIR"
+          cat > "$TEST_RESULTS_DIR/evidence-bootstrap.trx" <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010" />
+          EOF
+
+      - name: Run deterministic failure conformance tests
+        id: deterministic_tests
+        run: |
+          FILTER='FullyQualifiedName=Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.S3_injected_backend_failures_return_native_retryable_errors|FullyQualifiedName=Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.DynamoDb_injected_backend_failures_return_native_retryable_errors|FullyQualifiedName=Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.Sqs_injected_rest_failures_cover_query_xml_and_sdk_json_retryability|FullyQualifiedName=Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.SecretsManager_injected_backend_failures_return_native_retryable_errors|FullyQualifiedName=Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.SecretsManager_injected_invalid_client_secret_returns_native_non_retryable_error|FullyQualifiedName=Aws2Azure.IntegrationTests.FailureConformance.DeterministicHttpFailureConformanceTests.Http_client_cancellation_propagates_without_committed_success'
+          status=0
+          dotnet test tests/Aws2Azure.IntegrationTests \
+            -c Release --no-build --nologo \
+            --filter "$FILTER" \
+            --results-directory "$TEST_RESULTS_DIR" \
+            --logger "trx;LogFileName=deterministic-failures.trx" || status=$?
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+
+      - name: Run focused matrix AMQP unit tests
+        id: matrix_unit_tests
+        run: |
+          FILTER='FullyQualifiedName=Aws2Azure.UnitTests.Sqs.AmqpSendMessageHandlersTests.SendMessage_maps_server_busy_to_503_so_aws_sdk_retries|FullyQualifiedName=Aws2Azure.UnitTests.Sqs.AmqpSendMessageHandlersTests.SendMessage_propagates_broker_reject_as_error|FullyQualifiedName=Aws2Azure.UnitTests.Kinesis.PutRecordHandlerTests.HandleAsync_maps_amqp_throttling_to_provisioned_throughput_exceeded|FullyQualifiedName=Aws2Azure.UnitTests.Kinesis.PutRecordHandlerTests.HandleAsync_maps_amqp_transient_failures_to_retryable_kinesis_error|FullyQualifiedName=Aws2Azure.UnitTests.Kinesis.PutRecordHandlerTests.HandleAsync_propagates_amqp_cancellation_without_success_body|FullyQualifiedName=Aws2Azure.UnitTests.Sns.PublishHandlerTests.HandleAsync_maps_amqp_throttle_to_sns_throttled_error|FullyQualifiedName=Aws2Azure.UnitTests.Sns.PublishHandlerTests.HandleAsync_maps_amqp_timeout_to_retryable_sns_error|FullyQualifiedName=Aws2Azure.UnitTests.Sns.PublishHandlerTests.HandleAsync_maps_amqp_send_failure_to_sns_error|FullyQualifiedName=Aws2Azure.UnitTests.Sns.PublishHandlerTests.HandleAsync_propagates_amqp_cancellation_without_success_body'
+          status=0
+          dotnet test tests/Aws2Azure.UnitTests \
+            -c Release --no-build --nologo \
+            --filter "$FILTER" \
+            --results-directory "$TEST_RESULTS_DIR" \
+            --logger "trx;LogFileName=matrix-amqp-unit.trx" || status=$?
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
 
       - name: Azure login (OIDC)
         if: steps.gate.outputs.enabled == 'true'
@@ -186,7 +232,7 @@ jobs:
           # ACTIONS_ID_TOKEN_REQUEST_* vars are injected because the job has
           # `id-token: write`.
           TOKEN_FILE="$RUNNER_TEMP/azure-federated-token.jwt"
-          RESPONSE="$(curl -sS \
+          RESPONSE="$(curl -fsS \
             -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange")"
           ASSERTION="$(printf '%s' "$RESPONSE" | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])')"
@@ -202,29 +248,68 @@ jobs:
             echo "AZURE_CLIENT_ID=$AZURE_CLIENT_ID"
           } >> "$GITHUB_ENV"
 
-      - name: Run real-Azure integration tests
+      - name: Run real-Azure matrix tests
+        id: real_azure_tests
+        if: always()
         run: |
           # AZURE_KEYVAULT_URL is exported from the ephemeral deployment output by
           # the "Export connection info" step (Secrets Manager -> Key Vault). When
           # provisioning is skipped (no OIDC) it stays unset and the SecretsManager
           # smoke skips. Workload-Identity auth uses the OIDC token minted above.
+          # Deterministic failures were run separately so every result has one
+          # stable TRX identity and real-Azure skips remain explicit.
+          status=0
           dotnet test tests/Aws2Azure.IntegrationTests \
             -c Release --no-build --nologo \
-            --filter "Category=RealAzure"
+            --filter "Category=RealAzure&FullyQualifiedName!~FailureConformance.DeterministicHttpFailureConformanceTests" \
+            --results-directory "$TEST_RESULTS_DIR" \
+            --logger "trx;LogFileName=real-azure.trx" || status=$?
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
 
-      # Theme C divergence report (#467): regenerate the gap-doc site so the
-      # divergence dossier reflects the current YAML seals, surface the summary
-      # inline, and upload it as the run's conformance artifact. Runs even when
-      # tests fail so the report still captures the documented divergences.
-      - name: Generate divergence report
+      # Generate immutable matrix evidence from every available TRX and refresh
+      # the Theme C divergence dossier even when tests failed. The test steps
+      # preserve their exit codes; a final gate after teardown restores failure.
+      - name: Generate conformance evidence and divergence report
+        id: reports
         if: always()
         run: |
-          dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release
-          {
-            echo "## Real-Azure conformance"
-            echo
-            grep -m1 'Operations:' docs/site/divergences.md || true
-          } >> "$GITHUB_STEP_SUMMARY"
+          status=0
+          dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- \
+            --generate-evidence \
+            --trx "$TEST_RESULTS_DIR" \
+            --run-id "${{ github.run_id }}" \
+            --run-url "$RUN_URL" \
+            --evidence-output "$EVIDENCE_DIR" || status=$?
+          dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release || status=$?
+
+          if [ -f "$EVIDENCE_DIR/summary.md" ]; then
+            cat "$EVIDENCE_DIR/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::Conformance summary was not generated."
+            status=1
+          fi
+          if [ -f docs/site/divergences.md ]; then
+            {
+              echo
+              echo "## Documented divergences"
+              echo
+              grep -m1 'Operations:' docs/site/divergences.md || true
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::Divergence report was not generated."
+            status=1
+          fi
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+
+      - name: Upload conformance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-azure-conformance
+          path: |
+            TestResults/real-azure/*.trx
+            TestResults/real-azure-conformance/**
+          if-no-files-found: error
 
       - name: Upload divergence report
         if: always()
@@ -252,3 +337,21 @@ jobs:
             az keyvault purge -n "$kv" --no-wait || true
           done
           az group delete -n "$RG_NAME" --yes --no-wait || true
+
+      - name: Enforce test and report results
+        if: always()
+        run: |
+          failed=0
+          check() {
+            name="$1"
+            value="$2"
+            if ! [[ "$value" =~ ^[0-9]+$ ]] || [ "$value" -ne 0 ]; then
+              echo "::error::$name failed or did not execute (exit code: ${value:-missing})."
+              failed=1
+            fi
+          }
+          check "Deterministic failure tests" "${{ steps.deterministic_tests.outputs.exit_code }}"
+          check "Focused matrix unit tests" "${{ steps.matrix_unit_tests.outputs.exit_code }}"
+          check "Real-Azure integration tests" "${{ steps.real_azure_tests.outputs.exit_code }}"
+          check "Evidence/report generation" "${{ steps.reports.outputs.exit_code }}"
+          exit "$failed"

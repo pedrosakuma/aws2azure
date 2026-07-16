@@ -75,6 +75,13 @@ internal static class S3ErrorMapping
             (403, _) =>
                 new Mapping(403, "AccessDenied", "Access Denied."),
 
+            // Azure's 408 describes an upstream request timeout, not malformed
+            // caller input. Surface S3's native retryable timeout code instead
+            // of falling through to InvalidRequest.
+            (408, _) =>
+                new Mapping(400, "RequestTimeout",
+                    "Your socket connection to the server was not read from or written to within the timeout period."),
+
             (429, _) =>
                 new Mapping(503, "SlowDown", "Please reduce your request rate."),
 

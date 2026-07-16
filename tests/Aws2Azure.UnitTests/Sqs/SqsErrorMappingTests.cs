@@ -98,6 +98,7 @@ public class SqsErrorMappingTests
         var m = SqsErrorMapping.FromAmqp(AmqpErrorKind.Auth, null, "ReceiveMessage");
         Assert.Equal("AccessDenied", m.Code);
         Assert.Equal(403, m.StatusCode);
+        Assert.Equal(SqsErrorResponse.FaultType.Sender, m.FaultType);
     }
 
     [Fact]
@@ -106,6 +107,7 @@ public class SqsErrorMappingTests
         var m = SqsErrorMapping.FromAmqp(AmqpErrorKind.Throttled, null, "ReceiveMessage");
         Assert.Equal("ServiceUnavailable", m.Code);
         Assert.Equal(503, m.StatusCode);
+        Assert.Equal(SqsErrorResponse.FaultType.Receiver, m.FaultType);
     }
 
     [Fact]
@@ -114,6 +116,7 @@ public class SqsErrorMappingTests
         var m = SqsErrorMapping.FromAmqp(AmqpErrorKind.Transient, null, "ReceiveMessage");
         Assert.Equal("ServiceUnavailable", m.Code);
         Assert.Equal(503, m.StatusCode);
+        Assert.Equal(SqsErrorResponse.FaultType.Receiver, m.FaultType);
     }
 
     [Fact]
@@ -130,6 +133,7 @@ public class SqsErrorMappingTests
         var m = SqsErrorMapping.FromAmqp(AmqpErrorKind.ServerFatal, null, "ReceiveMessage");
         Assert.Equal("ServiceUnavailable", m.Code);
         Assert.Equal(502, m.StatusCode);
+        Assert.Equal(SqsErrorResponse.FaultType.Receiver, m.FaultType);
     }
 
     [Fact]
@@ -148,4 +152,3 @@ public class SqsErrorMappingTests
         Assert.DoesNotContain("weird:condition", m.Message);
     }
 }
-

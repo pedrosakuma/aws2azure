@@ -38,6 +38,8 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
 {
     public const string AwsAccessKey = "AKIA-REAL-AZURE-NIGHTLY";
     public const string AwsSecret = "real-azure-nightly-secret";
+    public const string InvalidBackendAwsAccessKey = "AKIA-REAL-AZURE-INVALID";
+    public const string InvalidBackendAwsSecret = "real-azure-invalid-secret";
 
     // A second AWS identity whose AAD-capable backends authenticate via Workload
     // Identity instead of shared keys (issue #307). It lives in the same proxy
@@ -47,6 +49,8 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     public const string WiAwsSecret = "real-azure-nightly-wi-secret";
 
     private const string AuthRegion = "us-east-1";
+    private const string InvalidAzureSharedKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    private const string InvalidAzureSasKeyName = "aws2azure-invalid-sas-key";
 
     private readonly StringBuilder _proxyOutput = new();
     private Process? _proxyProcess;
@@ -65,6 +69,7 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     private string? _sbNamespace;
     private string? _sbSasKeyName;
     private string? _sbSasKey;
+    private string? _sbConnectionString;
 
     private string? _ehNamespace;
     private string? _ehSasKeyName;
@@ -89,6 +94,9 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
 
     /// <summary>SQS → Service Bus backend configured.</summary>
     public bool ServiceBusConfigured { get; private set; }
+
+    /// <summary>SNS → Service Bus Topics backend configured.</summary>
+    public bool SnsConfigured => ServiceBusConfigured;
 
     /// <summary>Kinesis → Event Hubs backend configured.</summary>
     public bool EventHubsConfigured { get; private set; }
@@ -218,6 +226,15 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
             AuthenticationRegion = AuthRegion,
         });
 
+    public HttpClient CreateSnsClient() => new()
+    {
+        BaseAddress = new Uri(ServiceUrlFor("sns")),
+    };
+
+    public string GetServiceUrl(string service) => ServiceUrlFor(service);
+
+    public string CreateServiceBusConnectionString() => _sbConnectionString ?? string.Empty;
+
     public AmazonKinesisClient CreateKinesisClient() => new(
         AwsAccessKey, AwsSecret,
         new AmazonKinesisConfig
@@ -297,6 +314,7 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         var sbConn = Env("AZURE_SB_CONNSTR");
         if (!string.IsNullOrWhiteSpace(sbConn))
         {
+            _sbConnectionString = sbConn;
             var (ns, keyName, key) = ParseSasConnectionString(sbConn);
             _sbNamespace = ns;
             _sbSasKeyName = keyName;
@@ -336,6 +354,7 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
             : string.Empty;
         AppendService(services, "dynamodb", CosmosConfigured || CosmosWorkloadIdentityConfigured, dynamoDbServiceOptions);
         AppendService(services, "sqs", ServiceBusConfigured);
+        AppendService(services, "sns", ServiceBusConfigured);
         AppendService(services, "kinesis", EventHubsConfigured || EventHubsWorkloadIdentityConfigured);
 
         if (BlobConfigured)
@@ -358,7 +377,10 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         if (ServiceBusConfigured)
         {
             AppendAzure(azure, $$"""
-                "sqs": { "kind": "serviceBus", "target": { "namespace": "{{JsonEscape(_sbNamespace!)}}", "transport": "Rest" }, "auth": { "mode": "sas", "keyName": "{{JsonEscape(_sbSasKeyName!)}}", "key": "{{JsonEscape(_sbSasKey!)}}" } }
+                "sqs": { "kind": "serviceBus", "target": { "namespace": "{{JsonEscape(_sbNamespace!)}}", "transport": "Amqp" }, "auth": { "mode": "sas", "keyName": "{{JsonEscape(_sbSasKeyName!)}}", "key": "{{JsonEscape(_sbSasKey!)}}" } }
+                """);
+            AppendAzure(azure, $$"""
+                "sns": { "kind": "serviceBusTopics", "target": { "namespace": "{{JsonEscape(_sbNamespace!)}}" }, "auth": { "mode": "sas", "keyName": "{{JsonEscape(_sbSasKeyName!)}}", "key": "{{JsonEscape(_sbSasKey!)}}" } }
                 """);
         }
 
@@ -386,6 +408,44 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
                 """);
         }
 
+        // Isolated identity for negative-auth conformance. It targets the same
+        // live resources but uses deterministic invalid keys, leaving the
+        // successful binding and shared Azure resources untouched.
+        var invalidAzure = new StringBuilder();
+        if (BlobConfigured)
+        {
+            var endpoint = string.IsNullOrWhiteSpace(_blobEndpoint)
+                ? string.Empty
+                : $$""", "endpoint": "{{JsonEscape(_blobEndpoint!)}}" """;
+            AppendAzure(invalidAzure, $$"""
+                "s3": { "kind": "blob", "target": { "accountName": "{{JsonEscape(_blobAccount!)}}"{{endpoint}} }, "auth": { "mode": "sharedKey", "key": "{{InvalidAzureSharedKey}}" } }
+                """);
+        }
+
+        if (CosmosConfigured || CosmosWorkloadIdentityConfigured)
+        {
+            AppendAzure(invalidAzure, $$"""
+                "dynamodb": { "kind": "cosmos", "target": { "endpoint": "{{JsonEscape(_cosmosEndpoint!)}}", "databaseName": "{{JsonEscape(_cosmosDatabase!)}}" }, "auth": { "mode": "sharedKey", "key": "{{InvalidAzureSharedKey}}" } }
+                """);
+        }
+
+        if (ServiceBusConfigured)
+        {
+            AppendAzure(invalidAzure, $$"""
+                "sqs": { "kind": "serviceBus", "target": { "namespace": "{{JsonEscape(_sbNamespace!)}}", "transport": "Amqp" }, "auth": { "mode": "sas", "keyName": "{{InvalidAzureSasKeyName}}", "key": "{{InvalidAzureSharedKey}}" } }
+                """);
+            AppendAzure(invalidAzure, $$"""
+                "sns": { "kind": "serviceBusTopics", "target": { "namespace": "{{JsonEscape(_sbNamespace!)}}" }, "auth": { "mode": "sas", "keyName": "{{InvalidAzureSasKeyName}}", "key": "{{InvalidAzureSharedKey}}" } }
+                """);
+        }
+
+        if (EventHubsConfigured || EventHubsWorkloadIdentityConfigured)
+        {
+            AppendAzure(invalidAzure, $$"""
+                "kinesis": { "kind": "eventHubs", "target": { "namespace": "{{JsonEscape(_ehNamespace!)}}" }, "auth": { "mode": "sas", "keyName": "{{InvalidAzureSasKeyName}}", "key": "{{InvalidAzureSharedKey}}" } }
+                """);
+        }
+
         var credentials = new StringBuilder();
         if (azure.Length > 0)
         {
@@ -395,6 +455,15 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         if (wiAzure.Length > 0)
         {
             AppendCredential(credentials, WiAwsAccessKey, WiAwsSecret, wiAzure.ToString());
+        }
+
+        if (invalidAzure.Length > 0)
+        {
+            AppendCredential(
+                credentials,
+                InvalidBackendAwsAccessKey,
+                InvalidBackendAwsSecret,
+                invalidAzure.ToString());
         }
 
         return $$"""

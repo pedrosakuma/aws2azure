@@ -5,42 +5,94 @@ the Service Bus / Event Hubs / Cosmos emulators) for a fast PR feedback loop.
 Emulators are a **necessary but not sufficient** signal — they diverge from
 real Azure on auth, default ports, throttling and feature surface. The
 [`integration-real-azure`](../../.github/workflows/integration-real-azure.yml)
-workflow therefore runs a small set of CRUD **smoke round-trips** through the
+workflow therefore runs the bounded, six-service
+[`real-azure-conformance.yaml`](real-azure-conformance.yaml) matrix through the
 proxy against **live Azure**, nightly, to catch real-Azure-only regressions
 (e.g. the AMQP port-defaulting bug fixed in `1560d11` that no emulator
 surfaced).
 
 This implements roadmap issue **#153**; the ephemeral provisioning flow below
-implements **#257**.
+implements **#257**, and the complete conformance/evidence layer implements
+**#533**.
 
-## How it runs: provision → test → deallocate
+## How it runs: validate → deterministic → provision → real → evidence → deallocate
 
 The nightly job is **self-contained** — there are no standing Azure resources
 and no long-lived account-key secrets:
 
-1. **Log in to Azure via OIDC** (`azure/login@v2`, federated credentials — no
+1. **Build and validate** the gap docs and declarative matrix.
+2. **Run credential-independent checks**: deterministic HTTP failure injection
+   plus only the exact Kinesis, SNS, and SQS AMQP mapping test identities named
+   by the matrix. These checks produce TRX even when OIDC is unavailable. They
+   verify AWS envelopes/retryability, but are **not real-Azure observations**.
+3. **Log in to Azure via OIDC** (`azure/login@v2`, federated credentials — no
    stored client secret).
-2. **Provision** a per-run, uniquely-named resource group
+4. **Provision** a per-run, uniquely-named resource group
    (`aws2azure-it-<run_id>-<attempt>`) from
    [`deploy/realazure/main.bicep`](../../deploy/realazure/main.bicep): a Storage
    account, a Service Bus namespace, a serverless Cosmos DB account + database,
-   and an Event Hubs namespace + hub.
-3. **Export** the freshly-minted connection details (fetched with
+   an Event Hubs namespace + hub, and an RBAC Key Vault.
+5. **Export** the freshly-minted connection details (fetched with
    `az … keys list`, masked) into the test environment.
-4. **Run** the `Category=RealAzure` suite against them.
-5. **Deallocate** — `az group delete --yes --no-wait` in an `if: always()`
+6. **Run** the real-Azure matrix tests and write a separate TRX. If OIDC is
+   unavailable, the tests execute their normal skip gates, so evidence records
+   `skipped`/`not_run` rather than pretending Azure was observed.
+7. **Generate evidence** and the divergence report from every available TRX
+   under `if: always()`, then upload both reports.
+8. **Deallocate** — Key Vault delete/purge plus
+   `az group delete --yes --no-wait` in an `if: always()`
    teardown, so the resource group is removed even when provisioning or the
-   tests fail.
+   tests fail. A final gate then restores the captured test/report exit codes;
+   report generation and cleanup never turn a failing test green.
 
 A [`real-azure-reaper`](../../.github/workflows/real-azure-reaper.yml) workflow
 runs every 6 hours as a backstop, deleting any `purpose=aws2azure-nightly`
 resource group older than `MAX_AGE_HOURS` (default 6) — covering the rare case
 where a force-cancelled run skips its teardown.
 
-Cosmos DB account creation dominates the run (~5–10 min); the full
-provision → test → deallocate cycle is well within a nightly budget.
+Cosmos DB account creation dominates the run (normally ~5–10 min). The job has
+a hard **60-minute timeout**, global fixed concurrency
+(`integration-real-azure`, no cancellation of the active run), and no unbounded
+load: pagination uses a few entities/pages, batches contain fixed small entry
+counts, and concurrency checks use a fixed handful of writers/consumers. This
+is conformance, not throughput testing. Under normal Azure control-plane
+conditions the full run should finish in roughly 15–30 minutes. The ephemeral
+resource group, asynchronous teardown, six-hour reaper, and subscription Cost
+Management budget cap both duration and cost; investigate any run approaching
+the timeout rather than increasing workloads or the timeout.
+
+The operational cost ceiling is **one active ephemeral resource group**:
+Standard LRS Storage, one Standard Service Bus namespace, one serverless Cosmos
+account, one capacity-1 Standard Event Hubs namespace with a two-partition hub,
+and one Key Vault. No test scales SKU/capacity or derives request count from
+input. Azure prices vary by agreement and region, so the currency-denominated
+limit belongs in the subscription Cost Management budget; set that budget to
+the operator-approved nightly amount and do not raise these SKUs/counts to make
+a conformance test pass.
 
 ## What runs
+
+Every matrix scenario declares a required `evidence_source` and an explicit
+`establishes_verification` boolean:
+
+- `real_azure` means the scenario reaches a live Azure data plane or identity
+  endpoint. Core/read/write/list/pagination/batch/concurrency scenarios and the
+  isolated invalid-credential probes use this source.
+- `deterministic` means the scenario uses an injected HTTP/AMQP or unit-test
+  seam. Throttling, timeout, 503/service-unavailable, and cancellation probes
+  use this source and must never be presented as observations of live Azure.
+- `establishes_verification: true` is reserved for positive live-Azure
+  core/read/write/list/pagination/batch/concurrency scenarios that demonstrate
+  successful operation behavior. Deterministic and real-Azure
+  invalid-credential/failure-only scenarios set it to `false`.
+
+Validation rejects a missing or unknown source, a missing boolean, or a `true`
+value on a non-positive/non-live scenario. Generated JSON and Markdown carry
+both fields for each scenario. An operation is eligible for a future
+`verified_real_azure` seal only if **all** scenarios referencing it pass
+(including deterministic scenarios) and at least one passing reference is
+`real_azure` with `establishes_verification: true`. Otherwise evidence records
+`no_positive_real_azure_evidence`. Evidence generation never changes a seal.
 
 Each service drives the proxy with the **official AWS SDK** (exactly as a
 migrated application would) and verifies a self-contained lifecycle. Tests are
@@ -49,18 +101,21 @@ proxy ([`RealAzureProxyFixture`](../../tests/Aws2Azure.IntegrationTests/Fixtures
 
 | AWS service | Azure backend | Round-trip | Provisioning |
 |---|---|---|---|
-| S3 | Blob Storage | CreateBucket → Put/Get/Delete object → DeleteBucket | Ephemeral (Bicep); the proxy creates the container |
-| DynamoDB | Cosmos DB | CreateTable → Put/Get/Delete item → DeleteTable | Ephemeral (Bicep) account + **database**; the test owns the table (container) |
-| SQS | Service Bus | CreateQueue → Send/Receive/Delete → DeleteQueue | Ephemeral (Bicep); the proxy creates the queue |
-| Kinesis | Event Hubs | PutRecord | Ephemeral (Bicep) namespace + **hub** (`CreateStream` is not implemented) |
-| Secrets Manager | Key Vault | secret lifecycle (Create → Describe → Get → Put/VersionStages → Update → List → Delete) | Ephemeral (Bicep) + data-plane RBAC; authenticates via a **federated token**, no client secret (issue #307) |
+| S3 | Blob Storage | Bucket/object lifecycle, ListObjectsV2 pagination, multi-object delete | Ephemeral (Bicep); the proxy creates the container |
+| DynamoDB | Cosmos DB | Table/item lifecycle, indexed query pagination, batch read/write, concurrent conditional update | Ephemeral (Bicep) account + **database**; the test owns the table (container) |
+| SQS | Service Bus | Queue/message lifecycle, queue pagination, send/delete batch, concurrent FIFO ordering | Ephemeral (Bicep); the proxy creates the queue |
+| Kinesis | Event Hubs | Put/Get records, shard pagination, record batch, concurrent consumer progress | Ephemeral (Bicep) namespace + **hub** (`CreateStream` is not implemented) |
+| SNS | Service Bus Topics | Topic/subscription lifecycle, list pagination, PublishBatch results | Ephemeral (Bicep); the test owns topics and subscriptions |
+| Secrets Manager | Key Vault | Secret lifecycle, version write/idempotency, list pagination | Ephemeral (Bicep) + data-plane RBAC; authenticates via a **federated token**, no client secret (issue #307) |
 | DynamoDB *(Workload Identity)* | Cosmos DB | Put/Get/Delete item (table provisioned with the shared key — Cosmos rejects container DDL over an AAD token) | Ephemeral (Bicep) + data-plane RBAC; item CRUD via a **federated token** (issue #307) |
 | Kinesis *(Workload Identity)* | Event Hubs | PutRecord | Ephemeral (Bicep) + data-plane RBAC; authenticates via a **federated token**, no SAS key (issue #307) |
 
-Every backend is gated **independently** on its environment: a backend whose
-values are absent **skips** (it does not fail), so fork PRs, local
-`dotnet test`, and the no-OIDC case stay green. When no backend at all is
-configured the proxy process is never started.
+Every real backend is gated **independently** on its environment: a backend
+whose values are absent **skips** (it does not fail), so fork PRs, local
+`dotnet test`, and the no-OIDC case stay honest and green when the
+credential-independent checks pass. The deterministic failure and focused AMQP
+tests still run. When no backend at all is configured the proxy process is
+never started.
 
 ## When it runs
 
@@ -133,8 +188,10 @@ gh secret set AZURE_CLIENT_OBJECT_ID --body "$SP_ID"
 The federated-credential subjects above cover scheduled / `workflow_dispatch`
 runs on `main` and label-gated pull requests **from the repository itself**.
 Fork PRs receive no OIDC token (and no secrets), so the job's gate skips
-provisioning and the tests skip — fork contributors never see red CI for a
-check they cannot run.
+provisioning and real-Azure tests skip. Deterministic and focused AMQP tests
+still run, and the evidence report contains the canonical run URL plus
+`skipped`/`not_run` blockers. No operation becomes seal-eligible from such a
+run.
 
 > **Budget guardrail.** Add a Cost Management budget on the subscription with an
 > email/action-group alert. Ephemeral resources only exist for the duration of a
@@ -217,24 +274,44 @@ az deployment group create -g "$RG" -n aws2azure-realazure \
 # Export the connection details (see the workflow's "Export connection info"
 # step for the exact az queries), then:
 dotnet build -c Release
+dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- --validate
+
+# Credential-independent deterministic failures (all six exact methods in this class).
 dotnet test tests/Aws2Azure.IntegrationTests -c Release --no-build \
-  --filter "Category=RealAzure"
+  --filter "FullyQualifiedName~FailureConformance.DeterministicHttpFailureConformanceTests" \
+  --results-directory TestResults/real-azure \
+  --logger "trx;LogFileName=deterministic-failures.trx"
+
+# Exact AMQP identities referenced by the matrix (11 executions: one method
+# has three xUnit theory rows).
+AMQP_FILTER='FullyQualifiedName=Aws2Azure.UnitTests.Sqs.AmqpSendMessageHandlersTests.SendMessage_maps_server_busy_to_503_so_aws_sdk_retries|FullyQualifiedName=Aws2Azure.UnitTests.Sqs.AmqpSendMessageHandlersTests.SendMessage_propagates_broker_reject_as_error|FullyQualifiedName=Aws2Azure.UnitTests.Kinesis.PutRecordHandlerTests.HandleAsync_maps_amqp_throttling_to_provisioned_throughput_exceeded|FullyQualifiedName=Aws2Azure.UnitTests.Kinesis.PutRecordHandlerTests.HandleAsync_maps_amqp_transient_failures_to_retryable_kinesis_error|FullyQualifiedName=Aws2Azure.UnitTests.Kinesis.PutRecordHandlerTests.HandleAsync_propagates_amqp_cancellation_without_success_body|FullyQualifiedName=Aws2Azure.UnitTests.Sns.PublishHandlerTests.HandleAsync_maps_amqp_throttle_to_sns_throttled_error|FullyQualifiedName=Aws2Azure.UnitTests.Sns.PublishHandlerTests.HandleAsync_maps_amqp_timeout_to_retryable_sns_error|FullyQualifiedName=Aws2Azure.UnitTests.Sns.PublishHandlerTests.HandleAsync_maps_amqp_send_failure_to_sns_error|FullyQualifiedName=Aws2Azure.UnitTests.Sns.PublishHandlerTests.HandleAsync_propagates_amqp_cancellation_without_success_body'
+dotnet test tests/Aws2Azure.UnitTests -c Release --no-build \
+  --filter "$AMQP_FILTER" \
+  --results-directory TestResults/real-azure \
+  --logger "trx;LogFileName=matrix-amqp-unit.trx"
+
+# Live-Azure tests; excludes the deterministic class already run above.
+dotnet test tests/Aws2Azure.IntegrationTests -c Release --no-build \
+  --filter "Category=RealAzure&FullyQualifiedName!~FailureConformance.DeterministicHttpFailureConformanceTests" \
+  --results-directory TestResults/real-azure \
+  --logger "trx;LogFileName=real-azure.trx"
 
 az group delete -n "$RG" --yes --no-wait    # always tear down
 ```
 
 Backends without exported environment values skip; with none exported, every
-real-Azure test skips. Each test also deletes the bucket / queue / table it
-creates in a `finally` block, so the ephemeral resource group is the only
+real-Azure test skips while deterministic failures still execute. The CI
+workflow additionally uses exact `FullyQualifiedName=` filters for the nine
+unique AMQP methods named by the matrix; copy that filter when reproducing the
+complete workflow locally. Each test deletes the bucket / queue / topic / table
+it creates in a `finally` block, so the ephemeral resource group is the only
 cleanup the harness itself does not perform.
 
-## Managed / Workload Identity validation (manual)
+## Managed Identity validation (manual)
 
-The nightly job authenticates the proxy to the data-plane backends with
-**account keys / SAS / a service-principal secret** — shapes that work from any
-runner. It does **not** cover the secret-less
-[`managedIdentity` / `workloadIdentity` auth modes](../azure-authentication.md),
-and deliberately so:
+The nightly covers shared-key/SAS backends and the testable
+[`workloadIdentity` auth mode](../azure-authentication.md) with a GitHub OIDC
+federated token. It does **not** cover `managedIdentity`, deliberately:
 
 - **Emulators have no IMDS / federation.** Azurite and the Service Bus / Cosmos
   emulators can't issue Managed Identity tokens, so the emulator `integration`
@@ -278,7 +355,7 @@ compute** whenever the token-source or auth-mode wiring changes
    Cosmos. Success proves the proxy acquired a token from IMDS and called Azure
    with **no `clientSecret` in config** — the #290 acceptance criterion.
 
-### Workload Identity (AKS)
+### Workload Identity (AKS, optional manual parity check)
 
 1. On an AKS cluster with the Workload Identity webhook enabled, create an Entra
    app registration with a **federated credential** trusting the cluster's OIDC
@@ -303,13 +380,76 @@ artifact, with a one-line summary in the run's job summary. The report lists
 every documented behaviour difference and which operations carry a real-Azure
 seal vs. are implemented-but-unsealed.
 
-To **seal** an operation as real-Azure verified, add `verified_real_azure` to its
-gap-doc YAML (a date and/or workflow run URL), e.g.:
+To **seal** an operation as real-Azure verified, first download the
+`real-azure-conformance` artifact from a successful, OIDC-enabled run and check
+the service report shows every scenario for that operation passed and at least
+one passing scenario has `real_azure` evidence with
+`establishes_verification: true`. Then add
+`verified_real_azure` to its gap-doc YAML with the date and canonical workflow
+URL, e.g.:
 
 ```yaml
-verified_real_azure: "2026-06-29 (run 28343347638)"
+verified_real_azure: "2026-07-15 (https://github.com/pedrosakuma/aws2azure/actions/runs/123456789)"
 ```
 
 It renders a ✅ in the coverage matrix / service page and removes the op from the
-"implemented without a seal" list. Only seal after a real-Azure run has actually
-exercised the operation.
+"implemented without a seal" list. Never promote from deterministic injection,
+unit tests, emulator results, skipped/not-run evidence, or an unsuccessful
+Azure run. Evidence generation itself never edits a seal.
+
+## Declarative conformance evidence
+
+[`real-azure-conformance.yaml`](real-azure-conformance.yaml) is the
+machine-readable coverage plan for all registered services. Each scenario has a
+priority, category, strict `evidence_source`, explicit
+`establishes_verification`, affected gap-doc operations, and one or more
+fully-qualified xUnit test identities. Planned identities are allowed: until
+they appear in a TRX file they are reported as `not_run`. `--validate` checks
+the matrix schema, the complete six-service set, and every operation reference
+together with the normal gap docs.
+
+Generate immutable run evidence from one or more TRX files with:
+
+```bash
+dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- \
+  --generate-evidence \
+  --trx TestResults/real-azure \
+  --run-id "$GITHUB_RUN_ID" \
+  --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+  --evidence-output TestResults/real-azure-conformance
+```
+
+`--trx` accepts a file or directory and may be repeated. The output contains
+`real-azure-evidence.json`, an overall `summary.md`, and one Markdown report per
+service under `services/`. An operation is only listed as eligible when every
+referencing scenario passed and at least one passing reference is `real_azure`
+with `establishes_verification: true`. Deterministic failures, skipped tests,
+and missing results block eligibility; deterministic or failure-only passes
+alone yield `no_positive_real_azure_evidence`.
+Evidence generation never edits `verified_real_azure`; promotion remains a
+reviewed gap-doc change.
+
+Every workflow run uploads:
+
+```text
+real-azure-conformance/
+  real-azure/
+    evidence-bootstrap.trx
+    deterministic-failures.trx
+    matrix-amqp-unit.trx
+    real-azure.trx
+  real-azure-conformance/
+    real-azure-evidence.json
+    summary.md
+    services/{s3,dynamodb,sqs,kinesis,sns,secretsmanager}.md
+
+real-azure-divergences/
+  divergences.md
+```
+
+The first artifact combines raw TRX with generated JSON/Markdown evidence; the
+second preserves the repository-wide divergence dossier. `summary.md` is also
+appended verbatim to the GitHub job summary. Both generators use the current
+`github.run_id` and
+`$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID`, so evidence
+links to the immutable canonical run rather than a mutable branch URL.
