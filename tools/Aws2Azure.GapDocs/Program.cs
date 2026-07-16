@@ -18,6 +18,14 @@ if (args.Length > 0 && args[0] == "check-workload")
     return CheckWorkload(args[1..], gapsRoot);
 }
 
+if (args.Length > 0 && args[0] == "plan-conformance")
+{
+    return PlanConformance(
+        args[1..],
+        gapsRoot,
+        Path.Combine(repoRoot, "docs", "testing", "real-azure-conformance.yaml"));
+}
+
 return RunGapDocs(args, repoRoot, gapsRoot, siteRoot, generatedCode);
 
 static int RunGapDocs(
@@ -212,6 +220,75 @@ static int CheckWorkload(string[] args, string gapsRoot)
     }
 
     return failOnBlocked && report.Compatibility == "blocked" ? 2 : 0;
+}
+
+static int PlanConformance(string[] args, string gapsRoot, string defaultMatrixPath)
+{
+    string? matrixPath = null;
+    string? service = null;
+    string? scenario = null;
+    string? outputPath = null;
+    for (var i = 0; i < args.Length; i++)
+    {
+        switch (args[i])
+        {
+            case "--matrix" when i + 1 < args.Length
+                                 && !args[i + 1].StartsWith("--", StringComparison.Ordinal):
+                matrixPath = args[++i];
+                break;
+            case "--service" when i + 1 < args.Length
+                                  && !args[i + 1].StartsWith("--", StringComparison.Ordinal):
+                service = args[++i];
+                break;
+            case "--scenario" when i + 1 < args.Length
+                                   && !args[i + 1].StartsWith("--", StringComparison.Ordinal):
+                scenario = args[++i];
+                break;
+            case "--output" when i + 1 < args.Length
+                                 && !args[i + 1].StartsWith("--", StringComparison.Ordinal):
+                outputPath = args[++i];
+                break;
+            default:
+                Console.Error.WriteLine($"Unknown or incomplete option '{args[i]}'.");
+                return 1;
+        }
+    }
+
+    try
+    {
+        var docs = Loader.LoadAll(gapsRoot);
+        var resolvedMatrixPath = Path.GetFullPath(matrixPath ?? defaultMatrixPath);
+        var matrix = ConformanceMatrixLoader.Load(resolvedMatrixPath);
+        var errors = ConformanceMatrixValidator.Validate(matrix, docs);
+        if (errors.Count > 0)
+        {
+            WriteErrors("real-Azure conformance matrix", errors);
+            return 1;
+        }
+
+        var plan = ConformancePlanGenerator.Generate(matrix, service, scenario);
+        var content = ConformancePlanRenderer.RenderJson(plan) + Environment.NewLine;
+        if (outputPath is null)
+        {
+            Console.Write(content);
+        }
+        else
+        {
+            File.WriteAllText(outputPath, content);
+        }
+        return 0;
+    }
+    catch (Exception exception) when (exception is ArgumentException
+                                      or FileNotFoundException
+                                      or InvalidDataException
+                                      or InvalidOperationException
+                                      or IOException
+                                      or UnauthorizedAccessException
+                                      or YamlException)
+    {
+        Console.Error.WriteLine("[gap-docs] " + exception.Message);
+        return 2;
+    }
 }
 
 static IReadOnlyList<string> ExpandTrxPaths(IReadOnlyList<string> paths)
