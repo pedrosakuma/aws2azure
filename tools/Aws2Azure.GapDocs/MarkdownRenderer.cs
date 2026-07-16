@@ -124,6 +124,40 @@ public static class MarkdownRenderer
         sb.AppendLine("4. Treat missing real-Azure seals as validation work required in your own staging environment.");
         sb.AppendLine("5. Stop the migration when a required pattern is blocked; do not assume the proxy emulates it.");
         sb.AppendLine();
+        sb.AppendLine("## Automated workload check");
+        sb.AppendLine();
+        sb.AppendLine("Create a versioned manifest that lists every AWS operation the application calls");
+        sb.AppendLine("and enables the contextual requirement IDs from the profiles below:");
+        sb.AppendLine();
+        sb.AppendLine("```yaml");
+        sb.AppendLine("schema_version: 1");
+        sb.AppendLine("workload: checkout");
+        sb.AppendLine("operations:");
+        sb.AppendLine("  - dynamodb:TransactWriteItems");
+        sb.AppendLine("  - sqs:SendMessage");
+        sb.AppendLine("requirements:");
+        sb.AppendLine("  cross_partition_transactions: true");
+        sb.AppendLine("```");
+        sb.AppendLine();
+        sb.AppendLine("Run a human-readable discovery report:");
+        sb.AppendLine();
+        sb.AppendLine("```bash");
+        sb.AppendLine("dotnet run --project tools/Aws2Azure.GapDocs -- check-workload workload.yaml");
+        sb.AppendLine("```");
+        sb.AppendLine();
+        sb.AppendLine("For CI, emit source-generated JSON and opt into a non-zero exit code when");
+        sb.AppendLine("the valid workload contains blockers:");
+        sb.AppendLine();
+        sb.AppendLine("```bash");
+        sb.AppendLine("dotnet run --project tools/Aws2Azure.GapDocs -- check-workload workload.yaml \\");
+        sb.AppendLine("  --format json --output compatibility.json --fail-on-blocked");
+        sb.AppendLine("```");
+        sb.AppendLine();
+        sb.AppendLine("Exit code `0` means the report was produced, `1` means the manifest or command");
+        sb.AppendLine("was invalid, and `2` means `--fail-on-blocked` found at least one blocker.");
+        sb.AppendLine("A `conditional` result does not fail CI; its guidance and workarounds require");
+        sb.AppendLine("an explicit migration decision.");
+        sb.AppendLine();
 
         foreach (var serviceDoc in designDocs.OrderBy(d => d.Service, System.StringComparer.Ordinal))
         {
@@ -135,8 +169,8 @@ public static class MarkdownRenderer
 
             sb.AppendLine($"## {serviceDoc.Service.ToLowerInvariant()}");
             sb.AppendLine();
-            sb.AppendLine("| Workload pattern | Assessment | Operation coverage | Real-Azure | Decision guidance |");
-            sb.AppendLine("|---|---|---|---:|---|");
+            sb.AppendLine("| Workload pattern | Assessment | Operation coverage | Real-Azure | Decision guidance | Requirement ID |");
+            sb.AppendLine("|---|---|---|---:|---|---|");
             foreach (var pattern in serviceDoc.WorkloadPatterns)
             {
                 var referencedOperations = pattern.Operations
@@ -161,12 +195,12 @@ public static class MarkdownRenderer
                 {
                     if (gapsByArea.TryGetValue(area, out var gap))
                     {
-                        details.Add($"[Design gap](design-gaps.md#{Anchor(serviceDoc.Service + "-" + area)}): {gap.Area}");
+                        details.Add($"[Design gap](design-gaps.md#{DocumentationLinks.Anchor(serviceDoc.Service + "-" + area)}): {gap.Area}");
                     }
                 }
                 sb.AppendLine(
                     $"| {Esc(pattern.Name)} | {CompatibilityBadge(pattern.Compatibility)} | " +
-                    $"{coverage} | {seals} | {string.Join("<br>", details)} |");
+                    $"{coverage} | {seals} | {string.Join("<br>", details)} | `{pattern.Id}` |");
             }
             sb.AppendLine();
         }
@@ -270,7 +304,7 @@ public static class MarkdownRenderer
             sb.AppendLine();
             foreach (var g in doc.DesignGaps)
             {
-                sb.AppendLine($"<a id=\"{Anchor(doc.Service + "-" + g.Area)}\"></a>");
+                sb.AppendLine($"<a id=\"{DocumentationLinks.Anchor(doc.Service + "-" + g.Area)}\"></a>");
                 sb.AppendLine();
                 sb.AppendLine($"### {Esc(g.Area)}");
                 sb.AppendLine();
@@ -340,17 +374,6 @@ public static class MarkdownRenderer
         "unsupported" => 3,
         _ => 4
     };
-
-    private static string Anchor(string value)
-    {
-        var sb = new StringBuilder(value.Length);
-        foreach (var c in value.ToLowerInvariant())
-        {
-            if (char.IsLetterOrDigit(c) || c == '-') sb.Append(c);
-            else if (c == ' ' || c == '/' || c == '(' || c == ')') sb.Append('-');
-        }
-        return sb.ToString().Trim('-');
-    }
 
     // Theme C divergence report: a one-screen dossier of every documented
     // behaviour difference plus the real-Azure verification state. The

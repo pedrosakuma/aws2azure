@@ -1,0 +1,8 @@
+schema_version: 1
+workload: checkout
+operations:
+  - sqs:SendMessage
+  - dynamodb:TransactWriteItems
+  - s3:PutObject
+requirements:
+  cross_partition_transactions: true

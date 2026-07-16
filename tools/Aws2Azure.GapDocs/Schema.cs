@@ -86,6 +86,7 @@ public sealed class DesignGap
 /// </summary>
 public sealed class WorkloadPattern
 {
+    public string Id { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string Compatibility { get; set; } = "conditional";
     public string Summary { get; set; } = string.Empty;

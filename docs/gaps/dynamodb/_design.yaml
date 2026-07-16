@@ -91,7 +91,8 @@ design_gaps:
       Use the corresponding Azure Cosmos capability directly (change feed,
       continuous backup, multi-region writes) outside the AWS wire protocol.
 workload_patterns:
-  - name: Basic table and item CRUD
+  - id: dynamodb_basic_crud
+    name: Basic table and item CRUD
     compatibility: conditional
     summary: >-
       Table lifecycle and item CRUD are translated, with expression, consistency,
@@ -110,7 +111,8 @@ workload_patterns:
     guidance: >-
       Use a proxy-managed Cosmos database, keep keys within the documented limit,
       and select an account consistency level that matches the workload.
-  - name: Query, Scan, and secondary-index reads
+  - id: dynamodb_query_scan_indexes
+    name: Query, Scan, and secondary-index reads
     compatibility: conditional
     summary: >-
       Query and Scan work for documented expression subsets; GSI/LSI reads add
@@ -125,7 +127,8 @@ workload_patterns:
     guidance: >-
       Validate every expression and index access pattern against representative
       data before migration.
-  - name: Single-partition transactions
+  - id: dynamodb_single_partition_transactions
+    name: Single-partition transactions
     compatibility: conditional
     summary: >-
       TransactGetItems and TransactWriteItems can be atomic only when every item
@@ -138,7 +141,8 @@ workload_patterns:
     guidance: >-
       Co-locate all transaction items under one partition key and test the
       supported condition-expression subset.
-  - name: Cross-table or cross-partition transactions
+  - id: cross_partition_transactions
+    name: Cross-table or cross-partition transactions
     compatibility: blocked
     summary: >-
       Cosmos stored procedures cannot reproduce DynamoDB ACID transactions
@@ -151,7 +155,8 @@ workload_patterns:
     guidance: >-
       Remodel the data or implement idempotent application-level compensation
       before routing this workload through the proxy.
-  - name: Streams, global tables, backups, DAX, or auto-scaling control plane
+  - id: dynamodb_absent_features
+    name: Streams, global tables, backups, DAX, or auto-scaling control plane
     compatibility: blocked
     summary: >-
       These DynamoDB control-plane and streaming capabilities are outside the

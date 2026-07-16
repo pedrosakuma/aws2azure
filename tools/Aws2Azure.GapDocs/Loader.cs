@@ -378,6 +378,7 @@ public static class Validator
             operationDocs.Select(o => o.Service.ToLowerInvariant()),
             StringComparer.OrdinalIgnoreCase);
         var seenServices = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenPatternIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var operationsByService = operationDocs
             .GroupBy(o => o.Service, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(
@@ -444,6 +445,21 @@ public static class Validator
             {
                 var pattern = doc.WorkloadPatterns[i];
                 var prefix = $"workload_patterns[{i}]";
+                if (string.IsNullOrWhiteSpace(pattern.Id))
+                {
+                    Err($"{prefix}.id missing");
+                }
+                else
+                {
+                    if (!IsRequirementId(pattern.Id))
+                    {
+                        Err($"{prefix}.id '{pattern.Id}' must use lowercase letters, digits, and underscores, starting with a letter");
+                    }
+                    if (!seenPatternIds.Add(pattern.Id))
+                    {
+                        Err($"{prefix} duplicates workload pattern id '{pattern.Id}'");
+                    }
+                }
                 if (string.IsNullOrWhiteSpace(pattern.Name))
                 {
                     Err($"{prefix}.name missing");
@@ -509,5 +525,24 @@ public static class Validator
         }
 
         return errors;
+    }
+
+    private static bool IsRequirementId(string value)
+    {
+        if (value.Length == 0 || value[0] is < 'a' or > 'z')
+        {
+            return false;
+        }
+
+        for (var i = 1; i < value.Length; i++)
+        {
+            var c = value[i];
+            if (c is not (>= 'a' and <= 'z') && c is not (>= '0' and <= '9') && c != '_')
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

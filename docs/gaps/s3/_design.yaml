@@ -78,7 +78,8 @@ design_gaps:
       website, and Event Grid subscriptions configured directly on the storage
       account.
 workload_patterns:
-  - name: Basic object CRUD
+  - id: s3_basic_object_crud
+    name: Basic object CRUD
     compatibility: supported
     summary: >-
       Upload, download, inspect, list, and delete ordinary objects through the
@@ -92,7 +93,8 @@ workload_patterns:
     guidance: >-
       Suitable when the application does not depend on AWS IAM, bucket policies,
       lifecycle configuration, or an AWS-specific encryption mode.
-  - name: Multipart upload
+  - id: s3_multipart_upload
+    name: Multipart upload
     compatibility: conditional
     summary: >-
       Multipart initiation, part upload/listing, completion, and abort are
@@ -108,7 +110,8 @@ workload_patterns:
     guidance: >-
       Accept only if clients do not overwrite a part number with different
       content and then depend on CompleteMultipartUpload rejecting the old ETag.
-  - name: Versioning and object-lock administration
+  - id: s3_versioning_object_lock
+    name: Versioning and object-lock administration
     compatibility: conditional
     summary: >-
       Object versions, retention, and legal holds are exposed, but account-level
@@ -127,7 +130,8 @@ workload_patterns:
     guidance: >-
       Validate the exact flow against real Azure and configure Blob versioning
       and immutability outside the proxy before adoption.
-  - name: Bucket policy, lifecycle, and event automation
+  - id: s3_policy_lifecycle_automation
+    name: Bucket policy, lifecycle, and event automation
     compatibility: blocked
     summary: >-
       Workloads that configure authorization, lifecycle, replication, website,
