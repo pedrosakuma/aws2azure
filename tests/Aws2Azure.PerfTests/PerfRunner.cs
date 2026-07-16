@@ -123,14 +123,6 @@ internal static class PerfRunner
                     {
                         Interlocked.CompareExchange(ref firstThrottle, ex, null);
                         Interlocked.Increment(ref throttled);
-                        try
-                        {
-                            await Task.Delay(TimeSpan.FromMilliseconds(50), runCts.Token).ConfigureAwait(false);
-                        }
-                        catch (OperationCanceledException) when (runCts.IsCancellationRequested)
-                        {
-                            break;
-                        }
                     }
                     else
                     {

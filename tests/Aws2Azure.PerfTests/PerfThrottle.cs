@@ -44,7 +44,6 @@ internal static class PerfThrottle
         "RequestThrottled",
         "RequestRateTooLarge",
         "TooManyRequests",
-        "SlowDown",
     };
 
     /// <summary>
@@ -60,7 +59,6 @@ internal static class PerfThrottle
         "TooManyRequests",
         "ThrottlingException",
         "ProvisionedThroughputExceeded",
-        "Reduce your request rate",
     };
 
     /// <summary>

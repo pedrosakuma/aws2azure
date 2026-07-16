@@ -224,7 +224,8 @@ Use the repository validation entrypoint so local and agent runs match CI:
   suitable for a quick cross-cutting check. Run focused unit tests for the
   changed area before it.
 - `pwsh ./eng/validate.ps1 pr` — release build, all unit tests, Tier-1
-  conformance, and gap-doc validation. It also publishes AOT on Linux.
+  conformance, deterministic perf-harness tests (emulator scenarios self-skip),
+  and gap-doc validation. It also publishes AOT on Linux.
   Non-Linux hosts skip AOT unless requested because Native AOT requires a
   platform toolchain; CI passes `linux-x64 -RequireAot` explicitly. Run before
   declaring a non-trivial change complete.
@@ -300,8 +301,9 @@ task is genuinely trivial (typo fix, one-line config, doc-only).
   is the cumulative append-only trend.
 - **Perf CI cadence.** `.github/workflows/perf.yml` runs the harness on
   nightly cron (05:30 UTC), `workflow_dispatch`, and automatically for PRs
-  changing shipping code or perf infrastructure. The `run-perf` label remains
-  an explicit override.
+  changing shipping code or emulator infrastructure. Deterministic perf-harness
+  tests run in `ci.yml`; the `run-perf` label remains an explicit override for
+  harness/baseline changes that need an end-to-end measurement.
 
 User- or task-scoped preferences ("for this PR skip the review", "I
 prefer option X") belong in the prompt, not here. Conventions in this

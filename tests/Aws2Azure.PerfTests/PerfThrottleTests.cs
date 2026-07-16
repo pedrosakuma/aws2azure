@@ -52,16 +52,6 @@ public class PerfThrottleTests
     }
 
     [Fact]
-    public void S3_slow_down_is_throttle()
-    {
-        var ex = new AmazonServiceException(
-            "Reduce your request rate.", null, ErrorType.Sender, "SlowDown", "req-s3",
-            HttpStatusCode.ServiceUnavailable);
-
-        Assert.True(PerfThrottle.IsThrottle(ex));
-    }
-
-    [Fact]
     public void Server_error_5xx_is_not_throttle()
     {
         var ex = new AmazonServiceException(

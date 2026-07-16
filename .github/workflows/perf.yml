@@ -27,13 +27,9 @@ jobs:
           filters: |
             relevant:
               - 'src/**'
-              - 'tests/Aws2Azure.PerfTests/**'
-              - 'tests/Aws2Azure.TestSupport/**'
-              - 'docs/perf/baseline-reference.json'
               - 'deploy/emulators/**'
               - 'deploy/docker-compose.yml'
               - 'docker-compose.yml'
-              - '.github/workflows/perf.yml'
 
   perf:
     needs: changes
