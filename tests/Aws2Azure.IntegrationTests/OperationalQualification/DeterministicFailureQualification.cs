@@ -50,7 +50,7 @@ internal static class DeterministicFailureQualification
             case CancellationScenarioId:
                 await VerifyCancellationAsync(
                     "s3",
-                    static baseAddress => CreateS3ListBucketsRequest(baseAddress))
+                    static baseAddress => CreateS3GetObjectRequest(baseAddress))
                     .ConfigureAwait(false);
                 break;
             case RetryExhaustionScenarioId:
@@ -110,14 +110,18 @@ internal static class DeterministicFailureQualification
         harness.Backend.PlanStatus(failure.BackendStatus, failure.AzureErrorCode);
 
         using var response = await harness.RawClient.SendAsync(
-            CreateS3ListBucketsRequest(harness.RawClient.BaseAddress!)).ConfigureAwait(false);
+            CreateS3GetObjectRequest(harness.RawClient.BaseAddress!)).ConfigureAwait(false);
         await AssertCanonicalErrorAsync(
             response,
             failure,
             CanonicalResponse.BodyKindXmlError).ConfigureAwait(false);
 
         var exception = await Assert.ThrowsAnyAsync<AmazonServiceException>(
-            () => sdk.ListBucketsAsync());
+            () => sdk.GetObjectAsync(new GetObjectRequest
+            {
+                BucketName = "deterministic-failure",
+                Key = "object",
+            }));
         AssertSdkError(exception, failure);
         AssertSdkRetriedOnce(harness);
     }
@@ -222,9 +226,11 @@ internal static class DeterministicFailureQualification
                 HttpClientFactory = harness.AwsHttpClientFactory,
             });
 
-    private static HttpRequestMessage CreateS3ListBucketsRequest(Uri baseAddress)
+    private static HttpRequestMessage CreateS3GetObjectRequest(Uri baseAddress)
     {
-        var request = new HttpRequestMessage(HttpMethod.Get, new Uri(baseAddress, "/"));
+        var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            new Uri(baseAddress, "/deterministic-failure/object"));
         TestSigV4Signer.SignHeader(
             request,
             [],
