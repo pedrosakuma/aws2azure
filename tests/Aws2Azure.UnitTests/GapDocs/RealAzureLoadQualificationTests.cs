@@ -213,6 +213,51 @@ public sealed class RealAzureLoadQualificationTests
     }
 
     [Fact]
+    public void Generate_allows_one_shot_real_azure_operational_scenario_below_load_volume()
+    {
+        var manifest = Manifest();
+        manifest.Evidence.RequiredScenarios.Add("restart");
+        manifest.Evidence.RequiredRealAzureScenarios.Add("restart");
+        var policy = Policy();
+        policy.Scenarios.Add(new WorkloadQualificationScenarioPolicy
+        {
+            Id = "restart",
+            Service = "s3",
+            Operation = "PutObject",
+            EvidenceSource = "real_azure",
+        });
+        var evidence = new[] { Evidence(1), Evidence(2), Evidence(3) };
+        foreach (var run in evidence)
+        {
+            run.Scenarios.Add(new SloQualificationScenario
+            {
+                Id = "restart",
+                Service = "s3",
+                Operation = "PutObject",
+                EvidenceSource = "real_azure",
+                Completions = 1,
+                DurationSeconds = 1,
+                CapturedAtUtc = run.Provenance.WindowEndUtc,
+            });
+        }
+
+        var document = RealAzureLoadQualificationGenerator.Generate(
+            manifest,
+            Candidate(),
+            policy,
+            evidence,
+            Metadata());
+
+        Assert.Equal("qualified", document.Verdict);
+        var restart = Assert.Single(document.Scenarios, scenario => scenario.Id == "restart");
+        Assert.Equal(3, restart.Completions);
+        Assert.DoesNotContain(
+            document.Findings,
+            finding => finding.Code == "insufficient_scenario_evidence"
+                       && finding.ScenarioId == "restart");
+    }
+
+    [Fact]
     public void Generate_records_unresolved_capacity_threshold_and_blocks_qualification()
     {
         var policy = Policy();
