@@ -11,6 +11,15 @@ services:
         operations: [CreateBucket, PutObject, GetObject, DeleteObject, DeleteBucket]
         tests:
           - Aws2Azure.IntegrationTests.S3.S3RealAzureSmokeTests.Object_lifecycle_round_trips_against_real_blob_storage
+      - id: object-read-shape
+        priority: p0
+        category: read
+        evidence_source: real_azure
+        establishes_verification: true
+        description: PutObject metadata and content type, HeadObject response shape, ranged GetObject, ETag conditionals, and idempotent object cleanup against real Blob Storage.
+        operations: [PutObject, GetObject, HeadObject]
+        tests:
+          - Aws2Azure.IntegrationTests.S3.S3RealAzureConformanceTests.HeadObject_and_read_shape_conform_against_real_blob_storage
       - id: object-list-pagination
         priority: p0
         category: pagination

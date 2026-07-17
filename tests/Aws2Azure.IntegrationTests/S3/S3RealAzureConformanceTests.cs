@@ -1,3 +1,5 @@
+using System.Net;
+using Amazon.S3;
 using Amazon.S3.Model;
 using Xunit;
 
@@ -7,6 +9,120 @@ namespace Aws2Azure.IntegrationTests.S3;
 [Collection(RealAzureCollection.Name)]
 public sealed class S3RealAzureConformanceTests(RealAzureProxyFixture fixture)
 {
+    [SkippableFact]
+    public async Task HeadObject_and_read_shape_conform_against_real_blob_storage()
+    {
+        Skip.IfNot(fixture.BlobConfigured,
+            "AZURE_BLOB_ACCOUNT/AZURE_BLOB_KEY not set — skipping real-Azure S3 conformance.");
+
+        var bucket = "aws2azure-read-" + Guid.NewGuid().ToString("N")[..12];
+        const string key = "read/object.txt";
+        const string payload = "0123456789abcdefghijklmnopqrstuvwxyz";
+        const string contentType = "text/plain; charset=utf-8";
+        const string metadataKey = "x-amz-meta-certification";
+        const string metadataValue = "head-read-shape";
+        const string nonMatchingEtag = "\"00000000000000000000000000000000\"";
+        using var client = fixture.CreateS3Client();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var bucketCreated = false;
+
+        try
+        {
+            await client.PutBucketAsync(
+                new PutBucketRequest { BucketName = bucket },
+                timeout.Token).ConfigureAwait(false);
+            bucketCreated = true;
+
+            var putRequest = new PutObjectRequest
+            {
+                BucketName = bucket,
+                Key = key,
+                ContentBody = payload,
+                ContentType = contentType,
+            };
+            putRequest.Metadata.Add(metadataKey, metadataValue);
+            var put = await client.PutObjectAsync(putRequest, timeout.Token).ConfigureAwait(false);
+
+            var head = await client.GetObjectMetadataAsync(new GetObjectMetadataRequest
+            {
+                BucketName = bucket,
+                Key = key,
+            }, timeout.Token).ConfigureAwait(false);
+
+            Assert.Equal(payload.Length, head.ContentLength);
+            Assert.Equal(contentType, head.Headers.ContentType);
+            Assert.Equal(put.ETag, head.ETag);
+            Assert.Equal(metadataValue, head.Metadata[metadataKey]);
+
+            using (var ranged = await client.GetObjectAsync(new GetObjectRequest
+            {
+                BucketName = bucket,
+                Key = key,
+                ByteRange = new ByteRange(7, 18),
+            }, timeout.Token).ConfigureAwait(false))
+            {
+                Assert.Equal(HttpStatusCode.PartialContent, ranged.HttpStatusCode);
+                using var reader = new StreamReader(ranged.ResponseStream);
+                Assert.Equal(payload[7..19], await reader.ReadToEndAsync(timeout.Token).ConfigureAwait(false));
+            }
+
+            var matchingHead = await client.GetObjectMetadataAsync(new GetObjectMetadataRequest
+            {
+                BucketName = bucket,
+                Key = key,
+                EtagToMatch = head.ETag,
+            }, timeout.Token).ConfigureAwait(false);
+            Assert.Equal(head.ETag, matchingHead.ETag);
+
+            var failedHead = await Assert.ThrowsAsync<AmazonS3Exception>(() =>
+                client.GetObjectMetadataAsync(new GetObjectMetadataRequest
+                {
+                    BucketName = bucket,
+                    Key = key,
+                    EtagToMatch = nonMatchingEtag,
+                }, timeout.Token)).ConfigureAwait(false);
+            Assert.Equal(HttpStatusCode.PreconditionFailed, failedHead.StatusCode);
+
+            var notModified = await Assert.ThrowsAsync<AmazonS3Exception>(() =>
+                client.GetObjectAsync(new GetObjectRequest
+                {
+                    BucketName = bucket,
+                    Key = key,
+                    EtagToNotMatch = head.ETag,
+                }, timeout.Token)).ConfigureAwait(false);
+            Assert.Equal(HttpStatusCode.NotModified, notModified.StatusCode);
+
+            using (var nonMatching = await client.GetObjectAsync(new GetObjectRequest
+            {
+                BucketName = bucket,
+                Key = key,
+                EtagToNotMatch = nonMatchingEtag,
+            }, timeout.Token).ConfigureAwait(false))
+            using (var reader = new StreamReader(nonMatching.ResponseStream))
+            {
+                Assert.Equal(payload, await reader.ReadToEndAsync(timeout.Token).ConfigureAwait(false));
+            }
+
+            await client.DeleteObjectAsync(
+                new DeleteObjectRequest { BucketName = bucket, Key = key },
+                timeout.Token).ConfigureAwait(false);
+            await client.DeleteObjectAsync(
+                new DeleteObjectRequest { BucketName = bucket, Key = key },
+                timeout.Token).ConfigureAwait(false);
+            await client.DeleteBucketAsync(
+                new DeleteBucketRequest { BucketName = bucket },
+                timeout.Token).ConfigureAwait(false);
+            bucketCreated = false;
+        }
+        finally
+        {
+            if (bucketCreated)
+            {
+                await DeleteBucketBestEffortAsync(client, bucket, [key]).ConfigureAwait(false);
+            }
+        }
+    }
+
     [SkippableFact]
     public async Task ListObjectsV2_paginates_against_real_blob_storage()
     {
