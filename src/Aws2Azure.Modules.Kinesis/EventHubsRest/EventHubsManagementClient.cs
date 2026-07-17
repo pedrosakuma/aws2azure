@@ -53,7 +53,7 @@ public sealed class EventHubsManagementClient : IEventHubsManagementClient
         }
 
         var requestUri = BuildRequestUri(credentials, namespaceFqdn, eventHubName);
-        EventHubsManagementClientLog.FetchingEventHub(_logger, namespaceFqdn, eventHubName);
+        KinesisLog.FetchingEventHub(_logger, namespaceFqdn, eventHubName);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
@@ -66,7 +66,7 @@ public sealed class EventHubsManagementClient : IEventHubsManagementClient
         if (!response.IsSuccessStatusCode)
         {
             var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            EventHubsManagementClientLog.EventHubRequestFailed(_logger, namespaceFqdn, eventHubName, (int)response.StatusCode);
+            KinesisLog.EventHubRequestFailed(_logger, namespaceFqdn, eventHubName, (int)response.StatusCode);
             throw new EventHubsManagementException(response.StatusCode, errorBody);
         }
 
@@ -250,15 +250,4 @@ public sealed class EventHubsManagementException : Exception
 
     public HttpStatusCode StatusCode { get; }
     public string? ResponseBody { get; }
-}
-
-internal static partial class EventHubsManagementClientLog
-{
-    [LoggerMessage(EventId = 1, Level = LogLevel.Debug,
-        Message = "Fetching Event Hub metadata for namespace '{NamespaceFqdn}' and entity '{EventHubName}'")]
-    public static partial void FetchingEventHub(ILogger logger, string namespaceFqdn, string eventHubName);
-
-    [LoggerMessage(EventId = 2, Level = LogLevel.Warning,
-        Message = "Event Hub metadata request for namespace '{NamespaceFqdn}' and entity '{EventHubName}' failed with HTTP {StatusCode}")]
-    public static partial void EventHubRequestFailed(ILogger logger, string namespaceFqdn, string eventHubName, int statusCode);
 }

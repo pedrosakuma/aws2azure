@@ -39,7 +39,7 @@ public sealed class ShardIteratorTokenCodecFactory
             return new ShardIteratorTokenCodec(decoded, _timeProvider);
         }
 
-        ShardIteratorTokenCodecFactoryLog.UsingEphemeralSigningKey(_logger);
+        KinesisLog.UsingEphemeralShardIteratorSigningKey(_logger);
         return new ShardIteratorTokenCodec(ProcessSigningKey.Value, _timeProvider);
     }
 }

@@ -36,7 +36,7 @@ public sealed class ListShardsCursorCodecFactory
             return new ListShardsCursorCodec(decoded, _timeProvider);
         }
 
-        ListShardsCursorCodecFactoryLog.UsingEphemeralSigningKey(_logger);
+        KinesisLog.UsingEphemeralListShardsCursorSigningKey(_logger);
         return new ListShardsCursorCodec(ProcessSigningKey.Value, _timeProvider);
     }
 }
@@ -121,11 +121,4 @@ public enum ListShardsCursorVerifyError
     BadSignature,
     MalformedPayload,
     Expired,
-}
-
-internal static partial class ListShardsCursorCodecFactoryLog
-{
-    [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
-        Message = "Event Hubs list-shards cursor signing key is not configured; using an ephemeral process key.")]
-    public static partial void UsingEphemeralSigningKey(ILogger logger);
 }
