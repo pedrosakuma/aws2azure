@@ -69,9 +69,11 @@ jobs:
           dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- \
             plan-conformance --output "$CONFORMANCE_PLAN"
 
-      # Reproduce the integration-real-azure candidate identity. Qualification
-      # later rejects a load run unless this runtime/config identity exactly
-      # matches the selected correctness artifact.
+      # Reproduce the integration-real-azure candidate identity separately from
+      # the load producer identity. Qualification rejects a load run unless the
+      # candidate runtime/config exactly matches the selected correctness
+      # artifact, while producer_config_digest below seals the files actually
+      # used to provision and drive this load run.
       - name: Seal runtime and non-secret candidate configuration
         id: provenance
         shell: bash
@@ -87,7 +89,7 @@ jobs:
               xargs -0 sha256sum
           ) > "$GITHUB_WORKSPACE/$runtime_manifest"
 
-          config_manifest="$QUALIFICATION_DIR/config-manifest.json"
+          candidate_config_manifest="$QUALIFICATION_DIR/config-manifest.json"
           jq -n \
             --arg schema_version "1" \
             --arg git_sha "$(git rev-parse HEAD)" \
@@ -111,12 +113,44 @@ jobs:
                 bicep: ("sha256:" + $bicep_sha256),
                 workflow: ("sha256:" + $workflow_sha256)
               }
-            }' > "$config_manifest"
+            }' > "$candidate_config_manifest"
+
+          producer_config_manifest="$QUALIFICATION_DIR/load-producer-config-manifest.json"
+          jq -n \
+            --arg schema_version "1" \
+            --arg git_sha "$(git rev-parse HEAD)" \
+            --arg region "$AZURE_LOCATION" \
+            --arg concurrency "$LOAD_CONCURRENCY" \
+            --arg duration_seconds "$LOAD_DURATION_SECONDS" \
+            --arg bicep_sha256 "$(sha256sum deploy/realazure/secretsmanager-load.bicep | cut -d' ' -f1)" \
+            --arg workflow_sha256 "$(sha256sum .github/workflows/workload-load-real-azure.yml | cut -d' ' -f1)" \
+            --arg runner_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/SecretsManager/SecretsManagerRealAzureLoadQualificationTests.cs | cut -d' ' -f1)" \
+            '{
+              schema_version: ($schema_version | tonumber),
+              git_sha: $git_sha,
+              region: $region,
+              topology: {
+                backend: "Key Vault Standard",
+                rbac: true,
+                soft_delete_retention_days: 7,
+                purge_protection: false
+              },
+              load_shape: {
+                concurrency: ($concurrency | tonumber),
+                requested_duration_seconds: ($duration_seconds | tonumber)
+              },
+              source_digests: {
+                bicep: ("sha256:" + $bicep_sha256),
+                workflow: ("sha256:" + $workflow_sha256),
+                runner: ("sha256:" + $runner_sha256)
+              }
+            }' > "$producer_config_manifest"
 
           {
             echo "git_sha=$(git rev-parse HEAD)"
             echo "runtime_digest=sha256:$(sha256sum "$runtime_manifest" | cut -d' ' -f1)"
-            echo "config_digest=sha256:$(sha256sum "$config_manifest" | cut -d' ' -f1)"
+            echo "config_digest=sha256:$(sha256sum "$candidate_config_manifest" | cut -d' ' -f1)"
+            echo "producer_config_digest=sha256:$(sha256sum "$producer_config_manifest" | cut -d' ' -f1)"
           } >> "$GITHUB_OUTPUT"
 
       - name: Azure login (OIDC)
@@ -137,10 +171,8 @@ jobs:
                    created="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             -o none
           az deployment group create -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
-            -f deploy/realazure/main.bicep \
-            -p cosmosDatabaseName=dynamodb \
-               eventHubName=kinesis-smoke \
-               principalId="$AZURE_CLIENT_OBJECT_ID" \
+            -f deploy/realazure/secretsmanager-load.bicep \
+            -p principalId="$AZURE_CLIENT_OBJECT_ID" \
             -o none
 
       - name: Export Key Vault endpoint
@@ -201,8 +233,9 @@ jobs:
           AWS2AZURE_LOAD_GIT_SHA: ${{ steps.provenance.outputs.git_sha }}
           AWS2AZURE_LOAD_ARTIFACT_DIGEST: ${{ steps.provenance.outputs.runtime_digest }}
           AWS2AZURE_LOAD_CONFIG_DIGEST: ${{ steps.provenance.outputs.config_digest }}
+          AWS2AZURE_LOAD_PRODUCER_CONFIG_DIGEST: ${{ steps.provenance.outputs.producer_config_digest }}
           AWS2AZURE_LOAD_RUN_URL: ${{ env.RUN_URL }}
-          AWS2AZURE_LOAD_BACKEND_DESCRIPTION: Ephemeral Azure production SKUs from deploy/realazure/main.bicep
+          AWS2AZURE_LOAD_BACKEND_DESCRIPTION: Ephemeral Key Vault Standard with RBAC and seven-day soft delete
         run: |
           dotnet test tests/Aws2Azure.IntegrationTests \
             -c Release --no-build --nologo \

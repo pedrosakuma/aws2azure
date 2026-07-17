@@ -76,6 +76,7 @@ public sealed class RealAzureLoadEvidenceProvenance
     public DateTimeOffset WindowEndUtc { get; set; }
     public string Region { get; set; } = string.Empty;
     public string BackendDescription { get; set; } = string.Empty;
+    public string ProducerConfigDigest { get; set; } = string.Empty;
 }
 
 public sealed class RealAzureLoadSignalMeasurement
@@ -641,6 +642,9 @@ public static class RealAzureLoadQualificationGenerator
                 || run.Candidate.ConfigDigest != candidate.Candidate.ConfigDigest
                 || run.Provenance.Region != first.Provenance.Region
                 || run.Provenance.BackendDescription != first.Provenance.BackendDescription
+                || string.IsNullOrWhiteSpace(run.Provenance.ProducerConfigDigest)
+                || run.Provenance.ProducerConfigDigest
+                    != first.Provenance.ProducerConfigDigest
                 || run.Provenance.RunAttempt <= 0
                 || run.Provenance.WindowStartUtc >= run.Provenance.WindowEndUtc
                 || run.Provenance.GeneratedAtUtc < run.Provenance.WindowEndUtc

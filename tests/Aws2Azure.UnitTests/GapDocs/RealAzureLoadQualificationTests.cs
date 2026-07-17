@@ -63,6 +63,23 @@ public sealed class RealAzureLoadQualificationTests
     }
 
     [Fact]
+    public void Generate_rejects_load_producer_config_drift_between_runs()
+    {
+        var drifted = Evidence(2);
+        drifted.Provenance.ProducerConfigDigest = "sha256:different-producer";
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            RealAzureLoadQualificationGenerator.Generate(
+                Manifest(),
+                Candidate(),
+                Policy(),
+                [Evidence(1), drifted, Evidence(3)],
+                Metadata()));
+
+        Assert.Contains("inconsistent", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Generate_requires_exactly_one_capacity_signal_from_each_run()
     {
         var duplicated = Evidence(1);
@@ -439,6 +456,7 @@ public sealed class RealAzureLoadQualificationTests
             GeneratedAtUtc = Now.AddMinutes(-attempt * 10),
             Region = "eastus2",
             BackendDescription = "Blob Storage Standard_LRS",
+            ProducerConfigDigest = "sha256:load-producer",
         },
         LoadShape = new RealAzureLoadShape
         {

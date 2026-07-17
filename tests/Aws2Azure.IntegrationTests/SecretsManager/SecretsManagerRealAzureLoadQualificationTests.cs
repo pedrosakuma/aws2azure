@@ -102,6 +102,8 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                 WindowEndUtc = windowEnd,
                 Region = RequiredEnvironment("AZURE_LOCATION"),
                 BackendDescription = RequiredEnvironment("AWS2AZURE_LOAD_BACKEND_DESCRIPTION"),
+                ProducerConfigDigest = RequiredEnvironment(
+                    "AWS2AZURE_LOAD_PRODUCER_CONFIG_DIGEST"),
             },
             LoadShape = new LoadShape
             {
@@ -596,6 +598,7 @@ internal sealed class LoadProvenance
     public DateTimeOffset WindowEndUtc { get; set; }
     public string Region { get; set; } = string.Empty;
     public string BackendDescription { get; set; } = string.Empty;
+    public string ProducerConfigDigest { get; set; } = string.Empty;
 }
 
 internal sealed class LoadShape
