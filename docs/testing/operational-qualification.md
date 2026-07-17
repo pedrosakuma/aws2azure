@@ -37,10 +37,13 @@ previously approved immutable artifact.
 1. Run `integration-real-azure` for the candidate SHA. Retain the
    `real-azure-conformance` artifact containing correctness candidates,
    `runtime-sha256.txt`, and `config-manifest.json`.
-2. Execute the profile's production-shaped load job at least the policy's
-   `min_distinct_runs`. Each run must upload exactly one
-   `real-azure-workload-load-<profile>/load-evidence.json`; do not reuse a run id
-   or mix candidate/config digests, regions, SKUs, emulator results, or A/B arms.
+2. Dispatch `workload-load-real-azure` for the profile at least the policy's
+   `min_distinct_runs` (the schedule intentionally remains Secrets Manager only).
+   Each profile uses its own concurrency group and ephemeral resource group and
+   uploads `real-azure-workload-load-<profile>` with exactly one
+   `load-evidence.json` plus the sealed runtime, candidate-config, and
+   producer-config manifests. Do not reuse a run id or mix candidate/config
+   digests, regions, SKUs, emulator results, or A/B arms.
 3. Complete the rollback action above and include its scenario row in every
    evidence bundle required by the reviewed policy.
 4. Dispatch `qualification-real-azure` with the correctness run id, all load run

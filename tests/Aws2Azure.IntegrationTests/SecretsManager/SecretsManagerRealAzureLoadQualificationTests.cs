@@ -1,12 +1,11 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Globalization;
 using System.Net;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Amazon.SecretsManager;
 using Amazon.SecretsManager.Model;
+using Aws2Azure.IntegrationTests.OperationalQualification;
 using Xunit;
+using static Aws2Azure.IntegrationTests.OperationalQualification.RealAzureWorkloadLoad;
 
 namespace Aws2Azure.IntegrationTests.SecretsManager;
 
@@ -39,11 +38,11 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
         var concurrency = ReadPositiveInt("AWS2AZURE_LOAD_CONCURRENCY", 8);
         var requestedDuration = TimeSpan.FromSeconds(
             ReadPositiveInt("AWS2AZURE_LOAD_DURATION_SECONDS", 300));
-        var tracker = new LoadTracker(Operations);
+        var tracker = new RealAzureWorkloadLoadTracker("secretsmanager", Operations);
         var vaultUrl = RequiredEnvironment("AZURE_KEYVAULT_URL");
         var windowStart = DateTimeOffset.UtcNow;
-        var networkBefore = await ProbeNetworkAsync(vaultUrl, 12).ConfigureAwait(false);
-        var loadStart = DateTimeOffset.UtcNow;
+        var networkTarget = new Uri(new Uri(vaultUrl), "secrets?api-version=7.4");
+        var networkBefore = await ProbeNetworkAsync(networkTarget, 12).ConfigureAwait(false);
         var stopwatch = Stopwatch.StartNew();
         using var client = fixture.CreateSecretsManagerClient();
         using var timeout = new CancellationTokenSource(requestedDuration + TimeSpan.FromMinutes(5));
@@ -60,7 +59,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
         await Task.WhenAll(workers).ConfigureAwait(false);
         stopwatch.Stop();
         var loadEnd = DateTimeOffset.UtcNow;
-        var networkAfter = await ProbeNetworkAsync(vaultUrl, 12).ConfigureAwait(false);
+        var networkAfter = await ProbeNetworkAsync(networkTarget, 12).ConfigureAwait(false);
         var windowEnd = DateTimeOffset.UtcNow;
 
         var operationMix = tracker.Snapshot();
@@ -70,29 +69,29 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
         var representativeAttempts = representative.Completions + representative.Failures;
         var representativeLatencies = tracker.Latencies("GetSecretValue");
         var networkLatencies = networkBefore.Concat(networkAfter).ToArray();
-        var evidence = new SecretsManagerLoadEvidence
+        var evidence = new RealAzureWorkloadLoadEvidence
         {
             SchemaVersion = 1,
-            Profile = new LoadProfile
+            Profile = new RealAzureWorkloadLoadProfile
             {
                 Id = "secretsmanager-basic-lifecycle",
                 Version = 1,
                 Services =
                 [
-                    new LoadProfileService
+                    new RealAzureWorkloadLoadProfileService
                     {
                         Service = "secretsmanager",
                         Operations = Operations.ToList(),
                     }
                 ],
             },
-            Candidate = new LoadCandidate
+            Candidate = new RealAzureWorkloadLoadCandidate
             {
                 GitSha = RequiredEnvironment("AWS2AZURE_LOAD_GIT_SHA"),
                 ArtifactDigest = RequiredEnvironment("AWS2AZURE_LOAD_ARTIFACT_DIGEST"),
                 ConfigDigest = RequiredEnvironment("AWS2AZURE_LOAD_CONFIG_DIGEST"),
             },
-            Provenance = new LoadProvenance
+            Provenance = new RealAzureWorkloadLoadProvenance
             {
                 RunId = RequiredEnvironment("GITHUB_RUN_ID"),
                 RunUrl = RequiredEnvironment("AWS2AZURE_LOAD_RUN_URL"),
@@ -105,7 +104,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                 ProducerConfigDigest = RequiredEnvironment(
                     "AWS2AZURE_LOAD_PRODUCER_CONFIG_DIGEST"),
             },
-            LoadShape = new LoadShape
+            LoadShape = new RealAzureWorkloadLoadShape
             {
                 Concurrency = concurrency,
                 RequestedDurationSeconds = requestedDuration.TotalSeconds,
@@ -167,15 +166,13 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
             ],
         };
 
-        var fullOutputPath = Path.IsPathRooted(outputPath)
-            ? outputPath!
-            : Path.Combine(FindRepoRoot(), outputPath!);
+        var fullOutputPath = ResolveOutputPath(outputPath!);
         Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath)!);
         await File.WriteAllTextAsync(
             fullOutputPath,
             JsonSerializer.Serialize(
                 evidence,
-                SecretsManagerLoadEvidenceJsonContext.Default.SecretsManagerLoadEvidence),
+                RealAzureWorkloadLoadEvidenceJsonContext.Default.RealAzureWorkloadLoadEvidence),
             timeout.Token).ConfigureAwait(false);
 
         Assert.True(totalCompletions > 0, "The production-shaped load completed no operations.");
@@ -186,7 +183,8 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                 ", ",
                 operationMix
                     .Where(item => item.Failures > 0)
-                    .Select(item => $"{item.Operation}={item.Failures}"))}" +
+                    .Select(item =>
+                        $"{item.Operation}={item.Failures} ({tracker.FirstFailure(item.Operation)})"))}" +
             $"{Environment.NewLine}{fixture.ProxyOutput}");
         Assert.All(operationMix, item => Assert.True(
             item.Completions > 0,
@@ -195,7 +193,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
 
     private static async Task RunWorkerAsync(
         IAmazonSecretsManager client,
-        LoadTracker tracker,
+        RealAzureWorkloadLoadTracker tracker,
         int worker,
         TimeSpan duration,
         Stopwatch stopwatch,
@@ -325,7 +323,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
     }
 
     private static async Task MeasureAsync(
-        LoadTracker tracker,
+        RealAzureWorkloadLoadTracker tracker,
         string operation,
         Func<Task> action)
     {
@@ -341,7 +339,8 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
             tracker.RecordFailure(
                 operation,
                 Stopwatch.GetElapsedTime(started).TotalMilliseconds,
-                IsThrottle(exception));
+                IsThrottle(exception),
+                exception);
             throw;
         }
     }
@@ -383,26 +382,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                    || string.Equals(aws.ErrorCode, "ThrottlingException", StringComparison.Ordinal));
     }
 
-    private static async Task<double[]> ProbeNetworkAsync(string vaultUrl, int samples)
-    {
-        using var client = new HttpClient
-        {
-            Timeout = TimeSpan.FromSeconds(10),
-        };
-        var target = new Uri(new Uri(vaultUrl), "secrets?api-version=7.4");
-        var latencies = new double[samples];
-        for (var index = 0; index < samples; index++)
-        {
-            var started = Stopwatch.GetTimestamp();
-            using var response = await client.GetAsync(
-                target,
-                HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
-            latencies[index] = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
-        }
-        return latencies;
-    }
-
-    private static LoadScenario Scenario(
+    private static RealAzureWorkloadLoadScenario Scenario(
         string id,
         string operation,
         string evidenceSource,
@@ -423,7 +403,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
         CapturedAtUtc = capturedAtUtc,
     };
 
-    private static LoadSignal Signal(
+    private static RealAzureWorkloadLoadSignal Signal(
         string id,
         string metric,
         double measuredValue,
@@ -438,230 +418,4 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
         CapturedAtUtc = capturedAtUtc,
     };
 
-    private static double Percentile(IReadOnlyCollection<double> values, double percentile)
-    {
-        if (values.Count == 0)
-        {
-            return 0;
-        }
-        var ordered = values.Order().ToArray();
-        var index = Math.Clamp((int)Math.Ceiling(percentile * ordered.Length) - 1, 0, ordered.Length - 1);
-        return ordered[index];
-    }
-
-    private static int ReadPositiveInt(string name, int fallback)
-    {
-        var value = Environment.GetEnvironmentVariable(name);
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return fallback;
-        }
-        if (!int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed)
-            || parsed <= 0)
-        {
-            throw new InvalidDataException($"{name} must be a positive integer.");
-        }
-        return parsed;
-    }
-
-    private static string RequiredEnvironment(string name)
-    {
-        var value = Environment.GetEnvironmentVariable(name);
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            throw new InvalidDataException($"{name} is required for load evidence.");
-        }
-        return value;
-    }
-
-    private static string FindRepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
-        {
-            if (File.Exists(Path.Combine(directory.FullName, "aws2azure.slnx")))
-            {
-                return directory.FullName;
-            }
-            directory = directory.Parent;
-        }
-        throw new DirectoryNotFoundException("Could not locate repository root.");
-    }
-
-    private sealed class LoadTracker
-    {
-        private readonly IReadOnlyDictionary<string, OperationTracker> _operations;
-
-        public LoadTracker(IEnumerable<string> operations)
-        {
-            _operations = operations.ToDictionary(
-                operation => operation,
-                _ => new OperationTracker(),
-                StringComparer.Ordinal);
-        }
-
-        public void RecordSuccess(string operation, double elapsedMilliseconds)
-        {
-            _operations[operation].RecordSuccess(elapsedMilliseconds);
-        }
-
-        public void RecordFailure(string operation, double elapsedMilliseconds, bool throttled)
-        {
-            _operations[operation].RecordFailure(elapsedMilliseconds, throttled);
-        }
-
-        public List<LoadOperationMeasurement> Snapshot()
-        {
-            return _operations
-                .OrderBy(item => item.Key, StringComparer.Ordinal)
-                .Select(item => item.Value.Snapshot(item.Key))
-                .ToList();
-        }
-
-        public LoadOperationMeasurement Snapshot(string operation)
-        {
-            return _operations[operation].Snapshot(operation);
-        }
-
-        public double[] Latencies(string operation)
-        {
-            return _operations[operation].Latencies.ToArray();
-        }
-
-        public long Throttles(string operation)
-        {
-            return _operations[operation].Throttles;
-        }
-    }
-
-    private sealed class OperationTracker
-    {
-        private readonly ConcurrentQueue<double> _latencies = new();
-        private long _completions;
-        private long _failures;
-        private long _throttles;
-
-        public IEnumerable<double> Latencies => _latencies;
-        public long Throttles => Interlocked.Read(ref _throttles);
-
-        public void RecordSuccess(double elapsedMilliseconds)
-        {
-            _latencies.Enqueue(elapsedMilliseconds);
-            Interlocked.Increment(ref _completions);
-        }
-
-        public void RecordFailure(double elapsedMilliseconds, bool throttled)
-        {
-            _latencies.Enqueue(elapsedMilliseconds);
-            Interlocked.Increment(ref _failures);
-            if (throttled)
-            {
-                Interlocked.Increment(ref _throttles);
-            }
-        }
-
-        public LoadOperationMeasurement Snapshot(string operation)
-        {
-            var latencies = _latencies.ToArray();
-            return new LoadOperationMeasurement
-            {
-                Service = "secretsmanager",
-                Operation = operation,
-                Completions = Interlocked.Read(ref _completions),
-                Failures = Interlocked.Read(ref _failures),
-                P95Milliseconds = Percentile(latencies, 0.95),
-                P99Milliseconds = Percentile(latencies, 0.99),
-            };
-        }
-    }
 }
-
-internal sealed class SecretsManagerLoadEvidence
-{
-    public int SchemaVersion { get; set; }
-    public LoadProfile Profile { get; set; } = new();
-    public LoadCandidate Candidate { get; set; } = new();
-    public LoadProvenance Provenance { get; set; } = new();
-    public LoadShape LoadShape { get; set; } = new();
-    public List<LoadOperationMeasurement> OperationMix { get; set; } = new();
-    public List<LoadScenario> Scenarios { get; set; } = new();
-    public List<LoadSignal> Signals { get; set; } = new();
-}
-
-internal sealed class LoadProfile
-{
-    public string Id { get; set; } = string.Empty;
-    public int Version { get; set; }
-    public List<LoadProfileService> Services { get; set; } = new();
-}
-
-internal sealed class LoadProfileService
-{
-    public string Service { get; set; } = string.Empty;
-    public List<string> Operations { get; set; } = new();
-}
-
-internal sealed class LoadCandidate
-{
-    public string GitSha { get; set; } = string.Empty;
-    public string ArtifactDigest { get; set; } = string.Empty;
-    public string ConfigDigest { get; set; } = string.Empty;
-}
-
-internal sealed class LoadProvenance
-{
-    public string RunId { get; set; } = string.Empty;
-    public string RunUrl { get; set; } = string.Empty;
-    public int RunAttempt { get; set; }
-    public DateTimeOffset GeneratedAtUtc { get; set; }
-    public DateTimeOffset WindowStartUtc { get; set; }
-    public DateTimeOffset WindowEndUtc { get; set; }
-    public string Region { get; set; } = string.Empty;
-    public string BackendDescription { get; set; } = string.Empty;
-    public string ProducerConfigDigest { get; set; } = string.Empty;
-}
-
-internal sealed class LoadShape
-{
-    public int Concurrency { get; set; }
-    public double RequestedDurationSeconds { get; set; }
-}
-
-internal sealed class LoadOperationMeasurement
-{
-    public string Service { get; set; } = string.Empty;
-    public string Operation { get; set; } = string.Empty;
-    public long Completions { get; set; }
-    public long Failures { get; set; }
-    public double P95Milliseconds { get; set; }
-    public double P99Milliseconds { get; set; }
-}
-
-internal sealed class LoadScenario
-{
-    public string Id { get; set; } = string.Empty;
-    public string Service { get; set; } = string.Empty;
-    public string Operation { get; set; } = string.Empty;
-    public string EvidenceSource { get; set; } = string.Empty;
-    public long Completions { get; set; }
-    public long Failures { get; set; }
-    public long Skipped { get; set; }
-    public double DurationSeconds { get; set; }
-    public DateTimeOffset CapturedAtUtc { get; set; }
-}
-
-internal sealed class LoadSignal
-{
-    public string Id { get; set; } = string.Empty;
-    public string ScenarioId { get; set; } = string.Empty;
-    public string Metric { get; set; } = string.Empty;
-    public double MeasuredValue { get; set; }
-    public long Samples { get; set; }
-    public DateTimeOffset CapturedAtUtc { get; set; }
-}
-
-[JsonSerializable(typeof(SecretsManagerLoadEvidence))]
-[JsonSourceGenerationOptions(
-    PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
-    WriteIndented = true)]
-internal sealed partial class SecretsManagerLoadEvidenceJsonContext : JsonSerializerContext;
