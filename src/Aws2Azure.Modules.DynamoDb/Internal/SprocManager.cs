@@ -155,28 +155,19 @@ internal sealed partial class SprocManager
 
         if (response.IsSuccessStatusCode)
         {
-            LogSprocCreated(_logger, containerName);
+            DynamoDbLog.LogSprocCreated(_logger, containerName);
             return true;
         }
         if (response.StatusCode == HttpStatusCode.Conflict)
         {
-            LogSprocAlreadyExists(_logger, containerName);
+            DynamoDbLog.LogSprocAlreadyExists(_logger, containerName);
             return true;
         }
 
         var errorBody = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-        LogSprocCreateFailed(_logger, containerName, (int)response.StatusCode, errorBody);
+        DynamoDbLog.LogSprocCreateFailed(_logger, containerName, (int)response.StatusCode, errorBody);
         return false;
     }
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "Created atomicWrite sproc in container {ContainerName}")]
-    private static partial void LogSprocCreated(ILogger logger, string containerName);
-
-    [LoggerMessage(Level = LogLevel.Debug, Message = "atomicWrite sproc already exists in container {ContainerName}")]
-    private static partial void LogSprocAlreadyExists(ILogger logger, string containerName);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to create sproc in container {ContainerName}: HTTP {StatusCode} - {ErrorBody}")]
-    private static partial void LogSprocCreateFailed(ILogger logger, string containerName, int statusCode, string errorBody);
 
     private enum SprocState { Unknown, Available, Failed }
 }

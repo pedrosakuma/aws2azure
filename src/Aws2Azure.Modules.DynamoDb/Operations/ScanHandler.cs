@@ -88,7 +88,7 @@ internal static class ScanHandler
         // can identify hot callers in dashboards / logs.
         if (logger is not null)
         {
-            ScanLog.CrossPartitionScan(logger, req.TableName!);
+            DynamoDbLog.CrossPartitionScan(logger, req.TableName!);
         }
         if (req.Segment is not null || req.TotalSegments is not null)
         {
@@ -752,19 +752,4 @@ internal static class ScanHandler
             _ => true,
         };
     }
-}
-
-/// <summary>
-/// Source-generated logging helpers for <see cref="ScanHandler"/>.
-/// Kept as a separate static partial class so the
-/// <c>LoggerMessage</c> generator (AOT-safe, zero reflection) can
-/// emit the backing implementation.
-/// </summary>
-internal static partial class ScanLog
-{
-    [LoggerMessage(
-        EventId = 3001,
-        Level = LogLevel.Warning,
-        Message = "Cross-partition DynamoDB Scan against {Table} — Scan walks every partition and is expensive on Cosmos; prefer Query when a partition key is known.")]
-    public static partial void CrossPartitionScan(ILogger logger, string table);
 }

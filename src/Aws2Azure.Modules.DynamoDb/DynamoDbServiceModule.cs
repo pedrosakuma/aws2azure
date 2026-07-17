@@ -259,7 +259,7 @@ public sealed class DynamoDbServiceModule : IServiceModule
                 // Required.
                 if (_consistencyLogger is not null)
                 {
-                    ConsistencyLog.ProbeFailed(_consistencyLogger, creds.Endpoint, ex.Message);
+                    DynamoDbLog.ProbeFailed(_consistencyLogger, creds.Endpoint, ex.Message);
                 }
                 if (mode == ConsistencyCheckMode.Required)
                 {
@@ -273,7 +273,7 @@ public sealed class DynamoDbServiceModule : IServiceModule
             {
                 if (_consistencyLogger is not null)
                 {
-                    ConsistencyLog.Indeterminate(_consistencyLogger, creds.Endpoint);
+                    DynamoDbLog.Indeterminate(_consistencyLogger, creds.Endpoint);
                 }
                 if (mode == ConsistencyCheckMode.Required)
                 {
@@ -288,13 +288,13 @@ public sealed class DynamoDbServiceModule : IServiceModule
                 case CosmosConsistency.ProbeOutcome.Ok:
                     if (_consistencyLogger is not null)
                     {
-                        ConsistencyLog.Honored(_consistencyLogger, creds.Endpoint, level.ToString());
+                        DynamoDbLog.Honored(_consistencyLogger, creds.Endpoint, level.ToString());
                     }
                     break;
                 case CosmosConsistency.ProbeOutcome.Warn:
                     if (_consistencyLogger is not null)
                     {
-                        ConsistencyLog.BelowStrong(_consistencyLogger, creds.Endpoint, level.ToString());
+                        DynamoDbLog.BelowStrong(_consistencyLogger, creds.Endpoint, level.ToString());
                     }
                     break;
                 case CosmosConsistency.ProbeOutcome.Fail:

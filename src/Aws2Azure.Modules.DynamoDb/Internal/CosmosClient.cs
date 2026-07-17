@@ -170,7 +170,7 @@ internal sealed class CosmosClient
 
         if (_regionLogger is not null)
         {
-            CosmosRegionLog.SelectedEndpoint(
+            DynamoDbLog.SelectedEndpoint(
                 _regionLogger,
                 isRead ? "read" : "write",
                 candidates[0].AbsoluteUri);
@@ -231,7 +231,7 @@ internal sealed class CosmosClient
                         {
                             if (_regionLogger is not null)
                             {
-                                CosmosRegionLog.Failover(
+                                DynamoDbLog.Failover(
                                     _regionLogger,
                                     endpoint.AbsoluteUri,
                                     next.AbsoluteUri,
@@ -287,7 +287,7 @@ internal sealed class CosmosClient
 
                 if (_regionLogger is not null)
                 {
-                    CosmosRegionLog.Failover(_regionLogger, endpoint.AbsoluteUri, next.AbsoluteUri, 0);
+                    DynamoDbLog.Failover(_regionLogger, endpoint.AbsoluteUri, next.AbsoluteUri, 0);
                 }
             }
             catch (TaskCanceledException) when (!ct.IsCancellationRequested)
@@ -311,7 +311,7 @@ internal sealed class CosmosClient
 
                 if (_regionLogger is not null)
                 {
-                    CosmosRegionLog.Failover(_regionLogger, endpoint.AbsoluteUri, next.AbsoluteUri, 0);
+                    DynamoDbLog.Failover(_regionLogger, endpoint.AbsoluteUri, next.AbsoluteUri, 0);
                 }
             }
         }
@@ -443,7 +443,7 @@ internal sealed class CosmosClient
             _accountCache.Snapshot = new AccountSnapshot(refreshed, now + AccountRefreshTtl);
             if (_regionLogger is not null)
             {
-                CosmosRegionLog.DiscoveredRegions(
+                DynamoDbLog.DiscoveredRegions(
                     _regionLogger,
                     _endpoint,
                     CosmosRegionRouting.BuildLocationSummary(refreshed.ReadableLocations),
