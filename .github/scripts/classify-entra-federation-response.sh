@@ -13,6 +13,8 @@ if [[ ! "$status" =~ ^[0-9]{3}$ ]] || [ ! -f "$response_file" ]; then
   exit 0
 fi
 
+# A newly created FIC can briefly be invisible as either "no matching FIC"
+# (70021/700212) or "no configured FIC" (70025). No other auth code is retryable.
 if ! fields="$(jq -er '
   def safe_error:
     .error as $error
@@ -33,10 +35,12 @@ if ! fields="$(jq -er '
       $error_name,
       (if ($codes | index("70021")) != null then "70021"
        elif ($codes | index("700212")) != null then "700212"
+       elif ($codes | index("70025")) != null then "70025"
        else ($codes[0] // "none")
        end),
       (if (($codes | index("70021")) != null
-           or ($codes | index("700212")) != null)
+           or ($codes | index("700212")) != null
+           or ($codes | index("70025")) != null)
        then "expected_fic_mismatch"
        else "other"
        end)

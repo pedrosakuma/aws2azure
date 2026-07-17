@@ -26,7 +26,10 @@ feature-specific A/B experiments.
   backend unchanged while overlapping blue/green backend identities. Revoke the
   blue identity's exact backend-scoped role, prove green remains successful,
   and require the drained blue process to return the AWS-native access-denied
-  shape within the reviewed propagation budget.
+  shape within the reviewed propagation budget. Immediately after FIC creation,
+  Entra may transiently return AADSTS70021, AADSTS700212, or AADSTS70025; only
+  those exact codes on HTTP 400/401 are retried within the five-minute setup
+  budget. Other `invalid_client` codes fail immediately.
 - **rollback**: deploy the sealed candidate, create/read canary state, replace it
   with the previously approved sealed runtime without changing the backend, and
   verify the same state plus cleanup. A source build of "main" or a config-only

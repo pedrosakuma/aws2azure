@@ -17,6 +17,17 @@ actual="$("$script_dir/classify-entra-federation-response.sh" \
   401 "$scratch_dir/expected-401.json")"
 [ "$actual" = $'retry\tinvalid_client\t70021' ]
 
+cat > "$scratch_dir/expected-70025-401.json" <<'JSON'
+{
+  "error": "invalid_client",
+  "error_description": "AADSTS70025: The client has no configured federated identity credentials.",
+  "error_codes": [70025]
+}
+JSON
+actual="$("$script_dir/classify-entra-federation-response.sh" \
+  401 "$scratch_dir/expected-70025-401.json")"
+[ "$actual" = $'retry\tinvalid_client\t70025' ]
+
 cat > "$scratch_dir/unexpected-401.json" <<'JSON'
 {
   "error": "invalid_client",
