@@ -56,7 +56,7 @@ internal static class SecretsManagerCredentialRotationQualification
 
         var startedAt = DateTimeOffset.UtcNow;
         var setupDeadline = startedAt + SetupPropagationTimeout;
-        var sentinelName = $"a2a-rotation-{Guid.NewGuid():N}"[..48];
+        var sentinelName = CreateSentinelName();
         var sentinelValue = "identity-rotation-sentinel";
         var oldInstance = fixture.DefaultInstance;
         SecretsManagerRealAzureProxyFixture.ProxyInstance? newInstance = null;
@@ -258,6 +258,7 @@ internal static class SecretsManagerCredentialRotationQualification
                 null,
                 response.StatusCode);
         }
+
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         using var document = JsonDocument.Parse(body);
         if (!document.RootElement.TryGetProperty("value", out var valueElement)
@@ -284,6 +285,11 @@ internal static class SecretsManagerCredentialRotationQualification
                 tokenFile,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite);
         }
+    }
+
+    internal static string CreateSentinelName(Guid? id = null)
+    {
+        return $"a2a-rotation-{(id ?? Guid.NewGuid()):N}";
     }
 
     private static async Task<long> RetryExpectedSetupPropagationAsync(
