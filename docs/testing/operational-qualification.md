@@ -90,8 +90,13 @@ qualification, rollback evidence, or a GA claim. The first trusted artifact may
 be recorded as `bootstrap`; it has no predecessor and therefore cannot claim
 rollback. A later artifact with a distinct complete runtime digest must be
 deployed and then successfully rolled back to that bootstrap artifact before
-rollback can become qualified. The approval ledger and correctness/load/
-rollback consumers are intentionally deferred to dependent work.
+rollback can become qualified. The profile-owned ledger under
+`docs/workloads/approved-runtimes/` records this distinction mechanically:
+bootstrap may be a rollback baseline but is never promotion eligible. Only the
+later distinct candidate, with qualification evidence naming both candidate and
+rollback-target digests, may become the first approved runtime. Runtime
+consumers and rollback execution remain intentionally deferred to dependent
+work.
 
 ## Reproduce
 
@@ -143,9 +148,13 @@ These report-only diagnostics localize a cause; they cannot justify changing a
 threshold by themselves.
 
 The S3 connectivity signal measures response-header latency for an intentionally
-unauthenticated Blob service-list request and requires HTTP 403. It is not
-authenticated data-plane health. The sealed producer-config manifest records
-the profile, region, backend topology, load shape, and source digests, but does
-not yet record runner SKU/image, logical processors, process count, or affinity.
-Treat that missing runner/process provenance as a limitation in cross-run
-diagnosis; the shared load-evidence schema remains unchanged.
+unauthenticated Blob service-list request. It accepts HTTP 403 only with a known
+authentication-denial error code, or HTTP 409 only with the exact
+`PublicAccessNotPermitted` error code returned when account-level public access
+is disabled. Both are diagnostic network-noise connectivity responses, not
+workload success, authenticated data-plane health, or Blob capacity. The sealed
+producer-config manifest records the profile, region, backend topology, load
+shape, and source digests, but does not yet record runner SKU/image, logical
+processors, process count, or affinity. Treat that missing runner/process
+provenance as a limitation in cross-run diagnosis; the shared load-evidence
+schema remains unchanged.

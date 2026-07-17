@@ -1,0 +1,6 @@
+schema_version: 1
+profile:
+  id: s3-basic-object-crud
+  version: 1
+status: bootstrap
+unknown_policy_switch: true

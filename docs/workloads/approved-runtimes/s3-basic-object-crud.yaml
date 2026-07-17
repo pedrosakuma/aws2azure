@@ -1,0 +1,42 @@
+schema_version: 1
+profile:
+  id: s3-basic-object-crud
+  version: 1
+status: bootstrap
+eligibility:
+  rollback_baseline_eligible: true
+  promotion_eligible: false
+runtime:
+  target:
+    operating_system: linux
+    architecture: x64
+    rid: linux-x64
+  source_repository: pedrosakuma/aws2azure
+  source_sha: fd72cda28ca68ad53cd6b30fb3f43cbe923580ef
+  aggregate_digest: sha256:6d4476c6bcce82fb3d47f72f007a2d81d95f504fc95f9671a0821d8cd513bbef
+  executable_digest: sha256:c7e517aad020c7074ecc9208456ced9d48d35133636309e0016d8d8439918246
+producer:
+  workflow: .github/workflows/sealed-runtime.yml
+  run_id: 29610742551
+  run_attempt: 1
+  run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29610742551
+artifact:
+  id: 8418646730
+  name: aws2azure-sealed-linux-x64-6d4476c6bcce82fb3d47f72f007a2d81d95f504fc95f9671a0821d8cd513bbef-run-29610742551-attempt-1
+  upload_digest: sha256:1c266d50d543be8134005371d3c0bacaedc81df986f38c476f199de23ffb5957
+  created_at: 2026-07-17T20:20:56Z
+  expires_at: 2026-10-15T20:18:55Z
+attestation:
+  predicate_type: https://slsa.dev/provenance/v1
+  repository: pedrosakuma/aws2azure
+  signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
+  source_sha: fd72cda28ca68ad53cd6b30fb3f43cbe923580ef
+  subject_name: Aws2Azure.Proxy
+  subject_digest: sha256:c7e517aad020c7074ecc9208456ced9d48d35133636309e0016d8d8439918246
+approval:
+  reason: >-
+    First sealed bytes for this profile have no previously approved predecessor,
+    so they cannot prove rollback and are recorded only as a bootstrap baseline.
+  review_url: https://github.com/pedrosakuma/aws2azure/issues/552
+  reviewed_at: 2026-07-17T20:34:55Z
+  reviewed_by: pedrosakuma
