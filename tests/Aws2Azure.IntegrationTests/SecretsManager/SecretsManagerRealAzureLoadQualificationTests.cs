@@ -60,6 +60,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
         stopwatch.Stop();
         var loadEnd = DateTimeOffset.UtcNow;
         var networkAfter = await ProbeNetworkAsync(networkTarget, 12).ConfigureAwait(false);
+        var loadWindowEnd = DateTimeOffset.UtcNow;
         var throttling = await VerifyScenarioAsync(
             DeterministicFailureQualification.ThrottlingScenarioId,
             "GetSecretValue",
@@ -187,7 +188,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                     "p95_ms",
                     Percentile(networkLatencies, 0.95),
                     networkLatencies.LongLength,
-                    windowEnd),
+                    loadWindowEnd),
                 Signal(
                     "representative-load-throttle-rate",
                     "throttle_rate",
