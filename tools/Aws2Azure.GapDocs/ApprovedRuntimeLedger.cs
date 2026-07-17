@@ -436,9 +436,9 @@ public static partial class ApprovedRuntimeLedgerValidator
         {
             err("attestation.source_sha must match runtime.source_sha");
         }
-        if (string.IsNullOrWhiteSpace(attestation.SubjectName))
+        if (!attestation.SubjectName.Equals("Aws2Azure.Proxy", StringComparison.Ordinal))
         {
-            err("attestation.subject_name missing");
+            err("attestation.subject_name must be 'Aws2Azure.Proxy'");
         }
         RequireDigest(attestation.SubjectDigest, "attestation.subject_digest", err);
         if (!attestation.SubjectDigest.Equals(

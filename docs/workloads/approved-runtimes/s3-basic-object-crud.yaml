@@ -31,7 +31,7 @@ attestation:
   repository: pedrosakuma/aws2azure
   signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
   source_sha: fd72cda28ca68ad53cd6b30fb3f43cbe923580ef
-  subject_name: runtime/Aws2Azure.Proxy
+  subject_name: Aws2Azure.Proxy
   subject_digest: sha256:c7e517aad020c7074ecc9208456ced9d48d35133636309e0016d8d8439918246
 approval:
   reason: >-

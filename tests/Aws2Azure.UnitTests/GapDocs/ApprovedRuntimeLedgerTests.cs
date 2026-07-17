@@ -202,6 +202,19 @@ public sealed class ApprovedRuntimeLedgerTests
     }
 
     [Fact]
+    public void Attestation_subject_name_must_match_the_executable_dsse_subject()
+    {
+        var record = ValidRecord();
+        record.Attestation.SubjectName = "runtime/Aws2Azure.Proxy";
+
+        var errors = Validate(record);
+
+        Assert.Contains(errors, error => error.Contains(
+            "attestation.subject_name must be 'Aws2Azure.Proxy'",
+            StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Shared_producer_identity_must_resolve_to_one_runtime()
     {
         var first = ValidRecord();
@@ -301,7 +314,7 @@ public sealed class ApprovedRuntimeLedgerTests
             Repository = "example/repository",
             SignerWorkflow = "example/repository/.github/workflows/sealed-runtime.yml",
             SourceSha = "1234567890123456789012345678901234567890",
-            SubjectName = "runtime/Aws2Azure.Proxy",
+            SubjectName = "Aws2Azure.Proxy",
             SubjectDigest =
                 "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         },
