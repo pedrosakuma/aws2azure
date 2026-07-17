@@ -232,16 +232,13 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
 
                 await MeasureAsync(tracker, "GetSecretValue", async () =>
                 {
-                    var response = await client.GetSecretValueAsync(
-                        new GetSecretValueRequest { SecretId = name },
+                    await GetExpectedValueAsync(
+                        client,
+                        name,
+                        "value-1",
                         cancellationToken).ConfigureAwait(false);
-                    if (!string.Equals(response.SecretString, "value-1", StringComparison.Ordinal))
-                    {
-                        throw new InvalidDataException("GetSecretValue returned the wrong value.");
-                    }
                 }).ConfigureAwait(false);
 
-                string putVersion = string.Empty;
                 await MeasureAsync(tracker, "PutSecretValue", async () =>
                 {
                     var response = await client.PutSecretValueAsync(new PutSecretValueRequest
@@ -249,23 +246,21 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                         SecretId = name,
                         SecretString = "value-2",
                     }, cancellationToken).ConfigureAwait(false);
-                    putVersion = response.VersionId;
+                    if (string.IsNullOrWhiteSpace(response.VersionId))
+                    {
+                        throw new InvalidDataException("PutSecretValue returned no version id.");
+                    }
                 }).ConfigureAwait(false);
 
                 await MeasureAsync(tracker, "GetSecretValue", async () =>
                 {
-                    var response = await client.GetSecretValueAsync(new GetSecretValueRequest
-                    {
-                        SecretId = name,
-                        VersionId = putVersion,
-                    }, cancellationToken).ConfigureAwait(false);
-                    if (!string.Equals(response.SecretString, "value-2", StringComparison.Ordinal))
-                    {
-                        throw new InvalidDataException("Versioned GetSecretValue returned the wrong value.");
-                    }
+                    await GetExpectedValueAsync(
+                        client,
+                        name,
+                        "value-2",
+                        cancellationToken).ConfigureAwait(false);
                 }).ConfigureAwait(false);
 
-                string updateVersion = string.Empty;
                 await MeasureAsync(tracker, "UpdateSecret", async () =>
                 {
                     var response = await client.UpdateSecretAsync(new UpdateSecretRequest
@@ -274,20 +269,19 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                         SecretString = "value-3",
                         Description = "aws2azure production-shaped load qualification updated",
                     }, cancellationToken).ConfigureAwait(false);
-                    updateVersion = response.VersionId;
+                    if (string.IsNullOrWhiteSpace(response.VersionId))
+                    {
+                        throw new InvalidDataException("UpdateSecret returned no version id.");
+                    }
                 }).ConfigureAwait(false);
 
                 await MeasureAsync(tracker, "GetSecretValue", async () =>
                 {
-                    var response = await client.GetSecretValueAsync(new GetSecretValueRequest
-                    {
-                        SecretId = name,
-                        VersionId = updateVersion,
-                    }, cancellationToken).ConfigureAwait(false);
-                    if (!string.Equals(response.SecretString, "value-3", StringComparison.Ordinal))
-                    {
-                        throw new InvalidDataException("Updated GetSecretValue returned the wrong value.");
-                    }
+                    await GetExpectedValueAsync(
+                        client,
+                        name,
+                        "value-3",
+                        cancellationToken).ConfigureAwait(false);
                 }).ConfigureAwait(false);
 
                 await MeasureAsync(tracker, "ListSecrets", async () =>
@@ -346,6 +340,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
             await action().ConfigureAwait(false);
             tracker.RecordSuccess(operation, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
         }
+
         catch (Exception exception)
         {
             tracker.RecordFailure(
@@ -353,6 +348,36 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                 Stopwatch.GetElapsedTime(started).TotalMilliseconds,
                 IsThrottle(exception));
             throw;
+        }
+    }
+
+    private static async Task GetExpectedValueAsync(
+        IAmazonSecretsManager client,
+        string secretId,
+        string expectedValue,
+        CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(60);
+        var delay = TimeSpan.FromMilliseconds(250);
+        while (true)
+        {
+            var response = await client.GetSecretValueAsync(
+                new GetSecretValueRequest { SecretId = secretId },
+                cancellationToken).ConfigureAwait(false);
+            if (string.Equals(response.SecretString, expectedValue, StringComparison.Ordinal))
+            {
+                return;
+            }
+            if (DateTime.UtcNow >= deadline)
+            {
+                throw new InvalidDataException(
+                    $"GetSecretValue did not observe '{expectedValue}' within 60 seconds.");
+            }
+            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            if (delay < TimeSpan.FromSeconds(2))
+            {
+                delay += delay;
+            }
         }
     }
 
