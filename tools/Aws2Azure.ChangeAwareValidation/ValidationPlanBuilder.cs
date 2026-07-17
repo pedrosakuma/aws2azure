@@ -120,6 +120,12 @@ public static class ValidationPlanBuilder
             path.StartsWith("docs/workloads/qualification/", StringComparison.Ordinal);
         var isQualificationWorkflow =
             IsWorkflow(path, "qualification-real-azure.yml");
+        var isWorkloadLoadWorkflow =
+            IsWorkflow(path, "workload-load-real-azure.yml");
+        var isWorkloadLoadProducer = isWorkloadLoadWorkflow
+            || path == "deploy/realazure/secretsmanager-load.bicep"
+            || path
+                == "tests/Aws2Azure.IntegrationTests/SecretsManager/SecretsManagerRealAzureLoadQualificationTests.cs";
         var isMicrobenchBaseline = path == "docs/perf/microbench-reference.json";
         var isValidationEntrypoint = path == "eng/validate.ps1";
 
@@ -181,6 +187,7 @@ public static class ValidationPlanBuilder
             IsWorkflow(path, "perf.yml") ||
             IsWorkflow(path, "perf-real-azure.yml") ||
             isQualificationWorkflow ||
+            isWorkloadLoadProducer ||
             IsPerfBaseline(path))
         {
             Require(decisions, "perf", path, "request hot path or performance gate changed");
@@ -211,6 +218,7 @@ public static class ValidationPlanBuilder
             IsWorkflow(path, "integration-real-azure.yml") ||
             IsWorkflow(path, "perf-real-azure.yml") ||
             isQualificationWorkflow ||
+            isWorkloadLoadWorkflow ||
             IsWorkflow(path, "real-azure-reaper.yml") ||
             path.StartsWith("deploy/realazure/", StringComparison.Ordinal) ||
             isQualificationPolicy)

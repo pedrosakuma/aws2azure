@@ -29,6 +29,9 @@ public sealed class RealAzureLoadQualificationTests
     {
         var zero = Evidence(3);
         zero.Scenarios[0].Completions = 0;
+        zero.Scenarios[0].Failures = 1;
+        zero.OperationMix[0].Completions = 0;
+        zero.OperationMix[0].Failures = 1;
 
         var document = RealAzureLoadQualificationGenerator.Generate(
             Manifest(),
@@ -47,6 +50,23 @@ public sealed class RealAzureLoadQualificationTests
     {
         var drifted = Evidence(2);
         drifted.Candidate.ConfigDigest = "sha256:different";
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            RealAzureLoadQualificationGenerator.Generate(
+                Manifest(),
+                Candidate(),
+                Policy(),
+                [Evidence(1), drifted, Evidence(3)],
+                Metadata()));
+
+        Assert.Contains("inconsistent", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Generate_rejects_load_producer_config_drift_between_runs()
+    {
+        var drifted = Evidence(2);
+        drifted.Provenance.ProducerConfigDigest = "sha256:different-producer";
 
         var exception = Assert.Throws<InvalidDataException>(() =>
             RealAzureLoadQualificationGenerator.Generate(
@@ -92,10 +112,13 @@ public sealed class RealAzureLoadQualificationTests
     {
         var failed = Evidence(1);
         failed.Scenarios[0].Failures = 1;
+        failed.OperationMix[0].Failures = 1;
         var largeRun2 = Evidence(2);
         largeRun2.Scenarios[0].Completions = 10_000;
+        largeRun2.OperationMix[0].Completions = 10_000;
         var largeRun3 = Evidence(3);
         largeRun3.Scenarios[0].Completions = 10_000;
+        largeRun3.OperationMix[0].Completions = 10_000;
 
         var document = RealAzureLoadQualificationGenerator.Generate(
             Manifest(),
@@ -190,6 +213,104 @@ public sealed class RealAzureLoadQualificationTests
     }
 
     [Fact]
+    public void Generate_records_unresolved_capacity_threshold_and_blocks_qualification()
+    {
+        var policy = Policy();
+        var signal = Assert.Single(policy.Scenarios[0].Signals);
+        signal.ThresholdStatus = "unresolved";
+        signal.ThresholdReason = "Three comparable live-Azure runs have not been reviewed.";
+        signal.MaxValue = null;
+
+        var document = RealAzureLoadQualificationGenerator.Generate(
+            Manifest(),
+            Candidate(),
+            policy,
+            [Evidence(1), Evidence(2), Evidence(3)],
+            Metadata());
+
+        Assert.Equal("candidate", document.Verdict);
+        Assert.Contains(
+            document.Findings,
+            finding => finding.Code == "signal_threshold_unresolved");
+        Assert.Equal("report_only", Assert.Single(document.Signals).Disposition);
+        Assert.Empty(SloQualificationValidator.Validate(document, Now));
+    }
+
+    [Fact]
+    public void Generate_reports_worst_run_for_unresolved_throughput_floor()
+    {
+        var policy = Policy();
+        var signal = Assert.Single(policy.Scenarios[0].Signals);
+        signal.Metric = "throughput_per_sec";
+        signal.ThresholdStatus = "unresolved";
+        signal.ThresholdReason = "Comparable live-Azure runs have not been reviewed.";
+        signal.MaxValue = null;
+        var evidence = new[] { Evidence(1), Evidence(2), Evidence(3) };
+        evidence[0].Signals[0].Metric = "throughput_per_sec";
+        evidence[0].Signals[0].MeasuredValue = 90;
+        evidence[1].Signals[0].Metric = "throughput_per_sec";
+        evidence[1].Signals[0].MeasuredValue = 75;
+        evidence[2].Signals[0].Metric = "throughput_per_sec";
+        evidence[2].Signals[0].MeasuredValue = 80;
+
+        var document = RealAzureLoadQualificationGenerator.Generate(
+            Manifest(),
+            Candidate(),
+            policy,
+            evidence,
+            Metadata());
+
+        Assert.Equal(75, Assert.Single(document.Signals).MeasuredValue);
+    }
+
+    [Fact]
+    public void Generate_rejects_operation_mix_that_omits_a_profile_operation()
+    {
+        var evidence = Evidence(1);
+        evidence.OperationMix.Clear();
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            RealAzureLoadQualificationGenerator.Generate(
+                Manifest(),
+                Candidate(),
+                Policy(),
+                [evidence, Evidence(2), Evidence(3)],
+                Metadata()));
+
+        Assert.Contains("operation mix", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void SecretsManager_policy_is_explicitly_blocked_pending_empirical_threshold_review()
+    {
+        var repoRoot = FindRepoRoot();
+        var policy = WorkloadQualificationPolicyLoader.Load(Path.Combine(
+            repoRoot,
+            "docs",
+            "workloads",
+            "qualification",
+            "secretsmanager-basic-lifecycle.yaml"));
+        var manifest = WorkloadGaManifestLoader.Load(Path.Combine(
+            repoRoot,
+            "docs",
+            "workloads",
+            "secretsmanager-basic-lifecycle.yaml"));
+
+        Assert.Equal(
+            manifest.Evidence.RequiredScenarios.Order(StringComparer.Ordinal),
+            policy.Scenarios.Select(item => item.Id).Order(StringComparer.Ordinal));
+        var capacity = Assert.Single(
+            policy.Scenarios.SelectMany(item => item.Signals),
+            signal => signal.Disposition == "blocking");
+        Assert.Equal("unresolved", capacity.ThresholdStatus);
+        Assert.False(string.IsNullOrWhiteSpace(capacity.ThresholdReason));
+        Assert.Null(capacity.MinValue);
+        Assert.Null(capacity.MaxValue);
+        Assert.Equal(8, policy.LoadShape.Concurrency);
+        Assert.Equal(300, policy.LoadShape.RequestedDurationSeconds);
+    }
+
+    [Fact]
     public void RenderTrend_marks_rows_as_real_azure_workload_qualification()
     {
         var output = Path.Combine(
@@ -239,6 +360,11 @@ public sealed class RealAzureLoadQualificationTests
             ZeroCompletionsDisqualify = true,
             OnlySkippedRealAzureDisqualifies = true,
             MinDistinctRuns = 3,
+        },
+        LoadShape = new RealAzureLoadShape
+        {
+            Concurrency = 4,
+            RequestedDurationSeconds = 100,
         },
         Scenarios =
         [
@@ -330,7 +456,24 @@ public sealed class RealAzureLoadQualificationTests
             GeneratedAtUtc = Now.AddMinutes(-attempt * 10),
             Region = "eastus2",
             BackendDescription = "Blob Storage Standard_LRS",
+            ProducerConfigDigest = "sha256:load-producer",
         },
+        LoadShape = new RealAzureLoadShape
+        {
+            Concurrency = 4,
+            RequestedDurationSeconds = 100,
+        },
+        OperationMix =
+        [
+            new RealAzureLoadOperationMeasurement
+            {
+                Service = "s3",
+                Operation = "PutObject",
+                Completions = 100,
+                P95Milliseconds = 400,
+                P99Milliseconds = 700,
+            }
+        ],
         Scenarios =
         [
             new SloQualificationScenario
@@ -386,4 +529,18 @@ public sealed class RealAzureLoadQualificationTests
         RunAttempt = 1,
         GeneratedAtUtc = Now,
     };
+
+    private static string FindRepoRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "aws2azure.slnx")))
+            {
+                return directory.FullName;
+            }
+            directory = directory.Parent;
+        }
+        throw new DirectoryNotFoundException("Could not locate repository root.");
+    }
 }

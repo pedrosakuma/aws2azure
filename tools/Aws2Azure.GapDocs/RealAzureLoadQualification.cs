@@ -13,6 +13,7 @@ public sealed class WorkloadQualificationPolicy
     public string ProfileId { get; set; } = string.Empty;
     public int ProfileVersion { get; set; }
     public SloQualificationRules Rules { get; set; } = new();
+    public RealAzureLoadShape LoadShape { get; set; } = new();
     public List<WorkloadQualificationScenarioPolicy> Scenarios { get; set; } = new();
 }
 
@@ -31,6 +32,8 @@ public sealed class WorkloadQualificationSignalPolicy
     public string Source { get; set; } = string.Empty;
     public string Disposition { get; set; } = string.Empty;
     public string Metric { get; set; } = string.Empty;
+    public string ThresholdStatus { get; set; } = "resolved";
+    public string ThresholdReason { get; set; } = string.Empty;
     public double? MinValue { get; set; }
     public double? MaxValue { get; set; }
 }
@@ -41,8 +44,26 @@ public sealed class RealAzureLoadEvidence
     public SloQualificationProfile Profile { get; set; } = new();
     public SloQualificationCandidate Candidate { get; set; } = new();
     public RealAzureLoadEvidenceProvenance Provenance { get; set; } = new();
+    public RealAzureLoadShape LoadShape { get; set; } = new();
+    public List<RealAzureLoadOperationMeasurement> OperationMix { get; set; } = new();
     public List<SloQualificationScenario> Scenarios { get; set; } = new();
     public List<RealAzureLoadSignalMeasurement> Signals { get; set; } = new();
+}
+
+public sealed class RealAzureLoadShape
+{
+    public int Concurrency { get; set; }
+    public double RequestedDurationSeconds { get; set; }
+}
+
+public sealed class RealAzureLoadOperationMeasurement
+{
+    public string Service { get; set; } = string.Empty;
+    public string Operation { get; set; } = string.Empty;
+    public long Completions { get; set; }
+    public long Failures { get; set; }
+    public double P95Milliseconds { get; set; }
+    public double P99Milliseconds { get; set; }
 }
 
 public sealed class RealAzureLoadEvidenceProvenance
@@ -55,6 +76,7 @@ public sealed class RealAzureLoadEvidenceProvenance
     public DateTimeOffset WindowEndUtc { get; set; }
     public string Region { get; set; } = string.Empty;
     public string BackendDescription { get; set; } = string.Empty;
+    public string ProducerConfigDigest { get; set; } = string.Empty;
 }
 
 public sealed class RealAzureLoadSignalMeasurement
@@ -92,6 +114,7 @@ public static class WorkloadQualificationPolicyLoader
         var policy = deserializer.Deserialize<WorkloadQualificationPolicy>(reader)
             ?? throw new InvalidDataException($"{path}: empty document");
         policy.Rules ??= new SloQualificationRules();
+        policy.LoadShape ??= new RealAzureLoadShape();
         policy.Scenarios ??= new List<WorkloadQualificationScenarioPolicy>();
         foreach (var scenario in policy.Scenarios)
         {
@@ -341,15 +364,39 @@ public static class RealAzureLoadQualificationGenerator
                 }
                 if (signalMeasurements.Any(item => item.Metric != signalPolicy.Metric
                                                    || !double.IsFinite(item.MeasuredValue)
-                                                   || item.Samples < 0))
+                                                   || item.Samples <= 0))
                 {
                     throw new InvalidDataException(
                         $"Signal '{signalPolicy.Id}' contains an invalid measurement.");
                 }
 
                 var measuredValue = signalPolicy.MinValue is not null
+                                    || signalPolicy.ThresholdStatus == "unresolved"
+                                    && signalPolicy.Metric == "throughput_per_sec"
                     ? signalMeasurements.Min(item => item.MeasuredValue)
                     : signalMeasurements.Max(item => item.MeasuredValue);
+                if (signalPolicy.ThresholdStatus == "unresolved")
+                {
+                    blocked = true;
+                    document.Signals.Add(new SloQualificationSignal
+                    {
+                        Id = signalPolicy.Id,
+                        ScenarioId = scenarioPolicy.Id,
+                        Source = signalPolicy.Source,
+                        Disposition = "report_only",
+                        Metric = signalPolicy.Metric,
+                        MeasuredValue = measuredValue,
+                        Samples = signalMeasurements.Sum(item => item.Samples),
+                        CapturedAtUtc = signalMeasurements.Max(item => item.CapturedAtUtc),
+                    });
+                    AddFinding(
+                        document,
+                        "signal_threshold_unresolved",
+                        $"Signal '{signalPolicy.Id}' remains unresolved: " +
+                        signalPolicy.ThresholdReason,
+                        scenarioPolicy.Id);
+                    continue;
+                }
                 var signal = new SloQualificationSignal
                 {
                     Id = signalPolicy.Id,
@@ -459,6 +506,12 @@ public static class RealAzureLoadQualificationGenerator
         {
             throw new InvalidDataException("Workload qualification policy rules are invalid.");
         }
+        if (policy.LoadShape.Concurrency <= 0
+            || !double.IsFinite(policy.LoadShape.RequestedDurationSeconds)
+            || policy.LoadShape.RequestedDurationSeconds <= 0)
+        {
+            throw new InvalidDataException("Workload qualification policy load shape is invalid.");
+        }
         if (evidence.Count == 0)
         {
             throw new ArgumentException("At least one load evidence document is required.", nameof(evidence));
@@ -532,18 +585,35 @@ public static class RealAzureLoadQualificationGenerator
             }
             foreach (var signal in scenario.Signals)
             {
+                var thresholdResolved = signal.ThresholdStatus == "resolved";
+                var thresholdUnresolved = signal.ThresholdStatus == "unresolved";
                 if (!SloQualificationValues.SignalSources.Contains(signal.Source)
                     || !SloQualificationValues.Dispositions.Contains(signal.Disposition)
                     || !SloQualificationValues.Metrics.Contains(signal.Metric)
+                    || !thresholdResolved && !thresholdUnresolved
                     || signal.MinValue is not null && signal.MaxValue is not null
-                    || signal.Disposition == "blocking"
+                    || thresholdResolved
+                       && signal.Disposition == "blocking"
                        && signal.MinValue is null
                        && signal.MaxValue is null
-                    || signal.Disposition == "report_only"
+                    || thresholdResolved
+                       && signal.Disposition == "report_only"
                        && (signal.MinValue is not null || signal.MaxValue is not null))
                 {
                     throw new InvalidDataException(
                         $"Policy signal '{signal.Id}' in scenario '{scenario.Id}' is invalid.");
+                }
+                if (thresholdUnresolved
+                    && (signal.Disposition != "blocking"
+                        || signal.Source != "backend_capacity"
+                        || signal.Metric is not ("throughput_per_sec" or "p95_ms" or "p99_ms")
+                        || signal.MinValue is not null
+                        || signal.MaxValue is not null
+                        || string.IsNullOrWhiteSpace(signal.ThresholdReason)))
+                {
+                    throw new InvalidDataException(
+                        $"Unresolved policy signal '{signal.Id}' in scenario " +
+                        $"'{scenario.Id}' must be a reasoned blocking backend-capacity signal.");
                 }
             }
         }
@@ -572,6 +642,9 @@ public static class RealAzureLoadQualificationGenerator
                 || run.Candidate.ConfigDigest != candidate.Candidate.ConfigDigest
                 || run.Provenance.Region != first.Provenance.Region
                 || run.Provenance.BackendDescription != first.Provenance.BackendDescription
+                || string.IsNullOrWhiteSpace(run.Provenance.ProducerConfigDigest)
+                || run.Provenance.ProducerConfigDigest
+                    != first.Provenance.ProducerConfigDigest
                 || run.Provenance.RunAttempt <= 0
                 || run.Provenance.WindowStartUtc >= run.Provenance.WindowEndUtc
                 || run.Provenance.GeneratedAtUtc < run.Provenance.WindowEndUtc
@@ -579,6 +652,17 @@ public static class RealAzureLoadQualificationGenerator
             {
                 throw new InvalidDataException(
                     "Load evidence provenance, candidate, environment, or run identity is inconsistent.");
+            }
+            ValidateLoadShapeAndOperationMix(run, expectedOperations);
+            if (run.LoadShape.Concurrency != policy.LoadShape.Concurrency
+                || run.LoadShape.RequestedDurationSeconds
+                    != policy.LoadShape.RequestedDurationSeconds
+                || run.LoadShape.Concurrency != first.LoadShape.Concurrency
+                || run.LoadShape.RequestedDurationSeconds
+                    != first.LoadShape.RequestedDurationSeconds)
+            {
+                throw new InvalidDataException(
+                    "Load evidence runs must use the policy's reviewed concurrency and duration.");
             }
             if (run.Scenarios.Any(item =>
                     item.CapturedAtUtc < run.Provenance.WindowStartUtc
@@ -590,6 +674,63 @@ public static class RealAzureLoadQualificationGenerator
                 throw new InvalidDataException(
                     $"Load evidence run {run.Provenance.RunId}/{run.Provenance.RunAttempt} " +
                     "contains measurements outside its immutable run window.");
+            }
+        }
+    }
+
+    private static void ValidateLoadShapeAndOperationMix(
+        RealAzureLoadEvidence run,
+        IReadOnlySet<string> expectedOperations)
+    {
+        if (run.LoadShape.Concurrency <= 0
+            || !double.IsFinite(run.LoadShape.RequestedDurationSeconds)
+            || run.LoadShape.RequestedDurationSeconds <= 0
+            || run.OperationMix.Count != expectedOperations.Count)
+        {
+            throw new InvalidDataException("Load evidence shape or operation mix is incomplete.");
+        }
+
+        var operations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var measurement in run.OperationMix)
+        {
+            if (string.IsNullOrWhiteSpace(measurement.Service)
+                || string.IsNullOrWhiteSpace(measurement.Operation)
+                || measurement.Completions < 0
+                || measurement.Failures < 0
+                || measurement.Completions + measurement.Failures == 0
+                || !double.IsFinite(measurement.P95Milliseconds)
+                || !double.IsFinite(measurement.P99Milliseconds)
+                || measurement.P95Milliseconds < 0
+                || measurement.P99Milliseconds < measurement.P95Milliseconds)
+            {
+                throw new InvalidDataException(
+                    $"Load evidence operation '{measurement.Operation}' is invalid.");
+            }
+            var operationKey = $"{measurement.Service}:{measurement.Operation}";
+            if (!expectedOperations.Contains(operationKey) || !operations.Add(operationKey))
+            {
+                throw new InvalidDataException(
+                    $"Load evidence operation '{operationKey}' is outside the profile or duplicated.");
+            }
+        }
+
+        if (!expectedOperations.SetEquals(operations))
+        {
+            throw new InvalidDataException(
+                "Load evidence operation mix must exactly match the workload profile.");
+        }
+
+        foreach (var scenario in run.Scenarios)
+        {
+            var operation = run.OperationMix.SingleOrDefault(item =>
+                item.Service.Equals(scenario.Service, StringComparison.OrdinalIgnoreCase)
+                && item.Operation.Equals(scenario.Operation, StringComparison.OrdinalIgnoreCase));
+            if (operation is null
+                || scenario.Completions > operation.Completions
+                || scenario.Failures > operation.Failures)
+            {
+                throw new InvalidDataException(
+                    $"Load evidence scenario '{scenario.Id}' is not supported by its operation mix.");
             }
         }
     }
