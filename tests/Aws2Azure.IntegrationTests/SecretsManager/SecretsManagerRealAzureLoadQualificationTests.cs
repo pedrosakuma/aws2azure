@@ -165,7 +165,9 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
             ],
         };
 
-        var fullOutputPath = Path.GetFullPath(outputPath!);
+        var fullOutputPath = Path.IsPathRooted(outputPath)
+            ? outputPath!
+            : Path.Combine(FindRepoRoot(), outputPath!);
         Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath)!);
         await File.WriteAllTextAsync(
             fullOutputPath,
@@ -178,6 +180,11 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
         Assert.True(
             totalFailures == 0,
             $"{totalFailures} of {totalCompletions + totalFailures} operations failed." +
+            $"{Environment.NewLine}{string.Join(
+                ", ",
+                operationMix
+                    .Where(item => item.Failures > 0)
+                    .Select(item => $"{item.Operation}={item.Failures}"))}" +
             $"{Environment.NewLine}{fixture.ProxyOutput}");
         Assert.All(operationMix, item => Assert.True(
             item.Completions > 0,
@@ -443,6 +450,20 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
             throw new InvalidDataException($"{name} is required for load evidence.");
         }
         return value;
+    }
+
+    private static string FindRepoRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "aws2azure.slnx")))
+            {
+                return directory.FullName;
+            }
+            directory = directory.Parent;
+        }
+        throw new DirectoryNotFoundException("Could not locate repository root.");
     }
 
     private sealed class LoadTracker
