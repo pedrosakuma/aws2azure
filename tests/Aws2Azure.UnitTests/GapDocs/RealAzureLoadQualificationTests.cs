@@ -255,6 +255,7 @@ public sealed class RealAzureLoadQualificationTests
             document.Findings,
             finding => finding.Code == "insufficient_scenario_evidence"
                        && finding.ScenarioId == "restart");
+        Assert.Empty(SloQualificationValidator.Validate(document, Now));
     }
 
     [Fact]
