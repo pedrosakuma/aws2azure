@@ -281,7 +281,7 @@ public sealed class RealAzureLoadQualificationTests
     }
 
     [Fact]
-    public void SecretsManager_policy_is_explicitly_blocked_pending_empirical_threshold_review()
+    public void SecretsManager_policy_uses_reviewed_real_azure_capacity_floor()
     {
         var repoRoot = FindRepoRoot();
         var policy = WorkloadQualificationPolicyLoader.Load(Path.Combine(
@@ -302,16 +302,16 @@ public sealed class RealAzureLoadQualificationTests
         var capacity = Assert.Single(
             policy.Scenarios.SelectMany(item => item.Signals),
             signal => signal.Disposition == "blocking");
-        Assert.Equal("unresolved", capacity.ThresholdStatus);
+        Assert.Equal("resolved", capacity.ThresholdStatus);
         Assert.False(string.IsNullOrWhiteSpace(capacity.ThresholdReason));
-        Assert.Null(capacity.MinValue);
+        Assert.Equal(9, capacity.MinValue);
         Assert.Null(capacity.MaxValue);
         Assert.Equal(8, policy.LoadShape.Concurrency);
         Assert.Equal(300, policy.LoadShape.RequestedDurationSeconds);
     }
 
     [Fact]
-    public void S3_policy_is_explicitly_blocked_pending_empirical_threshold_review()
+    public void S3_policy_uses_reviewed_real_azure_capacity_floor()
     {
         var repoRoot = FindRepoRoot();
         var policy = WorkloadQualificationPolicyLoader.Load(Path.Combine(
@@ -334,9 +334,9 @@ public sealed class RealAzureLoadQualificationTests
             signal => signal.Disposition == "blocking");
         Assert.Equal("backend_capacity", capacity.Source);
         Assert.Equal("throughput_per_sec", capacity.Metric);
-        Assert.Equal("unresolved", capacity.ThresholdStatus);
+        Assert.Equal("resolved", capacity.ThresholdStatus);
         Assert.False(string.IsNullOrWhiteSpace(capacity.ThresholdReason));
-        Assert.Null(capacity.MinValue);
+        Assert.Equal(40, capacity.MinValue);
         Assert.Null(capacity.MaxValue);
         Assert.Equal(8, policy.LoadShape.Concurrency);
         Assert.Equal(300, policy.LoadShape.RequestedDurationSeconds);
