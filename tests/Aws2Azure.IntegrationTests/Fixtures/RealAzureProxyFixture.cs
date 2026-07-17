@@ -272,31 +272,50 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
             AuthenticationRegion = AuthRegion,
         });
 
+    public async Task RestartAsync()
+    {
+        if (!ProxyStarted || _configFile is null)
+        {
+            throw new InvalidOperationException("The real-Azure proxy is not running.");
+        }
+
+        await StopProxyAsync().ConfigureAwait(false);
+        _proxyProcess = StartProxyProcess(_proxyPort, _configFile);
+        await WaitForProxyAsync(_proxyPort, TimeSpan.FromMinutes(2)).ConfigureAwait(false);
+    }
+
     public async Task DisposeAsync()
     {
-        if (_proxyProcess is not null)
-        {
-            try
-            {
-                if (!_proxyProcess.HasExited)
-                {
-                    _proxyProcess.Kill(entireProcessTree: true);
-                    await _proxyProcess.WaitForExitAsync().ConfigureAwait(false);
-                }
-            }
-            catch
-            {
-            }
-
-            _proxyProcess.Dispose();
-            _proxyProcess = null;
-        }
+        await StopProxyAsync().ConfigureAwait(false);
 
         if (_configFile is not null)
         {
             try { File.Delete(_configFile); } catch { }
             _configFile = null;
         }
+    }
+
+    private async Task StopProxyAsync()
+    {
+        if (_proxyProcess is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!_proxyProcess.HasExited)
+            {
+                _proxyProcess.Kill(entireProcessTree: true);
+                await _proxyProcess.WaitForExitAsync().ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+        }
+
+        _proxyProcess.Dispose();
+        _proxyProcess = null;
     }
 
     private void ReadEnvironment()

@@ -99,6 +99,7 @@ jobs:
       TEST_RESULTS_DIR: TestResults/real-azure
       EVIDENCE_DIR: TestResults/real-azure-conformance
       CONFORMANCE_PLAN: TestResults/real-azure-conformance-plan.json
+      QUALIFICATION_DIR: artifacts/real-azure-qualification
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -223,6 +224,56 @@ jobs:
 
           echo "integration=$(filter_for tests/Aws2Azure.IntegrationTests)" >> "$GITHUB_OUTPUT"
           echo "unit=$(filter_for tests/Aws2Azure.UnitTests)" >> "$GITHUB_OUTPUT"
+
+      - name: Seal runtime and non-secret qualification configuration
+        id: provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$QUALIFICATION_DIR"
+
+          runtime_manifest="$QUALIFICATION_DIR/runtime-sha256.txt"
+          (
+            cd src/Aws2Azure.Proxy/bin/Release/net10.0
+            find . -maxdepth 1 -type f \
+              \( -name '*.dll' -o -name '*.json' -o -name 'Aws2Azure.Proxy' \) \
+              -print0 |
+              sort -z |
+              xargs -0 sha256sum
+          ) > "$GITHUB_WORKSPACE/$runtime_manifest"
+
+          config_manifest="$QUALIFICATION_DIR/config-manifest.json"
+          jq -n \
+            --arg schema_version "1" \
+            --arg git_sha "$(git rev-parse HEAD)" \
+            --arg region "$AZURE_LOCATION" \
+            --arg plan_sha256 "$(sha256sum "$CONFORMANCE_PLAN" | cut -d' ' -f1)" \
+            --arg matrix_sha256 "$(sha256sum docs/testing/real-azure-conformance.yaml | cut -d' ' -f1)" \
+            --arg bicep_sha256 "$(sha256sum deploy/realazure/main.bicep | cut -d' ' -f1)" \
+            --arg workflow_sha256 "$(sha256sum .github/workflows/integration-real-azure.yml | cut -d' ' -f1)" \
+            '{
+              schema_version: ($schema_version | tonumber),
+              git_sha: $git_sha,
+              region: $region,
+              topology: "ephemeral-per-run",
+              inputs: {
+                cosmos_database: "dynamodb",
+                event_hub: "kinesis-smoke"
+              },
+              source_digests: {
+                conformance_plan: ("sha256:" + $plan_sha256),
+                conformance_matrix: ("sha256:" + $matrix_sha256),
+                bicep: ("sha256:" + $bicep_sha256),
+                workflow: ("sha256:" + $workflow_sha256)
+              }
+            }' > "$config_manifest"
+
+          runtime_digest="sha256:$(sha256sum "$runtime_manifest" | cut -d' ' -f1)"
+          config_digest="sha256:$(sha256sum "$config_manifest" | cut -d' ' -f1)"
+          {
+            echo "runtime_digest=$runtime_digest"
+            echo "config_digest=$config_digest"
+          } >> "$GITHUB_OUTPUT"
 
       # The empty TRX is a truthful fallback: if a test host cannot start,
       # evidence generation still records matrix entries as not_run instead of
@@ -425,6 +476,54 @@ jobs:
           fi
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
 
+      - name: Generate workload correctness candidates
+        id: qualification
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          evidence="$EVIDENCE_DIR/real-azure-evidence.json"
+          mkdir -p "$QUALIFICATION_DIR/candidates"
+          if [ ! -f "$evidence" ]; then
+            echo "::error::Conformance evidence is unavailable; workload candidates cannot be generated."
+            echo "exit_code=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          for manifest in docs/workloads/*.yaml; do
+            profile="$(basename "$manifest" .yaml)"
+            output="$QUALIFICATION_DIR/candidates/$profile.yaml"
+            set +e
+            dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- \
+              generate-real-azure-workload-qualification \
+              --manifest "$manifest" \
+              --evidence "$evidence" \
+              --output "$output" \
+              --git-sha "$(git rev-parse HEAD)" \
+              --artifact-digest "${{ steps.provenance.outputs.runtime_digest }}" \
+              --config-digest "${{ steps.provenance.outputs.config_digest }}" \
+              --region "$AZURE_LOCATION" \
+              --run-attempt "$GITHUB_RUN_ATTEMPT" \
+              --backend-description "Ephemeral Azure production SKUs from deploy/realazure/main.bicep"
+            command_status=$?
+            set -e
+
+            if [ ! -f "$output" ] || [ "$command_status" -eq 1 ] || [ "$command_status" -eq 2 ]; then
+              echo "::error::Failed to generate workload candidate for $profile (exit $command_status)."
+              status=1
+              continue
+            fi
+            verdict="$(sed -n 's/^verdict: //p' "$output" | head -n 1)"
+            {
+              echo "### $profile correctness candidate"
+              echo
+              echo "- Verdict: \`$verdict\`"
+              echo "- Capacity claim: none; production-shaped repeated load evidence is still required"
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+
       - name: Upload conformance evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -434,6 +533,9 @@ jobs:
             TestResults/real-azure-conformance-plan.json
             TestResults/real-azure/*.trx
             TestResults/real-azure-conformance/**
+            artifacts/real-azure-qualification/runtime-sha256.txt
+            artifacts/real-azure-qualification/config-manifest.json
+            artifacts/real-azure-qualification/candidates/**
           if-no-files-found: error
 
       - name: Upload divergence report
@@ -472,4 +574,5 @@ jobs:
           check "Planned unit tests" "${{ steps.unit_tests.outputs.exit_code }}"
           check "Planned integration tests" "${{ steps.integration_tests.outputs.exit_code }}"
           check "Evidence/report generation" "${{ steps.reports.outputs.exit_code }}"
+          check "Workload correctness candidate generation" "${{ steps.qualification.outputs.exit_code }}"
           exit "$failed"

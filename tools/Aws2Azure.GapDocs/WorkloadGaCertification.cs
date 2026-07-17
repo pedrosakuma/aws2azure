@@ -29,6 +29,7 @@ public sealed class WorkloadGaEvidence
 {
     public string QualificationArtifact { get; set; } = string.Empty;
     public List<string> RequiredScenarios { get; set; } = new();
+    public List<string> RequiredRealAzureScenarios { get; set; } = new();
 }
 
 public sealed class WorkloadGaReport
@@ -92,6 +93,7 @@ public static class WorkloadGaManifestLoader
         manifest.AcceptedDesignGaps ??= new List<string>();
         manifest.Evidence ??= new WorkloadGaEvidence();
         manifest.Evidence.RequiredScenarios ??= new List<string>();
+        manifest.Evidence.RequiredRealAzureScenarios ??= new List<string>();
     }
 }
 
@@ -210,9 +212,22 @@ public static class WorkloadGaManifestValidator
             Err);
 
         ValidateUnique(manifest.Evidence.RequiredScenarios, "evidence scenario", Err);
+        ValidateUnique(
+            manifest.Evidence.RequiredRealAzureScenarios,
+            "real-Azure evidence scenario",
+            Err);
         if (manifest.Evidence.RequiredScenarios.Any(string.IsNullOrWhiteSpace))
         {
             Err("evidence.required_scenarios contains an empty scenario");
+        }
+        foreach (var scenario in manifest.Evidence.RequiredRealAzureScenarios)
+        {
+            if (!manifest.Evidence.RequiredScenarios.Contains(scenario, StringComparer.Ordinal))
+            {
+                Err(
+                    $"evidence.required_real_azure_scenarios entry '{scenario}' " +
+                    "is not present in evidence.required_scenarios");
+            }
         }
 
         return errors;
@@ -451,16 +466,30 @@ public static class WorkloadGaEvaluator
         }
 
         var actualScenarios = qualification.Scenarios
-            .Where(scenario => scenario.EvidenceSource == "real_azure")
-            .Select(scenario => scenario.Id)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            .ToDictionary(scenario => scenario.Id, StringComparer.OrdinalIgnoreCase);
         foreach (var scenario in manifest.Evidence.RequiredScenarios)
         {
-            if (!actualScenarios.Contains(scenario))
+            if (!actualScenarios.ContainsKey(scenario))
             {
                 matches = false;
                 Add(report, "required_scenario_missing", "blocking", scenario,
                     "Qualification does not contain this required reliability/performance scenario.");
+            }
+            else if (actualScenarios[scenario].EvidenceSource == "emulator")
+            {
+                matches = false;
+                Add(report, "required_scenario_source_mismatch", "blocking", scenario,
+                    "Workload qualification scenarios cannot use emulator evidence.");
+            }
+        }
+        foreach (var scenario in manifest.Evidence.RequiredRealAzureScenarios)
+        {
+            if (actualScenarios.TryGetValue(scenario, out var evidence)
+                && evidence.EvidenceSource != "real_azure")
+            {
+                matches = false;
+                Add(report, "required_scenario_source_mismatch", "blocking", scenario,
+                    "Qualification scenario must be backed by real-Azure evidence.");
             }
         }
         return matches;

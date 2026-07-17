@@ -138,6 +138,7 @@ public sealed class WorkloadGaCertificationTests
             "qualification.yaml");
         Directory.CreateDirectory(Path.GetDirectoryName(evidencePath)!);
         var manifest = MinimalManifest();
+        manifest.Evidence.RequiredRealAzureScenarios = ["required-load"];
         var qualification = QualifiedDocument();
         qualification.Scenarios.Insert(
             0,
@@ -165,8 +166,65 @@ public sealed class WorkloadGaCertificationTests
             Assert.Equal("candidate", report.Verdict);
             Assert.Contains(
                 report.Findings,
-                finding => finding.Code == "required_scenario_missing"
+                finding => finding.Code == "required_scenario_source_mismatch"
                            && finding.Subject == "required-load");
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Deterministic_operational_scenario_can_satisfy_manifest_when_not_marked_live()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"aws2azure-ga-{Guid.NewGuid():N}");
+        var evidencePath = Path.Combine(
+            tempRoot,
+            "docs",
+            "workloads",
+            "evidence",
+            "qualification.yaml");
+        Directory.CreateDirectory(Path.GetDirectoryName(evidencePath)!);
+        var qualification = QualifiedDocument();
+        qualification.Scenarios[0].Id = "required-load";
+        qualification.Scenarios[0].EvidenceSource = "deterministic";
+        qualification.Signals[0].ScenarioId = "required-load";
+        qualification.Signals[0].Source = "proxy_overhead";
+        qualification.Scenarios.Add(new SloQualificationScenario
+        {
+            Id = "capacity",
+            Service = "s3",
+            Operation = "PutObject",
+            EvidenceSource = "real_azure",
+            Completions = 1000,
+            DurationSeconds = 300,
+            CapturedAtUtc = qualification.Provenance.WindowEndUtc,
+        });
+        qualification.Signals.Add(new SloQualificationSignal
+        {
+            Id = "capacity-p99",
+            ScenarioId = "capacity",
+            Source = "backend_capacity",
+            Disposition = "blocking",
+            Metric = "p99_ms",
+            MaxValue = 1000,
+            MeasuredValue = 500,
+            Samples = 1000,
+            CapturedAtUtc = qualification.Provenance.WindowEndUtc,
+        });
+        SloQualificationRenderer.RenderYaml(qualification, evidencePath);
+
+        try
+        {
+            var report = WorkloadGaEvaluator.Evaluate(
+                MinimalManifest(),
+                MinimalOperations(),
+                [],
+                tempRoot,
+                new DateOnly(2026, 7, 16));
+
+            Assert.Equal("ga", report.Verdict);
         }
         finally
         {
@@ -268,13 +326,39 @@ public sealed class WorkloadGaCertificationTests
             },
             Provenance = new SloQualificationProvenance
             {
-                RunId = "123",
-                RunUrl = "https://github.com/example/repo/actions/runs/123",
+                RunId = "124",
+                RunUrl = "https://github.com/example/repo/actions/runs/124",
+                RunAttempt = 1,
                 GeneratedAtUtc = capturedAt,
                 WindowStartUtc = capturedAt.AddMinutes(-5),
                 WindowEndUtc = capturedAt,
                 Region = "eastus2",
                 BackendDescription = "Blob Storage Standard_LRS",
+                CorrectnessRun = new SloQualificationSourceRun
+                {
+                    RunId = "122",
+                    RunUrl = "https://github.com/example/repo/actions/runs/122",
+                    RunAttempt = 1,
+                    WindowStartUtc = capturedAt.AddMinutes(-10),
+                    WindowEndUtc = capturedAt.AddMinutes(-6),
+                    GitSha = "0123456789abcdef",
+                    ArtifactDigest = "sha256:artifact",
+                    ConfigDigest = "sha256:config",
+                },
+                SourceRuns =
+                [
+                    new SloQualificationSourceRun
+                    {
+                        RunId = "123",
+                        RunUrl = "https://github.com/example/repo/actions/runs/123",
+                        RunAttempt = 1,
+                        WindowStartUtc = capturedAt.AddMinutes(-5),
+                        WindowEndUtc = capturedAt,
+                        GitSha = "0123456789abcdef",
+                        ArtifactDigest = "sha256:artifact",
+                        ConfigDigest = "sha256:config",
+                    }
+                ],
             },
             Rules = new SloQualificationRules
             {
@@ -284,6 +368,7 @@ public sealed class WorkloadGaCertificationTests
                 MaxFailureRate = 0.001,
                 ZeroCompletionsDisqualify = true,
                 OnlySkippedRealAzureDisqualifies = true,
+                MinDistinctRuns = 1,
             },
             Signals =
             [

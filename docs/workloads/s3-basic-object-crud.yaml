@@ -27,3 +27,7 @@ evidence:
     - restart
     - retry-exhaustion
     - rollback
+  required_real_azure_scenarios:
+    - representative-load
+    - restart
+    - rollback

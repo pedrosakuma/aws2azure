@@ -1,0 +1,214 @@
+name: qualification-real-azure
+
+# This workflow only evaluates immutable evidence produced by separate real-Azure
+# correctness and production-shaped load runs. It never consumes emulator
+# baselines or the specialized perf-real-azure A/B artifacts.
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Workload profile id
+        required: true
+        type: choice
+        options:
+          - s3-basic-object-crud
+          - sqs-standard-messaging
+          - secretsmanager-basic-lifecycle
+          - dynamodb-basic-crud
+      correctness_run_id:
+        description: integration-real-azure run containing the correctness candidate
+        required: true
+        type: string
+      load_run_ids:
+        description: Comma-separated production-shaped load run ids (never emulator or A/B runs)
+        required: true
+        type: string
+      policy_path:
+        description: Reviewed repository-relative workload qualification policy
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: qualification-real-azure-${{ inputs.profile }}
+      cancel-in-progress: false
+    env:
+      PROFILE: ${{ inputs.profile }}
+      CORRECTNESS_RUN_ID: ${{ inputs.correctness_run_id }}
+      LOAD_RUN_IDS: ${{ inputs.load_run_ids }}
+      POLICY_PATH: ${{ inputs.policy_path }}
+      EVIDENCE_ROOT: artifacts/qualification-input
+      OUTPUT_ROOT: artifacts/qualification-output
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/dotnet-setup
+
+      - name: Build qualification tool
+        run: dotnet build tools/Aws2Azure.GapDocs -c Release --nologo
+
+      - name: Validate immutable input selection
+        id: validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$CORRECTNESS_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::correctness_run_id must be a numeric GitHub Actions run id."
+            exit 1
+          fi
+          if [ ! -f "docs/workloads/$PROFILE.yaml" ]; then
+            echo "::error::Unknown workload profile: $PROFILE"
+            exit 1
+          fi
+          if [[ "$POLICY_PATH" = /* ]] ||
+             [[ "$POLICY_PATH" == *".."* ]] ||
+             [[ "$POLICY_PATH" != docs/workloads/qualification/*.yaml ]] ||
+             [ ! -f "$POLICY_PATH" ]; then
+            echo "::error::policy_path must name a committed file under docs/workloads/qualification/."
+            exit 1
+          fi
+          mkdir -p "$OUTPUT_ROOT"
+          cp "$POLICY_PATH" "$OUTPUT_ROOT/policy.yaml"
+
+      - name: Download correctness candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT/correctness"
+          gh run download "$CORRECTNESS_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name real-azure-conformance \
+            --dir "$EVIDENCE_ROOT/correctness"
+          candidate="$EVIDENCE_ROOT/correctness/artifacts/real-azure-qualification/candidates/$PROFILE.yaml"
+          if [ ! -f "$candidate" ]; then
+            echo "::error::Correctness run does not contain candidate $PROFILE."
+            exit 1
+          fi
+          embedded_run_id="$(sed -n 's/^  run_id: //p' "$candidate" | head -n 1 | tr -d '\"')"
+          if [ "$embedded_run_id" != "$CORRECTNESS_RUN_ID" ]; then
+            echo "::error::Correctness candidate provenance run_id '$embedded_run_id' does not match selected run $CORRECTNESS_RUN_ID."
+            exit 1
+          fi
+
+      - name: Download repeated production-shaped load evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT/load"
+          evidence_paths="$EVIDENCE_ROOT/load-evidence-paths.txt"
+          : > "$evidence_paths"
+          IFS=',' read -ra run_ids <<< "$LOAD_RUN_IDS"
+          seen=()
+          for raw in "${run_ids[@]}"; do
+            run_id="$(echo "$raw" | xargs)"
+            if [[ ! "$run_id" =~ ^[0-9]+$ ]]; then
+              echo "::error::Invalid load run id: $run_id"
+              exit 1
+            fi
+            if printf '%s\n' "${seen[@]:-}" | grep -Fxq "$run_id"; then
+              echo "::error::Duplicate load run id: $run_id"
+              exit 1
+            fi
+            seen+=("$run_id")
+            destination="$EVIDENCE_ROOT/load/$run_id"
+            mkdir -p "$destination"
+            gh run download "$run_id" \
+              --repo "$GITHUB_REPOSITORY" \
+              --name "real-azure-workload-load-$PROFILE" \
+              --dir "$destination"
+            mapfile -t downloaded < <(
+              find "$destination" -type f -name 'load-evidence.json' | sort
+            )
+            if [ "${#downloaded[@]}" -ne 1 ]; then
+              echo "::error::Load run $run_id must contribute exactly one load-evidence.json."
+              exit 1
+            fi
+            embedded_run_id="$(jq -r '.provenance.run_id // empty' "${downloaded[0]}")"
+            if [ "$embedded_run_id" != "$run_id" ]; then
+              echo "::error::Load evidence provenance run_id '$embedded_run_id' does not match selected run $run_id."
+              exit 1
+            fi
+            printf '%s\n' "${downloaded[0]}" >> "$evidence_paths"
+          done
+
+          if [ "$(wc -l < "$evidence_paths")" -ne "${#seen[@]}" ]; then
+            echo "::error::The immutable evidence path list is incomplete."
+            exit 1
+          fi
+
+      - name: Generate qualification and isolated trend
+        id: generate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUTPUT_ROOT"
+          args=(
+            generate-real-azure-load-qualification
+            --manifest "docs/workloads/$PROFILE.yaml"
+            --candidate "$EVIDENCE_ROOT/correctness/artifacts/real-azure-qualification/candidates/$PROFILE.yaml"
+            --policy "$POLICY_PATH"
+            --output "$OUTPUT_ROOT/$PROFILE.yaml"
+            --trend-output "$OUTPUT_ROOT/$PROFILE-trend.csv"
+            --run-id "$GITHUB_RUN_ID"
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
+          )
+          while IFS= read -r evidence; do
+            args+=(--evidence "$evidence")
+          done < "$EVIDENCE_ROOT/load-evidence-paths.txt"
+
+          set +e
+          dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- "${args[@]}"
+          status=$?
+          set -e
+          if [ ! -f "$OUTPUT_ROOT/$PROFILE.yaml" ]; then
+            status=2
+            verdict=missing
+          else
+            verdict="$(sed -n 's/^verdict: //p' "$OUTPUT_ROOT/$PROFILE.yaml" | head -n 1)"
+          fi
+          {
+            echo "status=$status"
+            echo "verdict=$verdict"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## Real-Azure workload qualification"
+            echo
+            echo "- Profile: \`$PROFILE\`"
+            echo "- Verdict: \`${verdict:-missing}\`"
+            echo "- Evidence class: production-shaped real Azure"
+            echo "- Emulator baseline consumed: no"
+            echo "- A/B experiment consumed: no"
+            echo "- Policy: \`$POLICY_PATH\`"
+            echo "- Correctness run: \`$CORRECTNESS_RUN_ID\`"
+            echo "- Load runs: \`$LOAD_RUN_IDS\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload immutable qualification bundle
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: real-azure-workload-qualification-${{ inputs.profile }}
+          path: |
+            artifacts/qualification-output/**
+            artifacts/qualification-input/correctness/artifacts/real-azure-qualification/runtime-sha256.txt
+            artifacts/qualification-input/correctness/artifacts/real-azure-qualification/config-manifest.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Enforce qualified verdict
+        if: always()
+        shell: bash
+        run: |
+          if [ "${{ steps.generate.outputs.status }}" != "0" ] ||
+             [ "${{ steps.generate.outputs.verdict }}" != "qualified" ]; then
+            echo "::error::Qualification did not produce a qualified verdict. Investigate the evidence; do not raise thresholds or rerun blindly."
+            exit 1
+          fi

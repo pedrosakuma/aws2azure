@@ -34,3 +34,9 @@ evidence:
     - restart
     - retry-exhaustion
     - rollback
+  required_real_azure_scenarios:
+    - representative-load
+    - conditional-write-concurrency
+    - read-after-write
+    - restart
+    - rollback

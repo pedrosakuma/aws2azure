@@ -50,11 +50,26 @@ public sealed class SloQualificationProvenance
 {
     public string RunId { get; set; } = string.Empty;
     public string RunUrl { get; set; } = string.Empty;
+    public int RunAttempt { get; set; } = 1;
     public DateTimeOffset GeneratedAtUtc { get; set; }
     public DateTimeOffset WindowStartUtc { get; set; }
     public DateTimeOffset WindowEndUtc { get; set; }
     public string Region { get; set; } = string.Empty;
     public string BackendDescription { get; set; } = string.Empty;
+    public SloQualificationSourceRun? CorrectnessRun { get; set; }
+    public List<SloQualificationSourceRun> SourceRuns { get; set; } = new();
+}
+
+public sealed class SloQualificationSourceRun
+{
+    public string RunId { get; set; } = string.Empty;
+    public string RunUrl { get; set; } = string.Empty;
+    public int RunAttempt { get; set; }
+    public DateTimeOffset WindowStartUtc { get; set; }
+    public DateTimeOffset WindowEndUtc { get; set; }
+    public string GitSha { get; set; } = string.Empty;
+    public string ArtifactDigest { get; set; } = string.Empty;
+    public string ConfigDigest { get; set; } = string.Empty;
 }
 
 public sealed class SloQualificationRules
@@ -65,6 +80,7 @@ public sealed class SloQualificationRules
     public double MaxFailureRate { get; set; }
     public bool ZeroCompletionsDisqualify { get; set; }
     public bool OnlySkippedRealAzureDisqualifies { get; set; }
+    public int MinDistinctRuns { get; set; } = 1;
 }
 
 public sealed class SloQualificationSignal
@@ -210,6 +226,7 @@ public static class SloQualificationValidator
         document.Scenarios ??= new List<SloQualificationScenario>();
         document.Findings ??= new List<SloQualificationFinding>();
         document.Profile.Services ??= new List<SloQualificationProfileService>();
+        document.Provenance.SourceRuns ??= new List<SloQualificationSourceRun>();
 
         for (var index = 0; index < document.Profile.Services.Count; index++)
         {
@@ -325,6 +342,10 @@ public static class SloQualificationValidator
         {
             err("provenance.run_id missing");
         }
+        if (provenance.RunAttempt <= 0)
+        {
+            err("provenance.run_attempt must be greater than zero");
+        }
         if (!Uri.TryCreate(provenance.RunUrl, UriKind.Absolute, out var runUri)
             || (runUri.Scheme != Uri.UriSchemeHttps && runUri.Scheme != Uri.UriSchemeHttp))
         {
@@ -366,6 +387,138 @@ public static class SloQualificationValidator
             {
                 err("provenance.backend_description missing for real-Azure qualification");
             }
+            ValidateSourceRuns(document, nowUtc, err);
+        }
+    }
+
+    private static void ValidateSourceRuns(
+        SloQualificationDocument document,
+        DateTimeOffset nowUtc,
+        Action<string> err)
+    {
+        var runs = document.Provenance.SourceRuns;
+        if (document.Verdict != "qualified" && runs.Count == 0)
+        {
+            return;
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        for (var index = 0; index < runs.Count; index++)
+        {
+            var run = runs[index];
+            var prefix = $"provenance.source_runs[{index}]";
+            if (string.IsNullOrWhiteSpace(run.RunId))
+            {
+                err($"{prefix}.run_id missing");
+            }
+            if (!Uri.TryCreate(run.RunUrl, UriKind.Absolute, out var runUri)
+                || (runUri.Scheme != Uri.UriSchemeHttps && runUri.Scheme != Uri.UriSchemeHttp))
+            {
+                err($"{prefix}.run_url must be an absolute HTTP(S) URL");
+            }
+            if (run.RunAttempt <= 0)
+            {
+                err($"{prefix}.run_attempt must be greater than zero");
+            }
+            if (run.WindowStartUtc == default
+                || run.WindowEndUtc == default
+                || run.WindowStartUtc >= run.WindowEndUtc)
+            {
+                err($"{prefix} requires an ordered non-empty run window");
+            }
+            if (run.WindowStartUtc < document.Provenance.WindowStartUtc
+                || run.WindowEndUtc > document.Provenance.WindowEndUtc)
+            {
+                err($"{prefix} window must fall within the aggregate provenance window");
+            }
+            if (!string.Equals(run.GitSha, document.Candidate.GitSha, StringComparison.Ordinal)
+                || !string.Equals(
+                    run.ArtifactDigest,
+                    document.Candidate.ArtifactDigest,
+                    StringComparison.Ordinal)
+                || !string.Equals(
+                    run.ConfigDigest,
+                    document.Candidate.ConfigDigest,
+                    StringComparison.Ordinal))
+            {
+                err($"{prefix} candidate provenance does not match the qualification candidate");
+            }
+            if (!seen.Add(run.RunId))
+            {
+                err($"{prefix} duplicates run_id '{run.RunId}'");
+            }
+            if (document.Verdict == "qualified"
+                && HasValidMaxAge(document.Rules)
+                && nowUtc.ToUniversalTime() - run.WindowEndUtc.ToUniversalTime()
+                > TimeSpan.FromHours(document.Rules.MaxArtifactAgeHours))
+            {
+                err($"{prefix} is stale");
+            }
+        }
+
+        if (document.Verdict == "qualified"
+            && seen.Count < document.Rules.MinDistinctRuns)
+        {
+            err(
+                $"qualified real-Azure artifact has {seen.Count} distinct source runs; " +
+                $"minimum is {document.Rules.MinDistinctRuns}");
+        }
+        if (document.Verdict == "qualified")
+        {
+            if (seen.Contains(document.Provenance.RunId))
+            {
+                err("qualification provenance.run_id must be distinct from load source runs");
+            }
+            var correctness = document.Provenance.CorrectnessRun;
+            if (correctness is null)
+            {
+                err("qualified real-Azure artifact requires provenance.correctness_run");
+            }
+            else
+            {
+                ValidateCorrectnessRun(document, correctness, nowUtc, err);
+                if (seen.Contains(correctness.RunId))
+                {
+                    err("provenance.correctness_run must be distinct from load source runs");
+                }
+                if (correctness.RunId == document.Provenance.RunId)
+                {
+                    err(
+                        "qualification provenance.run_id must be distinct from " +
+                        "provenance.correctness_run");
+                }
+            }
+        }
+    }
+
+    private static void ValidateCorrectnessRun(
+        SloQualificationDocument document,
+        SloQualificationSourceRun run,
+        DateTimeOffset nowUtc,
+        Action<string> err)
+    {
+        const string prefix = "provenance.correctness_run";
+        if (string.IsNullOrWhiteSpace(run.RunId)
+            || !Uri.TryCreate(run.RunUrl, UriKind.Absolute, out var runUri)
+            || (runUri.Scheme != Uri.UriSchemeHttps && runUri.Scheme != Uri.UriSchemeHttp)
+            || run.RunAttempt <= 0
+            || run.WindowStartUtc == default
+            || run.WindowEndUtc == default
+            || run.WindowStartUtc >= run.WindowEndUtc)
+        {
+            err($"{prefix} is incomplete or malformed");
+        }
+        if (!string.Equals(run.GitSha, document.Candidate.GitSha, StringComparison.Ordinal)
+            || !string.Equals(run.ArtifactDigest, document.Candidate.ArtifactDigest, StringComparison.Ordinal)
+            || !string.Equals(run.ConfigDigest, document.Candidate.ConfigDigest, StringComparison.Ordinal))
+        {
+            err($"{prefix} candidate provenance does not match the qualification candidate");
+        }
+        if (HasValidMaxAge(document.Rules)
+            && nowUtc.ToUniversalTime() - run.WindowEndUtc.ToUniversalTime()
+            > TimeSpan.FromHours(document.Rules.MaxArtifactAgeHours))
+        {
+            err($"{prefix} is stale");
         }
     }
 
@@ -392,6 +545,10 @@ public static class SloQualificationValidator
             || rules.MaxFailureRate is < 0 or > 1)
         {
             err("rules.max_failure_rate must be a finite number between zero and one");
+        }
+        if (rules.MinDistinctRuns <= 0)
+        {
+            err("rules.min_distinct_runs must be greater than zero");
         }
     }
 
@@ -531,6 +688,17 @@ public static class SloQualificationValidator
                           && scenario.EvidenceSource == "real_azure"))
         {
             err("qualified real-Azure artifact requires a blocking signal for a real_azure scenario");
+        }
+        if (document.ArtifactKind == "real_azure_workload_qualification"
+            && document.Verdict == "qualified"
+            && !document.Signals.Any(
+                signal => signal.Disposition == "blocking"
+                          && signal.Source == "backend_capacity"
+                          && signal.Metric is "throughput_per_sec" or "p95_ms" or "p99_ms"))
+        {
+            err(
+                "qualified real-Azure artifact requires a blocking backend-capacity " +
+                "throughput or latency signal");
         }
 
         var gatesMustPass = (document.ArtifactKind == "real_azure_workload_qualification"
@@ -700,13 +868,26 @@ public static class SloQualificationValidator
             err("qualified real-Azure artifact is stale");
         }
 
-        foreach (var scenario in realAzureScenarios)
+        foreach (var scenario in document.Scenarios)
         {
             var prefix = $"scenario '{scenario.Id}'";
             if (scenario.Completions == 0)
             {
                 err($"{prefix} has zero completions");
             }
+            var attempts = (double)scenario.Completions + scenario.Failures;
+            var failureRate = attempts == 0 ? 0 : scenario.Failures / attempts;
+            if (failureRate > document.Rules.MaxFailureRate)
+            {
+                err(
+                    $"{prefix} failure rate {failureRate:F6} exceeds " +
+                    $"{document.Rules.MaxFailureRate:F6}");
+            }
+        }
+
+        foreach (var scenario in realAzureScenarios)
+        {
+            var prefix = $"scenario '{scenario.Id}'";
             if (scenario.Completions < document.Rules.MinSamplesPerScenario)
             {
                 err(
@@ -718,14 +899,6 @@ public static class SloQualificationValidator
                 err(
                     $"{prefix} duration is {scenario.DurationSeconds}; " +
                     $"minimum is {document.Rules.MinDurationSeconds}");
-            }
-            var attempts = (double)scenario.Completions + scenario.Failures;
-            var failureRate = attempts == 0 ? 0 : scenario.Failures / attempts;
-            if (failureRate > document.Rules.MaxFailureRate)
-            {
-                err(
-                    $"{prefix} failure rate {failureRate:F6} exceeds " +
-                    $"{document.Rules.MaxFailureRate:F6}");
             }
             if (HasValidMaxAge(document.Rules)
                 && nowUtc

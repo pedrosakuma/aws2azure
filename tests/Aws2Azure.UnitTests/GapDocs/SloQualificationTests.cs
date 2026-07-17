@@ -140,6 +140,65 @@ public sealed class SloQualificationTests
     }
 
     [Fact]
+    public void Validate_rejects_failed_or_zero_completion_deterministic_required_evidence()
+    {
+        var document = Valid("real_azure_workload_qualification", "qualified");
+        document.Scenarios.Add(new SloQualificationScenario
+        {
+            Id = "retry-exhaustion",
+            Service = "s3",
+            Operation = "PutObject",
+            EvidenceSource = "deterministic",
+            Completions = 0,
+            Failures = 1,
+            DurationSeconds = 1,
+            CapturedAtUtc = Now.AddMinutes(-1),
+        });
+
+        var errors = SloQualificationValidator.Validate(document, Now);
+
+        Assert.Contains(
+            errors,
+            error => error.Contains("retry-exhaustion", StringComparison.Ordinal)
+                     && error.Contains("zero completions", StringComparison.Ordinal));
+        Assert.Contains(
+            errors,
+            error => error.Contains("retry-exhaustion", StringComparison.Ordinal)
+                     && error.Contains("failure rate", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Validate_rejects_stale_individual_source_run()
+    {
+        var document = Valid("real_azure_workload_qualification", "qualified");
+        document.Provenance.WindowStartUtc = Now.AddHours(-80);
+        document.Provenance.SourceRuns[0].WindowStartUtc = Now.AddHours(-80);
+        document.Provenance.SourceRuns[0].WindowEndUtc = Now.AddHours(-79);
+
+        var errors = SloQualificationValidator.Validate(document, Now);
+
+        Assert.Contains(
+            errors,
+            error => error.Contains("source_runs[0]", StringComparison.Ordinal)
+                     && error.Contains("stale", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Validate_requires_qualification_correctness_and_load_run_ids_to_be_distinct()
+    {
+        var document = Valid("real_azure_workload_qualification", "qualified");
+        document.Provenance.RunId = document.Provenance.SourceRuns[0].RunId;
+
+        var errors = SloQualificationValidator.Validate(document, Now);
+
+        Assert.Contains(
+            errors,
+            error => error.Contains(
+                "qualification provenance.run_id must be distinct",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Validate_rejects_stale_or_short_real_azure_qualification()
     {
         var document = Valid("real_azure_workload_qualification", "qualified");
@@ -336,13 +395,39 @@ public sealed class SloQualificationTests
         },
         Provenance = new SloQualificationProvenance
         {
-            RunId = "123",
-            RunUrl = "https://github.com/example/repo/actions/runs/123",
+            RunId = "124",
+            RunUrl = "https://github.com/example/repo/actions/runs/124",
+            RunAttempt = 1,
             GeneratedAtUtc = Now.AddMinutes(-1),
             WindowStartUtc = Now.AddMinutes(-10),
             WindowEndUtc = Now.AddMinutes(-1),
             Region = "eastus2",
-            BackendDescription = "Blob Storage Standard_LRS"
+            BackendDescription = "Blob Storage Standard_LRS",
+            CorrectnessRun = new SloQualificationSourceRun
+            {
+                RunId = "122",
+                RunUrl = "https://github.com/example/repo/actions/runs/122",
+                RunAttempt = 1,
+                WindowStartUtc = Now.AddMinutes(-20),
+                WindowEndUtc = Now.AddMinutes(-11),
+                GitSha = "0123456789abcdef",
+                ArtifactDigest = "sha256:artifact",
+                ConfigDigest = "sha256:config"
+            },
+            SourceRuns =
+            [
+                new SloQualificationSourceRun
+                {
+                    RunId = "123",
+                    RunUrl = "https://github.com/example/repo/actions/runs/123",
+                    RunAttempt = 1,
+                    WindowStartUtc = Now.AddMinutes(-10),
+                    WindowEndUtc = Now.AddMinutes(-1),
+                    GitSha = "0123456789abcdef",
+                    ArtifactDigest = "sha256:artifact",
+                    ConfigDigest = "sha256:config"
+                }
+            ]
         },
         Rules = new SloQualificationRules
         {
@@ -351,7 +436,8 @@ public sealed class SloQualificationTests
             MinDurationSeconds = 300,
             MaxFailureRate = 0.001,
             ZeroCompletionsDisqualify = true,
-            OnlySkippedRealAzureDisqualifies = true
+            OnlySkippedRealAzureDisqualifies = true,
+            MinDistinctRuns = 1
         },
         Signals =
         [

@@ -15,7 +15,9 @@ public sealed class RealAzureWorkloadQualificationMetadata
     public string ConfigDigest { get; set; } = string.Empty;
     public string Region { get; set; } = string.Empty;
     public string BackendDescription { get; set; } = string.Empty;
+    public int RunAttempt { get; set; } = 1;
     public DateTimeOffset GeneratedAtUtc { get; set; }
+    public List<string> RequiredScenarioIds { get; set; } = new();
 }
 
 public sealed class RealAzureWorkloadOperation
@@ -49,6 +51,7 @@ public static class RealAzureWorkloadQualificationGenerator
         RealAzureWorkloadQualificationMetadata metadata)
     {
         ValidateEvidence(evidence);
+        metadata.RequiredScenarioIds ??= new List<string>();
         var operations = NormalizeOperations(requestedOperations);
         if (operations.Count == 0)
         {
@@ -97,6 +100,7 @@ public static class RealAzureWorkloadQualificationGenerator
             {
                 RunId = evidence.RunId,
                 RunUrl = evidence.RunUrl,
+                RunAttempt = metadata.RunAttempt,
                 GeneratedAtUtc = generatedAtUtc,
                 WindowStartUtc = capturedAtUtc,
                 WindowEndUtc = capturedAtUtc.AddTicks(1),
@@ -116,6 +120,9 @@ public static class RealAzureWorkloadQualificationGenerator
 
         var blocked = false;
         var inconclusive = !string.IsNullOrWhiteSpace(evidence.Selection.Scenario);
+        var emittedSourceScenarios = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var scenariosById =
+            new Dictionary<string, SloQualificationScenario>(StringComparer.OrdinalIgnoreCase);
         if (inconclusive)
         {
             document.Findings.Add(new SloQualificationFinding
@@ -127,7 +134,6 @@ public static class RealAzureWorkloadQualificationGenerator
                     $"'{evidence.Selection.Scenario}' and cannot establish complete workload coverage."
             });
         }
-        var scenarioIndex = 0;
         foreach (var requested in operations)
         {
             var service = evidence.Services.FirstOrDefault(
@@ -162,25 +168,41 @@ public static class RealAzureWorkloadQualificationGenerator
                 continue;
             }
 
-            foreach (var sourceGroup in relevantScenarios
-                         .GroupBy(scenario => scenario.EvidenceSource, StringComparer.Ordinal)
-                         .OrderBy(group => group.Key, StringComparer.Ordinal))
+            foreach (var scenario in relevantScenarios.OrderBy(
+                         scenario => scenario.Id,
+                         StringComparer.Ordinal))
             {
-                scenarioIndex++;
-                document.Scenarios.Add(new SloQualificationScenario
+                var sourceKey = requested.Service + "\n" + scenario.Id;
+                if (!emittedSourceScenarios.Add(sourceKey))
                 {
-                    Id = $"conformance-{scenarioIndex:D3}",
-                    Service = requested.Service,
-                    Operation = requested.Operation,
-                    EvidenceSource = sourceGroup.Key,
-                    Completions = sourceGroup.Count(scenario => scenario.Outcome == "passed"),
-                    Failures = sourceGroup.Count(scenario => scenario.Outcome == "failed"),
-                    Skipped = sourceGroup.Count(
-                        scenario => scenario.Outcome is "skipped" or "not_run"),
-                    DurationSeconds =
-                        sourceGroup.Sum(scenario => scenario.DurationMilliseconds) / 1000,
-                    CapturedAtUtc = capturedAtUtc
-                });
+                    continue;
+                }
+
+                var stableId = StableScenarioId(scenario, metadata.RequiredScenarioIds);
+                if (!scenariosById.TryGetValue(stableId, out var emitted))
+                {
+                    emitted = new SloQualificationScenario
+                    {
+                        Id = stableId,
+                        Service = requested.Service,
+                        Operation = requested.Operation,
+                        EvidenceSource = scenario.EvidenceSource,
+                        CapturedAtUtc = capturedAtUtc
+                    };
+                    scenariosById.Add(stableId, emitted);
+                }
+                else if (!emitted.Service.Equals(requested.Service, StringComparison.OrdinalIgnoreCase)
+                         || emitted.EvidenceSource != scenario.EvidenceSource)
+                {
+                    throw new InvalidDataException(
+                        $"Stable qualification scenario id '{stableId}' is ambiguous across " +
+                        "services or evidence sources.");
+                }
+
+                emitted.Completions += scenario.Outcome == "passed" ? 1 : 0;
+                emitted.Failures += scenario.Outcome == "failed" ? 1 : 0;
+                emitted.Skipped += scenario.Outcome is "skipped" or "not_run" ? 1 : 0;
+                emitted.DurationSeconds += scenario.DurationMilliseconds / 1000;
             }
 
             var failedOutcomes = relevantScenarios
@@ -205,7 +227,6 @@ public static class RealAzureWorkloadQualificationGenerator
                     "Required conformance failed: " + string.Join(", ", failedOutcomes));
                 continue;
             }
-
             if (incompleteOutcomes.Count > 0
                 || !hasPositiveRealAzureEvidence)
             {
@@ -223,6 +244,9 @@ public static class RealAzureWorkloadQualificationGenerator
                     "Required conformance is incomplete: " + string.Join(", ", reasons));
             }
         }
+        document.Scenarios = scenariosById.Values
+            .OrderBy(scenario => scenario.Id, StringComparer.Ordinal)
+            .ToList();
 
         if (blocked)
         {
@@ -246,6 +270,28 @@ public static class RealAzureWorkloadQualificationGenerator
         }
 
         return document;
+    }
+
+    private static string StableScenarioId(
+        ScenarioEvidence scenario,
+        IReadOnlyList<string> requiredScenarioIds)
+    {
+        var canonical = scenario.Category switch
+        {
+            "throttling" => "throttling",
+            "timeout" => "timeout",
+            "service_unavailable" => "service-unavailable",
+            "cancellation" => "cancellation",
+            "retry_exhaustion" => "retry-exhaustion",
+            "restart" => "restart",
+            "rollback" => "rollback",
+            "concurrency" => "concurrency",
+            _ => scenario.Id
+        };
+        return requiredScenarioIds.Contains(canonical, StringComparer.OrdinalIgnoreCase)
+            ? requiredScenarioIds.First(
+                value => value.Equals(canonical, StringComparison.OrdinalIgnoreCase))
+            : scenario.Id;
     }
 
     private static List<RealAzureWorkloadOperation> NormalizeOperations(

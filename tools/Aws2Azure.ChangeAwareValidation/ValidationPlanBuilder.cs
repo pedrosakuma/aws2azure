@@ -109,9 +109,17 @@ public static class ValidationPlanBuilder
         var isPerfTest = path.StartsWith("tests/Aws2Azure.PerfTests/", StringComparison.Ordinal);
         var isFootprintTest = path.StartsWith("tests/Aws2Azure.FootprintTests/", StringComparison.Ordinal);
         var isRealAzureTest = isIntegrationTest &&
-            ContainsAny(path, "/RealAzure/", "RealAzure");
+            ContainsAny(
+                path,
+                "/RealAzure/",
+                "RealAzure",
+                "/OperationalQualification/");
         var isWorkflow = path.StartsWith(".github/workflows/", StringComparison.Ordinal);
         var isRealAzureMatrix = path == "docs/testing/real-azure-conformance.yaml";
+        var isQualificationPolicy =
+            path.StartsWith("docs/workloads/qualification/", StringComparison.Ordinal);
+        var isQualificationWorkflow =
+            IsWorkflow(path, "qualification-real-azure.yml");
         var isMicrobenchBaseline = path == "docs/perf/microbench-reference.json";
         var isValidationEntrypoint = path == "eng/validate.ps1";
 
@@ -172,6 +180,7 @@ public static class ValidationPlanBuilder
             isValidationEntrypoint ||
             IsWorkflow(path, "perf.yml") ||
             IsWorkflow(path, "perf-real-azure.yml") ||
+            isQualificationWorkflow ||
             IsPerfBaseline(path))
         {
             Require(decisions, "perf", path, "request hot path or performance gate changed");
@@ -201,8 +210,10 @@ public static class ValidationPlanBuilder
             isRealAzureMatrix ||
             IsWorkflow(path, "integration-real-azure.yml") ||
             IsWorkflow(path, "perf-real-azure.yml") ||
+            isQualificationWorkflow ||
             IsWorkflow(path, "real-azure-reaper.yml") ||
-            path.StartsWith("deploy/realazure/", StringComparison.Ordinal))
+            path.StartsWith("deploy/realazure/", StringComparison.Ordinal) ||
+            isQualificationPolicy)
         {
             Require(decisions, "real-azure", path, "authentication or transport behavior needs live-Azure coverage");
         }

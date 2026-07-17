@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -45,7 +46,12 @@ if (args.Length > 0 && args[0] == "generate-emulator-qualification")
 
 if (args.Length > 0 && args[0] == "generate-real-azure-workload-qualification")
 {
-    return GenerateRealAzureWorkloadQualification(args[1..]);
+    return GenerateRealAzureWorkloadQualification(args[1..], repoRoot);
+}
+
+if (args.Length > 0 && args[0] == "generate-real-azure-load-qualification")
+{
+    return GenerateRealAzureLoadQualification(args[1..], repoRoot);
 }
 
 return RunGapDocs(args, repoRoot, gapsRoot, workloadsRoot, siteRoot, generatedCode);
@@ -569,10 +575,11 @@ static int GenerateEmulatorQualification(string[] args)
     }
 }
 
-static int GenerateRealAzureWorkloadQualification(string[] args)
+static int GenerateRealAzureWorkloadQualification(string[] args, string repoRoot)
 {
     var values = new Dictionary<string, string>(StringComparer.Ordinal);
     var operations = new List<RealAzureWorkloadOperation>();
+    var requiredScenarioIds = new List<string>();
     for (var index = 0; index < args.Length; index++)
     {
         var option = args[index];
@@ -598,13 +605,15 @@ static int GenerateRealAzureWorkloadQualification(string[] args)
         }
         if (option is "--evidence"
             or "--output"
+            or "--manifest"
             or "--profile-id"
             or "--profile-version"
             or "--git-sha"
             or "--artifact-digest"
             or "--config-digest"
             or "--region"
-            or "--backend-description")
+            or "--backend-description"
+            or "--run-attempt")
         {
             if (++index >= args.Length || args[index].StartsWith("--", StringComparison.Ordinal))
             {
@@ -617,6 +626,51 @@ static int GenerateRealAzureWorkloadQualification(string[] args)
 
         Console.Error.WriteLine($"Unknown option '{option}'.");
         return 1;
+    }
+
+    if (values.TryGetValue("--manifest", out var manifestPath))
+    {
+        if (values.ContainsKey("--profile-id")
+            || values.ContainsKey("--profile-version")
+            || operations.Count > 0)
+        {
+            Console.Error.WriteLine(
+                "--manifest cannot be combined with --profile-id, --profile-version, or --operation.");
+            return 1;
+        }
+        try
+        {
+            var manifest = WorkloadGaManifestLoader.Load(manifestPath);
+            values["--profile-id"] = manifest.Id;
+            values["--profile-version"] = manifest.Version.ToString(CultureInfo.InvariantCulture);
+            requiredScenarioIds.AddRange(manifest.Evidence.RequiredScenarios);
+            foreach (var operationReference in manifest.Operations)
+            {
+                if (!WorkloadManifestValidator.TryParseOperation(
+                        operationReference,
+                        out var service,
+                        out var operation))
+                {
+                    Console.Error.WriteLine(
+                        $"Manifest contains invalid operation reference '{operationReference}'.");
+                    return 1;
+                }
+                operations.Add(new RealAzureWorkloadOperation
+                {
+                    Service = service,
+                    Operation = operation,
+                });
+            }
+        }
+        catch (Exception exception) when (exception is FileNotFoundException
+                                          or InvalidDataException
+                                          or IOException
+                                          or UnauthorizedAccessException
+                                          or YamlException)
+        {
+            Console.Error.WriteLine("[gap-docs] " + exception.Message);
+            return 2;
+        }
     }
 
     var required = new[]
@@ -638,6 +692,7 @@ static int GenerateRealAzureWorkloadQualification(string[] args)
         {
             missing.Add("--operation");
         }
+
         Console.Error.WriteLine(
             "Missing required option(s): " + string.Join(", ", missing));
         return 1;
@@ -645,6 +700,12 @@ static int GenerateRealAzureWorkloadQualification(string[] args)
     if (!int.TryParse(values["--profile-version"], out var profileVersion))
     {
         Console.Error.WriteLine("--profile-version requires an integer.");
+        return 1;
+    }
+    if (values.TryGetValue("--run-attempt", out var rawRunAttempt)
+        && (!int.TryParse(rawRunAttempt, out var parsedRunAttempt) || parsedRunAttempt <= 0))
+    {
+        Console.Error.WriteLine("--run-attempt requires a positive integer.");
         return 1;
     }
 
@@ -662,6 +723,11 @@ static int GenerateRealAzureWorkloadQualification(string[] args)
                 ConfigDigest = values["--config-digest"],
                 Region = values["--region"],
                 BackendDescription = values["--backend-description"],
+                RunAttempt = values.TryGetValue("--run-attempt", out var runAttemptValue)
+                    && int.TryParse(runAttemptValue, out var runAttempt)
+                    ? runAttempt
+                    : 1,
+                RequiredScenarioIds = requiredScenarioIds,
                 GeneratedAtUtc = DateTimeOffset.UtcNow
             });
         var errors = SloQualificationValidator.Validate(document, DateTimeOffset.UtcNow);
@@ -688,6 +754,126 @@ static int GenerateRealAzureWorkloadQualification(string[] args)
                                       or IOException
                                       or UnauthorizedAccessException
                                       or JsonException)
+    {
+        Console.Error.WriteLine("[gap-docs] " + exception.Message);
+        return 2;
+    }
+}
+
+static int GenerateRealAzureLoadQualification(string[] args, string repoRoot)
+{
+    var values = new Dictionary<string, string>(StringComparer.Ordinal);
+    var evidencePaths = new List<string>();
+    for (var index = 0; index < args.Length; index++)
+    {
+        var option = args[index];
+        if (option == "--evidence")
+        {
+            if (++index >= args.Length || args[index].StartsWith("--", StringComparison.Ordinal))
+            {
+                Console.Error.WriteLine($"{option} requires a value.");
+                return 1;
+            }
+            evidencePaths.Add(args[index]);
+            continue;
+        }
+        if (option is "--manifest"
+            or "--candidate"
+            or "--policy"
+            or "--output"
+            or "--trend-output"
+            or "--run-id"
+            or "--run-url"
+            or "--run-attempt")
+        {
+            if (++index >= args.Length || args[index].StartsWith("--", StringComparison.Ordinal))
+            {
+                Console.Error.WriteLine($"{option} requires a value.");
+                return 1;
+            }
+            values[option] = args[index];
+            continue;
+        }
+
+        Console.Error.WriteLine($"Unknown option '{option}'.");
+        return 1;
+    }
+
+    var required = new[]
+    {
+        "--manifest",
+        "--candidate",
+        "--policy",
+        "--output",
+        "--trend-output",
+        "--run-id",
+        "--run-url",
+        "--run-attempt"
+    };
+    var missing = required.Where(option => !values.ContainsKey(option)).ToList();
+    if (evidencePaths.Count == 0)
+    {
+        missing.Add("--evidence");
+    }
+    if (missing.Count > 0)
+    {
+        Console.Error.WriteLine("Missing required option(s): " + string.Join(", ", missing));
+        return 1;
+    }
+    if (!int.TryParse(values["--run-attempt"], out var qualificationRunAttempt)
+        || qualificationRunAttempt <= 0)
+    {
+        Console.Error.WriteLine("--run-attempt requires a positive integer.");
+        return 1;
+    }
+
+    try
+    {
+        var manifest = WorkloadGaManifestLoader.Load(values["--manifest"]);
+        var candidate = SloQualificationLoader.Load(values["--candidate"]);
+        var candidateErrors = SloQualificationValidator.Validate(candidate, DateTimeOffset.UtcNow);
+        if (candidateErrors.Count > 0)
+        {
+            WriteErrors("real-Azure correctness candidate", candidateErrors);
+            return 1;
+        }
+        var policy = WorkloadQualificationPolicyLoader.Load(values["--policy"]);
+        var evidence = evidencePaths
+            .Select(RealAzureLoadQualificationGenerator.LoadEvidence)
+            .ToList();
+        var document = RealAzureLoadQualificationGenerator.Generate(
+            manifest,
+            candidate,
+            policy,
+            evidence,
+            new RealAzureLoadQualificationMetadata
+            {
+                RunId = values["--run-id"],
+                RunUrl = values["--run-url"],
+                RunAttempt = qualificationRunAttempt,
+                GeneratedAtUtc = DateTimeOffset.UtcNow,
+            });
+        var errors = SloQualificationValidator.Validate(document, DateTimeOffset.UtcNow);
+        if (errors.Count > 0)
+        {
+            WriteErrors("generated real-Azure load qualification", errors);
+            return 1;
+        }
+
+        SloQualificationRenderer.RenderYaml(document, values["--output"]);
+        RealAzureLoadQualificationGenerator.RenderTrend(evidence, values["--trend-output"]);
+        Console.WriteLine(
+            $"[gap-docs] real-Azure load qualification '{document.Verdict}' " +
+            $"written to {values["--output"]}");
+        return document.Verdict == "qualified" ? 0 : 4;
+    }
+    catch (Exception exception) when (exception is ArgumentException
+                                      or FileNotFoundException
+                                      or InvalidDataException
+                                      or IOException
+                                      or UnauthorizedAccessException
+                                      or JsonException
+                                      or YamlException)
     {
         Console.Error.WriteLine("[gap-docs] " + exception.Message);
         return 2;
