@@ -43,9 +43,9 @@ into one 90-day artifact, validates a source-generated JSON manifest, and
 attests both the executable and manifest. No consumer may independently rebuild
 the SHA and call that output the same sealed runtime.
 
-The artifact name contains the complete runtime digest plus the GitHub run id
-and attempt. The manifest also records the repository, source SHA/ref, RID,
-executable digest, complete canonical `runtime-sha256.txt` digest,
+The artifact name contains the full 64-hex complete-runtime SHA-256 plus the
+GitHub run id and attempt. The manifest also records the repository, source
+SHA/ref, RID, executable digest, complete canonical `runtime-sha256.txt` digest,
 workflow/run/attempt URLs, and timestamps. Select an artifact by the exact run
 id, attempt, and artifact name; a rerun is a distinct producer identity even
 when its runtime digest is identical. GitHub artifact upload does not preserve

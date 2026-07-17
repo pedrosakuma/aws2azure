@@ -150,7 +150,7 @@ generate_manifest() {
   executable_sha256="$(sha256sum "$runtime_dir/$executable_name" | cut -d' ' -f1)"
   executable_size="$(stat -c '%s' "$runtime_dir/$executable_name")"
   aggregate_digest="$(sha256sum "$hashes_path" | cut -d' ' -f1)"
-  artifact_name="aws2azure-sealed-linux-x64-${aggregate_digest:0:16}-run-$SEALED_RUN_ID-attempt-$SEALED_RUN_ATTEMPT"
+  artifact_name="aws2azure-sealed-linux-x64-$aggregate_digest-run-$SEALED_RUN_ID-attempt-$SEALED_RUN_ATTEMPT"
   archive_name="$artifact_name.tar"
 
   jq -S -n \
@@ -336,7 +336,7 @@ validate_manifest() {
   local runtime_dir="$bundle_dir/runtime"
   [[ -d "$runtime_dir" && ! -L "$runtime_dir" ]] ||
     fail "runtime root must be a real directory: $runtime_dir"
-  if find "$runtime_dir" -mindepth 1 -maxdepth 1 \( -type l -o -type d \) -print -quit |
+  if find "$runtime_dir" -mindepth 1 -maxdepth 1 ! -type f -print -quit |
      grep -q .; then
     fail "runtime root must contain regular files only"
   fi
@@ -422,7 +422,7 @@ validate_manifest() {
 
   local aggregate_hex="${aggregate_digest#sha256:}"
   local expected_artifact_name
-  expected_artifact_name="aws2azure-sealed-linux-x64-${aggregate_hex:0:16}-run-$run_id-attempt-$run_attempt"
+  expected_artifact_name="aws2azure-sealed-linux-x64-$aggregate_hex-run-$run_id-attempt-$run_attempt"
   [[ "$(jq -er '.artifact.name' "$manifest_path")" == "$expected_artifact_name" ]] ||
     fail "artifact name does not contain the complete runtime digest and exact run identity"
   [[ "$(jq -er '.artifact.archive_name' "$manifest_path")" == "$expected_artifact_name.tar" ]] ||

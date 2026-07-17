@@ -33,6 +33,14 @@ cmp --silent \
 cmp --silent "$bundle_one/runtime-sha256.txt" "$bundle_two/runtime-sha256.txt"
 cp "$bundle_two/sealed-runtime-manifest.json" "$scratch/original-manifest.json"
 
+aggregate_hex="$(
+  jq -r '.runtime.aggregate_digest' "$scratch/original-manifest.json" |
+    sed 's/^sha256://'
+)"
+artifact_name="$(jq -r '.artifact.name' "$scratch/original-manifest.json")"
+[[ "$aggregate_hex" =~ ^[0-9a-f]{64}$ ]]
+[[ "$artifact_name" == "aws2azure-sealed-linux-x64-$aggregate_hex-run-$SEALED_RUN_ID-attempt-$SEALED_RUN_ATTEMPT" ]]
+
 archive_name="$(jq -r '.artifact.archive_name' "$scratch/original-manifest.json")"
 tar \
   --format=gnu \
@@ -48,6 +56,14 @@ mkdir -p "$scratch/roundtrip"
 tar -xf "$scratch/$archive_name" -C "$scratch/roundtrip"
 "$repo_root/eng/sealed-runtime-manifest.sh" validate \
   "$scratch/roundtrip/sealed-runtime-manifest.json" >/dev/null
+
+mkfifo "$bundle_one/runtime/unexpected.pipe"
+if "$repo_root/eng/sealed-runtime-manifest.sh" validate \
+  "$bundle_one/sealed-runtime-manifest.json" >/dev/null 2>&1; then
+  echo "runtime FIFO unexpectedly validated as a regular file" >&2
+  exit 1
+fi
+rm "$bundle_one/runtime/unexpected.pipe"
 
 chmod 0644 "$bundle_one/runtime/Aws2Azure.Proxy"
 if "$repo_root/eng/sealed-runtime-manifest.sh" validate \
