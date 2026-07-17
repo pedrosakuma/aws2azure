@@ -7,7 +7,7 @@ Legend: ⛔ blocked · 🟡 conditional · 🔵 candidate · ✅ GA
 | Profile | Version | Minimum proxy | Verdict | Blocking reasons |
 |---|---:|---|---|---|
 | DynamoDB basic table and item CRUD (`dynamodb-basic-crud`) | 1 | `0.1.0` | 🔵 candidate | 1 |
-| S3 basic object CRUD (`s3-basic-object-crud`) | 1 | `0.1.0` | 🟡 conditional | 1 |
+| S3 basic object CRUD (`s3-basic-object-crud`) | 1 | `0.1.0` | 🔵 candidate | 1 |
 | Secrets Manager basic lifecycle (`secretsmanager-basic-lifecycle`) | 1 | `0.1.0` | 🔵 candidate | 1 |
 | SQS standard messaging (`sqs-standard-messaging`) | 1 | `0.1.0` | 🟡 conditional | 3 |
 

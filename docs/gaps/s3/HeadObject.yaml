@@ -2,6 +2,10 @@ service: s3
 operation: HeadObject
 azure_equivalent: "HEAD https://{account}.blob.core.windows.net/{container}/{blob}"
 status: implemented
+verified_real_azure:
+  date: "2026-07-17"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29548639280
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29548639280
 sub_features:
   - name: conditional headers
     status: implemented

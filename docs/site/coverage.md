@@ -72,7 +72,7 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | s3 | [GetObjectTorrent](s3.md#getobjecttorrent) | ⛔ unsupported | — | `(no equivalent — proxy returns 501 NotImplemented)` |
 | s3 | [GetPublicAccessBlock](s3.md#getpublicaccessblock) | ⛔ unsupported | — | `(no equivalent — proxy returns 404 NoSuchPublicAccessBlockConfiguration)` |
 | s3 | [HeadBucket](s3.md#headbucket) | ✅ implemented | — | `HEAD https://{account}.blob.core.windows.net/{container}?restype=container` |
-| s3 | [HeadObject](s3.md#headobject) | ✅ implemented | — | `HEAD https://{account}.blob.core.windows.net/{container}/{blob}` |
+| s3 | [HeadObject](s3.md#headobject) | ✅ implemented | ✅ | `HEAD https://{account}.blob.core.windows.net/{container}/{blob}` |
 | s3 | [ListBuckets](s3.md#listbuckets) | ✅ implemented | — | `GET https://{account}.blob.core.windows.net/?comp=list` |
 | s3 | [ListMultipartUploads](s3.md#listmultipartuploads) | 🟡 partial | — | `(none — Azure Blob has no in-progress-upload enumeration)` |
 | s3 | [ListObjectVersions](s3.md#listobjectversions) | 🟡 partial | ✅ | `GET {container}?restype=container&comp=list&include=versions` |

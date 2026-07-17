@@ -19,7 +19,6 @@ services:
       - DeleteObjectTagging
       - GetObjectTagging
       - HeadBucket
-      - HeadObject
       - ListBuckets
       - ListObjects
       - ListParts

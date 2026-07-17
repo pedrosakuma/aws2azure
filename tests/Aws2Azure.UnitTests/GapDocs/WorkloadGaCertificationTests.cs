@@ -12,7 +12,7 @@ public sealed class WorkloadGaCertificationTests
         Loader.LoadDesignDocs(Path.Combine(RepoRoot, "docs", "gaps"));
 
     [Theory]
-    [InlineData("s3-basic-object-crud.yaml", "conditional")]
+    [InlineData("s3-basic-object-crud.yaml", "candidate")]
     [InlineData("secretsmanager-basic-lifecycle.yaml", "candidate")]
     [InlineData("sqs-standard-messaging.yaml", "conditional")]
     [InlineData("dynamodb-basic-crud.yaml", "candidate")]
@@ -108,7 +108,7 @@ public sealed class WorkloadGaCertificationTests
         Assert.Equal(first, second);
         using var document = JsonDocument.Parse(first);
         Assert.Equal("s3-basic-object-crud", document.RootElement.GetProperty("profile_id").GetString());
-        Assert.Equal("conditional", document.RootElement.GetProperty("verdict").GetString());
+        Assert.Equal("candidate", document.RootElement.GetProperty("verdict").GetString());
     }
 
     [Fact]

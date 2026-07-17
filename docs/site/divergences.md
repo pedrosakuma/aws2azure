@@ -4,7 +4,7 @@ Emulators are a necessary, not sufficient, signal: nothing is trusted as
 `implemented` without ≥1 recorded real-Azure validation. This report aggregates
 the documented behaviour differences and the real-Azure seal state.
 
-- Operations: **142** — real-Azure verified: **50**, implemented-but-unsealed: **24**
+- Operations: **142** — real-Azure verified: **51**, implemented-but-unsealed: **23**
 
 ## Implemented without a real-Azure seal
 
@@ -22,7 +22,6 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | DeleteObjectTagging | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
 | s3 | GetObjectTagging | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
 | s3 | HeadBucket | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
-| s3 | HeadObject | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
 | s3 | ListBuckets | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
 | s3 | ListObjects | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
 | s3 | ListParts | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
@@ -267,9 +266,9 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | GetObjectTagging | — | Returns an empty TagSet (200) when no tags are set, matching Azure's behaviour. Azure surfaces 'no tags' as an empty set rather than a NoSuchTagSet error. |
 | s3 | GetPublicAccessBlock | — | GET returns HTTP 404 with code NoSuchPublicAccessBlockConfiguration so clients receive the same shape as a never-configured S3 bucket instead of InternalError. |
 | s3 | HeadBucket | — | 404 responses include x-amz-error-code: NoSuchBucket so SDKs can map the error without a body (HEAD has none). |
-| s3 | HeadObject | — | 404 responses include x-amz-error-code: NoSuchKey and an empty body (HEAD spec). |
-| s3 | HeadObject | — | 412 PreconditionFailed (failed If-Match) responses include x-amz-error-code: PreconditionFailed and an empty body (HEAD spec). |
-| s3 | HeadObject | — | Presigned HEAD is accepted (see PresignedUrl.yaml). |
+| s3 | HeadObject | ✅ | 404 responses include x-amz-error-code: NoSuchKey and an empty body (HEAD spec). |
+| s3 | HeadObject | ✅ | 412 PreconditionFailed (failed If-Match) responses include x-amz-error-code: PreconditionFailed and an empty body (HEAD spec). |
+| s3 | HeadObject | ✅ | Presigned HEAD is accepted (see PresignedUrl.yaml). |
 | s3 | ListBuckets | — | CreationDate is populated from the container Last-Modified header — close enough for S3 SDKs but not strictly equivalent. |
 | s3 | ListBuckets | — | Single fixed storage account per process (BlobCredentials); cross-account listing is out of scope. |
 | s3 | ListMultipartUploads | — | Returns a well-formed empty <ListMultipartUploadsResult> (IsTruncated=false, no <Upload> entries) rather than 501. This keeps SDK retry/recovery flows from erroring out, but callers cannot use this endpoint to discover orphaned uploads. |
