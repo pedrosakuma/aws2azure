@@ -29,9 +29,21 @@ scenarios:
         min_value: 40
         threshold_reason: >-
           Reviewed main-branch runs 29580202166, 29580827819, and 29581332440
-          measured 259.68, 43.69, and 89.01 GetObject/s with zero failures.
-          The 40/s floor is conservatively below the worst healthy run; no
-          emulator or A/B measurements were used.
+          measured 259.68, 43.69, and 89.01 GetObject completions/s with zero
+          failures. Each value divides GetObject completions by the total window
+          for the fixed eight-worker closed-loop CRUD topology (PutObject, two
+          HeadObject, three GetObject variants, ListObjectsV2, and two
+          DeleteObject calls); it is not standalone Blob or GetObject capacity.
+          The 40/s floor is conservatively below the worst reviewed healthy run;
+          no emulator or A/B measurements were used.
+      - id: crud-iterations-per-sec
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: aws-operations-per-sec
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
       - id: representative-load-p95
         source: backend_capacity
         disposition: report_only
@@ -40,7 +52,79 @@ scenarios:
         source: backend_capacity
         disposition: report_only
         metric: p99_ms
-      - id: representative-load-network-p95
+      - id: representative-load-create-bucket-throughput
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: representative-load-create-bucket-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-create-bucket-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+      - id: representative-load-put-object-throughput
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: representative-load-put-object-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-put-object-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+      - id: representative-load-head-object-throughput
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: representative-load-head-object-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-head-object-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+      - id: representative-load-list-objects-v2-throughput
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: representative-load-list-objects-v2-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-list-objects-v2-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+      - id: representative-load-delete-object-throughput
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: representative-load-delete-object-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-delete-object-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+      - id: representative-load-delete-bucket-throughput
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: representative-load-delete-bucket-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-delete-bucket-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+      - id: representative-load-unauthenticated-connectivity-header-p95
         source: network_noise
         disposition: report_only
         metric: p95_ms

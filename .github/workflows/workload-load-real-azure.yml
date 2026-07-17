@@ -232,6 +232,8 @@ jobs:
             --arg workflow_sha256 "$(sha256sum .github/workflows/workload-load-real-azure.yml | cut -d' ' -f1)" \
             --arg runner_sha256 "$(sha256sum "$RUNNER_PATH" | cut -d' ' -f1)" \
             --arg shared_runner_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/OperationalQualification/RealAzureWorkloadLoadEvidence.cs | cut -d' ' -f1)" \
+            --arg completed_iteration_counter_sha256 "$(sha256sum tests/Aws2Azure.TestSupport/OperationalQualification/CompletedIterationCounter.cs | cut -d' ' -f1)" \
+            --arg load_evidence_producer_guard_sha256 "$(sha256sum tests/Aws2Azure.TestSupport/OperationalQualification/LoadEvidenceProducerGuard.cs | cut -d' ' -f1)" \
             --arg failure_qualification_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/OperationalQualification/DeterministicFailureQualification.cs | cut -d' ' -f1)" \
             --arg restart_qualification_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/OperationalQualification/RealAzureRestartQualification.cs | cut -d' ' -f1)" \
             --arg credential_rotation_qualification_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/OperationalQualification/SecretsManagerCredentialRotationQualification.cs | cut -d' ' -f1)" \
@@ -254,6 +256,8 @@ jobs:
                 workflow: ("sha256:" + $workflow_sha256),
                 runner: ("sha256:" + $runner_sha256),
                 shared_runner: ("sha256:" + $shared_runner_sha256),
+                completed_iteration_counter: ("sha256:" + $completed_iteration_counter_sha256),
+                load_evidence_producer_guard: ("sha256:" + $load_evidence_producer_guard_sha256),
                 deterministic_failure_qualification: ("sha256:" + $failure_qualification_sha256),
                 restart_qualification: ("sha256:" + $restart_qualification_sha256),
                 credential_rotation_qualification: ("sha256:" + $credential_rotation_qualification_sha256),

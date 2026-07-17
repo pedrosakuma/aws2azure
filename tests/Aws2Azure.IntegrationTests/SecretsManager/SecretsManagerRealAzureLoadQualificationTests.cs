@@ -4,6 +4,7 @@ using System.Text.Json;
 using Amazon.SecretsManager;
 using Amazon.SecretsManager.Model;
 using Aws2Azure.IntegrationTests.OperationalQualification;
+using Aws2Azure.TestSupport.OperationalQualification;
 using Xunit;
 using static Aws2Azure.IntegrationTests.OperationalQualification.RealAzureWorkloadLoad;
 
@@ -35,10 +36,14 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
         Skip.If(!fixture.Configured,
             fixture.SkipReason ?? "Real Azure Key Vault is not configured.");
 
+        var fullOutputPath = ResolveOutputPath(outputPath!);
+        File.Delete(fullOutputPath);
+        File.Delete($"{fullOutputPath}.pending");
         var concurrency = ReadPositiveInt("AWS2AZURE_LOAD_CONCURRENCY", 8);
         var requestedDuration = TimeSpan.FromSeconds(
             ReadPositiveInt("AWS2AZURE_LOAD_DURATION_SECONDS", 300));
         var tracker = new RealAzureWorkloadLoadTracker("secretsmanager", Operations);
+        var completedIterations = new CompletedIterationCounter();
         var vaultUrl = RequiredEnvironment("AZURE_KEYVAULT_URL");
         var windowStart = DateTimeOffset.UtcNow;
         var networkTarget = new Uri(new Uri(vaultUrl), "secrets?api-version=7.4");
@@ -51,6 +56,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
             .Select(worker => RunWorkerAsync(
                 client,
                 tracker,
+                completedIterations,
                 worker,
                 requestedDuration,
                 stopwatch,
@@ -101,8 +107,13 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
         var windowEnd = DateTimeOffset.UtcNow;
 
         var operationMix = tracker.Snapshot();
-        var totalCompletions = operationMix.Sum(item => item.Completions);
-        var totalFailures = operationMix.Sum(item => item.Failures);
+        var operationOutcomes = operationMix
+            .Select(item => new LoadOperationOutcome(
+                item.Operation,
+                item.Completions,
+                item.Failures,
+                tracker.FirstFailure(item.Operation)))
+            .ToArray();
         var representative = tracker.Snapshot("GetSecretValue");
         var representativeAttempts = representative.Completions + representative.Failures;
         var representativeLatencies = tracker.Latencies("GetSecretValue");
@@ -214,34 +225,37 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
             CredentialRotationProofs = [rotation.Proof],
         };
 
-        var fullOutputPath = ResolveOutputPath(outputPath!);
-        Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath)!);
-        await File.WriteAllTextAsync(
-            fullOutputPath,
-            JsonSerializer.Serialize(
-                evidence,
-                RealAzureWorkloadLoadEvidenceJsonContext.Default.RealAzureWorkloadLoadEvidence),
-            timeout.Token).ConfigureAwait(false);
-
-        Assert.True(totalCompletions > 0, "The production-shaped load completed no operations.");
-        Assert.True(
-            totalFailures == 0,
-            $"{totalFailures} of {totalCompletions + totalFailures} operations failed." +
-            $"{Environment.NewLine}{string.Join(
-                ", ",
-                operationMix
-                    .Where(item => item.Failures > 0)
-                    .Select(item =>
-                        $"{item.Operation}={item.Failures} ({tracker.FirstFailure(item.Operation)})"))}" +
-            $"{Environment.NewLine}{fixture.ProxyOutput}");
-        Assert.All(operationMix, item => Assert.True(
-            item.Completions > 0,
-            $"{item.Operation} completed no requests."));
+        await LoadEvidenceProducerGuard.PublishAsync(
+            completedIterations.Count,
+            operationOutcomes,
+            fixture.ProxyOutput,
+            async () =>
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath)!);
+                var pendingOutputPath = $"{fullOutputPath}.pending";
+                File.Delete(pendingOutputPath);
+                try
+                {
+                    await File.WriteAllTextAsync(
+                        pendingOutputPath,
+                        JsonSerializer.Serialize(
+                            evidence,
+                            RealAzureWorkloadLoadEvidenceJsonContext.Default
+                                .RealAzureWorkloadLoadEvidence),
+                        timeout.Token).ConfigureAwait(false);
+                    File.Move(pendingOutputPath, fullOutputPath, true);
+                }
+                finally
+                {
+                    File.Delete(pendingOutputPath);
+                }
+            }).ConfigureAwait(false);
     }
 
     private static async Task RunWorkerAsync(
         IAmazonSecretsManager client,
         RealAzureWorkloadLoadTracker tracker,
+        CompletedIterationCounter completedIterations,
         int worker,
         TimeSpan duration,
         Stopwatch stopwatch,
@@ -250,6 +264,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
         var iteration = 0;
         while (stopwatch.Elapsed < duration)
         {
+            completedIterations.RecordStarted();
             var name = $"a2a-load-{worker:x2}-{iteration++:x6}-{Guid.NewGuid():N}"[..48];
             var created = false;
             try
@@ -337,14 +352,15 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                         cancellationToken).ConfigureAwait(false);
                 }).ConfigureAwait(false);
 
-                await MeasureAsync(tracker, "DeleteSecret", async () =>
-                {
-                    await client.DeleteSecretAsync(new DeleteSecretRequest
+                await completedIterations.CompleteAfterAsync(
+                    () => MeasureAsync(tracker, "DeleteSecret", async () =>
                     {
-                        SecretId = name,
-                        ForceDeleteWithoutRecovery = true,
-                    }, cancellationToken).ConfigureAwait(false);
-                }).ConfigureAwait(false);
+                        await client.DeleteSecretAsync(new DeleteSecretRequest
+                        {
+                            SecretId = name,
+                            ForceDeleteWithoutRecovery = true,
+                        }, cancellationToken).ConfigureAwait(false);
+                    })).ConfigureAwait(false);
                 created = false;
             }
             catch when (!cancellationToken.IsCancellationRequested)
