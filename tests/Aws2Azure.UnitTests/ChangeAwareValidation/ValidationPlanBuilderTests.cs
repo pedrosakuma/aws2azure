@@ -47,6 +47,8 @@ public sealed class ValidationPlanBuilderTests
     [InlineData(".github/workflows/conformance.yml", "conformance", "required")]
     [InlineData(".github/workflows/qualification-real-azure.yml", "perf", "required")]
     [InlineData(".github/workflows/qualification-real-azure.yml", "real-azure", "required")]
+    [InlineData(".github/workflows/workload-load-real-azure.yml", "perf", "required")]
+    [InlineData(".github/workflows/workload-load-real-azure.yml", "real-azure", "required")]
     [InlineData("docs/workloads/qualification/s3.yaml", "real-azure", "required")]
     [InlineData(
         "tests/Aws2Azure.IntegrationTests/OperationalQualification/SecretsManagerRestartQualificationTests.cs",
