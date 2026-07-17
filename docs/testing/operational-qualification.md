@@ -44,6 +44,10 @@ previously approved immutable artifact.
    `load-evidence.json` plus the sealed runtime, candidate-config, and
    producer-config manifests. Do not reuse a run id or mix candidate/config
    digests, regions, SKUs, emulator results, or A/B arms.
+   The producer publishes the final evidence filename only after every mandatory
+   operation completed, the full CRUD iteration count is non-zero, and the
+   operation mix has zero failures. A failed producer artifact must not contain
+   a consumable `load-evidence.json`.
 3. Complete the rollback action above and include its scenario row in every
    evidence bundle required by the reviewed policy.
 4. Dispatch `qualification-real-azure` with the correctness run id, all load run

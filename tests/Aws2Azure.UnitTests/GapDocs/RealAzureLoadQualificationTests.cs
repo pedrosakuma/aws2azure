@@ -135,6 +135,26 @@ public sealed class RealAzureLoadQualificationTests
     }
 
     [Fact]
+    public void Generate_blocks_operation_failures_not_reflected_in_scenario_rows()
+    {
+        var failed = Evidence(1);
+        failed.OperationMix[0].Failures = 1;
+
+        var document = RealAzureLoadQualificationGenerator.Generate(
+            Manifest(),
+            Candidate(),
+            Policy(),
+            [failed, Evidence(2), Evidence(3)],
+            Metadata());
+
+        Assert.Equal("candidate", document.Verdict);
+        Assert.Contains(
+            document.Findings,
+            finding => finding.Code == "operation_failure_rate_exceeded"
+                       && finding.Message.Contains("load-1/1", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Generate_does_not_allow_one_fresh_run_to_hide_a_stale_source_run()
     {
         var stale = Evidence(1);

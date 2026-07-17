@@ -219,6 +219,30 @@ public static class RealAzureLoadQualificationGenerator
                     $"Run {run.Provenance.RunId}/{run.Provenance.RunAttempt} is older than " +
                     $"{policy.Rules.MaxArtifactAgeHours} hours.");
             }
+            foreach (var operation in run.OperationMix)
+            {
+                if (operation.Completions == 0)
+                {
+                    blocked = true;
+                    AddFinding(
+                        document,
+                        "operation_zero_completions",
+                        $"Run {run.Provenance.RunId}/{run.Provenance.RunAttempt} operation " +
+                        $"'{operation.Service}:{operation.Operation}' has zero completions.");
+                }
+                var attempts = (double)operation.Completions + operation.Failures;
+                var failureRate = operation.Failures / attempts;
+                if (failureRate > policy.Rules.MaxFailureRate)
+                {
+                    blocked = true;
+                    AddFinding(
+                        document,
+                        "operation_failure_rate_exceeded",
+                        $"Run {run.Provenance.RunId}/{run.Provenance.RunAttempt} operation " +
+                        $"'{operation.Service}:{operation.Operation}' failure rate " +
+                        $"{failureRate:F6} exceeds {policy.Rules.MaxFailureRate:F6}.");
+                }
+            }
         }
         if (metadata.GeneratedAtUtc.ToUniversalTime()
             - candidate.Provenance.WindowEndUtc.ToUniversalTime()

@@ -36,6 +36,9 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
         Skip.IfNot(fixture.BlobConfigured,
             "AZURE_BLOB_ACCOUNT/AZURE_BLOB_KEY not set — skipping real-Azure S3 load.");
 
+        var fullOutputPath = ResolveOutputPath(outputPath!);
+        File.Delete(fullOutputPath);
+        File.Delete($"{fullOutputPath}.pending");
         var concurrency = ReadPositiveInt("AWS2AZURE_LOAD_CONCURRENCY", 8);
         var requestedDuration = TimeSpan.FromSeconds(
             ReadPositiveInt("AWS2AZURE_LOAD_DURATION_SECONDS", 300));
@@ -74,6 +77,13 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
         var totalAttempts = totalCompletions + totalFailures;
         var completedIterationCount = completedIterations.Count;
         var startedIterationCount = completedIterations.StartedCount;
+        var operationOutcomes = operationMix
+            .Select(item => new LoadOperationOutcome(
+                item.Operation,
+                item.Completions,
+                item.Failures,
+                tracker.FirstFailure(item.Operation)))
+            .ToArray();
         var representative = tracker.Snapshot("GetObject");
         var representativeAttempts = representative.Completions + representative.Failures;
         var networkLatencies = networkBefore.Concat(networkAfter).ToArray();
@@ -198,32 +208,31 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
             Signals = signals,
         };
 
-        var fullOutputPath = ResolveOutputPath(outputPath!);
-        Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath)!);
-        await File.WriteAllTextAsync(
-            fullOutputPath,
-            JsonSerializer.Serialize(
-                evidence,
-                RealAzureWorkloadLoadEvidenceJsonContext.Default.RealAzureWorkloadLoadEvidence),
-            timeout.Token).ConfigureAwait(false);
-
-        Assert.True(
-            completedIterationCount > 0,
-            "The production-shaped load completed no full CRUD iterations.");
-        Assert.True(totalCompletions > 0, "The production-shaped load completed no operations.");
-        Assert.True(
-            totalFailures == 0,
-            $"{totalFailures} of {totalCompletions + totalFailures} operations failed." +
-            $"{Environment.NewLine}{string.Join(
-                ", ",
-                operationMix
-                    .Where(item => item.Failures > 0)
-                    .Select(item =>
-                        $"{item.Operation}={item.Failures} ({tracker.FirstFailure(item.Operation)})"))}" +
-            $"{Environment.NewLine}{fixture.ProxyOutput}");
-        Assert.All(operationMix, item => Assert.True(
-            item.Completions > 0,
-            $"{item.Operation} completed no requests."));
+        await LoadEvidenceProducerGuard.PublishAsync(
+            completedIterationCount,
+            operationOutcomes,
+            fixture.ProxyOutput,
+            async () =>
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath)!);
+                var pendingOutputPath = $"{fullOutputPath}.pending";
+                File.Delete(pendingOutputPath);
+                try
+                {
+                    await File.WriteAllTextAsync(
+                        pendingOutputPath,
+                        JsonSerializer.Serialize(
+                            evidence,
+                            RealAzureWorkloadLoadEvidenceJsonContext.Default
+                                .RealAzureWorkloadLoadEvidence),
+                        timeout.Token).ConfigureAwait(false);
+                    File.Move(pendingOutputPath, fullOutputPath, true);
+                }
+                finally
+                {
+                    File.Delete(pendingOutputPath);
+                }
+            }).ConfigureAwait(false);
     }
 
     private static async Task<RealAzureWorkloadLoadScenario> VerifyScenarioAsync(
