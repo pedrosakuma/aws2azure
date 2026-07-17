@@ -17,6 +17,7 @@ public sealed class S3RealAzureConformanceTests(RealAzureProxyFixture fixture)
 
         var bucket = "aws2azure-read-" + Guid.NewGuid().ToString("N")[..12];
         const string key = "read/object.txt";
+        const string missingCleanupKey = "read/missing-cleanup.txt";
         const string payload = "0123456789abcdefghijklmnopqrstuvwxyz";
         const string contentType = "text/plain; charset=utf-8";
         const string metadataKey = "x-amz-meta-certification";
@@ -32,6 +33,13 @@ public sealed class S3RealAzureConformanceTests(RealAzureProxyFixture fixture)
                 new PutBucketRequest { BucketName = bucket },
                 timeout.Token).ConfigureAwait(false);
             bucketCreated = true;
+
+            await client.DeleteObjectAsync(
+                new DeleteObjectRequest { BucketName = bucket, Key = missingCleanupKey },
+                timeout.Token).ConfigureAwait(false);
+            await client.DeleteObjectAsync(
+                new DeleteObjectRequest { BucketName = bucket, Key = missingCleanupKey },
+                timeout.Token).ConfigureAwait(false);
 
             var putRequest = new PutObjectRequest
             {
@@ -103,9 +111,6 @@ public sealed class S3RealAzureConformanceTests(RealAzureProxyFixture fixture)
                 Assert.Equal(payload, await reader.ReadToEndAsync(timeout.Token).ConfigureAwait(false));
             }
 
-            await client.DeleteObjectAsync(
-                new DeleteObjectRequest { BucketName = bucket, Key = key },
-                timeout.Token).ConfigureAwait(false);
             await client.DeleteObjectAsync(
                 new DeleteObjectRequest { BucketName = bucket, Key = key },
                 timeout.Token).ConfigureAwait(false);
