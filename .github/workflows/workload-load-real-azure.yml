@@ -238,6 +238,7 @@ jobs:
             --arg restart_qualification_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/OperationalQualification/RealAzureRestartQualification.cs | cut -d' ' -f1)" \
             --arg credential_rotation_qualification_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/OperationalQualification/SecretsManagerCredentialRotationQualification.cs | cut -d' ' -f1)" \
             --arg secretsmanager_fixture_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/Fixtures/SecretsManagerRealAzureProxyFixture.cs | cut -d' ' -f1)" \
+            --arg federation_classifier_sha256 "$(sha256sum .github/scripts/classify-entra-federation-response.sh | cut -d' ' -f1)" \
             --arg manifest_sha256 "$(sha256sum "docs/workloads/$PROFILE.yaml" | cut -d' ' -f1)" \
             --arg policy_sha256 "$(sha256sum "docs/workloads/qualification/$PROFILE.yaml" | cut -d' ' -f1)" \
             --argjson topology "$topology" \
@@ -262,6 +263,7 @@ jobs:
                 restart_qualification: ("sha256:" + $restart_qualification_sha256),
                 credential_rotation_qualification: ("sha256:" + $credential_rotation_qualification_sha256),
                 secretsmanager_fixture: ("sha256:" + $secretsmanager_fixture_sha256),
+                federation_response_classifier: ("sha256:" + $federation_classifier_sha256),
                 workload_manifest: ("sha256:" + $manifest_sha256),
                 qualification_policy: ("sha256:" + $policy_sha256)
               }
@@ -445,6 +447,13 @@ jobs:
             exit 1
           fi
           mint_token "$TOKEN_B"
+          token_a_digest="$(sha256sum "$TOKEN_A" | cut -d' ' -f1)"
+          token_b_digest="$(sha256sum "$TOKEN_B" | cut -d' ' -f1)"
+          if [ "$token_a_digest" = "$token_b_digest" ]; then
+            echo "::error::Runtime A/B projected OIDC assertions must be distinct."
+            exit 1
+          fi
+          unset token_a_digest token_b_digest
 
           {
             echo "AZURE_TENANT_ID=$AZURE_TENANT_ID"
@@ -478,6 +487,15 @@ jobs:
                   "$destination"
             )
             chmod 0600 "$destination"
+          }
+          assert_distinct_assertions() {
+            local digest_a digest_b
+            digest_a="$(sha256sum "$AWS2AZURE_ROTATION_TOKEN_FILE_A" | cut -d' ' -f1)"
+            digest_b="$(sha256sum "$AWS2AZURE_ROTATION_TOKEN_FILE_B" | cut -d' ' -f1)"
+            if [ "$digest_a" = "$digest_b" ]; then
+              echo "::error::Runtime A/B projected OIDC assertions must be distinct."
+              return 1
+            fi
           }
           verify_identity() {
             local label="$1"
@@ -523,14 +541,17 @@ jobs:
                 return 1
               fi
 
-              if [ "$exchange_status" = 400 ] &&
-                 jq -er '.error_description // ""' "$exchange_file" |
-                   grep -Eq 'AADSTS70021|AADSTS700212'; then
+              classification="$(
+                ./.github/scripts/classify-entra-federation-response.sh \
+                  "$exchange_status" "$exchange_file"
+              )"
+              IFS=$'\t' read -r disposition error_name aadsts_code <<< "$classification"
+              if [ "$disposition" = retry ]; then
                 federation_retries=$((federation_retries + 1))
                 sleep 5
                 continue
               fi
-              echo "::error::$label federation setup probe failed with unexpected HTTP $exchange_status."
+              echo "::error::$label federation setup probe failed with unexpected HTTP $exchange_status (error=$error_name, aadsts=$aadsts_code)."
               return 1
             done
             echo "::error::$label federation/RBAC propagation exceeded five minutes."
@@ -541,6 +562,7 @@ jobs:
           verify_identity runtime-a \
             "$AWS2AZURE_ROTATION_CLIENT_ID_A" "$AWS2AZURE_ROTATION_TOKEN_FILE_A"
           refresh_assertion "$AWS2AZURE_ROTATION_TOKEN_FILE_B"
+          assert_distinct_assertions
           verify_identity runtime-b \
             "$AWS2AZURE_ROTATION_CLIENT_ID_B" "$AWS2AZURE_ROTATION_TOKEN_FILE_B"
 

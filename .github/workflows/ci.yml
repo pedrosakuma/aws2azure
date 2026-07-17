@@ -24,6 +24,9 @@ jobs:
       - name: Validate sealed runtime manifest tooling
         shell: bash
         run: ./eng/test-sealed-runtime-manifest.sh
+      - name: Validate Entra federation response classification
+        shell: bash
+        run: ./.github/scripts/test-entra-federation-response-classifier.sh
       - name: Verify reproducible proxy runtime
         shell: bash
         run: ./eng/verify-deterministic-runtime.sh
