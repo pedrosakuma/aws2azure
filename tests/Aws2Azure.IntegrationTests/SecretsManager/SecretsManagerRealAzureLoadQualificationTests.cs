@@ -157,6 +157,8 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                 serviceUnavailable,
                 cancellation,
                 restart,
+                // Backend credential rotation and sealed-artifact rollback require
+                // external deployment orchestration that this ephemeral run lacks.
                 Scenario("credential-rotation", "GetSecretValue", "real_azure", 0, 0, 1, 0, loadEnd),
                 Scenario("rollback", "GetSecretValue", "real_azure", 0, 0, 1, 0, loadEnd),
             ],
