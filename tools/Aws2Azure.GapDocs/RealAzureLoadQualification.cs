@@ -374,11 +374,7 @@ public static class RealAzureLoadQualificationGenerator
                         $"Signal '{signalPolicy.Id}' contains an invalid measurement.");
                 }
 
-                var measuredValue = signalPolicy.MinValue is not null
-                                    || signalPolicy.ThresholdStatus == "unresolved"
-                                    && signalPolicy.Metric == "throughput_per_sec"
-                    ? signalMeasurements.Min(item => item.MeasuredValue)
-                    : signalMeasurements.Max(item => item.MeasuredValue);
+                var measuredValue = AggregateSignalMeasurements(signalPolicy, signalMeasurements);
                 if (signalPolicy.ThresholdStatus == "unresolved")
                 {
                     blocked = true;
@@ -432,6 +428,21 @@ public static class RealAzureLoadQualificationGenerator
 
         document.Verdict = blocked ? "candidate" : "qualified";
         return document;
+    }
+
+    private static double AggregateSignalMeasurements(
+        WorkloadQualificationSignalPolicy policy,
+        IReadOnlyCollection<RealAzureLoadSignalMeasurement> measurements)
+    {
+        if (policy.MaxValue is not null)
+        {
+            return measurements.Max(item => item.MeasuredValue);
+        }
+        if (policy.MinValue is not null || policy.Metric == "throughput_per_sec")
+        {
+            return measurements.Min(item => item.MeasuredValue);
+        }
+        return measurements.Max(item => item.MeasuredValue);
     }
 
     public static RealAzureLoadEvidence LoadEvidence(string path)

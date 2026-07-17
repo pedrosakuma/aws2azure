@@ -62,3 +62,25 @@ passed across the minimum distinct immutable runs. `candidate` means evidence is
 missing, inconsistent, stale, insufficient, or failed; the findings state the
 exact reason. External Azure throttling and network-noise signals remain visible
 but cannot silently replace a failed backend-capacity gate.
+
+For `s3-basic-object-crud`, `representative-load-throughput` remains the blocking
+signal and the 40/s floor is unchanged. It is GetObject completions divided by
+the total fixed eight-worker closed-loop CRUD window, not isolated GetObject or
+Blob capacity. The latest qualification remains blocked at 37.2526/s.
+`crud-iterations-per-sec` counts only iterations that complete PutObject, both
+HeadObject calls, all three GetObject variants, ListObjectsV2, the initial
+DeleteObject, and the idempotent DeleteObject. `aws-operations-per-sec` counts
+all successful AWS SDK calls in the operation mix per load-window second.
+Per-operation throughput uses the same window; per-operation p95/p99 uses all
+attempt latencies. Qualification selects the minimum throughput and maximum
+latency across runs, making the closed-loop controlling operation visible.
+These report-only diagnostics localize a cause; they cannot justify changing a
+threshold by themselves.
+
+The S3 connectivity signal measures response-header latency for an intentionally
+unauthenticated Blob service-list request and requires HTTP 403. It is not
+authenticated data-plane health. The sealed producer-config manifest records
+the profile, region, backend topology, load shape, and source digests, but does
+not yet record runner SKU/image, logical processors, process count, or affinity.
+Treat that missing runner/process provenance as a limitation in cross-run
+diagnosis; the shared load-evidence schema remains unchanged.

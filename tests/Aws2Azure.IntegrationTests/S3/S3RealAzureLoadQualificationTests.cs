@@ -4,6 +4,7 @@ using System.Text.Json;
 using Amazon.S3;
 using Amazon.S3.Model;
 using Aws2Azure.IntegrationTests.OperationalQualification;
+using Aws2Azure.TestSupport.OperationalQualification;
 using Xunit;
 using static Aws2Azure.IntegrationTests.OperationalQualification.RealAzureWorkloadLoad;
 
@@ -39,10 +40,13 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
         var requestedDuration = TimeSpan.FromSeconds(
             ReadPositiveInt("AWS2AZURE_LOAD_DURATION_SECONDS", 300));
         var tracker = new RealAzureWorkloadLoadTracker(Service, Operations);
+        var completedIterations = new CompletedIterationCounter();
         var blobEndpoint = RequiredEnvironment("AZURE_BLOB_ENDPOINT");
         var networkTarget = new Uri(new Uri(blobEndpoint), "?comp=list");
         var windowStart = DateTimeOffset.UtcNow;
-        var networkBefore = await ProbeNetworkAsync(networkTarget, 12).ConfigureAwait(false);
+        var networkBefore = await ProbeUnauthenticatedConnectivityHeaderLatencyAsync(
+            networkTarget,
+            12).ConfigureAwait(false);
         var stopwatch = Stopwatch.StartNew();
         using var client = fixture.CreateS3Client();
         using var timeout = new CancellationTokenSource(requestedDuration + TimeSpan.FromMinutes(10));
@@ -51,6 +55,7 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
             .Select(worker => RunWorkerAsync(
                 client,
                 tracker,
+                completedIterations,
                 worker,
                 requestedDuration,
                 stopwatch,
@@ -59,14 +64,18 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
         await Task.WhenAll(workers).ConfigureAwait(false);
         stopwatch.Stop();
         var loadEnd = DateTimeOffset.UtcNow;
-        var networkAfter = await ProbeNetworkAsync(networkTarget, 12).ConfigureAwait(false);
+        var networkAfter = await ProbeUnauthenticatedConnectivityHeaderLatencyAsync(
+            networkTarget,
+            12).ConfigureAwait(false);
         var loadWindowEnd = DateTimeOffset.UtcNow;
         var operationMix = tracker.Snapshot();
         var totalCompletions = operationMix.Sum(item => item.Completions);
         var totalFailures = operationMix.Sum(item => item.Failures);
+        var totalAttempts = totalCompletions + totalFailures;
+        var completedIterationCount = completedIterations.Count;
+        var startedIterationCount = completedIterations.StartedCount;
         var representative = tracker.Snapshot("GetObject");
         var representativeAttempts = representative.Completions + representative.Failures;
-        var representativeLatencies = tracker.Latencies("GetObject");
         var networkLatencies = networkBefore.Concat(networkAfter).ToArray();
         var scenarios = new List<RealAzureWorkloadLoadScenario>
         {
@@ -131,6 +140,18 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
             0,
             DateTimeOffset.UtcNow));
         var windowEnd = DateTimeOffset.UtcNow;
+        var signals = BuildRepresentativeLoadSignals(
+            operationMix,
+            completedIterationCount,
+            startedIterationCount,
+            totalCompletions,
+            totalAttempts,
+            stopwatch.Elapsed.TotalSeconds,
+            networkLatencies,
+            representativeAttempts,
+            tracker.Throttles("GetObject"),
+            loadEnd,
+            loadWindowEnd);
 
         var evidence = new RealAzureWorkloadLoadEvidence
         {
@@ -174,46 +195,7 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
             },
             OperationMix = operationMix,
             Scenarios = scenarios,
-            Signals =
-            [
-                Signal(
-                    "representative-load-throughput",
-                    "representative-load",
-                    "throughput_per_sec",
-                    representative.Completions / stopwatch.Elapsed.TotalSeconds,
-                    representativeAttempts,
-                    loadEnd),
-                Signal(
-                    "representative-load-p95",
-                    "representative-load",
-                    "p95_ms",
-                    Percentile(representativeLatencies, 0.95),
-                    representativeAttempts,
-                    loadEnd),
-                Signal(
-                    "representative-load-p99",
-                    "representative-load",
-                    "p99_ms",
-                    Percentile(representativeLatencies, 0.99),
-                    representativeAttempts,
-                    loadEnd),
-                Signal(
-                    "representative-load-network-p95",
-                    "representative-load",
-                    "p95_ms",
-                    Percentile(networkLatencies, 0.95),
-                    networkLatencies.LongLength,
-                    loadWindowEnd),
-                Signal(
-                    "representative-load-throttle-rate",
-                    "representative-load",
-                    "throttle_rate",
-                    representativeAttempts == 0
-                        ? 0
-                        : (double)tracker.Throttles("GetObject") / representativeAttempts,
-                    representativeAttempts,
-                    loadEnd),
-            ],
+            Signals = signals,
         };
 
         var fullOutputPath = ResolveOutputPath(outputPath!);
@@ -225,6 +207,9 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
                 RealAzureWorkloadLoadEvidenceJsonContext.Default.RealAzureWorkloadLoadEvidence),
             timeout.Token).ConfigureAwait(false);
 
+        Assert.True(
+            completedIterationCount > 0,
+            "The production-shaped load completed no full CRUD iterations.");
         Assert.True(totalCompletions > 0, "The production-shaped load completed no operations.");
         Assert.True(
             totalFailures == 0,
@@ -264,6 +249,7 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
     private static async Task RunWorkerAsync(
         IAmazonS3 client,
         RealAzureWorkloadLoadTracker tracker,
+        CompletedIterationCounter completedIterations,
         int worker,
         TimeSpan duration,
         Stopwatch stopwatch,
@@ -284,6 +270,7 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
 
             while (stopwatch.Elapsed < duration)
             {
+                completedIterations.RecordStarted();
                 var key = $"objects/worker-{worker:D2}/item-{iteration++:D8}.txt";
                 var payload = $"aws2azure production-shaped S3 load {key} {new string('x', 65_536)}";
                 var objectCreated = false;
@@ -426,12 +413,16 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
                     }, IsThrottle).ConfigureAwait(false);
                     objectCreated = false;
 
-                    await MeasureAsync(tracker, "DeleteObject", async () =>
-                    {
-                        await client.DeleteObjectAsync(
-                            new DeleteObjectRequest { BucketName = bucket, Key = key },
-                            cancellationToken).ConfigureAwait(false);
-                    }, IsThrottle).ConfigureAwait(false);
+                    await completedIterations.CompleteAfterAsync(() => MeasureAsync(
+                        tracker,
+                        "DeleteObject",
+                        async () =>
+                        {
+                            await client.DeleteObjectAsync(
+                                new DeleteObjectRequest { BucketName = bucket, Key = key },
+                                cancellationToken).ConfigureAwait(false);
+                        },
+                        IsThrottle)).ConfigureAwait(false);
                 }
                 catch when (!cancellationToken.IsCancellationRequested)
                 {
@@ -471,6 +462,125 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
                 await DeleteBucketBestEffortAsync(client, bucket).ConfigureAwait(false);
             }
         }
+    }
+
+    private static List<RealAzureWorkloadLoadSignal> BuildRepresentativeLoadSignals(
+        IReadOnlyList<RealAzureWorkloadLoadOperationMeasurement> operationMix,
+        long completedIterations,
+        long startedIterations,
+        long totalCompletions,
+        long totalAttempts,
+        double durationSeconds,
+        IReadOnlyCollection<double> networkLatencies,
+        long representativeAttempts,
+        long representativeThrottles,
+        DateTimeOffset loadEnd,
+        DateTimeOffset loadWindowEnd)
+    {
+        var signals = new List<RealAzureWorkloadLoadSignal>
+        {
+            Signal(
+                "crud-iterations-per-sec",
+                "representative-load",
+                "throughput_per_sec",
+                completedIterations / durationSeconds,
+                startedIterations,
+                loadEnd),
+            Signal(
+                "aws-operations-per-sec",
+                "representative-load",
+                "throughput_per_sec",
+                totalCompletions / durationSeconds,
+                totalAttempts,
+                loadEnd),
+        };
+
+        foreach (var operation in operationMix)
+        {
+            var prefix = OperationSignalPrefix(operation.Operation);
+            var attempts = operation.Completions + operation.Failures;
+            signals.Add(Signal(
+                $"{prefix}-throughput",
+                "representative-load",
+                "throughput_per_sec",
+                operation.Completions / durationSeconds,
+                attempts,
+                loadEnd));
+            signals.Add(Signal(
+                $"{prefix}-p95",
+                "representative-load",
+                "p95_ms",
+                operation.P95Milliseconds,
+                attempts,
+                loadEnd));
+            signals.Add(Signal(
+                $"{prefix}-p99",
+                "representative-load",
+                "p99_ms",
+                operation.P99Milliseconds,
+                attempts,
+                loadEnd));
+        }
+
+        signals.Add(Signal(
+            "representative-load-unauthenticated-connectivity-header-p95",
+            "representative-load",
+            "p95_ms",
+            Percentile(networkLatencies, 0.95),
+            networkLatencies.Count,
+            loadWindowEnd));
+        signals.Add(Signal(
+            "representative-load-throttle-rate",
+            "representative-load",
+            "throttle_rate",
+            representativeAttempts == 0
+                ? 0
+                : (double)representativeThrottles / representativeAttempts,
+            representativeAttempts,
+            loadEnd));
+        return signals;
+    }
+
+    private static string OperationSignalPrefix(string operation)
+    {
+        return operation switch
+        {
+            "CreateBucket" => "representative-load-create-bucket",
+            "PutObject" => "representative-load-put-object",
+            "GetObject" => "representative-load",
+            "HeadObject" => "representative-load-head-object",
+            "ListObjectsV2" => "representative-load-list-objects-v2",
+            "DeleteObject" => "representative-load-delete-object",
+            "DeleteBucket" => "representative-load-delete-bucket",
+            _ => throw new InvalidDataException(
+                $"No stable diagnostic signal prefix is defined for '{operation}'."),
+        };
+    }
+
+    private static async Task<double[]> ProbeUnauthenticatedConnectivityHeaderLatencyAsync(
+        Uri target,
+        int samples)
+    {
+        using var client = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(10),
+        };
+        var latencies = new double[samples];
+        for (var index = 0; index < samples; index++)
+        {
+            var started = Stopwatch.GetTimestamp();
+            using var response = await client.GetAsync(
+                target,
+                HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+            latencies[index] = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            if (response.StatusCode != HttpStatusCode.Forbidden)
+            {
+                throw new InvalidDataException(
+                    $"Unauthenticated Blob connectivity probe expected HTTP 403 but received " +
+                    $"{(int)response.StatusCode}.");
+            }
+        }
+        return latencies;
     }
 
     private static bool IsThrottle(Exception exception)
