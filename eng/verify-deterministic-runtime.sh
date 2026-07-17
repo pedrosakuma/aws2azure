@@ -15,10 +15,12 @@ trap 'rm -rf "$scratch"' EXIT
 baseline="$scratch/runtime-1.sha256"
 artifacts="$scratch/build"
 for attempt in $(seq 1 "$attempts"); do
+  dotnet build-server shutdown >/dev/null
   rm -rf "$artifacts"
   dotnet build "$repo_root/src/Aws2Azure.Proxy/Aws2Azure.Proxy.csproj" \
     -c Release \
     --artifacts-path "$artifacts" \
+    --disable-build-servers \
     --nologo \
     --verbosity quiet
 
