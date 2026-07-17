@@ -14,6 +14,8 @@ internal static class SecretsManagerCredentialRotationQualification
 {
     private static readonly TimeSpan SetupPropagationTimeout = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan RevocationPropagationTimeout = TimeSpan.FromMinutes(10);
+    private const int MaxSetupPropagationRetries = 60;
+    private const int MaxRevocationPolls = 121;
 
     public static async Task<SecretsManagerCredentialRotationResult> VerifyAsync(
         SecretsManagerRealAzureProxyFixture fixture,
@@ -33,6 +35,7 @@ internal static class SecretsManagerCredentialRotationQualification
         var candidateConfigDigest = RequiredEnvironment("AWS2AZURE_LOAD_CONFIG_DIGEST");
         var vaultUrl = RequiredEnvironment("AZURE_KEYVAULT_URL");
         var vaultId = RequiredEnvironment("AZURE_KEYVAULT_ID");
+        var normalizedVaultScope = NormalizeKeyVaultScope(vaultId);
 
         if (string.Equals(identityAClientId, identityBClientId, StringComparison.Ordinal)
             || string.Equals(identityAObjectId, identityBObjectId, StringComparison.Ordinal)
@@ -42,8 +45,17 @@ internal static class SecretsManagerCredentialRotationQualification
             throw new InvalidDataException(
                 "Credential rotation requires distinct identities, role assignments, and token files.");
         }
+        if (!TryGetRoleAssignmentScope(roleAssignmentA, out var roleScopeA)
+            || !TryGetRoleAssignmentScope(roleAssignmentB, out var roleScopeB)
+            || roleScopeA != normalizedVaultScope
+            || roleScopeB != normalizedVaultScope)
+        {
+            throw new InvalidDataException(
+                "Credential rotation role assignments must use the exact Key Vault resource scope.");
+        }
 
         var startedAt = DateTimeOffset.UtcNow;
+        var setupDeadline = startedAt + SetupPropagationTimeout;
         var sentinelName = $"a2a-rotation-{Guid.NewGuid():N}"[..48];
         var sentinelValue = "identity-rotation-sentinel";
         var oldInstance = fixture.DefaultInstance;
@@ -67,7 +79,7 @@ internal static class SecretsManagerCredentialRotationQualification
                     SecretString = sentinelValue,
                     Description = "aws2azure backend identity rotation qualification",
                 }, cancellationToken).ConfigureAwait(false);
-            }, cancellationToken).ConfigureAwait(false);
+            }, setupDeadline, cancellationToken).ConfigureAwait(false);
             sentinelCreated = true;
             await AssertValueAsync(oldClient, sentinelName, sentinelValue, cancellationToken)
                 .ConfigureAwait(false);
@@ -80,17 +92,28 @@ internal static class SecretsManagerCredentialRotationQualification
             {
                 await AssertValueAsync(newClient, sentinelName, sentinelValue, cancellationToken)
                     .ConfigureAwait(false);
-            }, cancellationToken).ConfigureAwait(false);
+            }, setupDeadline, cancellationToken).ConfigureAwait(false);
             greenReadCompletions++;
 
             var revocationRequestedAt = DateTimeOffset.UtcNow;
+            if (revocationRequestedAt > setupDeadline)
+            {
+                throw new TimeoutException(
+                    "Credential rotation setup exceeded the five-minute evidence budget.");
+            }
+            var revocationDeadline = revocationRequestedAt + RevocationPropagationTimeout;
             await DeleteExactRoleAssignmentAsync(roleAssignmentA, cancellationToken)
                 .ConfigureAwait(false);
 
-            var deadline = DateTimeOffset.UtcNow + RevocationPropagationTimeout;
             DateTimeOffset oldAccessDeniedAt;
             while (true)
             {
+                if (revocationPolls >= MaxRevocationPolls
+                    || DateTimeOffset.UtcNow > revocationDeadline)
+                {
+                    throw new TimeoutException(
+                        "The revoked runtime identity retained Key Vault access beyond the bounded propagation window.");
+                }
                 await AssertValueAsync(newClient, sentinelName, sentinelValue, cancellationToken)
                     .ConfigureAwait(false);
                 greenReadCompletions++;
@@ -109,14 +132,14 @@ internal static class SecretsManagerCredentialRotationQualification
                               StringComparison.Ordinal))
                 {
                     oldAccessDeniedAt = DateTimeOffset.UtcNow;
+                    if (oldAccessDeniedAt > revocationDeadline)
+                    {
+                        throw new TimeoutException(
+                            "The revoked runtime identity was denied only after the ten-minute evidence budget.");
+                    }
                     break;
                 }
 
-                if (DateTimeOffset.UtcNow >= deadline)
-                {
-                    throw new TimeoutException(
-                        "The revoked runtime identity retained Key Vault access beyond the bounded propagation window.");
-                }
                 await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
             }
 
@@ -157,8 +180,8 @@ internal static class SecretsManagerCredentialRotationQualification
                     RoleAssignmentAId = roleAssignmentA,
                     RoleAssignmentBId = roleAssignmentB,
                     RoleDefinitionId = "b86a8fe4-44ce-4948-aee5-eccb2c155cd7",
-                    RoleScopeDigestA = Digest(vaultId),
-                    RoleScopeDigestB = Digest(vaultId),
+                    RoleScopeDigestA = Digest(normalizedVaultScope),
+                    RoleScopeDigestB = Digest(normalizedVaultScope),
                     FederatedIssuerDigest = RequiredEnvironment(
                         "AWS2AZURE_ROTATION_FEDERATED_ISSUER_DIGEST"),
                     FederatedSubjectDigest = RequiredEnvironment(
@@ -265,12 +288,17 @@ internal static class SecretsManagerCredentialRotationQualification
 
     private static async Task<long> RetryExpectedSetupPropagationAsync(
         Func<Task> operation,
+        DateTimeOffset deadline,
         CancellationToken cancellationToken)
     {
-        var deadline = DateTimeOffset.UtcNow + SetupPropagationTimeout;
         var retries = 0L;
         while (true)
         {
+            if (DateTimeOffset.UtcNow > deadline)
+            {
+                throw new TimeoutException(
+                    "Workload Identity federation or Key Vault RBAC did not propagate within five minutes.");
+            }
             try
             {
                 await operation().ConfigureAwait(false);
@@ -279,7 +307,8 @@ internal static class SecretsManagerCredentialRotationQualification
             catch (AmazonSecretsManagerException exception)
                 when (IsExpectedSetupAccessPropagation(exception))
             {
-                if (DateTimeOffset.UtcNow >= deadline)
+                if (DateTimeOffset.UtcNow >= deadline
+                    || retries >= MaxSetupPropagationRetries)
                 {
                     throw new TimeoutException(
                         "Workload Identity federation or Key Vault RBAC did not propagate within five minutes.",
@@ -350,6 +379,54 @@ internal static class SecretsManagerCredentialRotationQualification
             throw new InvalidOperationException(
                 $"Azure CLI failed to revoke the exact old role assignment (exit {process.ExitCode}): {stderr}");
         }
+    }
+
+    private static string NormalizeKeyVaultScope(string value)
+    {
+        var normalized = value.TrimEnd('/').ToLowerInvariant();
+        var segments = normalized.Split('/');
+        if (segments.Length != 9
+            || segments[0].Length != 0
+            || segments[1] != "subscriptions"
+            || !Guid.TryParse(segments[2], out _)
+            || segments[3] != "resourcegroups"
+            || segments[4].Length == 0
+            || segments[5] != "providers"
+            || segments[6] != "microsoft.keyvault"
+            || segments[7] != "vaults"
+            || segments[8].Length == 0)
+        {
+            throw new InvalidDataException("AZURE_KEYVAULT_ID is not an exact Key Vault resource id.");
+        }
+        return normalized;
+    }
+
+    private static bool TryGetRoleAssignmentScope(
+        string value,
+        out string normalizedScope)
+    {
+        normalizedScope = string.Empty;
+        if (string.IsNullOrWhiteSpace(value)
+            || value.Length != value.Trim().Length)
+        {
+            return false;
+        }
+
+        var normalized = value.ToLowerInvariant();
+        const string marker = "/providers/microsoft.authorization/roleassignments/";
+        var markerIndex = normalized.IndexOf(marker, StringComparison.Ordinal);
+        if (markerIndex <= 0
+            || normalized.IndexOf(
+                marker,
+                markerIndex + marker.Length,
+                StringComparison.Ordinal) >= 0
+            || !Guid.TryParse(normalized.AsSpan(markerIndex + marker.Length), out _))
+        {
+            return false;
+        }
+
+        normalizedScope = normalized[..markerIndex];
+        return true;
     }
 
     private static string Digest(string value)

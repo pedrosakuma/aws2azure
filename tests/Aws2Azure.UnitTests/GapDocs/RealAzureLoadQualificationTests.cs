@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Aws2Azure.GapDocs;
 
 namespace Aws2Azure.UnitTests.GapDocs;
@@ -357,6 +359,103 @@ public sealed class RealAzureLoadQualificationTests
                 outOfWindow.Candidate,
                 outOfWindow.Policy,
                 outOfWindow.Evidence,
+                Metadata()));
+    }
+
+    [Theory]
+    [InlineData("subscription")]
+    [InlineData("resource-group")]
+    public void Generate_rejects_over_scoped_rotation_role_assignments(string scopeKind)
+    {
+        var inputs = RotationInputs();
+        var proof = Assert.Single(inputs.Evidence[0].CredentialRotationProofs);
+        const string subscriptionId = "11111111-1111-1111-1111-111111111111";
+        var scope = scopeKind == "subscription"
+            ? $"/subscriptions/{subscriptionId}"
+            : $"/subscriptions/{subscriptionId}/resourceGroups/rotation-rg";
+        proof.RoleAssignmentAId = RoleAssignmentId(scope, 901);
+        proof.RoleAssignmentBId = RoleAssignmentId(scope, 902);
+        proof.RoleScopeDigestA = Digest(scope);
+        proof.RoleScopeDigestB = Digest(scope);
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            RealAzureLoadQualificationGenerator.Generate(
+                inputs.Manifest,
+                inputs.Candidate,
+                inputs.Policy,
+                inputs.Evidence,
+                Metadata()));
+
+        Assert.Contains("exact Key Vault", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Generate_rejects_rotation_proof_above_retry_or_poll_budgets()
+    {
+        var excessiveRetries = RotationInputs();
+        Assert.Single(excessiveRetries.Evidence[0].CredentialRotationProofs)
+            .SetupPropagationRetries =
+            RealAzureCredentialRotationBudgets.MaxSetupPropagationRetries + 1;
+        Assert.Throws<InvalidDataException>(() =>
+            RealAzureLoadQualificationGenerator.Generate(
+                excessiveRetries.Manifest,
+                excessiveRetries.Candidate,
+                excessiveRetries.Policy,
+                excessiveRetries.Evidence,
+                Metadata()));
+
+        var excessivePolls = RotationInputs();
+        Assert.Single(excessivePolls.Evidence[0].CredentialRotationProofs)
+            .RevocationPolls = RealAzureCredentialRotationBudgets.MaxRevocationPolls + 1;
+        Assert.Throws<InvalidDataException>(() =>
+            RealAzureLoadQualificationGenerator.Generate(
+                excessivePolls.Manifest,
+                excessivePolls.Candidate,
+                excessivePolls.Policy,
+                excessivePolls.Evidence,
+                Metadata()));
+    }
+
+    [Fact]
+    public void Generate_rejects_rotation_proof_above_setup_or_revocation_time_budgets()
+    {
+        var excessiveSetup = RotationInputs();
+        var setupRun = excessiveSetup.Evidence[0];
+        var setupProof = Assert.Single(setupRun.CredentialRotationProofs);
+        setupRun.Provenance.WindowStartUtc = setupProof.RevocationRequestedAtUtc
+            - RealAzureCredentialRotationBudgets.MaxSetupDuration
+            - TimeSpan.FromMinutes(1);
+        setupProof.StartedAtUtc = setupProof.RevocationRequestedAtUtc
+            - RealAzureCredentialRotationBudgets.MaxSetupDuration
+            - TimeSpan.FromSeconds(1);
+        Assert.Throws<InvalidDataException>(() =>
+            RealAzureLoadQualificationGenerator.Generate(
+                excessiveSetup.Manifest,
+                excessiveSetup.Candidate,
+                excessiveSetup.Policy,
+                excessiveSetup.Evidence,
+                Metadata()));
+
+        var excessiveRevocation = RotationInputs();
+        var revocationRun = excessiveRevocation.Evidence[0];
+        var revocationProof = Assert.Single(revocationRun.CredentialRotationProofs);
+        var oldAccessDeniedAt = revocationProof.RevocationRequestedAtUtc
+            + RealAzureCredentialRotationBudgets.MaxRevocationDuration
+            + TimeSpan.FromSeconds(1);
+        revocationProof.OldAccessDeniedAtUtc = oldAccessDeniedAt;
+        revocationProof.CompletedAtUtc = oldAccessDeniedAt.AddSeconds(1);
+        revocationRun.Provenance.WindowEndUtc = revocationProof.CompletedAtUtc.AddSeconds(1);
+        revocationRun.Provenance.GeneratedAtUtc = revocationRun.Provenance.WindowEndUtc;
+        Assert.Single(
+            revocationRun.Scenarios,
+            scenario => scenario.Id == "credential-rotation").CapturedAtUtc =
+            revocationProof.CompletedAtUtc;
+        Assert.Throws<InvalidDataException>(() =>
+            RealAzureLoadQualificationGenerator.Generate(
+                excessiveRevocation.Manifest,
+                excessiveRevocation.Candidate,
+                excessiveRevocation.Policy,
+                excessiveRevocation.Evidence,
                 Metadata()));
     }
 
@@ -766,13 +865,11 @@ public sealed class RealAzureLoadQualificationTests
         IdentityAObjectId = $"object-a-{attempt}",
         IdentityBClientId = $"client-b-{attempt}",
         IdentityBObjectId = $"object-b-{attempt}",
-        RoleAssignmentAId =
-            $"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Authorization/roleAssignments/a-{attempt}",
-        RoleAssignmentBId =
-            $"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Authorization/roleAssignments/b-{attempt}",
+        RoleAssignmentAId = RoleAssignmentId(KeyVaultScope(attempt), attempt),
+        RoleAssignmentBId = RoleAssignmentId(KeyVaultScope(attempt), attempt + 100),
         RoleDefinitionId = "b86a8fe4-44ce-4948-aee5-eccb2c155cd7",
-        RoleScopeDigestA = Sha256('7'),
-        RoleScopeDigestB = Sha256('7'),
+        RoleScopeDigestA = Digest(KeyVaultScope(attempt)),
+        RoleScopeDigestB = Digest(KeyVaultScope(attempt)),
         FederatedIssuerDigest = Sha256('1'),
         FederatedSubjectDigest = Sha256('2'),
         FederatedAudienceDigest = Sha256('3'),
@@ -799,6 +896,20 @@ public sealed class RealAzureLoadQualificationTests
     };
 
     private static string Sha256(char value) => "sha256:" + new string(value, 64);
+
+    private static string KeyVaultScope(int attempt) =>
+        "/subscriptions/11111111-1111-1111-1111-111111111111" +
+        $"/resourceGroups/rotation-rg-{attempt}" +
+        $"/providers/Microsoft.KeyVault/vaults/rotation-vault-{attempt}";
+
+    private static string RoleAssignmentId(string scope, int suffix) =>
+        scope
+        + "/providers/Microsoft.Authorization/roleAssignments/"
+        + $"00000000-0000-0000-0000-{suffix:D12}";
+
+    private static string Digest(string value) =>
+        "sha256:" + Convert.ToHexStringLower(
+            SHA256.HashData(Encoding.UTF8.GetBytes(value.ToLowerInvariant())));
 
     private static SloQualificationProfile Profile() => new()
     {

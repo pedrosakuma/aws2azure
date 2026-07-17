@@ -133,6 +133,14 @@ public sealed class RealAzureCredentialRotationProof
     public DateTimeOffset CompletedAtUtc { get; set; }
 }
 
+public static class RealAzureCredentialRotationBudgets
+{
+    public const int MaxSetupPropagationRetries = 60;
+    public const int MaxRevocationPolls = 121;
+    public static readonly TimeSpan MaxSetupDuration = TimeSpan.FromMinutes(5);
+    public static readonly TimeSpan MaxRevocationDuration = TimeSpan.FromMinutes(10);
+}
+
 public sealed class RealAzureLoadQualificationMetadata
 {
     public string RunId { get; set; } = string.Empty;
@@ -785,11 +793,21 @@ public static class RealAzureLoadQualificationGenerator
                 "Credential rotation proof must use fresh, distinct blue/green runtime identities.");
         }
 
-        if (!IsRoleAssignmentId(proof.RoleAssignmentAId)
-            || !IsRoleAssignmentId(proof.RoleAssignmentBId)
-            || proof.RoleDefinitionId != "b86a8fe4-44ce-4948-aee5-eccb2c155cd7"
-            || !IsDigest(proof.RoleScopeDigestA)
-            || proof.RoleScopeDigestA != proof.RoleScopeDigestB
+        if (!TryGetKeyVaultRoleAssignmentScope(
+                proof.RoleAssignmentAId,
+                out var roleScopeA)
+            || !TryGetKeyVaultRoleAssignmentScope(
+                proof.RoleAssignmentBId,
+                out var roleScopeB)
+            || roleScopeA != roleScopeB
+            || proof.RoleScopeDigestA != Digest(roleScopeA)
+            || proof.RoleScopeDigestB != Digest(roleScopeB))
+        {
+            throw new InvalidDataException(
+                "Credential rotation role assignments must use the exact Key Vault resource scope.");
+        }
+
+        if (proof.RoleDefinitionId != "b86a8fe4-44ce-4948-aee5-eccb2c155cd7"
             || !IsDigest(proof.FederatedIssuerDigest)
             || !IsDigest(proof.FederatedSubjectDigest)
             || !IsDigest(proof.FederatedAudienceDigest)
@@ -810,16 +828,22 @@ public static class RealAzureLoadQualificationGenerator
                 "Credential rotation proof contains runtime, configuration, binding, or backend drift.");
         }
 
-        if (proof.SetupPropagationRetries < 0
+        if (proof.SetupPropagationRetries is < 0
+                or > RealAzureCredentialRotationBudgets.MaxSetupPropagationRetries
             || proof.FederatedCredentialCompletions != 2
-            || proof.RevocationPolls <= 0
+            || proof.RevocationPolls is <= 0
+                or > RealAzureCredentialRotationBudgets.MaxRevocationPolls
             || proof.GreenReadCompletions < 3
             || proof.OldAccessDeniedCompletions != 1
             || proof.OldAccessDeniedErrorCode != "AccessDeniedException"
             || proof.OldAccessDeniedHttpStatus != 403
             || proof.StartedAtUtc < run.Provenance.WindowStartUtc
             || proof.StartedAtUtc >= proof.RevocationRequestedAtUtc
+            || proof.RevocationRequestedAtUtc - proof.StartedAtUtc
+                > RealAzureCredentialRotationBudgets.MaxSetupDuration
             || proof.RevocationRequestedAtUtc > proof.OldAccessDeniedAtUtc
+            || proof.OldAccessDeniedAtUtc - proof.RevocationRequestedAtUtc
+                > RealAzureCredentialRotationBudgets.MaxRevocationDuration
             || proof.OldAccessDeniedAtUtc > proof.CompletedAtUtc
             || proof.CompletedAtUtc > run.Provenance.WindowEndUtc)
         {
@@ -835,12 +859,55 @@ public static class RealAzureLoadQualificationGenerator
                && value.AsSpan(7).IndexOfAnyExcept("0123456789abcdefABCDEF") < 0;
     }
 
-    private static bool IsRoleAssignmentId(string value)
+    private static bool TryGetKeyVaultRoleAssignmentScope(
+        string value,
+        out string normalizedScope)
     {
-        return value.StartsWith("/subscriptions/", StringComparison.OrdinalIgnoreCase)
-               && value.Contains(
-                   "/providers/Microsoft.Authorization/roleAssignments/",
-                   StringComparison.OrdinalIgnoreCase);
+        normalizedScope = string.Empty;
+        if (string.IsNullOrWhiteSpace(value)
+            || value.Length != value.Trim().Length)
+        {
+            return false;
+        }
+
+        var normalized = value.ToLowerInvariant();
+        const string marker = "/providers/microsoft.authorization/roleassignments/";
+        var markerIndex = normalized.IndexOf(marker, StringComparison.Ordinal);
+        if (markerIndex <= 0
+            || normalized.IndexOf(
+                marker,
+                markerIndex + marker.Length,
+                StringComparison.Ordinal) >= 0
+            || !Guid.TryParse(normalized.AsSpan(markerIndex + marker.Length), out _))
+        {
+            return false;
+        }
+
+        var scope = normalized[..markerIndex];
+        var segments = scope.Split('/');
+        if (segments.Length != 9
+            || segments[0].Length != 0
+            || segments[1] != "subscriptions"
+            || !Guid.TryParse(segments[2], out _)
+            || segments[3] != "resourcegroups"
+            || segments[4].Length == 0
+            || segments[5] != "providers"
+            || segments[6] != "microsoft.keyvault"
+            || segments[7] != "vaults"
+            || segments[8].Length == 0)
+        {
+            return false;
+        }
+
+        normalizedScope = scope;
+        return true;
+    }
+
+    private static string Digest(string value)
+    {
+        return "sha256:" + Convert.ToHexStringLower(
+            System.Security.Cryptography.SHA256.HashData(
+                Encoding.UTF8.GetBytes(value)));
     }
 
     private static void ValidateLoadShapeAndOperationMix(

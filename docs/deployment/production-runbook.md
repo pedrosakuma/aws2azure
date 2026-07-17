@@ -388,6 +388,10 @@ unchanged; only the process identity and projected token file change.
    reads while waiting for blue to return the service-native
    `AccessDeniedException`; fail immediately on unrelated 4xx, 429, 5xx,
    malformed responses, or transport/configuration errors.
+   Qualification bounds the shared setup window to five minutes (at most 60
+   five-second propagation retries total) and the post-revocation window to ten
+   minutes (at most 121 green/blue poll iterations, including the immediate
+   poll).
 5. Stop blue, promote green, and delete the sentinel through green. Remove old
    role assignments, identities, and projected token files after drain.
 
