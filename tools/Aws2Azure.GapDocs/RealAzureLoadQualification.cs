@@ -48,6 +48,7 @@ public sealed class RealAzureLoadEvidence
     public List<RealAzureLoadOperationMeasurement> OperationMix { get; set; } = new();
     public List<SloQualificationScenario> Scenarios { get; set; } = new();
     public List<RealAzureLoadSignalMeasurement> Signals { get; set; } = new();
+    public List<RealAzureCredentialRotationProof> CredentialRotationProofs { get; set; } = new();
 }
 
 public sealed class RealAzureLoadShape
@@ -87,6 +88,57 @@ public sealed class RealAzureLoadSignalMeasurement
     public double MeasuredValue { get; set; }
     public long Samples { get; set; }
     public DateTimeOffset CapturedAtUtc { get; set; }
+}
+
+public sealed class RealAzureCredentialRotationProof
+{
+    public string ScenarioId { get; set; } = string.Empty;
+    public string Service { get; set; } = string.Empty;
+    public string Operation { get; set; } = string.Empty;
+    public string RotationKind { get; set; } = string.Empty;
+    public string AuthenticationMode { get; set; } = string.Empty;
+    public string BackendKind { get; set; } = string.Empty;
+    public string IdentityAClientId { get; set; } = string.Empty;
+    public string IdentityAObjectId { get; set; } = string.Empty;
+    public string IdentityBClientId { get; set; } = string.Empty;
+    public string IdentityBObjectId { get; set; } = string.Empty;
+    public string RoleAssignmentAId { get; set; } = string.Empty;
+    public string RoleAssignmentBId { get; set; } = string.Empty;
+    public string RoleDefinitionId { get; set; } = string.Empty;
+    public string RoleScopeDigestA { get; set; } = string.Empty;
+    public string RoleScopeDigestB { get; set; } = string.Empty;
+    public string FederatedIssuerDigest { get; set; } = string.Empty;
+    public string FederatedSubjectDigest { get; set; } = string.Empty;
+    public string FederatedAudienceDigest { get; set; } = string.Empty;
+    public string RuntimeArtifactDigestA { get; set; } = string.Empty;
+    public string RuntimeArtifactDigestB { get; set; } = string.Empty;
+    public string CandidateConfigDigestA { get; set; } = string.Empty;
+    public string CandidateConfigDigestB { get; set; } = string.Empty;
+    public string ProxyConfigDigestA { get; set; } = string.Empty;
+    public string ProxyConfigDigestB { get; set; } = string.Empty;
+    public string AwsBindingDigestA { get; set; } = string.Empty;
+    public string AwsBindingDigestB { get; set; } = string.Empty;
+    public string BackendTargetDigestA { get; set; } = string.Empty;
+    public string BackendTargetDigestB { get; set; } = string.Empty;
+    public long SetupPropagationRetries { get; set; }
+    public long FederatedCredentialCompletions { get; set; }
+    public long RevocationPolls { get; set; }
+    public long GreenReadCompletions { get; set; }
+    public long OldAccessDeniedCompletions { get; set; }
+    public string OldAccessDeniedErrorCode { get; set; } = string.Empty;
+    public int OldAccessDeniedHttpStatus { get; set; }
+    public DateTimeOffset StartedAtUtc { get; set; }
+    public DateTimeOffset RevocationRequestedAtUtc { get; set; }
+    public DateTimeOffset OldAccessDeniedAtUtc { get; set; }
+    public DateTimeOffset CompletedAtUtc { get; set; }
+}
+
+public static class RealAzureCredentialRotationBudgets
+{
+    public const int MaxSetupPropagationRetries = 60;
+    public const int MaxRevocationPolls = 121;
+    public static readonly TimeSpan MaxSetupDuration = TimeSpan.FromMinutes(5);
+    public static readonly TimeSpan MaxRevocationDuration = TimeSpan.FromMinutes(10);
 }
 
 public sealed class RealAzureLoadQualificationMetadata
@@ -667,6 +719,7 @@ public static class RealAzureLoadQualificationGenerator
 
         var first = evidence[0];
         var seenRuns = new HashSet<string>(StringComparer.Ordinal);
+        var seenRotationIdentities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var run in evidence)
         {
             var runOperations = run.Profile.Services
@@ -714,7 +767,182 @@ public static class RealAzureLoadQualificationGenerator
                     $"Load evidence run {run.Provenance.RunId}/{run.Provenance.RunAttempt} " +
                     "contains measurements outside its immutable run window.");
             }
+            ValidateCredentialRotationProof(
+                run,
+                candidate.Candidate,
+                policy.Scenarios.Any(item => item.Id == "credential-rotation"),
+                seenRotationIdentities);
         }
+    }
+
+    private static void ValidateCredentialRotationProof(
+        RealAzureLoadEvidence run,
+        SloQualificationCandidate candidate,
+        bool required,
+        ISet<string> seenIdentities)
+    {
+        if (!required)
+        {
+            if (run.CredentialRotationProofs.Count != 0)
+            {
+                throw new InvalidDataException(
+                    "Load evidence contains credential rotation proof outside its policy.");
+            }
+            return;
+        }
+        if (run.CredentialRotationProofs.Count != 1)
+        {
+            throw new InvalidDataException(
+                "Each load run must contain exactly one credential rotation proof.");
+        }
+
+        var proof = run.CredentialRotationProofs[0];
+        var scenario = run.Scenarios.SingleOrDefault(item => item.Id == "credential-rotation");
+        if (scenario is null
+            || scenario.Completions != 1
+            || scenario.Failures != 0
+            || scenario.Skipped != 0
+            || scenario.CapturedAtUtc != proof.CompletedAtUtc
+            || proof.ScenarioId != "credential-rotation"
+            || proof.Service != "secretsmanager"
+            || proof.Operation != "GetSecretValue"
+            || proof.RotationKind != "azure_backend_identity"
+            || proof.AuthenticationMode != "workload_identity"
+            || proof.BackendKind != "key_vault")
+        {
+            throw new InvalidDataException(
+                "Credential rotation proof does not match its successful real-Azure scenario.");
+        }
+
+        if (string.IsNullOrWhiteSpace(proof.IdentityAClientId)
+            || string.IsNullOrWhiteSpace(proof.IdentityAObjectId)
+            || string.IsNullOrWhiteSpace(proof.IdentityBClientId)
+            || string.IsNullOrWhiteSpace(proof.IdentityBObjectId)
+            || proof.IdentityAClientId.Equals(proof.IdentityBClientId, StringComparison.OrdinalIgnoreCase)
+            || proof.IdentityAObjectId.Equals(proof.IdentityBObjectId, StringComparison.OrdinalIgnoreCase)
+            || proof.RoleAssignmentAId.Equals(proof.RoleAssignmentBId, StringComparison.OrdinalIgnoreCase)
+            || !seenIdentities.Add(proof.IdentityAObjectId)
+            || !seenIdentities.Add(proof.IdentityBObjectId))
+        {
+            throw new InvalidDataException(
+                "Credential rotation proof must use fresh, distinct blue/green runtime identities.");
+        }
+
+        if (!TryGetKeyVaultRoleAssignmentScope(
+                proof.RoleAssignmentAId,
+                out var roleScopeA)
+            || !TryGetKeyVaultRoleAssignmentScope(
+                proof.RoleAssignmentBId,
+                out var roleScopeB)
+            || roleScopeA != roleScopeB
+            || proof.RoleScopeDigestA != Digest(roleScopeA)
+            || proof.RoleScopeDigestB != Digest(roleScopeB))
+        {
+            throw new InvalidDataException(
+                "Credential rotation role assignments must use the exact Key Vault resource scope.");
+        }
+
+        if (proof.RoleDefinitionId != "b86a8fe4-44ce-4948-aee5-eccb2c155cd7"
+            || !IsDigest(proof.FederatedIssuerDigest)
+            || !IsDigest(proof.FederatedSubjectDigest)
+            || !IsDigest(proof.FederatedAudienceDigest)
+            || proof.RuntimeArtifactDigestA != candidate.ArtifactDigest
+            || proof.RuntimeArtifactDigestB != candidate.ArtifactDigest
+            || proof.RuntimeArtifactDigestA != proof.RuntimeArtifactDigestB
+            || proof.CandidateConfigDigestA != candidate.ConfigDigest
+            || proof.CandidateConfigDigestB != candidate.ConfigDigest
+            || proof.CandidateConfigDigestA != proof.CandidateConfigDigestB
+            || !IsDigest(proof.ProxyConfigDigestA)
+            || proof.ProxyConfigDigestA != proof.ProxyConfigDigestB
+            || !IsDigest(proof.AwsBindingDigestA)
+            || proof.AwsBindingDigestA != proof.AwsBindingDigestB
+            || !IsDigest(proof.BackendTargetDigestA)
+            || proof.BackendTargetDigestA != proof.BackendTargetDigestB)
+        {
+            throw new InvalidDataException(
+                "Credential rotation proof contains runtime, configuration, binding, or backend drift.");
+        }
+
+        if (proof.SetupPropagationRetries is < 0
+                or > RealAzureCredentialRotationBudgets.MaxSetupPropagationRetries
+            || proof.FederatedCredentialCompletions != 2
+            || proof.RevocationPolls is <= 0
+                or > RealAzureCredentialRotationBudgets.MaxRevocationPolls
+            || proof.GreenReadCompletions < 3
+            || proof.OldAccessDeniedCompletions != 1
+            || proof.OldAccessDeniedErrorCode != "AccessDeniedException"
+            || proof.OldAccessDeniedHttpStatus != 403
+            || proof.StartedAtUtc < run.Provenance.WindowStartUtc
+            || proof.StartedAtUtc >= proof.RevocationRequestedAtUtc
+            || proof.RevocationRequestedAtUtc - proof.StartedAtUtc
+                > RealAzureCredentialRotationBudgets.MaxSetupDuration
+            || proof.RevocationRequestedAtUtc > proof.OldAccessDeniedAtUtc
+            || proof.OldAccessDeniedAtUtc - proof.RevocationRequestedAtUtc
+                > RealAzureCredentialRotationBudgets.MaxRevocationDuration
+            || proof.OldAccessDeniedAtUtc > proof.CompletedAtUtc
+            || proof.CompletedAtUtc > run.Provenance.WindowEndUtc)
+        {
+            throw new InvalidDataException(
+                "Credential rotation proof lacks bounded overlap, old-access denial, or valid timing.");
+        }
+    }
+
+    private static bool IsDigest(string value)
+    {
+        return value.StartsWith("sha256:", StringComparison.Ordinal)
+               && value.Length == 71
+               && value.AsSpan(7).IndexOfAnyExcept("0123456789abcdefABCDEF") < 0;
+    }
+
+    private static bool TryGetKeyVaultRoleAssignmentScope(
+        string value,
+        out string normalizedScope)
+    {
+        normalizedScope = string.Empty;
+        if (string.IsNullOrWhiteSpace(value)
+            || value.Length != value.Trim().Length)
+        {
+            return false;
+        }
+
+        var normalized = value.ToLowerInvariant();
+        const string marker = "/providers/microsoft.authorization/roleassignments/";
+        var markerIndex = normalized.IndexOf(marker, StringComparison.Ordinal);
+        if (markerIndex <= 0
+            || normalized.IndexOf(
+                marker,
+                markerIndex + marker.Length,
+                StringComparison.Ordinal) >= 0
+            || !Guid.TryParse(normalized.AsSpan(markerIndex + marker.Length), out _))
+        {
+            return false;
+        }
+
+        var scope = normalized[..markerIndex];
+        var segments = scope.Split('/');
+        if (segments.Length != 9
+            || segments[0].Length != 0
+            || segments[1] != "subscriptions"
+            || !Guid.TryParse(segments[2], out _)
+            || segments[3] != "resourcegroups"
+            || segments[4].Length == 0
+            || segments[5] != "providers"
+            || segments[6] != "microsoft.keyvault"
+            || segments[7] != "vaults"
+            || segments[8].Length == 0)
+        {
+            return false;
+        }
+
+        normalizedScope = scope;
+        return true;
+    }
+
+    private static string Digest(string value)
+    {
+        return "sha256:" + Convert.ToHexStringLower(
+            System.Security.Cryptography.SHA256.HashData(
+                Encoding.UTF8.GetBytes(value)));
     }
 
     private static void ValidateLoadShapeAndOperationMix(

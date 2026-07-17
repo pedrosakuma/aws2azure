@@ -270,6 +270,7 @@ internal sealed class RealAzureWorkloadLoadEvidence
     public List<RealAzureWorkloadLoadOperationMeasurement> OperationMix { get; set; } = new();
     public List<RealAzureWorkloadLoadScenario> Scenarios { get; set; } = new();
     public List<RealAzureWorkloadLoadSignal> Signals { get; set; } = new();
+    public List<RealAzureCredentialRotationProof> CredentialRotationProofs { get; set; } = new();
 }
 
 internal sealed class RealAzureWorkloadLoadProfile
@@ -342,6 +343,49 @@ internal sealed class RealAzureWorkloadLoadSignal
     public double MeasuredValue { get; set; }
     public long Samples { get; set; }
     public DateTimeOffset CapturedAtUtc { get; set; }
+}
+
+internal sealed class RealAzureCredentialRotationProof
+{
+    public string ScenarioId { get; set; } = string.Empty;
+    public string Service { get; set; } = string.Empty;
+    public string Operation { get; set; } = string.Empty;
+    public string RotationKind { get; set; } = string.Empty;
+    public string AuthenticationMode { get; set; } = string.Empty;
+    public string BackendKind { get; set; } = string.Empty;
+    public string IdentityAClientId { get; set; } = string.Empty;
+    public string IdentityAObjectId { get; set; } = string.Empty;
+    public string IdentityBClientId { get; set; } = string.Empty;
+    public string IdentityBObjectId { get; set; } = string.Empty;
+    public string RoleAssignmentAId { get; set; } = string.Empty;
+    public string RoleAssignmentBId { get; set; } = string.Empty;
+    public string RoleDefinitionId { get; set; } = string.Empty;
+    public string RoleScopeDigestA { get; set; } = string.Empty;
+    public string RoleScopeDigestB { get; set; } = string.Empty;
+    public string FederatedIssuerDigest { get; set; } = string.Empty;
+    public string FederatedSubjectDigest { get; set; } = string.Empty;
+    public string FederatedAudienceDigest { get; set; } = string.Empty;
+    public string RuntimeArtifactDigestA { get; set; } = string.Empty;
+    public string RuntimeArtifactDigestB { get; set; } = string.Empty;
+    public string CandidateConfigDigestA { get; set; } = string.Empty;
+    public string CandidateConfigDigestB { get; set; } = string.Empty;
+    public string ProxyConfigDigestA { get; set; } = string.Empty;
+    public string ProxyConfigDigestB { get; set; } = string.Empty;
+    public string AwsBindingDigestA { get; set; } = string.Empty;
+    public string AwsBindingDigestB { get; set; } = string.Empty;
+    public string BackendTargetDigestA { get; set; } = string.Empty;
+    public string BackendTargetDigestB { get; set; } = string.Empty;
+    public long SetupPropagationRetries { get; set; }
+    public long FederatedCredentialCompletions { get; set; }
+    public long RevocationPolls { get; set; }
+    public long GreenReadCompletions { get; set; }
+    public long OldAccessDeniedCompletions { get; set; }
+    public string OldAccessDeniedErrorCode { get; set; } = string.Empty;
+    public int OldAccessDeniedHttpStatus { get; set; }
+    public DateTimeOffset StartedAtUtc { get; set; }
+    public DateTimeOffset RevocationRequestedAtUtc { get; set; }
+    public DateTimeOffset OldAccessDeniedAtUtc { get; set; }
+    public DateTimeOffset CompletedAtUtc { get; set; }
 }
 
 [JsonSerializable(typeof(RealAzureWorkloadLoadEvidence))]

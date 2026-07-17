@@ -1,5 +1,5 @@
 param location string = resourceGroup().location
-param principalId string
+param bootstrapPrincipalId string
 
 var keyVaultName = 'a2a-kvl-${uniqueString(resourceGroup().id)}'
 var keyVaultSecretsOfficerRoleId = 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
@@ -20,17 +20,18 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   }
 }
 
-resource keyVaultSecretsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(keyVault.id, principalId, keyVaultSecretsOfficerRoleId)
+resource bootstrapKeyVaultSecretsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, bootstrapPrincipalId, keyVaultSecretsOfficerRoleId)
   scope: keyVault
   properties: {
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
       keyVaultSecretsOfficerRoleId)
-    principalId: principalId
+    principalId: bootstrapPrincipalId
     principalType: 'ServicePrincipal'
   }
 }
 
 output keyVaultName string = keyVault.name
 output keyVaultUri string = keyVault.properties.vaultUri
+output keyVaultId string = keyVault.id

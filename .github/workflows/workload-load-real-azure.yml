@@ -90,6 +90,8 @@ jobs:
       QUALIFICATION_DIR: artifacts/workload-load/${{ matrix.profile }}/provenance
       LOAD_EVIDENCE_PATH: artifacts/workload-load/${{ matrix.profile }}/load-evidence.json
       PRIVATE_DIR: artifacts/workload-load-private/${{ matrix.profile }}
+      RUNTIME_IDENTITY_A_NAME: a2a-kv-a-${{ github.run_id }}-${{ github.run_attempt }}
+      RUNTIME_IDENTITY_B_NAME: a2a-kv-b-${{ github.run_id }}-${{ github.run_attempt }}
       LOAD_DURATION_SECONDS: '300'
       LOAD_CONCURRENCY: '8'
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -230,8 +232,13 @@ jobs:
             --arg workflow_sha256 "$(sha256sum .github/workflows/workload-load-real-azure.yml | cut -d' ' -f1)" \
             --arg runner_sha256 "$(sha256sum "$RUNNER_PATH" | cut -d' ' -f1)" \
             --arg shared_runner_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/OperationalQualification/RealAzureWorkloadLoadEvidence.cs | cut -d' ' -f1)" \
+            --arg completed_iteration_counter_sha256 "$(sha256sum tests/Aws2Azure.TestSupport/OperationalQualification/CompletedIterationCounter.cs | cut -d' ' -f1)" \
+            --arg load_evidence_producer_guard_sha256 "$(sha256sum tests/Aws2Azure.TestSupport/OperationalQualification/LoadEvidenceProducerGuard.cs | cut -d' ' -f1)" \
             --arg failure_qualification_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/OperationalQualification/DeterministicFailureQualification.cs | cut -d' ' -f1)" \
             --arg restart_qualification_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/OperationalQualification/RealAzureRestartQualification.cs | cut -d' ' -f1)" \
+            --arg credential_rotation_qualification_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/OperationalQualification/SecretsManagerCredentialRotationQualification.cs | cut -d' ' -f1)" \
+            --arg secretsmanager_fixture_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/Fixtures/SecretsManagerRealAzureProxyFixture.cs | cut -d' ' -f1)" \
+            --arg federation_classifier_sha256 "$(sha256sum .github/scripts/classify-entra-federation-response.sh | cut -d' ' -f1)" \
             --arg manifest_sha256 "$(sha256sum "docs/workloads/$PROFILE.yaml" | cut -d' ' -f1)" \
             --arg policy_sha256 "$(sha256sum "docs/workloads/qualification/$PROFILE.yaml" | cut -d' ' -f1)" \
             --argjson topology "$topology" \
@@ -250,8 +257,13 @@ jobs:
                 workflow: ("sha256:" + $workflow_sha256),
                 runner: ("sha256:" + $runner_sha256),
                 shared_runner: ("sha256:" + $shared_runner_sha256),
+                completed_iteration_counter: ("sha256:" + $completed_iteration_counter_sha256),
+                load_evidence_producer_guard: ("sha256:" + $load_evidence_producer_guard_sha256),
                 deterministic_failure_qualification: ("sha256:" + $failure_qualification_sha256),
                 restart_qualification: ("sha256:" + $restart_qualification_sha256),
+                credential_rotation_qualification: ("sha256:" + $credential_rotation_qualification_sha256),
+                secretsmanager_fixture: ("sha256:" + $secretsmanager_fixture_sha256),
+                federation_response_classifier: ("sha256:" + $federation_classifier_sha256),
                 workload_manifest: ("sha256:" + $manifest_sha256),
                 qualification_policy: ("sha256:" + $policy_sha256)
               }
@@ -289,7 +301,7 @@ jobs:
             -f "$BICEP_PATH"
           )
           if [ "$PROFILE" = secretsmanager-basic-lifecycle ]; then
-            args+=(-p principalId="$AZURE_CLIENT_OBJECT_ID")
+            args+=(-p bootstrapPrincipalId="$AZURE_CLIENT_OBJECT_ID")
           fi
           "${args[@]}" -o none
 
@@ -301,7 +313,9 @@ jobs:
               --query properties.outputs.keyVaultUri.value -o tsv)"
             name="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
               --query properties.outputs.keyVaultName.value -o tsv)"
-            if [ -z "$endpoint" ] || [ -z "$name" ]; then
+            vault_id="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
+              --query properties.outputs.keyVaultId.value -o tsv)"
+            if [ -z "$endpoint" ] || [ -z "$name" ] || [ -z "$vault_id" ]; then
               echo "::error::The deployment did not produce a Key Vault endpoint."
               exit 1
             fi
@@ -317,7 +331,10 @@ jobs:
               echo "::error::Key Vault RBAC did not become ready within five minutes."
               exit 1
             fi
-            echo "AZURE_KEYVAULT_URL=$endpoint" >> "$GITHUB_ENV"
+            {
+              echo "AZURE_KEYVAULT_URL=$endpoint"
+              echo "AZURE_KEYVAULT_ID=$vault_id"
+            } >> "$GITHUB_ENV"
           else
             account="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
               --query properties.outputs.storageAccountName.value -o tsv)"
@@ -337,30 +354,217 @@ jobs:
             } >> "$GITHUB_ENV"
           fi
 
-      - name: Mint projected Workload Identity token
+      - name: Provision blue/green runtime Workload Identities
         if: matrix.profile == 'secretsmanager-basic-lifecycle'
         env:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
         run: |
           set -euo pipefail
-          mkdir -p "$PRIVATE_DIR"
-          TOKEN_FILE="$GITHUB_WORKSPACE/$PRIVATE_DIR/azure-federated-token.jwt"
-          RESPONSE="$(curl -fsS \
-            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange")"
-          ASSERTION="$(printf '%s' "$RESPONSE" | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])')"
-          if [ -z "$ASSERTION" ]; then
-            echo "::error::Failed to obtain a projected Workload Identity token."
+          install -d -m 0700 "$PRIVATE_DIR"
+          TOKEN_DIR="$GITHUB_WORKSPACE/$PRIVATE_DIR/tokens"
+          install -d -m 0700 "$TOKEN_DIR"
+          TOKEN_A="$TOKEN_DIR/runtime-a.jwt"
+          TOKEN_B="$TOKEN_DIR/runtime-b.jwt"
+
+          mint_token() {
+            local destination="$1"
+            ( umask 077
+              curl -fsS \
+                -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+                "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" |
+                python3 -c \
+                  'import json, pathlib, sys; value=json.load(sys.stdin).get("value"); assert value; pathlib.Path(sys.argv[1]).write_text(value)' \
+                  "$destination"
+            )
+            chmod 0600 "$destination"
+          }
+
+          mint_token "$TOKEN_A"
+          mapfile -t claims < <(
+            python3 - "$TOKEN_A" <<'PY'
+          import base64
+          import json
+          import pathlib
+          import sys
+
+          token = pathlib.Path(sys.argv[1]).read_text().strip()
+          payload = token.split('.')[1]
+          payload += '=' * (-len(payload) % 4)
+          claims = json.loads(base64.urlsafe_b64decode(payload))
+          audience = claims['aud']
+          if isinstance(audience, list):
+              if len(audience) != 1:
+                  raise SystemExit('OIDC assertion must have exactly one audience')
+              audience = audience[0]
+          print(claims['iss'])
+          print(claims['sub'])
+          print(audience)
+          PY
+          )
+          if [ "${#claims[@]}" -ne 3 ] ||
+             [ -z "${claims[0]}" ] ||
+             [ -z "${claims[1]}" ] ||
+             [ "${claims[2]}" != "api://AzureADTokenExchange" ]; then
+            echo "::error::GitHub OIDC assertion claims are incomplete or unexpected."
             exit 1
           fi
-          echo "::add-mask::$ASSERTION"
-          ( umask 077; printf '%s' "$ASSERTION" > "$TOKEN_FILE" )
+          issuer="${claims[0]}"
+          subject="${claims[1]}"
+          audience="${claims[2]}"
+
+          client_a="$(az identity create -g "$RG_NAME" -n "$RUNTIME_IDENTITY_A_NAME" \
+            --query clientId -o tsv)"
+          object_a="$(az identity show -g "$RG_NAME" -n "$RUNTIME_IDENTITY_A_NAME" \
+            --query principalId -o tsv)"
+          client_b="$(az identity create -g "$RG_NAME" -n "$RUNTIME_IDENTITY_B_NAME" \
+            --query clientId -o tsv)"
+          object_b="$(az identity show -g "$RG_NAME" -n "$RUNTIME_IDENTITY_B_NAME" \
+            --query principalId -o tsv)"
+          if [ -z "$client_a" ] || [ -z "$object_a" ] ||
+             [ -z "$client_b" ] || [ -z "$object_b" ]; then
+            echo "::error::Runtime UAMI provisioning returned incomplete identity."
+            exit 1
+          fi
+
+          az identity federated-credential create \
+            -g "$RG_NAME" --identity-name "$RUNTIME_IDENTITY_A_NAME" \
+            -n github-actions-exact \
+            --issuer "$issuer" --subject "$subject" --audiences "$audience" -o none
+          az identity federated-credential create \
+            -g "$RG_NAME" --identity-name "$RUNTIME_IDENTITY_B_NAME" \
+            -n github-actions-exact \
+            --issuer "$issuer" --subject "$subject" --audiences "$audience" -o none
+
+          role_id='b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
+          role_a="$(az role assignment create \
+            --assignee-object-id "$object_a" --assignee-principal-type ServicePrincipal \
+            --role "$role_id" --scope "$AZURE_KEYVAULT_ID" --query id -o tsv)"
+          role_b="$(az role assignment create \
+            --assignee-object-id "$object_b" --assignee-principal-type ServicePrincipal \
+            --role "$role_id" --scope "$AZURE_KEYVAULT_ID" --query id -o tsv)"
+          if [ -z "$role_a" ] || [ -z "$role_b" ]; then
+            echo "::error::Runtime Key Vault role assignment provisioning was incomplete."
+            exit 1
+          fi
+          mint_token "$TOKEN_B"
+          token_a_digest="$(sha256sum "$TOKEN_A" | cut -d' ' -f1)"
+          token_b_digest="$(sha256sum "$TOKEN_B" | cut -d' ' -f1)"
+          if [ "$token_a_digest" = "$token_b_digest" ]; then
+            echo "::error::Runtime A/B projected OIDC assertions must be distinct."
+            exit 1
+          fi
+          unset token_a_digest token_b_digest
+
           {
-            echo "AZURE_FEDERATED_TOKEN_FILE=$TOKEN_FILE"
             echo "AZURE_TENANT_ID=$AZURE_TENANT_ID"
-            echo "AZURE_CLIENT_ID=$AZURE_CLIENT_ID"
+            echo "AZURE_CLIENT_ID=$client_a"
+            echo "AZURE_FEDERATED_TOKEN_FILE=$TOKEN_A"
+            echo "AWS2AZURE_ROTATION_CLIENT_ID_A=$client_a"
+            echo "AWS2AZURE_ROTATION_OBJECT_ID_A=$object_a"
+            echo "AWS2AZURE_ROTATION_ROLE_ASSIGNMENT_ID_A=$role_a"
+            echo "AWS2AZURE_ROTATION_TOKEN_FILE_A=$TOKEN_A"
+            echo "AWS2AZURE_ROTATION_CLIENT_ID_B=$client_b"
+            echo "AWS2AZURE_ROTATION_OBJECT_ID_B=$object_b"
+            echo "AWS2AZURE_ROTATION_ROLE_ASSIGNMENT_ID_B=$role_b"
+            echo "AWS2AZURE_ROTATION_TOKEN_FILE_B=$TOKEN_B"
+            echo "AWS2AZURE_ROTATION_FEDERATED_ISSUER_DIGEST=sha256:$(printf '%s' "$issuer" | sha256sum | cut -d' ' -f1)"
+            echo "AWS2AZURE_ROTATION_FEDERATED_SUBJECT_DIGEST=sha256:$(printf '%s' "$subject" | sha256sum | cut -d' ' -f1)"
+            echo "AWS2AZURE_ROTATION_FEDERATED_AUDIENCE_DIGEST=sha256:$(printf '%s' "$audience" | sha256sum | cut -d' ' -f1)"
           } >> "$GITHUB_ENV"
+
+      - name: Verify narrowly classified runtime identity propagation
+        if: matrix.profile == 'secretsmanager-basic-lifecycle'
+        run: |
+          set -euo pipefail
+          refresh_assertion() {
+            local destination="$1"
+            ( umask 077
+              curl -fsS \
+                -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+                "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" |
+                python3 -c \
+                  'import json, pathlib, sys; value=json.load(sys.stdin).get("value"); assert value; pathlib.Path(sys.argv[1]).write_text(value)' \
+                  "$destination"
+            )
+            chmod 0600 "$destination"
+          }
+          assert_distinct_assertions() {
+            local digest_a digest_b
+            digest_a="$(sha256sum "$AWS2AZURE_ROTATION_TOKEN_FILE_A" | cut -d' ' -f1)"
+            digest_b="$(sha256sum "$AWS2AZURE_ROTATION_TOKEN_FILE_B" | cut -d' ' -f1)"
+            if [ "$digest_a" = "$digest_b" ]; then
+              echo "::error::Runtime A/B projected OIDC assertions must be distinct."
+              return 1
+            fi
+          }
+          verify_identity() {
+            local label="$1"
+            local client_id="$2"
+            local token_file="$3"
+            local exchange_file="$PRIVATE_DIR/$label-exchange.json"
+            local header_file="$PRIVATE_DIR/$label-authorization.header"
+            local vault_file="$PRIVATE_DIR/$label-vault.json"
+            local deadline=$(( $(date -u +%s) + 300 ))
+            local federation_retries=0
+            local rbac_retries=0
+
+            while [ "$(date -u +%s)" -lt "$deadline" ]; do
+              exchange_status="$(curl -sS -o "$exchange_file" -w '%{http_code}' \
+                -X POST "https://login.microsoftonline.com/$AZURE_TENANT_ID/oauth2/v2.0/token" \
+                -H 'Content-Type: application/x-www-form-urlencoded' \
+                --data-urlencode 'grant_type=client_credentials' \
+                --data-urlencode "client_id=$client_id" \
+                --data-urlencode 'scope=https://vault.azure.net/.default' \
+                --data-urlencode 'client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer' \
+                --data-urlencode "client_assertion@$token_file")"
+              chmod 0600 "$exchange_file"
+
+              if [ "$exchange_status" = 200 ]; then
+                jq -er '"Authorization: Bearer " + .access_token' \
+                  "$exchange_file" > "$header_file"
+                chmod 0600 "$header_file"
+                vault_status="$(curl -sS -o "$vault_file" -w '%{http_code}' \
+                  -H "@$header_file" \
+                  "${AZURE_KEYVAULT_URL%/}/secrets?api-version=7.4")"
+                chmod 0600 "$vault_file"
+                if [ "$vault_status" = 200 ]; then
+                  rm -f "$exchange_file" "$header_file" "$vault_file"
+                  echo "$label federation retries: $federation_retries; RBAC retries: $rbac_retries"
+                  return 0
+                fi
+                if [ "$vault_status" = 403 ]; then
+                  rbac_retries=$((rbac_retries + 1))
+                  sleep 5
+                  continue
+                fi
+                echo "::error::$label Key Vault setup probe failed with unexpected HTTP $vault_status."
+                return 1
+              fi
+
+              classification="$(
+                ./.github/scripts/classify-entra-federation-response.sh \
+                  "$exchange_status" "$exchange_file"
+              )"
+              IFS=$'\t' read -r disposition error_name aadsts_code <<< "$classification"
+              if [ "$disposition" = retry ]; then
+                federation_retries=$((federation_retries + 1))
+                sleep 5
+                continue
+              fi
+              echo "::error::$label federation setup probe failed with unexpected HTTP $exchange_status (error=$error_name, aadsts=$aadsts_code)."
+              return 1
+            done
+            echo "::error::$label federation/RBAC propagation exceeded five minutes."
+            return 1
+          }
+
+          refresh_assertion "$AWS2AZURE_ROTATION_TOKEN_FILE_A"
+          verify_identity runtime-a \
+            "$AWS2AZURE_ROTATION_CLIENT_ID_A" "$AWS2AZURE_ROTATION_TOKEN_FILE_A"
+          refresh_assertion "$AWS2AZURE_ROTATION_TOKEN_FILE_B"
+          assert_distinct_assertions
+          verify_identity runtime-b \
+            "$AWS2AZURE_ROTATION_CLIENT_ID_B" "$AWS2AZURE_ROTATION_TOKEN_FILE_B"
 
       - name: Run production-shaped workload through the official AWS SDK
         env:
@@ -374,6 +578,18 @@ jobs:
           AWS2AZURE_LOAD_RUN_URL: ${{ env.RUN_URL }}
           AWS2AZURE_LOAD_BACKEND_DESCRIPTION: ${{ env.BACKEND_DESCRIPTION }}
         run: |
+          set -euo pipefail
+          if [ "$PROFILE" = secretsmanager-basic-lifecycle ]; then
+            ( umask 077
+              curl -fsS \
+                -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+                "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" |
+                python3 -c \
+                  'import json, pathlib, sys; value=json.load(sys.stdin).get("value"); assert value; pathlib.Path(sys.argv[1]).write_text(value)' \
+                  "$AWS2AZURE_ROTATION_TOKEN_FILE_A"
+            )
+            chmod 0600 "$AWS2AZURE_ROTATION_TOKEN_FILE_A"
+          fi
           dotnet test tests/Aws2Azure.IntegrationTests \
             -c Release --no-build --nologo \
             --filter "$TEST_FILTER" \
@@ -399,7 +615,12 @@ jobs:
             echo "- Failures: \`$(jq '[.operation_mix[].failures] | add' "$LOAD_EVIDENCE_PATH")\`"
             echo "- P95: \`$(jq -r '.signals[] | select(.id == "representative-load-p95") | .measured_value' "$LOAD_EVIDENCE_PATH") ms\`"
             echo "- P99: \`$(jq -r '.signals[] | select(.id == "representative-load-p99") | .measured_value' "$LOAD_EVIDENCE_PATH") ms\`"
-            echo "- Policy blocker: capacity threshold and non-load operational scenarios remain unresolved"
+            if [ "$PROFILE" = secretsmanager-basic-lifecycle ]; then
+              echo "- Backend identity rotation completions: \`$(jq -r '.scenarios[] | select(.id == "credential-rotation") | .completions' "$LOAD_EVIDENCE_PATH")\`"
+              echo "- Rotation green reads: \`$(jq -r '.credential_rotation_proofs[0].green_read_completions' "$LOAD_EVIDENCE_PATH")\`"
+              echo "- Revoked identity denied: \`$(jq -r '.credential_rotation_proofs[0].old_access_denied_completions == 1' "$LOAD_EVIDENCE_PATH")\`"
+            fi
+            echo "- Remaining policy blocker: sealed-artifact rollback evidence"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload immutable load evidence
@@ -411,9 +632,23 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - name: Remove projected token
+      - name: Remove runtime identities, role assignments, and projected tokens
         if: always()
-        run: rm -rf "$PRIVATE_DIR"
+        run: |
+          set +e
+          if [ "$PROFILE" = secretsmanager-basic-lifecycle ]; then
+            if [ -n "${AWS2AZURE_ROTATION_ROLE_ASSIGNMENT_ID_A:-}" ]; then
+              az role assignment delete \
+                --ids "$AWS2AZURE_ROTATION_ROLE_ASSIGNMENT_ID_A" --only-show-errors
+            fi
+            if [ -n "${AWS2AZURE_ROTATION_ROLE_ASSIGNMENT_ID_B:-}" ]; then
+              az role assignment delete \
+                --ids "$AWS2AZURE_ROTATION_ROLE_ASSIGNMENT_ID_B" --only-show-errors
+            fi
+            az identity delete -g "$RG_NAME" -n "$RUNTIME_IDENTITY_A_NAME" --only-show-errors
+            az identity delete -g "$RG_NAME" -n "$RUNTIME_IDENTITY_B_NAME" --only-show-errors
+          fi
+          rm -rf "$PRIVATE_DIR"
 
       - name: Deallocate ephemeral Azure resources
         if: always()
