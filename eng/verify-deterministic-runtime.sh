@@ -9,7 +9,8 @@ if ! [[ "$attempts" =~ ^[2-9][0-9]*$ ]]; then
   exit 2
 fi
 
-scratch="$(mktemp -d)"
+scratch="$repo_root/artifacts/verify-deterministic-runtime-$$"
+mkdir -p "$scratch"
 trap 'rm -rf "$scratch"' EXIT
 
 baseline="$scratch/runtime-1.sha256"
@@ -26,14 +27,8 @@ for attempt in $(seq 1 "$attempts"); do
 
   runtime="$artifacts/bin/Aws2Azure.Proxy/release"
   manifest="$scratch/runtime-$attempt.sha256"
-  (
-    cd "$runtime"
-    find . -maxdepth 1 -type f \
-      \( -name '*.dll' -o -name '*.json' -o -name 'Aws2Azure.Proxy' \) \
-      -print0 |
-      sort -z |
-      xargs -0 sha256sum
-  ) > "$manifest"
+  "$repo_root/eng/sealed-runtime-manifest.sh" \
+    runtime-hashes "$runtime" "$manifest"
 
   if [ "$attempt" -gt 1 ] && ! cmp --silent "$baseline" "$manifest"; then
     echo "Proxy runtime is not reproducible between isolated builds 1 and $attempt." >&2

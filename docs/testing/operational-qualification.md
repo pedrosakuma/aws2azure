@@ -32,6 +32,59 @@ live restart checks for the initial candidate profiles. Rollback remains an
 external deployment action because the repository cannot manufacture a
 previously approved immutable artifact.
 
+## Sealed runtime producer and bootstrap
+
+`sealed-runtime.yml` is the trusted build-once producer for the exact
+`linux-x64` Native-AOT bytes used by future correctness, load, and rollback
+consumers. It is manual-only and rejects pull-request refs, unprotected refs,
+and refs other than `main` or a `vX.Y.Z-rc...` tag. The workflow publishes the
+proxy once, copies that same executable and its non-secret runtime JSON files
+into one 90-day artifact, validates a source-generated JSON manifest, and
+attests both the executable and manifest. No consumer may independently rebuild
+the SHA and call that output the same sealed runtime.
+
+The artifact name contains the complete runtime digest plus the GitHub run id
+and attempt. The manifest also records the repository, source SHA/ref, RID,
+executable digest, complete canonical `runtime-sha256.txt` digest,
+workflow/run/attempt URLs, and timestamps. Select an artifact by the exact run
+id, attempt, and artifact name; a rerun is a distinct producer identity even
+when its runtime digest is identical. GitHub artifact upload does not preserve
+Unix file modes, so the artifact contains a deterministic tar archive that
+preserves the executable bit. Download, extract, validate, and verify both
+attestations with:
+
+```bash
+gh run download "$run_id" \
+  --repo pedrosakuma/aws2azure \
+  --name "$artifact_name" \
+  --dir artifacts/sealed-runtime-download
+mkdir -p artifacts/sealed-runtime-bundle
+tar -xf "artifacts/sealed-runtime-download/$artifact_name.tar" \
+  -C artifacts/sealed-runtime-bundle
+./eng/sealed-runtime-manifest.sh validate \
+  artifacts/sealed-runtime-bundle/sealed-runtime-manifest.json
+gh attestation verify \
+  artifacts/sealed-runtime-bundle/runtime/Aws2Azure.Proxy \
+  --repo pedrosakuma/aws2azure \
+  --signer-workflow pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml \
+  --source-ref "$expected_ref" \
+  --source-digest "$expected_sha"
+gh attestation verify \
+  artifacts/sealed-runtime-bundle/sealed-runtime-manifest.json \
+  --repo pedrosakuma/aws2azure \
+  --signer-workflow pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml \
+  --source-ref "$expected_ref" \
+  --source-digest "$expected_sha"
+```
+
+Producing and attesting an artifact is necessary but is not approval, workload
+qualification, rollback evidence, or a GA claim. The first trusted artifact may
+be recorded as `bootstrap`; it has no predecessor and therefore cannot claim
+rollback. A later artifact with a distinct complete runtime digest must be
+deployed and then successfully rolled back to that bootstrap artifact before
+rollback can become qualified. The approval ledger and correctness/load/
+rollback consumers are intentionally deferred to dependent work.
+
 ## Reproduce
 
 1. Run `integration-real-azure` for the candidate SHA. Retain the

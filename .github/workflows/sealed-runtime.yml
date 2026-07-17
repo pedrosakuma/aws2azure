@@ -1,0 +1,194 @@
+name: sealed-runtime
+
+# Trusted build-once producer for the exact linux-x64 Native-AOT bytes consumed
+# by later qualification workflows. This workflow never accepts pull-request
+# refs and never asks a consumer to rebuild a checksum-equivalent candidate.
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  attestations: write
+  contents: read
+  id-token: write
+
+jobs:
+  produce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: sealed-runtime-${{ github.ref }}-${{ github.sha }}
+      cancel-in-progress: false
+    steps:
+      - name: Require a protected trusted dispatch ref
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != workflow_dispatch ]; then
+            echo "::error::Sealed runtime production only accepts workflow_dispatch."
+            exit 1
+          fi
+          if [[ "$REF" == refs/pull/* ]]; then
+            echo "::error::Pull-request refs are never trusted sealed-runtime inputs."
+            exit 1
+          fi
+          if [[ "$REF" != refs/heads/main ]] &&
+             [[ ! "$REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-rc([.-]?[0-9A-Za-z]+)*$ ]]; then
+            echo "::error::Dispatch from protected main or a protected vX.Y.Z-rc tag."
+            exit 1
+          fi
+          if [ "$REF_PROTECTED" != true ]; then
+            echo "::error::The selected ref is not protected by branch protection or a ruleset."
+            exit 1
+          fi
+
+      - name: Checkout exact producer commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          if [ "$actual_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::Checked-out SHA $actual_sha does not match producer SHA $GITHUB_SHA."
+            exit 1
+          fi
+          if [ -n "$(git status --short)" ]; then
+            echo "::error::Producer checkout is not clean."
+            exit 1
+          fi
+
+      - uses: ./.github/actions/dotnet-setup
+
+      - name: Install Native-AOT toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang zlib1g-dev
+
+      - name: Publish linux-x64 Native-AOT runtime once
+        run: |
+          set -euo pipefail
+          dotnet publish src/Aws2Azure.Proxy \
+            -c Release \
+            -r linux-x64 \
+            -o artifacts/sealed-runtime-publish \
+            --nologo
+
+      - name: Package and validate the exact published bytes
+        id: package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          executable="artifacts/sealed-runtime-publish/Aws2Azure.Proxy"
+          if [ ! -f "$executable" ] || [ ! -x "$executable" ]; then
+            echo "::error::Native-AOT executable was not published at $executable."
+            exit 1
+          fi
+
+          run_started_at="$(
+            gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              --jq '.run_started_at'
+          )"
+          if [[ ! "$run_started_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+            echo "::error::GitHub did not return a valid run_started_at timestamp."
+            exit 1
+          fi
+
+          export SEALED_REPOSITORY="$GITHUB_REPOSITORY"
+          export SEALED_GIT_SHA="$GITHUB_SHA"
+          export SEALED_GIT_REF="$GITHUB_REF"
+          export SEALED_SERVER_URL="$GITHUB_SERVER_URL"
+          export SEALED_WORKFLOW_REF="$GITHUB_WORKFLOW_REF"
+          export SEALED_RUN_ID="$GITHUB_RUN_ID"
+          export SEALED_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT"
+          export SEALED_RUN_STARTED_AT="$run_started_at"
+          export SEALED_PRODUCED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          ./eng/sealed-runtime-manifest.sh generate \
+            artifacts/sealed-runtime-publish \
+            artifacts/sealed-runtime-bundle
+          ./eng/sealed-runtime-manifest.sh validate \
+            artifacts/sealed-runtime-bundle/sealed-runtime-manifest.json
+
+          artifact_name="$(jq -r '.artifact.name' artifacts/sealed-runtime-bundle/sealed-runtime-manifest.json)"
+          archive_name="$(jq -r '.artifact.archive_name' artifacts/sealed-runtime-bundle/sealed-runtime-manifest.json)"
+          tar \
+            --format=gnu \
+            --sort=name \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            --mtime='@0' \
+            -cf "artifacts/$archive_name" \
+            -C artifacts/sealed-runtime-bundle \
+            .
+
+          mkdir -p artifacts/sealed-runtime-roundtrip
+          tar -xf "artifacts/$archive_name" -C artifacts/sealed-runtime-roundtrip
+          ./eng/sealed-runtime-manifest.sh validate \
+            artifacts/sealed-runtime-roundtrip/sealed-runtime-manifest.json
+
+          executable_sha="$(sha256sum "$executable" | cut -d' ' -f1)"
+          {
+            echo "artifact_name=$artifact_name"
+            echo "archive_name=$archive_name"
+            echo "executable_sha256=sha256:$executable_sha"
+            echo "aggregate_digest=$(jq -r '.runtime.aggregate_digest' artifacts/sealed-runtime-bundle/sealed-runtime-manifest.json)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload immutable sealed runtime
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.package.outputs.artifact_name }}
+          path: artifacts/${{ steps.package.outputs.archive_name }}
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+          overwrite: false
+
+      - name: Attest executable and manifest
+        id: attest
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        with:
+          subject-path: |
+            artifacts/sealed-runtime-bundle/runtime/Aws2Azure.Proxy
+            artifacts/sealed-runtime-bundle/sealed-runtime-manifest.json
+
+      - name: Record exact producer identity
+        shell: bash
+        env:
+          ARTIFACT_NAME: ${{ steps.package.outputs.artifact_name }}
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          EXECUTABLE_DIGEST: ${{ steps.package.outputs.executable_sha256 }}
+          RUNTIME_DIGEST: ${{ steps.package.outputs.aggregate_digest }}
+          ATTESTATION_URL: ${{ steps.attest.outputs.attestation-url }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Sealed linux-x64 Native-AOT runtime"
+            echo
+            echo "- Source: \`$GITHUB_REPOSITORY@$GITHUB_SHA\`"
+            echo "- Ref: \`$GITHUB_REF\`"
+            echo "- Producer: [run $GITHUB_RUN_ID attempt $GITHUB_RUN_ATTEMPT]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT)"
+            echo "- Artifact: [\`$ARTIFACT_NAME\`]($ARTIFACT_URL) (id \`$ARTIFACT_ID\`)"
+            echo "- Uploaded artifact digest: \`$ARTIFACT_DIGEST\`"
+            echo "- Executable digest: \`$EXECUTABLE_DIGEST\`"
+            echo "- Complete runtime digest: \`$RUNTIME_DIGEST\`"
+            echo "- Attestation: $ATTESTATION_URL"
+            echo
+            echo "Consumers must select this exact run, attempt, and artifact name. They must not rebuild the runtime."
+          } >> "$GITHUB_STEP_SUMMARY"
