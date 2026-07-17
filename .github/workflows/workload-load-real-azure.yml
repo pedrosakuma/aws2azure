@@ -1,12 +1,23 @@
 name: workload-load-real-azure
 
-# Produces immutable production-shaped load evidence for the Secrets Manager
-# basic lifecycle profile. This is live Key Vault evidence only: emulator
-# baselines and specialized A/B artifacts are never read or uploaded here.
+# Produces immutable production-shaped workload evidence against ephemeral real
+# Azure resources. Scheduled evidence remains Secrets Manager only; manual runs
+# can select S3, Secrets Manager, or both. Emulator and A/B artifacts are never
+# read or uploaded by this workflow.
 on:
   schedule:
     - cron: '15 6 * * *'
   workflow_dispatch:
+    inputs:
+      profile:
+        description: Production-shaped workload profile
+        required: true
+        default: secretsmanager-basic-lifecycle
+        type: choice
+        options:
+          - secretsmanager-basic-lifecycle
+          - s3-basic-object-crud
+          - all
   pull_request:
     types: [labeled, synchronize, reopened]
 
@@ -15,7 +26,7 @@ permissions:
   contents: read
 
 jobs:
-  secretsmanager-basic-lifecycle:
+  select:
     if: >-
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
@@ -23,18 +34,62 @@ jobs:
        contains(github.event.pull_request.labels.*.name, 'run-real-azure') &&
        contains(github.event.pull_request.labels.*.name, 'run-perf'))
     runs-on: ubuntu-latest
+    outputs:
+      profiles: ${{ steps.profiles.outputs.profiles }}
+    steps:
+      - name: Select workload profiles
+        id: profiles
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_PROFILE: ${{ inputs.profile }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            schedule)
+              profiles='["secretsmanager-basic-lifecycle"]'
+              ;;
+            workflow_dispatch)
+              case "$REQUESTED_PROFILE" in
+                secretsmanager-basic-lifecycle|s3-basic-object-crud)
+                  profiles="[\"$REQUESTED_PROFILE\"]"
+                  ;;
+                all)
+                  profiles='["secretsmanager-basic-lifecycle","s3-basic-object-crud"]'
+                  ;;
+                *)
+                  echo "::error::Unsupported workload profile: $REQUESTED_PROFILE"
+                  exit 1
+                  ;;
+              esac
+              ;;
+            pull_request)
+              profiles='["secretsmanager-basic-lifecycle","s3-basic-object-crud"]'
+              ;;
+            *)
+              echo "::error::Unsupported event: $EVENT_NAME"
+              exit 1
+              ;;
+          esac
+          echo "profiles=$profiles" >> "$GITHUB_OUTPUT"
+
+  load:
+    needs: select
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: ${{ fromJSON(needs.select.outputs.profiles) }}
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     concurrency:
-      group: workload-load-real-azure-secretsmanager-basic-lifecycle
+      group: workload-load-real-azure-${{ matrix.profile }}
       cancel-in-progress: false
     env:
+      PROFILE: ${{ matrix.profile }}
       AZURE_LOCATION: eastus2
-      RG_NAME: aws2azure-load-sm-${{ github.run_id }}-${{ github.run_attempt }}
-      DEPLOYMENT_NAME: aws2azure-load-secretsmanager
-      CONFORMANCE_PLAN: artifacts/secretsmanager-load/provenance/conformance-plan.json
-      QUALIFICATION_DIR: artifacts/secretsmanager-load/provenance
-      LOAD_EVIDENCE_PATH: artifacts/secretsmanager-load/load-evidence.json
-      PRIVATE_DIR: artifacts/secretsmanager-load-private
+      RG_NAME: aws2azure-load-${{ matrix.profile }}-${{ github.run_id }}-${{ github.run_attempt }}
+      QUALIFICATION_DIR: artifacts/workload-load/${{ matrix.profile }}/provenance
+      LOAD_EVIDENCE_PATH: artifacts/workload-load/${{ matrix.profile }}/load-evidence.json
+      PRIVATE_DIR: artifacts/workload-load-private/${{ matrix.profile }}
       LOAD_DURATION_SECONDS: '300'
       LOAD_CONCURRENCY: '8'
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -42,7 +97,35 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: ./.github/actions/dotnet-setup
 
-      - name: Require Workload Identity provisioning
+      - name: Configure selected producer
+        run: |
+          set -euo pipefail
+          case "$PROFILE" in
+            secretsmanager-basic-lifecycle)
+              {
+                echo "DEPLOYMENT_NAME=aws2azure-load-secretsmanager"
+                echo "BICEP_PATH=deploy/realazure/secretsmanager-load.bicep"
+                echo "RUNNER_PATH=tests/Aws2Azure.IntegrationTests/SecretsManager/SecretsManagerRealAzureLoadQualificationTests.cs"
+                echo "TEST_FILTER=Category=SecretsManagerLoadQualification"
+                echo "BACKEND_DESCRIPTION=Ephemeral Key Vault Standard with RBAC and seven-day soft delete"
+              } >> "$GITHUB_ENV"
+              ;;
+            s3-basic-object-crud)
+              {
+                echo "DEPLOYMENT_NAME=aws2azure-load-s3"
+                echo "BICEP_PATH=deploy/realazure/s3-load.bicep"
+                echo "RUNNER_PATH=tests/Aws2Azure.IntegrationTests/S3/S3RealAzureLoadQualificationTests.cs"
+                echo "TEST_FILTER=Category=S3LoadQualification"
+                echo "BACKEND_DESCRIPTION=Ephemeral Azure Blob StorageV2 Standard_LRS"
+              } >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "::error::Unsupported workload profile: $PROFILE"
+              exit 1
+              ;;
+          esac
+
+      - name: Require Azure OIDC provisioning
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_OBJECT_ID: ${{ secrets.AZURE_CLIENT_OBJECT_ID }}
@@ -51,10 +134,14 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "$AZURE_CLIENT_ID" ] ||
-             [ -z "$AZURE_CLIENT_OBJECT_ID" ] ||
              [ -z "$AZURE_TENANT_ID" ] ||
              [ -z "$AZURE_SUBSCRIPTION_ID" ]; then
-            echo "::error::Azure Workload Identity secrets and object id are required; load evidence cannot fall back to emulator or anonymous data."
+            echo "::error::Azure OIDC secrets are required; load evidence cannot fall back to emulator or anonymous data."
+            exit 1
+          fi
+          if [ "$PROFILE" = secretsmanager-basic-lifecycle ] &&
+             [ -z "$AZURE_CLIENT_OBJECT_ID" ]; then
+            echo "::error::AZURE_CLIENT_OBJECT_ID is required for Key Vault data-plane RBAC."
             exit 1
           fi
 
@@ -62,6 +149,8 @@ jobs:
         run: dotnet build -c Release --nologo
 
       - name: Validate manifests and plan canonical candidate configuration
+        env:
+          CONFORMANCE_PLAN: artifacts/workload-load/${{ matrix.profile }}/provenance/conformance-plan.json
         run: |
           set -euo pipefail
           dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- --validate
@@ -69,14 +158,12 @@ jobs:
           dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- \
             plan-conformance --output "$CONFORMANCE_PLAN"
 
-      # Reproduce the integration-real-azure candidate identity separately from
-      # the load producer identity. Qualification rejects a load run unless the
-      # candidate runtime/config exactly matches the selected correctness
-      # artifact, while producer_config_digest below seals the files actually
-      # used to provision and drive this load run.
-      - name: Seal runtime and non-secret candidate configuration
+      # Candidate identity is reproduced from integration-real-azure. The
+      # producer digest separately seals the profile-specific topology and code.
+      - name: Seal runtime, candidate config, and producer config
         id: provenance
-        shell: bash
+        env:
+          CONFORMANCE_PLAN: artifacts/workload-load/${{ matrix.profile }}/provenance/conformance-plan.json
         run: |
           set -euo pipefail
           runtime_manifest="$QUALIFICATION_DIR/runtime-sha256.txt"
@@ -115,26 +202,43 @@ jobs:
               }
             }' > "$candidate_config_manifest"
 
+          if [ "$PROFILE" = secretsmanager-basic-lifecycle ]; then
+            topology='{
+              "backend": "Key Vault Standard",
+              "rbac": true,
+              "soft_delete_retention_days": 7,
+              "purge_protection": false
+            }'
+          else
+            topology='{
+              "backend": "Blob StorageV2",
+              "sku": "Standard_LRS",
+              "public_blob_access": false,
+              "soft_delete": false
+            }'
+          fi
+
           producer_config_manifest="$QUALIFICATION_DIR/load-producer-config-manifest.json"
           jq -n \
             --arg schema_version "1" \
+            --arg profile "$PROFILE" \
             --arg git_sha "$(git rev-parse HEAD)" \
             --arg region "$AZURE_LOCATION" \
             --arg concurrency "$LOAD_CONCURRENCY" \
             --arg duration_seconds "$LOAD_DURATION_SECONDS" \
-            --arg bicep_sha256 "$(sha256sum deploy/realazure/secretsmanager-load.bicep | cut -d' ' -f1)" \
+            --arg bicep_sha256 "$(sha256sum "$BICEP_PATH" | cut -d' ' -f1)" \
             --arg workflow_sha256 "$(sha256sum .github/workflows/workload-load-real-azure.yml | cut -d' ' -f1)" \
-            --arg runner_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/SecretsManager/SecretsManagerRealAzureLoadQualificationTests.cs | cut -d' ' -f1)" \
+            --arg runner_sha256 "$(sha256sum "$RUNNER_PATH" | cut -d' ' -f1)" \
+            --arg shared_runner_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/OperationalQualification/RealAzureWorkloadLoadEvidence.cs | cut -d' ' -f1)" \
+            --arg manifest_sha256 "$(sha256sum "docs/workloads/$PROFILE.yaml" | cut -d' ' -f1)" \
+            --arg policy_sha256 "$(sha256sum "docs/workloads/qualification/$PROFILE.yaml" | cut -d' ' -f1)" \
+            --argjson topology "$topology" \
             '{
               schema_version: ($schema_version | tonumber),
+              profile_id: $profile,
               git_sha: $git_sha,
               region: $region,
-              topology: {
-                backend: "Key Vault Standard",
-                rbac: true,
-                soft_delete_retention_days: 7,
-                purge_protection: false
-              },
+              topology: $topology,
               load_shape: {
                 concurrency: ($concurrency | tonumber),
                 requested_duration_seconds: ($duration_seconds | tonumber)
@@ -142,7 +246,10 @@ jobs:
               source_digests: {
                 bicep: ("sha256:" + $bicep_sha256),
                 workflow: ("sha256:" + $workflow_sha256),
-                runner: ("sha256:" + $runner_sha256)
+                runner: ("sha256:" + $runner_sha256),
+                shared_runner: ("sha256:" + $shared_runner_sha256),
+                workload_manifest: ("sha256:" + $manifest_sha256),
+                qualification_policy: ("sha256:" + $policy_sha256)
               }
             }' > "$producer_config_manifest"
 
@@ -160,47 +267,74 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Provision ephemeral production Key Vault topology
+      - name: Provision isolated production-shaped topology
         env:
           AZURE_CLIENT_OBJECT_ID: ${{ secrets.AZURE_CLIENT_OBJECT_ID }}
         run: |
           set -euo pipefail
           az group create -n "$RG_NAME" -l "$AZURE_LOCATION" \
-            --tags purpose=aws2azure-nightly \
+            --tags purpose=aws2azure-workload-load \
+                   profile="$PROFILE" \
                    run-id="${{ github.run_id }}" \
                    created="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             -o none
-          az deployment group create -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
-            -f deploy/realazure/secretsmanager-load.bicep \
-            -p principalId="$AZURE_CLIENT_OBJECT_ID" \
-            -o none
+          args=(
+            az deployment group create
+            -g "$RG_NAME"
+            -n "$DEPLOYMENT_NAME"
+            -f "$BICEP_PATH"
+          )
+          if [ "$PROFILE" = secretsmanager-basic-lifecycle ]; then
+            args+=(-p principalId="$AZURE_CLIENT_OBJECT_ID")
+          fi
+          "${args[@]}" -o none
 
-      - name: Export Key Vault endpoint
+      - name: Export selected backend
         run: |
           set -euo pipefail
-          KV_URI="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
-            --query properties.outputs.keyVaultUri.value -o tsv)"
-          KV_NAME="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
-            --query properties.outputs.keyVaultName.value -o tsv)"
-          if [ -z "$KV_URI" ] || [ -z "$KV_NAME" ]; then
-            echo "::error::The deployment did not produce a Key Vault endpoint."
-            exit 1
-          fi
-          ready=false
-          for attempt in $(seq 1 30); do
-            if az keyvault secret list --vault-name "$KV_NAME" --maxresults 1 -o none 2>/dev/null; then
-              ready=true
-              break
+          if [ "$PROFILE" = secretsmanager-basic-lifecycle ]; then
+            endpoint="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
+              --query properties.outputs.keyVaultUri.value -o tsv)"
+            name="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
+              --query properties.outputs.keyVaultName.value -o tsv)"
+            if [ -z "$endpoint" ] || [ -z "$name" ]; then
+              echo "::error::The deployment did not produce a Key Vault endpoint."
+              exit 1
             fi
-            sleep 10
-          done
-          if [ "$ready" != true ]; then
-            echo "::error::Key Vault RBAC did not become ready within five minutes."
-            exit 1
+            ready=false
+            for attempt in $(seq 1 30); do
+              if az keyvault secret list --vault-name "$name" --maxresults 1 -o none 2>/dev/null; then
+                ready=true
+                break
+              fi
+              sleep 10
+            done
+            if [ "$ready" != true ]; then
+              echo "::error::Key Vault RBAC did not become ready within five minutes."
+              exit 1
+            fi
+            echo "AZURE_KEYVAULT_URL=$endpoint" >> "$GITHUB_ENV"
+          else
+            account="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
+              --query properties.outputs.storageAccountName.value -o tsv)"
+            endpoint="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
+              --query properties.outputs.blobEndpoint.value -o tsv)"
+            key="$(az storage account keys list -g "$RG_NAME" -n "$account" \
+              --query '[0].value' -o tsv)"
+            if [ -z "$account" ] || [ -z "$endpoint" ] || [ -z "$key" ]; then
+              echo "::error::The deployment did not produce usable Blob Storage credentials."
+              exit 1
+            fi
+            echo "::add-mask::$key"
+            {
+              echo "AZURE_BLOB_ACCOUNT=$account"
+              echo "AZURE_BLOB_KEY=$key"
+              echo "AZURE_BLOB_ENDPOINT=$endpoint"
+            } >> "$GITHUB_ENV"
           fi
-          echo "AZURE_KEYVAULT_URL=$KV_URI" >> "$GITHUB_ENV"
 
       - name: Mint projected Workload Identity token
+        if: matrix.profile == 'secretsmanager-basic-lifecycle'
         env:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -224,8 +358,7 @@ jobs:
             echo "AZURE_CLIENT_ID=$AZURE_CLIENT_ID"
           } >> "$GITHUB_ENV"
 
-      - name: Run production-shaped Secrets Manager lifecycle
-        id: load
+      - name: Run production-shaped workload through the official AWS SDK
         env:
           AWS2AZURE_LOAD_EVIDENCE_PATH: ${{ env.LOAD_EVIDENCE_PATH }}
           AWS2AZURE_LOAD_DURATION_SECONDS: ${{ env.LOAD_DURATION_SECONDS }}
@@ -235,11 +368,11 @@ jobs:
           AWS2AZURE_LOAD_CONFIG_DIGEST: ${{ steps.provenance.outputs.config_digest }}
           AWS2AZURE_LOAD_PRODUCER_CONFIG_DIGEST: ${{ steps.provenance.outputs.producer_config_digest }}
           AWS2AZURE_LOAD_RUN_URL: ${{ env.RUN_URL }}
-          AWS2AZURE_LOAD_BACKEND_DESCRIPTION: Ephemeral Key Vault Standard with RBAC and seven-day soft delete
+          AWS2AZURE_LOAD_BACKEND_DESCRIPTION: ${{ env.BACKEND_DESCRIPTION }}
         run: |
           dotnet test tests/Aws2Azure.IntegrationTests \
             -c Release --no-build --nologo \
-            --filter "Category=SecretsManagerLoadQualification" \
+            --filter "$TEST_FILTER" \
             --logger "console;verbosity=normal"
 
       - name: Summarize immutable load evidence
@@ -250,16 +383,18 @@ jobs:
             exit 1
           fi
           {
-            echo "## Secrets Manager production-shaped load"
+            echo "## Production-shaped real-Azure workload load"
             echo
-            echo "- Profile: \`secretsmanager-basic-lifecycle\`"
-            echo "- Backend: real Azure Key Vault"
-            echo "- Authentication: Workload Identity"
+            echo "- Profile: \`$PROFILE\`"
+            echo "- Backend: \`$(jq -r '.provenance.backend_description' "$LOAD_EVIDENCE_PATH")\`"
+            echo "- Official AWS SDK through proxy: yes"
             echo "- Emulator evidence consumed: no"
             echo "- Duration: \`$(jq -r '.load_shape.requested_duration_seconds' "$LOAD_EVIDENCE_PATH")s\`"
             echo "- Concurrency: \`$(jq -r '.load_shape.concurrency' "$LOAD_EVIDENCE_PATH")\`"
             echo "- Completions: \`$(jq '[.operation_mix[].completions] | add' "$LOAD_EVIDENCE_PATH")\`"
             echo "- Failures: \`$(jq '[.operation_mix[].failures] | add' "$LOAD_EVIDENCE_PATH")\`"
+            echo "- P95: \`$(jq -r '.signals[] | select(.id == "representative-load-p95") | .measured_value' "$LOAD_EVIDENCE_PATH") ms\`"
+            echo "- P99: \`$(jq -r '.signals[] | select(.id == "representative-load-p99") | .measured_value' "$LOAD_EVIDENCE_PATH") ms\`"
             echo "- Policy blocker: capacity threshold and non-load operational scenarios remain unresolved"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -267,8 +402,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: real-azure-workload-load-secretsmanager-basic-lifecycle
-          path: artifacts/secretsmanager-load/load-evidence.json
+          name: real-azure-workload-load-${{ matrix.profile }}
+          path: artifacts/workload-load/${{ matrix.profile }}/**
           if-no-files-found: error
           retention-days: 90
 

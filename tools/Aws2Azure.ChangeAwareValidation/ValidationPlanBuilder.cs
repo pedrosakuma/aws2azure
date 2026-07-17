@@ -124,8 +124,13 @@ public static class ValidationPlanBuilder
             IsWorkflow(path, "workload-load-real-azure.yml");
         var isWorkloadLoadProducer = isWorkloadLoadWorkflow
             || path == "deploy/realazure/secretsmanager-load.bicep"
+            || path == "deploy/realazure/s3-load.bicep"
             || path
-                == "tests/Aws2Azure.IntegrationTests/SecretsManager/SecretsManagerRealAzureLoadQualificationTests.cs";
+                == "tests/Aws2Azure.IntegrationTests/SecretsManager/SecretsManagerRealAzureLoadQualificationTests.cs"
+            || path
+                == "tests/Aws2Azure.IntegrationTests/S3/S3RealAzureLoadQualificationTests.cs"
+            || path
+                == "tests/Aws2Azure.IntegrationTests/OperationalQualification/RealAzureWorkloadLoadEvidence.cs";
         var isMicrobenchBaseline = path == "docs/perf/microbench-reference.json";
         var isValidationEntrypoint = path == "eng/validate.ps1";
 
