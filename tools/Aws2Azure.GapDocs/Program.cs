@@ -77,6 +77,8 @@ static int RunGapDocs(
         var migration = Loader.LoadRealAzureMigration(gapsRoot);
         var matrix = ConformanceMatrixLoader.Load(matrixPath);
         var workloadManifests = WorkloadGaManifestLoader.LoadAll(workloadsRoot);
+        var approvedRuntimes = ApprovedRuntimeLedgerLoader.LoadAll(
+            Path.Combine(workloadsRoot, "approved-runtimes"));
         var errors = new List<string>();
         errors.AddRange(Validator.Validate(docs, migration, DateOnly.FromDateTime(DateTime.UtcNow)));
         errors.AddRange(Validator.ValidateDesign(designDocs, docs));
@@ -85,6 +87,10 @@ static int RunGapDocs(
         {
             errors.AddRange(WorkloadGaManifestValidator.Validate(manifest, docs, designDocs));
         }
+        errors.AddRange(ApprovedRuntimeLedgerValidator.Validate(
+            approvedRuntimes,
+            workloadManifests,
+            DateTimeOffset.UtcNow));
         if (errors.Count > 0)
         {
             WriteErrors("gap-doc validation", errors);
@@ -93,7 +99,8 @@ static int RunGapDocs(
 
         Console.WriteLine(
             $"[gap-docs] {docs.Count} operation(s), {designDocs.Count} service design doc(s), " +
-            "and real-Azure conformance matrix validated OK");
+            $"{approvedRuntimes.Count} approved-runtime record(s), and real-Azure " +
+            "conformance matrix validated OK");
         if (options.ValidateOnly)
         {
             return 0;

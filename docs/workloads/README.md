@@ -18,6 +18,24 @@ use deterministic evidence, but never emulator evidence.
 production-shaped real-Azure artifact is committed under
 `docs/workloads/evidence/` and referenced with its repository-relative path.
 
+## Approved-runtime ledger
+
+`approved-runtimes/<profile-id>.yaml` records the exact sealed runtime status
+for each profile. Approval is profile-owned even when multiple profiles share
+the same producer artifact. Records are strict schema-versioned documents:
+unknown fields, profile-version drift, malformed or inconsistent producer
+identity, expired ephemeral artifacts, and invalid status/evidence combinations
+fail gap-doc validation.
+
+The first sealed runtime has a bootstrap paradox: it has no earlier approved
+runtime to roll back to, so it can never be a qualified or approved candidate.
+It is mechanically `promotion_eligible: false`, but policy may mark it
+`rollback_baseline_eligible: true`. A later candidate with a distinct complete
+runtime digest may deploy, prove rollback to that bootstrap, and include the
+qualification evidence linking both digests. Only that later candidate can
+become the first `approved` runtime for the profile. A revoked runtime is
+eligible for neither promotion nor rollback.
+
 Verdicts are mechanical:
 
 | Verdict | Meaning |
