@@ -109,7 +109,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         ArgumentException.ThrowIfNullOrWhiteSpace(topicName);
 
         var requestUri = BuildTopicUri(credentials, namespaceFqdn, topicName);
-        ServiceBusTopicsManagementClientLog.CreatingTopic(_logger, namespaceFqdn, topicName);
+        SnsLog.CreatingTopic(_logger, namespaceFqdn, topicName);
 
         using var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
@@ -125,7 +125,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         }
 
         var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        ServiceBusTopicsManagementClientLog.TopicRequestFailed(_logger, nameof(CreateTopicAsync), namespaceFqdn, topicName, (int)response.StatusCode);
+        SnsLog.TopicRequestFailed(_logger, nameof(CreateTopicAsync), namespaceFqdn, topicName, (int)response.StatusCode);
         throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
     }
 
@@ -139,7 +139,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
         ArgumentException.ThrowIfNullOrWhiteSpace(topicName);
 
-        ServiceBusTopicsManagementClientLog.DeletingTopic(_logger, namespaceFqdn, topicName);
+        SnsLog.DeletingTopic(_logger, namespaceFqdn, topicName);
 
         // Probe-before-delete: the SB emulator returns HTTP 400 (not 404) for DELETE on a missing
         // entity with no distinguishing body, so we cannot rely on the DELETE status code alone for
@@ -162,7 +162,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         }
 
         var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        ServiceBusTopicsManagementClientLog.TopicRequestFailed(_logger, nameof(DeleteTopicAsync), namespaceFqdn, topicName, (int)response.StatusCode);
+        SnsLog.TopicRequestFailed(_logger, nameof(DeleteTopicAsync), namespaceFqdn, topicName, (int)response.StatusCode);
         throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
     }
 
@@ -179,7 +179,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(top);
 
         var requestUri = BuildListTopicsUri(credentials, namespaceFqdn, skip, top);
-        ServiceBusTopicsManagementClientLog.ListingTopics(_logger, namespaceFqdn, skip, top);
+        SnsLog.ListingTopics(_logger, namespaceFqdn, skip, top);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
@@ -190,7 +190,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         if (!response.IsSuccessStatusCode)
         {
             var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            ServiceBusTopicsManagementClientLog.TopicRequestFailed(_logger, nameof(ListTopicsAsync), namespaceFqdn, "$Resources/topics", (int)response.StatusCode);
+            SnsLog.TopicRequestFailed(_logger, nameof(ListTopicsAsync), namespaceFqdn, "$Resources/topics", (int)response.StatusCode);
             throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
         }
 
@@ -210,7 +210,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         ArgumentException.ThrowIfNullOrWhiteSpace(topicName);
 
         var requestUri = BuildTopicUri(credentials, namespaceFqdn, topicName);
-        ServiceBusTopicsManagementClientLog.GettingTopic(_logger, namespaceFqdn, topicName);
+        SnsLog.GettingTopic(_logger, namespaceFqdn, topicName);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
@@ -226,7 +226,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         if (!response.IsSuccessStatusCode)
         {
             var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            ServiceBusTopicsManagementClientLog.TopicRequestFailed(_logger, nameof(GetTopicAsync), namespaceFqdn, topicName, (int)response.StatusCode);
+            SnsLog.TopicRequestFailed(_logger, nameof(GetTopicAsync), namespaceFqdn, topicName, (int)response.StatusCode);
             throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
         }
 
@@ -258,7 +258,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         ArgumentNullException.ThrowIfNull(userMetadata);
 
         var requestUri = BuildSubscriptionUri(credentials, namespaceFqdn, topicName, subscriptionName);
-        ServiceBusTopicsManagementClientLog.CreatingSubscription(_logger, namespaceFqdn, topicName, subscriptionName);
+        SnsLog.CreatingSubscription(_logger, namespaceFqdn, topicName, subscriptionName);
 
         using var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
@@ -275,7 +275,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
             return;
         }
 
-        ServiceBusTopicsManagementClientLog.TopicRequestFailed(_logger, nameof(CreateSubscriptionAsync), namespaceFqdn, topicName + "/subscriptions/" + subscriptionName, (int)response.StatusCode);
+        SnsLog.TopicRequestFailed(_logger, nameof(CreateSubscriptionAsync), namespaceFqdn, topicName + "/subscriptions/" + subscriptionName, (int)response.StatusCode);
         throw new ServiceBusTopicsManagementException(response.StatusCode, respBody);
     }
 
@@ -291,7 +291,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         ArgumentException.ThrowIfNullOrWhiteSpace(topicName);
         ArgumentException.ThrowIfNullOrWhiteSpace(subscriptionName);
 
-        ServiceBusTopicsManagementClientLog.DeletingSubscription(_logger, namespaceFqdn, topicName, subscriptionName);
+        SnsLog.DeletingSubscription(_logger, namespaceFqdn, topicName, subscriptionName);
 
         // Probe-before-delete: same emulator quirk as DeleteTopicAsync (400 on missing entity).
         var existing = await GetSubscriptionAsync(credentials, namespaceFqdn, topicName, subscriptionName, cancellationToken).ConfigureAwait(false);
@@ -312,7 +312,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         }
 
         var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        ServiceBusTopicsManagementClientLog.TopicRequestFailed(_logger, nameof(DeleteSubscriptionAsync), namespaceFqdn, topicName + "/subscriptions/" + subscriptionName, (int)response.StatusCode);
+        SnsLog.TopicRequestFailed(_logger, nameof(DeleteSubscriptionAsync), namespaceFqdn, topicName + "/subscriptions/" + subscriptionName, (int)response.StatusCode);
         throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
     }
 
@@ -331,7 +331,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(top);
 
         var requestUri = BuildListSubscriptionsUri(credentials, namespaceFqdn, topicName, skip, top);
-        ServiceBusTopicsManagementClientLog.ListingSubscriptions(_logger, namespaceFqdn, topicName, skip, top);
+        SnsLog.ListingSubscriptions(_logger, namespaceFqdn, topicName, skip, top);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
@@ -342,7 +342,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         if (!response.IsSuccessStatusCode)
         {
             var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            ServiceBusTopicsManagementClientLog.TopicRequestFailed(_logger, nameof(ListSubscriptionsAsync), namespaceFqdn, topicName + "/subscriptions", (int)response.StatusCode);
+            SnsLog.TopicRequestFailed(_logger, nameof(ListSubscriptionsAsync), namespaceFqdn, topicName + "/subscriptions", (int)response.StatusCode);
             throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
         }
 
@@ -364,7 +364,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         ArgumentException.ThrowIfNullOrWhiteSpace(subscriptionName);
 
         var requestUri = BuildSubscriptionUri(credentials, namespaceFqdn, topicName, subscriptionName);
-        ServiceBusTopicsManagementClientLog.GettingSubscription(_logger, namespaceFqdn, topicName, subscriptionName);
+        SnsLog.GettingSubscription(_logger, namespaceFqdn, topicName, subscriptionName);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
@@ -380,7 +380,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         if (!response.IsSuccessStatusCode)
         {
             var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            ServiceBusTopicsManagementClientLog.TopicRequestFailed(_logger, nameof(GetSubscriptionAsync), namespaceFqdn, topicName + "/subscriptions/" + subscriptionName, (int)response.StatusCode);
+            SnsLog.TopicRequestFailed(_logger, nameof(GetSubscriptionAsync), namespaceFqdn, topicName + "/subscriptions/" + subscriptionName, (int)response.StatusCode);
             throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
         }
 
@@ -413,7 +413,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         ArgumentException.ThrowIfNullOrWhiteSpace(description.SubscriptionName);
 
         var requestUri = BuildSubscriptionUri(credentials, namespaceFqdn, topicName, description.SubscriptionName);
-        ServiceBusTopicsManagementClientLog.UpdatingSubscription(_logger, namespaceFqdn, topicName, description.SubscriptionName);
+        SnsLog.UpdatingSubscription(_logger, namespaceFqdn, topicName, description.SubscriptionName);
 
         using var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
@@ -429,7 +429,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         }
 
         var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        ServiceBusTopicsManagementClientLog.TopicRequestFailed(_logger, nameof(UpdateSubscriptionAsync), namespaceFqdn, topicName + "/subscriptions/" + description.SubscriptionName, (int)response.StatusCode);
+        SnsLog.TopicRequestFailed(_logger, nameof(UpdateSubscriptionAsync), namespaceFqdn, topicName + "/subscriptions/" + description.SubscriptionName, (int)response.StatusCode);
         throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
     }
 
@@ -498,47 +498,4 @@ public sealed class ServiceBusTopicsManagementException : Exception
 
     public HttpStatusCode StatusCode { get; }
     public string? ResponseBody { get; }
-}
-
-internal static partial class ServiceBusTopicsManagementClientLog
-{
-    [LoggerMessage(EventId = 1, Level = LogLevel.Debug,
-        Message = "Creating Service Bus topic for namespace '{NamespaceFqdn}' and entity '{TopicName}'")]
-    public static partial void CreatingTopic(ILogger logger, string namespaceFqdn, string topicName);
-
-    [LoggerMessage(EventId = 2, Level = LogLevel.Debug,
-        Message = "Deleting Service Bus topic for namespace '{NamespaceFqdn}' and entity '{TopicName}'")]
-    public static partial void DeletingTopic(ILogger logger, string namespaceFqdn, string topicName);
-
-    [LoggerMessage(EventId = 3, Level = LogLevel.Debug,
-        Message = "Listing Service Bus topics for namespace '{NamespaceFqdn}' with skip={Skip} top={Top}")]
-    public static partial void ListingTopics(ILogger logger, string namespaceFqdn, int skip, int top);
-
-    [LoggerMessage(EventId = 4, Level = LogLevel.Warning,
-        Message = "Service Bus Topics request '{Operation}' for namespace '{NamespaceFqdn}' and entity '{EntityName}' failed with HTTP {StatusCode}")]
-    public static partial void TopicRequestFailed(ILogger logger, string operation, string namespaceFqdn, string entityName, int statusCode);
-
-    [LoggerMessage(EventId = 5, Level = LogLevel.Debug,
-        Message = "Creating Service Bus subscription for namespace '{NamespaceFqdn}', topic '{TopicName}', and subscription '{SubscriptionName}'")]
-    public static partial void CreatingSubscription(ILogger logger, string namespaceFqdn, string topicName, string subscriptionName);
-
-    [LoggerMessage(EventId = 6, Level = LogLevel.Debug,
-        Message = "Deleting Service Bus subscription for namespace '{NamespaceFqdn}', topic '{TopicName}', and subscription '{SubscriptionName}'")]
-    public static partial void DeletingSubscription(ILogger logger, string namespaceFqdn, string topicName, string subscriptionName);
-
-    [LoggerMessage(EventId = 7, Level = LogLevel.Debug,
-        Message = "Listing Service Bus subscriptions for namespace '{NamespaceFqdn}', topic '{TopicName}', skip={Skip}, top={Top}")]
-    public static partial void ListingSubscriptions(ILogger logger, string namespaceFqdn, string topicName, int skip, int top);
-
-    [LoggerMessage(EventId = 8, Level = LogLevel.Debug,
-        Message = "Getting Service Bus subscription for namespace '{NamespaceFqdn}', topic '{TopicName}', and subscription '{SubscriptionName}'")]
-    public static partial void GettingSubscription(ILogger logger, string namespaceFqdn, string topicName, string subscriptionName);
-
-    [LoggerMessage(EventId = 9, Level = LogLevel.Debug,
-        Message = "Getting Service Bus topic for namespace '{NamespaceFqdn}' and entity '{TopicName}'")]
-    public static partial void GettingTopic(ILogger logger, string namespaceFqdn, string topicName);
-
-    [LoggerMessage(EventId = 10, Level = LogLevel.Debug,
-        Message = "Updating Service Bus subscription for namespace '{NamespaceFqdn}', topic '{TopicName}', and subscription '{SubscriptionName}'")]
-    public static partial void UpdatingSubscription(ILogger logger, string namespaceFqdn, string topicName, string subscriptionName);
 }
