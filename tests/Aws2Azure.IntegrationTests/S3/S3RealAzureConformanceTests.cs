@@ -111,13 +111,6 @@ public sealed class S3RealAzureConformanceTests(RealAzureProxyFixture fixture)
                 Assert.Equal(payload, await reader.ReadToEndAsync(timeout.Token).ConfigureAwait(false));
             }
 
-            await client.DeleteObjectAsync(
-                new DeleteObjectRequest { BucketName = bucket, Key = key },
-                timeout.Token).ConfigureAwait(false);
-            await client.DeleteBucketAsync(
-                new DeleteBucketRequest { BucketName = bucket },
-                timeout.Token).ConfigureAwait(false);
-            bucketCreated = false;
         }
         finally
         {
