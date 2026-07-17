@@ -17,6 +17,7 @@ public sealed class RealAzureWorkloadQualificationTests
         Assert.Equal("candidate", document.Verdict);
         Assert.Empty(document.Signals);
         var scenario = Assert.Single(document.Scenarios);
+        Assert.Equal("object-lifecycle", scenario.Id);
         Assert.Equal("real_azure", scenario.EvidenceSource);
         Assert.Equal(1, scenario.Completions);
         Assert.Equal("load_evidence_missing", Assert.Single(document.Findings).Code);
@@ -83,6 +84,7 @@ public sealed class RealAzureWorkloadQualificationTests
         service.Scenarios.Add(new ScenarioEvidence
         {
             Id = "write-throttled",
+            Category = "throttling",
             EvidenceSource = "deterministic",
             EstablishesVerification = false,
             Outcome = "passed",
@@ -103,6 +105,65 @@ public sealed class RealAzureWorkloadQualificationTests
             1,
             Assert.Single(document.Scenarios, scenario => scenario.EvidenceSource == "deterministic")
                 .Completions);
+    }
+
+    [Fact]
+    public void Generate_uses_manifest_compatible_stable_operational_scenario_ids()
+    {
+        var evidence = Evidence("passed", eligible: true);
+        var service = Assert.Single(evidence.Services);
+        service.Scenarios.Add(new ScenarioEvidence
+        {
+            Id = "write-throttled",
+            Category = "throttling",
+            EvidenceSource = "deterministic",
+            EstablishesVerification = false,
+            Outcome = "passed",
+            Operations = ["PutObject"],
+            DurationMilliseconds = 100
+        });
+        service.Operations[0].Scenarios.Add("write-throttled");
+
+        var document = RealAzureWorkloadQualificationGenerator.Generate(
+            evidence,
+            [new RealAzureWorkloadOperation { Service = "s3", Operation = "PutObject" }],
+            Metadata("throttling"));
+
+        Assert.Contains(document.Scenarios, scenario => scenario.Id == "object-lifecycle");
+        var throttling = Assert.Single(
+            document.Scenarios,
+            scenario => scenario.Id == "throttling");
+        Assert.Equal("deterministic", throttling.EvidenceSource);
+        Assert.DoesNotContain(
+            document.Scenarios,
+            scenario => scenario.Id.StartsWith("conformance-", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Generate_emits_shared_conformance_scenario_once_for_multiple_operations()
+    {
+        var evidence = Evidence("passed", eligible: true);
+        var service = Assert.Single(evidence.Services);
+        service.Scenarios[0].Operations.Add("GetObject");
+        service.Operations.Add(new OperationEvidence
+        {
+            Operation = "GetObject",
+            EligibleForVerifiedRealAzure = true,
+            Scenarios = ["object-lifecycle"],
+            BlockingOutcomes = []
+        });
+
+        var document = RealAzureWorkloadQualificationGenerator.Generate(
+            evidence,
+            [
+                new RealAzureWorkloadOperation { Service = "s3", Operation = "PutObject" },
+                new RealAzureWorkloadOperation { Service = "s3", Operation = "GetObject" }
+            ],
+            Metadata());
+
+        var scenario = Assert.Single(document.Scenarios);
+        Assert.Equal("object-lifecycle", scenario.Id);
+        Assert.Equal(1, scenario.Completions);
     }
 
     [Fact]
@@ -176,7 +237,8 @@ public sealed class RealAzureWorkloadQualificationTests
             [new RealAzureWorkloadOperation { Service = "s3", Operation = "PutObject" }],
             Metadata());
 
-    private static RealAzureWorkloadQualificationMetadata Metadata() => new()
+    private static RealAzureWorkloadQualificationMetadata Metadata(
+        params string[] requiredScenarioIds) => new()
     {
         ProfileId = "s3-basic-write",
         ProfileVersion = 1,
@@ -185,6 +247,7 @@ public sealed class RealAzureWorkloadQualificationTests
         ConfigDigest = "sha256:config",
         Region = "eastus2",
         BackendDescription = "Blob Storage Standard_LRS",
+        RequiredScenarioIds = requiredScenarioIds.ToList(),
         GeneratedAtUtc = GeneratedTime
     };
 

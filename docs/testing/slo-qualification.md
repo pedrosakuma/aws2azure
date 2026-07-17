@@ -65,6 +65,15 @@ failed required conformance scenario produces `blocked`. It never emits
 `qualified`: that verdict requires a later production-shaped load artifact with
 reviewed thresholds, sample counts, duration, and capacity signals.
 
+Candidate scenario IDs are stable. Matrix IDs are preserved for core scenarios,
+while operational categories are normalized to the matching workload manifest
+IDs when the command receives `--manifest` (`throttling`, `timeout`,
+`service-unavailable`, `cancellation`, `retry-exhaustion`, `restart`,
+`rollback`, and `concurrency`). A conformance scenario shared by several
+operations is emitted once, never as a synthetic `conformance-###` row. This
+lets later qualification evidence and GA manifests refer to the same identities
+without claiming that correctness evidence is capacity evidence.
+
 The nightly workflow generates one candidate per workload manifest and uploads
 it with two immutable siblings:
 

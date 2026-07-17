@@ -579,6 +579,7 @@ static int GenerateRealAzureWorkloadQualification(string[] args, string repoRoot
 {
     var values = new Dictionary<string, string>(StringComparer.Ordinal);
     var operations = new List<RealAzureWorkloadOperation>();
+    var requiredScenarioIds = new List<string>();
     for (var index = 0; index < args.Length; index++)
     {
         var option = args[index];
@@ -642,6 +643,7 @@ static int GenerateRealAzureWorkloadQualification(string[] args, string repoRoot
             var manifest = WorkloadGaManifestLoader.Load(manifestPath);
             values["--profile-id"] = manifest.Id;
             values["--profile-version"] = manifest.Version.ToString(CultureInfo.InvariantCulture);
+            requiredScenarioIds.AddRange(manifest.Evidence.RequiredScenarios);
             foreach (var operationReference in manifest.Operations)
             {
                 if (!WorkloadManifestValidator.TryParseOperation(
@@ -725,6 +727,7 @@ static int GenerateRealAzureWorkloadQualification(string[] args, string repoRoot
                     && int.TryParse(runAttemptValue, out var runAttempt)
                     ? runAttempt
                     : 1,
+                RequiredScenarioIds = requiredScenarioIds,
                 GeneratedAtUtc = DateTimeOffset.UtcNow
             });
         var errors = SloQualificationValidator.Validate(document, DateTimeOffset.UtcNow);
