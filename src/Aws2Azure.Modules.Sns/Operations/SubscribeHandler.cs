@@ -64,7 +64,7 @@ internal static class SubscribeHandler
 
             if (!SnsSubscriptionSupport.MetadataMatches(existing?.UserMetadata, request.Metadata))
             {
-                SubscribeHandlerLog.MismatchedExistingSubscription(logger, request.TopicName, subscriptionId, request.Protocol, request.Endpoint);
+                SnsLog.MismatchedExistingSubscription(logger, request.TopicName, subscriptionId, request.Protocol, request.Endpoint);
             }
         }
         catch (ServiceBusTopicsManagementException ex)
@@ -75,11 +75,4 @@ internal static class SubscribeHandler
 
         await SnsResponseWriter.WriteSubscribeResponseAsync(context, subscriptionArn).ConfigureAwait(false);
     }
-}
-
-internal static partial class SubscribeHandlerLog
-{
-    [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
-        Message = "Existing Service Bus subscription '{SubscriptionId}' for topic '{TopicName}' did not match requested SNS subscriber protocol '{Protocol}' and endpoint '{Endpoint}'. Returning the existing ARN without replacing metadata.")]
-    public static partial void MismatchedExistingSubscription(ILogger logger, string topicName, string subscriptionId, string protocol, string endpoint);
 }

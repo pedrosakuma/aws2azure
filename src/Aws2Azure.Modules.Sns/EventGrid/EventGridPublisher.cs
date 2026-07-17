@@ -166,7 +166,7 @@ internal sealed class EventGridPublisher : IEventGridPublisher
             var body = response.Content is null
                 ? string.Empty
                 : await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            EventGridPublisherLog.PublishHttpFailed(_logger, destination.Endpoint, (int)response.StatusCode, body);
+            SnsLog.PublishHttpFailed(_logger, destination.Endpoint, (int)response.StatusCode, body);
             return CreateFailure(response.StatusCode, body);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -175,7 +175,7 @@ internal sealed class EventGridPublisher : IEventGridPublisher
         }
         catch (TaskCanceledException)
         {
-            EventGridPublisherLog.PublishTimedOut(_logger, destination.Endpoint);
+            SnsLog.PublishTimedOut(_logger, destination.Endpoint);
             return new EventGridPublishFailure(
                 StatusCodes.Status500InternalServerError,
                 "InternalFailure",
@@ -189,12 +189,12 @@ internal sealed class EventGridPublisher : IEventGridPublisher
             // 429 surfaces as the SNS Throttled shape and transient/auth failures stay
             // faithful — instead of a flat InternalFailure. The token-endpoint body is
             // never echoed to the SNS caller.
-            EventGridPublisherLog.PublishAuthFailed(_logger, destination.Endpoint, exception);
+            SnsLog.PublishAuthFailed(_logger, destination.Endpoint, exception);
             return CreateFailure(exception.BackendStatus, string.Empty);
         }
         catch (HttpRequestException exception)
         {
-            EventGridPublisherLog.PublishTransportFailed(_logger, destination.Endpoint, exception);
+            SnsLog.PublishTransportFailed(_logger, destination.Endpoint, exception);
             return new EventGridPublishFailure(
                 StatusCodes.Status500InternalServerError,
                 "InternalFailure",
@@ -209,7 +209,7 @@ internal sealed class EventGridPublisher : IEventGridPublisher
             // 500. Status-bearing token failures are handled by the EntraIdTokenException
             // catch above. Azure response bodies are logged internally but never bubble
             // up into client-visible SNS error messages.
-            EventGridPublisherLog.PublishAuthFailed(_logger, destination.Endpoint, exception);
+            SnsLog.PublishAuthFailed(_logger, destination.Endpoint, exception);
             return new EventGridPublishFailure(
                 StatusCodes.Status500InternalServerError,
                 "InternalFailure",
@@ -239,7 +239,7 @@ internal sealed class EventGridPublisher : IEventGridPublisher
         if (!string.IsNullOrWhiteSpace(message.MessageGroupId)
             || !string.IsNullOrWhiteSpace(message.MessageDeduplicationId))
         {
-            EventGridPublisherLog.IgnoringFifoFields(_logger, message.TopicArn, message.MessageId);
+            SnsLog.IgnoringFifoFields(_logger, message.TopicArn, message.MessageId);
         }
 
         var attributes = new Dictionary<string, SnsEventGridMessageAttribute>(message.MessageAttributes.Count, StringComparer.Ordinal);
@@ -337,7 +337,7 @@ internal sealed class EventGridPublisher : IEventGridPublisher
 
     private static EventGridPublishFailure CreateFailure(HttpStatusCode statusCode, string body)
     {
-        // Note: Azure response bodies are logged via EventGridPublisherLog.PublishHttpFailed but are
+        // Note: Azure response bodies are logged via SnsLog.PublishHttpFailed but are
         // intentionally NOT echoed into client-visible SNS error messages — they could leak internal
         // Azure details (auth diagnostics, request IDs, account hints) to SNS callers.
         _ = body;
@@ -371,27 +371,4 @@ internal sealed class EventGridPublisher : IEventGridPublisher
 
     private static SnsBatchSendOutcome ToBatchOutcome(EventGridPublishFailure failure)
         => new(false, failure.ErrorCode, failure.ErrorMessage, failure.SenderFault);
-}
-
-internal static partial class EventGridPublisherLog
-{
-    [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
-        Message = "SNS Event Grid backend ignored FIFO fields for topic '{TopicArn}' and generated message id '{MessageId}'.")]
-    public static partial void IgnoringFifoFields(ILogger logger, string topicArn, Guid messageId);
-
-    [LoggerMessage(EventId = 2, Level = LogLevel.Warning,
-        Message = "Azure Event Grid publish to '{Endpoint}' failed with HTTP {StatusCode}. Body: {Body}")]
-    public static partial void PublishHttpFailed(ILogger logger, string endpoint, int statusCode, string body);
-
-    [LoggerMessage(EventId = 3, Level = LogLevel.Warning,
-        Message = "Azure Event Grid publish to '{Endpoint}' failed at transport layer.")]
-    public static partial void PublishTransportFailed(ILogger logger, string endpoint, Exception exception);
-
-    [LoggerMessage(EventId = 4, Level = LogLevel.Warning,
-        Message = "Azure Event Grid publish to '{Endpoint}' timed out.")]
-    public static partial void PublishTimedOut(ILogger logger, string endpoint);
-
-    [LoggerMessage(EventId = 5, Level = LogLevel.Warning,
-        Message = "Azure Event Grid publish to '{Endpoint}' failed during authentication.")]
-    public static partial void PublishAuthFailed(ILogger logger, string endpoint, Exception exception);
 }
