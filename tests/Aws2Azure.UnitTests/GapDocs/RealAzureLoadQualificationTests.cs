@@ -135,6 +135,26 @@ public sealed class RealAzureLoadQualificationTests
     }
 
     [Fact]
+    public void Generate_blocks_operation_failures_not_reflected_in_scenario_rows()
+    {
+        var failed = Evidence(1);
+        failed.OperationMix[0].Failures = 1;
+
+        var document = RealAzureLoadQualificationGenerator.Generate(
+            Manifest(),
+            Candidate(),
+            Policy(),
+            [failed, Evidence(2), Evidence(3)],
+            Metadata());
+
+        Assert.Equal("candidate", document.Verdict);
+        Assert.Contains(
+            document.Findings,
+            finding => finding.Code == "operation_failure_rate_exceeded"
+                       && finding.Message.Contains("load-1/1", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Generate_does_not_allow_one_fresh_run_to_hide_a_stale_source_run()
     {
         var stale = Evidence(1);
@@ -310,6 +330,67 @@ public sealed class RealAzureLoadQualificationTests
     }
 
     [Fact]
+    public void Generate_aggregates_report_only_diagnostics_by_metric_direction()
+    {
+        var policy = Policy();
+        policy.Scenarios[0].Signals.Add(new WorkloadQualificationSignalPolicy
+        {
+            Id = "crud-iterations-per-sec",
+            Source = "backend_capacity",
+            Disposition = "report_only",
+            Metric = "throughput_per_sec",
+        });
+        policy.Scenarios[0].Signals.Add(new WorkloadQualificationSignalPolicy
+        {
+            Id = "representative-load-put-object-p99",
+            Source = "backend_capacity",
+            Disposition = "report_only",
+            Metric = "p99_ms",
+        });
+        var evidence = new[] { Evidence(1), Evidence(2), Evidence(3) };
+        var throughputValues = new[] { 30d, 20d, 25d };
+        var latencyValues = new[] { 400d, 600d, 500d };
+        for (var index = 0; index < evidence.Length; index++)
+        {
+            evidence[index].Signals.Add(new RealAzureLoadSignalMeasurement
+            {
+                Id = "crud-iterations-per-sec",
+                ScenarioId = "representative-load",
+                Metric = "throughput_per_sec",
+                MeasuredValue = throughputValues[index],
+                Samples = 100,
+                CapturedAtUtc = evidence[index].Provenance.WindowEndUtc,
+            });
+            evidence[index].Signals.Add(new RealAzureLoadSignalMeasurement
+            {
+                Id = "representative-load-put-object-p99",
+                ScenarioId = "representative-load",
+                Metric = "p99_ms",
+                MeasuredValue = latencyValues[index],
+                Samples = 100,
+                CapturedAtUtc = evidence[index].Provenance.WindowEndUtc,
+            });
+        }
+
+        var document = RealAzureLoadQualificationGenerator.Generate(
+            Manifest(),
+            Candidate(),
+            policy,
+            evidence,
+            Metadata());
+
+        Assert.Equal(
+            20,
+            Assert.Single(document.Signals, item => item.Id == "crud-iterations-per-sec")
+                .MeasuredValue);
+        Assert.Equal(
+            600,
+            Assert.Single(
+                document.Signals,
+                item => item.Id == "representative-load-put-object-p99").MeasuredValue);
+    }
+
+    [Fact]
     public void Generate_rejects_operation_mix_that_omits_a_profile_operation()
     {
         var evidence = Evidence(1);
@@ -384,8 +465,36 @@ public sealed class RealAzureLoadQualificationTests
         Assert.False(string.IsNullOrWhiteSpace(capacity.ThresholdReason));
         Assert.Equal(40, capacity.MinValue);
         Assert.Null(capacity.MaxValue);
+        Assert.Contains("closed-loop CRUD topology", capacity.ThresholdReason, StringComparison.Ordinal);
         Assert.Equal(8, policy.LoadShape.Concurrency);
         Assert.Equal(300, policy.LoadShape.RequestedDurationSeconds);
+
+        var representative = Assert.Single(
+            policy.Scenarios,
+            scenario => scenario.Id == "representative-load");
+        var signals = representative.Signals.ToDictionary(item => item.Id, StringComparer.Ordinal);
+        Assert.Equal(25, signals.Count);
+        Assert.Equal("throughput_per_sec", signals["crud-iterations-per-sec"].Metric);
+        Assert.Equal("throughput_per_sec", signals["aws-operations-per-sec"].Metric);
+        foreach (var prefix in new[]
+                 {
+                     "representative-load",
+                     "representative-load-create-bucket",
+                     "representative-load-put-object",
+                     "representative-load-head-object",
+                     "representative-load-list-objects-v2",
+                     "representative-load-delete-object",
+                     "representative-load-delete-bucket",
+                 })
+        {
+            Assert.Equal("throughput_per_sec", signals[$"{prefix}-throughput"].Metric);
+            Assert.Equal("p95_ms", signals[$"{prefix}-p95"].Metric);
+            Assert.Equal("p99_ms", signals[$"{prefix}-p99"].Metric);
+        }
+        var connectivity =
+            signals["representative-load-unauthenticated-connectivity-header-p95"];
+        Assert.Equal("network_noise", connectivity.Source);
+        Assert.Equal("report_only", connectivity.Disposition);
     }
 
     [Fact]
