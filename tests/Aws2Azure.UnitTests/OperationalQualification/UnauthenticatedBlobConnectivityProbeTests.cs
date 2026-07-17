@@ -47,6 +47,19 @@ public sealed class UnauthenticatedBlobConnectivityProbeTests
             () => UnauthenticatedBlobConnectivityProbe.ValidateResponseAsync(response));
     }
 
+    [Theory]
+    [InlineData(
+        "<Error><Details><Code>AuthenticationFailed</Code></Details></Error>")]
+    [InlineData(
+        "<Error><Code>AuthenticationFailed</Code><Code>AuthenticationFailed</Code></Error>")]
+    public async Task ValidateResponseAsync_rejects_non_unique_direct_child_code(string body)
+    {
+        using var response = Response(HttpStatusCode.Forbidden, body);
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => UnauthenticatedBlobConnectivityProbe.ValidateResponseAsync(response));
+    }
+
     [Fact]
     public async Task ValidateResponseAsync_rejects_oversized_error_body()
     {
@@ -71,6 +84,22 @@ public sealed class UnauthenticatedBlobConnectivityProbeTests
             () => UnauthenticatedBlobConnectivityProbe.ValidateResponseAsync(response));
     }
 
+    [Fact]
+    public async Task MeasureHeaderLatenciesAsync_times_out_stalled_error_body()
+    {
+        using var client = new HttpClient(new StalledBodyHandler())
+        {
+            Timeout = Timeout.InfiniteTimeSpan,
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => UnauthenticatedBlobConnectivityProbe.MeasureHeaderLatenciesAsync(
+                client,
+                new Uri("https://example.invalid/?comp=list"),
+                1,
+                TimeSpan.FromMilliseconds(50)));
+    }
+
     private static HttpResponseMessage Response(HttpStatusCode statusCode, string body)
     {
         return new HttpResponseMessage(statusCode)
@@ -82,5 +111,64 @@ public sealed class UnauthenticatedBlobConnectivityProbeTests
     private static string Error(string code, string message = "denied")
     {
         return $"<Error><Code>{code}</Code><Message>{message}</Message></Error>";
+    }
+
+    private sealed class StalledBodyHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden)
+            {
+                Content = new StreamContent(new StalledReadStream()),
+            });
+        }
+    }
+
+    private sealed class StalledReadStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush()
+        {
+            throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            throw new InvalidOperationException("Synchronous reads are not allowed.");
+        }
+
+        public override async ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+            return 0;
+        }
+
+        public override long Seek(long offset, SeekOrigin origin)
+        {
+            throw new NotSupportedException();
+        }
+
+        public override void SetLength(long value)
+        {
+            throw new NotSupportedException();
+        }
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            throw new NotSupportedException();
+        }
     }
 }

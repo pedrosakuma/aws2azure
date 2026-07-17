@@ -8,6 +8,7 @@ namespace Aws2Azure.TestSupport.OperationalQualification;
 public static class UnauthenticatedBlobConnectivityProbe
 {
     public const int MaximumErrorBodyBytes = 8 * 1024;
+    private static readonly TimeSpan SampleTimeout = TimeSpan.FromSeconds(10);
 
     private static readonly string[] ForbiddenAuthenticationCodes =
     [
@@ -30,18 +31,49 @@ public static class UnauthenticatedBlobConnectivityProbe
         };
         using var client = new HttpClient(handler)
         {
-            Timeout = TimeSpan.FromSeconds(10),
+            Timeout = Timeout.InfiniteTimeSpan,
         };
+
+        return await MeasureHeaderLatenciesAsync(
+            client,
+            target,
+            samples,
+            SampleTimeout,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public static async Task<double[]> MeasureHeaderLatenciesAsync(
+        HttpClient client,
+        Uri target,
+        int samples,
+        TimeSpan sampleTimeout,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(samples);
+        if (sampleTimeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(sampleTimeout),
+                sampleTimeout,
+                "The per-sample timeout must be positive.");
+        }
+
         var latencies = new double[samples];
         for (var index = 0; index < samples; index++)
         {
+            using var sampleCancellation =
+                CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            sampleCancellation.CancelAfter(sampleTimeout);
+            var sampleToken = sampleCancellation.Token;
             var started = Stopwatch.GetTimestamp();
             using var response = await client.GetAsync(
                 target,
                 HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken).ConfigureAwait(false);
+                sampleToken).ConfigureAwait(false);
             latencies[index] = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
-            await ValidateResponseAsync(response, cancellationToken).ConfigureAwait(false);
+            await ValidateResponseAsync(response, sampleToken).ConfigureAwait(false);
         }
 
         return latencies;
@@ -138,20 +170,26 @@ public static class UnauthenticatedBlobConnectivityProbe
                 throw MalformedBody();
             }
 
+            var rootDepth = reader.Depth;
             string? errorCode = null;
-            while (await reader.ReadAsync().ConfigureAwait(false))
+            var hasNode = await reader.ReadAsync().ConfigureAwait(false);
+            while (hasNode)
             {
                 if (reader.NodeType == XmlNodeType.Element
                     && string.Equals(reader.LocalName, "Code", StringComparison.Ordinal))
                 {
-                    if (errorCode is not null)
+                    if (reader.Depth != rootDepth + 1 || errorCode is not null)
                     {
                         throw MalformedBody();
                     }
 
                     errorCode = await reader.ReadElementContentAsStringAsync()
                         .ConfigureAwait(false);
+                    hasNode = !reader.EOF;
+                    continue;
                 }
+
+                hasNode = await reader.ReadAsync().ConfigureAwait(false);
             }
 
             if (string.IsNullOrWhiteSpace(errorCode))
