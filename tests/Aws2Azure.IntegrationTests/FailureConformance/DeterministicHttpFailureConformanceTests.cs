@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -6,13 +5,12 @@ using Amazon;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
 using Amazon.Runtime;
-using Amazon.S3;
-using Amazon.S3.Model;
 using Amazon.SecretsManager;
 using Amazon.SecretsManager.Model;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Aws2Azure.Conformance.Canonicalization;
+using Aws2Azure.IntegrationTests.OperationalQualification;
 using Xunit;
 
 namespace Aws2Azure.IntegrationTests.FailureConformance;
@@ -23,27 +21,12 @@ public sealed class DeterministicHttpFailureConformanceTests
     [Fact]
     public async Task S3_injected_backend_failures_return_native_retryable_errors()
     {
-        using var harness = DeterministicFailureHarness.Create("s3");
-        using var sdk = CreateS3Client(harness);
-        var cases = new[]
-        {
-            new FailureCase(HttpStatusCode.TooManyRequests, null, 503, "SlowDown"),
-            new FailureCase(HttpStatusCode.RequestTimeout, null, 400, "RequestTimeout"),
-            new FailureCase(HttpStatusCode.ServiceUnavailable, null, 503, "ServiceUnavailable"),
-        };
-
-        foreach (var failure in cases)
-        {
-            harness.Backend.PlanStatus(failure.BackendStatus, failure.AzureErrorCode);
-            using var response = await harness.RawClient.SendAsync(
-                CreateS3ListBucketsRequest(harness.RawClient.BaseAddress!));
-            await AssertCanonicalErrorAsync(response, failure, CanonicalResponse.BodyKindXmlError);
-
-            var exception = await Assert.ThrowsAnyAsync<AmazonServiceException>(
-                () => sdk.ListBucketsAsync());
-            AssertSdkError(exception, failure);
-            AssertSdkRetriedOnce(harness);
-        }
+        await DeterministicFailureQualification.VerifyS3ScenarioAsync(
+            DeterministicFailureQualification.ThrottlingScenarioId);
+        await DeterministicFailureQualification.VerifyS3ScenarioAsync(
+            DeterministicFailureQualification.TimeoutScenarioId);
+        await DeterministicFailureQualification.VerifyS3ScenarioAsync(
+            DeterministicFailureQualification.ServiceUnavailableScenarioId);
     }
 
     [Fact]
@@ -108,35 +91,12 @@ public sealed class DeterministicHttpFailureConformanceTests
     [Fact]
     public async Task SecretsManager_injected_backend_failures_return_native_retryable_errors()
     {
-        using var harness = DeterministicFailureHarness.Create("secretsmanager");
-        using var sdk = CreateSecretsManagerClient(harness);
-        var cases = new[]
-        {
-            new FailureCase(HttpStatusCode.TooManyRequests, null, 429, "ThrottlingException"),
-            new FailureCase(HttpStatusCode.RequestTimeout, null, 503, "InternalServiceError"),
-            new FailureCase(HttpStatusCode.ServiceUnavailable, null, 503, "InternalServiceError"),
-        };
-
-        foreach (var failure in cases)
-        {
-            harness.Backend.PlanStatus(failure.BackendStatus, failure.AzureErrorCode);
-            using var response = await harness.RawClient.SendAsync(
-                CreateJsonRequest(
-                    harness.RawClient.BaseAddress!,
-                    "secretsmanager",
-                    "secretsmanager.GetSecretValue",
-                    """{"SecretId":"deterministic-failure"}"""));
-            await AssertCanonicalErrorAsync(response, failure, CanonicalResponse.BodyKindJsonError);
-
-            var exception = await Assert.ThrowsAnyAsync<AmazonServiceException>(
-                () => sdk.GetSecretValueAsync(new GetSecretValueRequest
-                {
-                    SecretId = "deterministic-failure",
-                }));
-            AssertSdkError(exception, failure);
-            AssertSdkRetriedOnce(harness);
-            Assert.InRange(harness.Backend.TokenRequestCount, 0, 1);
-        }
+        await DeterministicFailureQualification.VerifySecretsManagerScenarioAsync(
+            DeterministicFailureQualification.ThrottlingScenarioId);
+        await DeterministicFailureQualification.VerifySecretsManagerScenarioAsync(
+            DeterministicFailureQualification.TimeoutScenarioId);
+        await DeterministicFailureQualification.VerifySecretsManagerScenarioAsync(
+            DeterministicFailureQualification.ServiceUnavailableScenarioId);
     }
 
     [Fact]
@@ -172,42 +132,17 @@ public sealed class DeterministicHttpFailureConformanceTests
     [Fact]
     public async Task Http_client_cancellation_propagates_without_committed_success()
     {
-        using var harness = DeterministicFailureHarness.Create("s3");
-        harness.Backend.PlanCancellation();
-        using var request = CreateS3ListBucketsRequest(harness.RawClient.BaseAddress!);
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-
-        var stopwatch = Stopwatch.StartNew();
-        var pending = harness.RawClient.SendAsync(request, cancellation.Token);
-        await harness.Backend.RequestObserved.WaitAsync(TimeSpan.FromSeconds(2));
-        cancellation.Cancel();
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-           () => pending.WaitAsync(TimeSpan.FromSeconds(2)));
-        await harness.Backend.CancellationObserved.WaitAsync(TimeSpan.FromSeconds(2));
-        stopwatch.Stop();
-
-        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2), $"Cancellation took {stopwatch.Elapsed}.");
-        var exchange = Assert.IsType<ProxyExchangeSnapshot>(harness.LastProxyExchange);
-        Assert.False(exchange.ResponseStarted);
-        Assert.Equal(0, exchange.ResponseBodyLength);
+        await DeterministicFailureQualification.VerifyS3ScenarioAsync(
+            DeterministicFailureQualification.CancellationScenarioId);
+        await DeterministicFailureQualification.VerifySecretsManagerScenarioAsync(
+            DeterministicFailureQualification.CancellationScenarioId);
     }
 
     [Fact]
     public async Task Aws_sdk_retry_exhaustion_is_bounded_for_candidate_profile_operations()
     {
-        await AssertRetryExhaustionAsync(
-            "s3",
-            async harness =>
-            {
-                using var sdk = CreateS3Client(harness, maxErrorRetry: 2);
-                await sdk.PutObjectAsync(new PutObjectRequest
-                {
-                    BucketName = "retry-exhaustion",
-                    Key = "object",
-                    ContentBody = "payload",
-                }).ConfigureAwait(false);
-            });
+        await DeterministicFailureQualification.VerifyS3ScenarioAsync(
+            DeterministicFailureQualification.RetryExhaustionScenarioId);
         await AssertRetryExhaustionAsync(
             "dynamodb",
             async harness =>
@@ -245,22 +180,6 @@ public sealed class DeterministicHttpFailureConformanceTests
                 }).ConfigureAwait(false);
             });
     }
-
-    private static AmazonS3Client CreateS3Client(
-        DeterministicFailureHarness harness,
-        int maxErrorRetry = 1) =>
-        new(
-            DeterministicFailureHarness.AccessKey,
-            DeterministicFailureHarness.SecretKey,
-            new AmazonS3Config
-            {
-                ServiceURL = harness.RawClient.BaseAddress!.GetLeftPart(UriPartial.Authority),
-                ForcePathStyle = true,
-                UseHttp = true,
-                AuthenticationRegion = DeterministicFailureHarness.Region,
-                MaxErrorRetry = maxErrorRetry,
-                HttpClientFactory = harness.AwsHttpClientFactory,
-            });
 
     private static AmazonDynamoDBClient CreateDynamoDbClient(
         DeterministicFailureHarness harness,
@@ -307,19 +226,6 @@ public sealed class DeterministicHttpFailureConformanceTests
                 MaxErrorRetry = maxErrorRetry,
                 HttpClientFactory = harness.AwsHttpClientFactory,
             });
-
-    private static HttpRequestMessage CreateS3ListBucketsRequest(Uri baseAddress)
-    {
-        var request = new HttpRequestMessage(HttpMethod.Get, new Uri(baseAddress, "/"));
-        TestSigV4Signer.SignHeader(
-            request,
-            [],
-            DeterministicFailureHarness.AccessKey,
-            DeterministicFailureHarness.SecretKey,
-            DeterministicFailureHarness.Region,
-            "s3");
-        return request;
-    }
 
     private static HttpRequestMessage CreateJsonRequest(
         Uri baseAddress,

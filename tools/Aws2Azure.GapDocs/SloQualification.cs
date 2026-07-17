@@ -839,6 +839,10 @@ public static class SloQualificationValidator
         var realAzureScenarios = document.Scenarios
             .Where(scenario => scenario.EvidenceSource == "real_azure")
             .ToList();
+        var capacityScenarioIds = document.Signals
+            .Where(signal => signal.Source == "backend_capacity")
+            .Select(signal => signal.ScenarioId)
+            .ToHashSet(StringComparer.Ordinal);
         if (realAzureScenarios.Count == 0)
         {
             if (document.Verdict is "inconclusive" or "blocked")
@@ -888,13 +892,15 @@ public static class SloQualificationValidator
         foreach (var scenario in realAzureScenarios)
         {
             var prefix = $"scenario '{scenario.Id}'";
-            if (scenario.Completions < document.Rules.MinSamplesPerScenario)
+            if (capacityScenarioIds.Contains(scenario.Id)
+                && scenario.Completions < document.Rules.MinSamplesPerScenario)
             {
                 err(
                     $"{prefix} has {scenario.Completions} completions; " +
                     $"minimum is {document.Rules.MinSamplesPerScenario}");
             }
-            if (scenario.DurationSeconds < document.Rules.MinDurationSeconds)
+            if (capacityScenarioIds.Contains(scenario.Id)
+                && scenario.DurationSeconds < document.Rules.MinDurationSeconds)
             {
                 err(
                     $"{prefix} duration is {scenario.DurationSeconds}; " +

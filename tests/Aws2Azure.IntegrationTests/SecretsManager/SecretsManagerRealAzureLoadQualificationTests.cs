@@ -60,6 +60,38 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
         stopwatch.Stop();
         var loadEnd = DateTimeOffset.UtcNow;
         var networkAfter = await ProbeNetworkAsync(networkTarget, 12).ConfigureAwait(false);
+        var loadWindowEnd = DateTimeOffset.UtcNow;
+        var throttling = await VerifyScenarioAsync(
+            DeterministicFailureQualification.ThrottlingScenarioId,
+            "GetSecretValue",
+            "deterministic",
+            () => DeterministicFailureQualification.VerifySecretsManagerScenarioAsync(
+                DeterministicFailureQualification.ThrottlingScenarioId)).ConfigureAwait(false);
+        var timeoutScenario = await VerifyScenarioAsync(
+            DeterministicFailureQualification.TimeoutScenarioId,
+            "GetSecretValue",
+            "deterministic",
+            () => DeterministicFailureQualification.VerifySecretsManagerScenarioAsync(
+                DeterministicFailureQualification.TimeoutScenarioId)).ConfigureAwait(false);
+        var serviceUnavailable = await VerifyScenarioAsync(
+            DeterministicFailureQualification.ServiceUnavailableScenarioId,
+            "GetSecretValue",
+            "deterministic",
+            () => DeterministicFailureQualification.VerifySecretsManagerScenarioAsync(
+                DeterministicFailureQualification.ServiceUnavailableScenarioId))
+            .ConfigureAwait(false);
+        var cancellation = await VerifyScenarioAsync(
+            DeterministicFailureQualification.CancellationScenarioId,
+            "GetSecretValue",
+            "deterministic",
+            () => DeterministicFailureQualification.VerifySecretsManagerScenarioAsync(
+                DeterministicFailureQualification.CancellationScenarioId)).ConfigureAwait(false);
+        var restart = await VerifyScenarioAsync(
+            "restart",
+            "CreateSecret",
+            "real_azure",
+            () => RealAzureRestartQualification.VerifySecretsManagerAsync(fixture))
+            .ConfigureAwait(false);
         var windowEnd = DateTimeOffset.UtcNow;
 
         var operationMix = tracker.Snapshot();
@@ -121,11 +153,13 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                     0,
                     stopwatch.Elapsed.TotalSeconds,
                     loadEnd),
-                Scenario("throttling", "GetSecretValue", "deterministic", 0, 0, 1, 0, loadEnd),
-                Scenario("timeout", "GetSecretValue", "deterministic", 0, 0, 1, 0, loadEnd),
-                Scenario("service-unavailable", "GetSecretValue", "deterministic", 0, 0, 1, 0, loadEnd),
-                Scenario("cancellation", "GetSecretValue", "deterministic", 0, 0, 1, 0, loadEnd),
-                Scenario("restart", "CreateSecret", "real_azure", 0, 0, 1, 0, loadEnd),
+                throttling,
+                timeoutScenario,
+                serviceUnavailable,
+                cancellation,
+                restart,
+                // Backend credential rotation and sealed-artifact rollback require
+                // external deployment orchestration that this ephemeral run lacks.
                 Scenario("credential-rotation", "GetSecretValue", "real_azure", 0, 0, 1, 0, loadEnd),
                 Scenario("rollback", "GetSecretValue", "real_azure", 0, 0, 1, 0, loadEnd),
             ],
@@ -154,7 +188,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                     "p95_ms",
                     Percentile(networkLatencies, 0.95),
                     networkLatencies.LongLength,
-                    windowEnd),
+                    loadWindowEnd),
                 Signal(
                     "representative-load-throttle-rate",
                     "throttle_rate",
@@ -380,6 +414,25 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
         return exception is AmazonSecretsManagerException aws
                && (aws.StatusCode == HttpStatusCode.TooManyRequests
                    || string.Equals(aws.ErrorCode, "ThrottlingException", StringComparison.Ordinal));
+    }
+
+    private static async Task<RealAzureWorkloadLoadScenario> VerifyScenarioAsync(
+        string id,
+        string operation,
+        string evidenceSource,
+        Func<Task> verify)
+    {
+        var started = Stopwatch.GetTimestamp();
+        await verify().ConfigureAwait(false);
+        return Scenario(
+            id,
+            operation,
+            evidenceSource,
+            1,
+            0,
+            0,
+            Stopwatch.GetElapsedTime(started).TotalSeconds,
+            DateTimeOffset.UtcNow);
     }
 
     private static RealAzureWorkloadLoadScenario Scenario(

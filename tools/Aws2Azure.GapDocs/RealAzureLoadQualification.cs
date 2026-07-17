@@ -305,11 +305,15 @@ public static class RealAzureLoadQualificationGenerator
             };
             document.Scenarios.Add(scenario);
 
+            var requiresCapacityVolume = scenarioPolicy.Signals.Any(
+                signal => signal.Source == "backend_capacity");
             if (scenario.Completions == 0
                 || (scenario.Completions < policy.Rules.MinSamplesPerScenario
-                    && scenario.EvidenceSource == "real_azure")
+                    && scenario.EvidenceSource == "real_azure"
+                    && requiresCapacityVolume)
                 || (scenario.DurationSeconds < policy.Rules.MinDurationSeconds
-                    && scenario.EvidenceSource == "real_azure"))
+                    && scenario.EvidenceSource == "real_azure"
+                    && requiresCapacityVolume))
             {
                 blocked = true;
                 AddFinding(

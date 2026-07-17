@@ -60,8 +60,7 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
         stopwatch.Stop();
         var loadEnd = DateTimeOffset.UtcNow;
         var networkAfter = await ProbeNetworkAsync(networkTarget, 12).ConfigureAwait(false);
-        var windowEnd = DateTimeOffset.UtcNow;
-
+        var loadWindowEnd = DateTimeOffset.UtcNow;
         var operationMix = tracker.Snapshot();
         var totalCompletions = operationMix.Sum(item => item.Completions);
         var totalFailures = operationMix.Sum(item => item.Failures);
@@ -69,6 +68,70 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
         var representativeAttempts = representative.Completions + representative.Failures;
         var representativeLatencies = tracker.Latencies("GetObject");
         var networkLatencies = networkBefore.Concat(networkAfter).ToArray();
+        var scenarios = new List<RealAzureWorkloadLoadScenario>
+        {
+            Scenario(
+                "representative-load",
+                Service,
+                "GetObject",
+                "real_azure",
+                representative.Completions,
+                representative.Failures,
+                0,
+                stopwatch.Elapsed.TotalSeconds,
+                loadEnd),
+        };
+        scenarios.Add(await VerifyScenarioAsync(
+            DeterministicFailureQualification.ThrottlingScenarioId,
+            "GetObject",
+            "deterministic",
+            static () => DeterministicFailureQualification.VerifyS3ScenarioAsync(
+                DeterministicFailureQualification.ThrottlingScenarioId)).ConfigureAwait(false));
+        scenarios.Add(await VerifyScenarioAsync(
+            DeterministicFailureQualification.TimeoutScenarioId,
+            "GetObject",
+            "deterministic",
+            static () => DeterministicFailureQualification.VerifyS3ScenarioAsync(
+                DeterministicFailureQualification.TimeoutScenarioId)).ConfigureAwait(false));
+        scenarios.Add(await VerifyScenarioAsync(
+            DeterministicFailureQualification.ServiceUnavailableScenarioId,
+            "GetObject",
+            "deterministic",
+            static () => DeterministicFailureQualification.VerifyS3ScenarioAsync(
+                DeterministicFailureQualification.ServiceUnavailableScenarioId))
+            .ConfigureAwait(false));
+        scenarios.Add(await VerifyScenarioAsync(
+            DeterministicFailureQualification.CancellationScenarioId,
+            "GetObject",
+            "deterministic",
+            static () => DeterministicFailureQualification.VerifyS3ScenarioAsync(
+                DeterministicFailureQualification.CancellationScenarioId)).ConfigureAwait(false));
+        scenarios.Add(await VerifyScenarioAsync(
+            "restart",
+            "PutObject",
+            "real_azure",
+            () => RealAzureRestartQualification.VerifyS3Async(fixture)).ConfigureAwait(false));
+        scenarios.Add(await VerifyScenarioAsync(
+            DeterministicFailureQualification.RetryExhaustionScenarioId,
+            "PutObject",
+            "deterministic",
+            static () => DeterministicFailureQualification.VerifyS3ScenarioAsync(
+                DeterministicFailureQualification.RetryExhaustionScenarioId))
+            .ConfigureAwait(false));
+
+        // No sealed previous-artifact deployment target exists to qualify rollback.
+        scenarios.Add(Scenario(
+            "rollback",
+            Service,
+            "GetObject",
+            "real_azure",
+            0,
+            0,
+            1,
+            0,
+            DateTimeOffset.UtcNow));
+        var windowEnd = DateTimeOffset.UtcNow;
+
         var evidence = new RealAzureWorkloadLoadEvidence
         {
             SchemaVersion = 1,
@@ -110,26 +173,7 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
                 RequestedDurationSeconds = requestedDuration.TotalSeconds,
             },
             OperationMix = operationMix,
-            Scenarios =
-            [
-                Scenario(
-                    "representative-load",
-                    Service,
-                    "GetObject",
-                    "real_azure",
-                    representative.Completions,
-                    representative.Failures,
-                    0,
-                    stopwatch.Elapsed.TotalSeconds,
-                    loadEnd),
-                Scenario("throttling", Service, "GetObject", "deterministic", 0, 0, 1, 0, loadEnd),
-                Scenario("timeout", Service, "GetObject", "deterministic", 0, 0, 1, 0, loadEnd),
-                Scenario("service-unavailable", Service, "GetObject", "deterministic", 0, 0, 1, 0, loadEnd),
-                Scenario("cancellation", Service, "GetObject", "deterministic", 0, 0, 1, 0, loadEnd),
-                Scenario("restart", Service, "PutObject", "real_azure", 0, 0, 1, 0, loadEnd),
-                Scenario("retry-exhaustion", Service, "PutObject", "deterministic", 0, 0, 1, 0, loadEnd),
-                Scenario("rollback", Service, "GetObject", "real_azure", 0, 0, 1, 0, loadEnd),
-            ],
+            Scenarios = scenarios,
             Signals =
             [
                 Signal(
@@ -159,7 +203,7 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
                     "p95_ms",
                     Percentile(networkLatencies, 0.95),
                     networkLatencies.LongLength,
-                    windowEnd),
+                    loadWindowEnd),
                 Signal(
                     "representative-load-throttle-rate",
                     "representative-load",
@@ -195,6 +239,26 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
         Assert.All(operationMix, item => Assert.True(
             item.Completions > 0,
             $"{item.Operation} completed no requests."));
+    }
+
+    private static async Task<RealAzureWorkloadLoadScenario> VerifyScenarioAsync(
+        string id,
+        string operation,
+        string evidenceSource,
+        Func<Task> verification)
+    {
+        var started = Stopwatch.GetTimestamp();
+        await verification().ConfigureAwait(false);
+        return Scenario(
+            id,
+            Service,
+            operation,
+            evidenceSource,
+            1,
+            0,
+            0,
+            Stopwatch.GetElapsedTime(started).TotalSeconds,
+            DateTimeOffset.UtcNow);
     }
 
     private static async Task RunWorkerAsync(
