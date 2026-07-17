@@ -21,3 +21,6 @@ jobs:
       - name: PR validation
         shell: pwsh
         run: ./eng/validate.ps1 pr -RuntimeIdentifier linux-x64 -RequireAot
+      - name: Verify reproducible proxy runtime
+        shell: bash
+        run: ./eng/verify-deterministic-runtime.sh

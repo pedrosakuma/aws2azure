@@ -83,6 +83,10 @@ it with two immutable siblings:
 
 The candidate's `artifact_digest` and `config_digest` are hashes of those files.
 The manifests are evidence, not substitutes for production-shaped load.
+Correctness and repeated load runs must reproduce the complete runtime manifest
+byte-for-byte. CI runs three isolated Release builds through
+`eng/verify-deterministic-runtime.sh` so source-generator ordering or another
+non-reproducible build input cannot make valid evidence impossible to combine.
 
 Generate a final qualification from a reviewed policy, a correctness candidate,
 and repeated immutable load evidence with:
