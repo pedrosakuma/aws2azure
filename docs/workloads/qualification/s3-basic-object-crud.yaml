@@ -1,8 +1,6 @@
-# Initial reviewed policy for the production-shaped Blob Storage workload.
-# The capacity floor is deliberately unresolved: it must be selected from at
-# least three comparable artifacts produced by workload-load-real-azure.yml.
-# Until that review occurs, the blocking unresolved signal keeps the mechanical
-# verdict at candidate; it is not a GA claim.
+# Reviewed policy for the production-shaped Blob Storage workload.
+# The capacity floor is based only on three comparable main-branch real-Azure
+# runs; operational and rollback evidence remain independently blocking.
 schema_version: 1
 profile_id: s3-basic-object-crud
 profile_version: 1
@@ -27,11 +25,13 @@ scenarios:
         source: backend_capacity
         disposition: blocking
         metric: throughput_per_sec
-        threshold_status: unresolved
+        threshold_status: resolved
+        min_value: 40
         threshold_reason: >-
-          No comparable repeated live-Blob-Storage runs have been reviewed.
-          Select a floor from the worst healthy run without using emulator or
-          A/B data.
+          Reviewed main-branch runs 29580202166, 29580827819, and 29581332440
+          measured 259.68, 43.69, and 89.01 GetObject/s with zero failures.
+          The 40/s floor is conservatively below the worst healthy run; no
+          emulator or A/B measurements were used.
       - id: representative-load-p95
         source: backend_capacity
         disposition: report_only
