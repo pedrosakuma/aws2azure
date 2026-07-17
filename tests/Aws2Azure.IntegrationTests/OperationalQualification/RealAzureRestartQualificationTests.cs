@@ -1,6 +1,5 @@
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
-using Amazon.S3.Model;
 using Amazon.SQS.Model;
 using Aws2Azure.IntegrationTests.Fixtures;
 using Xunit;
@@ -15,30 +14,7 @@ public sealed class RealAzureRestartQualificationTests(RealAzureProxyFixture fix
     public async Task S3_state_remains_readable_after_proxy_restart()
     {
         Skip.IfNot(fixture.BlobConfigured, "Real Azure Blob Storage is not configured.");
-        var bucket = "aws2azure-restart-" + Guid.NewGuid().ToString("N")[..10];
-        const string key = "state";
-        using var client = fixture.CreateS3Client();
-        try
-        {
-            await client.PutBucketAsync(bucket).ConfigureAwait(false);
-            await client.PutObjectAsync(new PutObjectRequest
-            {
-                BucketName = bucket,
-                Key = key,
-                ContentBody = "survives-restart",
-            }).ConfigureAwait(false);
-
-            await fixture.RestartAsync().ConfigureAwait(false);
-
-            using var response = await client.GetObjectAsync(bucket, key).ConfigureAwait(false);
-            using var reader = new StreamReader(response.ResponseStream);
-            Assert.Equal("survives-restart", await reader.ReadToEndAsync().ConfigureAwait(false));
-        }
-        finally
-        {
-            try { await client.DeleteObjectAsync(bucket, key).ConfigureAwait(false); } catch { }
-            try { await client.DeleteBucketAsync(bucket).ConfigureAwait(false); } catch { }
-        }
+        await RealAzureRestartQualification.VerifyS3Async(fixture).ConfigureAwait(false);
     }
 
     [SkippableFact]
