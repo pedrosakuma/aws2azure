@@ -82,8 +82,13 @@ qualification, rollback evidence, or a GA claim. The first trusted artifact may
 be recorded as `bootstrap`; it has no predecessor and therefore cannot claim
 rollback. A later artifact with a distinct complete runtime digest must be
 deployed and then successfully rolled back to that bootstrap artifact before
-rollback can become qualified. The approval ledger and correctness/load/
-rollback consumers are intentionally deferred to dependent work.
+rollback can become qualified. The profile-owned ledger under
+`docs/workloads/approved-runtimes/` records this distinction mechanically:
+bootstrap may be a rollback baseline but is never promotion eligible. Only the
+later distinct candidate, with qualification evidence naming both candidate and
+rollback-target digests, may become the first approved runtime. Runtime
+consumers and rollback execution remain intentionally deferred to dependent
+work.
 
 ## Reproduce
 
