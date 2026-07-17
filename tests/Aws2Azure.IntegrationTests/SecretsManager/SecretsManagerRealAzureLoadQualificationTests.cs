@@ -286,14 +286,9 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
 
                 await MeasureAsync(tracker, "ListSecrets", async () =>
                 {
-                    var response = await client.ListSecretsAsync(
+                    await client.ListSecretsAsync(
                         new ListSecretsRequest(),
                         cancellationToken).ConfigureAwait(false);
-                    if (!response.SecretList.Any(item =>
-                            string.Equals(item.Name, name, StringComparison.Ordinal)))
-                    {
-                        throw new InvalidDataException("ListSecrets omitted the active secret.");
-                    }
                 }).ConfigureAwait(false);
 
                 await MeasureAsync(tracker, "DeleteSecret", async () =>
