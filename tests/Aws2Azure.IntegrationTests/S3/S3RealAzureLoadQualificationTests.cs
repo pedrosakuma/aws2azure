@@ -47,7 +47,7 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
         var blobEndpoint = RequiredEnvironment("AZURE_BLOB_ENDPOINT");
         var networkTarget = new Uri(new Uri(blobEndpoint), "?comp=list");
         var windowStart = DateTimeOffset.UtcNow;
-        var networkBefore = await ProbeUnauthenticatedConnectivityHeaderLatencyAsync(
+        var networkBefore = await UnauthenticatedBlobConnectivityProbe.MeasureHeaderLatenciesAsync(
             networkTarget,
             12).ConfigureAwait(false);
         var stopwatch = Stopwatch.StartNew();
@@ -67,7 +67,7 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
         await Task.WhenAll(workers).ConfigureAwait(false);
         stopwatch.Stop();
         var loadEnd = DateTimeOffset.UtcNow;
-        var networkAfter = await ProbeUnauthenticatedConnectivityHeaderLatencyAsync(
+        var networkAfter = await UnauthenticatedBlobConnectivityProbe.MeasureHeaderLatenciesAsync(
             networkTarget,
             12).ConfigureAwait(false);
         var loadWindowEnd = DateTimeOffset.UtcNow;
@@ -564,32 +564,6 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
             _ => throw new InvalidDataException(
                 $"No stable diagnostic signal prefix is defined for '{operation}'."),
         };
-    }
-
-    private static async Task<double[]> ProbeUnauthenticatedConnectivityHeaderLatencyAsync(
-        Uri target,
-        int samples)
-    {
-        using var client = new HttpClient
-        {
-            Timeout = TimeSpan.FromSeconds(10),
-        };
-        var latencies = new double[samples];
-        for (var index = 0; index < samples; index++)
-        {
-            var started = Stopwatch.GetTimestamp();
-            using var response = await client.GetAsync(
-                target,
-                HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
-            latencies[index] = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
-            if (response.StatusCode != HttpStatusCode.Forbidden)
-            {
-                throw new InvalidDataException(
-                    $"Unauthenticated Blob connectivity probe expected HTTP 403 but received " +
-                    $"{(int)response.StatusCode}.");
-            }
-        }
-        return latencies;
     }
 
     private static bool IsThrottle(Exception exception)
