@@ -45,7 +45,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
         var networkBefore = await ProbeNetworkAsync(networkTarget, 12).ConfigureAwait(false);
         var stopwatch = Stopwatch.StartNew();
         using var client = fixture.CreateSecretsManagerClient();
-        using var timeout = new CancellationTokenSource(requestedDuration + TimeSpan.FromMinutes(5));
+        using var timeout = new CancellationTokenSource(requestedDuration + TimeSpan.FromMinutes(20));
 
         var workers = Enumerable.Range(0, concurrency)
             .Select(worker => RunWorkerAsync(
@@ -86,12 +86,18 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
             "deterministic",
             () => DeterministicFailureQualification.VerifySecretsManagerScenarioAsync(
                 DeterministicFailureQualification.CancellationScenarioId)).ConfigureAwait(false);
+        await SecretsManagerCredentialRotationQualification.RefreshGitHubOidcTokenAsync(
+            RequiredEnvironment("AWS2AZURE_ROTATION_TOKEN_FILE_A"),
+            timeout.Token).ConfigureAwait(false);
         var restart = await VerifyScenarioAsync(
             "restart",
             "CreateSecret",
             "real_azure",
             () => RealAzureRestartQualification.VerifySecretsManagerAsync(fixture))
             .ConfigureAwait(false);
+        var rotation = await SecretsManagerCredentialRotationQualification.VerifyAsync(
+            fixture,
+            timeout.Token).ConfigureAwait(false);
         var windowEnd = DateTimeOffset.UtcNow;
 
         var operationMix = tracker.Snapshot();
@@ -158,9 +164,16 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                 serviceUnavailable,
                 cancellation,
                 restart,
-                // Backend credential rotation and sealed-artifact rollback require
-                // external deployment orchestration that this ephemeral run lacks.
-                Scenario("credential-rotation", "GetSecretValue", "real_azure", 0, 0, 1, 0, loadEnd),
+                Scenario(
+                    "credential-rotation",
+                    "GetSecretValue",
+                    "real_azure",
+                    1,
+                    0,
+                    0,
+                    rotation.DurationSeconds,
+                    rotation.CapturedAtUtc),
+                // Sealed-artifact rollback still requires external deployment orchestration.
                 Scenario("rollback", "GetSecretValue", "real_azure", 0, 0, 1, 0, loadEnd),
             ],
             Signals =
@@ -198,6 +211,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                     representativeAttempts,
                     loadEnd),
             ],
+            CredentialRotationProofs = [rotation.Proof],
         };
 
         var fullOutputPath = ResolveOutputPath(outputPath!);

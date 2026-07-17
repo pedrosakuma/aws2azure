@@ -365,25 +365,42 @@ backend evidence; do not restart-loop healthy instances merely to reset it.
    workload SLO. A longer timeout can hide saturation and increase in-flight
    memory.
 
-### Static credential rotation
+### Backend authentication identity rotation
 
 Configuration is loaded only at process startup.
 
-1. Create/activate the replacement credential and grant least-privilege access
-   without revoking the current credential.
-2. Build the replacement config outside source control.
-3. Deploy it to a canary and restart/roll out proxy instances so they load it.
-4. Run signed AWS operations through every affected binding and confirm Azure
-   authorization.
-5. Promote the config to all instances.
-6. Revoke the old Azure credential only after all old instances have drained.
+Rotate the Azure identity independently from Secrets Manager secret versions.
+Keep the candidate binary, proxy JSON bytes, AWS binding, and backend target
+unchanged; only the process identity and projected token file change.
+
+1. Create a replacement managed identity with the same narrowly scoped
+   data-plane role. For GitHub Actions or Kubernetes Workload Identity, create
+   an exact issuer/subject/audience federated credential; never mint a client
+   secret for overlap.
+2. Start a green proxy process with the replacement client id and token file on
+   the unchanged artifact/config while the blue process remains serving.
+   `WorkloadIdentityTokenSource` captures the client id and token-file path at
+   startup, so environment mutation is not rotation.
+3. Use a strict, no-SDK-retry client to read the same sentinel through both
+   processes. Treat only the documented federation-match and Azure RBAC 403
+   propagation states as retryable, with a deadline.
+4. Revoke the blue identity's exact role assignment. Continuously prove green
+   reads while waiting for blue to return the service-native
+   `AccessDeniedException`; fail immediately on unrelated 4xx, 429, 5xx,
+   malformed responses, or transport/configuration errors.
+5. Stop blue, promote green, and delete the sentinel through green. Remove old
+   role assignments, identities, and projected token files after drain.
+
+The Secrets Manager production-shaped real-Azure workflow automates this
+blue/green proof with ephemeral UAMIs. Its artifact contains only identity and
+role-assignment IDs, digests, timestamps, and counters—never OIDC assertions or
+access tokens.
 
 For an AWS access-key/secret change, coordinate the application and proxy
 binding so at least one matching pair is active throughout the rollout; use
 separate bindings during overlap when the application can switch credentials
-in stages. For Workload Identity, the projected token file is re-read during
-token refresh, but identity/RBAC or service-account changes still require a
-canary and platform-appropriate rollout.
+in stages. A projected assertion may be refreshed in the same file, but
+identity/client-id or token-path changes still require a canary process rollout.
 
 ### Azure unavailability
 

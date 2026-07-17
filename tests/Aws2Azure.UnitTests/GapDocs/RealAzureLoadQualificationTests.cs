@@ -259,6 +259,108 @@ public sealed class RealAzureLoadQualificationTests
     }
 
     [Fact]
+    public void Generate_accepts_fresh_identity_rotation_proof_without_candidate_drift()
+    {
+        var inputs = RotationInputs();
+
+        var document = RealAzureLoadQualificationGenerator.Generate(
+            inputs.Manifest,
+            inputs.Candidate,
+            inputs.Policy,
+            inputs.Evidence,
+            Metadata());
+
+        Assert.Equal("qualified", document.Verdict);
+        Assert.Equal(
+            3,
+            Assert.Single(document.Scenarios, scenario => scenario.Id == "credential-rotation")
+                .Completions);
+    }
+
+    [Fact]
+    public void Generate_rejects_rotation_without_distinct_identity()
+    {
+        var inputs = RotationInputs();
+        var proof = Assert.Single(inputs.Evidence[0].CredentialRotationProofs);
+        proof.IdentityBObjectId = proof.IdentityAObjectId;
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            RealAzureLoadQualificationGenerator.Generate(
+                inputs.Manifest,
+                inputs.Candidate,
+                inputs.Policy,
+                inputs.Evidence,
+                Metadata()));
+
+        Assert.Contains("distinct", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Generate_rejects_rotation_runtime_or_config_drift()
+    {
+        var inputs = RotationInputs();
+        var proof = Assert.Single(inputs.Evidence[0].CredentialRotationProofs);
+        proof.ProxyConfigDigestB = Sha256('b');
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            RealAzureLoadQualificationGenerator.Generate(
+                inputs.Manifest,
+                inputs.Candidate,
+                inputs.Policy,
+                inputs.Evidence,
+                Metadata()));
+
+        Assert.Contains("drift", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Generate_rejects_rotation_without_old_access_denial()
+    {
+        var inputs = RotationInputs();
+        Assert.Single(inputs.Evidence[0].CredentialRotationProofs)
+            .OldAccessDeniedCompletions = 0;
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            RealAzureLoadQualificationGenerator.Generate(
+                inputs.Manifest,
+                inputs.Candidate,
+                inputs.Policy,
+                inputs.Evidence,
+                Metadata()));
+
+        Assert.Contains("denial", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Generate_rejects_duplicate_or_out_of_window_rotation_proof()
+    {
+        var duplicated = RotationInputs();
+        duplicated.Evidence[0].CredentialRotationProofs.Add(
+            duplicated.Evidence[0].CredentialRotationProofs[0]);
+        Assert.Throws<InvalidDataException>(() =>
+            RealAzureLoadQualificationGenerator.Generate(
+                duplicated.Manifest,
+                duplicated.Candidate,
+                duplicated.Policy,
+                duplicated.Evidence,
+                Metadata()));
+
+        var outOfWindow = RotationInputs();
+        var outside = outOfWindow.Evidence[0].Provenance.WindowEndUtc.AddSeconds(1);
+        Assert.Single(outOfWindow.Evidence[0].CredentialRotationProofs).CompletedAtUtc = outside;
+        Assert.Single(
+            outOfWindow.Evidence[0].Scenarios,
+            scenario => scenario.Id == "credential-rotation").CapturedAtUtc = outside;
+        Assert.Throws<InvalidDataException>(() =>
+            RealAzureLoadQualificationGenerator.Generate(
+                outOfWindow.Manifest,
+                outOfWindow.Candidate,
+                outOfWindow.Policy,
+                outOfWindow.Evidence,
+                Metadata()));
+    }
+
+    [Fact]
     public void Generate_records_unresolved_capacity_threshold_and_blocks_qualification()
     {
         var policy = Policy();
@@ -578,6 +680,125 @@ public sealed class RealAzureLoadQualificationTests
             }
         ],
     };
+
+    private static (
+        WorkloadGaManifest Manifest,
+        SloQualificationDocument Candidate,
+        WorkloadQualificationPolicy Policy,
+        RealAzureLoadEvidence[] Evidence) RotationInputs()
+    {
+        var manifest = Manifest();
+        manifest.Id = "secretsmanager-basic-lifecycle";
+        manifest.Name = "Secrets Manager basic lifecycle";
+        manifest.Operations = ["secretsmanager:GetSecretValue"];
+        manifest.Evidence.RequiredScenarios.Add("credential-rotation");
+        manifest.Evidence.RequiredRealAzureScenarios.Add("credential-rotation");
+
+        var candidate = Candidate();
+        candidate.Profile.Id = manifest.Id;
+        candidate.Profile.Services =
+        [
+            new SloQualificationProfileService
+            {
+                Service = "secretsmanager",
+                Operations = ["GetSecretValue"],
+            }
+        ];
+
+        var policy = Policy();
+        policy.ProfileId = manifest.Id;
+        policy.Scenarios[0].Service = "secretsmanager";
+        policy.Scenarios[0].Operation = "GetSecretValue";
+        policy.Scenarios.Add(new WorkloadQualificationScenarioPolicy
+        {
+            Id = "credential-rotation",
+            Service = "secretsmanager",
+            Operation = "GetSecretValue",
+            EvidenceSource = "real_azure",
+        });
+
+        var evidence = new[] { Evidence(1), Evidence(2), Evidence(3) };
+        foreach (var run in evidence)
+        {
+            var attempt = int.Parse(run.Provenance.RunId.AsSpan("load-".Length));
+            run.Profile.Id = manifest.Id;
+            run.Profile.Services =
+            [
+                new SloQualificationProfileService
+                {
+                    Service = "secretsmanager",
+                    Operations = ["GetSecretValue"],
+                }
+            ];
+            run.OperationMix[0].Service = "secretsmanager";
+            run.OperationMix[0].Operation = "GetSecretValue";
+            run.Scenarios[0].Service = "secretsmanager";
+            run.Scenarios[0].Operation = "GetSecretValue";
+            var completed = run.Provenance.WindowEndUtc.AddSeconds(-1);
+            run.Scenarios.Add(new SloQualificationScenario
+            {
+                Id = "credential-rotation",
+                Service = "secretsmanager",
+                Operation = "GetSecretValue",
+                EvidenceSource = "real_azure",
+                Completions = 1,
+                DurationSeconds = 4,
+                CapturedAtUtc = completed,
+            });
+            run.CredentialRotationProofs.Add(RotationProof(attempt, run, completed));
+        }
+
+        return (manifest, candidate, policy, evidence);
+    }
+
+    private static RealAzureCredentialRotationProof RotationProof(
+        int attempt,
+        RealAzureLoadEvidence run,
+        DateTimeOffset completed) => new()
+    {
+        ScenarioId = "credential-rotation",
+        Service = "secretsmanager",
+        Operation = "GetSecretValue",
+        RotationKind = "azure_backend_identity",
+        AuthenticationMode = "workload_identity",
+        BackendKind = "key_vault",
+        IdentityAClientId = $"client-a-{attempt}",
+        IdentityAObjectId = $"object-a-{attempt}",
+        IdentityBClientId = $"client-b-{attempt}",
+        IdentityBObjectId = $"object-b-{attempt}",
+        RoleAssignmentAId =
+            $"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Authorization/roleAssignments/a-{attempt}",
+        RoleAssignmentBId =
+            $"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Authorization/roleAssignments/b-{attempt}",
+        RoleDefinitionId = "b86a8fe4-44ce-4948-aee5-eccb2c155cd7",
+        RoleScopeDigestA = Sha256('7'),
+        RoleScopeDigestB = Sha256('7'),
+        FederatedIssuerDigest = Sha256('1'),
+        FederatedSubjectDigest = Sha256('2'),
+        FederatedAudienceDigest = Sha256('3'),
+        RuntimeArtifactDigestA = run.Candidate.ArtifactDigest,
+        RuntimeArtifactDigestB = run.Candidate.ArtifactDigest,
+        CandidateConfigDigestA = run.Candidate.ConfigDigest,
+        CandidateConfigDigestB = run.Candidate.ConfigDigest,
+        ProxyConfigDigestA = Sha256('4'),
+        ProxyConfigDigestB = Sha256('4'),
+        AwsBindingDigestA = Sha256('5'),
+        AwsBindingDigestB = Sha256('5'),
+        BackendTargetDigestA = Sha256('6'),
+        BackendTargetDigestB = Sha256('6'),
+        FederatedCredentialCompletions = 2,
+        RevocationPolls = 1,
+        GreenReadCompletions = 3,
+        OldAccessDeniedCompletions = 1,
+        OldAccessDeniedErrorCode = "AccessDeniedException",
+        OldAccessDeniedHttpStatus = 403,
+        StartedAtUtc = completed.AddSeconds(-4),
+        RevocationRequestedAtUtc = completed.AddSeconds(-3),
+        OldAccessDeniedAtUtc = completed.AddSeconds(-1),
+        CompletedAtUtc = completed,
+    };
+
+    private static string Sha256(char value) => "sha256:" + new string(value, 64);
 
     private static SloQualificationProfile Profile() => new()
     {
