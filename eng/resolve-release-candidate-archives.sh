@@ -112,9 +112,10 @@ main_compare_json="$private_dir/main-source-compare.json"
   "/repos/$repository/actions/runs/$run_id/attempts/$run_attempt" > "$run_json"
 "$gh_bin" api -H "Accept: application/vnd.github+json" \
   "/repos/$repository/actions/artifacts/$artifact_id" > "$artifact_json"
-"$gh_bin" api -H "Accept: application/vnd.github+json" \
-  "/repos/$repository/rulesets?includes_parents=true&targets=tag&per_page=100" \
-  > "$rulesets_json"
+"$repo_root/eng/resolve-release-candidate-rulesets.sh" \
+  --repository "$repository" \
+  --fetch-rulesets \
+  --output-json "$rulesets_json"
 "$gh_bin" api -H "Accept: application/vnd.github+json" \
   "/repos/$repository/git/ref/tags/$candidate" > "$tag_ref_json"
 "$gh_bin" api -H "Accept: application/vnd.github+json" \

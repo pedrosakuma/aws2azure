@@ -57,18 +57,80 @@ cat > "$test_root/details/19148912.json" <<'JSON'
   "updated_at": "2026-07-18T18:13:18.386Z"
 }
 JSON
+cat > "$test_root/details/19148913.json" <<'JSON'
+{
+  "id": 19148913,
+  "name": "Protect unrelated tags",
+  "target": "tag",
+  "source_type": "Repository",
+  "source": "pedrosakuma/aws2azure",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "exclude": [],
+      "include": ["refs/tags/internal-*"]
+    }
+  },
+  "rules": [
+    {"type": "deletion"},
+    {"type": "non_fast_forward"}
+  ],
+  "updated_at": "2026-07-18T18:15:00.000Z"
+}
+JSON
+jq -n \
+  --slurpfile matching "$test_root/compact-rulesets.json" \
+  '[
+    [$matching[0][0]],
+    [{
+      id: 19148913,
+      name: "Protect unrelated tags",
+      target: "tag",
+      source_type: "Repository",
+      source: "pedrosakuma/aws2azure",
+      enforcement: "active",
+      node_id: "RRS_unrelated",
+      _links: {
+        self: {
+          href: "https://api.github.com/repos/pedrosakuma/aws2azure/rulesets/19148913"
+        },
+        html: {
+          href: "https://github.com/pedrosakuma/aws2azure/rules/19148913"
+        }
+      },
+      created_at: "2026-07-18T18:14:59.000Z",
+      updated_at: "2026-07-18T18:15:00.000Z"
+    }]
+  ]' > "$test_root/compact-pages.json"
 cat > "$test_root/mock-bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$#" == 6 ]]
 [[ "$1" == api ]]
-[[ "$2" == -H ]]
-[[ "$3" == "Accept: application/vnd.github+json" ]]
-[[ "$4" == -H ]]
-[[ "$5" == "X-GitHub-Api-Version: 2022-11-28" ]]
-case "$6" in
+endpoint="${@: -1}"
+if [[ -n "${MOCK_GH_LOG:-}" ]]; then
+  printf '%s\n' "$*" >> "$MOCK_GH_LOG"
+fi
+case "$endpoint" in
+  */rulesets\?includes_parents=true\&targets=tag\&per_page=100)
+    [[ "$#" == 8 ]]
+    [[ "$2" == --paginate ]]
+    [[ "$3" == --slurp ]]
+    [[ "$4" == -H ]]
+    [[ "$5" == "Accept: application/vnd.github+json" ]]
+    [[ "$6" == -H ]]
+    [[ "$7" == "X-GitHub-Api-Version: 2022-11-28" ]]
+    [[ "${GH_TOKEN:-}" == test-token ]]
+    [[ "${MOCK_RULESET_LIST_FAILURE:-false}" != true ]]
+    cat "$MOCK_RULESET_PAGES"
+    ;;
   /repos/pedrosakuma/aws2azure/rulesets/[1-9]*)
-    ruleset_id="${6##*/}"
+    [[ "$#" == 6 ]]
+    [[ "$2" == -H ]]
+    [[ "$3" == "Accept: application/vnd.github+json" ]]
+    [[ "$4" == -H ]]
+    [[ "$5" == "X-GitHub-Api-Version: 2022-11-28" ]]
+    ruleset_id="${endpoint##*/}"
+    [[ "${MOCK_RULESET_DETAIL_FAILURE:-}" != "$ruleset_id" ]]
     cat "$MOCK_RULESET_DETAIL_DIR/$ruleset_id.json"
     ;;
   *)
@@ -88,10 +150,33 @@ resolve_rulesets() {
       --output-json "$test_root/rulesets.json"
 }
 
+resolve_fetched_rulesets() {
+  rm -f "$test_root/fetched-rulesets.json"
+  (
+    cd "$test_root"
+    GH_TOKEN=test-token \
+      GH_BIN="$test_root/mock-bin/gh" \
+      MOCK_GH_LOG="$test_root/gh.log" \
+      MOCK_RULESET_PAGES="${1:-$test_root/compact-pages.json}" \
+      MOCK_RULESET_DETAIL_DIR="$test_root/details" \
+      "$repo_root/eng/resolve-release-candidate-rulesets.sh" \
+        --repository pedrosakuma/aws2azure \
+        --fetch-rulesets \
+        --output-json "$test_root/fetched-rulesets.json"
+  )
+}
+
 resolve_rulesets
 cp "$test_root/rulesets.json" "$test_root/resolved-first.json"
 resolve_rulesets
 cmp "$test_root/resolved-first.json" "$test_root/rulesets.json"
+
+: > "$test_root/gh.log"
+resolve_fetched_rulesets
+[[ "$(jq 'length' "$test_root/fetched-rulesets.json")" == 2 ]]
+grep -Fq 'api --paginate --slurp' "$test_root/gh.log"
+grep -Fq '/rulesets/19148912' "$test_root/gh.log"
+grep -Fq '/rulesets/19148913' "$test_root/gh.log"
 
 expect_fail() {
   if "$@" >"$test_root/unexpected.out" 2>"$test_root/expected.err"; then
@@ -112,10 +197,30 @@ expect_resolve_fail() {
   [[ ! -e "$test_root/rulesets.json" ]]
 }
 
+expect_fetched_resolve_fail() {
+  rm -f "$test_root/fetched-rulesets.json"
+  expect_fail env \
+    GH_TOKEN=test-token \
+    GH_BIN="$test_root/mock-bin/gh" \
+    MOCK_RULESET_PAGES="${MOCK_RULESET_PAGES:-$test_root/compact-pages.json}" \
+    MOCK_RULESET_DETAIL_DIR="$test_root/details" \
+    MOCK_RULESET_LIST_FAILURE="${MOCK_RULESET_LIST_FAILURE:-false}" \
+    MOCK_RULESET_DETAIL_FAILURE="${MOCK_RULESET_DETAIL_FAILURE:-}" \
+    "$repo_root/eng/resolve-release-candidate-rulesets.sh" \
+      --repository pedrosakuma/aws2azure \
+      --fetch-rulesets \
+      --output-json "$test_root/fetched-rulesets.json"
+  [[ ! -e "$test_root/fetched-rulesets.json" ]]
+}
+
 printf '[\n' > "$test_root/malformed-list.json"
 expect_resolve_fail "$test_root/malformed-list.json"
 jq '[.]' "$test_root/compact-rulesets.json" > "$test_root/unflattened-pages.json"
 expect_resolve_fail "$test_root/unflattened-pages.json"
+jq '.[0]' "$test_root/compact-pages.json" > "$test_root/malformed-pages.json"
+MOCK_RULESET_PAGES="$test_root/malformed-pages.json" expect_fetched_resolve_fail
+MOCK_RULESET_LIST_FAILURE=true expect_fetched_resolve_fail
+MOCK_RULESET_DETAIL_FAILURE=19148913 expect_fetched_resolve_fail
 jq '[.[0], .[0]]' "$test_root/compact-rulesets.json" > "$test_root/duplicate-id.json"
 expect_resolve_fail "$test_root/duplicate-id.json"
 jq '.[0] |= del(.id)' "$test_root/compact-rulesets.json" > "$test_root/missing-id.json"
@@ -136,12 +241,21 @@ for mutation in \
   jq "$mutation" "$test_root/detail-valid.json" > "$test_root/details/19148912.json"
   expect_resolve_fail "$test_root/compact-rulesets.json"
 done
+cp "$test_root/detail-valid.json" "$test_root/details/19148912.json"
+jq '.id = 19148914' \
+  "$test_root/detail-valid.json" > "$test_root/details/19148912.json"
+expect_fetched_resolve_fail
 printf '{\n' > "$test_root/details/19148912.json"
 expect_resolve_fail "$test_root/compact-rulesets.json"
 rm "$test_root/details/19148912.json"
 expect_resolve_fail "$test_root/compact-rulesets.json"
 cp "$test_root/detail-valid.json" "$test_root/details/19148912.json"
 resolve_rulesets
+
+jq '.[0][0].enforcement = "disabled"' \
+  "$test_root/compact-pages.json" > "$test_root/inactive-pages.json"
+MOCK_RULESET_PAGES="$test_root/inactive-pages.json" expect_fetched_resolve_fail
+resolve_fetched_rulesets
 
 cat > "$test_root/compare.json" <<JSON
 {

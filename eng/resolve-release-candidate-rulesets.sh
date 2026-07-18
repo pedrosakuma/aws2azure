@@ -11,6 +11,7 @@ fail() {
 repository=
 rulesets_json=
 output_json=
+fetch_rulesets=false
 
 while (($# > 0)); do
   option="$1"
@@ -18,18 +19,24 @@ while (($# > 0)); do
   case "$option" in
     --repository) repository="${1:-}"; shift ;;
     --rulesets-json) rulesets_json="${1:-}"; shift ;;
+    --fetch-rulesets) fetch_rulesets=true ;;
     --output-json) output_json="${1:-}"; shift ;;
     *) fail "unknown option: $option" ;;
   esac
 done
 
 [[ -n "$repository" ]] || fail "missing --repository"
-[[ -n "$rulesets_json" ]] || fail "missing --rulesets-json"
 [[ -n "$output_json" ]] || fail "missing --output-json"
 [[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
   fail "invalid repository: $repository"
-[[ -f "$rulesets_json" && ! -L "$rulesets_json" ]] ||
-  fail "compact rulesets input must be a regular file"
+if [[ "$fetch_rulesets" == true ]]; then
+  [[ -z "$rulesets_json" ]] ||
+    fail "--fetch-rulesets and --rulesets-json are mutually exclusive"
+else
+  [[ -n "$rulesets_json" ]] || fail "missing --rulesets-json"
+  [[ -f "$rulesets_json" && ! -L "$rulesets_json" ]] ||
+    fail "compact rulesets input must be a regular file"
+fi
 command -v "$gh_bin" >/dev/null 2>&1 || fail "required command not found: $gh_bin"
 command -v python3 >/dev/null 2>&1 || fail "python3 is required"
 
@@ -40,6 +47,41 @@ staging_dir="${output_json}.details.$$"
 mkdir -m 0700 "$staging_dir" ||
   fail "could not create private detail staging directory"
 trap 'rm -rf "$staging_dir"' EXIT
+
+if [[ "$fetch_rulesets" == true ]]; then
+  ruleset_pages="$staging_dir/compact-pages.json"
+  rulesets_json="$staging_dir/compact.json"
+  if ! "$gh_bin" api --paginate --slurp \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    "/repos/$repository/rulesets?includes_parents=true&targets=tag&per_page=100" \
+    > "$ruleset_pages"; then
+    fail "failed to fetch compact tag rulesets"
+  fi
+  python3 - "$ruleset_pages" "$rulesets_json" <<'PY' ||
+import json
+import pathlib
+import sys
+
+pages_path, output_path = map(pathlib.Path, sys.argv[1:])
+try:
+    pages = json.loads(pages_path.read_text(encoding="utf-8"))
+except (OSError, UnicodeError, json.JSONDecodeError):
+    raise SystemExit(1)
+if not isinstance(pages, list) or not all(isinstance(page, list) for page in pages):
+    raise SystemExit(1)
+output_path.write_text(
+    json.dumps(
+        [ruleset for page in pages for ruleset in page],
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    + "\n",
+    encoding="utf-8",
+)
+PY
+    fail "compact tag ruleset pagination response is malformed"
+fi
 
 python3 - "$rulesets_json" "$staging_dir/expected.json" "$staging_dir/ids.txt" <<'PY' ||
 import json
