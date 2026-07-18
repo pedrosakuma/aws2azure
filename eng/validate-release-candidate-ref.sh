@@ -109,10 +109,32 @@ jq -e \
   --arg approval_sha "$approval_sha" \
   --arg main_sha "$main_sha" \
   '
-    (.status == "ahead" or .status == "identical") and
-    .base_commit.sha == $approval_sha and
-    .merge_base_commit.sha == $approval_sha and
-    .head_commit.sha == $main_sha
+    def exact_commit($sha):
+      type == "object" and
+      has("sha") and
+      .sha == $sha;
+
+    type == "object" and
+    (.base_commit | exact_commit($approval_sha)) and
+    (.merge_base_commit | exact_commit($approval_sha)) and
+    if .status == "identical" then
+      $approval_sha == $main_sha and
+      .ahead_by == 0 and
+      .behind_by == 0 and
+      .total_commits == 0 and
+      (
+        .head_commit == null or
+        (.head_commit | exact_commit($main_sha))
+      )
+    elif .status == "ahead" then
+      $approval_sha != $main_sha and
+      (.ahead_by | type == "number" and . > 0 and floor == .) and
+      .behind_by == 0 and
+      .total_commits == .ahead_by and
+      (.head_commit | exact_commit($main_sha))
+    else
+      false
+    end
   ' "$compare_json" >/dev/null ||
   fail "approved-ledger SHA is not an exact ancestor of protected main"
 
