@@ -1,0 +1,18 @@
+# Reviewed RC observation generation policy, not runtime evidence.
+# The real-Azure workflow emits measured evidence only as immutable run artifacts.
+schema_version: 1
+profile_id: s3-basic-object-crud
+profile_version: 1
+minimum_window_minutes: 60
+maximum_window_minutes: 180
+maximum_evidence_age_hours: 72
+minimum_samples_per_cohort: 300
+metrics:
+  - id: representative-load-throughput
+    unit: throughput_per_sec
+    threshold_source: qualification_signal
+    threshold_reference: representative-load-throughput
+  - id: operation-failure-rate
+    unit: ratio
+    threshold_source: qualification_rule
+    threshold_reference: max_failure_rate

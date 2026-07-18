@@ -1016,7 +1016,11 @@ def rendered_manifest(manifest: dict[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
-def generate(descriptor_path: pathlib.Path, output_path: pathlib.Path) -> None:
+def generate(
+    descriptor_path: pathlib.Path,
+    output_path: pathlib.Path,
+    identity_only: bool = False,
+) -> None:
     try:
         descriptor_mode = descriptor_path.lstat().st_mode
     except OSError as error:
@@ -1025,19 +1029,21 @@ def generate(descriptor_path: pathlib.Path, output_path: pathlib.Path) -> None:
         fail("descriptor must be a regular non-symbolic-link file")
     descriptor_path = descriptor_path.resolve()
     root = descriptor_path.parent
+    expected_descriptor_fields = {
+        "schema_version",
+        "candidate",
+        "producer",
+        "platforms",
+        "container",
+        "workloads",
+        "compatibility_policy",
+    }
+    if not identity_only:
+        expected_descriptor_fields.add("observation_evidence")
     descriptor = require_object(
         load_json(descriptor_path),
         "descriptor",
-        {
-            "schema_version",
-            "candidate",
-            "producer",
-            "platforms",
-            "container",
-            "workloads",
-            "compatibility_policy",
-            "observation_evidence",
-        },
+        expected_descriptor_fields,
     )
     if require_integer(
         descriptor["schema_version"], "descriptor.schema_version"
@@ -1198,34 +1204,37 @@ def generate(descriptor_path: pathlib.Path, output_path: pathlib.Path) -> None:
     workloads.sort(key=lambda item: (item["profile"]["id"], item["profile"]["version"]))
 
     policy = validate_policy(descriptor["compatibility_policy"], "compatibility_policy")
-    observations_input = require_array(
-        descriptor["observation_evidence"], "observation_evidence"
-    )
     observations: list[dict[str, Any]] = []
-    observation_keys: set[tuple[str, int]] = set()
-    observation_identifiers: set[str] = set()
-    observation_digests: set[str] = set()
-    for index, observation_value in enumerate(observations_input):
-        observation = validate_observation(
-            observation_value, f"observation_evidence[{index}]"
+    if not identity_only:
+        observations_input = require_array(
+            descriptor["observation_evidence"], "observation_evidence"
         )
-        key = (
-            observation["profile"]["id"],
-            observation["profile"]["version"],
+        observation_keys: set[tuple[str, int]] = set()
+        observation_identifiers: set[str] = set()
+        observation_digests: set[str] = set()
+        for index, observation_value in enumerate(observations_input):
+            observation = validate_observation(
+                observation_value, f"observation_evidence[{index}]"
+            )
+            key = (
+                observation["profile"]["id"],
+                observation["profile"]["version"],
+            )
+            if key in observation_keys:
+                fail(f"duplicate observation profile identity: {key[0]} v{key[1]}")
+            observation_keys.add(key)
+            if observation["identifier"] in observation_identifiers:
+                fail(f"duplicate observation identifier: {observation['identifier']}")
+            if observation["digest"] in observation_digests:
+                fail(f"duplicate observation digest: {observation['digest']}")
+            observation_identifiers.add(observation["identifier"])
+            observation_digests.add(observation["digest"])
+            observations.append(observation)
+        if observation_keys != workload_keys:
+            fail("observation evidence must cover every supported workload exactly once")
+        observations.sort(
+            key=lambda item: (item["profile"]["id"], item["profile"]["version"])
         )
-        if key in observation_keys:
-            fail(f"duplicate observation profile identity: {key[0]} v{key[1]}")
-        observation_keys.add(key)
-        if observation["identifier"] in observation_identifiers:
-            fail(f"duplicate observation identifier: {observation['identifier']}")
-        if observation["digest"] in observation_digests:
-            fail(f"duplicate observation digest: {observation['digest']}")
-        observation_identifiers.add(observation["identifier"])
-        observation_digests.add(observation["digest"])
-        observations.append(observation)
-    if observation_keys != workload_keys:
-        fail("observation evidence must cover every supported workload exactly once")
-    observations.sort(key=lambda item: (item["profile"]["id"], item["profile"]["version"]))
 
     manifest: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -1237,6 +1246,26 @@ def generate(descriptor_path: pathlib.Path, output_path: pathlib.Path) -> None:
         "compatibility_policy": policy,
     }
     manifest["identity_digest"] = canonical_identity_digest(manifest)
+    if identity_only:
+        receipt = {
+            "schema_version": SCHEMA_VERSION,
+            "artifact_kind": "release_candidate_identity",
+            **manifest,
+        }
+        receipt["content_digest"] = canonical_body_digest(receipt)
+        output_path = output_path.resolve()
+        if output_path.exists():
+            fail(f"output already exists: {output_path}")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with output_path.open("xb") as stream:
+                stream.write(rendered_manifest(receipt))
+        except OSError as error:
+            fail(f"cannot write identity receipt {output_path}: {error}")
+        validate_identity(output_path)
+        print(output_path)
+        return
+
     manifest["observation_evidence"] = [
         {
             **observation,
@@ -1256,6 +1285,57 @@ def generate(descriptor_path: pathlib.Path, output_path: pathlib.Path) -> None:
         fail(f"cannot write manifest {output_path}: {error}")
     validate(output_path, source["sha"], manifest["content_digest"])
     print(output_path)
+
+
+def validate_identity(receipt_path: pathlib.Path) -> None:
+    try:
+        mode = receipt_path.lstat().st_mode
+    except OSError as error:
+        fail(f"cannot inspect identity receipt: {error}")
+    if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+        fail("identity receipt must be a regular non-symbolic-link file")
+    receipt_path = receipt_path.resolve()
+    receipt = require_object(
+        load_json(receipt_path),
+        "identity receipt",
+        {
+            "schema_version",
+            "artifact_kind",
+            "candidate",
+            "producer",
+            "platforms",
+            "container",
+            "workloads",
+            "compatibility_policy",
+            "identity_digest",
+            "content_digest",
+        },
+    )
+    if (
+        require_integer(receipt["schema_version"], "identity receipt schema")
+        != SCHEMA_VERSION
+        or receipt["artifact_kind"] != "release_candidate_identity"
+    ):
+        fail("identity receipt schema or artifact kind is invalid")
+    identity_body = {
+        key: value
+        for key, value in receipt.items()
+        if key not in {"artifact_kind", "content_digest", "identity_digest"}
+    }
+    if require_digest(
+        receipt["identity_digest"], "identity receipt identity digest"
+    ) != canonical_identity_digest(identity_body):
+        fail("identity receipt digest does not match its canonical RC interfaces")
+    if require_digest(
+        receipt["content_digest"], "identity receipt content digest"
+    ) != canonical_body_digest(receipt):
+        fail("identity receipt content digest is invalid")
+    try:
+        actual_bytes = receipt_path.read_bytes()
+    except OSError as error:
+        fail(f"cannot read identity receipt bytes: {error}")
+    if actual_bytes != rendered_manifest(receipt):
+        fail("identity receipt JSON is not in canonical deterministic form")
 
 
 def validate(
@@ -1464,19 +1544,28 @@ def main() -> None:
     generate_parser = subparsers.add_parser("generate")
     generate_parser.add_argument("descriptor", type=pathlib.Path)
     generate_parser.add_argument("output", type=pathlib.Path)
+    identity_parser = subparsers.add_parser("identity")
+    identity_parser.add_argument("descriptor", type=pathlib.Path)
+    identity_parser.add_argument("output", type=pathlib.Path)
     validate_parser = subparsers.add_parser("validate")
     validate_parser.add_argument("manifest", type=pathlib.Path)
     validate_parser.add_argument("--expected-source-sha", required=True)
     validate_parser.add_argument("--expected-content-digest", required=True)
+    validate_identity_parser = subparsers.add_parser("validate-identity")
+    validate_identity_parser.add_argument("receipt", type=pathlib.Path)
     args = parser.parse_args()
     if args.command == "generate":
         generate(args.descriptor, args.output)
-    else:
+    elif args.command == "identity":
+        generate(args.descriptor, args.output, identity_only=True)
+    elif args.command == "validate":
         validate(
             args.manifest,
             args.expected_source_sha,
             args.expected_content_digest,
         )
+    else:
+        validate_identity(args.receipt)
 
 
 if __name__ == "__main__":

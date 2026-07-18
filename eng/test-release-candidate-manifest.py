@@ -468,6 +468,33 @@ class ReleaseCandidateManifestTests(unittest.TestCase):
             )
         )
 
+    def test_identity_receipt_precedes_observations_without_fabricating_them(self) -> None:
+        identity_descriptor = dict(self.descriptor)
+        identity_descriptor.pop("observation_evidence")
+        identity_descriptor_path = self.root / "release-candidate-identity-inputs.json"
+        identity_receipt_path = self.root / "release-candidate-identity.json"
+        write_json(identity_descriptor_path, identity_descriptor)
+
+        self.run_tool(
+            "identity",
+            str(identity_descriptor_path),
+            str(identity_receipt_path),
+        )
+        self.run_tool("validate-identity", str(identity_receipt_path))
+        receipt = json.loads(identity_receipt_path.read_text(encoding="utf-8"))
+        manifest = self.generate()
+
+        self.assertEqual(receipt["artifact_kind"], "release_candidate_identity")
+        self.assertNotIn("observation_evidence", receipt)
+        self.assertEqual(receipt["identity_digest"], manifest["identity_digest"])
+        linked_receipt = self.root / "linked-release-candidate-identity.json"
+        linked_receipt.symlink_to(identity_receipt_path)
+        self.run_tool(
+            "validate-identity",
+            str(linked_receipt),
+            expect_success=False,
+        )
+
     def test_descriptor_rejects_unknown_missing_and_duplicate_fields(self) -> None:
         descriptor = dict(self.descriptor)
         descriptor["unknown"] = True

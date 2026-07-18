@@ -59,6 +59,16 @@ if (args.Length > 0 && args[0] == "export-approved-runtime")
     return ExportApprovedRuntime(args[1..], repoRoot);
 }
 
+if (args.Length > 0 && args[0] == "generate-rc-observation")
+{
+    return GenerateRcObservation(args[1..], repoRoot);
+}
+
+if (args.Length > 0 && args[0] == "validate-rc-observation")
+{
+    return ValidateRcObservation(args[1..]);
+}
+
 return RunGapDocs(args, repoRoot, gapsRoot, workloadsRoot, siteRoot, generatedCode);
 
 static int RunGapDocs(
@@ -84,6 +94,8 @@ static int RunGapDocs(
         var workloadManifests = WorkloadGaManifestLoader.LoadAll(workloadsRoot);
         var approvedRuntimes = ApprovedRuntimeLedgerLoader.LoadAll(
             Path.Combine(workloadsRoot, "approved-runtimes"));
+        var observationPolicies = RcObservationPolicyLoader.LoadAll(
+            Path.Combine(workloadsRoot, "observation"));
         var errors = new List<string>();
         errors.AddRange(Validator.Validate(docs, migration, DateOnly.FromDateTime(DateTime.UtcNow)));
         errors.AddRange(Validator.ValidateDesign(designDocs, docs));
@@ -96,6 +108,11 @@ static int RunGapDocs(
             approvedRuntimes,
             workloadManifests,
             DateTimeOffset.UtcNow));
+        errors.AddRange(RcObservationPolicyValidator.Validate(
+            observationPolicies,
+            workloadManifests,
+            approvedRuntimes,
+            workloadsRoot));
         if (errors.Count > 0)
         {
             WriteErrors("gap-doc validation", errors);
@@ -104,7 +121,8 @@ static int RunGapDocs(
 
         Console.WriteLine(
             $"[gap-docs] {docs.Count} operation(s), {designDocs.Count} service design doc(s), " +
-            $"{approvedRuntimes.Count} approved-runtime record(s), and real-Azure " +
+            $"{approvedRuntimes.Count} approved-runtime record(s), " +
+            $"{observationPolicies.Count} RC observation policy/policies, and real-Azure " +
             "conformance matrix validated OK");
         if (options.ValidateOnly)
         {
@@ -951,10 +969,19 @@ static int ExportApprovedRuntime(string[] args, string repoRoot)
 {
     string? profileId = null;
     string? outputPath = null;
+    string? candidatePath = null;
+    string? ledgerJsonPath = null;
+    var rollbackTarget = false;
     for (var index = 0; index < args.Length; index++)
     {
         var option = args[index];
-        if (option is not ("--profile" or "--output"))
+        if (option == "--rollback-target")
+        {
+            rollbackTarget = true;
+            continue;
+        }
+        if (option is not ("--profile" or "--output" or "--candidate"
+            or "--ledger-json"))
         {
             Console.Error.WriteLine($"Unknown option '{option}'.");
             return 1;
@@ -968,16 +995,41 @@ static int ExportApprovedRuntime(string[] args, string repoRoot)
         {
             profileId = args[index];
         }
-        else
+        else if (option == "--output")
         {
             outputPath = args[index];
+        }
+        else
+        {
+            if (option == "--candidate")
+            {
+                candidatePath = args[index];
+            }
+            else
+            {
+                ledgerJsonPath = args[index];
+            }
         }
     }
 
     if (string.IsNullOrWhiteSpace(profileId) || string.IsNullOrWhiteSpace(outputPath))
     {
         Console.Error.WriteLine(
-            "export-approved-runtime requires --profile <id> --output <path>.");
+            "export-approved-runtime requires --profile <id> --output <path> " +
+            "[--rollback-target --candidate <candidate-runtime.json> " +
+            "[--ledger-json <approved-runtime.json>]].");
+        return 1;
+    }
+    if (rollbackTarget != !string.IsNullOrWhiteSpace(candidatePath))
+    {
+        Console.Error.WriteLine(
+            "--rollback-target and --candidate must be supplied together.");
+        return 1;
+    }
+    if (!string.IsNullOrWhiteSpace(ledgerJsonPath) && !rollbackTarget)
+    {
+        Console.Error.WriteLine(
+            "--ledger-json is accepted only with --rollback-target.");
         return 1;
     }
 
@@ -985,8 +1037,22 @@ static int ExportApprovedRuntime(string[] args, string repoRoot)
     {
         var workloadsRoot = Path.Combine(repoRoot, "docs", "workloads");
         var profiles = WorkloadGaManifestLoader.LoadAll(workloadsRoot);
-        var records = ApprovedRuntimeLedgerLoader.LoadAll(
-            Path.Combine(workloadsRoot, "approved-runtimes"));
+        IReadOnlyList<ApprovedRuntimeRecord> records;
+        ApprovedRuntimeRecord record;
+        if (string.IsNullOrWhiteSpace(ledgerJsonPath))
+        {
+            records = ApprovedRuntimeLedgerLoader.LoadAll(
+                Path.Combine(workloadsRoot, "approved-runtimes"));
+            record = records.SingleOrDefault(
+                item => item.Profile.Id.Equals(profileId, StringComparison.Ordinal))
+                ?? throw new InvalidDataException(
+                    $"No approved-runtime ledger record exists for profile '{profileId}'.");
+        }
+        else
+        {
+            record = ApprovedRuntimeLedgerExport.Load(ledgerJsonPath).Record;
+            records = [record];
+        }
         var errors = ApprovedRuntimeLedgerValidator.Validate(
             records,
             profiles,
@@ -997,11 +1063,34 @@ static int ExportApprovedRuntime(string[] args, string repoRoot)
             return 1;
         }
 
-        var record = records.SingleOrDefault(
-            item => item.Profile.Id.Equals(profileId, StringComparison.Ordinal))
-            ?? throw new InvalidDataException(
-                $"No approved-runtime ledger record exists for profile '{profileId}'.");
-        var export = ApprovedRuntimeLedgerExport.Create(record);
+        if (!record.Profile.Id.Equals(profileId, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                $"Approved-runtime export does not match profile '{profileId}'.");
+        }
+        ApprovedRuntimeLedgerExport export;
+        if (rollbackTarget)
+        {
+            var candidate = SealedRuntimeEvidenceLoader.LoadRuntime(candidatePath!);
+            SealedRuntimeEvidenceValidator.ValidateApprovedCandidate(
+                candidate,
+                record,
+                DateTimeOffset.UtcNow);
+            var trustedPrior = record.Qualification?.RollbackTarget
+                ?? throw new InvalidDataException(
+                    "Approved runtime does not contain a trusted rollback target.");
+            SealedRuntimeEvidenceValidator.ValidateTrustedRollbackTarget(
+                trustedPrior,
+                record.Profile.Id,
+                record.Profile.Version,
+                record.Qualification!.RollbackTargetRuntimeDigest,
+                DateTimeOffset.UtcNow);
+            export = ApprovedRuntimeLedgerExport.CreateRollbackTarget(record);
+        }
+        else
+        {
+            export = ApprovedRuntimeLedgerExport.Create(record);
+        }
         var fullOutputPath = Path.GetFullPath(outputPath);
         Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath)!);
         File.WriteAllText(
@@ -1010,8 +1099,9 @@ static int ExportApprovedRuntime(string[] args, string repoRoot)
                 export,
                 ApprovedRuntimeLedgerJsonContext.Default.ApprovedRuntimeLedgerExport));
         Console.WriteLine(
-            $"[gap-docs] approved runtime '{record.Status}' for '{profileId}' written to " +
-            fullOutputPath);
+            $"[gap-docs] approved runtime " +
+            $"'{(rollbackTarget ? export.Record.Status + " rollback target" : record.Status)}' " +
+            $"for '{profileId}' written to {fullOutputPath}");
         return 0;
     }
     catch (Exception exception) when (exception is FileNotFoundException
@@ -1019,6 +1109,212 @@ static int ExportApprovedRuntime(string[] args, string repoRoot)
                                       or IOException
                                       or UnauthorizedAccessException
                                       or JsonException
+                                      or YamlException)
+    {
+        Console.Error.WriteLine("[gap-docs] " + exception.Message);
+        return 2;
+    }
+}
+
+static int GenerateRcObservation(string[] args, string repoRoot)
+{
+    var values = new Dictionary<string, string>(StringComparer.Ordinal);
+    var allowed = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "--capture",
+        "--capture-selection",
+        "--archive-selection",
+        "--ghcr-selection",
+        "--identity-selection",
+        "--approved-runtime",
+        "--candidate",
+        "--prior",
+        "--workload",
+        "--qualification-policy",
+        "--observation-policy",
+        "--release-candidate-id",
+        "--owner",
+        "--output",
+        "--binding-output",
+    };
+    for (var index = 0; index < args.Length; index++)
+    {
+        var option = args[index];
+        if (!allowed.Contains(option)
+            || index + 1 >= args.Length
+            || args[index + 1].StartsWith("--", StringComparison.Ordinal)
+            || !values.TryAdd(option, args[++index]))
+        {
+            Console.Error.WriteLine($"Unknown, duplicate, or incomplete option '{option}'.");
+            return 1;
+        }
+    }
+    if (allowed.Any(option => !values.ContainsKey(option)))
+    {
+        Console.Error.WriteLine(
+            "Usage: generate-rc-observation --capture <json> --capture-selection <json> " +
+            "--archive-selection <json> --ghcr-selection <json> " +
+            "--identity-selection <json> --approved-runtime <json> --candidate <json> " +
+            "--prior <json> --workload <yaml> " +
+            "--qualification-policy <yaml> --observation-policy <yaml> " +
+            "--release-candidate-id <id> " +
+            "--owner <actor> --output <yaml> --binding-output <json>");
+        return 1;
+    }
+
+    try
+    {
+        var output = Path.GetFullPath(values["--output"]);
+        var bindingOutput = Path.GetFullPath(values["--binding-output"]);
+        if (File.Exists(output) || File.Exists(bindingOutput))
+        {
+            throw new IOException(
+                "RC observation output and binding paths must not already exist.");
+        }
+
+        var capture = RcObservationCaptureLoader.Load(values["--capture"]);
+        var selection = RcObservationCaptureLoader.LoadSelection(
+            values["--capture-selection"]);
+        var archiveSelection = RcObservationCaptureLoader.LoadArchiveSelection(
+            values["--archive-selection"]);
+        var ghcrSelection = RcObservationCaptureLoader.LoadGhcrSelection(
+            values["--ghcr-selection"]);
+        var identitySelection = RcObservationCaptureLoader.LoadIdentitySelection(
+            values["--identity-selection"]);
+        var candidate = SealedRuntimeEvidenceLoader.LoadRuntime(values["--candidate"]);
+        var prior = SealedRuntimeEvidenceLoader.LoadRuntime(values["--prior"]);
+        var approvedRuntime = ApprovedRuntimeLedgerExport.Load(
+            values["--approved-runtime"]);
+        var workload = WorkloadGaManifestLoader.Load(values["--workload"]);
+        var qualification = WorkloadQualificationPolicyLoader.Load(
+            values["--qualification-policy"]);
+        var policy = RcObservationPolicyLoader.Load(values["--observation-policy"]);
+        var generatedAt = DateTimeOffset.UtcNow;
+        var result = RcObservationGenerator.Generate(
+            capture,
+            policy,
+            qualification,
+            workload,
+            candidate,
+            prior,
+            approvedRuntime.Record,
+            archiveSelection,
+            ghcrSelection,
+            identitySelection,
+            selection,
+            new RcObservationGenerationInput
+            {
+                ReleaseCandidateId = values["--release-candidate-id"],
+                DecisionOwner = values["--owner"],
+                CandidateIdentityDigest =
+                    RcObservationRenderer.DigestFile(values["--candidate"]),
+                PriorIdentityDigest = RcObservationRenderer.DigestFile(values["--prior"]),
+                ApprovedRuntimeLedgerDigest = approvedRuntime.LedgerRecordDigest,
+                WorkloadManifestDigest =
+                    RcObservationRenderer.DigestFile(values["--workload"]),
+                QualificationPolicyDigest =
+                    RcObservationRenderer.DigestFile(values["--qualification-policy"]),
+                ObservationPolicyDigest =
+                    RcObservationRenderer.DigestFile(values["--observation-policy"]),
+                GeneratedAtUtc = generatedAt,
+            });
+        RcObservationRenderer.Render(result.Evidence, output);
+        RcObservationRenderer.RenderBinding(result.Binding, bindingOutput);
+
+        var loaded = RcObservationLoader.Load(output);
+        var errors = RcObservationValidator.Validate(loaded, result.Binding, generatedAt);
+        if (errors.Count > 0)
+        {
+            WriteErrors("RC observation generation", errors);
+            return 3;
+        }
+        Console.WriteLine(
+            $"[gap-docs] RC observation '{loaded.Decision.Verdict}' for " +
+            $"'{loaded.Profile.Id}' written to {output}");
+        Console.WriteLine($"evidence_digest={loaded.EvidenceDigest}");
+        Console.WriteLine($"verdict={loaded.Decision.Verdict}");
+        return 0;
+    }
+    catch (Exception exception) when (exception is ArgumentException
+                                      or FileNotFoundException
+                                      or InvalidDataException
+                                      or IOException
+                                      or JsonException
+                                      or UnauthorizedAccessException
+                                      or YamlException)
+    {
+        Console.Error.WriteLine("[gap-docs] " + exception.Message);
+        return 2;
+    }
+}
+
+static int ValidateRcObservation(string[] args)
+{
+    string? evidencePath = null;
+    string? bindingPath = null;
+    string? expectedDigest = null;
+    for (var index = 0; index < args.Length; index++)
+    {
+        var option = args[index];
+        if (++index >= args.Length || args[index].StartsWith("--", StringComparison.Ordinal))
+        {
+            Console.Error.WriteLine($"Incomplete option '{option}'.");
+            return 1;
+        }
+        var value = args[index];
+        switch (option)
+        {
+            case "--evidence" when evidencePath is null:
+                evidencePath = value;
+                break;
+            case "--binding" when bindingPath is null:
+                bindingPath = value;
+                break;
+            case "--expected-evidence-digest" when expectedDigest is null:
+                expectedDigest = value;
+                break;
+            default:
+                Console.Error.WriteLine($"Unknown or duplicate option '{option}'.");
+                return 1;
+        }
+    }
+    if (evidencePath is null || bindingPath is null || expectedDigest is null)
+    {
+        Console.Error.WriteLine(
+            "Usage: validate-rc-observation --evidence <yaml> --binding <json> " +
+            "--expected-evidence-digest <sha256>");
+        return 1;
+    }
+
+    try
+    {
+        var evidence = RcObservationLoader.Load(evidencePath);
+        var binding = RcObservationCaptureLoader.LoadBinding(bindingPath);
+        if (binding.ExpectedEvidenceDigest != expectedDigest)
+        {
+            throw new InvalidDataException(
+                "Trusted expected evidence digest does not match the observation binding.");
+        }
+        var errors = RcObservationValidator.Validate(
+            evidence,
+            binding,
+            DateTimeOffset.UtcNow);
+        if (errors.Count > 0)
+        {
+            WriteErrors("RC observation validation", errors);
+            return 3;
+        }
+        Console.WriteLine(
+            $"[gap-docs] RC observation '{evidence.Decision.Verdict}' validated " +
+            $"for '{evidence.Profile.Id}' ({evidence.EvidenceDigest})");
+        return 0;
+    }
+    catch (Exception exception) when (exception is ArgumentException
+                                      or FileNotFoundException
+                                      or InvalidDataException
+                                      or IOException
+                                      or JsonException
+                                      or UnauthorizedAccessException
                                       or YamlException)
     {
         Console.Error.WriteLine("[gap-docs] " + exception.Message);

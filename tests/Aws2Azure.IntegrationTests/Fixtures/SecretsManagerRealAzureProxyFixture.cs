@@ -71,6 +71,12 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
         _runtimeSelection.GetTarget(SealedRuntimeRole.Candidate).Identity;
     public SealedRuntimeIdentity PriorRuntimeIdentity =>
         _runtimeSelection.GetTarget(SealedRuntimeRole.Prior).Identity;
+    public string CandidateRuntimeIdentityDigest =>
+        Digest(File.ReadAllBytes(
+            _runtimeSelection.GetTarget(SealedRuntimeRole.Candidate).IdentityPath));
+    public string PriorRuntimeIdentityDigest =>
+        Digest(File.ReadAllBytes(
+            _runtimeSelection.GetTarget(SealedRuntimeRole.Prior).IdentityPath));
     public ProxyInstance DefaultInstance => _defaultInstance
         ?? throw new InvalidOperationException("The default real-Azure proxy is not running.");
 
@@ -191,6 +197,20 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
             clientId,
             federatedTokenFile,
             SealedRuntimeRole.Candidate,
+            port: null).ConfigureAwait(false);
+    }
+
+    public async Task<ProxyInstance> StartAdditionalRuntimeAsync(
+        SealedRuntimeRole role)
+    {
+        if (role == SealedRuntimeRole.Prior && !_runtimeSelection.RequiresRollback)
+        {
+            throw new InvalidOperationException("No verified prior runtime is configured.");
+        }
+        return await StartProxyInstanceCoreAsync(
+            RequiredEnvironment("AZURE_CLIENT_ID"),
+            RequiredEnvironment("AZURE_FEDERATED_TOKEN_FILE"),
+            role,
             port: null).ConfigureAwait(false);
     }
 
@@ -450,8 +470,11 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
     }
 
     private static string Digest(string value) =>
+        Digest(Encoding.UTF8.GetBytes(value));
+
+    private static string Digest(ReadOnlySpan<byte> value) =>
         "sha256:" + Convert.ToHexStringLower(
-            SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+            SHA256.HashData(value));
 
     public sealed class ProxyInstance
     {

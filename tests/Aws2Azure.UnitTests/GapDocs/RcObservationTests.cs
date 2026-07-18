@@ -35,6 +35,13 @@ public sealed class RcObservationTests
             ReleaseCandidate = evidence.ReleaseCandidate with
             {
                 ManifestDigest = Digest('9'),
+                ArchiveInputs = evidence.ReleaseCandidate.ArchiveInputs with
+                {
+                    Artifact = evidence.ReleaseCandidate.ArchiveInputs.Artifact with
+                    {
+                        Id = evidence.ReleaseCandidate.ArchiveInputs.Artifact.Id + 1,
+                    },
+                },
             },
             Candidate = evidence.Candidate with { IdentityDigest = Digest('8') },
             Prior = evidence.Prior with { RuntimeDigest = Digest('7') },
@@ -46,6 +53,9 @@ public sealed class RcObservationTests
 
         Assert.Contains(errors, error => error.Contains(
             "trusted RC manifest identity",
+            StringComparison.Ordinal));
+        Assert.Contains(errors, error => error.Contains(
+            "archive inputs",
             StringComparison.Ordinal));
         Assert.Contains(errors, error => error.Contains(
             "trusted RC candidate identity",
@@ -495,13 +505,62 @@ public sealed class RcObservationTests
         };
         var evidence = new RcObservationEvidence
         {
-            SchemaVersion = 1,
+            SchemaVersion = RcObservationValidator.CurrentSchemaVersion,
             ArtifactKind = "rc_observation",
             ReleaseCandidate = new RcObservationReleaseCandidate
             {
                 Id = "v1.0.0-rc.1",
                 ManifestDigest = Digest('2'),
                 SourceSha = candidate.SourceSha,
+                ArchiveInputs = new RcObservationArchiveInputsIdentity
+                {
+                    ContentDigest = Digest('9'),
+                    Producer = new RcObservationArchiveProducer
+                    {
+                        Repository = "example/repository",
+                        WorkflowPath = ".github/workflows/release-candidate.yml",
+                        EventName = "workflow_dispatch",
+                        RunId = 12000,
+                        RunAttempt = 1,
+                        AttemptUrl =
+                            "https://github.com/example/repository/actions/runs/" +
+                            "12000/attempts/1",
+                        SourceSha = candidate.SourceSha,
+                        SourceRef = "refs/tags/v1.0.0-rc.1",
+                    },
+                    Artifact = new RcObservationArtifactIdentity
+                    {
+                        Id = 67000,
+                        Name = "aws2azure-rc-archives-v1.0.0-rc.1-" +
+                               new string('9', 64) + "-run-12000-attempt-1",
+                        UploadDigest = Digest('0'),
+                    },
+                },
+                GhcrInputs = new RcObservationGhcrInputsIdentity
+                {
+                    ContentDigest = Digest('0'),
+                    Producer = new RcObservationArchiveProducer
+                    {
+                        Repository = "example/repository",
+                        WorkflowPath = ".github/workflows/release-candidate-image.yml",
+                        EventName = "workflow_dispatch",
+                        RunId = 12100,
+                        RunAttempt = 1,
+                        AttemptUrl =
+                            "https://github.com/example/repository/actions/runs/" +
+                            "12100/attempts/1",
+                        SourceSha = new string('c', 40),
+                        SourceRef = "refs/heads/main",
+                    },
+                    Artifact = new RcObservationArtifactIdentity
+                    {
+                        Id = 67100,
+                        Name = "aws2azure-rc-ghcr-v1.0.0-rc.1-" +
+                               new string('0', 64) + "-run-12100-attempt-1",
+                        UploadDigest = Digest('1'),
+                    },
+                    IndexDigest = Digest('2'),
+                },
             },
             Candidate = candidate,
             Prior = prior,
@@ -510,7 +569,32 @@ public sealed class RcObservationTests
                 Id = "s3-basic-object-crud",
                 Version = 1,
             },
+            Policy = new RcObservationPolicyIdentity
+            {
+                WorkloadManifestDigest = Digest('5'),
+                QualificationPolicyDigest = Digest('6'),
+                ObservationPolicyDigest = Digest('7'),
+            },
             Azure = environment,
+            Producer = new RcObservationProducer
+            {
+                Repository = "example/repository",
+                WorkflowPath = ".github/workflows/rc-observation-real-azure.yml",
+                EventName = "workflow_dispatch",
+                RunId = 12345,
+                RunAttempt = 2,
+                RunUrl = "https://github.com/example/repository/actions/runs/12345",
+                AttemptUrl =
+                    "https://github.com/example/repository/actions/runs/12345/attempts/2",
+                SourceSha = new string('d', 40),
+                SourceRef = "refs/heads/main",
+            },
+            CaptureArtifact = new RcObservationArtifactIdentity
+            {
+                Id = 67890,
+                Name = "real-azure-rc-observation-capture-s3-basic-object-crud",
+                UploadDigest = Digest('8'),
+            },
             Observation = new RcObservationWindow
             {
                 StartedAtUtc = started,
@@ -575,6 +659,38 @@ public sealed class RcObservationTests
         {
             ReleaseCandidateId = evidence.ReleaseCandidate.Id,
             RcManifestDigest = evidence.ReleaseCandidate.ManifestDigest,
+            ArchiveInputsDigest = evidence.ReleaseCandidate.ArchiveInputs.ContentDigest,
+            ArchiveProducerRepository =
+                evidence.ReleaseCandidate.ArchiveInputs.Producer.Repository,
+            ArchiveProducerWorkflowPath =
+                evidence.ReleaseCandidate.ArchiveInputs.Producer.WorkflowPath,
+            ArchiveProducerRunId =
+                evidence.ReleaseCandidate.ArchiveInputs.Producer.RunId,
+            ArchiveProducerRunAttempt =
+                evidence.ReleaseCandidate.ArchiveInputs.Producer.RunAttempt,
+            ArchiveProducerSourceRef =
+                evidence.ReleaseCandidate.ArchiveInputs.Producer.SourceRef,
+            ArchiveArtifactId = evidence.ReleaseCandidate.ArchiveInputs.Artifact.Id,
+            ArchiveArtifactName = evidence.ReleaseCandidate.ArchiveInputs.Artifact.Name,
+            ArchiveArtifactUploadDigest =
+                evidence.ReleaseCandidate.ArchiveInputs.Artifact.UploadDigest,
+            GhcrInputsDigest = evidence.ReleaseCandidate.GhcrInputs.ContentDigest,
+            GhcrProducerRepository =
+                evidence.ReleaseCandidate.GhcrInputs.Producer.Repository,
+            GhcrProducerWorkflowPath =
+                evidence.ReleaseCandidate.GhcrInputs.Producer.WorkflowPath,
+            GhcrProducerRunId = evidence.ReleaseCandidate.GhcrInputs.Producer.RunId,
+            GhcrProducerRunAttempt =
+                evidence.ReleaseCandidate.GhcrInputs.Producer.RunAttempt,
+            GhcrProducerSourceSha =
+                evidence.ReleaseCandidate.GhcrInputs.Producer.SourceSha,
+            GhcrProducerSourceRef =
+                evidence.ReleaseCandidate.GhcrInputs.Producer.SourceRef,
+            GhcrArtifactId = evidence.ReleaseCandidate.GhcrInputs.Artifact.Id,
+            GhcrArtifactName = evidence.ReleaseCandidate.GhcrInputs.Artifact.Name,
+            GhcrArtifactUploadDigest =
+                evidence.ReleaseCandidate.GhcrInputs.Artifact.UploadDigest,
+            GhcrIndexDigest = evidence.ReleaseCandidate.GhcrInputs.IndexDigest,
             CandidateSourceSha = candidate.SourceSha,
             CandidateIdentityDigest = candidate.IdentityDigest,
             CandidateRuntimeDigest = candidate.RuntimeDigest,
@@ -583,11 +699,23 @@ public sealed class RcObservationTests
             PriorRuntimeDigest = prior.RuntimeDigest,
             ProfileId = evidence.Profile.Id,
             ProfileVersion = evidence.Profile.Version,
+            WorkloadManifestDigest = evidence.Policy.WorkloadManifestDigest,
+            QualificationPolicyDigest = evidence.Policy.QualificationPolicyDigest,
+            ObservationPolicyDigest = evidence.Policy.ObservationPolicyDigest,
             AzureBackendKind = environment.BackendKind,
             AzureRegion = environment.Region,
             AzureBackendIdentityDigest = environment.BackendIdentityDigest,
             ConfigDigest = environment.ConfigDigest,
             AwsBindingDigest = environment.AwsBindingDigest,
+            ProducerRepository = evidence.Producer.Repository,
+            ProducerWorkflowPath = evidence.Producer.WorkflowPath,
+            ProducerRunId = evidence.Producer.RunId,
+            ProducerRunAttempt = evidence.Producer.RunAttempt,
+            ProducerSourceSha = evidence.Producer.SourceSha,
+            ProducerSourceRef = evidence.Producer.SourceRef,
+            CaptureArtifactId = evidence.CaptureArtifact.Id,
+            CaptureArtifactName = evidence.CaptureArtifact.Name,
+            CaptureArtifactUploadDigest = evidence.CaptureArtifact.UploadDigest,
             MinimumWindowMinutes = evidence.Observation.MinimumWindowMinutes,
             MaximumEvidenceAge = TimeSpan.FromHours(4),
         };
@@ -621,8 +749,26 @@ public sealed class RcObservationTests
         RcObservationEvidence evidence,
         RcObservationValidationContext context)
     {
+        var restorationStarted = evidence.Observation.StartedAtUtc.AddMinutes(60);
+        var restorationVerified = evidence.Observation.StartedAtUtc.AddMinutes(70);
         return evidence with
         {
+            Observation = evidence.Observation with
+            {
+                EndedAtUtc = restorationVerified,
+                GeneratedAtUtc = restorationVerified.AddMinutes(10),
+            },
+            Cohorts =
+            [
+                evidence.Cohorts.Single(cohort => cohort.Role == "candidate") with
+                {
+                    ObservedUntilUtc = restorationStarted,
+                },
+                evidence.Cohorts.Single(cohort => cohort.Role == "stable") with
+                {
+                    ObservedUntilUtc = restorationVerified,
+                },
+            ],
             Metrics =
             [
                 evidence.Metrics[0] with
@@ -639,6 +785,7 @@ public sealed class RcObservationTests
             {
                 Verdict = "rollback",
                 Reason = "Candidate error-rate trigger fired.",
+                DecidedAtUtc = restorationVerified.AddMinutes(5),
             },
             Restoration = new RcObservationRestoration
             {
@@ -648,8 +795,8 @@ public sealed class RcObservationTests
                 BackendIdentityDigest = context.AzureBackendIdentityDigest,
                 ConfigDigest = context.ConfigDigest,
                 AwsBindingDigest = context.AwsBindingDigest,
-                StartedAtUtc = evidence.Observation.StartedAtUtc.AddMinutes(40),
-                VerifiedAtUtc = evidence.Observation.StartedAtUtc.AddMinutes(50),
+                StartedAtUtc = restorationStarted,
+                VerifiedAtUtc = restorationVerified,
             },
         };
     }

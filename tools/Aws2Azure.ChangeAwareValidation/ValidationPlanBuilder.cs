@@ -118,10 +118,16 @@ public static class ValidationPlanBuilder
         var isRealAzureMatrix = path == "docs/testing/real-azure-conformance.yaml";
         var isQualificationPolicy =
             path.StartsWith("docs/workloads/qualification/", StringComparison.Ordinal);
+        var isObservationPolicy =
+            path.StartsWith("docs/workloads/observation/", StringComparison.Ordinal);
+        var isApprovedRuntimeLedger =
+            path.StartsWith("docs/workloads/approved-runtimes/", StringComparison.Ordinal);
         var isQualificationWorkflow =
             IsWorkflow(path, "qualification-real-azure.yml");
         var isWorkloadLoadWorkflow =
             IsWorkflow(path, "workload-load-real-azure.yml");
+        var isRcObservationWorkflow =
+            IsWorkflow(path, "rc-observation-real-azure.yml");
         var isWorkloadLoadProducer = isWorkloadLoadWorkflow
             || path == "deploy/realazure/secretsmanager-load.bicep"
             || path == "deploy/realazure/s3-load.bicep"
@@ -131,6 +137,14 @@ public static class ValidationPlanBuilder
                 == "tests/Aws2Azure.IntegrationTests/S3/S3RealAzureLoadQualificationTests.cs"
             || path
                 == "tests/Aws2Azure.IntegrationTests/OperationalQualification/RealAzureWorkloadLoadEvidence.cs";
+        var isRcObservationProducer = isRcObservationWorkflow
+            || isObservationPolicy
+            || path
+                == "tests/Aws2Azure.IntegrationTests/SecretsManager/SecretsManagerRealAzureRcObservationTests.cs"
+            || path
+                == "tests/Aws2Azure.IntegrationTests/S3/S3RealAzureRcObservationTests.cs"
+            || path
+                == "tests/Aws2Azure.IntegrationTests/OperationalQualification/RcObservationCaptureEvidence.cs";
         var isMicrobenchBaseline = path == "docs/perf/microbench-reference.json";
         var isValidationEntrypoint = path == "eng/validate.ps1";
 
@@ -193,6 +207,8 @@ public static class ValidationPlanBuilder
             IsWorkflow(path, "perf-real-azure.yml") ||
             isQualificationWorkflow ||
             isWorkloadLoadProducer ||
+            isRcObservationProducer ||
+            isApprovedRuntimeLedger ||
             IsPerfBaseline(path))
         {
             Require(decisions, "perf", path, "request hot path or performance gate changed");
@@ -224,9 +240,12 @@ public static class ValidationPlanBuilder
             IsWorkflow(path, "perf-real-azure.yml") ||
             isQualificationWorkflow ||
             isWorkloadLoadWorkflow ||
+            isRcObservationProducer ||
+            isApprovedRuntimeLedger ||
             IsWorkflow(path, "real-azure-reaper.yml") ||
             path.StartsWith("deploy/realazure/", StringComparison.Ordinal) ||
-            isQualificationPolicy)
+            isQualificationPolicy ||
+            isObservationPolicy)
         {
             Require(decisions, "real-azure", path, "authentication or transport behavior needs live-Azure coverage");
         }

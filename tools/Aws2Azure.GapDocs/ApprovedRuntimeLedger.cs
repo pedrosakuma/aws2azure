@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using YamlDotNet.Serialization;
@@ -46,6 +47,108 @@ public sealed class ApprovedRuntimeLedgerExport
             LedgerRecordDigest = "sha256:" + Convert.ToHexStringLower(
                 SHA256.HashData(File.ReadAllBytes(record.SourceFile))),
             Record = record,
+        };
+    }
+
+    public static ApprovedRuntimeLedgerExport Load(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        var info = new FileInfo(path);
+        if (!info.Exists || info.Attributes.HasFlag(FileAttributes.ReparsePoint))
+        {
+            throw new InvalidDataException(
+                $"Approved-runtime export '{path}' must be a regular file.");
+        }
+
+        var export = JsonSerializer.Deserialize(
+            File.ReadAllText(path),
+            ApprovedRuntimeLedgerJsonContext.Default.ApprovedRuntimeLedgerExport)
+            ?? throw new InvalidDataException(
+                $"Approved-runtime export '{path}' is empty.");
+        if (export.SchemaVersion != 1
+            || export.LedgerRecordDigest.Length != 71
+            || !export.LedgerRecordDigest.StartsWith("sha256:", StringComparison.Ordinal)
+            || export.LedgerRecordDigest.AsSpan(7)
+                .IndexOfAnyExcept("0123456789abcdef") >= 0)
+        {
+            throw new InvalidDataException(
+                $"Approved-runtime export '{path}' has an invalid identity.");
+        }
+        return export;
+    }
+
+    public static ApprovedRuntimeLedgerExport CreateRollbackTarget(
+        ApprovedRuntimeRecord approvedRecord)
+    {
+        ArgumentNullException.ThrowIfNull(approvedRecord);
+        var target = approvedRecord.Qualification?.RollbackTarget
+            ?? throw new InvalidDataException(
+                "Approved-runtime record does not contain a rollback target.");
+        if (string.IsNullOrWhiteSpace(target.LedgerRecordDigest))
+        {
+            throw new InvalidDataException(
+                "Approved-runtime rollback target lacks its committed ledger digest.");
+        }
+
+        return new ApprovedRuntimeLedgerExport
+        {
+            LedgerRecordDigest = target.LedgerRecordDigest,
+            Record = new ApprovedRuntimeRecord
+            {
+                SchemaVersion = target.SchemaVersion,
+                Profile = new ApprovedRuntimeProfile
+                {
+                    Id = target.Profile.Id,
+                    Version = target.Profile.Version,
+                },
+                Status = target.Status,
+                Eligibility = new ApprovedRuntimeEligibility
+                {
+                    RollbackBaselineEligible =
+                        target.Eligibility.RollbackBaselineEligible,
+                    PromotionEligible = target.Eligibility.PromotionEligible,
+                },
+                Runtime = new ApprovedRuntimeIdentity
+                {
+                    Target = new ApprovedRuntimeTarget
+                    {
+                        OperatingSystem = "linux",
+                        Architecture = "x64",
+                        Rid = "linux-x64",
+                    },
+                    SourceRepository = target.Source.Repository,
+                    SourceSha = target.Source.Sha,
+                    AggregateDigest = target.Runtime.AggregateDigest,
+                    ExecutableDigest = target.Runtime.ExecutableDigest,
+                },
+                Producer = new ApprovedRuntimeProducer
+                {
+                    Workflow = target.Producer.Workflow,
+                    RunId = target.Producer.RunId,
+                    RunAttempt = target.Producer.RunAttempt,
+                    RunUrl = target.Producer.RunUrl,
+                },
+                Artifact = new ApprovedRuntimeArtifact
+                {
+                    Id = target.Artifact.Id,
+                    Name = target.Artifact.Name,
+                    UploadDigest = target.Artifact.UploadDigest,
+                    CreatedAt = target.Artifact.CreatedAt,
+                    ExpiresAt = target.Artifact.ExpiresAt,
+                },
+                Attestation = new ApprovedRuntimeAttestation
+                {
+                    PredicateType = target.Attestation.PredicateType,
+                    Repository = target.Attestation.Repository,
+                    SignerWorkflow = target.Attestation.SignerWorkflow,
+                    SourceSha = target.Attestation.SourceSha,
+                    SourceRef = target.Attestation.SourceRef,
+                    SubjectName = target.Attestation.ExecutableSubjectName,
+                    SubjectDigest = target.Attestation.ExecutableSubjectDigest,
+                    ManifestSubjectName = target.Attestation.ManifestSubjectName,
+                    ManifestSubjectDigest = target.Attestation.ManifestSubjectDigest,
+                },
+            },
         };
     }
 }
@@ -746,5 +849,6 @@ public static partial class ApprovedRuntimeLedgerValidator
 [JsonSerializable(typeof(ApprovedRuntimeLedgerExport))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
+    UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     WriteIndented = true)]
 internal sealed partial class ApprovedRuntimeLedgerJsonContext : JsonSerializerContext;

@@ -277,13 +277,24 @@ internal static class SecretsManagerCredentialRotationQualification
                 directory,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
-        await File.WriteAllTextAsync(tokenFile, valueElement.GetString()!, cancellationToken)
-            .ConfigureAwait(false);
-        if (!OperatingSystem.IsWindows())
+        var pending = tokenFile + "." + Guid.NewGuid().ToString("N") + ".pending";
+        try
         {
-            File.SetUnixFileMode(
-                tokenFile,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            await File.WriteAllTextAsync(
+                pending,
+                valueElement.GetString()!,
+                cancellationToken).ConfigureAwait(false);
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(
+                    pending,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
+            File.Move(pending, tokenFile, true);
+        }
+        finally
+        {
+            File.Delete(pending);
         }
     }
 

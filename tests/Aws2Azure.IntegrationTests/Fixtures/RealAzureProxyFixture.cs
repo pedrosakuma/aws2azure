@@ -55,6 +55,7 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     private const string InvalidAzureSasKeyName = "aws2azure-invalid-sas-key";
 
     private readonly StringBuilder _proxyOutput = new();
+    private readonly List<RuntimeInstance> _additionalInstances = [];
     private Process? _proxyProcess;
     private string? _configFile;
     private string? _privateDirectory;
@@ -154,6 +155,7 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     public string EventHubStream { get; private set; } = string.Empty;
 
     public string ProxyOutput => _proxyOutput.ToString();
+    public string S3ServiceUrl => ServiceUrlFor("s3");
     public string ProxyConfigDigest { get; private set; } = string.Empty;
     public string BackendIdentityDigest { get; private set; } = string.Empty;
     public string AwsBindingDigest { get; private set; } = string.Empty;
@@ -163,6 +165,12 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         _runtimeSelection.GetTarget(SealedRuntimeRole.Candidate).Identity;
     public SealedRuntimeIdentity PriorRuntimeIdentity =>
         _runtimeSelection.GetTarget(SealedRuntimeRole.Prior).Identity;
+    public string CandidateRuntimeIdentityDigest =>
+        Digest(File.ReadAllBytes(
+            _runtimeSelection.GetTarget(SealedRuntimeRole.Candidate).IdentityPath));
+    public string PriorRuntimeIdentityDigest =>
+        Digest(File.ReadAllBytes(
+            _runtimeSelection.GetTarget(SealedRuntimeRole.Prior).IdentityPath));
 
     public async Task InitializeAsync()
     {
@@ -220,11 +228,13 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         }
     }
 
-    public AmazonS3Client CreateS3Client(int maxErrorRetry = 2) => new(
+    public AmazonS3Client CreateS3Client(
+        string? serviceUrl = null,
+        int maxErrorRetry = 2) => new(
         AwsAccessKey, AwsSecret,
         new AmazonS3Config
         {
-            ServiceURL = ServiceUrlFor("s3"),
+            ServiceURL = serviceUrl ?? ServiceUrlFor("s3"),
             ForcePathStyle = true,
             UseHttp = true,
             AuthenticationRegion = AuthRegion,
@@ -314,6 +324,48 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         ProxyStarted = true;
     }
 
+    public async Task<RuntimeInstance> StartAdditionalRuntimeAsync(
+        SealedRuntimeRole role)
+    {
+        if (_configFile is null || !ProxyStarted)
+        {
+            throw new InvalidOperationException("The real-Azure proxy is not running.");
+        }
+        if (role == SealedRuntimeRole.Prior && !_runtimeSelection.RequiresRollback)
+        {
+            throw new InvalidOperationException("No verified prior runtime is configured.");
+        }
+
+        var port = GetFreePort();
+        var process = StartProxyProcess(port, _configFile, role);
+        var instance = new RuntimeInstance(
+            process,
+            ServiceUrlFor("s3", port),
+            role);
+        _additionalInstances.Add(instance);
+        try
+        {
+            await WaitForProxyAsync(process, port, TimeSpan.FromMinutes(2))
+                .ConfigureAwait(false);
+            return instance;
+        }
+        catch
+        {
+            await StopAdditionalRuntimeAsync(instance).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    public async Task StopAdditionalRuntimeAsync(RuntimeInstance instance)
+    {
+        ArgumentNullException.ThrowIfNull(instance);
+        if (!_additionalInstances.Remove(instance))
+        {
+            return;
+        }
+        await StopProcessAsync(instance.Process).ConfigureAwait(false);
+    }
+
     public async Task StopForRuntimeSwitchAsync()
     {
         if (!ProxyStarted)
@@ -349,6 +401,10 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
+        foreach (var instance in _additionalInstances.ToArray())
+        {
+            await StopAdditionalRuntimeAsync(instance).ConfigureAwait(false);
+        }
         await StopProxyAsync().ConfigureAwait(false);
 
         if (_configFile is not null)
@@ -370,21 +426,25 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
             return;
         }
 
+        await StopProcessAsync(_proxyProcess).ConfigureAwait(false);
+        _proxyProcess = null;
+        ProxyStarted = false;
+    }
+
+    private static async Task StopProcessAsync(Process process)
+    {
         try
         {
-            if (!_proxyProcess.HasExited)
+            if (!process.HasExited)
             {
-                _proxyProcess.Kill(entireProcessTree: true);
-                await _proxyProcess.WaitForExitAsync().ConfigureAwait(false);
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync().ConfigureAwait(false);
             }
         }
         catch
         {
         }
-
-        _proxyProcess.Dispose();
-        _proxyProcess = null;
-        ProxyStarted = false;
+        process.Dispose();
     }
 
     private void ReadEnvironment()
@@ -606,7 +666,8 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         sb.Append("        ").Append(block.Trim());
     }
 
-    private string ServiceUrlFor(string service) => $"http://{service}.127.0.0.1.nip.io:{_proxyPort}";
+    private string ServiceUrlFor(string service, int? port = null) =>
+        $"http://{service}.127.0.0.1.nip.io:{port ?? _proxyPort}";
 
     /// <summary>
     /// Parses an Azure SAS connection string
@@ -710,13 +771,19 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         }
     }
 
-    private async Task WaitForProxyAsync(int port, TimeSpan timeout)
+    private async Task WaitForProxyAsync(int port, TimeSpan timeout) =>
+        await WaitForProxyAsync(_proxyProcess!, port, timeout).ConfigureAwait(false);
+
+    private async Task WaitForProxyAsync(
+        Process process,
+        int port,
+        TimeSpan timeout)
     {
         using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
         {
-            if (_proxyProcess is { HasExited: true })
+            if (process.HasExited)
             {
                 throw new InvalidOperationException(
                     "Proxy process exited before becoming ready:" + Environment.NewLine + _proxyOutput);
@@ -768,6 +835,16 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
 
     private static string Digest(ReadOnlySpan<byte> value) =>
         "sha256:" + Convert.ToHexStringLower(SHA256.HashData(value));
+
+    public sealed class RuntimeInstance(
+        Process process,
+        string serviceUrl,
+        SealedRuntimeRole runtimeRole)
+    {
+        internal Process Process { get; } = process;
+        public string ServiceUrl { get; } = serviceUrl;
+        public SealedRuntimeRole RuntimeRole { get; } = runtimeRole;
+    }
 }
 
 [CollectionDefinition(Name)]
