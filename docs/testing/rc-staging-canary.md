@@ -115,3 +115,11 @@ manifest-digest mismatches fail validation.
 The real-Azure producer/consumer workflow that captures and binds this evidence
 is intentionally separate from this contract and must not claim acceptance
 until it supplies the trusted validation tuple above.
+
+The immutable archive producer in
+`.github/workflows/release-candidate.yml` stops before this step. Its attested
+`release-candidate-archive-inputs.json` records observation evidence as pending
+on the remaining workflow scope of #582 rather than fabricating a digest or pass
+verdict. After #588 binds GHCR to the exact released executables, the observation
+workflow must bind each profile's evidence to the archive-input identity and the
+eventual canonical RC-manifest identity before promotion.

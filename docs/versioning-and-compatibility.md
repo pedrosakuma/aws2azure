@@ -24,6 +24,35 @@ Tags and release artifacts use `vMAJOR.MINOR.PATCH`. A workload profile has its
 own integer `version`; a profile version is not inferred from the proxy version.
 The release support matrix maps the two.
 
+Release candidates use the stricter `vMAJOR.MINOR.PATCH-rc.NUMBER` identity,
+with no leading zeroes. They are produced by
+`.github/workflows/release-candidate.yml`, not by the stable release workflow.
+The RC producer runs only from the exact protected candidate tag and requires
+that tag to resolve to the checked-out source SHA. Approved ledgers necessarily
+post-date the sealed source commit, so the dispatch also names their exact commit;
+that commit must be an ancestor of protected `main`. The producer checks out the
+ledger commit separately and fails unless both GA records select the candidate
+source and the same exact sealed linux-x64 artifact. This separation avoids an
+impossible self-referential commit whose ledger would need to contain its own
+future Git SHA.
+
+The RC archive producer never rebuilds linux-x64. It downloads and verifies the
+approved sealed bytes, builds linux-arm64 once on a native arm64 runner, performs
+native architecture-specific health smokes, creates deterministic digest-named
+archives and checksums, and attests the executables, manifests, checksums, and
+archives. Artifact uploads are non-overwriting and include the full archive-input
+digest in their names.
+
+`release-candidate-archive-inputs.json` is an attested input fragment for the
+canonical `eng/release-candidate-manifest.py` interface, not a completed RC
+manifest. Schema version 1 does not permit invented or placeholder GHCR and
+observation identities. The fragment therefore records those interfaces as
+explicitly pending: #588 must consume the exact archived executables and return
+the immutable amd64/arm64 GHCR identities, while the remaining workflow scope of
+#582 must supply real-Azure observation evidence for both GA profiles. Only then
+may the canonical generator produce the final manifest. This producer creates no
+GitHub Release, stable `v1` publication, or GHCR image.
+
 For a stable major line, the supported window is the latest patch of the current
 minor and the latest patch of the immediately previous minor. "Supported" means
 that compatibility and security fixes are considered for those releases; it is

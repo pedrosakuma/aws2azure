@@ -27,6 +27,7 @@ jobs:
           ./eng/test-sealed-runtime-manifest.sh
           ./eng/test-sealed-runtime-consumer.sh
           python3 ./eng/test-release-candidate-manifest.py
+          ./eng/test-release-candidate-producer.sh
       - name: Validate Entra federation response classification
         shell: bash
         run: ./.github/scripts/test-entra-federation-response-classifier.sh
