@@ -582,6 +582,7 @@ public static class RcObservationGenerator
             ArchiveProducerWorkflowPath = archiveSelection.Producer.WorkflowPath,
             ArchiveProducerRunId = archiveSelection.Producer.RunId,
             ArchiveProducerRunAttempt = archiveSelection.Producer.RunAttempt,
+            ArchiveProducerSourceSha = archiveSelection.Producer.SourceSha,
             ArchiveProducerSourceRef = archiveSelection.Producer.SourceRef,
             ArchiveArtifactId = archiveSelection.Artifact.Id,
             ArchiveArtifactName = archiveSelection.Artifact.Name,
@@ -679,8 +680,8 @@ public static class RcObservationGenerator
             || producer.RunId <= 0
             || producer.RunAttempt <= 0
             || producer.AttemptUrl != expectedAttemptUrl
-            || producer.SourceSha != candidate.Source.Sha
-            || producer.SourceRef != archive.SourceRef
+            || !IsGitSha(producer.SourceSha)
+            || producer.SourceRef != "refs/heads/main"
             || archive.Artifact.Id <= 0
             || archive.Artifact.Name != expectedArtifactName
             || !IsDigest(archive.Artifact.UploadDigest)

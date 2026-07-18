@@ -424,6 +424,7 @@ def validate_producer(
             "run_attempt",
             "attempt_url",
             "source_sha",
+            "source_ref",
         },
     )
     workflow = require_relative_path(producer["workflow"], f"{name}.workflow")
@@ -436,9 +437,9 @@ def validate_producer(
     run_attempt = require_integer(
         producer["run_attempt"], f"{name}.run_attempt", positive=True
     )
-    source_sha = require_sha(producer["source_sha"], f"{name}.source_sha")
-    if source_sha != source["sha"]:
-        fail(f"{name}.source_sha does not match the bound source SHA")
+    require_sha(producer["source_sha"], f"{name}.source_sha")
+    if producer["source_ref"] != "refs/heads/main":
+        fail(f"{name}.source_ref must identify protected main orchestration")
     expected_url = (
         f"https://github.com/{source['repository']}/actions/runs/"
         f"{run_id}/attempts/{run_attempt}"
@@ -762,7 +763,13 @@ def build_provenance(
     provenance = require_object(
         value,
         name,
-        {"predicate_type", "bundle_digest", "producer_attempt_url", "source_sha"},
+        {
+            "predicate_type",
+            "bundle_digest",
+            "producer_attempt_url",
+            "producer_source_sha",
+            "candidate_source_sha",
+        },
     )
     require_string(provenance["predicate_type"], f"{name}.predicate_type")
     require_digest(provenance["bundle_digest"], f"{name}.bundle_digest")
@@ -771,8 +778,20 @@ def build_provenance(
     )
     if provenance["producer_attempt_url"] != producer["attempt_url"]:
         fail(f"{name}.producer_attempt_url drifts from the candidate producer")
-    if require_sha(provenance["source_sha"], f"{name}.source_sha") != source["sha"]:
-        fail(f"{name}.source_sha does not match the candidate source")
+    if (
+        require_sha(
+            provenance["producer_source_sha"], f"{name}.producer_source_sha"
+        )
+        != producer["source_sha"]
+    ):
+        fail(f"{name}.producer_source_sha does not match the producer")
+    if (
+        require_sha(
+            provenance["candidate_source_sha"], f"{name}.candidate_source_sha"
+        )
+        != source["sha"]
+    ):
+        fail(f"{name}.candidate_source_sha does not match the candidate")
     return {
         **provenance,
         "subjects": [
@@ -797,7 +816,8 @@ def validate_provenance(
             "predicate_type",
             "bundle_digest",
             "producer_attempt_url",
-            "source_sha",
+            "producer_source_sha",
+            "candidate_source_sha",
             "subjects",
         },
     )
@@ -808,8 +828,20 @@ def validate_provenance(
     )
     if provenance["producer_attempt_url"] != producer["attempt_url"]:
         fail(f"{name}.producer_attempt_url drifts from the candidate producer")
-    if require_sha(provenance["source_sha"], f"{name}.source_sha") != source["sha"]:
-        fail(f"{name}.source_sha does not match the candidate source")
+    if (
+        require_sha(
+            provenance["producer_source_sha"], f"{name}.producer_source_sha"
+        )
+        != producer["source_sha"]
+    ):
+        fail(f"{name}.producer_source_sha does not match the producer")
+    if (
+        require_sha(
+            provenance["candidate_source_sha"], f"{name}.candidate_source_sha"
+        )
+        != source["sha"]
+    ):
+        fail(f"{name}.candidate_source_sha does not match the candidate")
     subjects = require_array(provenance["subjects"], f"{name}.subjects")
     expected = [
         {"name": executable["path"], "digest": executable["sha256"]},

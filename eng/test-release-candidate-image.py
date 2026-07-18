@@ -23,7 +23,8 @@ DOCKERFILE = REPO_ROOT / "docker" / "release-candidate" / "Dockerfile"
 CANDIDATE = "v1.2.3-rc.4"
 REPOSITORY = "pedrosakuma/aws2azure"
 SOURCE_SHA = "0123456789abcdef0123456789abcdef01234567"
-APPROVAL_SHA = "1123456789abcdef0123456789abcdef01234567"
+ORCHESTRATION_SHA = "1123456789abcdef0123456789abcdef01234567"
+APPROVAL_SHA = ORCHESTRATION_SHA
 RUN_ID = 333
 RUN_ATTEMPT = 2
 BASES = {
@@ -233,6 +234,8 @@ class ReleaseCandidateImageTests(unittest.TestCase):
             SOURCE_SHA,
             "--source-ref",
             f"refs/tags/{CANDIDATE}",
+            "--orchestration-sha",
+            ORCHESTRATION_SHA,
             "--approval-sha",
             APPROVAL_SHA,
             "--s3-ledger",
@@ -346,7 +349,8 @@ class ReleaseCandidateImageTests(unittest.TestCase):
                     f"attempts/{RUN_ATTEMPT}"
                 ),
                 "run_started_at": "2026-07-18T10:00:00Z",
-                "source_sha": SOURCE_SHA,
+                "source_sha": ORCHESTRATION_SHA,
+                "source_ref": "refs/heads/main",
             },
             "artifact": {
                 "id": 7654321,
@@ -393,6 +397,7 @@ class ReleaseCandidateImageTests(unittest.TestCase):
             for item in identity["attestation_subjects"][key]
         ]
         source = identity["candidate"]["source"]
+        producer = identity["producer"]
         attempt_url = identity["producer"]["attempt_url"]
         return {
             "verificationResult": {
@@ -400,10 +405,10 @@ class ReleaseCandidateImageTests(unittest.TestCase):
                     "certificate": {
                         "githubWorkflowTrigger": "workflow_dispatch",
                         "githubWorkflowRepository": source["repository"],
-                        "githubWorkflowRef": source["ref"],
-                        "githubWorkflowSHA": source["sha"],
-                        "sourceRepositoryDigest": source["sha"],
-                        "sourceRepositoryRef": source["ref"],
+                        "githubWorkflowRef": producer["source_ref"],
+                        "githubWorkflowSHA": producer["source_sha"],
+                        "sourceRepositoryDigest": producer["source_sha"],
+                        "sourceRepositoryRef": producer["source_ref"],
                         "runInvocationURI": attempt_url,
                     }
                 },
@@ -584,8 +589,8 @@ class ReleaseCandidateImageTests(unittest.TestCase):
             "status": "completed",
             "conclusion": "success",
             "path": ".github/workflows/release-candidate.yml",
-            "head_sha": SOURCE_SHA,
-            "head_branch": None,
+            "head_sha": ORCHESTRATION_SHA,
+            "head_branch": "main",
             "run_started_at": "2026-07-18T10:00:00Z",
             "repository": {"full_name": REPOSITORY},
             "head_repository": {"full_name": REPOSITORY},
@@ -597,12 +602,27 @@ class ReleaseCandidateImageTests(unittest.TestCase):
             "expired": False,
             "created_at": "2026-07-18T10:10:00Z",
             "expires_at": "2099-07-18T10:10:00Z",
-            "workflow_run": {"id": RUN_ID, "head_sha": SOURCE_SHA},
+            "workflow_run": {"id": RUN_ID, "head_sha": ORCHESTRATION_SHA},
         }
         run_path = self.root / "run.json"
         artifact_path = self.root / "artifact.json"
+        main_branch_path = self.root / "main-branch.json"
+        main_compare_path = self.root / "main-compare.json"
         write_json(run_path, run)
         write_json(artifact_path, artifact)
+        main_branch = {
+            "name": "main",
+            "protected": True,
+            "commit": {"sha": ORCHESTRATION_SHA},
+        }
+        main_compare = {
+            "status": "identical",
+            "base_commit": {"sha": ORCHESTRATION_SHA},
+            "merge_base_commit": {"sha": ORCHESTRATION_SHA},
+            "head_commit": {"sha": ORCHESTRATION_SHA},
+        }
+        write_json(main_branch_path, main_branch)
+        write_json(main_compare_path, main_compare)
         output = self.root / "selection.json"
         arguments = (
             "validate-selection",
@@ -612,6 +632,8 @@ class ReleaseCandidateImageTests(unittest.TestCase):
             CANDIDATE,
             "--source-sha",
             SOURCE_SHA,
+            "--workflow-source-sha",
+            ORCHESTRATION_SHA,
             "--run-id",
             str(RUN_ID),
             "--run-attempt",
@@ -628,6 +650,10 @@ class ReleaseCandidateImageTests(unittest.TestCase):
             str(run_path),
             "--artifact-json",
             str(artifact_path),
+            "--main-branch-json",
+            str(main_branch_path),
+            "--main-compare-json",
+            str(main_compare_path),
             "--output",
             str(output),
         )
@@ -635,8 +661,18 @@ class ReleaseCandidateImageTests(unittest.TestCase):
         selection = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(selection["producer"]["run_attempt"], RUN_ATTEMPT)
         self.assertEqual(selection["artifact"]["upload_digest"], artifact["digest"])
+        self.assertEqual(selection["candidate"]["source"]["sha"], SOURCE_SHA)
+        self.assertEqual(selection["producer"]["source_sha"], ORCHESTRATION_SHA)
+        self.assertEqual(selection["producer"]["source_ref"], "refs/heads/main")
 
         output.unlink()
+        run["head_sha"] = SOURCE_SHA
+        run["head_branch"] = None
+        write_json(run_path, run)
+        self.run_tool(IMAGE_TOOL, *arguments, expect_success=False)
+
+        run["head_sha"] = ORCHESTRATION_SHA
+        run["head_branch"] = "main"
         run["run_attempt"] = 1
         write_json(run_path, run)
         self.run_tool(IMAGE_TOOL, *arguments, expect_success=False)
@@ -648,6 +684,55 @@ class ReleaseCandidateImageTests(unittest.TestCase):
         bad_arguments[bad_arguments.index(artifact_name)] = malicious
         self.run_tool(IMAGE_TOOL, *bad_arguments, expect_success=False)
         self.assertFalse((self.root / "injected").exists())
+
+        main_branch["protected"] = False
+        write_json(main_branch_path, main_branch)
+        self.run_tool(IMAGE_TOOL, *arguments, expect_success=False)
+        main_branch["protected"] = True
+        write_json(main_branch_path, main_branch)
+
+        main_compare["status"] = "diverged"
+        main_compare["merge_base_commit"]["sha"] = SOURCE_SHA
+        write_json(main_compare_path, main_compare)
+        self.run_tool(IMAGE_TOOL, *arguments, expect_success=False)
+
+    def test_protected_main_source_rejects_unprotected_and_diverged(self) -> None:
+        branch_path = self.root / "protected-main.json"
+        compare_path = self.root / "protected-main-compare.json"
+        branch = {
+            "name": "main",
+            "protected": True,
+            "commit": {"sha": ORCHESTRATION_SHA},
+        }
+        comparison = {
+            "status": "identical",
+            "base_commit": {"sha": ORCHESTRATION_SHA},
+            "merge_base_commit": {"sha": ORCHESTRATION_SHA},
+            "head_commit": {"sha": ORCHESTRATION_SHA},
+        }
+        write_json(branch_path, branch)
+        write_json(compare_path, comparison)
+        arguments = (
+            "validate-protected-main",
+            "--source-sha",
+            ORCHESTRATION_SHA,
+            "--main-branch-json",
+            str(branch_path),
+            "--main-compare-json",
+            str(compare_path),
+        )
+        self.run_tool(IMAGE_TOOL, *arguments)
+
+        branch["protected"] = False
+        write_json(branch_path, branch)
+        self.run_tool(IMAGE_TOOL, *arguments, expect_success=False)
+        branch["protected"] = True
+        write_json(branch_path, branch)
+
+        comparison["status"] = "diverged"
+        comparison["merge_base_commit"]["sha"] = SOURCE_SHA
+        write_json(compare_path, comparison)
+        self.run_tool(IMAGE_TOOL, *arguments, expect_success=False)
 
     def test_shell_consumer_rejects_injection_before_network_or_file_effects(self) -> None:
         injected = self.root / "injected"
@@ -662,6 +747,8 @@ class ReleaseCandidateImageTests(unittest.TestCase):
                 CANDIDATE,
                 "--source-sha",
                 SOURCE_SHA,
+                "--workflow-source-sha",
+                ORCHESTRATION_SHA,
                 "--run-id",
                 str(RUN_ID),
                 "--run-attempt",
@@ -964,6 +1051,7 @@ class ReleaseCandidateImageTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, combined)
         self.assertIn("runs-on: ${{ matrix.runner }}", workflow)
+        self.assertIn("archive_workflow_source_sha:", workflow)
         self.assertIn("runner: ubuntu-24.04-arm", workflow)
         self.assertIn("Require native architecture", workflow)
         self.assertIn("overwrite: false", workflow)
@@ -985,6 +1073,16 @@ class ReleaseCandidateImageTests(unittest.TestCase):
         self.assertNotIn("${!", (
             REPO_ROOT / "eng" / "resolve-release-candidate-archives.sh"
         ).read_text(encoding="utf-8"))
+        resolver = (
+            REPO_ROOT / "eng" / "resolve-release-candidate-archives.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("/branches/main", resolver)
+        self.assertIn(
+            "/compare/$workflow_source_sha...$main_sha",
+            resolver,
+        )
+        self.assertIn('--main-branch-json "$main_branch_json"', resolver)
+        self.assertIn('--main-compare-json "$main_compare_json"', resolver)
 
         run_blocks = re.findall(
             r"\n\s+run: \|\n((?:\s{10,}.+\n?)+)", workflow

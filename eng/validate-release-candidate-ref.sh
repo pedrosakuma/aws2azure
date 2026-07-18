@@ -7,7 +7,7 @@ fail() {
 }
 
 candidate=
-source_sha=
+orchestration_sha=
 dispatch_ref=
 ref_protected=
 tag_sha=
@@ -22,7 +22,7 @@ while (($# > 0)); do
   shift
   case "$option" in
     --candidate) candidate="${1:-}"; shift ;;
-    --source-sha) source_sha="${1:-}"; shift ;;
+    --orchestration-sha) orchestration_sha="${1:-}"; shift ;;
     --dispatch-ref) dispatch_ref="${1:-}"; shift ;;
     --ref-protected) ref_protected="${1:-}"; shift ;;
     --tag-sha) tag_sha="${1:-}"; shift ;;
@@ -35,26 +35,32 @@ while (($# > 0)); do
   esac
 done
 
-for value in \
-  candidate source_sha dispatch_ref ref_protected tag_sha rulesets_json \
-  approval_sha main_sha main_protected compare_json; do
-  [[ -n "${!value}" ]] || fail "missing --${value//_/-}"
-done
+[[ -n "$candidate" ]] || fail "missing --candidate"
+[[ -n "$orchestration_sha" ]] || fail "missing --orchestration-sha"
+[[ -n "$dispatch_ref" ]] || fail "missing --dispatch-ref"
+[[ -n "$ref_protected" ]] || fail "missing --ref-protected"
+[[ -n "$tag_sha" ]] || fail "missing --tag-sha"
+[[ -n "$rulesets_json" ]] || fail "missing --rulesets-json"
+[[ -n "$approval_sha" ]] || fail "missing --approval-sha"
+[[ -n "$main_sha" ]] || fail "missing --main-sha"
+[[ -n "$main_protected" ]] || fail "missing --main-protected"
+[[ -n "$compare_json" ]] || fail "missing --compare-json"
 
 semver_number='(0|[1-9][0-9]*)'
 [[ "$candidate" =~ ^v${semver_number}\.${semver_number}\.${semver_number}-rc\.([1-9][0-9]*)$ ]] ||
   fail "candidate must be strict vMAJOR.MINOR.PATCH-rc.NUMBER SemVer"
-[[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || fail "source SHA is invalid"
+[[ "$orchestration_sha" =~ ^[0-9a-f]{40}$ ]] ||
+  fail "orchestration SHA is invalid"
 [[ "$tag_sha" =~ ^[0-9a-f]{40}$ ]] || fail "candidate tag SHA is invalid"
 [[ "$approval_sha" =~ ^[0-9a-f]{40}$ ]] || fail "approval SHA is invalid"
 [[ "$main_sha" =~ ^[0-9a-f]{40}$ ]] || fail "main SHA is invalid"
 [[ "$ref_protected" == true ]] || fail "dispatch ref is not protected"
 [[ "$main_protected" == true ]] || fail "main is not protected"
 candidate_ref="refs/tags/$candidate"
-[[ "$dispatch_ref" == "$candidate_ref" ]] ||
-  fail "dispatch ref must be the exact protected candidate tag"
-[[ "$tag_sha" == "$source_sha" ]] ||
-  fail "candidate tag does not resolve to the exact producer source SHA"
+[[ "$dispatch_ref" == "refs/heads/main" ]] ||
+  fail "dispatch ref must be protected main, never the candidate tag"
+[[ "$approval_sha" == "$orchestration_sha" ]] ||
+  fail "approved-ledger SHA must equal the exact orchestration SHA"
 [[ -f "$rulesets_json" && ! -L "$rulesets_json" ]] ||
   fail "tag rulesets input must be a regular file"
 [[ -f "$compare_json" && ! -L "$compare_json" ]] ||

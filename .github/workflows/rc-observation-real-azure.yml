@@ -22,6 +22,10 @@ on:
         description: Exact protected RC tag commit SHA
         required: true
         type: string
+      archive_workflow_source_sha:
+        description: Exact protected-main SHA used by release-candidate
+        required: true
+        type: string
       archive_run_id:
         description: Exact successful release-candidate workflow run id
         required: true
@@ -99,12 +103,19 @@ jobs:
     outputs:
       profiles: ${{ steps.profiles.outputs.profiles }}
     steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
       - name: Validate RC and select profiles
         id: profiles
         env:
+          GH_TOKEN: ${{ github.token }}
           REQUESTED_PROFILE: ${{ inputs.profile }}
           RELEASE_CANDIDATE_ID: ${{ inputs.release_candidate_id }}
           CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          ARCHIVE_WORKFLOW_SOURCE_SHA: ${{ inputs.archive_workflow_source_sha }}
           ARCHIVE_RUN_ID: ${{ inputs.archive_run_id }}
           ARCHIVE_RUN_ATTEMPT: ${{ inputs.archive_run_attempt }}
           ARCHIVE_ARTIFACT_ID: ${{ inputs.archive_artifact_id }}
@@ -133,10 +144,41 @@ jobs:
             exit 1
           fi
           if [[ ! "$CANDIDATE_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+             [[ ! "$ARCHIVE_WORKFLOW_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] ||
              [[ ! "$GHCR_WORKFLOW_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::Candidate and GHCR workflow source SHAs must be exact lowercase Git SHAs."
+            echo "::error::Candidate, archive workflow, and GHCR workflow SHAs must be exact lowercase Git SHAs."
             exit 1
           fi
+          preflight_root=artifacts/rc-observation-source-preflight
+          mkdir -p "$preflight_root"
+          main_branch_json="$preflight_root/main-branch.json"
+          gh api -H "Accept: application/vnd.github+json" \
+            "/repos/$GITHUB_REPOSITORY/branches/main" > "$main_branch_json"
+          main_sha="$(
+            jq -er '
+              select(.name == "main" and .protected == true)
+              | .commit.sha
+              | select(type == "string")
+              | select(test("^[0-9a-f]{40}$"))
+            ' "$main_branch_json"
+          )" || {
+            echo "::error::Current main branch is not protected or has invalid metadata."
+            exit 1
+          }
+          for producer in archive ghcr; do
+            case "$producer" in
+              archive) producer_sha="$ARCHIVE_WORKFLOW_SOURCE_SHA" ;;
+              ghcr) producer_sha="$GHCR_WORKFLOW_SOURCE_SHA" ;;
+            esac
+            compare_json="$preflight_root/$producer-main-compare.json"
+            gh api -H "Accept: application/vnd.github+json" \
+              "/repos/$GITHUB_REPOSITORY/compare/$producer_sha...$main_sha" \
+              > "$compare_json"
+            python3 eng/release-candidate-image.py validate-protected-main \
+              --source-sha "$producer_sha" \
+              --main-branch-json "$main_branch_json" \
+              --main-compare-json "$compare_json"
+          done
           if [[ ! "$ARCHIVE_RUN_ID" =~ ^[1-9][0-9]*$ ]] ||
              [[ ! "$ARCHIVE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] ||
              [[ ! "$ARCHIVE_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] ||
@@ -195,6 +237,7 @@ jobs:
       PROFILE: ${{ matrix.profile }}
       RELEASE_CANDIDATE_ID: ${{ inputs.release_candidate_id }}
       CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+      ARCHIVE_WORKFLOW_SOURCE_SHA: ${{ inputs.archive_workflow_source_sha }}
       ARCHIVE_RUN_ID: ${{ inputs.archive_run_id }}
       ARCHIVE_RUN_ATTEMPT: ${{ inputs.archive_run_attempt }}
       ARCHIVE_ARTIFACT_ID: ${{ inputs.archive_artifact_id }}
@@ -352,8 +395,8 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --run-id "$ARCHIVE_RUN_ID" \
             --run-attempt "$ARCHIVE_RUN_ATTEMPT" \
-            --expected-sha "$CANDIDATE_SOURCE_SHA" \
-            --expected-ref "refs/tags/$RELEASE_CANDIDATE_ID" \
+            --expected-sha "$ARCHIVE_WORKFLOW_SOURCE_SHA" \
+            --expected-ref refs/heads/main \
             --workflow ".github/workflows/release-candidate.yml" \
             --event "workflow_dispatch" \
             --profile "release-candidate-archives" \
@@ -375,10 +418,15 @@ jobs:
               .candidate.source.repository == env.GITHUB_REPOSITORY and
               .candidate.source.sha == $source_sha and
               .candidate.source.ref == $source_ref and
+              .orchestration_source.repository == env.GITHUB_REPOSITORY and
+              .orchestration_source.sha == env.ARCHIVE_WORKFLOW_SOURCE_SHA and
+              .orchestration_source.ref == "refs/heads/main" and
               .producer.workflow == ".github/workflows/release-candidate.yml" and
               .producer.event_name == "workflow_dispatch" and
               .producer.run_id == $run_id and
               .producer.run_attempt == $run_attempt and
+              .producer.source_sha == env.ARCHIVE_WORKFLOW_SOURCE_SHA and
+              .producer.source_ref == "refs/heads/main" and
               .pending_interfaces.observation_evidence.status == "pending" and
               .pending_interfaces.observation_evidence.issue == 582 and
               ([.workloads[] | select(.profile.id == $profile)] | length) == 1
@@ -409,18 +457,16 @@ jobs:
           gh attestation verify "$archive_inputs" \
             --repo "$GITHUB_REPOSITORY" \
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-candidate.yml" \
-            --source-digest "$CANDIDATE_SOURCE_SHA" \
-            --source-ref "refs/tags/$RELEASE_CANDIDATE_ID" \
+            --source-digest "$ARCHIVE_WORKFLOW_SOURCE_SHA" \
+            --source-ref refs/heads/main \
             --predicate-type "https://slsa.dev/provenance/v1" \
             --deny-self-hosted-runners \
             --format json > "$attestations"
           expected_attempt_uri="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${ARCHIVE_RUN_ID}/attempts/${ARCHIVE_RUN_ATTEMPT}"
-          expected_workflow_ref="${GITHUB_REPOSITORY}/.github/workflows/release-candidate.yml@refs/tags/${RELEASE_CANDIDATE_ID}"
           jq -e \
             --arg repository "$GITHUB_REPOSITORY" \
-            --arg workflow_ref "$expected_workflow_ref" \
-            --arg source_sha "$CANDIDATE_SOURCE_SHA" \
-            --arg source_ref "refs/tags/$RELEASE_CANDIDATE_ID" \
+            --arg source_sha "$ARCHIVE_WORKFLOW_SOURCE_SHA" \
+            --arg source_ref refs/heads/main \
             --arg attempt_uri "$expected_attempt_uri" \
             --arg digest "$archive_inputs_sha" \
             '
@@ -433,7 +479,7 @@ jobs:
                 | select(.verificationResult.signature.certificate.githubWorkflowRepository ==
                     $repository)
                 | select(.verificationResult.signature.certificate.githubWorkflowRef ==
-                    $workflow_ref)
+                    $source_ref)
                 | select(.verificationResult.signature.certificate.githubWorkflowSHA ==
                     $source_sha)
                 | select(.verificationResult.signature.certificate.sourceRepositoryDigest ==
@@ -466,16 +512,15 @@ jobs:
           gh attestation verify "$approved_ledger" \
             --repo "$GITHUB_REPOSITORY" \
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-candidate.yml" \
-            --source-digest "$CANDIDATE_SOURCE_SHA" \
-            --source-ref "refs/tags/$RELEASE_CANDIDATE_ID" \
+            --source-digest "$ARCHIVE_WORKFLOW_SOURCE_SHA" \
+            --source-ref refs/heads/main \
             --predicate-type "https://slsa.dev/provenance/v1" \
             --deny-self-hosted-runners \
             --format json > "$ledger_attestations"
           jq -e \
             --arg repository "$GITHUB_REPOSITORY" \
-            --arg workflow_ref "$expected_workflow_ref" \
-            --arg source_sha "$CANDIDATE_SOURCE_SHA" \
-            --arg source_ref "refs/tags/$RELEASE_CANDIDATE_ID" \
+            --arg source_sha "$ARCHIVE_WORKFLOW_SOURCE_SHA" \
+            --arg source_ref refs/heads/main \
             --arg attempt_uri "$expected_attempt_uri" \
             --arg subject_name "$ledger_name" \
             --arg digest "$approved_ledger_sha" \
@@ -489,7 +534,7 @@ jobs:
                 | select(.verificationResult.signature.certificate.githubWorkflowRepository ==
                     $repository)
                 | select(.verificationResult.signature.certificate.githubWorkflowRef ==
-                    $workflow_ref)
+                    $source_ref)
                 | select(.verificationResult.signature.certificate.githubWorkflowSHA ==
                     $source_sha)
                 | select(.verificationResult.signature.certificate.sourceRepositoryDigest ==
@@ -527,8 +572,8 @@ jobs:
                     run_id: $archive[0].producer.run_id,
                     run_attempt: $archive[0].producer.run_attempt,
                     attempt_url: $archive[0].producer.attempt_url,
-                    source_sha: $archive[0].candidate.source.sha,
-                    source_ref: $archive[0].candidate.source.ref
+                    source_sha: $archive[0].producer.source_sha,
+                    source_ref: $archive[0].producer.source_ref
                   },
                   artifact: {
                     id: $identity[0].artifact.id,
@@ -636,6 +681,7 @@ jobs:
               .archive_input.producer.run_attempt == $archive[0].producer.run_attempt and
               .archive_input.producer.attempt_url == $archive[0].producer.attempt_url and
               .archive_input.producer.source_sha == $archive[0].producer.source_sha and
+              .archive_input.producer.source_ref == $archive[0].producer.source_ref and
               .archive_input.content_digest == $archive[0].content_digest and
               .archive_input.manifest_sha256 == $archive_manifest_sha and
               .archive_input.artifact.id == $selection[0].artifact.id and
@@ -656,11 +702,10 @@ jobs:
             --deny-self-hosted-runners \
             --format json > "$attestations"
           expected_attempt_uri="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GHCR_RUN_ID}/attempts/${GHCR_RUN_ATTEMPT}"
-          expected_workflow_ref="${GITHUB_REPOSITORY}/.github/workflows/release-candidate-image.yml@refs/heads/main"
           jq -e \
             --arg repository "$GITHUB_REPOSITORY" \
-            --arg workflow_ref "$expected_workflow_ref" \
             --arg source_sha "$GHCR_WORKFLOW_SOURCE_SHA" \
+            --arg source_ref refs/heads/main \
             --arg attempt_uri "$expected_attempt_uri" \
             --arg digest "$ghcr_inputs_sha" \
             '
@@ -673,13 +718,13 @@ jobs:
                 | select(.verificationResult.signature.certificate.githubWorkflowRepository ==
                     $repository)
                 | select(.verificationResult.signature.certificate.githubWorkflowRef ==
-                    $workflow_ref)
+                    $source_ref)
                 | select(.verificationResult.signature.certificate.githubWorkflowSHA ==
                     $source_sha)
                 | select(.verificationResult.signature.certificate.sourceRepositoryDigest ==
                     $source_sha)
                 | select(.verificationResult.signature.certificate.sourceRepositoryRef ==
-                    "refs/heads/main")
+                    $source_ref)
                 | select(.verificationResult.signature.certificate.runInvocationURI ==
                     $attempt_uri)
                 | select(.verificationResult.statement.predicate.runDetails.metadata.invocationId ==

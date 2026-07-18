@@ -525,8 +525,8 @@ public sealed class RcObservationTests
                         AttemptUrl =
                             "https://github.com/example/repository/actions/runs/" +
                             "12000/attempts/1",
-                        SourceSha = candidate.SourceSha,
-                        SourceRef = "refs/tags/v1.0.0-rc.1",
+                        SourceSha = new string('e', 40),
+                        SourceRef = "refs/heads/main",
                     },
                     Artifact = new RcObservationArtifactIdentity
                     {
@@ -668,6 +668,8 @@ public sealed class RcObservationTests
                 evidence.ReleaseCandidate.ArchiveInputs.Producer.RunId,
             ArchiveProducerRunAttempt =
                 evidence.ReleaseCandidate.ArchiveInputs.Producer.RunAttempt,
+            ArchiveProducerSourceSha =
+                evidence.ReleaseCandidate.ArchiveInputs.Producer.SourceSha,
             ArchiveProducerSourceRef =
                 evidence.ReleaseCandidate.ArchiveInputs.Producer.SourceRef,
             ArchiveArtifactId = evidence.ReleaseCandidate.ArchiveInputs.Artifact.Id,

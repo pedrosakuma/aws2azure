@@ -219,6 +219,7 @@ public sealed record RcObservationValidationContext
     public string ArchiveProducerWorkflowPath { get; init; } = string.Empty;
     public long ArchiveProducerRunId { get; init; }
     public int ArchiveProducerRunAttempt { get; init; }
+    public string ArchiveProducerSourceSha { get; init; } = string.Empty;
     public string ArchiveProducerSourceRef { get; init; } = string.Empty;
     public long ArchiveArtifactId { get; init; }
     public string ArchiveArtifactName { get; init; } = string.Empty;
@@ -1066,7 +1067,8 @@ public static partial class RcObservationValidator
                 ".github/workflows/release-candidate.yml"
             || context.ArchiveProducerRunId <= 0
             || context.ArchiveProducerRunAttempt <= 0
-            || !TrustedRefRegex().IsMatch(context.ArchiveProducerSourceRef)
+            || !IsGitSha(context.ArchiveProducerSourceSha)
+            || context.ArchiveProducerSourceRef != "refs/heads/main"
             || context.ArchiveArtifactId <= 0
             || string.IsNullOrWhiteSpace(context.ArchiveArtifactName)
             || !IsDigest(context.ArchiveArtifactUploadDigest)
@@ -1223,7 +1225,7 @@ public static partial class RcObservationValidator
             || archiveProducer.RunId != context.ArchiveProducerRunId
             || archiveProducer.RunAttempt != context.ArchiveProducerRunAttempt
             || archiveProducer.AttemptUrl != expectedArchiveAttempt
-            || archiveProducer.SourceSha != context.CandidateSourceSha
+            || archiveProducer.SourceSha != context.ArchiveProducerSourceSha
             || archiveProducer.SourceRef != context.ArchiveProducerSourceRef
             || archive.Artifact.Id != context.ArchiveArtifactId
             || archive.Artifact.Name != context.ArchiveArtifactName

@@ -21,7 +21,8 @@ STABLE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
 CANDIDATE = "v1.2.3-rc.4"
 REPOSITORY = "pedrosakuma/aws2azure"
 SOURCE_SHA = "0123456789abcdef0123456789abcdef01234567"
-APPROVAL_SHA = "1123456789abcdef0123456789abcdef01234567"
+ORCHESTRATION_SHA = "1123456789abcdef0123456789abcdef01234567"
+APPROVAL_SHA = ORCHESTRATION_SHA
 SOURCE_REF = f"refs/tags/{CANDIDATE}"
 
 
@@ -153,6 +154,8 @@ class ReleaseCandidateProducerTests(unittest.TestCase):
             SOURCE_SHA,
             "--source-ref",
             SOURCE_REF,
+            "--orchestration-sha",
+            ORCHESTRATION_SHA,
             "--approval-sha",
             APPROVAL_SHA,
             "--s3-ledger",
@@ -170,7 +173,9 @@ class ReleaseCandidateProducerTests(unittest.TestCase):
             expect_success=expect_success,
         )
 
-    def package(self, rid: str, output: pathlib.Path) -> pathlib.Path:
+    def package(
+        self, rid: str, output: pathlib.Path, *, source_sha: str = SOURCE_SHA
+    ) -> pathlib.Path:
         self.run_tool(
             PACKAGE_TOOL,
             "package",
@@ -179,7 +184,7 @@ class ReleaseCandidateProducerTests(unittest.TestCase):
             "--repository",
             REPOSITORY,
             "--source-sha",
-            SOURCE_SHA,
+            source_sha,
             "--source-ref",
             SOURCE_REF,
             "--rid",
@@ -214,6 +219,14 @@ class ReleaseCandidateProducerTests(unittest.TestCase):
             ),
         )
         self.assertEqual(context["approved_ledger_source"]["sha"], APPROVAL_SHA)
+        self.assertEqual(
+            context["orchestration_source"],
+            context["approved_ledger_source"],
+        )
+        self.assertNotEqual(
+            context["orchestration_source"]["sha"],
+            context["candidate"]["source"]["sha"],
+        )
 
     def test_context_rejects_runtime_source_and_ledger_identity_drift(self) -> None:
         secrets_path = self.ledgers["secretsmanager-basic-lifecycle"]
@@ -244,6 +257,73 @@ class ReleaseCandidateProducerTests(unittest.TestCase):
         s3["record"]["attestation"]["source_ref"] = "refs/tags/v1.2.3-rc.3"
         write_json(s3_path, s3)
         self.create_context(expect_success=False)
+
+    def test_context_rejects_candidate_tag_and_ledger_runtime_mismatch(self) -> None:
+        self.run_tool(
+            INPUTS_TOOL,
+            "create-context",
+            "--candidate",
+            CANDIDATE,
+            "--repository",
+            REPOSITORY,
+            "--source-sha",
+            "2" * 40,
+            "--source-ref",
+            SOURCE_REF,
+            "--orchestration-sha",
+            ORCHESTRATION_SHA,
+            "--approval-sha",
+            APPROVAL_SHA,
+            "--s3-ledger",
+            str(self.ledgers["s3-basic-object-crud"]),
+            "--s3-profile",
+            str(REPO_ROOT / "docs/workloads/s3-basic-object-crud.yaml"),
+            "--secrets-ledger",
+            str(self.ledgers["secretsmanager-basic-lifecycle"]),
+            "--secrets-profile",
+            str(REPO_ROOT / "docs/workloads/secretsmanager-basic-lifecycle.yaml"),
+            "--policy",
+            str(REPO_ROOT / "docs/versioning-and-compatibility.md"),
+            "--output",
+            str(self.context),
+            expect_success=False,
+        )
+
+    def test_archive_inputs_reject_mixed_platform_candidate_sources(self) -> None:
+        self.create_context()
+        bundle = self.root / "mixed"
+        sealed = bundle / "sealed-runtime" / "sealed-runtime-manifest.json"
+        sealed.parent.mkdir(parents=True)
+        shutil.copyfile(self.sealed_manifest, sealed)
+        x64 = self.package("linux-x64", bundle / "platforms/linux-x64")
+        arm64 = self.package(
+            "linux-arm64",
+            bundle / "platforms/linux-arm64",
+            source_sha="2" * 40,
+        )
+        self.run_tool(
+            INPUTS_TOOL,
+            "assemble",
+            "--context",
+            str(self.context),
+            "--x64-manifest",
+            str(x64),
+            "--arm64-manifest",
+            str(arm64),
+            "--sealed-manifest",
+            str(sealed),
+            "--bundle-digest",
+            digest_bytes(b"bundle"),
+            "--run-id",
+            "333",
+            "--run-attempt",
+            "1",
+            "--attempt-url",
+            f"https://github.com/{REPOSITORY}/actions/runs/333/attempts/1",
+            "--output",
+            str(bundle / "release-candidate-archive-inputs.json"),
+            expect_success=False,
+        )
 
     def test_package_is_deterministic_strict_and_tamper_evident(self) -> None:
         first = self.root / "package-one"
@@ -366,6 +446,7 @@ class ReleaseCandidateProducerTests(unittest.TestCase):
             {
                 "schema_version",
                 "candidate",
+                "orchestration_source",
                 "producer",
                 "approved_ledger_source",
                 "platforms",
@@ -432,11 +513,27 @@ class ReleaseCandidateProducerTests(unittest.TestCase):
         self.assertIn("--rid linux-arm64", text)
         self.assertIn("native arm64 runner", text)
         self.assertEqual(text.count("ref: ${{ github.sha }}"), 3)
-        self.assertIn("ref: ${{ inputs.approved_ledger_sha }}", text)
+        self.assertEqual(text.count("path: orchestration"), 3)
+        self.assertEqual(text.count("path: candidate-source"), 2)
+        self.assertIn("ref: ${{ steps.trust.outputs.candidate_sha }}", text)
+        self.assertIn("ref: ${{ needs.linux-x64.outputs.candidate_sha }}", text)
+        self.assertIn("working-directory: candidate-source", text)
+        self.assertIn("uses: ./orchestration/.github/actions/dotnet-setup", text)
+        self.assertNotIn("uses: ./candidate-source/", text)
         self.assertIn("approved-ledger-compare.json", text)
-        self.assertIn("dispatch ref must be the exact protected candidate tag", (
+        self.assertIn("dispatch ref must be protected main, never the candidate tag", (
             REPO_ROOT / "eng" / "validate-release-candidate-ref.sh"
         ).read_text(encoding="utf-8"))
+        self.assertIn(
+            "--orchestration-sha \"$ORCHESTRATION_SHA\"",
+            text,
+        )
+        self.assertIn("--source-sha \"$CANDIDATE_SHA\"", text)
+        self.assertIn(
+            "orchestration/eng/validate-release-candidate-checkouts.sh",
+            text,
+        )
+        self.assertNotIn("approved-ledgers", text)
         self.assertIn("persist-credentials: false", text)
         self.assertIn("overwrite: false", text)
         self.assertIn("actions/attest-build-provenance@", text)

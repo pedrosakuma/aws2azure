@@ -241,10 +241,47 @@ def parse_timestamp(value: Any, name: str) -> datetime.datetime:
     return timestamp
 
 
+def validate_protected_main_source(
+    source_sha: str,
+    main_branch_path: pathlib.Path,
+    main_compare_path: pathlib.Path,
+) -> None:
+    main_branch = require_object(load_json(main_branch_path), "main branch")
+    main_commit = require_object(main_branch.get("commit"), "main branch commit")
+    main_sha = require_sha(main_commit.get("sha"), "main branch commit SHA")
+    if main_branch.get("name") != "main" or main_branch.get("protected") is not True:
+        fail("workflow source is not anchored to protected main")
+    main_compare = require_object(load_json(main_compare_path), "main comparison")
+    base_commit = require_object(main_compare.get("base_commit"), "comparison base commit")
+    merge_base = require_object(
+        main_compare.get("merge_base_commit"), "comparison merge-base commit"
+    )
+    head_commit = require_object(main_compare.get("head_commit"), "comparison head commit")
+    if (
+        main_compare.get("status") not in ("ahead", "identical")
+        or base_commit.get("sha") != source_sha
+        or merge_base.get("sha") != source_sha
+        or head_commit.get("sha") != main_sha
+    ):
+        fail("workflow source is not protected main history")
+
+
+def validate_protected_main(args: argparse.Namespace) -> None:
+    source_sha = require_sha(args.source_sha, "workflow source SHA")
+    validate_protected_main_source(
+        source_sha,
+        args.main_branch_json.resolve(),
+        args.main_compare_json.resolve(),
+    )
+
+
 def validate_selection(args: argparse.Namespace) -> None:
     repository = require_repository(args.repository, "repository")
     candidate = require_candidate(args.candidate)
     source_sha = require_sha(args.source_sha, "source SHA")
+    workflow_source_sha = require_sha(
+        args.workflow_source_sha, "workflow source SHA"
+    )
     run_id = require_integer(args.run_id, "run id")
     run_attempt = require_integer(args.run_attempt, "run attempt")
     artifact_id = require_integer(args.artifact_id, "artifact id")
@@ -252,6 +289,11 @@ def validate_selection(args: argparse.Namespace) -> None:
     upload_digest = require_digest(args.artifact_digest, "artifact digest")
     archive_content_digest = require_digest(
         args.archive_content_digest, "archive-input content digest"
+    )
+    validate_protected_main_source(
+        workflow_source_sha,
+        args.main_branch_json.resolve(),
+        args.main_compare_json.resolve(),
     )
     expected_name = (
         f"aws2azure-rc-archives-{candidate}-"
@@ -269,7 +311,8 @@ def validate_selection(args: argparse.Namespace) -> None:
         or run.get("status") != "completed"
         or run.get("conclusion") != "success"
         or run.get("path") != RC_WORKFLOW
-        or run.get("head_sha") != source_sha
+        or run.get("head_sha") != workflow_source_sha
+        or run.get("head_branch") != "main"
         or (run.get("repository") or {}).get("full_name") != repository
         or (run.get("head_repository") or {}).get("full_name") != repository
     ):
@@ -283,7 +326,7 @@ def validate_selection(args: argparse.Namespace) -> None:
         or artifact.get("digest") != upload_digest
         or artifact.get("expired") is not False
         or workflow_run.get("id") != run_id
-        or workflow_run.get("head_sha") != source_sha
+        or workflow_run.get("head_sha") != workflow_source_sha
     ):
         fail("selected artifact does not match its exact API identity")
     if parse_timestamp(artifact.get("expires_at"), "artifact.expires_at") <= datetime.datetime.now(
@@ -314,7 +357,8 @@ def validate_selection(args: argparse.Namespace) -> None:
             "run_started_at": require_string(
                 run.get("run_started_at"), "run.run_started_at"
             ),
-            "source_sha": source_sha,
+            "source_sha": workflow_source_sha,
+            "source_ref": "refs/heads/main",
         },
         "artifact": {
             "id": artifact_id,
@@ -372,6 +416,7 @@ def validate_selection_file(path: pathlib.Path) -> dict[str, Any]:
             "attempt_url",
             "run_started_at",
             "source_sha",
+            "source_ref",
         },
     )
     run_id = require_integer(producer["run_id"], "selection producer run id")
@@ -381,11 +426,12 @@ def validate_selection_file(path: pathlib.Path) -> dict[str, Any]:
     expected_attempt = (
         f"https://github.com/{repository}/actions/runs/{run_id}/attempts/{run_attempt}"
     )
+    require_sha(producer["source_sha"], "selection producer source SHA")
     if (
         producer["workflow"] != RC_WORKFLOW
         or producer["event_name"] != "workflow_dispatch"
         or producer["attempt_url"] != expected_attempt
-        or producer["source_sha"] != source["sha"]
+        or producer["source_ref"] != "refs/heads/main"
     ):
         fail("selection producer identity is invalid")
     parse_timestamp(producer["run_started_at"], "selection producer start time")
@@ -513,6 +559,10 @@ def validate_bundle(args: argparse.Namespace) -> None:
         != selection["producer"]["run_attempt"]
         or archive_inputs["producer"]["attempt_url"]
         != selection["producer"]["attempt_url"]
+        or archive_inputs["producer"]["source_sha"]
+        != selection["producer"]["source_sha"]
+        or archive_inputs["producer"]["source_ref"]
+        != selection["producer"]["source_ref"]
         or archive_inputs["content_digest"]
         != selection["archive_input_content_digest"]
     ):
@@ -667,8 +717,8 @@ def normalized_subjects(value: Any, name: str) -> Counter[tuple[str, str]]:
 def validate_attestation(args: argparse.Namespace) -> None:
     identity = validate_identity(args.identity.resolve())
     repository = identity["candidate"]["source"]["repository"]
-    source_sha = identity["candidate"]["source"]["sha"]
-    source_ref = identity["candidate"]["source"]["ref"]
+    source_sha = identity["producer"]["source_sha"]
+    source_ref = identity["producer"]["source_ref"]
     attempt_url = identity["producer"]["attempt_url"]
     expected_values = identity["attestation_subjects"][
         "payload" if args.kind == "payload" else "archive_inputs"
@@ -1368,6 +1418,7 @@ def validate_ghcr_input(path: pathlib.Path) -> dict[str, Any]:
             "attempt_url",
             "run_started_at",
             "source_sha",
+            "source_ref",
         },
     )
     archive_run_id = require_integer(
@@ -1380,11 +1431,14 @@ def validate_ghcr_input(path: pathlib.Path) -> dict[str, Any]:
         f"https://github.com/{repository}/actions/runs/{archive_run_id}/attempts/"
         f"{archive_run_attempt}"
     )
+    require_sha(
+        archive_producer["source_sha"], "GHCR archive producer source SHA"
+    )
     if (
         archive_producer["workflow"] != RC_WORKFLOW
         or archive_producer["event_name"] != "workflow_dispatch"
         or archive_producer["attempt_url"] != archive_attempt
-        or archive_producer["source_sha"] != source["sha"]
+        or archive_producer["source_ref"] != "refs/heads/main"
     ):
         fail("GHCR archive producer identity is invalid")
     parse_timestamp(archive_producer["run_started_at"], "GHCR archive start time")
@@ -1418,10 +1472,16 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    protected_main = subparsers.add_parser("validate-protected-main")
+    protected_main.add_argument("--source-sha", required=True)
+    protected_main.add_argument("--main-branch-json", type=pathlib.Path, required=True)
+    protected_main.add_argument("--main-compare-json", type=pathlib.Path, required=True)
+
     selection = subparsers.add_parser("validate-selection")
     selection.add_argument("--repository", required=True)
     selection.add_argument("--candidate", required=True)
     selection.add_argument("--source-sha", required=True)
+    selection.add_argument("--workflow-source-sha", required=True)
     selection.add_argument("--run-id", type=int, required=True)
     selection.add_argument("--run-attempt", type=int, required=True)
     selection.add_argument("--artifact-id", type=int, required=True)
@@ -1430,6 +1490,8 @@ def main() -> None:
     selection.add_argument("--archive-content-digest", required=True)
     selection.add_argument("--run-json", type=pathlib.Path, required=True)
     selection.add_argument("--artifact-json", type=pathlib.Path, required=True)
+    selection.add_argument("--main-branch-json", type=pathlib.Path, required=True)
+    selection.add_argument("--main-compare-json", type=pathlib.Path, required=True)
     selection.add_argument("--output", type=pathlib.Path, required=True)
 
     bundle = subparsers.add_parser("validate-bundle")
@@ -1503,7 +1565,9 @@ def main() -> None:
     validate_index_parser.add_argument("--index-digest", required=True)
 
     args = parser.parse_args()
-    if args.command == "validate-selection":
+    if args.command == "validate-protected-main":
+        validate_protected_main(args)
+    elif args.command == "validate-selection":
         validate_selection(args)
     elif args.command == "validate-bundle":
         validate_bundle(args)

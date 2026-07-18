@@ -290,7 +290,10 @@ def create_context(args: argparse.Namespace) -> None:
     if REPOSITORY_RE.fullmatch(args.repository) is None:
         fail("repository must be OWNER/REPO")
     source_sha = require_sha(args.source_sha, "source SHA")
+    orchestration_sha = require_sha(args.orchestration_sha, "orchestration SHA")
     approval_sha = require_sha(args.approval_sha, "approved-ledger SHA")
+    if orchestration_sha != approval_sha:
+        fail("orchestration and approved-ledger SHAs must identify one trusted main commit")
     if args.source_ref != f"refs/tags/{candidate}":
         fail("source ref must be the exact candidate tag")
     common_identities: list[dict[str, Any]] = []
@@ -329,6 +332,11 @@ def create_context(args: argparse.Namespace) -> None:
                 "ref": args.source_ref,
             },
         },
+        "orchestration_source": {
+            "repository": args.repository,
+            "sha": orchestration_sha,
+            "ref": "refs/heads/main",
+        },
         "approved_ledger_source": {
             "repository": args.repository,
             "sha": approval_sha,
@@ -357,6 +365,7 @@ def validate_context(path: pathlib.Path) -> dict[str, Any]:
         "schema_version",
         "artifact_kind",
         "candidate",
+        "orchestration_source",
         "approved_ledger_source",
         "sealed_runtime",
         "workloads",
@@ -381,17 +390,26 @@ def validate_context(path: pathlib.Path) -> dict[str, Any]:
     ):
         fail("context candidate source is invalid")
     require_sha(source.get("sha"), "context source SHA")
+    orchestration_source = require_keys(
+        context["orchestration_source"],
+        "orchestration source",
+        {"repository", "sha", "ref"},
+    )
+    if (
+        orchestration_source["repository"] != source["repository"]
+        or orchestration_source["ref"] != "refs/heads/main"
+    ):
+        fail("orchestration source must be the same repository's protected main")
+    require_sha(orchestration_source["sha"], "orchestration source SHA")
     approved_source = require_keys(
         context["approved_ledger_source"],
         "approved ledger source",
         {"repository", "sha", "ref"},
     )
     if (
-        approved_source["repository"] != source["repository"]
-        or approved_source["ref"] != "refs/heads/main"
+        approved_source != orchestration_source
     ):
-        fail("approved ledger source must be the same repository's protected main")
-    require_sha(approved_source["sha"], "approved ledger source SHA")
+        fail("approved ledger source must equal the exact trusted orchestration source")
     sealed = require_keys(
         context["sealed_runtime"],
         "sealed runtime",
@@ -592,13 +610,15 @@ def assemble(args: argparse.Namespace) -> None:
     root = output.parent
     context = validate_context(args.context.resolve())
     source = context["candidate"]["source"]
+    orchestration_source = context["orchestration_source"]
     producer = {
         "workflow": RC_WORKFLOW,
         "event_name": "workflow_dispatch",
         "run_id": require_integer(args.run_id, "run id"),
         "run_attempt": require_integer(args.run_attempt, "run attempt"),
         "attempt_url": args.attempt_url,
-        "source_sha": source["sha"],
+        "source_sha": orchestration_source["sha"],
+        "source_ref": orchestration_source["ref"],
     }
     expected_attempt = (
         f"https://github.com/{source['repository']}/actions/runs/"
@@ -638,7 +658,8 @@ def assemble(args: argparse.Namespace) -> None:
                 "predicate_type": "https://slsa.dev/provenance/v1",
                 "bundle_digest": bundle_digest,
                 "producer_attempt_url": producer["attempt_url"],
-                "source_sha": source["sha"],
+                "producer_source_sha": orchestration_source["sha"],
+                "candidate_source_sha": source["sha"],
             },
             "sealed_runtime": None,
         }
@@ -662,6 +683,7 @@ def assemble(args: argparse.Namespace) -> None:
         "schema_version": SCHEMA_VERSION,
         "artifact_kind": "release_candidate_archive_inputs",
         "candidate": context["candidate"],
+        "orchestration_source": orchestration_source,
         "producer": producer,
         "approved_ledger_source": context["approved_ledger_source"],
         "platforms": platforms,
@@ -693,6 +715,7 @@ def validate_inputs(path: pathlib.Path) -> dict[str, Any]:
         "schema_version",
         "artifact_kind",
         "candidate",
+        "orchestration_source",
         "producer",
         "approved_ledger_source",
         "platforms",
@@ -719,15 +742,35 @@ def validate_inputs(path: pathlib.Path) -> dict[str, Any]:
         or source.get("ref") != f"refs/tags/{identifier}"
     ):
         fail("source ref does not bind the exact candidate")
+    orchestration_source = require_keys(
+        evidence["orchestration_source"],
+        "orchestration source",
+        {"repository", "sha", "ref"},
+    )
+    if (
+        orchestration_source["repository"] != source["repository"]
+        or orchestration_source["ref"] != "refs/heads/main"
+    ):
+        fail("orchestration source must be exact protected main history")
+    require_sha(orchestration_source["sha"], "orchestration source SHA")
     producer = require_keys(
         evidence["producer"],
         "producer",
-        {"workflow", "event_name", "run_id", "run_attempt", "attempt_url", "source_sha"},
+        {
+            "workflow",
+            "event_name",
+            "run_id",
+            "run_attempt",
+            "attempt_url",
+            "source_sha",
+            "source_ref",
+        },
     )
     if (
         producer.get("workflow") != RC_WORKFLOW
         or producer.get("event_name") != "workflow_dispatch"
-        or producer.get("source_sha") != source["sha"]
+        or producer.get("source_sha") != orchestration_source["sha"]
+        or producer.get("source_ref") != orchestration_source["ref"]
     ):
         fail("producer identity is invalid")
     run_id = require_integer(producer.get("run_id"), "producer run id")
@@ -745,11 +788,9 @@ def validate_inputs(path: pathlib.Path) -> dict[str, Any]:
         {"repository", "sha", "ref"},
     )
     if (
-        approved_source["repository"] != source["repository"]
-        or approved_source["ref"] != "refs/heads/main"
+        approved_source != orchestration_source
     ):
-        fail("approved ledger source must be exact protected main history")
-    require_sha(approved_source["sha"], "approved ledger source SHA")
+        fail("approved ledger source must equal the exact orchestration source")
     platforms = evidence["platforms"]
     if (
         not isinstance(platforms, list)
@@ -779,13 +820,20 @@ def validate_inputs(path: pathlib.Path) -> dict[str, Any]:
         provenance = require_keys(
             platform["provenance"],
             f"{rid} provenance",
-            {"predicate_type", "bundle_digest", "producer_attempt_url", "source_sha"},
+            {
+                "predicate_type",
+                "bundle_digest",
+                "producer_attempt_url",
+                "producer_source_sha",
+                "candidate_source_sha",
+            },
         )
         require_digest(provenance.get("bundle_digest"), f"{rid} bundle digest")
         if (
             provenance.get("predicate_type") != "https://slsa.dev/provenance/v1"
             or provenance.get("producer_attempt_url") != producer["attempt_url"]
-            or provenance.get("source_sha") != source["sha"]
+            or provenance.get("producer_source_sha") != orchestration_source["sha"]
+            or provenance.get("candidate_source_sha") != source["sha"]
         ):
             fail(f"{rid} provenance identity is invalid")
         if executable.stat().st_size <= 0 or archive.stat().st_size <= 0:
@@ -911,6 +959,7 @@ def main() -> None:
     context_parser.add_argument("--repository", required=True)
     context_parser.add_argument("--source-sha", required=True)
     context_parser.add_argument("--source-ref", required=True)
+    context_parser.add_argument("--orchestration-sha", required=True)
     context_parser.add_argument("--approval-sha", required=True)
     context_parser.add_argument("--s3-ledger", type=pathlib.Path, required=True)
     context_parser.add_argument("--s3-profile", type=pathlib.Path, required=True)

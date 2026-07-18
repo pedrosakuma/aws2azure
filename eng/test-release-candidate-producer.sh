@@ -7,8 +7,9 @@ rm -rf "$test_root"
 mkdir -p "$test_root"
 trap 'rm -rf "$test_root"; rmdir "$repo_root/artifacts" 2>/dev/null || true' EXIT
 
-sha=0123456789abcdef0123456789abcdef01234567
-approval_sha=1123456789abcdef0123456789abcdef01234567
+candidate_sha=0123456789abcdef0123456789abcdef01234567
+orchestration_sha=1123456789abcdef0123456789abcdef01234567
+approval_sha=$orchestration_sha
 main_sha=2123456789abcdef0123456789abcdef01234567
 candidate=v1.2.3-rc.4
 cat > "$test_root/rulesets.json" <<'JSON'
@@ -36,10 +37,10 @@ JSON
 
 "$repo_root/eng/validate-release-candidate-ref.sh" \
   --candidate "$candidate" \
-  --source-sha "$sha" \
-  --dispatch-ref "refs/tags/$candidate" \
+  --orchestration-sha "$orchestration_sha" \
+  --dispatch-ref refs/heads/main \
   --ref-protected true \
-  --tag-sha "$sha" \
+  --tag-sha "$candidate_sha" \
   --rulesets-json "$test_root/rulesets.json" \
   --approval-sha "$approval_sha" \
   --main-sha "$main_sha" \
@@ -57,10 +58,10 @@ expect_fail() {
 
 base=(
   "$repo_root/eng/validate-release-candidate-ref.sh"
-  --source-sha "$sha"
-  --dispatch-ref "refs/tags/$candidate"
+  --orchestration-sha "$orchestration_sha"
+  --dispatch-ref refs/heads/main
   --ref-protected true
-  --tag-sha "$sha"
+  --tag-sha "$candidate_sha"
   --rulesets-json "$test_root/rulesets.json"
   --approval-sha "$approval_sha"
   --main-sha "$main_sha"
@@ -71,25 +72,30 @@ expect_fail "${base[@]}" --candidate v1.2.3-rc.04
 expect_fail "${base[@]}" --candidate v01.2.3-rc.4
 expect_fail "${base[@]}" --candidate v1.2.3-rc4
 expect_fail "$repo_root/eng/validate-release-candidate-ref.sh" \
-  --candidate "$candidate" --source-sha "$sha" --dispatch-ref refs/pull/1/merge \
-  --ref-protected true --tag-sha "$sha" --rulesets-json "$test_root/rulesets.json" \
+  --candidate "$candidate" --orchestration-sha "$orchestration_sha" \
+  --dispatch-ref refs/pull/1/merge \
+  --ref-protected true --tag-sha "$candidate_sha" --rulesets-json "$test_root/rulesets.json" \
   --approval-sha "$approval_sha" --main-sha "$main_sha" --main-protected true \
   --compare-json "$test_root/compare.json"
 expect_fail "$repo_root/eng/validate-release-candidate-ref.sh" \
-  --candidate "$candidate" --source-sha "$sha" --dispatch-ref refs/heads/main \
-  --ref-protected true --tag-sha "$sha" --rulesets-json "$test_root/rulesets.json" \
+  --candidate "$candidate" --orchestration-sha "$orchestration_sha" \
+  --dispatch-ref "refs/tags/$candidate" \
+  --ref-protected true --tag-sha "$candidate_sha" --rulesets-json "$test_root/rulesets.json" \
   --approval-sha "$approval_sha" --main-sha "$main_sha" --main-protected true \
   --compare-json "$test_root/compare.json"
 expect_fail "$repo_root/eng/validate-release-candidate-ref.sh" \
-  --candidate "$candidate" --source-sha "$sha" --dispatch-ref "refs/tags/$candidate" \
-  --ref-protected false --tag-sha "$sha" --rulesets-json "$test_root/rulesets.json" \
+  --candidate "$candidate" --orchestration-sha "$orchestration_sha" \
+  --dispatch-ref refs/heads/main \
+  --ref-protected false --tag-sha "$candidate_sha" --rulesets-json "$test_root/rulesets.json" \
   --approval-sha "$approval_sha" --main-sha "$main_sha" --main-protected true \
   --compare-json "$test_root/compare.json"
 expect_fail "$repo_root/eng/validate-release-candidate-ref.sh" \
-  --candidate "$candidate" --source-sha "$sha" --dispatch-ref "refs/tags/$candidate" \
-  --ref-protected true --tag-sha 3123456789abcdef0123456789abcdef01234567 \
+  --candidate "$candidate" --orchestration-sha "$orchestration_sha" \
+  --dispatch-ref refs/heads/main \
+  --ref-protected true --tag-sha "$candidate_sha" \
   --rulesets-json "$test_root/rulesets.json" \
-  --approval-sha "$approval_sha" --main-sha "$main_sha" --main-protected true \
+  --approval-sha 3123456789abcdef0123456789abcdef01234567 \
+  --main-sha "$main_sha" --main-protected true \
   --compare-json "$test_root/compare.json"
 
 cat > "$test_root/excluded.json" <<'JSON'
@@ -107,8 +113,9 @@ cat > "$test_root/excluded.json" <<'JSON'
 ]
 JSON
 expect_fail "$repo_root/eng/validate-release-candidate-ref.sh" \
-  --candidate "$candidate" --source-sha "$sha" --dispatch-ref "refs/tags/$candidate" \
-  --ref-protected true --tag-sha "$sha" --rulesets-json "$test_root/excluded.json" \
+  --candidate "$candidate" --orchestration-sha "$orchestration_sha" \
+  --dispatch-ref refs/heads/main \
+  --ref-protected true --tag-sha "$candidate_sha" --rulesets-json "$test_root/excluded.json" \
   --approval-sha "$approval_sha" --main-sha "$main_sha" --main-protected true \
   --compare-json "$test_root/compare.json"
 
@@ -116,15 +123,78 @@ cat > "$test_root/diverged.json" <<JSON
 {
   "status": "diverged",
   "base_commit": { "sha": "$approval_sha" },
-  "merge_base_commit": { "sha": "$sha" },
+  "merge_base_commit": { "sha": "$candidate_sha" },
   "head_commit": { "sha": "$main_sha" }
 }
 JSON
 expect_fail "$repo_root/eng/validate-release-candidate-ref.sh" \
-  --candidate "$candidate" --source-sha "$sha" --dispatch-ref "refs/tags/$candidate" \
-  --ref-protected true --tag-sha "$sha" --rulesets-json "$test_root/rulesets.json" \
+  --candidate "$candidate" --orchestration-sha "$orchestration_sha" \
+  --dispatch-ref refs/heads/main \
+  --ref-protected true --tag-sha "$candidate_sha" --rulesets-json "$test_root/rulesets.json" \
   --approval-sha "$approval_sha" --main-sha "$main_sha" --main-protected true \
   --compare-json "$test_root/diverged.json"
+
+orchestration_root="$test_root/orchestration"
+candidate_root="$test_root/candidate-source"
+mkdir -p \
+  "$orchestration_root/.github/workflows" \
+  "$orchestration_root/.github/actions/dotnet-setup" \
+  "$orchestration_root/eng" \
+  "$candidate_root/docker" \
+  "$candidate_root/src/Aws2Azure.Proxy"
+for path in \
+  .github/workflows/release-candidate.yml \
+  .github/actions/dotnet-setup/action.yml \
+  eng/release-candidate-inputs.py \
+  eng/release-candidate-package.py \
+  eng/resolve-sealed-runtime.sh \
+  eng/smoke-release-candidate.sh; do
+  printf 'trusted orchestration\n' > "$orchestration_root/$path"
+done
+printf 'license\n' > "$candidate_root/LICENSE"
+printf '{}\n' > "$candidate_root/docker/config.json"
+printf '<Project />\n' > "$candidate_root/src/Aws2Azure.Proxy/Aws2Azure.Proxy.csproj"
+for root in "$orchestration_root" "$candidate_root"; do
+  git -C "$root" init -q
+  git -C "$root" add .
+  git -C "$root" \
+    -c user.name=Test \
+    -c user.email=test@example.invalid \
+    commit -qm initial
+done
+actual_orchestration="$(git -C "$orchestration_root" rev-parse HEAD)"
+actual_candidate="$(git -C "$candidate_root" rev-parse HEAD)"
+"$repo_root/eng/validate-release-candidate-checkouts.sh" \
+  --orchestration-root "$orchestration_root" \
+  --orchestration-sha "$actual_orchestration" \
+  --candidate-root "$candidate_root" \
+  --candidate-sha "$actual_candidate"
+[[ ! -e "$candidate_root/.github/workflows/release-candidate.yml" ]]
+rm "$orchestration_root/eng/resolve-sealed-runtime.sh"
+git -C "$orchestration_root" add -u
+git -C "$orchestration_root" \
+  -c user.name=Test \
+  -c user.email=test@example.invalid \
+  commit -qm 'remove required helper'
+missing_helper_sha="$(git -C "$orchestration_root" rev-parse HEAD)"
+expect_fail "$repo_root/eng/validate-release-candidate-checkouts.sh" \
+  --orchestration-root "$orchestration_root" \
+  --orchestration-sha "$missing_helper_sha" \
+  --candidate-root "$candidate_root" \
+  --candidate-sha "$actual_candidate"
+git -C "$orchestration_root" reset --hard -q "$actual_orchestration"
+expect_fail "$repo_root/eng/validate-release-candidate-checkouts.sh" \
+  --orchestration-root "$orchestration_root" \
+  --orchestration-sha "$actual_candidate" \
+  --candidate-root "$candidate_root" \
+  --candidate-sha "$actual_candidate"
+printf 'dirty\n' >> "$candidate_root/LICENSE"
+expect_fail "$repo_root/eng/validate-release-candidate-checkouts.sh" \
+  --orchestration-root "$orchestration_root" \
+  --orchestration-sha "$actual_orchestration" \
+  --candidate-root "$candidate_root" \
+  --candidate-sha "$actual_candidate"
+git -C "$candidate_root" checkout -- LICENSE
 
 case "$(uname -m)" in
   x86_64|amd64) wrong_rid=linux-arm64 ;;

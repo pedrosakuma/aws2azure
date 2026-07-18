@@ -9,8 +9,9 @@ cross-profile measurements do not qualify.
 Before shifting traffic, retain one trusted tuple:
 
 - RC id, protected-tag source SHA, and canonical RC identity digest;
-- exact successful RC archive workflow run/attempt, artifact id/name/upload
-  digest, and canonical archive-input content digest;
+- exact protected-main RC archive orchestration SHA, successful workflow
+  run/attempt, artifact id/name/upload digest, and canonical archive-input
+  content digest;
 - exact successful GHCR workflow source SHA, run/attempt, artifact
   id/name/upload digest, canonical GHCR-input content digest, and OCI index
   digest;
@@ -105,8 +106,8 @@ release_candidate:
       run_id: 120
       run_attempt: 1
       attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/120/attempts/1
-      source_sha: ...
-      source_ref: refs/tags/v1.2.3-rc.1
+      source_sha: ... # protected-main archive orchestration SHA
+      source_ref: refs/heads/main
     artifact:
       id: 450
       name: aws2azure-rc-archives-v1.2.3-rc.1-<content-digest>-run-120-attempt-1
@@ -190,11 +191,41 @@ final manifest or placeholder evidence.
 
 The minimum reviewed window is 60 minutes, so PR workflows do not run this
 costly live-Azure procedure. Merge the implementation, seal and qualify the
-candidate, create the protected RC tag at the exact approved candidate SHA, run
-`.github/workflows/release-candidate.yml` from that tag, then run
-`.github/workflows/release-candidate-image.yml` from protected `main`. Record
-both workflows' exact source, run, attempt, artifact id/name/upload digest, and
-canonical content digest.
+candidate, create the protected RC tag at the exact approved candidate SHA, then
+run both RC workflows from protected `main`. The archive workflow checks out the
+candidate tag into a separate source path while its workflow, helpers, and
+approved ledgers remain pinned to one exact protected-main commit. Record the
+candidate source and each workflow source independently.
+
+For `v1.0.0-rc.1`, dispatch the archive producer with:
+
+```bash
+trusted_sha="$(gh api repos/pedrosakuma/aws2azure/branches/main --jq .commit.sha)"
+gh workflow run release-candidate.yml \
+  --ref main \
+  -f candidate=v1.0.0-rc.1 \
+  -f orchestration_sha="$trusted_sha"
+```
+
+The workflow fails if `main` resolves to a different SHA, if the dispatch ref is
+not protected `main`, if the candidate tag is not protected, or if its commit
+does not equal both approved runtime ledgers' runtime and attestation source.
+After the archive succeeds, dispatch the image workflow from protected `main`
+with both identities:
+
+```bash
+gh workflow run release-candidate-image.yml \
+  --ref main \
+  -f candidate=v1.0.0-rc.1 \
+  -f archive_source_sha=c885a4b7bfbc35390a32b98139495c19dfb7da0b \
+  -f archive_workflow_source_sha="$trusted_sha" \
+  -f archive_run_id=<release-candidate-workflow-run-id> \
+  -f archive_run_attempt=<release-candidate-workflow-attempt> \
+  -f archive_artifact_id=<immutable-archive-artifact-id> \
+  -f archive_artifact_name=<immutable-archive-artifact-name> \
+  -f archive_artifact_digest=sha256:<64-hex-upload-digest> \
+  -f archive_content_digest=sha256:<64-hex-content-digest>
+```
 
 Dispatch the observation workflow from protected `main`:
 
@@ -204,6 +235,7 @@ gh workflow run rc-observation-real-azure.yml \
   -f profile=all \
   -f release_candidate_id=v1.2.3-rc.1 \
   -f candidate_source_sha=<40-hex-protected-tag-sha> \
+  -f archive_workflow_source_sha=<40-hex-protected-main-archive-sha> \
   -f archive_run_id=<release-candidate-workflow-run-id> \
   -f archive_run_attempt=<release-candidate-workflow-attempt> \
   -f archive_artifact_id=<immutable-archive-artifact-id> \

@@ -18,6 +18,7 @@ import unittest
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 TOOL = REPO_ROOT / "eng" / "release-candidate-manifest.py"
 SOURCE_SHA = "c885a4b7bfbc35390a32b98139495c19dfb7da0b"
+ORCHESTRATION_SHA = "1123456789abcdef0123456789abcdef01234567"
 SOURCE_REPOSITORY = "pedrosakuma/aws2azure"
 SEALED_RUN_ID = 29629752701
 SEALED_RUN_ATTEMPT = 1
@@ -279,7 +280,8 @@ class ReleaseCandidateManifestTests(unittest.TestCase):
             "predicate_type": "https://slsa.dev/provenance/v1",
             "bundle_digest": digest_bytes(b"release attestation bundle"),
             "producer_attempt_url": producer_attempt,
-            "source_sha": SOURCE_SHA,
+            "producer_source_sha": ORCHESTRATION_SHA,
+            "candidate_source_sha": SOURCE_SHA,
         }
         return {
             "schema_version": 1,
@@ -297,7 +299,8 @@ class ReleaseCandidateManifestTests(unittest.TestCase):
                 "run_id": 30000000001,
                 "run_attempt": 1,
                 "attempt_url": producer_attempt,
-                "source_sha": SOURCE_SHA,
+                "source_sha": ORCHESTRATION_SHA,
+                "source_ref": "refs/heads/main",
             },
             "platforms": [
                 {
@@ -460,6 +463,18 @@ class ReleaseCandidateManifestTests(unittest.TestCase):
             [item["profile"]["id"] for item in manifest["observation_evidence"]],
             ["s3-basic-object-crud", "secretsmanager-basic-lifecycle"],
         )
+        self.assertEqual(manifest["candidate"]["source"]["sha"], SOURCE_SHA)
+        self.assertEqual(manifest["producer"]["source_sha"], ORCHESTRATION_SHA)
+        self.assertEqual(manifest["producer"]["source_ref"], "refs/heads/main")
+        for platform in manifest["platforms"]:
+            self.assertEqual(
+                platform["provenance"]["candidate_source_sha"],
+                SOURCE_SHA,
+            )
+            self.assertEqual(
+                platform["provenance"]["producer_source_sha"],
+                ORCHESTRATION_SHA,
+            )
         self.assertTrue(
             all(
                 item["release_candidate_manifest_digest"]
@@ -586,6 +601,16 @@ class ReleaseCandidateManifestTests(unittest.TestCase):
 
     def test_source_and_approved_runtime_identity_drift_fail(self) -> None:
         self.descriptor["workloads"][0]["approved_runtime"]["source_sha"] = "1" * 40
+        write_json(self.descriptor_path, self.descriptor)
+        self.run_tool(
+            "generate",
+            str(self.descriptor_path),
+            str(self.manifest_path),
+            expect_success=False,
+        )
+
+        self.descriptor = self.make_descriptor()
+        self.descriptor["producer"]["source_ref"] = "refs/tags/v1.0.0-rc.1"
         write_json(self.descriptor_path, self.descriptor)
         self.run_tool(
             "generate",
