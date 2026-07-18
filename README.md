@@ -83,6 +83,9 @@ need:
 - **Why it's built this way:** [Architecture Decision Records](./docs/adr/)
 - **Run it in production:** [production runbook](./docs/deployment/production-runbook.md)
   (qualification, go/no-go, canary, incidents, rollback) ·
+  [versioning and compatibility policy](./docs/versioning-and-compatibility.md)
+  (SemVer, supported upgrade/rollback span, schemas, persisted formats, release
+  notes) ·
   [sidecar deployment](./docs/deployment/sidecar.md) ·
   [build-time module selection](./docs/deployment/module-selection.md)
 - **Performance & testing:** [perf baseline](./docs/perf/README.md) ·

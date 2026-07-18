@@ -35,6 +35,10 @@ footprint gates, and release/container workflows.
 The current public release is `v0.1.0` prerelease. A `v1.0` release requires the
 announced workload profiles to pass the gates in the active maturity roadmap;
 it does not require every documented AWS operation to be implemented.
+Release numbering, the supported upgrade/rollback span, configuration and
+persisted-format obligations, deprecation, and mandatory release-note support
+matrices are defined in the
+[versioning and compatibility policy](./versioning-and-compatibility.md).
 
 ## Normative terms
 

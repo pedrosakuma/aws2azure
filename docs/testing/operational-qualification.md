@@ -143,7 +143,9 @@ but cannot silently replace a failed backend-capacity gate.
 For `s3-basic-object-crud`, `representative-load-throughput` remains the blocking
 signal and the 40/s floor is unchanged. It is GetObject completions divided by
 the total fixed eight-worker closed-loop CRUD window, not isolated GetObject or
-Blob capacity. The latest qualification remains blocked at 37.2526/s.
+Blob capacity. The qualification committed for the GA profile passed at
+268.6159/s; use the immutable evidence artifact rather than this explanatory
+number for release decisions.
 `crud-iterations-per-sec` counts only iterations that complete PutObject, both
 HeadObject calls, all three GetObject variants, ListObjectsV2, the initial
 DeleteObject, and the idempotent DeleteObject. `aws-operations-per-sec` counts
