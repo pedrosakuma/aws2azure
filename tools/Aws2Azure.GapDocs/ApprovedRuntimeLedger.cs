@@ -128,6 +128,7 @@ public sealed class ApprovedRuntimeQualification
     public string Verdict { get; set; } = string.Empty;
     public string CandidateRuntimeDigest { get; set; } = string.Empty;
     public string RollbackTargetRuntimeDigest { get; set; } = string.Empty;
+    public QualificationSealedRuntimeIdentity? RollbackTarget { get; set; }
     public string ReviewUrl { get; set; } = string.Empty;
     public DateTimeOffset QualifiedAt { get; set; }
 }
@@ -318,7 +319,7 @@ public static partial class ApprovedRuntimeLedgerValidator
         ValidateArtifact(record, now, Err);
         ValidateAttestation(record, Err);
         ValidateOptionalConfigContract(record, Err);
-        ValidateDecision(record, Err);
+        ValidateDecision(record, now, Err);
         return errors;
     }
 
@@ -521,7 +522,10 @@ public static partial class ApprovedRuntimeLedgerValidator
         RequireDigest(record.ConfigContract.Digest, "config_contract.digest", err);
     }
 
-    private static void ValidateDecision(ApprovedRuntimeRecord record, Action<string> err)
+    private static void ValidateDecision(
+        ApprovedRuntimeRecord record,
+        DateTimeOffset now,
+        Action<string> err)
     {
         if (string.IsNullOrWhiteSpace(record.Approval.Reason))
         {
@@ -571,7 +575,7 @@ public static partial class ApprovedRuntimeLedgerValidator
                 {
                     err("approved runtime must not carry revocation metadata");
                 }
-                ValidateQualification(record, err);
+                ValidateQualification(record, now, err);
                 break;
 
             case "revoked":
@@ -605,6 +609,7 @@ public static partial class ApprovedRuntimeLedgerValidator
 
     private static void ValidateQualification(
         ApprovedRuntimeRecord record,
+        DateTimeOffset now,
         Action<string> err)
     {
         var qualification = record.Qualification;
@@ -641,6 +646,26 @@ public static partial class ApprovedRuntimeLedgerValidator
                 StringComparison.Ordinal))
         {
             err("qualification rollback target must be a distinct runtime");
+        }
+        if (qualification.RollbackTarget is null)
+        {
+            err("qualification.rollback_target missing");
+        }
+        else
+        {
+            try
+            {
+                SealedRuntimeEvidenceValidator.ValidateTrustedRollbackTarget(
+                    qualification.RollbackTarget,
+                    record.Profile.Id,
+                    record.Profile.Version,
+                    qualification.RollbackTargetRuntimeDigest,
+                    now);
+            }
+            catch (InvalidDataException exception)
+            {
+                err($"qualification.rollback_target invalid: {exception.Message}");
+            }
         }
         if (!IsAbsoluteHttpsUrl(qualification.ReviewUrl))
         {
