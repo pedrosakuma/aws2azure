@@ -341,6 +341,12 @@ public static class SloQualificationValidator
         {
             return;
         }
+        if (document.Verdict == "qualified"
+            && (candidate.QualificationMode != "sealed" || candidate.Runtime is null))
+        {
+            err("qualified real-Azure artifact requires a verified sealed candidate runtime");
+            return;
+        }
         if (string.IsNullOrWhiteSpace(candidate.QualificationMode)
             && candidate.Runtime is null)
         {
@@ -508,6 +514,17 @@ public static class SloQualificationValidator
             {
                 err($"{prefix} is stale");
             }
+            if (document.Verdict == "qualified")
+            {
+                ValidateRunEvidenceArtifact(
+                    document,
+                    run,
+                    ".github/workflows/workload-load-real-azure.yml",
+                    "real-azure-workload-load-" + document.Profile.Id,
+                    nowUtc,
+                    prefix,
+                    err);
+            }
         }
 
         if (document.Verdict == "qualified"
@@ -573,6 +590,58 @@ public static class SloQualificationValidator
             > TimeSpan.FromHours(document.Rules.MaxArtifactAgeHours))
         {
             err($"{prefix} is stale");
+        }
+        ValidateRunEvidenceArtifact(
+            document,
+            run,
+            ".github/workflows/integration-real-azure.yml",
+            "real-azure-conformance",
+            nowUtc,
+            prefix,
+            err);
+    }
+
+    private static void ValidateRunEvidenceArtifact(
+        SloQualificationDocument document,
+        SloQualificationSourceRun run,
+        string expectedWorkflow,
+        string expectedArtifactName,
+        DateTimeOffset nowUtc,
+        string prefix,
+        Action<string> err)
+    {
+        if (run.EvidenceArtifact is null)
+        {
+            err($"{prefix}.evidence_artifact missing");
+            return;
+        }
+        if (document.Candidate.Runtime is null)
+        {
+            err($"{prefix}.evidence_artifact cannot be validated without sealed candidate identity");
+            return;
+        }
+
+        try
+        {
+            SealedRuntimeEvidenceValidator.ValidateRunArtifact(
+                run.EvidenceArtifact,
+                document.Profile.Id,
+                document.Candidate.Runtime.Source.Repository,
+                expectedWorkflow,
+                expectedArtifactName,
+                run.RunId,
+                run.RunAttempt,
+                document.Candidate.GitSha,
+                document.Candidate.Runtime.Source.Ref,
+                nowUtc);
+            if (run.RunUrl != run.EvidenceArtifact.RunUrl)
+            {
+                err($"{prefix}.run_url does not match evidence_artifact.run_url");
+            }
+        }
+        catch (InvalidDataException exception)
+        {
+            err($"{prefix}.evidence_artifact invalid: {exception.Message}");
         }
     }
 

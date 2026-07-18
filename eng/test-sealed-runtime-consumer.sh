@@ -313,6 +313,7 @@ evidence_content="$(
     --run-attempt 3 \
     --workflow .github/workflows/workload-load-real-azure.yml \
     --event workflow_dispatch \
+    --profile s3-basic-object-crud \
     --expected-sha "$source_sha" \
     --expected-ref refs/heads/main \
     --artifact-name real-azure-workload-load-s3-basic-object-crud \
@@ -323,6 +324,7 @@ evidence_content="$(
 jq -e \
   --arg digest "$evidence_digest" \
   '
+    .profile_id == "s3-basic-object-crud" and
     .workflow_path == ".github/workflows/workload-load-real-azure.yml" and
     .event_name == "workflow_dispatch" and
     .conclusion == "success" and

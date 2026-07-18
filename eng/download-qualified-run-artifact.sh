@@ -17,6 +17,7 @@ usage: eng/download-qualified-run-artifact.sh
   --run-attempt ATTEMPT
   --workflow .github/workflows/WORKFLOW.yml
   --event workflow_dispatch
+  --profile PROFILE
   --expected-sha SHA
   --expected-ref REF
   --artifact-name NAME
@@ -32,6 +33,7 @@ run_id=
 run_attempt=
 workflow=
 event_name=
+profile=
 expected_sha=
 expected_ref=
 artifact_name=
@@ -48,6 +50,7 @@ while (($# > 0)); do
     --run-attempt) run_attempt="${1:-}"; shift ;;
     --workflow) workflow="${1:-}"; shift ;;
     --event) event_name="${1:-}"; shift ;;
+    --profile) profile="${1:-}"; shift ;;
     --expected-sha) expected_sha="${1:-}"; shift ;;
     --expected-ref) expected_ref="${1:-}"; shift ;;
     --artifact-name) artifact_name="${1:-}"; shift ;;
@@ -59,7 +62,7 @@ while (($# > 0)); do
 done
 
 for value in \
-  repository run_id run_attempt workflow event_name expected_sha expected_ref \
+  repository run_id run_attempt workflow event_name profile expected_sha expected_ref \
   artifact_name destination identity_output; do
   [[ -n "${!value}" ]] || usage
 done
@@ -71,6 +74,7 @@ done
   fail "workflow path is invalid"
 [[ "$event_name" == workflow_dispatch ]] ||
   fail "qualification evidence must come from workflow_dispatch"
+[[ "$profile" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail "profile id is invalid"
 [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]] || fail "expected SHA is invalid"
 if [[ "$expected_ref" != refs/heads/main ]] &&
    [[ ! "$expected_ref" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-rc([.-]?[0-9A-Za-z]+)*$ ]]; then
@@ -208,6 +212,7 @@ python3 "$repo_root/eng/safe-extract.py" zip "$archive_zip" "$content_dir"
 
 jq -S -n \
   --argjson schema_version 1 \
+  --arg profile "$profile" \
   --arg repository "$repository" \
   --arg workflow "$workflow" \
   --arg event_name "$event_name" \
@@ -224,6 +229,7 @@ jq -S -n \
   --arg expires_at "$(jq -er '.expires_at' "$artifact_json")" \
   '{
     schema_version: $schema_version,
+    profile_id: $profile,
     repository: $repository,
     workflow_path: $workflow,
     event_name: $event_name,

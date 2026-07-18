@@ -13,17 +13,24 @@ public sealed class RealAzureLoadQualificationTests
     [Fact]
     public void Generate_qualifies_only_after_repeated_production_shaped_runs()
     {
+        var candidate = Candidate();
+        var evidence = new[] { Evidence(1), Evidence(2), Evidence(3) };
+        var selections = RunSelections(candidate, evidence);
         var document = RealAzureLoadQualificationGenerator.Generate(
             Manifest(),
-            Candidate(),
+            candidate,
             Policy(),
-            [Evidence(1), Evidence(2), Evidence(3)],
-            Metadata());
+            evidence,
+            Metadata(),
+            priorRuntime: null,
+            correctnessSelection: selections.Correctness,
+            loadSelections: selections.Load);
 
         Assert.Equal("qualified", document.Verdict);
         Assert.Equal(3, document.Provenance.SourceRuns.Count);
         Assert.Equal(300, Assert.Single(document.Scenarios).Completions);
         Assert.Equal(750, Assert.Single(document.Signals).MeasuredValue);
+        AttachRunArtifactSelections(document);
         Assert.Empty(SloQualificationValidator.Validate(document, Now));
     }
 
@@ -46,6 +53,22 @@ public sealed class RealAzureLoadQualificationTests
         Assert.Equal("candidate", document.Verdict);
         Assert.Contains(document.Findings, finding => finding.Code == "zero_completions");
         Assert.Empty(SloQualificationValidator.Validate(document, Now));
+    }
+
+    [Fact]
+    public void Generate_cannot_qualify_without_exact_run_artifact_trust()
+    {
+        var document = RealAzureLoadQualificationGenerator.Generate(
+            Manifest(),
+            Candidate(),
+            Policy(),
+            [Evidence(1), Evidence(2), Evidence(3)],
+            Metadata());
+
+        Assert.Equal("candidate", document.Verdict);
+        Assert.Contains(
+            document.Findings,
+            finding => finding.Code == "run_artifact_trust_missing");
     }
 
     [Fact]
@@ -134,7 +157,7 @@ public sealed class RealAzureLoadQualificationTests
         Assert.Contains(
             document.Findings,
             finding => finding.Code == "failure_rate_exceeded"
-                       && finding.Message.Contains("load-1/1", StringComparison.Ordinal));
+                       && finding.Message.Contains("201/1", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -154,7 +177,7 @@ public sealed class RealAzureLoadQualificationTests
         Assert.Contains(
             document.Findings,
             finding => finding.Code == "operation_failure_rate_exceeded"
-                       && finding.Message.Contains("load-1/1", StringComparison.Ordinal));
+                       && finding.Message.Contains("201/1", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -182,7 +205,7 @@ public sealed class RealAzureLoadQualificationTests
     public void Generate_rejects_multiple_attempts_of_the_same_run_as_distinct_runs()
     {
         var secondAttempt = Evidence(2);
-        secondAttempt.Provenance.RunId = "load-1";
+        secondAttempt.Provenance.RunId = "201";
         secondAttempt.Provenance.RunAttempt = 2;
 
         var exception = Assert.Throws<InvalidDataException>(() =>
@@ -264,12 +287,17 @@ public sealed class RealAzureLoadQualificationTests
             });
         }
 
+        var candidate = Candidate();
+        var selections = RunSelections(candidate, evidence);
         var document = RealAzureLoadQualificationGenerator.Generate(
             manifest,
-            Candidate(),
+            candidate,
             policy,
             evidence,
-            Metadata());
+            Metadata(),
+            priorRuntime: null,
+            correctnessSelection: selections.Correctness,
+            loadSelections: selections.Load);
 
         Assert.Equal("qualified", document.Verdict);
         var restart = Assert.Single(document.Scenarios, scenario => scenario.Id == "restart");
@@ -278,6 +306,7 @@ public sealed class RealAzureLoadQualificationTests
             document.Findings,
             finding => finding.Code == "insufficient_scenario_evidence"
                        && finding.ScenarioId == "restart");
+        AttachRunArtifactSelections(document);
         Assert.Empty(SloQualificationValidator.Validate(document, Now));
     }
 
@@ -285,13 +314,17 @@ public sealed class RealAzureLoadQualificationTests
     public void Generate_accepts_fresh_identity_rotation_proof_without_candidate_drift()
     {
         var inputs = RotationInputs();
+        var selections = RunSelections(inputs.Candidate, inputs.Evidence);
 
         var document = RealAzureLoadQualificationGenerator.Generate(
             inputs.Manifest,
             inputs.Candidate,
             inputs.Policy,
             inputs.Evidence,
-            Metadata());
+            Metadata(),
+            priorRuntime: null,
+            correctnessSelection: selections.Correctness,
+            loadSelections: selections.Load);
 
         Assert.Equal("qualified", document.Verdict);
         Assert.Equal(
@@ -484,6 +517,7 @@ public sealed class RealAzureLoadQualificationTests
     public void Generate_qualifies_only_with_one_real_rollback_proof_per_run()
     {
         var inputs = RollbackInputs();
+        var selections = RunSelections(inputs.Candidate, inputs.Evidence);
 
         var document = RealAzureLoadQualificationGenerator.Generate(
             inputs.Manifest,
@@ -491,7 +525,9 @@ public sealed class RealAzureLoadQualificationTests
             inputs.Policy,
             inputs.Evidence,
             Metadata(),
-            inputs.Prior);
+            inputs.Prior,
+            selections.Correctness,
+            selections.Load);
 
         Assert.Equal("qualified", document.Verdict);
         Assert.Equal(3, document.RollbackProofs.Count);
@@ -499,6 +535,7 @@ public sealed class RealAzureLoadQualificationTests
             3,
             Assert.Single(document.Scenarios, scenario => scenario.Id == "rollback")
                 .Completions);
+        AttachRunArtifactSelections(document);
         Assert.Empty(SloQualificationValidator.Validate(document, Now));
     }
 
@@ -623,13 +660,16 @@ public sealed class RealAzureLoadQualificationTests
     public void Qualified_validator_rejects_fabricated_missing_rollback_proof()
     {
         var inputs = RollbackInputs();
+        var selections = RunSelections(inputs.Candidate, inputs.Evidence);
         var document = RealAzureLoadQualificationGenerator.Generate(
             inputs.Manifest,
             inputs.Candidate,
             inputs.Policy,
             inputs.Evidence,
             Metadata(),
-            inputs.Prior);
+            inputs.Prior,
+            selections.Correctness,
+            selections.Load);
         document.RollbackProofs.Clear();
 
         var errors = SloQualificationValidator.Validate(document, Now);
@@ -1052,8 +1092,8 @@ public sealed class RealAzureLoadQualificationTests
         Candidate = CandidateIdentity(),
         Provenance = new SloQualificationProvenance
         {
-            RunId = "correctness",
-            RunUrl = "https://github.com/example/repo/actions/runs/correctness",
+            RunId = "100",
+            RunUrl = "https://github.com/example/repo/actions/runs/100",
             RunAttempt = 1,
             GeneratedAtUtc = Now.AddHours(-1),
             WindowStartUtc = Now.AddHours(-1).AddMinutes(-1),
@@ -1102,8 +1142,8 @@ public sealed class RealAzureLoadQualificationTests
         Candidate = CandidateIdentity(),
         Provenance = new RealAzureLoadEvidenceProvenance
         {
-            RunId = $"load-{attempt}",
-            RunUrl = $"https://github.com/example/repo/actions/runs/load-{attempt}",
+            RunId = (200 + attempt).ToString(),
+            RunUrl = $"https://github.com/example/repo/actions/runs/{200 + attempt}",
             RunAttempt = 1,
             WindowStartUtc = Now.AddMinutes(-attempt * 10 - 5),
             WindowEndUtc = Now.AddMinutes(-attempt * 10),
@@ -1195,7 +1235,7 @@ public sealed class RealAzureLoadQualificationTests
         var evidence = new[] { Evidence(1), Evidence(2), Evidence(3) };
         foreach (var run in evidence)
         {
-            var attempt = int.Parse(run.Provenance.RunId.AsSpan("load-".Length));
+            var attempt = int.Parse(run.Provenance.RunId) - 200;
             run.Profile.Id = manifest.Id;
             run.Candidate.Runtime!.Profile.Id = manifest.Id;
             run.Profile.Services =
@@ -1256,7 +1296,7 @@ public sealed class RealAzureLoadQualificationTests
         var evidence = new[] { Evidence(1), Evidence(2), Evidence(3) };
         foreach (var run in evidence)
         {
-            var runNumber = int.Parse(run.Provenance.RunId.AsSpan("load-".Length));
+            var runNumber = int.Parse(run.Provenance.RunId) - 200;
             var completed = run.Provenance.WindowEndUtc.AddSeconds(-1);
             run.Scenarios.Add(new SloQualificationScenario
             {
@@ -1514,27 +1554,58 @@ public sealed class RealAzureLoadQualificationTests
     private static QualificationRunArtifactIdentity RunSelection(
         long runId,
         string workflow,
-        string artifactName) => new()
+        string artifactName,
+        string profileId = "s3-basic-object-crud") =>
+        QualificationTrustTestData.RunArtifact(
+            profileId,
+            runId,
+            1,
+            workflow,
+            artifactName,
+            Now);
+
+    private static (
+        QualificationRunArtifactIdentity Correctness,
+        IReadOnlyList<QualificationRunArtifactIdentity> Load) RunSelections(
+        SloQualificationDocument candidate,
+        IReadOnlyList<RealAzureLoadEvidence> evidence)
     {
-        SchemaVersion = 1,
-        Repository = "example/repo",
-        WorkflowPath = workflow,
-        EventName = "workflow_dispatch",
-        Conclusion = "success",
-        RunId = runId,
-        RunAttempt = 1,
-        RunUrl = $"https://github.com/example/repo/actions/runs/{runId}",
-        HeadSha = "0123456789abcdef0123456789abcdef01234567",
-        HeadRef = "refs/heads/main",
-        Artifact = new QualificationRunArtifact
+        var correctness = RunSelection(
+            long.Parse(candidate.Provenance.RunId),
+            ".github/workflows/integration-real-azure.yml",
+            "real-azure-conformance",
+            candidate.Profile.Id);
+        var load = evidence.Select(run => RunSelection(
+                long.Parse(run.Provenance.RunId),
+                ".github/workflows/workload-load-real-azure.yml",
+                "real-azure-workload-load-" + candidate.Profile.Id,
+                candidate.Profile.Id))
+            .ToList();
+        return (correctness, load);
+    }
+
+    private static void AttachRunArtifactSelections(SloQualificationDocument document)
+    {
+        var correctness = document.Provenance.CorrectnessRun
+            ?? throw new InvalidDataException("Generated qualification lacks correctness run.");
+        correctness.EvidenceArtifact = QualificationTrustTestData.RunArtifact(
+            document.Profile.Id,
+            long.Parse(correctness.RunId),
+            correctness.RunAttempt,
+            ".github/workflows/integration-real-azure.yml",
+            "real-azure-conformance",
+            Now);
+        foreach (var run in document.Provenance.SourceRuns)
         {
-            Id = runId + 1000,
-            Name = artifactName,
-            UploadDigest = Sha256('6'),
-            CreatedAt = Now.AddHours(-1),
-            ExpiresAt = Now.AddDays(1),
-        },
-    };
+            run.EvidenceArtifact = QualificationTrustTestData.RunArtifact(
+                document.Profile.Id,
+                long.Parse(run.RunId),
+                run.RunAttempt,
+                ".github/workflows/workload-load-real-azure.yml",
+                "real-azure-workload-load-" + document.Profile.Id,
+                Now);
+        }
+    }
 
     private static RealAzureLoadQualificationMetadata Metadata() => new()
     {

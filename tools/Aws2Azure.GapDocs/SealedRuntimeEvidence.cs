@@ -83,6 +83,7 @@ public sealed class QualificationSealedRuntimeIdentity
 public sealed class QualificationRunArtifactIdentity
 {
     public int SchemaVersion { get; set; }
+    public string ProfileId { get; set; } = string.Empty;
     public string Repository { get; set; } = string.Empty;
     public string WorkflowPath { get; set; } = string.Empty;
     public string EventName { get; set; } = string.Empty;
@@ -235,6 +236,52 @@ public static partial class SealedRuntimeEvidenceValidator
     public static bool IsDigest(string value) => Sha256Regex().IsMatch(value);
 
     public static bool IsTrustedRef(string value) => TrustedRefRegex().IsMatch(value);
+
+    public static void ValidateRunArtifact(
+        QualificationRunArtifactIdentity selection,
+        string profileId,
+        string expectedRepository,
+        string expectedWorkflow,
+        string expectedArtifactName,
+        string expectedRunId,
+        int expectedRunAttempt,
+        string expectedHeadSha,
+        string expectedHeadRef,
+        DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(selection);
+        if (selection.Artifact is null)
+        {
+            throw new InvalidDataException(
+                $"Run {expectedRunId}/{expectedRunAttempt} evidence artifact metadata is missing.");
+        }
+        if (selection.SchemaVersion != 1
+            || selection.ProfileId != profileId
+            || selection.Repository != expectedRepository
+            || !RepositoryRegex().IsMatch(selection.Repository)
+            || selection.WorkflowPath != expectedWorkflow
+            || selection.EventName != "workflow_dispatch"
+            || selection.Conclusion != "success"
+            || selection.RunId.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                != expectedRunId
+            || selection.RunAttempt != expectedRunAttempt
+            || selection.RunUrl
+                != $"https://github.com/{selection.Repository}/actions/runs/{selection.RunId}"
+            || selection.HeadSha != expectedHeadSha
+            || selection.HeadRef != expectedHeadRef
+            || !IsTrustedRef(selection.HeadRef)
+            || selection.Artifact.Id <= 0
+            || selection.Artifact.Name != expectedArtifactName
+            || !IsDigest(selection.Artifact.UploadDigest)
+            || selection.Artifact.CreatedAt == default
+            || selection.Artifact.ExpiresAt <= selection.Artifact.CreatedAt
+            || selection.Artifact.ExpiresAt <= now)
+        {
+            throw new InvalidDataException(
+                $"Run {expectedRunId}/{expectedRunAttempt} does not match its trusted " +
+                $"{expectedWorkflow} artifact identity for profile '{profileId}'.");
+        }
+    }
 
     private static void ValidateCommon(
         QualificationSealedRuntimeIdentity identity,

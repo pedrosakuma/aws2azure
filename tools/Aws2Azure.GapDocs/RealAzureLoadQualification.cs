@@ -300,6 +300,14 @@ public static class RealAzureLoadQualificationGenerator
                 "conformance_not_candidate",
                 $"Correctness qualification verdict is '{candidate.Verdict}', not 'candidate'.");
         }
+        if (correctnessSelection is null || loadSelections is null)
+        {
+            blocked = true;
+            AddFinding(
+                document,
+                "run_artifact_trust_missing",
+                "Exact correctness and load workflow artifact identities are required.");
+        }
         if (orderedEvidence.Count < policy.Rules.MinDistinctRuns)
         {
             blocked = true;
@@ -894,14 +902,15 @@ public static class RealAzureLoadQualificationGenerator
                 "Qualification run artifact selections are incomplete.");
         }
 
-        ValidateRunSelection(
+        SealedRuntimeEvidenceValidator.ValidateRunArtifact(
             correctnessSelection,
+            manifest.Id,
+            candidate.Candidate.Runtime!.Source.Repository,
             ".github/workflows/integration-real-azure.yml",
             "real-azure-conformance",
             candidate.Provenance.RunId,
             candidate.Provenance.RunAttempt,
             candidate.Candidate.GitSha,
-            candidate.Candidate.Runtime!.Source.Repository,
             candidate.Candidate.Runtime.Source.Ref,
             metadata.GeneratedAtUtc);
         foreach (var run in evidence)
@@ -915,14 +924,15 @@ public static class RealAzureLoadQualificationGenerator
                 throw new InvalidDataException(
                     $"Load run {run.Provenance.RunId} must have one exact artifact selection.");
             }
-            ValidateRunSelection(
+            SealedRuntimeEvidenceValidator.ValidateRunArtifact(
                 matches[0],
+                manifest.Id,
+                candidate.Candidate.Runtime!.Source.Repository,
                 ".github/workflows/workload-load-real-azure.yml",
                 "real-azure-workload-load-" + manifest.Id,
                 run.Provenance.RunId,
                 run.Provenance.RunAttempt,
                 run.Candidate.GitSha,
-                candidate.Candidate.Runtime!.Source.Repository,
                 candidate.Candidate.Runtime.Source.Ref,
                 metadata.GeneratedAtUtc);
         }
@@ -935,42 +945,6 @@ public static class RealAzureLoadQualificationGenerator
         {
             throw new InvalidDataException(
                 "Correctness and load evidence selections must use one repository and protected ref.");
-        }
-    }
-
-    private static void ValidateRunSelection(
-        QualificationRunArtifactIdentity selection,
-        string workflow,
-        string artifactName,
-        string expectedRunId,
-        int expectedRunAttempt,
-        string expectedHeadSha,
-        string expectedRepository,
-        string expectedHeadRef,
-        DateTimeOffset now)
-    {
-        if (selection.SchemaVersion != 1
-            || selection.Repository != expectedRepository
-            || selection.WorkflowPath != workflow
-            || selection.EventName != "workflow_dispatch"
-            || selection.Conclusion != "success"
-            || selection.RunId.ToString(CultureInfo.InvariantCulture) != expectedRunId
-            || selection.RunAttempt != expectedRunAttempt
-            || selection.RunUrl
-                != $"https://github.com/{selection.Repository}/actions/runs/{selection.RunId}"
-            || selection.HeadSha != expectedHeadSha
-            || selection.HeadRef != expectedHeadRef
-            || !SealedRuntimeEvidenceValidator.IsTrustedRef(selection.HeadRef)
-            || selection.Artifact.Id <= 0
-            || selection.Artifact.Name != artifactName
-            || !SealedRuntimeEvidenceValidator.IsDigest(selection.Artifact.UploadDigest)
-            || selection.Artifact.CreatedAt == default
-            || selection.Artifact.ExpiresAt <= selection.Artifact.CreatedAt
-            || selection.Artifact.ExpiresAt <= now)
-        {
-            throw new InvalidDataException(
-                $"Run {expectedRunId}/{expectedRunAttempt} does not match its trusted " +
-                $"{workflow} artifact identity.");
         }
     }
 

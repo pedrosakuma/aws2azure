@@ -113,6 +113,7 @@ jobs:
               --run-attempt "$CORRECTNESS_RUN_ATTEMPT" \
               --workflow .github/workflows/integration-real-azure.yml \
               --event workflow_dispatch \
+              --profile "$PROFILE" \
               --expected-sha "$GITHUB_SHA" \
               --expected-ref "$GITHUB_REF" \
               --artifact-name real-azure-conformance \
@@ -186,6 +187,7 @@ jobs:
                 --run-attempt "$run_attempt" \
                 --workflow .github/workflows/workload-load-real-azure.yml \
                 --event workflow_dispatch \
+                --profile "$PROFILE" \
                 --expected-sha "$GITHUB_SHA" \
                 --expected-ref "$GITHUB_REF" \
                 --artifact-name "real-azure-workload-load-$PROFILE" \

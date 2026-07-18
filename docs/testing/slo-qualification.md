@@ -198,7 +198,10 @@ qualification plus a workload-only CSV trend, and fails unless the verdict is
 expected repository, workflow path, `workflow_dispatch` event, successful
 conclusion, protected ref, checked-out head SHA, run attempt, artifact
 id/name/upload digest, and unexpired artifact. Those selection identities are
-preserved in final provenance.
+preserved in final provenance with the profile id. A committed `qualified`
+artifact is valid only when correctness and every load source run carry this
+non-null `evidence_artifact` metadata and it still matches all of those immutable
+constraints; hand-edited or missing trust metadata blocks GA certification.
 
 ## Version 1 shape
 
