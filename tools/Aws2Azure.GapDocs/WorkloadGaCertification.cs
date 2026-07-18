@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -503,14 +504,14 @@ public static class WorkloadGaEvaluator
         {
             try
             {
-                var prior = ApprovedRuntimeLedgerLoader.Load(Path.Combine(
+                var ledger = ApprovedRuntimeLedgerLoader.Load(Path.Combine(
                     repoRoot,
                     "docs",
                     "workloads",
                     "approved-runtimes",
                     manifest.Id + ".yaml"));
                 var ledgerErrors = ApprovedRuntimeLedgerValidator.Validate(
-                    [prior],
+                    [ledger],
                     [manifest],
                     currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
                 if (ledgerErrors.Count > 0)
@@ -529,12 +530,35 @@ public static class WorkloadGaEvaluator
                     qualification.Candidate.GitSha,
                     qualification.Candidate.ArtifactDigest,
                     currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
-                foreach (var proof in qualification.RollbackProofs)
+                if (ledger.Status == "approved")
                 {
-                    SealedRuntimeEvidenceValidator.ValidatePrior(
-                        proof.Prior,
-                        prior,
+                    SealedRuntimeEvidenceValidator.ValidateApprovedCandidate(
+                        qualification.Candidate.Runtime,
+                        ledger,
                         currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
+                    ValidateApprovedQualification(manifest, qualification, ledger);
+                    var rollbackTargetLedgerDigest =
+                        qualification.RollbackProofs[0].Prior.LedgerRecordDigest!;
+                    foreach (var proof in qualification.RollbackProofs)
+                    {
+                        SealedRuntimeEvidenceValidator.ValidateRollbackTarget(
+                            proof.Prior,
+                            manifest.Id,
+                            manifest.Version,
+                            ledger.Qualification!.RollbackTargetRuntimeDigest,
+                            rollbackTargetLedgerDigest,
+                            currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
+                    }
+                }
+                else
+                {
+                    foreach (var proof in qualification.RollbackProofs)
+                    {
+                        SealedRuntimeEvidenceValidator.ValidatePrior(
+                            proof.Prior,
+                            ledger,
+                            currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
+                    }
                 }
             }
             catch (Exception exception) when (exception is FileNotFoundException
@@ -552,6 +576,29 @@ public static class WorkloadGaEvaluator
             }
         }
         return matches;
+    }
+
+    private static void ValidateApprovedQualification(
+        WorkloadGaManifest manifest,
+        SloQualificationDocument qualification,
+        ApprovedRuntimeRecord ledger)
+    {
+        var decision = ledger.Qualification
+            ?? throw new InvalidDataException(
+                "Approved profile ledger lacks qualification metadata.");
+        var artifactDigest = "sha256:" + Convert.ToHexStringLower(
+            SHA256.HashData(File.ReadAllBytes(qualification.SourceFile)));
+        if (decision.Artifact != manifest.Evidence.QualificationArtifact
+            || decision.Digest != artifactDigest
+            || decision.Verdict != qualification.Verdict
+            || decision.CandidateRuntimeDigest != qualification.Candidate.ArtifactDigest
+            || decision.ReviewUrl != qualification.Provenance.RunUrl
+            || decision.QualifiedAt.ToUniversalTime()
+                != qualification.Provenance.GeneratedAtUtc.ToUniversalTime())
+        {
+            throw new InvalidDataException(
+                "Approved profile ledger does not exactly match the committed qualification.");
+        }
     }
 
     private static bool HasFreshSeal(

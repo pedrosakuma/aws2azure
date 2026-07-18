@@ -57,13 +57,13 @@
     "profile_version": 1,
     "name": "S3 basic object CRUD",
     "minimum_proxy_version": "0.1.0",
-    "verdict": "candidate",
+    "verdict": "ga",
     "findings": [
       {
-        "code": "qualification_evidence_missing",
-        "disposition": "blocking",
+        "code": "profile_ga",
+        "disposition": "report_only",
         "subject": "s3-basic-object-crud",
-        "message": "No reviewed real-Azure workload qualification artifact is referenced."
+        "message": "Compatibility, real-Azure seals, and operational qualification gates are satisfied."
       }
     ]
   },
@@ -73,7 +73,7 @@
     "profile_version": 1,
     "name": "Secrets Manager basic lifecycle",
     "minimum_proxy_version": "0.1.0",
-    "verdict": "candidate",
+    "verdict": "ga",
     "findings": [
       {
         "code": "partial_operation_accepted",
@@ -94,10 +94,10 @@
         "message": "The profile explicitly accepts this documented design gap for requirement \u0027secretsmanager_version_stages\u0027."
       },
       {
-        "code": "qualification_evidence_missing",
-        "disposition": "blocking",
+        "code": "profile_ga",
+        "disposition": "report_only",
         "subject": "secretsmanager-basic-lifecycle",
-        "message": "No reviewed real-Azure workload qualification artifact is referenced."
+        "message": "Compatibility, real-Azure seals, and operational qualification gates are satisfied."
       }
     ]
   },

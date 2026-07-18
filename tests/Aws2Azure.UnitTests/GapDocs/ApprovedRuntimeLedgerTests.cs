@@ -6,10 +6,10 @@ namespace Aws2Azure.UnitTests.GapDocs;
 public sealed class ApprovedRuntimeLedgerTests
 {
     private static readonly DateTimeOffset ValidationTime =
-        new(2026, 7, 17, 21, 0, 0, TimeSpan.Zero);
+        new(2026, 7, 18, 5, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public void Repository_bootstrap_records_are_valid_and_profile_owned()
+    public void Repository_approved_records_are_valid_and_profile_owned()
     {
         var repoRoot = FindRepoRoot();
         var profiles = WorkloadGaManifestLoader.LoadAll(
@@ -26,10 +26,10 @@ public sealed class ApprovedRuntimeLedgerTests
         Assert.Equal(2, records.Count);
         Assert.All(records, record =>
         {
-            Assert.Equal("bootstrap", record.Status);
+            Assert.Equal("approved", record.Status);
             Assert.True(record.Eligibility.RollbackBaselineEligible);
-            Assert.False(record.Eligibility.PromotionEligible);
-            Assert.Null(record.Qualification);
+            Assert.True(record.Eligibility.PromotionEligible);
+            Assert.NotNull(record.Qualification);
         });
         Assert.Single(records.Select(record => record.Artifact.Id).Distinct());
     }

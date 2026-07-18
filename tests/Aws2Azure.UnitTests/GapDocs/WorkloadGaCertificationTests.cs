@@ -12,8 +12,8 @@ public sealed class WorkloadGaCertificationTests
         Loader.LoadDesignDocs(Path.Combine(RepoRoot, "docs", "gaps"));
 
     [Theory]
-    [InlineData("s3-basic-object-crud.yaml", "candidate")]
-    [InlineData("secretsmanager-basic-lifecycle.yaml", "candidate")]
+    [InlineData("s3-basic-object-crud.yaml", "ga")]
+    [InlineData("secretsmanager-basic-lifecycle.yaml", "ga")]
     [InlineData("sqs-standard-messaging.yaml", "conditional")]
     [InlineData("dynamodb-basic-crud.yaml", "candidate")]
     public void Repository_profiles_have_expected_mechanical_verdict(
@@ -28,7 +28,7 @@ public sealed class WorkloadGaCertificationTests
             Operations,
             Designs,
             RepoRoot,
-            new DateOnly(2026, 7, 16));
+            new DateOnly(2026, 7, 18));
 
         Assert.Equal(expectedVerdict, report.Verdict);
     }

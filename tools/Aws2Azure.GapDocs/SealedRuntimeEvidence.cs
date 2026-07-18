@@ -144,6 +144,74 @@ public static partial class SealedRuntimeEvidenceValidator
         }
     }
 
+    public static void ValidateApprovedCandidate(
+        QualificationSealedRuntimeIdentity identity,
+        ApprovedRuntimeRecord record,
+        DateTimeOffset now)
+    {
+        ValidateCommon(identity, record.Profile.Id, record.Profile.Version, now);
+        if (record.Status != "approved"
+            || identity.Role != "candidate"
+            || identity.Status != "candidate"
+            || identity.Eligibility.RollbackBaselineEligible
+            || identity.Eligibility.PromotionEligible
+            || identity.LedgerRecordDigest is not null
+            || identity.Source.Repository != record.Runtime.SourceRepository
+            || identity.Source.Sha != record.Runtime.SourceSha
+            || identity.Source.Ref != record.Attestation.SourceRef
+            || identity.Runtime.AggregateDigest != record.Runtime.AggregateDigest
+            || identity.Runtime.ExecutableDigest != record.Runtime.ExecutableDigest
+            || identity.Runtime.ManifestDigest != record.Attestation.ManifestSubjectDigest
+            || identity.Producer.Workflow != record.Producer.Workflow
+            || identity.Producer.RunId != record.Producer.RunId
+            || identity.Producer.RunAttempt != record.Producer.RunAttempt
+            || identity.Artifact.Id != record.Artifact.Id
+            || identity.Artifact.Name != record.Artifact.Name
+            || identity.Artifact.UploadDigest != record.Artifact.UploadDigest
+            || identity.Artifact.CreatedAt.ToUniversalTime()
+                != record.Artifact.CreatedAt.ToUniversalTime()
+            || identity.Artifact.ExpiresAt.ToUniversalTime()
+                != record.Artifact.ExpiresAt.ToUniversalTime()
+            || identity.Attestation.PredicateType != record.Attestation.PredicateType
+            || identity.Attestation.Repository != record.Attestation.Repository
+            || identity.Attestation.SignerWorkflow != record.Attestation.SignerWorkflow
+            || identity.Attestation.SourceSha != record.Attestation.SourceSha
+            || identity.Attestation.SourceRef != record.Attestation.SourceRef
+            || identity.Attestation.ExecutableSubjectName != record.Attestation.SubjectName
+            || identity.Attestation.ExecutableSubjectDigest != record.Attestation.SubjectDigest
+            || identity.Attestation.ManifestSubjectName
+                != record.Attestation.ManifestSubjectName
+            || identity.Attestation.ManifestSubjectDigest
+                != record.Attestation.ManifestSubjectDigest)
+        {
+            throw new InvalidDataException(
+                "Sealed qualification candidate does not exactly match the approved profile ledger.");
+        }
+    }
+
+    public static void ValidateRollbackTarget(
+        QualificationSealedRuntimeIdentity identity,
+        string profileId,
+        int profileVersion,
+        string expectedAggregateDigest,
+        string expectedLedgerRecordDigest,
+        DateTimeOffset now)
+    {
+        ValidateCommon(identity, profileId, profileVersion, now);
+        if (identity.Role != "prior"
+            || identity.Status is not ("bootstrap" or "approved")
+            || !identity.Eligibility.RollbackBaselineEligible
+            || identity.Status == "bootstrap" && identity.Eligibility.PromotionEligible
+            || identity.Status == "approved" && !identity.Eligibility.PromotionEligible
+            || !IsDigest(identity.LedgerRecordDigest ?? string.Empty)
+            || identity.LedgerRecordDigest != expectedLedgerRecordDigest
+            || identity.Runtime.AggregateDigest != expectedAggregateDigest)
+        {
+            throw new InvalidDataException(
+                "Sealed prior identity does not match the approved rollback target.");
+        }
+    }
+
     public static void ValidatePrior(
         QualificationSealedRuntimeIdentity identity,
         ApprovedRuntimeRecord record,

@@ -17,7 +17,7 @@ requirements:
 accepted_partial_operations: []
 accepted_design_gaps: []
 evidence:
-  qualification_artifact: ""
+  qualification_artifact: docs/workloads/evidence/s3-basic-object-crud.yaml
   required_scenarios:
     - representative-load
     - throttling
