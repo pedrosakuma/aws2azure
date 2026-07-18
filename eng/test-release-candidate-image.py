@@ -12,6 +12,7 @@ import shutil
 import struct
 import subprocess
 import unittest
+from collections import Counter
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -204,6 +205,8 @@ class ReleaseCandidateImageTests(unittest.TestCase):
                         f"{'a' * 64}-run-{run_id}-attempt-{run_attempt}"
                     ),
                     "upload_digest": digest_bytes(b"sealed artifact"),
+                    "created_at": "2026-07-17T18:01:00+00:00",
+                    "expires_at": "2099-07-17T18:01:00+00:00",
                 },
                 "attestation": {
                     "predicate_type": "https://slsa.dev/provenance/v1",
@@ -218,6 +221,72 @@ class ReleaseCandidateImageTests(unittest.TestCase):
                     "manifest_subject_name": "sealed-runtime-manifest.json",
                     "manifest_subject_digest": sealed_manifest_digest,
                 },
+            },
+        }
+
+    def make_resolved_x64_identity(
+        self,
+        context: dict[str, object],
+        ledger: dict[str, object],
+    ) -> dict[str, object]:
+        workload = next(
+            item
+            for item in context["workloads"]
+            if item["profile"]["id"] == "s3-basic-object-crud"
+        )
+        approved = workload["approved_runtime"]
+        source = context["sealed_runtime"]
+        record = ledger["record"]
+        producer = source["producer"]
+        repository = source["source_repository"]
+        run_url = f"https://github.com/{repository}/actions/runs/{producer['run_id']}"
+        return {
+            "schema_version": 1,
+            "role": "prior",
+            "profile": approved["profile"],
+            "status": approved["status"],
+            "eligibility": record["eligibility"],
+            "ledger_record_digest": approved["ledger_record_digest"],
+            "source": {
+                "repository": repository,
+                "sha": source["source_sha"],
+                "ref": source["source_ref"],
+            },
+            "runtime": {
+                "aggregate_digest": source["aggregate_digest"],
+                "executable_digest": source["executable_digest"],
+                "manifest_digest": source["manifest_digest"],
+            },
+            "producer": {
+                "workflow": producer["workflow"],
+                "event_name": "workflow_dispatch",
+                "run_id": producer["run_id"],
+                "run_attempt": producer["run_attempt"],
+                "run_url": run_url,
+                "attempt_url": producer["attempt_url"],
+                "run_started_at": "2026-07-17T18:00:00+00:00",
+            },
+            "artifact": {
+                "id": source["artifact"]["id"],
+                "name": source["artifact"]["name"],
+                "upload_digest": source["artifact"]["upload_digest"],
+                "created_at": record["artifact"]["created_at"],
+                "expires_at": record["artifact"]["expires_at"],
+            },
+            "attestation": {
+                "predicate_type": "https://slsa.dev/provenance/v1",
+                "repository": repository,
+                "signer_workflow": (
+                    f"{repository}/.github/workflows/sealed-runtime.yml"
+                ),
+                "source_sha": source["source_sha"],
+                "source_ref": source["source_ref"],
+                "run_invocation_url": producer["attempt_url"],
+                "bundle_digest": digest_bytes(b"sealed runtime attestation"),
+                "executable_subject_name": "Aws2Azure.Proxy",
+                "executable_subject_digest": source["executable_digest"],
+                "manifest_subject_name": "sealed-runtime-manifest.json",
+                "manifest_subject_digest": source["manifest_digest"],
             },
         }
 
@@ -255,7 +324,25 @@ class ReleaseCandidateImageTests(unittest.TestCase):
         packaged_arm64 = x64 if swap_architectures else arm64
 
         sealed = input_dir / "sealed-runtime-manifest.json"
-        sealed.write_text('{"sealed":"runtime"}\n', encoding="utf-8")
+        write_json(
+            sealed,
+            {
+                "producer": {
+                    "workflow_path": ".github/workflows/sealed-runtime.yml",
+                    "event_name": "workflow_dispatch",
+                    "run_id": 123456,
+                    "run_attempt": 2,
+                    "run_url": (
+                        f"https://github.com/{REPOSITORY}/actions/runs/123456"
+                    ),
+                    "attempt_url": (
+                        f"https://github.com/{REPOSITORY}/actions/runs/123456/"
+                        "attempts/2"
+                    ),
+                    "run_started_at": "2026-07-17T18:00:00Z",
+                }
+            },
+        )
         sealed_digest = digest_file(sealed)
         executable_digest = digest_file(packaged_x64)
         ledgers: dict[str, pathlib.Path] = {}
@@ -303,6 +390,14 @@ class ReleaseCandidateImageTests(unittest.TestCase):
         shutil.copyfile(
             ledgers["secretsmanager-basic-lifecycle"],
             bundle / "context" / "secretsmanager-approved-runtime.json",
+        )
+        context_value = json.loads(context.read_text(encoding="utf-8"))
+        s3_ledger = json.loads(
+            ledgers["s3-basic-object-crud"].read_text(encoding="utf-8")
+        )
+        write_json(
+            bundle / "context" / "resolved-x64-identity.json",
+            self.make_resolved_x64_identity(context_value, s3_ledger),
         )
         sealed_output = bundle / "sealed-runtime" / "sealed-runtime-manifest.json"
         sealed_output.parent.mkdir()
@@ -429,18 +524,22 @@ class ReleaseCandidateImageTests(unittest.TestCase):
         )
 
     def make_attestation(
-        self, identity: dict[str, object], kind: str
+        self,
+        identity: dict[str, object],
+        kind: str,
+        subjects: list[dict[str, object]] | None = None,
     ) -> dict[str, object]:
         key = "payload" if kind == "payload" else "archive_inputs"
-        subjects = [
-            {
-                "name": item["name"],
-                "digest": {
-                    "sha256": item["digest"].removeprefix("sha256:")
-                },
-            }
-            for item in identity["attestation_subjects"][key]
-        ]
+        if subjects is None:
+            subjects = [
+                {
+                    "name": item["name"],
+                    "digest": {
+                        "sha256": item["digest"].removeprefix("sha256:")
+                    },
+                }
+                for item in identity["attestation_subjects"][key]
+            ]
         source = identity["candidate"]["source"]
         producer = identity["producer"]
         attempt_url = identity["producer"]["attempt_url"]
@@ -468,6 +567,31 @@ class ReleaseCandidateImageTests(unittest.TestCase):
                 },
             }
         }
+
+    def producer_payload_subjects(
+        self, bundle: pathlib.Path
+    ) -> list[dict[str, object]]:
+        paths = [
+            *sorted((bundle / "context").glob("*.json")),
+            bundle / "sealed-runtime" / "sealed-runtime-manifest.json",
+        ]
+        for rid in ("linux-x64", "linux-arm64"):
+            platform = bundle / "platforms" / rid
+            paths.extend(
+                (
+                    platform / "Aws2Azure.Proxy",
+                    *sorted(platform.glob("*.tar.gz")),
+                    platform / "platform-manifest.json",
+                    platform / "SHA256SUMS",
+                )
+            )
+        return [
+            {
+                "name": path.name,
+                "digest": {"sha256": digest_file(path).removeprefix("sha256:")},
+            }
+            for path in paths
+        ]
 
     def image_inspect(
         self, identity: dict[str, object], platform: str
@@ -1261,7 +1385,15 @@ esac
         identity = json.loads(identity_path.read_text(encoding="utf-8"))
         for kind in ("payload", "archive-inputs"):
             verification = self.root / f"{kind}.json"
-            write_json(verification, [self.make_attestation(identity, kind)])
+            producer_subjects = (
+                self.producer_payload_subjects(bundle)
+                if kind == "payload"
+                else None
+            )
+            write_json(
+                verification,
+                [self.make_attestation(identity, kind, producer_subjects)],
+            )
             self.run_tool(
                 IMAGE_TOOL,
                 "validate-attestation",
@@ -1288,6 +1420,145 @@ esac
                 str(verification),
                 expect_success=False,
             )
+
+    def test_payload_subjects_match_real_producer_shape_and_reject_drift(self) -> None:
+        bundle, selection, identity_path = self.create_bundle()
+        self.validate_bundle(bundle, selection, identity_path)
+        identity = json.loads(identity_path.read_text(encoding="utf-8"))
+        producer_subjects = self.producer_payload_subjects(bundle)
+        expected = Counter(
+            (item["name"], item["digest"].removeprefix("sha256:"))
+            for item in identity["attestation_subjects"]["payload"]
+        )
+        actual = Counter(
+            (item["name"], item["digest"]["sha256"]) for item in producer_subjects
+        )
+        self.assertEqual(actual, expected)
+        subject_name_counts = Counter(
+            item["name"] for item in producer_subjects
+        )
+        self.assertEqual(subject_name_counts["Aws2Azure.Proxy"], 2)
+        self.assertEqual(subject_name_counts["platform-manifest.json"], 2)
+        self.assertEqual(subject_name_counts["SHA256SUMS"], 2)
+        self.assertEqual(subject_name_counts["resolved-x64-identity.json"], 1)
+
+        resolved_index = next(
+            index
+            for index, item in enumerate(producer_subjects)
+            if item["name"] == "resolved-x64-identity.json"
+        )
+        mutations = {}
+        for name in ("missing", "extra", "renamed", "duplicate", "rehashed"):
+            subjects = json.loads(json.dumps(producer_subjects))
+            if name == "missing":
+                del subjects[resolved_index]
+            elif name == "extra":
+                subjects.append(
+                    {
+                        "name": "unexpected.json",
+                        "digest": {"sha256": "a" * 64},
+                    }
+                )
+            elif name == "renamed":
+                subjects[resolved_index]["name"] = "resolved-identity.json"
+            elif name == "duplicate":
+                subjects.append(subjects[resolved_index])
+            else:
+                subjects[resolved_index]["digest"]["sha256"] = "b" * 64
+            mutations[name] = subjects
+
+        for name, subjects in mutations.items():
+            with self.subTest(name=name):
+                verification = self.root / f"payload-{name}.json"
+                write_json(
+                    verification,
+                    [self.make_attestation(identity, "payload", subjects)],
+                )
+                self.run_tool(
+                    IMAGE_TOOL,
+                    "validate-attestation",
+                    "--kind",
+                    "payload",
+                    "--identity",
+                    str(identity_path),
+                    "--verification",
+                    str(verification),
+                    expect_success=False,
+                )
+
+    def test_resolved_x64_identity_is_required_regular_and_semantically_bound(
+        self,
+    ) -> None:
+        bundle, selection, identity_path = self.create_bundle()
+        self.validate_bundle(bundle, selection, identity_path)
+        resolved = bundle / "context" / "resolved-x64-identity.json"
+
+        missing_bytes = resolved.read_bytes()
+        resolved.unlink()
+        self.write_complete_checksums(bundle)
+        self.validate_bundle(
+            bundle,
+            selection,
+            self.root / "missing-resolved-output.json",
+            expect_success=False,
+        )
+
+        resolved.write_bytes(missing_bytes)
+        link_target = bundle / "context" / "resolved-x64-identity-target.json"
+        resolved.rename(link_target)
+        resolved.symlink_to(link_target.name)
+        self.write_complete_checksums(bundle)
+        self.validate_bundle(
+            bundle,
+            selection,
+            self.root / "linked-resolved-output.json",
+            expect_success=False,
+        )
+
+        resolved.unlink()
+        link_target.rename(resolved)
+        drifted = json.loads(resolved.read_text(encoding="utf-8"))
+        drifted["producer"]["run_started_at"] = "2026-07-17T18:00:01Z"
+        write_json(resolved, drifted)
+        self.write_complete_checksums(bundle)
+
+        recomputed_identity = json.loads(identity_path.read_text(encoding="utf-8"))
+        resolved_subject = next(
+            item
+            for item in recomputed_identity["attestation_subjects"]["payload"]
+            if item["name"] == "resolved-x64-identity.json"
+        )
+        resolved_subject["digest"] = digest_file(resolved)
+        recomputed_identity["content_digest"] = content_digest(recomputed_identity)
+        recomputed_identity_path = self.root / "recomputed-identity.json"
+        write_json(recomputed_identity_path, recomputed_identity)
+        verification = self.root / "recomputed-payload-attestation.json"
+        write_json(
+            verification,
+            [
+                self.make_attestation(
+                    recomputed_identity,
+                    "payload",
+                    self.producer_payload_subjects(bundle),
+                )
+            ],
+        )
+        self.run_tool(
+            IMAGE_TOOL,
+            "validate-attestation",
+            "--kind",
+            "payload",
+            "--identity",
+            str(recomputed_identity_path),
+            "--verification",
+            str(verification),
+        )
+        self.validate_bundle(
+            bundle,
+            selection,
+            self.root / "semantic-drift-output.json",
+            expect_success=False,
+        )
 
     def test_registry_image_config_rejects_baked_overrides_and_drift(self) -> None:
         bundle, selection, identity_path = self.create_bundle()
