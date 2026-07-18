@@ -4,7 +4,13 @@
 > **Support window:** Current minor `X.Y`; previous supported minor `X.(Y-1)` or `None`
 
 Replace every `vX.Y.Z` placeholder, including documentation-link tags, before
-publishing.
+announcing or treating the release as supported.
+
+> **Current automation note:** The release workflow may initially create the
+> release with GitHub-generated notes. After assets upload, replace that body
+> with this completed template using `gh release edit vX.Y.Z --notes-file
+> <completed-template>`. Do not announce or mark the release supported until no
+> placeholder remains and every mandatory section is complete.
 
 ## Artifacts and provenance
 

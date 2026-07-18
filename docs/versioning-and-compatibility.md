@@ -212,3 +212,13 @@ notes must:
 - link the exact gap, qualification, and approved-runtime evidence used for each
   GA claim; and
 - say `None` rather than omit a mandatory section.
+
+The current release workflow uses GitHub-generated notes when it creates a
+missing release. Those notes are an asset-upload bootstrap, not a completed
+release record. After the workflow finishes, the release owner must replace the
+body with a completed template (for example, `gh release edit vX.Y.Z
+--notes-file <completed-template>`) and verify that no placeholder remains
+before the release is announced or treated as supported. Generated change notes
+may be copied into the template's Changes section; they do not replace any
+mandatory matrix or declaration. A workflow run is not release-complete until
+this manual postcondition is satisfied.
