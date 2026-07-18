@@ -777,6 +777,184 @@ class ReleaseCandidateImageTests(unittest.TestCase):
         self.assertFalse(injected.exists())
         self.assertFalse(destination.exists())
 
+    def test_archive_consumer_resolves_paginated_ruleset_details(self) -> None:
+        mock_root = self.root / "mock"
+        mock_bin = self.root / "mock-bin"
+        mock_root.mkdir()
+        mock_bin.mkdir()
+        compact_matching = {
+            "id": 19148912,
+            "name": "Protect release candidate tags",
+            "target": "tag",
+            "source_type": "Repository",
+            "source": REPOSITORY,
+            "enforcement": "active",
+            "updated_at": "2026-07-18T18:13:18.386Z",
+        }
+        compact_unrelated = {
+            "id": 19148913,
+            "name": "Protect internal tags",
+            "target": "tag",
+            "source_type": "Repository",
+            "source": REPOSITORY,
+            "enforcement": "active",
+            "updated_at": "2026-07-18T18:15:00.000Z",
+        }
+        write_json(
+            mock_root / "ruleset-pages.json",
+            [[compact_matching], [compact_unrelated]],
+        )
+        detail_matching = {
+            **compact_matching,
+            "conditions": {
+                "ref_name": {
+                    "include": ["refs/tags/v*-rc.*"],
+                    "exclude": [],
+                }
+            },
+            "rules": [{"type": "deletion"}, {"type": "non_fast_forward"}],
+        }
+        detail_unrelated = {
+            **compact_unrelated,
+            "conditions": {
+                "ref_name": {
+                    "include": ["refs/tags/internal-*"],
+                    "exclude": [],
+                }
+            },
+            "rules": [{"type": "deletion"}, {"type": "non_fast_forward"}],
+        }
+        write_json(mock_root / "ruleset-19148912.json", detail_matching)
+        write_json(mock_root / "ruleset-19148913.json", detail_unrelated)
+        write_json(
+            mock_root / "tag.json",
+            {"object": {"type": "commit", "sha": SOURCE_SHA}},
+        )
+        write_json(
+            mock_root / "branch.json",
+            {
+                "name": "main",
+                "protected": True,
+                "commit": {"sha": ORCHESTRATION_SHA},
+            },
+        )
+        write_json(mock_root / "run.json", {})
+        write_json(mock_root / "artifact.json", {})
+        write_json(mock_root / "compare.json", {})
+        mock_gh = mock_bin / "gh"
+        mock_gh.write_text(
+            """#!/usr/bin/env bash
+set -euo pipefail
+endpoint="${@: -1}"
+printf '%s\\n' "$*" >> "$MOCK_ROOT/gh.log"
+case "$endpoint" in
+  */actions/runs/333/attempts/2) cat "$MOCK_ROOT/run.json" ;;
+  */actions/artifacts/7654321) cat "$MOCK_ROOT/artifact.json" ;;
+  */rulesets\\?includes_parents=true\\&targets=tag\\&per_page=100)
+    [[ "$#" == 8 && "$2" == --paginate && "$3" == --slurp ]]
+    [[ "$4" == -H && "$5" == "Accept: application/vnd.github+json" ]]
+    [[ "$6" == -H && "$7" == "X-GitHub-Api-Version: 2022-11-28" ]]
+    [[ "$GH_TOKEN" == test-token ]]
+    cat "$MOCK_ROOT/ruleset-pages.json"
+    ;;
+  */rulesets/19148912) cat "$MOCK_RULESET_19148912" ;;
+  */rulesets/19148913) cat "$MOCK_ROOT/ruleset-19148913.json" ;;
+  */git/ref/tags/v1.2.3-rc.4) cat "$MOCK_ROOT/tag.json" ;;
+  */branches/main) cat "$MOCK_ROOT/branch.json" ;;
+  */compare/*) cat "$MOCK_ROOT/compare.json" ;;
+  *) echo "unexpected endpoint: $endpoint" >&2; exit 1 ;;
+esac
+""",
+            encoding="utf-8",
+        )
+        mock_gh.chmod(0o700)
+
+        arguments = [
+            "bash",
+            str(REPO_ROOT / "eng" / "resolve-release-candidate-archives.sh"),
+            "--repository",
+            REPOSITORY,
+            "--candidate",
+            CANDIDATE,
+            "--source-sha",
+            SOURCE_SHA,
+            "--workflow-source-sha",
+            ORCHESTRATION_SHA,
+            "--run-id",
+            str(RUN_ID),
+            "--run-attempt",
+            str(RUN_ATTEMPT),
+            "--artifact-id",
+            "7654321",
+            "--artifact-name",
+            "archive",
+            "--artifact-digest",
+            digest_bytes(b"artifact"),
+            "--archive-content-digest",
+            digest_bytes(b"inputs"),
+        ]
+        environment = {
+            **os.environ,
+            "GH_BIN": str(mock_gh),
+            "GH_TOKEN": "test-token",
+            "MOCK_ROOT": str(mock_root),
+            "MOCK_RULESET_19148912": str(
+                mock_root / "ruleset-19148912.json"
+            ),
+        }
+        result = subprocess.run(
+            [
+                *arguments,
+                "--destination",
+                str(self.root / "resolved"),
+                "--identity-output",
+                str(self.root / "resolved" / "identity.json"),
+            ],
+            cwd=self.root,
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn(
+            "candidate tag is not covered by an active protection ruleset",
+            result.stderr,
+        )
+        log = (mock_root / "gh.log").read_text(encoding="utf-8")
+        self.assertIn("api --paginate --slurp", log)
+        self.assertIn("/rulesets/19148912", log)
+        self.assertIn("/rulesets/19148913", log)
+
+        mismatched = {**detail_matching, "id": 19148914}
+        write_json(mock_root / "ruleset-mismatched.json", mismatched)
+        mismatch_result = subprocess.run(
+            [
+                *arguments,
+                "--destination",
+                str(self.root / "mismatch"),
+                "--identity-output",
+                str(self.root / "mismatch" / "identity.json"),
+            ],
+            cwd=self.root,
+            env={
+                **environment,
+                "MOCK_RULESET_19148912": str(
+                    mock_root / "ruleset-mismatched.json"
+                ),
+            },
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertNotEqual(mismatch_result.returncode, 0)
+        self.assertIn(
+            "detailed tag rulesets are malformed, incomplete, or inconsistent",
+            mismatch_result.stderr,
+        )
+
     def test_bundle_validates_archives_checksums_provenance_and_elf_identity(self) -> None:
         bundle, selection, identity = self.create_bundle()
         self.validate_bundle(bundle, selection, identity)
@@ -1083,6 +1261,40 @@ class ReleaseCandidateImageTests(unittest.TestCase):
         )
         self.assertIn('--main-branch-json "$main_branch_json"', resolver)
         self.assertIn('--main-compare-json "$main_compare_json"', resolver)
+        for consumer_path in (
+            REPO_ROOT / "eng" / "resolve-release-candidate-archives.sh",
+            REPO_ROOT / "eng" / "resolve-sealed-runtime.sh",
+            REPO_ROOT / "eng" / "download-qualified-run-artifact.sh",
+        ):
+            consumer = consumer_path.read_text(encoding="utf-8")
+            self.assertIn(
+                '"$repo_root/eng/resolve-release-candidate-rulesets.sh"',
+                consumer,
+            )
+            self.assertIn("--fetch-rulesets", consumer)
+            self.assertNotIn(
+                "rulesets?includes_parents=true&targets=tag&per_page=100",
+                consumer,
+            )
+        ruleset_resolver = (
+            REPO_ROOT / "eng" / "resolve-release-candidate-rulesets.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("api --paginate --slurp", ruleset_resolver)
+        self.assertIn("X-GitHub-Api-Version: 2022-11-28", ruleset_resolver)
+        qualified_consumer = (
+            REPO_ROOT / "eng" / "download-qualified-run-artifact.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            'if [[ "$expected_ref" == refs/heads/main ]]; then',
+            qualified_consumer,
+        )
+        sealed_consumer = (
+            REPO_ROOT / "eng" / "resolve-sealed-runtime.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            'if [[ "$ref" == refs/heads/main ]]; then',
+            sealed_consumer,
+        )
 
         run_blocks = re.findall(
             r"\n\s+run: \|\n((?:\s{10,}.+\n?)+)", workflow

@@ -96,6 +96,94 @@ jq -n \
     }]
   }' > "$scratch/mock/artifacts.json"
 printf '{"name":"main","protected":true}\n' > "$scratch/mock/branch.json"
+cat > "$scratch/mock/ruleset-pages.json" <<'JSON'
+[
+  [
+    {
+      "id": 19148912,
+      "name": "Protect release candidate tags",
+      "target": "tag",
+      "source_type": "Repository",
+      "source": "example/repository",
+      "enforcement": "active",
+      "node_id": "RRS_compact",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/example/repository/rulesets/19148912"
+        },
+        "html": {
+          "href": "https://github.com/example/repository/rules/19148912"
+        }
+      },
+      "created_at": "2026-07-18T18:13:18.367Z",
+      "updated_at": "2026-07-18T18:13:18.386Z"
+    }
+  ],
+  [
+    {
+      "id": 19148913,
+      "name": "Protect internal tags",
+      "target": "tag",
+      "source_type": "Repository",
+      "source": "example/repository",
+      "enforcement": "active",
+      "node_id": "RRS_compact_other",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/example/repository/rulesets/19148913"
+        },
+        "html": {
+          "href": "https://github.com/example/repository/rules/19148913"
+        }
+      },
+      "created_at": "2026-07-18T18:14:59.000Z",
+      "updated_at": "2026-07-18T18:15:00.000Z"
+    }
+  ]
+]
+JSON
+cat > "$scratch/mock/ruleset-19148912.json" <<'JSON'
+{
+  "id": 19148912,
+  "name": "Protect release candidate tags",
+  "target": "tag",
+  "source_type": "Repository",
+  "source": "example/repository",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "exclude": [],
+      "include": ["refs/tags/v*-rc.*"]
+    }
+  },
+  "rules": [
+    {"type": "deletion"},
+    {"type": "non_fast_forward"}
+  ],
+  "updated_at": "2026-07-18T18:13:18.386Z"
+}
+JSON
+cat > "$scratch/mock/ruleset-19148913.json" <<'JSON'
+{
+  "id": 19148913,
+  "name": "Protect internal tags",
+  "target": "tag",
+  "source_type": "Repository",
+  "source": "example/repository",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "exclude": [],
+      "include": ["refs/tags/internal-*"]
+    }
+  },
+  "rules": [
+    {"type": "deletion"},
+    {"type": "non_fast_forward"}
+  ],
+  "updated_at": "2026-07-18T18:15:00.000Z"
+}
+JSON
 
 install -d -m 0700 "$scratch/evidence/artifacts/workload"
 printf '{"candidate":{"qualification_mode":"sealed"}}\n' \
@@ -185,6 +273,7 @@ cat > "$scratch/mock-bin/gh" <<'EOF'
 set -euo pipefail
 if [[ "$1" == api ]]; then
   endpoint="${@: -1}"
+  printf '%s\n' "$*" >> "$MOCK_GH_ROOT/gh.log"
   case "$endpoint" in
     */actions/runs/123456789) cat "$MOCK_GH_ROOT/run.json" ;;
     */actions/runs/123456789/artifacts?per_page=100) cat "$MOCK_GH_ROOT/artifacts.json" ;;
@@ -193,6 +282,23 @@ if [[ "$1" == api ]]; then
     */actions/runs/987654321/artifacts?per_page=100) cat "$MOCK_GH_ROOT/evidence-artifacts.json" ;;
     */actions/artifacts/88/zip) cat "$MOCK_GH_ROOT/evidence.zip" ;;
     */branches/main) cat "$MOCK_GH_ROOT/branch.json" ;;
+    */rulesets\?includes_parents=true\&targets=tag\&per_page=100)
+      [[ "$#" == 8 ]]
+      [[ "$2" == --paginate && "$3" == --slurp ]]
+      [[ "$4" == -H && "$5" == "Accept: application/vnd.github+json" ]]
+      [[ "$6" == -H && "$7" == "X-GitHub-Api-Version: 2022-11-28" ]]
+      [[ "${GH_TOKEN:-}" == test-token ]]
+      [[ "${MOCK_RULESET_LIST_FAILURE:-false}" != true ]]
+      cat "${MOCK_RULESET_PAGES:-$MOCK_GH_ROOT/ruleset-pages.json}"
+      ;;
+    */rulesets/19148912)
+      [[ "${MOCK_RULESET_DETAIL_FAILURE:-}" != 19148912 ]]
+      cat "${MOCK_RULESET_DETAIL_19148912:-$MOCK_GH_ROOT/ruleset-19148912.json}"
+      ;;
+    */rulesets/19148913)
+      [[ "${MOCK_RULESET_DETAIL_FAILURE:-}" != 19148913 ]]
+      cat "$MOCK_GH_ROOT/ruleset-19148913.json"
+      ;;
     *) echo "unexpected mock API endpoint: $endpoint" >&2; exit 1 ;;
   esac
 elif [[ "$1" == attestation && "$2" == verify ]]; then
@@ -204,6 +310,8 @@ fi
 EOF
 chmod 0700 "$scratch/mock-bin/gh"
 export MOCK_GH_ROOT="$scratch/mock"
+export GH_TOKEN=test-token
+: > "$scratch/mock/gh.log"
 
 GH_BIN="$scratch/mock-bin/gh" "$repo_root/eng/resolve-sealed-runtime.sh" \
   --repository "$repository" \
@@ -333,6 +441,154 @@ jq -e \
     .artifact.id == 88 and
     .artifact.upload_digest == $digest
   ' "$scratch/evidence-identity.json" >/dev/null
+if grep -q '/rulesets' "$scratch/mock/gh.log"; then
+  echo "main-ref consumers unexpectedly required tag rulesets" >&2
+  exit 1
+fi
+
+candidate=v1.2.3-rc.4
+candidate_ref="refs/tags/$candidate"
+jq --arg branch "$candidate" '.head_branch = $branch' \
+  "$scratch/mock/evidence-run.json" > "$scratch/mock/evidence-run-tag.json"
+mv "$scratch/mock/evidence-run.json" "$scratch/mock/evidence-run-main.json"
+mv "$scratch/mock/evidence-run-tag.json" "$scratch/mock/evidence-run.json"
+tag_evidence_content="$(
+  cd "$scratch"
+  GH_BIN="$scratch/mock-bin/gh" \
+    "$repo_root/eng/download-qualified-run-artifact.sh" \
+      --repository "$repository" \
+      --run-id 987654321 \
+      --run-attempt 3 \
+      --workflow .github/workflows/workload-load-real-azure.yml \
+      --event workflow_dispatch \
+      --profile s3-basic-object-crud \
+      --expected-sha "$source_sha" \
+      --expected-ref "$candidate_ref" \
+      --artifact-name real-azure-workload-load-s3-basic-object-crud \
+      --destination "$scratch/tag-evidence-resolved" \
+      --identity-output "$scratch/tag-evidence-identity.json"
+)"
+[[ -f "$tag_evidence_content/artifacts/workload/load-evidence.json" ]]
+jq -e --arg ref "$candidate_ref" '.head_ref == $ref' \
+  "$scratch/tag-evidence-identity.json" >/dev/null
+grep -Fq 'api --paginate --slurp' "$scratch/mock/gh.log"
+grep -Fq '/rulesets/19148912' "$scratch/mock/gh.log"
+grep -Fq '/rulesets/19148913' "$scratch/mock/gh.log"
+
+jq --arg branch "$candidate" '.head_branch = $branch' \
+  "$scratch/mock/run.json" > "$scratch/mock/run-tag.json"
+mv "$scratch/mock/run.json" "$scratch/mock/run-main.json"
+mv "$scratch/mock/run-tag.json" "$scratch/mock/run.json"
+if (
+  cd "$scratch"
+  GH_BIN="$scratch/mock-bin/gh" "$repo_root/eng/resolve-sealed-runtime.sh" \
+    --repository "$repository" \
+    --run-id "$run_id" \
+    --run-attempt "$run_attempt" \
+    --expected-sha "$source_sha" \
+    --expected-ref "$candidate_ref" \
+    --profile s3-basic-object-crud \
+    --profile-version 1 \
+    --role candidate \
+    --destination "$scratch/tag-resolved" \
+    --identity-output "$scratch/tag-candidate.json"
+) >"$scratch/tag-sealed.out" 2>"$scratch/tag-sealed.err"; then
+  echo "tag sealed-runtime probe unexpectedly passed a main-bound manifest" >&2
+  exit 1
+fi
+grep -Fq 'manifest source identity does not match selected qualification source' \
+  "$scratch/tag-sealed.err"
+mv "$scratch/mock/run.json" "$scratch/mock/run-tag.json"
+mv "$scratch/mock/run-main.json" "$scratch/mock/run.json"
+
+jq '.conditions.ref_name.exclude = ["refs/tags/v1.2.3-rc.*"]' \
+  "$scratch/mock/ruleset-19148912.json" > "$scratch/mock/ruleset-excluded.json"
+if MOCK_RULESET_DETAIL_19148912="$scratch/mock/ruleset-excluded.json" \
+  GH_BIN="$scratch/mock-bin/gh" \
+  "$repo_root/eng/download-qualified-run-artifact.sh" \
+    --repository "$repository" \
+    --run-id 987654321 \
+    --run-attempt 3 \
+    --workflow .github/workflows/workload-load-real-azure.yml \
+    --event workflow_dispatch \
+    --profile s3-basic-object-crud \
+    --expected-sha "$source_sha" \
+    --expected-ref "$candidate_ref" \
+    --artifact-name real-azure-workload-load-s3-basic-object-crud \
+    --destination "$scratch/excluded-evidence" \
+    --identity-output "$scratch/excluded-evidence.json" \
+    >"$scratch/excluded.out" 2>"$scratch/excluded.err"; then
+  echo "qualified consumer accepted an excluded candidate tag" >&2
+  exit 1
+fi
+grep -Fq 'release-candidate tag is not protected' "$scratch/excluded.err"
+
+jq '.id = 19148914' "$scratch/mock/ruleset-19148912.json" \
+  > "$scratch/mock/ruleset-mismatch.json"
+if MOCK_RULESET_DETAIL_19148912="$scratch/mock/ruleset-mismatch.json" \
+  GH_BIN="$scratch/mock-bin/gh" \
+  "$repo_root/eng/download-qualified-run-artifact.sh" \
+    --repository "$repository" \
+    --run-id 987654321 \
+    --run-attempt 3 \
+    --workflow .github/workflows/workload-load-real-azure.yml \
+    --event workflow_dispatch \
+    --profile s3-basic-object-crud \
+    --expected-sha "$source_sha" \
+    --expected-ref "$candidate_ref" \
+    --artifact-name real-azure-workload-load-s3-basic-object-crud \
+    --destination "$scratch/mismatch-evidence" \
+    --identity-output "$scratch/mismatch-evidence.json" \
+    >"$scratch/mismatch.out" 2>"$scratch/mismatch.err"; then
+  echo "qualified consumer accepted mismatched ruleset detail" >&2
+  exit 1
+fi
+grep -Fq 'detailed tag rulesets are malformed, incomplete, or inconsistent' \
+  "$scratch/mismatch.err"
+
+if MOCK_RULESET_LIST_FAILURE=true GH_BIN="$scratch/mock-bin/gh" \
+  "$repo_root/eng/download-qualified-run-artifact.sh" \
+    --repository "$repository" \
+    --run-id 987654321 \
+    --run-attempt 3 \
+    --workflow .github/workflows/workload-load-real-azure.yml \
+    --event workflow_dispatch \
+    --profile s3-basic-object-crud \
+    --expected-sha "$source_sha" \
+    --expected-ref "$candidate_ref" \
+    --artifact-name real-azure-workload-load-s3-basic-object-crud \
+    --destination "$scratch/fetch-failure-evidence" \
+    --identity-output "$scratch/fetch-failure-evidence.json" \
+    >"$scratch/fetch-failure.out" 2>"$scratch/fetch-failure.err"; then
+  echo "qualified consumer accepted a ruleset list fetch failure" >&2
+  exit 1
+fi
+grep -Fq 'failed to fetch compact tag rulesets' "$scratch/fetch-failure.err"
+
+jq '.[0][0].enforcement = "disabled"' \
+  "$scratch/mock/ruleset-pages.json" > "$scratch/mock/ruleset-inactive-pages.json"
+if MOCK_RULESET_PAGES="$scratch/mock/ruleset-inactive-pages.json" \
+  GH_BIN="$scratch/mock-bin/gh" \
+  "$repo_root/eng/download-qualified-run-artifact.sh" \
+    --repository "$repository" \
+    --run-id 987654321 \
+    --run-attempt 3 \
+    --workflow .github/workflows/workload-load-real-azure.yml \
+    --event workflow_dispatch \
+    --profile s3-basic-object-crud \
+    --expected-sha "$source_sha" \
+    --expected-ref "$candidate_ref" \
+    --artifact-name real-azure-workload-load-s3-basic-object-crud \
+    --destination "$scratch/inactive-evidence" \
+    --identity-output "$scratch/inactive-evidence.json" \
+    >"$scratch/inactive.out" 2>"$scratch/inactive.err"; then
+  echo "qualified consumer accepted inactive compact ruleset metadata" >&2
+  exit 1
+fi
+grep -Fq 'compact tag rulesets are malformed, incomplete, duplicated, inactive' \
+  "$scratch/inactive.err"
+mv "$scratch/mock/evidence-run.json" "$scratch/mock/evidence-run-tag.json"
+mv "$scratch/mock/evidence-run-main.json" "$scratch/mock/evidence-run.json"
 
 jq '.path = ".github/workflows/not-trusted.yml"' \
   "$scratch/mock/run.json" > "$scratch/mock/run-invalid.json"
@@ -392,7 +648,9 @@ fi
 for workflow in \
   "$repo_root/.github/workflows/integration-real-azure.yml" \
   "$repo_root/.github/workflows/workload-load-real-azure.yml" \
-  "$repo_root/.github/workflows/qualification-real-azure.yml"; do
+  "$repo_root/.github/workflows/qualification-real-azure.yml" \
+  "$repo_root/.github/workflows/rc-observation-real-azure.yml" \
+  "$repo_root/.github/workflows/release-candidate-image.yml"; do
   while IFS= read -r action; do
     [[ "$action" =~ @[0-9a-f]{40}$ ]] || {
       echo "workflow action is not pinned by commit SHA: $action" >&2
@@ -404,6 +662,13 @@ for workflow in \
   )
   if grep -q 'dotnet run' "$workflow"; then
     echo "final qualification workflow path still invokes dotnet run: $workflow" >&2
+    exit 1
+  fi
+  if grep -Eq \
+    'resolve-release-candidate-archives|resolve-sealed-runtime|download-qualified-run-artifact' \
+    "$workflow" &&
+    ! grep -Fq 'GH_TOKEN: ${{ github.token }}' "$workflow"; then
+    echo "trusted artifact consumer workflow does not pass GH_TOKEN: $workflow" >&2
     exit 1
   fi
 done

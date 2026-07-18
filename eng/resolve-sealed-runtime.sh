@@ -148,9 +148,10 @@ require_protected_ref() {
   fi
 
   local rulesets_json="$private_dir/tag-rulesets.json"
-  "$gh_bin" api -H "Accept: application/vnd.github+json" \
-    "/repos/$repository/rulesets?includes_parents=true&targets=tag&per_page=100" \
-    > "$rulesets_json"
+  "$repo_root/eng/resolve-release-candidate-rulesets.sh" \
+    --repository "$repository" \
+    --fetch-rulesets \
+    --output-json "$rulesets_json"
   python3 - "$ref" "$rulesets_json" <<'PY' ||
 import fnmatch
 import json
