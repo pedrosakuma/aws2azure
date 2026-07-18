@@ -83,6 +83,58 @@ public sealed class ApprovedRuntimeLedgerTests
     }
 
     [Fact]
+    public void Approved_without_trusted_rollback_target_is_rejected()
+    {
+        var record = ValidRecord();
+        record.Status = "approved";
+        record.Eligibility.PromotionEligible = true;
+        record.Qualification = ValidQualification(record);
+        record.Qualification.RollbackTarget = null;
+
+        var errors = Validate(record);
+
+        Assert.Contains(errors, error => error.Contains(
+            "qualification.rollback_target missing",
+            StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Historical_rollback_target_expiry_does_not_expire_approved_ledger()
+    {
+        var record = ValidRecord();
+        record.Status = "approved";
+        record.Eligibility.PromotionEligible = true;
+        record.Artifact.ExpiresAt = ValidationTime.AddDays(10);
+        record.Qualification = ValidQualification(record);
+
+        var errors = ApprovedRuntimeLedgerValidator.Validate(
+            [record],
+            [Profile("test-profile", 1)],
+            ValidationTime.AddDays(2));
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void Null_nested_trusted_rollback_target_is_reported_as_validation_error()
+    {
+        var record = ValidRecord();
+        record.Status = "approved";
+        record.Eligibility.PromotionEligible = true;
+        record.Qualification = ValidQualification(record);
+        record.Qualification.RollbackTarget!.Profile = null!;
+
+        var exception = Record.Exception(() => Validate(record));
+
+        Assert.Null(exception);
+        Assert.Contains(
+            Validate(record),
+            error => error.Contains(
+                "qualification.rollback_target invalid",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Approved_requires_a_qualified_verdict()
     {
         var record = ValidRecord();
@@ -340,8 +392,82 @@ public sealed class ApprovedRuntimeLedgerTests
         CandidateRuntimeDigest = record.Runtime.AggregateDigest,
         RollbackTargetRuntimeDigest =
             "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        RollbackTarget = ValidRollbackTarget(record),
         ReviewUrl = "https://github.com/example/repository/issues/1",
         QualifiedAt = ValidationTime,
+    };
+
+    private static QualificationSealedRuntimeIdentity ValidRollbackTarget(
+        ApprovedRuntimeRecord record) => new()
+    {
+        SchemaVersion = 1,
+        Role = "prior",
+        Profile = new QualificationSealedRuntimeProfile
+        {
+            Id = record.Profile.Id,
+            Version = record.Profile.Version,
+        },
+        Status = "bootstrap",
+        Eligibility = new QualificationSealedRuntimeEligibility
+        {
+            RollbackBaselineEligible = true,
+            PromotionEligible = false,
+        },
+        LedgerRecordDigest =
+            "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        Source = new QualificationSealedRuntimeSource
+        {
+            Repository = "example/repository",
+            Sha = "abcdefabcdefabcdefabcdefabcdefabcdefabcd",
+            Ref = "refs/heads/main",
+        },
+        Runtime = new QualificationSealedRuntimeDigests
+        {
+            AggregateDigest =
+                "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            ExecutableDigest =
+                "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            ManifestDigest =
+                "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        },
+        Producer = new QualificationSealedRuntimeProducer
+        {
+            Workflow = ".github/workflows/sealed-runtime.yml",
+            EventName = "workflow_dispatch",
+            RunId = 41,
+            RunAttempt = 1,
+            RunUrl = "https://github.com/example/repository/actions/runs/41",
+            AttemptUrl = "https://github.com/example/repository/actions/runs/41/attempts/1",
+            RunStartedAt = ValidationTime.AddDays(-2),
+        },
+        Artifact = new QualificationSealedRuntimeArtifact
+        {
+            Id = 6,
+            Name =
+                "aws2azure-sealed-linux-x64-ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff-run-41-attempt-1",
+            UploadDigest =
+                "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            CreatedAt = ValidationTime.AddDays(-2),
+            ExpiresAt = ValidationTime.AddDays(1),
+        },
+        Attestation = new QualificationSealedRuntimeAttestation
+        {
+            PredicateType = "https://slsa.dev/provenance/v1",
+            Repository = "example/repository",
+            SignerWorkflow = "example/repository/.github/workflows/sealed-runtime.yml",
+            SourceSha = "abcdefabcdefabcdefabcdefabcdefabcdefabcd",
+            SourceRef = "refs/heads/main",
+            RunInvocationUrl =
+                "https://github.com/example/repository/actions/runs/41/attempts/1",
+            BundleDigest =
+                "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ExecutableSubjectName = "Aws2Azure.Proxy",
+            ExecutableSubjectDigest =
+                "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            ManifestSubjectName = "sealed-runtime-manifest.json",
+            ManifestSubjectDigest =
+                "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        },
     };
 
     private static string FindRepoRoot()

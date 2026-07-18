@@ -189,26 +189,53 @@ public static partial class SealedRuntimeEvidenceValidator
         }
     }
 
-    public static void ValidateRollbackTarget(
+    public static void ValidateTrustedRollbackTarget(
         QualificationSealedRuntimeIdentity identity,
         string profileId,
         int profileVersion,
         string expectedAggregateDigest,
-        string expectedLedgerRecordDigest,
         DateTimeOffset now)
     {
-        ValidateCommon(identity, profileId, profileVersion, now);
+        ValidateCommon(
+            identity,
+            profileId,
+            profileVersion,
+            now,
+            requireUnexpiredArtifact: false);
         if (identity.Role != "prior"
             || identity.Status is not ("bootstrap" or "approved")
             || !identity.Eligibility.RollbackBaselineEligible
             || identity.Status == "bootstrap" && identity.Eligibility.PromotionEligible
             || identity.Status == "approved" && !identity.Eligibility.PromotionEligible
             || !IsDigest(identity.LedgerRecordDigest ?? string.Empty)
-            || identity.LedgerRecordDigest != expectedLedgerRecordDigest
             || identity.Runtime.AggregateDigest != expectedAggregateDigest)
         {
             throw new InvalidDataException(
-                "Sealed prior identity does not match the approved rollback target.");
+                "Trusted rollback-target identity is invalid.");
+        }
+    }
+
+    public static void ValidateRollbackTarget(
+        QualificationSealedRuntimeIdentity identity,
+        QualificationSealedRuntimeIdentity trustedTarget,
+        DateTimeOffset now)
+    {
+        ValidateTrustedRollbackTarget(
+            trustedTarget,
+            trustedTarget.Profile.Id,
+            trustedTarget.Profile.Version,
+            trustedTarget.Runtime.AggregateDigest,
+            now);
+        ValidateCommon(
+            identity,
+            trustedTarget.Profile.Id,
+            trustedTarget.Profile.Version,
+            now,
+            requireUnexpiredArtifact: false);
+        if (IdentityKey(identity) != IdentityKey(trustedTarget))
+        {
+            throw new InvalidDataException(
+                "Sealed prior identity does not exactly match the trusted rollback target.");
         }
     }
 
@@ -262,6 +289,7 @@ public static partial class SealedRuntimeEvidenceValidator
 
     public static string IdentityKey(QualificationSealedRuntimeIdentity identity)
     {
+        ValidateIdentityShape(identity);
         return string.Join(
             '\n',
             identity.Role,
@@ -283,6 +311,7 @@ public static partial class SealedRuntimeEvidenceValidator
             identity.Producer.RunAttempt,
             identity.Producer.RunUrl,
             identity.Producer.AttemptUrl,
+            identity.Producer.RunStartedAt.ToUniversalTime().ToString("O"),
             identity.Artifact.Id,
             identity.Artifact.Name,
             identity.Artifact.UploadDigest,
@@ -301,9 +330,53 @@ public static partial class SealedRuntimeEvidenceValidator
             identity.Attestation.ManifestSubjectDigest);
     }
 
-    public static bool IsDigest(string value) => Sha256Regex().IsMatch(value);
+    public static bool IsDigest(string? value) =>
+        value is not null && Sha256Regex().IsMatch(value);
 
-    public static bool IsTrustedRef(string value) => TrustedRefRegex().IsMatch(value);
+    public static bool IsTrustedRef(string? value) =>
+        value is not null && TrustedRefRegex().IsMatch(value);
+
+    internal static void ValidateIdentityShape(QualificationSealedRuntimeIdentity identity)
+    {
+        if (identity is null
+            || identity.Profile is null
+            || identity.Eligibility is null
+            || identity.Source is null
+            || identity.Runtime is null
+            || identity.Producer is null
+            || identity.Artifact is null
+            || identity.Attestation is null
+            || identity.Role is null
+            || identity.Profile.Id is null
+            || identity.Status is null
+            || identity.Source.Repository is null
+            || identity.Source.Sha is null
+            || identity.Source.Ref is null
+            || identity.Runtime.AggregateDigest is null
+            || identity.Runtime.ExecutableDigest is null
+            || identity.Runtime.ManifestDigest is null
+            || identity.Producer.Workflow is null
+            || identity.Producer.EventName is null
+            || identity.Producer.RunUrl is null
+            || identity.Producer.AttemptUrl is null
+            || identity.Artifact.Name is null
+            || identity.Artifact.UploadDigest is null
+            || identity.Attestation.PredicateType is null
+            || identity.Attestation.Repository is null
+            || identity.Attestation.SignerWorkflow is null
+            || identity.Attestation.SourceSha is null
+            || identity.Attestation.SourceRef is null
+            || identity.Attestation.RunInvocationUrl is null
+            || identity.Attestation.BundleDigest is null
+            || identity.Attestation.ExecutableSubjectName is null
+            || identity.Attestation.ExecutableSubjectDigest is null
+            || identity.Attestation.ManifestSubjectName is null
+            || identity.Attestation.ManifestSubjectDigest is null)
+        {
+            throw new InvalidDataException(
+                "Sealed runtime identity contains null or missing fields.");
+        }
+    }
 
     public static void ValidateRunArtifact(
         QualificationRunArtifactIdentity selection,
@@ -355,8 +428,10 @@ public static partial class SealedRuntimeEvidenceValidator
         QualificationSealedRuntimeIdentity identity,
         string profileId,
         int profileVersion,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        bool requireUnexpiredArtifact = true)
     {
+        ValidateIdentityShape(identity);
         if (identity.SchemaVersion != 1
             || identity.Profile.Id != profileId
             || identity.Profile.Version != profileVersion
@@ -382,7 +457,7 @@ public static partial class SealedRuntimeEvidenceValidator
             || !IsDigest(identity.Artifact.UploadDigest)
             || identity.Artifact.CreatedAt == default
             || identity.Artifact.ExpiresAt <= identity.Artifact.CreatedAt
-            || identity.Artifact.ExpiresAt <= now
+            || requireUnexpiredArtifact && identity.Artifact.ExpiresAt <= now
             || identity.Attestation.PredicateType != "https://slsa.dev/provenance/v1"
             || identity.Attestation.Repository != identity.Source.Repository
             || identity.Attestation.SignerWorkflow

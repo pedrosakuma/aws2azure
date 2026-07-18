@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using Aws2Azure.GapDocs;
 
@@ -418,6 +419,333 @@ public sealed class WorkloadGaCertificationTests
             default:
                 throw new ArgumentOutOfRangeException(nameof(mutation), mutation, null);
         }
+    }
+
+    public static TheoryData<string> PriorIdentityTrustMutations => new()
+    {
+        "schema_version",
+        "role",
+        "profile_id",
+        "profile_version",
+        "status",
+        "rollback_baseline_eligible",
+        "promotion_eligible",
+        "ledger_record_digest",
+        "source_null",
+        "source_repository",
+        "source_sha",
+        "source_ref",
+        "runtime_aggregate_digest",
+        "runtime_executable_digest",
+        "runtime_manifest_digest",
+        "producer_workflow",
+        "producer_event_name",
+        "producer_run_id",
+        "producer_run_attempt",
+        "producer_run_url",
+        "producer_attempt_url",
+        "producer_run_started_at",
+        "artifact_id",
+        "artifact_name",
+        "artifact_upload_digest",
+        "artifact_created_at",
+        "artifact_expires_at",
+        "attestation_predicate_type",
+        "attestation_repository",
+        "attestation_signer_workflow",
+        "attestation_source_sha",
+        "attestation_source_ref",
+        "attestation_run_invocation_url",
+        "attestation_bundle_digest",
+        "attestation_executable_subject_name",
+        "attestation_executable_subject_digest",
+        "attestation_manifest_subject_name",
+        "attestation_manifest_subject_digest",
+    };
+
+    [Theory]
+    [MemberData(nameof(PriorIdentityTrustMutations))]
+    public void Approved_ledger_rejects_rehashed_qualification_with_tampered_prior(
+        string mutation)
+    {
+        var tempRoot = Path.Combine(
+            AppContext.BaseDirectory,
+            $"aws2azure-ga-prior-trust-{Guid.NewGuid():N}");
+        var evidencePath = Path.Combine(
+            tempRoot,
+            "docs",
+            "workloads",
+            "evidence",
+            "s3-basic-object-crud.yaml");
+        var ledgerPath = Path.Combine(
+            tempRoot,
+            "docs",
+            "workloads",
+            "approved-runtimes",
+            "s3-basic-object-crud.yaml");
+        Directory.CreateDirectory(Path.GetDirectoryName(evidencePath)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(ledgerPath)!);
+
+        var sourceEvidencePath = Path.Combine(
+            RepoRoot,
+            "docs",
+            "workloads",
+            "evidence",
+            "s3-basic-object-crud.yaml");
+        var sourceLedgerPath = Path.Combine(
+            RepoRoot,
+            "docs",
+            "workloads",
+            "approved-runtimes",
+            "s3-basic-object-crud.yaml");
+        var qualification = SloQualificationLoader.Load(sourceEvidencePath);
+        foreach (var proof in qualification.RollbackProofs)
+        {
+            MutatePriorIdentity(proof.Prior, mutation);
+        }
+        SloQualificationRenderer.RenderYaml(qualification, evidencePath);
+
+        var sourceLedger = ApprovedRuntimeLedgerLoader.Load(sourceLedgerPath);
+        var oldDigest = sourceLedger.Qualification!.Digest;
+        var newDigest = "sha256:" + Convert.ToHexStringLower(
+            SHA256.HashData(File.ReadAllBytes(evidencePath)));
+        var ledgerYaml = File.ReadAllText(sourceLedgerPath).Replace(
+            oldDigest,
+            newDigest,
+            StringComparison.Ordinal);
+        File.WriteAllText(ledgerPath, ledgerYaml);
+
+        try
+        {
+            var report = WorkloadGaEvaluator.Evaluate(
+                LoadManifest("s3-basic-object-crud.yaml"),
+                Operations,
+                Designs,
+                tempRoot,
+                new DateOnly(2026, 7, 18));
+
+            Assert.Equal("candidate", report.Verdict);
+            Assert.Contains(
+                report.Findings,
+                finding => finding.Code is "rollback_ledger_mismatch"
+                    or "qualification_evidence_invalid");
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    private static void MutatePriorIdentity(
+        QualificationSealedRuntimeIdentity identity,
+        string mutation)
+    {
+        switch (mutation)
+        {
+            case "schema_version":
+                identity.SchemaVersion++;
+                break;
+            case "role":
+                identity.Role = "candidate";
+                break;
+            case "profile_id":
+                identity.Profile.Id = "other-profile";
+                break;
+            case "profile_version":
+                identity.Profile.Version++;
+                break;
+            case "status":
+                identity.Status = "approved";
+                identity.Eligibility.PromotionEligible = true;
+                break;
+            case "rollback_baseline_eligible":
+                identity.Eligibility.RollbackBaselineEligible = false;
+                break;
+            case "promotion_eligible":
+                identity.Eligibility.PromotionEligible = true;
+                break;
+            case "ledger_record_digest":
+                identity.LedgerRecordDigest = Digest('1');
+                break;
+            case "source_null":
+                identity.Source = null!;
+                break;
+            case "source_repository":
+                identity.Source.Repository = "other/repository";
+                identity.Producer.RunUrl =
+                    $"https://github.com/{identity.Source.Repository}/actions/runs/" +
+                    identity.Producer.RunId;
+                identity.Producer.AttemptUrl =
+                    identity.Producer.RunUrl + "/attempts/" + identity.Producer.RunAttempt;
+                identity.Attestation.Repository = identity.Source.Repository;
+                identity.Attestation.SignerWorkflow =
+                    identity.Source.Repository + "/.github/workflows/sealed-runtime.yml";
+                identity.Attestation.RunInvocationUrl = identity.Producer.AttemptUrl;
+                break;
+            case "source_sha":
+                identity.Source.Sha = new string('1', 40);
+                identity.Attestation.SourceSha = identity.Source.Sha;
+                break;
+            case "source_ref":
+                identity.Source.Ref = "refs/tags/v1.0.0-rc1";
+                identity.Attestation.SourceRef = identity.Source.Ref;
+                break;
+            case "runtime_aggregate_digest":
+                identity.Runtime.AggregateDigest = Digest('1');
+                RebindArtifactName(identity);
+                break;
+            case "runtime_executable_digest":
+                identity.Runtime.ExecutableDigest = Digest('2');
+                identity.Attestation.ExecutableSubjectDigest =
+                    identity.Runtime.ExecutableDigest;
+                break;
+            case "runtime_manifest_digest":
+                identity.Runtime.ManifestDigest = Digest('3');
+                identity.Attestation.ManifestSubjectDigest = identity.Runtime.ManifestDigest;
+                break;
+            case "producer_workflow":
+                identity.Producer.Workflow = ".github/workflows/other.yml";
+                break;
+            case "producer_event_name":
+                identity.Producer.EventName = "pull_request";
+                break;
+            case "producer_run_id":
+                identity.Producer.RunId++;
+                identity.Producer.RunUrl =
+                    $"https://github.com/{identity.Source.Repository}/actions/runs/" +
+                    identity.Producer.RunId;
+                identity.Producer.AttemptUrl =
+                    identity.Producer.RunUrl + "/attempts/" + identity.Producer.RunAttempt;
+                identity.Attestation.RunInvocationUrl = identity.Producer.AttemptUrl;
+                RebindArtifactName(identity);
+                break;
+            case "producer_run_attempt":
+                identity.Producer.RunAttempt++;
+                identity.Producer.AttemptUrl =
+                    identity.Producer.RunUrl + "/attempts/" + identity.Producer.RunAttempt;
+                identity.Attestation.RunInvocationUrl = identity.Producer.AttemptUrl;
+                RebindArtifactName(identity);
+                break;
+            case "producer_run_url":
+                identity.Producer.RunUrl = "https://github.com/example/repo/actions/runs/1";
+                break;
+            case "producer_attempt_url":
+                identity.Producer.AttemptUrl =
+                    "https://github.com/example/repo/actions/runs/1/attempts/1";
+                break;
+            case "producer_run_started_at":
+                identity.Producer.RunStartedAt = identity.Producer.RunStartedAt.AddSeconds(1);
+                break;
+            case "artifact_id":
+                identity.Artifact.Id++;
+                break;
+            case "artifact_name":
+                identity.Artifact.Name += "-tampered";
+                break;
+            case "artifact_upload_digest":
+                identity.Artifact.UploadDigest = Digest('4');
+                break;
+            case "artifact_created_at":
+                identity.Artifact.CreatedAt = identity.Artifact.CreatedAt.AddSeconds(1);
+                break;
+            case "artifact_expires_at":
+                identity.Artifact.ExpiresAt = identity.Artifact.ExpiresAt.AddSeconds(1);
+                break;
+            case "attestation_predicate_type":
+                identity.Attestation.PredicateType = "https://example.invalid/predicate";
+                break;
+            case "attestation_repository":
+                identity.Attestation.Repository = "other/repository";
+                break;
+            case "attestation_signer_workflow":
+                identity.Attestation.SignerWorkflow =
+                    "other/repository/.github/workflows/sealed-runtime.yml";
+                break;
+            case "attestation_source_sha":
+                identity.Attestation.SourceSha = new string('2', 40);
+                break;
+            case "attestation_source_ref":
+                identity.Attestation.SourceRef = "refs/tags/v1.0.0-rc1";
+                break;
+            case "attestation_run_invocation_url":
+                identity.Attestation.RunInvocationUrl =
+                    "https://github.com/example/repo/actions/runs/1/attempts/1";
+                break;
+            case "attestation_bundle_digest":
+                identity.Attestation.BundleDigest = Digest('5');
+                break;
+            case "attestation_executable_subject_name":
+                identity.Attestation.ExecutableSubjectName = "Other";
+                break;
+            case "attestation_executable_subject_digest":
+                identity.Attestation.ExecutableSubjectDigest = Digest('6');
+                break;
+            case "attestation_manifest_subject_name":
+                identity.Attestation.ManifestSubjectName = "other.json";
+                break;
+            case "attestation_manifest_subject_digest":
+                identity.Attestation.ManifestSubjectDigest = Digest('7');
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(mutation), mutation, null);
+        }
+    }
+
+    private static void RebindArtifactName(QualificationSealedRuntimeIdentity identity)
+    {
+        identity.Artifact.Name =
+            $"aws2azure-sealed-linux-x64-{identity.Runtime.AggregateDigest["sha256:".Length..]}" +
+            $"-run-{identity.Producer.RunId}-attempt-{identity.Producer.RunAttempt}";
+    }
+
+    private static string Digest(char value) => "sha256:" + new string(value, 64);
+
+    [Fact]
+    public void Null_nested_candidate_and_prior_identities_return_validation_errors()
+    {
+        var candidateMalformed = SloQualificationLoader.Load(Path.Combine(
+            RepoRoot,
+            "docs",
+            "workloads",
+            "evidence",
+            "s3-basic-object-crud.yaml"));
+        candidateMalformed.Candidate.Runtime!.Source = null!;
+
+        var candidateErrors = SloQualificationValidator.Validate(
+            candidateMalformed,
+            new DateTimeOffset(2026, 7, 18, 5, 0, 0, TimeSpan.Zero));
+
+        Assert.NotEmpty(candidateErrors);
+
+        var priorMalformed = SloQualificationLoader.Load(Path.Combine(
+            RepoRoot,
+            "docs",
+            "workloads",
+            "evidence",
+            "s3-basic-object-crud.yaml"));
+        priorMalformed.RollbackProofs[0].Prior = null!;
+
+        var priorErrors = SloQualificationValidator.Validate(
+            priorMalformed,
+            new DateTimeOffset(2026, 7, 18, 5, 0, 0, TimeSpan.Zero));
+
+        Assert.NotEmpty(priorErrors);
+
+        var digestMalformed = SloQualificationLoader.Load(Path.Combine(
+            RepoRoot,
+            "docs",
+            "workloads",
+            "evidence",
+            "s3-basic-object-crud.yaml"));
+        digestMalformed.Provenance.CorrectnessRun!.EvidenceArtifact!.Artifact.UploadDigest =
+            null!;
+        digestMalformed.RollbackProofs[0].CandidateConfigDigest = null!;
+
+        var digestErrors = SloQualificationValidator.Validate(
+            digestMalformed,
+            new DateTimeOffset(2026, 7, 18, 5, 0, 0, TimeSpan.Zero));
+
+        Assert.NotEmpty(digestErrors);
     }
 
     private static WorkloadGaManifest MinimalManifest() => new()

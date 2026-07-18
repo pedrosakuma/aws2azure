@@ -537,16 +537,12 @@ public static class WorkloadGaEvaluator
                         ledger,
                         currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
                     ValidateApprovedQualification(manifest, qualification, ledger);
-                    var rollbackTargetLedgerDigest =
-                        qualification.RollbackProofs[0].Prior.LedgerRecordDigest!;
+                    var rollbackTarget = ledger.Qualification!.RollbackTarget!;
                     foreach (var proof in qualification.RollbackProofs)
                     {
                         SealedRuntimeEvidenceValidator.ValidateRollbackTarget(
                             proof.Prior,
-                            manifest.Id,
-                            manifest.Version,
-                            ledger.Qualification!.RollbackTargetRuntimeDigest,
-                            rollbackTargetLedgerDigest,
+                            rollbackTarget,
                             currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
                     }
                 }

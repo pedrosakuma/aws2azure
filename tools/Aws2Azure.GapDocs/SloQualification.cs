@@ -251,6 +251,14 @@ public static class SloQualificationValidator
         {
             document.Findings[index] ??= new SloQualificationFinding();
         }
+        for (var index = 0; index < document.RollbackProofs.Count; index++)
+        {
+            document.RollbackProofs[index] ??= new RealAzureRollbackProof();
+            document.RollbackProofs[index].Candidate ??=
+                new QualificationSealedRuntimeIdentity();
+            document.RollbackProofs[index].Prior ??=
+                new QualificationSealedRuntimeIdentity();
+        }
     }
 
     private static void ValidateVerdict(
@@ -623,6 +631,8 @@ public static class SloQualificationValidator
 
         try
         {
+            SealedRuntimeEvidenceValidator.ValidateIdentityShape(
+                document.Candidate.Runtime);
             SealedRuntimeEvidenceValidator.ValidateRunArtifact(
                 run.EvidenceArtifact,
                 document.Profile.Id,
@@ -1084,13 +1094,38 @@ public static class SloQualificationValidator
             return;
         }
 
-        var candidateKey = SealedRuntimeEvidenceValidator.IdentityKey(
-            document.Candidate.Runtime);
+        string candidateKey;
+        try
+        {
+            candidateKey = SealedRuntimeEvidenceValidator.IdentityKey(
+                document.Candidate.Runtime);
+        }
+        catch (InvalidDataException exception)
+        {
+            err("qualified rollback candidate identity invalid: " + exception.Message);
+            return;
+        }
         var priorKeys = new HashSet<string>(StringComparer.Ordinal);
         var seenRuns = new HashSet<string>(StringComparer.Ordinal);
         var seenCanaries = new HashSet<string>(StringComparer.Ordinal);
         foreach (var proof in document.RollbackProofs)
         {
+            string proofCandidateKey;
+            string proofPriorKey;
+            try
+            {
+                proofCandidateKey = SealedRuntimeEvidenceValidator.IdentityKey(
+                    proof.Candidate);
+                proofPriorKey = SealedRuntimeEvidenceValidator.IdentityKey(proof.Prior);
+            }
+            catch (InvalidDataException exception)
+            {
+                err(
+                    $"rollback proof for run {proof.EvidenceRunId}/" +
+                    $"{proof.EvidenceRunAttempt} has invalid runtime identity: " +
+                    exception.Message);
+                continue;
+            }
             var sourceRun = document.Provenance.SourceRuns.SingleOrDefault(
                 run => run.RunId == proof.EvidenceRunId
                        && run.RunAttempt == proof.EvidenceRunAttempt);
@@ -1099,11 +1134,11 @@ public static class SloQualificationValidator
                 err("rollback proof does not map one-to-one to an immutable source run");
                 continue;
             }
-            priorKeys.Add(SealedRuntimeEvidenceValidator.IdentityKey(proof.Prior));
+            priorKeys.Add(proofPriorKey);
             if (proof.ScenarioId != "rollback"
                 || proof.Service != rollbackScenario.Service
                 || proof.Operation != rollbackScenario.Operation
-                || SealedRuntimeEvidenceValidator.IdentityKey(proof.Candidate) != candidateKey
+                || proofCandidateKey != candidateKey
                 || proof.Candidate.Source.Sha == proof.Prior.Source.Sha
                 || proof.Candidate.Runtime.AggregateDigest == proof.Prior.Runtime.AggregateDigest
                 || proof.Candidate.Runtime.ExecutableDigest == proof.Prior.Runtime.ExecutableDigest
