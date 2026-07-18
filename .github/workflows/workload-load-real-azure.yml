@@ -1,9 +1,9 @@
 name: workload-load-real-azure
 
 # Produces immutable production-shaped workload evidence against ephemeral real
-# Azure resources. Scheduled evidence remains Secrets Manager only; manual runs
-# can select S3, Secrets Manager, or both. Emulator and A/B artifacts are never
-# read or uploaded by this workflow.
+# Azure resources. Only manual runs with an exact sealed producer are qualifying;
+# scheduled/PR runs remain explicit source validation. Manual runs can select S3,
+# Secrets Manager, or both. Emulator and A/B artifacts are never consumed.
 on:
   schedule:
     - cron: '15 6 * * *'
@@ -18,10 +18,25 @@ on:
           - secretsmanager-basic-lifecycle
           - s3-basic-object-crud
           - all
+      candidate_run_id:
+        description: Exact successful sealed-runtime producer run id
+        required: true
+        type: string
+      candidate_run_attempt:
+        description: Exact sealed-runtime producer attempt
+        required: true
+        default: '1'
+        type: string
+      candidate_artifact_id:
+        description: Optional exact sealed artifact id (normally inferred unambiguously)
+        required: false
+        type: string
   pull_request:
     types: [labeled, synchronize, reopened]
 
 permissions:
+  actions: read
+  attestations: read
   id-token: write
   contents: read
 
@@ -99,6 +114,44 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: ./.github/actions/dotnet-setup
 
+      - name: Select qualifying or source-validation mode
+        id: mode
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_PROTECTED: ${{ github.ref_protected }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+        run: |
+          set -euo pipefail
+          qualification_sha="$(git rev-parse HEAD)"
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            if [[ ! "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]] ||
+               [[ ! "$CANDIDATE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::error::Manual qualification requires numeric candidate run id and attempt."
+              exit 1
+            fi
+            if [ "$REF_PROTECTED" != true ] ||
+               { [ "$REF" != refs/heads/main ] &&
+                 [[ ! "$REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-rc([.-]?[0-9A-Za-z]+)*$ ]]; }; then
+              echo "::error::Sealed qualification must run from protected main or an allowed protected RC tag."
+              exit 1
+            fi
+            qualifying=true
+            runtime_mode=rollback
+          else
+            qualifying=false
+            runtime_mode=source_validation
+          fi
+          {
+            echo "qualifying=$qualifying"
+            echo "qualification_sha=$qualification_sha"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "AWS2AZURE_SEALED_RUNTIME_MODE=$runtime_mode"
+            echo "AWS2AZURE_QUALIFICATION_SHA=$qualification_sha"
+          } >> "$GITHUB_ENV"
+
       - name: Configure selected producer
         run: |
           set -euo pipefail
@@ -147,7 +200,7 @@ jobs:
             exit 1
           fi
 
-      - name: Restore and build sealed candidate
+      - name: Build test harness and validation tools
         run: dotnet build -c Release --nologo
 
       - name: Validate manifests and plan canonical candidate configuration
@@ -155,10 +208,81 @@ jobs:
           CONFORMANCE_PLAN: artifacts/workload-load/${{ matrix.profile }}/provenance/conformance-plan.json
         run: |
           set -euo pipefail
-          dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- --validate
+          gap_docs="tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll"
+          dotnet exec "$gap_docs" --validate
           mkdir -p "$QUALIFICATION_DIR"
-          dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- \
+          dotnet exec "$gap_docs" \
             plan-conformance --output "$CONFORMANCE_PLAN"
+
+      - name: Resolve exact sealed candidate and profile rollback baseline
+        if: steps.mode.outputs.qualifying == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_ARTIFACT_ID: ${{ inputs.candidate_artifact_id }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$PRIVATE_DIR"
+          identity_dir="$QUALIFICATION_DIR/sealed-runtimes"
+          install -d -m 0700 "$identity_dir"
+          gap_docs="tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll"
+          prior_ledger="$identity_dir/prior-ledger.json"
+          dotnet exec "$gap_docs" export-approved-runtime \
+            --profile "$PROFILE" \
+            --output "$prior_ledger"
+          chmod 0600 "$prior_ledger"
+
+          candidate_args=(
+            --repository "$GITHUB_REPOSITORY"
+            --run-id "$CANDIDATE_RUN_ID"
+            --run-attempt "$CANDIDATE_RUN_ATTEMPT"
+            --expected-sha "${{ steps.mode.outputs.qualification_sha }}"
+            --expected-ref "$GITHUB_REF"
+            --profile "$PROFILE"
+            --profile-version 1
+            --role candidate
+            --destination "$PRIVATE_DIR/sealed-candidate"
+            --identity-output "$identity_dir/candidate-runtime.json"
+            --github-env "$GITHUB_ENV"
+          )
+          if [ -n "$CANDIDATE_ARTIFACT_ID" ]; then
+            candidate_args+=(--artifact-id "$CANDIDATE_ARTIFACT_ID")
+          fi
+          ./eng/resolve-sealed-runtime.sh "${candidate_args[@]}"
+
+          prior_run_id="$(jq -er '.record.producer.run_id' "$prior_ledger")"
+          prior_attempt="$(jq -er '.record.producer.run_attempt' "$prior_ledger")"
+          prior_sha="$(jq -er '.record.runtime.source_sha' "$prior_ledger")"
+          prior_ref="$(jq -er '.record.attestation.source_ref' "$prior_ledger")"
+          prior_artifact_id="$(jq -er '.record.artifact.id' "$prior_ledger")"
+          ./eng/resolve-sealed-runtime.sh \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$prior_run_id" \
+            --run-attempt "$prior_attempt" \
+            --expected-sha "$prior_sha" \
+            --expected-ref "$prior_ref" \
+            --profile "$PROFILE" \
+            --profile-version 1 \
+            --role prior \
+            --artifact-id "$prior_artifact_id" \
+            --ledger-json "$prior_ledger" \
+            --destination "$PRIVATE_DIR/sealed-prior" \
+            --identity-output "$identity_dir/prior-runtime.json" \
+            --github-env "$GITHUB_ENV"
+
+          candidate_identity="$identity_dir/candidate-runtime.json"
+          prior_identity="$identity_dir/prior-runtime.json"
+          for field in source.sha runtime.aggregate_digest runtime.executable_digest; do
+            candidate_value="$(jq -er ".$field" "$candidate_identity")"
+            prior_value="$(jq -er ".$field" "$prior_identity")"
+            if [ "$candidate_value" = "$prior_value" ]; then
+              echo "::error::Candidate and prior must be distinct at $field."
+              exit 1
+            fi
+          done
+          cp "$PRIVATE_DIR/sealed-candidate/bundle/runtime-sha256.txt" \
+            "$QUALIFICATION_DIR/runtime-sha256.txt"
 
       # Candidate identity is reproduced from integration-real-azure. The
       # producer digest separately seals the profile-specific topology and code.
@@ -169,21 +293,22 @@ jobs:
         run: |
           set -euo pipefail
           runtime_manifest="$QUALIFICATION_DIR/runtime-sha256.txt"
-          (
-            cd src/Aws2Azure.Proxy/bin/Release/net10.0
-            find . -maxdepth 1 -type f \
-              \( -name '*.dll' -o -name '*.json' -o -name 'Aws2Azure.Proxy' \) \
-              -print0 |
-              sort -z |
-              xargs -0 sha256sum
-          ) > "$GITHUB_WORKSPACE/$runtime_manifest"
+          if [ "${{ steps.mode.outputs.qualifying }}" != true ]; then
+            (
+              cd src/Aws2Azure.Proxy/bin/Release/net10.0
+              find . -maxdepth 1 -type f \
+                \( -name '*.dll' -o -name '*.json' -o -name 'Aws2Azure.Proxy' \) \
+                -print0 |
+                sort -z |
+                xargs -0 sha256sum
+            ) > "$GITHUB_WORKSPACE/$runtime_manifest"
+          fi
 
           candidate_config_manifest="$QUALIFICATION_DIR/config-manifest.json"
           jq -n \
             --arg schema_version "1" \
             --arg git_sha "$(git rev-parse HEAD)" \
             --arg region "$AZURE_LOCATION" \
-            --arg plan_sha256 "$(sha256sum "$CONFORMANCE_PLAN" | cut -d' ' -f1)" \
             --arg matrix_sha256 "$(sha256sum docs/testing/real-azure-conformance.yaml | cut -d' ' -f1)" \
             --arg bicep_sha256 "$(sha256sum deploy/realazure/main.bicep | cut -d' ' -f1)" \
             --arg workflow_sha256 "$(sha256sum .github/workflows/integration-real-azure.yml | cut -d' ' -f1)" \
@@ -197,7 +322,6 @@ jobs:
                 event_hub: "kinesis-smoke"
               },
               source_digests: {
-                conformance_plan: ("sha256:" + $plan_sha256),
                 conformance_matrix: ("sha256:" + $matrix_sha256),
                 bicep: ("sha256:" + $bicep_sha256),
                 workflow: ("sha256:" + $workflow_sha256)
@@ -221,6 +345,15 @@ jobs:
           fi
 
           producer_config_manifest="$QUALIFICATION_DIR/load-producer-config-manifest.json"
+          if [ "${{ steps.mode.outputs.qualifying }}" = true ]; then
+            qualification_mode=sealed
+            candidate_identity_digest="sha256:$(sha256sum "$QUALIFICATION_DIR/sealed-runtimes/candidate-runtime.json" | cut -d' ' -f1)"
+            prior_identity_digest="sha256:$(sha256sum "$QUALIFICATION_DIR/sealed-runtimes/prior-runtime.json" | cut -d' ' -f1)"
+          else
+            qualification_mode=source_validation
+            candidate_identity_digest=
+            prior_identity_digest=
+          fi
           jq -n \
             --arg schema_version "1" \
             --arg profile "$PROFILE" \
@@ -228,6 +361,9 @@ jobs:
             --arg region "$AZURE_LOCATION" \
             --arg concurrency "$LOAD_CONCURRENCY" \
             --arg duration_seconds "$LOAD_DURATION_SECONDS" \
+            --arg qualification_mode "$qualification_mode" \
+            --arg candidate_identity_digest "$candidate_identity_digest" \
+            --arg prior_identity_digest "$prior_identity_digest" \
             --arg bicep_sha256 "$(sha256sum "$BICEP_PATH" | cut -d' ' -f1)" \
             --arg workflow_sha256 "$(sha256sum .github/workflows/workload-load-real-azure.yml | cut -d' ' -f1)" \
             --arg runner_sha256 "$(sha256sum "$RUNNER_PATH" | cut -d' ' -f1)" \
@@ -236,8 +372,14 @@ jobs:
             --arg load_evidence_producer_guard_sha256 "$(sha256sum tests/Aws2Azure.TestSupport/OperationalQualification/LoadEvidenceProducerGuard.cs | cut -d' ' -f1)" \
             --arg failure_qualification_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/OperationalQualification/DeterministicFailureQualification.cs | cut -d' ' -f1)" \
             --arg restart_qualification_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/OperationalQualification/RealAzureRestartQualification.cs | cut -d' ' -f1)" \
+            --arg rollback_qualification_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/OperationalQualification/RealAzureRollbackQualification.cs | cut -d' ' -f1)" \
             --arg credential_rotation_qualification_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/OperationalQualification/SecretsManagerCredentialRotationQualification.cs | cut -d' ' -f1)" \
+            --arg sealed_launcher_sha256 "$(sha256sum tests/Aws2Azure.TestSupport/OperationalQualification/SealedRuntimeLauncher.cs | cut -d' ' -f1)" \
+            --arg sealed_resolver_sha256 "$(sha256sum eng/resolve-sealed-runtime.sh | cut -d' ' -f1)" \
+            --arg sealed_manifest_sha256 "$(sha256sum eng/sealed-runtime-manifest.sh | cut -d' ' -f1)" \
+            --arg approved_runtime_ledger_sha256 "$(sha256sum "docs/workloads/approved-runtimes/$PROFILE.yaml" | cut -d' ' -f1)" \
             --arg secretsmanager_fixture_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/Fixtures/SecretsManagerRealAzureProxyFixture.cs | cut -d' ' -f1)" \
+            --arg realazure_fixture_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/Fixtures/RealAzureProxyFixture.cs | cut -d' ' -f1)" \
             --arg federation_classifier_sha256 "$(sha256sum .github/scripts/classify-entra-federation-response.sh | cut -d' ' -f1)" \
             --arg manifest_sha256 "$(sha256sum "docs/workloads/$PROFILE.yaml" | cut -d' ' -f1)" \
             --arg policy_sha256 "$(sha256sum "docs/workloads/qualification/$PROFILE.yaml" | cut -d' ' -f1)" \
@@ -252,6 +394,13 @@ jobs:
                 concurrency: ($concurrency | tonumber),
                 requested_duration_seconds: ($duration_seconds | tonumber)
               },
+              qualification_mode: $qualification_mode,
+              sealed_runtime_identities: {
+                candidate:
+                  (if $candidate_identity_digest == "" then null else $candidate_identity_digest end),
+                prior:
+                  (if $prior_identity_digest == "" then null else $prior_identity_digest end)
+              },
               source_digests: {
                 bicep: ("sha256:" + $bicep_sha256),
                 workflow: ("sha256:" + $workflow_sha256),
@@ -261,17 +410,30 @@ jobs:
                 load_evidence_producer_guard: ("sha256:" + $load_evidence_producer_guard_sha256),
                 deterministic_failure_qualification: ("sha256:" + $failure_qualification_sha256),
                 restart_qualification: ("sha256:" + $restart_qualification_sha256),
+                rollback_qualification: ("sha256:" + $rollback_qualification_sha256),
                 credential_rotation_qualification: ("sha256:" + $credential_rotation_qualification_sha256),
+                sealed_runtime_launcher: ("sha256:" + $sealed_launcher_sha256),
+                sealed_runtime_resolver: ("sha256:" + $sealed_resolver_sha256),
+                sealed_runtime_manifest_validator: ("sha256:" + $sealed_manifest_sha256),
+                approved_runtime_ledger: ("sha256:" + $approved_runtime_ledger_sha256),
                 secretsmanager_fixture: ("sha256:" + $secretsmanager_fixture_sha256),
+                realazure_fixture: ("sha256:" + $realazure_fixture_sha256),
                 federation_response_classifier: ("sha256:" + $federation_classifier_sha256),
                 workload_manifest: ("sha256:" + $manifest_sha256),
                 qualification_policy: ("sha256:" + $policy_sha256)
               }
             }' > "$producer_config_manifest"
 
+          if [ "${{ steps.mode.outputs.qualifying }}" = true ]; then
+            git_sha="$(jq -er '.source.sha' "$QUALIFICATION_DIR/sealed-runtimes/candidate-runtime.json")"
+            runtime_digest="$(jq -er '.runtime.aggregate_digest' "$QUALIFICATION_DIR/sealed-runtimes/candidate-runtime.json")"
+          else
+            git_sha="$(git rev-parse HEAD)"
+            runtime_digest="sha256:$(sha256sum "$runtime_manifest" | cut -d' ' -f1)"
+          fi
           {
-            echo "git_sha=$(git rev-parse HEAD)"
-            echo "runtime_digest=sha256:$(sha256sum "$runtime_manifest" | cut -d' ' -f1)"
+            echo "git_sha=$git_sha"
+            echo "runtime_digest=$runtime_digest"
             echo "config_digest=sha256:$(sha256sum "$candidate_config_manifest" | cut -d' ' -f1)"
             echo "producer_config_digest=sha256:$(sha256sum "$producer_config_manifest" | cut -d' ' -f1)"
           } >> "$GITHUB_OUTPUT"
@@ -476,6 +638,7 @@ jobs:
         if: matrix.profile == 'secretsmanager-basic-lifecycle'
         run: |
           set -euo pipefail
+          umask 077
           refresh_assertion() {
             local destination="$1"
             ( umask 077
@@ -609,6 +772,7 @@ jobs:
             echo "- Backend: \`$(jq -r '.provenance.backend_description' "$LOAD_EVIDENCE_PATH")\`"
             echo "- Official AWS SDK through proxy: yes"
             echo "- Emulator evidence consumed: no"
+            echo "- Qualification mode: \`$(jq -r '.candidate.qualification_mode' "$LOAD_EVIDENCE_PATH")\`"
             echo "- Duration: \`$(jq -r '.load_shape.requested_duration_seconds' "$LOAD_EVIDENCE_PATH")s\`"
             echo "- Concurrency: \`$(jq -r '.load_shape.concurrency' "$LOAD_EVIDENCE_PATH")\`"
             echo "- Completions: \`$(jq '[.operation_mix[].completions] | add' "$LOAD_EVIDENCE_PATH")\`"
@@ -620,17 +784,30 @@ jobs:
               echo "- Rotation green reads: \`$(jq -r '.credential_rotation_proofs[0].green_read_completions' "$LOAD_EVIDENCE_PATH")\`"
               echo "- Revoked identity denied: \`$(jq -r '.credential_rotation_proofs[0].old_access_denied_completions == 1' "$LOAD_EVIDENCE_PATH")\`"
             fi
-            echo "- Remaining policy blocker: sealed-artifact rollback evidence"
+            rollback_completions="$(jq -r '.scenarios[] | select(.id == "rollback") | .completions' "$LOAD_EVIDENCE_PATH")"
+            echo "- Exact sealed rollback completions: \`$rollback_completions\`"
+            if [ "${{ steps.mode.outputs.qualifying }}" != true ]; then
+              echo "- Eligibility: \`ineligible source validation; never consumable by final qualification\`"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload immutable load evidence
-        if: always()
+        if: always() && steps.mode.outputs.qualifying == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: real-azure-workload-load-${{ matrix.profile }}
           path: artifacts/workload-load/${{ matrix.profile }}/**
           if-no-files-found: error
           retention-days: 90
+
+      - name: Upload explicitly non-qualifying source validation
+        if: always() && steps.mode.outputs.qualifying != 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: source-validation-workload-load-${{ matrix.profile }}
+          path: artifacts/workload-load/${{ matrix.profile }}/**
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Remove runtime identities, role assignments, and projected tokens
         if: always()

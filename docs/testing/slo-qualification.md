@@ -39,7 +39,7 @@ zero-completion, or unevaluable measurements are retained as explicit
 `findings`; they are not silently converted into passing evidence.
 
 Generate a real-Azure workload candidate from the conformance evidence for an
-explicit operation set with:
+explicit operation set and a resolver-produced sealed runtime identity with:
 
 ```bash
 dotnet run --project tools/Aws2Azure.GapDocs -- \
@@ -54,6 +54,7 @@ dotnet run --project tools/Aws2Azure.GapDocs -- \
   --git-sha "$GITHUB_SHA" \
   --artifact-digest "sha256:<published-binary-or-image>" \
   --config-digest "sha256:<resolved-non-secret-config>" \
+  --sealed-runtime-identity artifacts/candidate-runtime.json \
   --region eastus2 \
   --backend-description "Blob Storage Standard_LRS"
 ```
@@ -74,19 +75,22 @@ operations is emitted once, never as a synthetic `conformance-###` row. This
 lets later qualification evidence and GA manifests refer to the same identities
 without claiming that correctness evidence is capacity evidence.
 
-The nightly workflow generates one candidate per workload manifest and uploads
-it with two immutable siblings:
+Only a manual sealed run generates a consumable candidate. Nightly, scheduled,
+PR, and explicit source-validation paths may run the tests but upload a
+differently named, ineligible artifact and never emit a correctness candidate.
+A sealed candidate is uploaded with:
 
-- `runtime-sha256.txt`: sorted hashes of the complete proxy runtime output;
+- `runtime-sha256.txt`: the producer's canonical complete-runtime hashes;
 - `config-manifest.json`: the non-secret region, deployment inputs, selected
-  conformance plan, and hashes of the matrix, Bicep, and workflow.
+  topology, and hashes of the matrix, Bicep, and workflow;
+- `sealed-runtimes/candidate-runtime.json`: source SHA/ref, runtime aggregate,
+  executable and manifest digests, producer run/attempt, artifact id/name/upload
+  digest, and exact executable/manifest attestation identity.
 
 The candidate's `artifact_digest` and `config_digest` are hashes of those files.
 The manifests are evidence, not substitutes for production-shaped load.
-Correctness and repeated load runs must reproduce the complete runtime manifest
-byte-for-byte. CI runs three isolated Release builds through
-`eng/verify-deterministic-runtime.sh` so source-generator ordering or another
-non-reproducible build input cannot make valid evidence impossible to combine.
+Correctness and repeated load runs download and launch those exact bytes. A
+hash-equivalent rebuild is not accepted as the candidate.
 
 Generate a final qualification from a reviewed policy, a correctness candidate,
 and repeated immutable load evidence with:
@@ -97,9 +101,13 @@ dotnet run --project tools/Aws2Azure.GapDocs -- \
   --manifest docs/workloads/s3-basic-object-crud.yaml \
   --candidate artifacts/correctness/s3-basic-object-crud.yaml \
   --policy docs/workloads/qualification/s3-basic-object-crud.yaml \
+  --correctness-selection artifacts/selections/correctness.json \
   --evidence artifacts/load/run-1/load-evidence.json \
+  --evidence-selection artifacts/selections/load-run-1.json \
   --evidence artifacts/load/run-2/load-evidence.json \
+  --evidence-selection artifacts/selections/load-run-2.json \
   --evidence artifacts/load/run-3/load-evidence.json \
+  --evidence-selection artifacts/selections/load-run-3.json \
   --output artifacts/qualification/s3-basic-object-crud.yaml \
   --trend-output artifacts/qualification/s3-basic-object-crud-trend.csv \
   --run-id "$GITHUB_RUN_ID" \
@@ -117,6 +125,16 @@ averaging a bad run away. A valid policy must include a blocking real-Azure
 backend-capacity throughput or latency threshold; emulator floors and A/B ratios
 cannot be reused.
 
+Each successful `rollback` row has exactly one structured proof. The proof
+contains the candidate and prior source SHA/ref; runtime aggregate, executable,
+manifest, and config digests; producer run/attempt; artifact id/name/upload
+digest; attestation identities; prior ledger record digest/status; backend and
+AWS-binding identity digests; a canary digest (never plaintext); and ordered
+candidate create/read, prior read, cleanup, and candidate-restore timestamps.
+Qualification rejects a missing/duplicate proof, an out-of-window or reordered
+timestamp, candidate/prior equality, config/backend drift, prior drift between
+the three runs, or any mismatch with the committed profile ledger.
+
 Minimal runner output (values are measurements, never policy thresholds):
 
 ```json
@@ -128,9 +146,15 @@ Minimal runner output (values are measurements, never policy thresholds):
     "services": [{ "service": "s3", "operations": ["PutObject"] }]
   },
   "candidate": {
-    "git_sha": "0123456789abcdef",
-    "artifact_digest": "sha256:runtime-manifest",
-    "config_digest": "sha256:config-manifest"
+    "git_sha": "0123456789abcdef0123456789abcdef01234567",
+    "artifact_digest": "sha256:<sealed-runtime-aggregate>",
+    "config_digest": "sha256:<config-manifest>",
+    "qualification_mode": "sealed",
+    "runtime": {
+      "role": "candidate",
+      "producer": { "run_id": 123400, "run_attempt": 1 },
+      "artifact": { "id": 456700, "name": "aws2azure-sealed-linux-x64-..." }
+    }
   },
   "provenance": {
     "run_id": "123451",
@@ -170,7 +194,14 @@ workflow downloads a correctness candidate and multiple
 `real-azure-workload-load-<profile>` artifacts by immutable run id, emits the
 qualification plus a workload-only CSV trend, and fails unless the verdict is
 `qualified`. It never downloads `perf-results` (emulator regression) or
-`perf-real-azure-results` (A/B experiments).
+`perf-real-azure-results` (A/B experiments). Before download it requires the
+expected repository, workflow path, `workflow_dispatch` event, successful
+conclusion, protected ref, checked-out head SHA, run attempt, artifact
+id/name/upload digest, and unexpired artifact. Those selection identities are
+preserved in final provenance with the profile id. A committed `qualified`
+artifact is valid only when correctness and every load source run carry this
+non-null `evidence_artifact` metadata and it still matches all of those immutable
+constraints; hand-edited or missing trust metadata blocks GA certification.
 
 ## Version 1 shape
 
@@ -187,9 +218,17 @@ profile:
       operations: [CreateBucket, PutObject, GetObject, DeleteObject, DeleteBucket]
 
 candidate:
-  git_sha: 0123456789abcdef
-  artifact_digest: sha256:binary-or-image
+  git_sha: 0123456789abcdef0123456789abcdef01234567
+  artifact_digest: sha256:sealed-runtime-aggregate
   config_digest: sha256:resolved-non-secret-config
+  qualification_mode: sealed
+  runtime:
+    role: candidate
+    source:
+      repository: pedrosakuma/aws2azure
+      sha: 0123456789abcdef0123456789abcdef01234567
+      ref: refs/heads/main
+    # runtime digests, producer, artifact, eligibility, and attestation follow
 
 provenance:
   run_id: "123456"
@@ -206,7 +245,7 @@ provenance:
     run_attempt: 1
     window_start_utc: 2026-07-16T15:35:00Z
     window_end_utc: 2026-07-16T15:39:00Z
-    git_sha: 0123456789abcdef
+    git_sha: 0123456789abcdef0123456789abcdef01234567
     artifact_digest: sha256:binary-or-image
     config_digest: sha256:resolved-non-secret-config
   source_runs:
@@ -215,7 +254,7 @@ provenance:
       run_attempt: 1
       window_start_utc: 2026-07-16T15:40:00Z
       window_end_utc: 2026-07-16T15:45:00Z
-      git_sha: 0123456789abcdef
+      git_sha: 0123456789abcdef0123456789abcdef01234567
       artifact_digest: sha256:binary-or-image
       config_digest: sha256:resolved-non-secret-config
     - run_id: "123452"
@@ -223,7 +262,7 @@ provenance:
       run_attempt: 1
       window_start_utc: 2026-07-16T15:47:00Z
       window_end_utc: 2026-07-16T15:52:00Z
-      git_sha: 0123456789abcdef
+      git_sha: 0123456789abcdef0123456789abcdef01234567
       artifact_digest: sha256:binary-or-image
       config_digest: sha256:resolved-non-secret-config
     - run_id: "123453"
@@ -231,7 +270,7 @@ provenance:
       run_attempt: 1
       window_start_utc: 2026-07-16T15:54:00Z
       window_end_utc: 2026-07-16T15:59:00Z
-      git_sha: 0123456789abcdef
+      git_sha: 0123456789abcdef0123456789abcdef01234567
       artifact_digest: sha256:binary-or-image
       config_digest: sha256:resolved-non-secret-config
 

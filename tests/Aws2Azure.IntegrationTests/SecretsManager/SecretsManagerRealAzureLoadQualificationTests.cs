@@ -50,7 +50,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
         var networkBefore = await ProbeNetworkAsync(networkTarget, 12).ConfigureAwait(false);
         var stopwatch = Stopwatch.StartNew();
         using var client = fixture.CreateSecretsManagerClient();
-        using var timeout = new CancellationTokenSource(requestedDuration + TimeSpan.FromMinutes(20));
+        using var timeout = new CancellationTokenSource(requestedDuration + TimeSpan.FromMinutes(30));
 
         var workers = Enumerable.Range(0, concurrency)
             .Select(worker => RunWorkerAsync(
@@ -104,6 +104,16 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
         var rotation = await SecretsManagerCredentialRotationQualification.VerifyAsync(
             fixture,
             timeout.Token).ConfigureAwait(false);
+        RealAzureRollbackResult? rollback = null;
+        if (fixture.SealedRollbackConfigured)
+        {
+            await SecretsManagerCredentialRotationQualification.RefreshGitHubOidcTokenAsync(
+                RequiredEnvironment("AWS2AZURE_ROTATION_TOKEN_FILE_B"),
+                timeout.Token).ConfigureAwait(false);
+            rollback = await RealAzureRollbackQualification.VerifySecretsManagerAsync(
+                fixture,
+                timeout.Token).ConfigureAwait(false);
+        }
         var windowEnd = DateTimeOffset.UtcNow;
 
         var operationMix = tracker.Snapshot();
@@ -139,6 +149,12 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                 GitSha = RequiredEnvironment("AWS2AZURE_LOAD_GIT_SHA"),
                 ArtifactDigest = RequiredEnvironment("AWS2AZURE_LOAD_ARTIFACT_DIGEST"),
                 ConfigDigest = RequiredEnvironment("AWS2AZURE_LOAD_CONFIG_DIGEST"),
+                QualificationMode = fixture.SealedRollbackConfigured
+                    ? "sealed"
+                    : "source_validation",
+                Runtime = fixture.SealedCandidateConfigured
+                    ? fixture.CandidateRuntimeIdentity
+                    : null,
             },
             Provenance = new RealAzureWorkloadLoadProvenance
             {
@@ -184,8 +200,25 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                     0,
                     rotation.DurationSeconds,
                     rotation.CapturedAtUtc),
-                // Sealed-artifact rollback still requires external deployment orchestration.
-                Scenario("rollback", "GetSecretValue", "real_azure", 0, 0, 1, 0, loadEnd),
+                rollback is null
+                    ? Scenario(
+                        "rollback",
+                        "GetSecretValue",
+                        "real_azure",
+                        0,
+                        0,
+                        1,
+                        0,
+                        windowEnd)
+                    : Scenario(
+                        "rollback",
+                        "GetSecretValue",
+                        "real_azure",
+                        1,
+                        0,
+                        0,
+                        rollback.DurationSeconds,
+                        rollback.CapturedAtUtc),
             ],
             Signals =
             [
@@ -223,6 +256,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                     loadEnd),
             ],
             CredentialRotationProofs = [rotation.Proof],
+            RollbackProofs = rollback is null ? [] : [rollback.Proof],
         };
 
         await LoadEvidenceProducerGuard.PublishAsync(

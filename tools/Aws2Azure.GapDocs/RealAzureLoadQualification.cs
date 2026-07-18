@@ -49,6 +49,7 @@ public sealed class RealAzureLoadEvidence
     public List<SloQualificationScenario> Scenarios { get; set; } = new();
     public List<RealAzureLoadSignalMeasurement> Signals { get; set; } = new();
     public List<RealAzureCredentialRotationProof> CredentialRotationProofs { get; set; } = new();
+    public List<RealAzureRollbackProof> RollbackProofs { get; set; } = new();
 }
 
 public sealed class RealAzureLoadShape
@@ -133,6 +134,35 @@ public sealed class RealAzureCredentialRotationProof
     public DateTimeOffset CompletedAtUtc { get; set; }
 }
 
+public sealed class RealAzureRollbackProof
+{
+    public string ScenarioId { get; set; } = string.Empty;
+    public string Service { get; set; } = string.Empty;
+    public string Operation { get; set; } = string.Empty;
+    public string EvidenceRunId { get; set; } = string.Empty;
+    public int EvidenceRunAttempt { get; set; }
+    public QualificationSealedRuntimeIdentity Candidate { get; set; } = new();
+    public QualificationSealedRuntimeIdentity Prior { get; set; } = new();
+    public string CandidateConfigDigest { get; set; } = string.Empty;
+    public string PriorConfigDigest { get; set; } = string.Empty;
+    public string CandidateBackendIdentityDigest { get; set; } = string.Empty;
+    public string PriorBackendIdentityDigest { get; set; } = string.Empty;
+    public string CandidateAwsBindingDigest { get; set; } = string.Empty;
+    public string PriorAwsBindingDigest { get; set; } = string.Empty;
+    public string CanaryDigest { get; set; } = string.Empty;
+    public string CleanupSemantics { get; set; } = string.Empty;
+    public DateTimeOffset StartedAtUtc { get; set; }
+    public DateTimeOffset CandidateCreateCompletedAtUtc { get; set; }
+    public DateTimeOffset CandidateReadCompletedAtUtc { get; set; }
+    public DateTimeOffset CandidateStoppedAtUtc { get; set; }
+    public DateTimeOffset PriorStartedAtUtc { get; set; }
+    public DateTimeOffset PriorReadCompletedAtUtc { get; set; }
+    public DateTimeOffset CleanupRequestedAtUtc { get; set; }
+    public DateTimeOffset CleanupVerifiedAtUtc { get; set; }
+    public DateTimeOffset CandidateRestoredAtUtc { get; set; }
+    public DateTimeOffset CompletedAtUtc { get; set; }
+}
+
 public static class RealAzureCredentialRotationBudgets
 {
     public const int MaxSetupPropagationRetries = 60;
@@ -183,9 +213,20 @@ public static class RealAzureLoadQualificationGenerator
         SloQualificationDocument candidate,
         WorkloadQualificationPolicy policy,
         IReadOnlyList<RealAzureLoadEvidence> evidence,
-        RealAzureLoadQualificationMetadata metadata)
+        RealAzureLoadQualificationMetadata metadata,
+        ApprovedRuntimeRecord? priorRuntime = null,
+        QualificationRunArtifactIdentity? correctnessSelection = null,
+        IReadOnlyList<QualificationRunArtifactIdentity>? loadSelections = null)
     {
-        ValidateInputs(manifest, candidate, policy, evidence, metadata);
+        ValidateInputs(
+            manifest,
+            candidate,
+            policy,
+            evidence,
+            metadata,
+            priorRuntime,
+            correctnessSelection,
+            loadSelections);
 
         var orderedEvidence = evidence
             .OrderBy(item => item.Provenance.WindowStartUtc)
@@ -204,6 +245,8 @@ public static class RealAzureLoadQualificationGenerator
                 GitSha = candidate.Candidate.GitSha,
                 ArtifactDigest = candidate.Candidate.ArtifactDigest,
                 ConfigDigest = candidate.Candidate.ConfigDigest,
+                QualificationMode = candidate.Candidate.QualificationMode,
+                Runtime = candidate.Candidate.Runtime,
             },
             Provenance = new SloQualificationProvenance
             {
@@ -225,6 +268,7 @@ public static class RealAzureLoadQualificationGenerator
                     GitSha = candidate.Candidate.GitSha,
                     ArtifactDigest = candidate.Candidate.ArtifactDigest,
                     ConfigDigest = candidate.Candidate.ConfigDigest,
+                    EvidenceArtifact = correctnessSelection,
                 },
                 SourceRuns = orderedEvidence.Select(item => new SloQualificationSourceRun
                 {
@@ -236,9 +280,16 @@ public static class RealAzureLoadQualificationGenerator
                     GitSha = item.Candidate.GitSha,
                     ArtifactDigest = item.Candidate.ArtifactDigest,
                     ConfigDigest = item.Candidate.ConfigDigest,
+                    EvidenceArtifact = loadSelections?
+                        .Single(selection =>
+                            selection.RunId.ToString(CultureInfo.InvariantCulture)
+                            == item.Provenance.RunId),
                 }).ToList(),
             },
             Rules = policy.Rules,
+            RollbackProofs = orderedEvidence
+                .SelectMany(item => item.RollbackProofs)
+                .ToList(),
         };
 
         var blocked = candidate.Verdict != "candidate";
@@ -248,6 +299,14 @@ public static class RealAzureLoadQualificationGenerator
                 document,
                 "conformance_not_candidate",
                 $"Correctness qualification verdict is '{candidate.Verdict}', not 'candidate'.");
+        }
+        if (correctnessSelection is null || loadSelections is null)
+        {
+            blocked = true;
+            AddFinding(
+                document,
+                "run_artifact_trust_missing",
+                "Exact correctness and load workflow artifact identities are required.");
         }
         if (orderedEvidence.Count < policy.Rules.MinDistinctRuns)
         {
@@ -570,7 +629,10 @@ public static class RealAzureLoadQualificationGenerator
         SloQualificationDocument candidate,
         WorkloadQualificationPolicy policy,
         IReadOnlyList<RealAzureLoadEvidence> evidence,
-        RealAzureLoadQualificationMetadata metadata)
+        RealAzureLoadQualificationMetadata metadata,
+        ApprovedRuntimeRecord? priorRuntime,
+        QualificationRunArtifactIdentity? correctnessSelection,
+        IReadOnlyList<QualificationRunArtifactIdentity>? loadSelections)
     {
         if (policy.SchemaVersion != 1)
         {
@@ -611,6 +673,26 @@ public static class RealAzureLoadQualificationGenerator
         {
             throw new InvalidDataException("Correctness candidate has the wrong artifact kind.");
         }
+        if (candidate.Candidate.QualificationMode != "sealed"
+            || candidate.Candidate.Runtime is null)
+        {
+            throw new InvalidDataException(
+                "Final real-Azure qualification requires a verified sealed correctness candidate.");
+        }
+        SealedRuntimeEvidenceValidator.ValidateCandidate(
+            candidate.Candidate.Runtime,
+            manifest.Id,
+            manifest.Version,
+            candidate.Candidate.GitSha,
+            candidate.Candidate.ArtifactDigest,
+            metadata.GeneratedAtUtc);
+        ValidateRunArtifactSelections(
+            manifest,
+            candidate,
+            evidence,
+            metadata,
+            correctnessSelection,
+            loadSelections);
         if (policy.ProfileId != manifest.Id
             || policy.ProfileVersion != manifest.Version
             || candidate.Profile.Id != manifest.Id
@@ -720,6 +802,14 @@ public static class RealAzureLoadQualificationGenerator
         var first = evidence[0];
         var seenRuns = new HashSet<string>(StringComparer.Ordinal);
         var seenRotationIdentities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenPriorRuntimeIdentities = new HashSet<string>(StringComparer.Ordinal);
+        var seenRollbackCanaries = new HashSet<string>(StringComparer.Ordinal);
+        var rollbackRequired = policy.Scenarios.Any(item => item.Id == "rollback");
+        if (rollbackRequired && priorRuntime is null)
+        {
+            throw new InvalidDataException(
+                "Rollback qualification requires the committed profile prior-runtime ledger record.");
+        }
         foreach (var run in evidence)
         {
             var runOperations = run.Profile.Services
@@ -732,6 +822,10 @@ public static class RealAzureLoadQualificationGenerator
                 || run.Candidate.GitSha != candidate.Candidate.GitSha
                 || run.Candidate.ArtifactDigest != candidate.Candidate.ArtifactDigest
                 || run.Candidate.ConfigDigest != candidate.Candidate.ConfigDigest
+                || run.Candidate.QualificationMode != "sealed"
+                || run.Candidate.Runtime is null
+                || SealedRuntimeEvidenceValidator.IdentityKey(run.Candidate.Runtime)
+                    != SealedRuntimeEvidenceValidator.IdentityKey(candidate.Candidate.Runtime)
                 || run.Provenance.Region != first.Provenance.Region
                 || run.Provenance.BackendDescription != first.Provenance.BackendDescription
                 || string.IsNullOrWhiteSpace(run.Provenance.ProducerConfigDigest)
@@ -772,6 +866,190 @@ public static class RealAzureLoadQualificationGenerator
                 candidate.Candidate,
                 policy.Scenarios.Any(item => item.Id == "credential-rotation"),
                 seenRotationIdentities);
+            ValidateRollbackProof(
+                run,
+                candidate.Candidate,
+                priorRuntime,
+                rollbackRequired,
+                seenPriorRuntimeIdentities,
+                seenRollbackCanaries,
+                metadata.GeneratedAtUtc);
+        }
+        if (rollbackRequired && seenPriorRuntimeIdentities.Count != 1)
+        {
+            throw new InvalidDataException(
+                "Every repeated load run must use one consistent committed prior runtime.");
+        }
+    }
+
+    private static void ValidateRunArtifactSelections(
+        WorkloadGaManifest manifest,
+        SloQualificationDocument candidate,
+        IReadOnlyList<RealAzureLoadEvidence> evidence,
+        RealAzureLoadQualificationMetadata metadata,
+        QualificationRunArtifactIdentity? correctnessSelection,
+        IReadOnlyList<QualificationRunArtifactIdentity>? loadSelections)
+    {
+        if (correctnessSelection is null && loadSelections is null)
+        {
+            return;
+        }
+        if (correctnessSelection is null
+            || loadSelections is null
+            || loadSelections.Count != evidence.Count)
+        {
+            throw new InvalidDataException(
+                "Qualification run artifact selections are incomplete.");
+        }
+
+        SealedRuntimeEvidenceValidator.ValidateRunArtifact(
+            correctnessSelection,
+            manifest.Id,
+            candidate.Candidate.Runtime!.Source.Repository,
+            ".github/workflows/integration-real-azure.yml",
+            "real-azure-conformance",
+            candidate.Provenance.RunId,
+            candidate.Provenance.RunAttempt,
+            candidate.Candidate.GitSha,
+            candidate.Candidate.Runtime.Source.Ref,
+            metadata.GeneratedAtUtc);
+        foreach (var run in evidence)
+        {
+            var matches = loadSelections.Where(
+                    selection => selection.RunId.ToString(CultureInfo.InvariantCulture)
+                                 == run.Provenance.RunId)
+                .ToList();
+            if (matches.Count != 1)
+            {
+                throw new InvalidDataException(
+                    $"Load run {run.Provenance.RunId} must have one exact artifact selection.");
+            }
+            SealedRuntimeEvidenceValidator.ValidateRunArtifact(
+                matches[0],
+                manifest.Id,
+                candidate.Candidate.Runtime!.Source.Repository,
+                ".github/workflows/workload-load-real-azure.yml",
+                "real-azure-workload-load-" + manifest.Id,
+                run.Provenance.RunId,
+                run.Provenance.RunAttempt,
+                run.Candidate.GitSha,
+                candidate.Candidate.Runtime.Source.Ref,
+                metadata.GeneratedAtUtc);
+        }
+
+        var repository = correctnessSelection.Repository;
+        var headRef = correctnessSelection.HeadRef;
+        if (loadSelections.Any(selection =>
+                selection.Repository != repository
+                || selection.HeadRef != headRef))
+        {
+            throw new InvalidDataException(
+                "Correctness and load evidence selections must use one repository and protected ref.");
+        }
+    }
+
+    private static void ValidateRollbackProof(
+        RealAzureLoadEvidence run,
+        SloQualificationCandidate candidate,
+        ApprovedRuntimeRecord? priorRuntime,
+        bool required,
+        ISet<string> seenPriorRuntimeIdentities,
+        ISet<string> seenCanaryDigests,
+        DateTimeOffset now)
+    {
+        if (!required)
+        {
+            if (run.RollbackProofs.Count != 0)
+            {
+                throw new InvalidDataException(
+                    "Load evidence contains rollback proof outside its policy.");
+            }
+            return;
+        }
+        if (priorRuntime is null || candidate.Runtime is null)
+        {
+            throw new InvalidDataException(
+                "Rollback proof validation is missing candidate or prior runtime identity.");
+        }
+        if (run.RollbackProofs.Count != 1)
+        {
+            throw new InvalidDataException(
+                "Each repeated load run must contain exactly one rollback proof.");
+        }
+
+        var proof = run.RollbackProofs[0];
+        var scenario = run.Scenarios.SingleOrDefault(item => item.Id == "rollback");
+        if (scenario is null
+            || scenario.Completions != 1
+            || scenario.Failures != 0
+            || scenario.Skipped != 0
+            || scenario.CapturedAtUtc != proof.CompletedAtUtc
+            || proof.ScenarioId != "rollback"
+            || proof.Service != scenario.Service
+            || proof.Operation != scenario.Operation
+            || proof.EvidenceRunId != run.Provenance.RunId
+            || proof.EvidenceRunAttempt != run.Provenance.RunAttempt)
+        {
+            throw new InvalidDataException(
+                "Rollback proof does not match one successful real-Azure rollback row.");
+        }
+
+        SealedRuntimeEvidenceValidator.ValidateCandidate(
+            proof.Candidate,
+            run.Profile.Id,
+            run.Profile.Version,
+            candidate.GitSha,
+            candidate.ArtifactDigest,
+            now);
+        SealedRuntimeEvidenceValidator.ValidatePrior(proof.Prior, priorRuntime, now);
+        if (SealedRuntimeEvidenceValidator.IdentityKey(proof.Candidate)
+                != SealedRuntimeEvidenceValidator.IdentityKey(candidate.Runtime)
+            || proof.Candidate.Source.Sha == proof.Prior.Source.Sha
+            || proof.Candidate.Runtime.AggregateDigest == proof.Prior.Runtime.AggregateDigest
+            || proof.Candidate.Runtime.ExecutableDigest == proof.Prior.Runtime.ExecutableDigest)
+        {
+            throw new InvalidDataException(
+                "Rollback candidate and prior runtime identities are missing or not distinct.");
+        }
+        seenPriorRuntimeIdentities.Add(
+            SealedRuntimeEvidenceValidator.IdentityKey(proof.Prior));
+
+        if (!SealedRuntimeEvidenceValidator.IsDigest(proof.CandidateConfigDigest)
+            || proof.CandidateConfigDigest != proof.PriorConfigDigest
+            || !SealedRuntimeEvidenceValidator.IsDigest(
+                proof.CandidateBackendIdentityDigest)
+            || proof.CandidateBackendIdentityDigest != proof.PriorBackendIdentityDigest
+            || !SealedRuntimeEvidenceValidator.IsDigest(proof.CandidateAwsBindingDigest)
+            || proof.CandidateAwsBindingDigest != proof.PriorAwsBindingDigest
+            || !SealedRuntimeEvidenceValidator.IsDigest(proof.CanaryDigest)
+            || !seenCanaryDigests.Add(proof.CanaryDigest))
+        {
+            throw new InvalidDataException(
+                "Rollback proof contains configuration, backend, binding, or canary drift.");
+        }
+
+        var expectedCleanup = proof.Service switch
+        {
+            "s3" => "delete_object_delete_bucket_verify_no_such_bucket",
+            "secretsmanager" =>
+                "force_delete_without_recovery_verify_resource_not_found_key_vault_soft_delete",
+            _ => string.Empty,
+        };
+        if (proof.CleanupSemantics != expectedCleanup
+            || proof.StartedAtUtc < run.Provenance.WindowStartUtc
+            || proof.StartedAtUtc >= proof.CandidateCreateCompletedAtUtc
+            || proof.CandidateCreateCompletedAtUtc >= proof.CandidateReadCompletedAtUtc
+            || proof.CandidateReadCompletedAtUtc >= proof.CandidateStoppedAtUtc
+            || proof.CandidateStoppedAtUtc >= proof.PriorStartedAtUtc
+            || proof.PriorStartedAtUtc >= proof.PriorReadCompletedAtUtc
+            || proof.PriorReadCompletedAtUtc >= proof.CleanupRequestedAtUtc
+            || proof.CleanupRequestedAtUtc >= proof.CleanupVerifiedAtUtc
+            || proof.CleanupVerifiedAtUtc >= proof.CandidateRestoredAtUtc
+            || proof.CandidateRestoredAtUtc >= proof.CompletedAtUtc
+            || proof.CompletedAtUtc > run.Provenance.WindowEndUtc)
+        {
+            throw new InvalidDataException(
+                "Rollback proof does not contain ordered in-window candidate, prior, cleanup, and restore timestamps.");
         }
     }
 

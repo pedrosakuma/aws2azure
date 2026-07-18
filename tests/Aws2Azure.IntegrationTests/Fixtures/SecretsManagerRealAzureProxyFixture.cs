@@ -9,6 +9,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Amazon;
 using Amazon.SecretsManager;
+using Aws2Azure.TestSupport.OperationalQualification;
 using Xunit;
 
 namespace Aws2Azure.IntegrationTests.Fixtures;
@@ -37,7 +38,12 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
     private readonly List<ProxyInstance> _instances = [];
     private readonly StringBuilder _completedOutput = new();
     private string? _configFile;
+    private string? _privateDirectory;
     private ProxyInstance? _defaultInstance;
+    private SealedRuntimeSelection _runtimeSelection = null!;
+    private string? _switchClientId;
+    private string? _switchFederatedTokenFile;
+    private int _switchPort;
 
     public bool Configured { get; private set; }
     public string? SkipReason { get; private set; }
@@ -56,11 +62,23 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
         }
     }
     public string ProxyConfigDigest { get; private set; } = string.Empty;
+    public string BackendIdentityDigest { get; private set; } = string.Empty;
+    public string AwsBindingDigest { get; private set; } = string.Empty;
+    public bool SealedCandidateConfigured => _runtimeSelection.IsSealed;
+    public bool SealedRollbackConfigured => _runtimeSelection.RequiresRollback;
+    public bool HasDefaultInstance => _defaultInstance is not null;
+    public SealedRuntimeIdentity CandidateRuntimeIdentity =>
+        _runtimeSelection.GetTarget(SealedRuntimeRole.Candidate).Identity;
+    public SealedRuntimeIdentity PriorRuntimeIdentity =>
+        _runtimeSelection.GetTarget(SealedRuntimeRole.Prior).Identity;
     public ProxyInstance DefaultInstance => _defaultInstance
         ?? throw new InvalidOperationException("The default real-Azure proxy is not running.");
 
     public async Task InitializeAsync()
     {
+        _runtimeSelection = SealedRuntimeSelection.Load(
+            "secretsmanager-basic-lifecycle",
+            1);
         var vaultUrl = Environment.GetEnvironmentVariable("AZURE_KEYVAULT_URL");
         var tenantId = Environment.GetEnvironmentVariable("AZURE_TENANT_ID");
         var clientId = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
@@ -75,7 +93,10 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
             return;
         }
 
-        _configFile = Path.Combine(AppContext.BaseDirectory, "secretsmanager-it-config-" + Guid.NewGuid().ToString("N") + ".json");
+        _privateDirectory = SealedRuntimeLauncher.CreatePrivateDirectory(
+            AppContext.BaseDirectory,
+            "secretsmanager-it");
+        _configFile = Path.Combine(_privateDirectory, "proxy-config.json");
         var configBytes = Encoding.UTF8.GetBytes($$"""
             {
               "services": {
@@ -122,14 +143,19 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
               ]
             }
             """);
-        await File.WriteAllBytesAsync(_configFile, configBytes).ConfigureAwait(false);
+        await SealedRuntimeLauncher.WritePrivateFileAsync(_configFile, configBytes)
+            .ConfigureAwait(false);
         ProxyConfigDigest = "sha256:" + Convert.ToHexStringLower(SHA256.HashData(configBytes));
+        BackendIdentityDigest = Digest(vaultUrl);
+        AwsBindingDigest = Digest(AwsAccessKey + "\n" + AwsSecret);
 
         try
         {
-            _defaultInstance = await StartProxyInstanceAsync(
+            _defaultInstance = await StartProxyInstanceCoreAsync(
                 clientId,
-                Environment.GetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE")!)
+                Environment.GetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE")!,
+                SealedRuntimeRole.Candidate,
+                port: null)
                 .ConfigureAwait(false);
             Configured = true;
         }
@@ -161,6 +187,19 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
         string clientId,
         string federatedTokenFile)
     {
+        return await StartProxyInstanceCoreAsync(
+            clientId,
+            federatedTokenFile,
+            SealedRuntimeRole.Candidate,
+            port: null).ConfigureAwait(false);
+    }
+
+    private async Task<ProxyInstance> StartProxyInstanceCoreAsync(
+        string clientId,
+        string federatedTokenFile,
+        SealedRuntimeRole runtimeRole,
+        int? port)
+    {
         if (_configFile is null)
         {
             throw new InvalidOperationException("The real-Azure Secrets Manager proxy is not configured.");
@@ -168,14 +207,23 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
         ArgumentException.ThrowIfNullOrWhiteSpace(clientId);
         ArgumentException.ThrowIfNullOrWhiteSpace(federatedTokenFile);
 
-        var port = GetFreePort();
+        var selectedPort = port ?? GetFreePort();
         var instance = new ProxyInstance(
-            StartProxyProcess(port, _configFile, clientId, federatedTokenFile),
-            $"http://{ProxyHostName}:{port}");
+            StartProxyProcess(
+                selectedPort,
+                _configFile,
+                clientId,
+                federatedTokenFile,
+                runtimeRole),
+            $"http://{ProxyHostName}:{selectedPort}",
+            clientId,
+            federatedTokenFile,
+            runtimeRole);
         _instances.Add(instance);
         try
         {
-            await WaitForProxyAsync(instance, port, TimeSpan.FromMinutes(2)).ConfigureAwait(false);
+            await WaitForProxyAsync(instance, selectedPort, TimeSpan.FromMinutes(2))
+                .ConfigureAwait(false);
             return instance;
         }
         catch
@@ -229,12 +277,44 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
         var clientId = RequiredEnvironment("AZURE_CLIENT_ID");
         var tokenFile = RequiredEnvironment("AZURE_FEDERATED_TOKEN_FILE");
         await StopProxyInstanceAsync(current).ConfigureAwait(false);
-        var replacement = new ProxyInstance(
-            StartProxyProcess(port, _configFile, clientId, tokenFile),
-            $"http://{ProxyHostName}:{port}");
-        _instances.Add(replacement);
+        var replacement = await StartProxyInstanceCoreAsync(
+            clientId,
+            tokenFile,
+            SealedRuntimeRole.Candidate,
+            port).ConfigureAwait(false);
         _defaultInstance = replacement;
-        await WaitForProxyAsync(replacement, port, TimeSpan.FromMinutes(2)).ConfigureAwait(false);
+    }
+
+    public async Task StopForRuntimeSwitchAsync()
+    {
+        var current = _defaultInstance
+            ?? throw new InvalidOperationException("The default real-Azure proxy is not running.");
+        _switchClientId = current.ClientId;
+        _switchFederatedTokenFile = current.FederatedTokenFile;
+        _switchPort = new Uri(current.ServiceUrl).Port;
+        await StopProxyInstanceAsync(current).ConfigureAwait(false);
+    }
+
+    public async Task StartRuntimeAsync(SealedRuntimeRole role)
+    {
+        if (_defaultInstance is not null
+            || string.IsNullOrWhiteSpace(_switchClientId)
+            || string.IsNullOrWhiteSpace(_switchFederatedTokenFile)
+            || _switchPort <= 0)
+        {
+            throw new InvalidOperationException(
+                "The Secrets Manager fixture has no stopped runtime to replace.");
+        }
+        if (role == SealedRuntimeRole.Prior && !_runtimeSelection.RequiresRollback)
+        {
+            throw new InvalidOperationException("No verified prior runtime is configured.");
+        }
+
+        _defaultInstance = await StartProxyInstanceCoreAsync(
+            _switchClientId,
+            _switchFederatedTokenFile,
+            role,
+            _switchPort).ConfigureAwait(false);
     }
 
     public async Task DisposeAsync()
@@ -248,6 +328,11 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
         {
             try { File.Delete(_configFile); } catch { }
             _configFile = null;
+        }
+        if (_privateDirectory is not null)
+        {
+            try { Directory.Delete(_privateDirectory, recursive: true); } catch { }
+            _privateDirectory = null;
         }
     }
 
@@ -268,27 +353,28 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
         process.Dispose();
     }
 
-    private static Process StartProxyProcess(
+    private Process StartProxyProcess(
         int port,
         string configFile,
         string clientId,
-        string federatedTokenFile)
+        string federatedTokenFile,
+        SealedRuntimeRole runtimeRole)
     {
         var repoRoot = FindRepoRoot();
-        var startInfo = new ProcessStartInfo("dotnet", "run -c Release --project src/Aws2Azure.Proxy/Aws2Azure.Proxy.csproj --no-build --no-restore --no-launch-profile")
-        {
-            WorkingDirectory = repoRoot,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        startInfo.Environment["AWS2AZURE_CONFIG_FILE"] = configFile;
-        startInfo.Environment["ASPNETCORE_URLS"] = $"http://127.0.0.1:{port}";
-        startInfo.Environment["DOTNET_ENVIRONMENT"] = "Testing";
-        startInfo.Environment["AZURE_CLIENT_ID"] = clientId;
-        startInfo.Environment["AZURE_FEDERATED_TOKEN_FILE"] = federatedTokenFile;
-        startInfo.Environment.Remove("ACTIONS_ID_TOKEN_REQUEST_TOKEN");
-        startInfo.Environment.Remove("ACTIONS_ID_TOKEN_REQUEST_URL");
+        var startInfo = SealedRuntimeLauncher.CreateStartInfo(
+            _runtimeSelection,
+            runtimeRole,
+            repoRoot,
+            port,
+            configFile,
+            new Dictionary<string, string?>
+            {
+                ["AZURE_TENANT_ID"] = RequiredEnvironment("AZURE_TENANT_ID"),
+                ["AZURE_CLIENT_ID"] = clientId,
+                ["AZURE_FEDERATED_TOKEN_FILE"] = federatedTokenFile,
+                ["AZURE_AUTHORITY_HOST"] =
+                    Environment.GetEnvironmentVariable("AZURE_AUTHORITY_HOST"),
+            });
 
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         if (!process.Start())
@@ -363,14 +449,26 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
             : value;
     }
 
+    private static string Digest(string value) =>
+        "sha256:" + Convert.ToHexStringLower(
+            SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+
     public sealed class ProxyInstance
     {
         private readonly StringBuilder _output = new();
 
-        internal ProxyInstance(Process process, string serviceUrl)
+        internal ProxyInstance(
+            Process process,
+            string serviceUrl,
+            string clientId,
+            string federatedTokenFile,
+            SealedRuntimeRole runtimeRole)
         {
             Process = process;
             ServiceUrl = serviceUrl;
+            ClientId = clientId;
+            FederatedTokenFile = federatedTokenFile;
+            RuntimeRole = runtimeRole;
             process.OutputDataReceived += (_, args) => AppendOutput(args.Data);
             process.ErrorDataReceived += (_, args) => AppendOutput(args.Data);
             process.BeginOutputReadLine();
@@ -378,6 +476,9 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
         }
 
         internal Process Process { get; }
+        internal string ClientId { get; }
+        internal string FederatedTokenFile { get; }
+        public SealedRuntimeRole RuntimeRole { get; }
         public string ServiceUrl { get; }
         public string Output
         {

@@ -54,6 +54,11 @@ if (args.Length > 0 && args[0] == "generate-real-azure-load-qualification")
     return GenerateRealAzureLoadQualification(args[1..], repoRoot);
 }
 
+if (args.Length > 0 && args[0] == "export-approved-runtime")
+{
+    return ExportApprovedRuntime(args[1..], repoRoot);
+}
+
 return RunGapDocs(args, repoRoot, gapsRoot, workloadsRoot, siteRoot, generatedCode);
 
 static int RunGapDocs(
@@ -618,6 +623,7 @@ static int GenerateRealAzureWorkloadQualification(string[] args, string repoRoot
             or "--git-sha"
             or "--artifact-digest"
             or "--config-digest"
+            or "--sealed-runtime-identity"
             or "--region"
             or "--backend-description"
             or "--run-attempt")
@@ -730,6 +736,14 @@ static int GenerateRealAzureWorkloadQualification(string[] args, string repoRoot
                 ConfigDigest = values["--config-digest"],
                 Region = values["--region"],
                 BackendDescription = values["--backend-description"],
+                QualificationMode = values.ContainsKey("--sealed-runtime-identity")
+                    ? "sealed"
+                    : "source_validation",
+                Runtime = values.TryGetValue(
+                        "--sealed-runtime-identity",
+                        out var sealedRuntimeIdentity)
+                    ? SealedRuntimeEvidenceLoader.LoadRuntime(sealedRuntimeIdentity)
+                    : null,
                 RunAttempt = values.TryGetValue("--run-attempt", out var runAttemptValue)
                     && int.TryParse(runAttemptValue, out var runAttempt)
                     ? runAttempt
@@ -771,6 +785,7 @@ static int GenerateRealAzureLoadQualification(string[] args, string repoRoot)
 {
     var values = new Dictionary<string, string>(StringComparer.Ordinal);
     var evidencePaths = new List<string>();
+    var evidenceSelectionPaths = new List<string>();
     for (var index = 0; index < args.Length; index++)
     {
         var option = args[index];
@@ -781,7 +796,18 @@ static int GenerateRealAzureLoadQualification(string[] args, string repoRoot)
                 Console.Error.WriteLine($"{option} requires a value.");
                 return 1;
             }
+
             evidencePaths.Add(args[index]);
+            continue;
+        }
+        if (option == "--evidence-selection")
+        {
+            if (++index >= args.Length || args[index].StartsWith("--", StringComparison.Ordinal))
+            {
+                Console.Error.WriteLine($"{option} requires a value.");
+                return 1;
+            }
+            evidenceSelectionPaths.Add(args[index]);
             continue;
         }
         if (option is "--manifest"
@@ -791,7 +817,8 @@ static int GenerateRealAzureLoadQualification(string[] args, string repoRoot)
             or "--trend-output"
             or "--run-id"
             or "--run-url"
-            or "--run-attempt")
+            or "--run-attempt"
+            or "--correctness-selection")
         {
             if (++index >= args.Length || args[index].StartsWith("--", StringComparison.Ordinal))
             {
@@ -815,12 +842,17 @@ static int GenerateRealAzureLoadQualification(string[] args, string repoRoot)
         "--trend-output",
         "--run-id",
         "--run-url",
-        "--run-attempt"
+        "--run-attempt",
+        "--correctness-selection"
     };
     var missing = required.Where(option => !values.ContainsKey(option)).ToList();
     if (evidencePaths.Count == 0)
     {
         missing.Add("--evidence");
+    }
+    if (evidenceSelectionPaths.Count != evidencePaths.Count)
+    {
+        missing.Add("one --evidence-selection per --evidence");
     }
     if (missing.Count > 0)
     {
@@ -848,6 +880,31 @@ static int GenerateRealAzureLoadQualification(string[] args, string repoRoot)
         var evidence = evidencePaths
             .Select(RealAzureLoadQualificationGenerator.LoadEvidence)
             .ToList();
+        var correctnessSelection = SealedRuntimeEvidenceLoader.LoadRunArtifact(
+            values["--correctness-selection"]);
+        var loadSelections = evidenceSelectionPaths
+            .Select(SealedRuntimeEvidenceLoader.LoadRunArtifact)
+            .ToList();
+        ApprovedRuntimeRecord? priorRuntime = null;
+        if (policy.Scenarios.Any(item => item.Id == "rollback"))
+        {
+            var runtimePath = Path.Combine(
+                repoRoot,
+                "docs",
+                "workloads",
+                "approved-runtimes",
+                manifest.Id + ".yaml");
+            priorRuntime = ApprovedRuntimeLedgerLoader.Load(runtimePath);
+            var ledgerErrors = ApprovedRuntimeLedgerValidator.Validate(
+                [priorRuntime],
+                [manifest],
+                DateTimeOffset.UtcNow);
+            if (ledgerErrors.Count > 0)
+            {
+                WriteErrors("profile approved-runtime ledger", ledgerErrors);
+                return 1;
+            }
+        }
         var document = RealAzureLoadQualificationGenerator.Generate(
             manifest,
             candidate,
@@ -859,7 +916,10 @@ static int GenerateRealAzureLoadQualification(string[] args, string repoRoot)
                 RunUrl = values["--run-url"],
                 RunAttempt = qualificationRunAttempt,
                 GeneratedAtUtc = DateTimeOffset.UtcNow,
-            });
+            },
+            priorRuntime,
+            correctnessSelection,
+            loadSelections);
         var errors = SloQualificationValidator.Validate(document, DateTimeOffset.UtcNow);
         if (errors.Count > 0)
         {
@@ -876,6 +936,85 @@ static int GenerateRealAzureLoadQualification(string[] args, string repoRoot)
     }
     catch (Exception exception) when (exception is ArgumentException
                                       or FileNotFoundException
+                                      or InvalidDataException
+                                      or IOException
+                                      or UnauthorizedAccessException
+                                      or JsonException
+                                      or YamlException)
+    {
+        Console.Error.WriteLine("[gap-docs] " + exception.Message);
+        return 2;
+    }
+}
+
+static int ExportApprovedRuntime(string[] args, string repoRoot)
+{
+    string? profileId = null;
+    string? outputPath = null;
+    for (var index = 0; index < args.Length; index++)
+    {
+        var option = args[index];
+        if (option is not ("--profile" or "--output"))
+        {
+            Console.Error.WriteLine($"Unknown option '{option}'.");
+            return 1;
+        }
+        if (++index >= args.Length || args[index].StartsWith("--", StringComparison.Ordinal))
+        {
+            Console.Error.WriteLine($"{option} requires a value.");
+            return 1;
+        }
+        if (option == "--profile")
+        {
+            profileId = args[index];
+        }
+        else
+        {
+            outputPath = args[index];
+        }
+    }
+
+    if (string.IsNullOrWhiteSpace(profileId) || string.IsNullOrWhiteSpace(outputPath))
+    {
+        Console.Error.WriteLine(
+            "export-approved-runtime requires --profile <id> --output <path>.");
+        return 1;
+    }
+
+    try
+    {
+        var workloadsRoot = Path.Combine(repoRoot, "docs", "workloads");
+        var profiles = WorkloadGaManifestLoader.LoadAll(workloadsRoot);
+        var records = ApprovedRuntimeLedgerLoader.LoadAll(
+            Path.Combine(workloadsRoot, "approved-runtimes"));
+        var errors = ApprovedRuntimeLedgerValidator.Validate(
+            records,
+            profiles,
+            DateTimeOffset.UtcNow);
+        if (errors.Count > 0)
+        {
+            WriteErrors("approved-runtime ledger", errors);
+            return 1;
+        }
+
+        var record = records.SingleOrDefault(
+            item => item.Profile.Id.Equals(profileId, StringComparison.Ordinal))
+            ?? throw new InvalidDataException(
+                $"No approved-runtime ledger record exists for profile '{profileId}'.");
+        var export = ApprovedRuntimeLedgerExport.Create(record);
+        var fullOutputPath = Path.GetFullPath(outputPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath)!);
+        File.WriteAllText(
+            fullOutputPath,
+            JsonSerializer.Serialize(
+                export,
+                ApprovedRuntimeLedgerJsonContext.Default.ApprovedRuntimeLedgerExport));
+        Console.WriteLine(
+            $"[gap-docs] approved runtime '{record.Status}' for '{profileId}' written to " +
+            fullOutputPath);
+        return 0;
+    }
+    catch (Exception exception) when (exception is FileNotFoundException
                                       or InvalidDataException
                                       or IOException
                                       or UnauthorizedAccessException

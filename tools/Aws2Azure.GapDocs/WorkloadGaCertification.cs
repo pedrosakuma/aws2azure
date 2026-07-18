@@ -422,7 +422,12 @@ public static class WorkloadGaEvaluator
             Add(report, "qualification_evidence_invalid", "blocking", qualificationPath, error);
         }
         if (qualificationErrors.Count > 0
-            || !QualificationMatches(manifest, qualification, report)
+            || !QualificationMatches(
+                manifest,
+                qualification,
+                report,
+                repoRoot,
+                currentDate)
             || qualification.Verdict != "qualified")
         {
             report.Verdict = "candidate";
@@ -443,7 +448,9 @@ public static class WorkloadGaEvaluator
     private static bool QualificationMatches(
         WorkloadGaManifest manifest,
         SloQualificationDocument qualification,
-        WorkloadGaReport report)
+        WorkloadGaReport report,
+        string repoRoot,
+        DateOnly currentDate)
     {
         var matches = true;
         if (!qualification.Profile.Id.Equals(manifest.Id, StringComparison.Ordinal)
@@ -490,6 +497,58 @@ public static class WorkloadGaEvaluator
                 matches = false;
                 Add(report, "required_scenario_source_mismatch", "blocking", scenario,
                     "Qualification scenario must be backed by real-Azure evidence.");
+            }
+        }
+        if (manifest.Evidence.RequiredScenarios.Contains("rollback", StringComparer.Ordinal))
+        {
+            try
+            {
+                var prior = ApprovedRuntimeLedgerLoader.Load(Path.Combine(
+                    repoRoot,
+                    "docs",
+                    "workloads",
+                    "approved-runtimes",
+                    manifest.Id + ".yaml"));
+                var ledgerErrors = ApprovedRuntimeLedgerValidator.Validate(
+                    [prior],
+                    [manifest],
+                    currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
+                if (ledgerErrors.Count > 0)
+                {
+                    throw new InvalidDataException(string.Join("; ", ledgerErrors));
+                }
+                if (qualification.Candidate.Runtime is null)
+                {
+                    throw new InvalidDataException(
+                        "Rollback qualification lacks a sealed candidate runtime.");
+                }
+                SealedRuntimeEvidenceValidator.ValidateCandidate(
+                    qualification.Candidate.Runtime,
+                    manifest.Id,
+                    manifest.Version,
+                    qualification.Candidate.GitSha,
+                    qualification.Candidate.ArtifactDigest,
+                    currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
+                foreach (var proof in qualification.RollbackProofs)
+                {
+                    SealedRuntimeEvidenceValidator.ValidatePrior(
+                        proof.Prior,
+                        prior,
+                        currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
+                }
+            }
+            catch (Exception exception) when (exception is FileNotFoundException
+                                              or InvalidDataException
+                                              or IOException
+                                              or YamlException)
+            {
+                matches = false;
+                Add(
+                    report,
+                    "rollback_ledger_mismatch",
+                    "blocking",
+                    qualification.SourceFile,
+                    exception.Message);
             }
         }
         return matches;

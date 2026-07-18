@@ -265,6 +265,161 @@ public sealed class WorkloadGaCertificationTests
         }
     }
 
+    public static TheoryData<string> EvidenceArtifactTrustMutations => new()
+    {
+        "correctness_missing",
+        "source_missing",
+        "schema_version",
+        "profile_id",
+        "repository",
+        "workflow_path",
+        "event_name",
+        "conclusion",
+        "run_id",
+        "run_attempt",
+        "run_url",
+        "head_sha",
+        "head_ref",
+        "artifact_missing",
+        "artifact_id",
+        "artifact_name",
+        "upload_digest",
+        "created_at",
+        "expires_at",
+        "correctness_workflow_path",
+        "correctness_artifact_name",
+    };
+
+    [Theory]
+    [MemberData(nameof(EvidenceArtifactTrustMutations))]
+    public void Committed_qualified_artifact_rejects_tampered_run_artifact_trust(
+        string mutation)
+    {
+        var tempRoot = Path.Combine(
+            AppContext.BaseDirectory,
+            $"aws2azure-ga-trust-{Guid.NewGuid():N}");
+        var evidencePath = Path.Combine(
+            tempRoot,
+            "docs",
+            "workloads",
+            "evidence",
+            "qualification.yaml");
+        Directory.CreateDirectory(Path.GetDirectoryName(evidencePath)!);
+        var qualification = QualifiedDocument();
+        qualification.Scenarios[0].Id = "required-load";
+        qualification.Signals.ForEach(signal => signal.ScenarioId = "required-load");
+        MutateEvidenceArtifactTrust(qualification, mutation);
+        SloQualificationRenderer.RenderYaml(qualification, evidencePath);
+
+        try
+        {
+            var report = WorkloadGaEvaluator.Evaluate(
+                MinimalManifest(),
+                MinimalOperations(),
+                [],
+                tempRoot,
+                new DateOnly(2026, 7, 16));
+
+            Assert.Equal("candidate", report.Verdict);
+            Assert.Contains(
+                report.Findings,
+                finding => finding.Code == "qualification_evidence_invalid"
+                           && finding.Message.Contains(
+                               "evidence_artifact",
+                               StringComparison.Ordinal));
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    private static void MutateEvidenceArtifactTrust(
+        SloQualificationDocument qualification,
+        string mutation)
+    {
+        var correctness = qualification.Provenance.CorrectnessRun!;
+        var source = qualification.Provenance.SourceRuns[0];
+        var selection = source.EvidenceArtifact!;
+        switch (mutation)
+        {
+            case "correctness_missing":
+                correctness.EvidenceArtifact = null;
+                break;
+            case "source_missing":
+                source.EvidenceArtifact = null;
+                break;
+            case "schema_version":
+                selection.SchemaVersion++;
+                break;
+            case "profile_id":
+                selection.ProfileId = "other-profile";
+                break;
+            case "repository":
+                selection.Repository = "other/repository";
+                break;
+            case "workflow_path":
+                selection.WorkflowPath = ".github/workflows/arbitrary.yml";
+                break;
+            case "event_name":
+                selection.EventName = "pull_request";
+                break;
+            case "conclusion":
+                selection.Conclusion = "failure";
+                break;
+            case "run_id":
+                selection.RunId++;
+                break;
+            case "run_attempt":
+                selection.RunAttempt++;
+                break;
+            case "run_url":
+                selection.RunUrl = "https://github.com/example/repo/actions/runs/999";
+                break;
+            case "head_sha":
+                selection.HeadSha = "1111111111111111111111111111111111111111";
+                break;
+            case "head_ref":
+                selection.HeadRef = "refs/tags/v1.0.0-rc1";
+                break;
+            case "artifact_missing":
+                selection.Artifact = null!;
+                break;
+            case "artifact_id":
+                selection.Artifact.Id = 0;
+                break;
+            case "artifact_name":
+                selection.Artifact.Name = "arbitrary-artifact";
+                break;
+            case "upload_digest":
+                selection.Artifact.UploadDigest = "sha256:invalid";
+                break;
+            case "created_at":
+                selection.Artifact.CreatedAt = default;
+                break;
+            case "expires_at":
+                selection.Artifact.ExpiresAt = new DateTimeOffset(
+                    2026,
+                    7,
+                    16,
+                    0,
+                    0,
+                    0,
+                    TimeSpan.Zero);
+                break;
+            case "correctness_workflow_path":
+                correctness.EvidenceArtifact!.WorkflowPath =
+                    ".github/workflows/workload-load-real-azure.yml";
+                break;
+            case "correctness_artifact_name":
+                correctness.EvidenceArtifact!.Artifact.Name =
+                    "real-azure-workload-load-s3-basic-object-crud";
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(mutation), mutation, null);
+        }
+    }
+
     private static WorkloadGaManifest MinimalManifest() => new()
     {
         SchemaVersion = 1,
@@ -300,7 +455,7 @@ public sealed class WorkloadGaCertificationTests
     private static SloQualificationDocument QualifiedDocument()
     {
         var capturedAt = new DateTimeOffset(2026, 7, 16, 15, 59, 0, TimeSpan.Zero);
-        return new SloQualificationDocument
+        var document = new SloQualificationDocument
         {
             SchemaVersion = 1,
             ArtifactKind = "real_azure_workload_qualification",
@@ -399,6 +554,8 @@ public sealed class WorkloadGaCertificationTests
                 },
             ],
         };
+        QualificationTrustTestData.AttachSealedTrust(document, capturedAt.AddMinutes(1));
+        return document;
     }
 
     private static WorkloadGaManifest LoadManifest(string fileName) =>

@@ -37,12 +37,14 @@ and no long-lived account-key secrets:
 6. **Run** the real-Azure matrix tests and write a separate TRX. If OIDC is
    unavailable, the tests execute their normal skip gates, so evidence records
    `skipped`/`not_run` rather than pretending Azure was observed.
-7. **Generate evidence**, the divergence report, and one correctness-only
-   workload candidate per GA manifest from every available TRX. The workflow
-   seals the complete runtime output and a non-secret config/source manifest;
-   candidates can never claim load qualification.
-8. **Upload** the TRX/evidence, candidates, runtime hashes, and config manifest
-   as the immutable `real-azure-conformance` artifact.
+7. **Generate evidence** and the divergence report from every available TRX.
+   Scheduled and PR executions are explicit source validation: they do not emit
+   a workload correctness candidate.
+8. **Upload** source-validation TRX/evidence as
+   `source-validation-real-azure-conformance`. A manual profile run that selects
+   an exact sealed producer instead uploads `real-azure-conformance` with the
+   sealed candidate identity, runtime hashes, config manifest, and one matching
+   correctness candidate.
 9. **Deallocate** — the shared cleanup first permanently deletes every Blob
    version (required because immutable storage with versioning protects
    non-empty accounts from deletion), deletes/purges Key Vault, requests
@@ -399,7 +401,8 @@ every documented behaviour difference and which operations carry a real-Azure
 seal vs. are implemented-but-unsealed.
 
 To **seal** an operation as real-Azure verified, first download the
-`real-azure-conformance` artifact from a successful, OIDC-enabled run and check
+`source-validation-real-azure-conformance` artifact (or the sealed manual
+`real-azure-conformance` artifact) from a successful, OIDC-enabled run and check
 the service report shows every scenario for that operation passed and at least
 one passing scenario has `real_azure` evidence with
 `establishes_verification: true`. Then add

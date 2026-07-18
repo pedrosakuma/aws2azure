@@ -368,97 +368,105 @@ public sealed class SloQualificationTests
         Assert.Contains(errors, error => error.Contains("failure rate", StringComparison.Ordinal));
     }
 
-    private static SloQualificationDocument Valid(string artifactKind, string verdict) => new()
+    private static SloQualificationDocument Valid(string artifactKind, string verdict)
     {
-        SchemaVersion = 1,
-        ArtifactKind = artifactKind,
-        Verdict = verdict,
-        SourceFile = "qualification.yaml",
-        Profile = new SloQualificationProfile
+        var document = new SloQualificationDocument
         {
-            Id = "s3-basic-object-crud",
-            Version = 1,
-            Services =
-            [
-                new SloQualificationProfileService
-                {
-                    Service = "s3",
-                    Operations = ["PutObject", "GetObject"]
-                }
-            ]
-        },
-        Candidate = new SloQualificationCandidate
-        {
-            GitSha = "0123456789abcdef",
-            ArtifactDigest = "sha256:artifact",
-            ConfigDigest = "sha256:config"
-        },
-        Provenance = new SloQualificationProvenance
-        {
-            RunId = "124",
-            RunUrl = "https://github.com/example/repo/actions/runs/124",
-            RunAttempt = 1,
-            GeneratedAtUtc = Now.AddMinutes(-1),
-            WindowStartUtc = Now.AddMinutes(-10),
-            WindowEndUtc = Now.AddMinutes(-1),
-            Region = "eastus2",
-            BackendDescription = "Blob Storage Standard_LRS",
-            CorrectnessRun = new SloQualificationSourceRun
+            SchemaVersion = 1,
+            ArtifactKind = artifactKind,
+            Verdict = verdict,
+            SourceFile = "qualification.yaml",
+            Profile = new SloQualificationProfile
             {
-                RunId = "122",
-                RunUrl = "https://github.com/example/repo/actions/runs/122",
-                RunAttempt = 1,
-                WindowStartUtc = Now.AddMinutes(-20),
-                WindowEndUtc = Now.AddMinutes(-11),
+                Id = "s3-basic-object-crud",
+                Version = 1,
+                Services =
+                [
+                    new SloQualificationProfileService
+                    {
+                        Service = "s3",
+                        Operations = ["PutObject", "GetObject"]
+                    }
+                ]
+            },
+            Candidate = new SloQualificationCandidate
+            {
                 GitSha = "0123456789abcdef",
                 ArtifactDigest = "sha256:artifact",
                 ConfigDigest = "sha256:config"
             },
-            SourceRuns =
-            [
-                new SloQualificationSourceRun
+            Provenance = new SloQualificationProvenance
+            {
+                RunId = "124",
+                RunUrl = "https://github.com/example/repo/actions/runs/124",
+                RunAttempt = 1,
+                GeneratedAtUtc = Now.AddMinutes(-1),
+                WindowStartUtc = Now.AddMinutes(-10),
+                WindowEndUtc = Now.AddMinutes(-1),
+                Region = "eastus2",
+                BackendDescription = "Blob Storage Standard_LRS",
+                CorrectnessRun = new SloQualificationSourceRun
                 {
-                    RunId = "123",
-                    RunUrl = "https://github.com/example/repo/actions/runs/123",
+                    RunId = "122",
+                    RunUrl = "https://github.com/example/repo/actions/runs/122",
                     RunAttempt = 1,
-                    WindowStartUtc = Now.AddMinutes(-10),
-                    WindowEndUtc = Now.AddMinutes(-1),
+                    WindowStartUtc = Now.AddMinutes(-20),
+                    WindowEndUtc = Now.AddMinutes(-11),
                     GitSha = "0123456789abcdef",
                     ArtifactDigest = "sha256:artifact",
                     ConfigDigest = "sha256:config"
+                },
+                SourceRuns =
+                [
+                    new SloQualificationSourceRun
+                    {
+                        RunId = "123",
+                        RunUrl = "https://github.com/example/repo/actions/runs/123",
+                        RunAttempt = 1,
+                        WindowStartUtc = Now.AddMinutes(-10),
+                        WindowEndUtc = Now.AddMinutes(-1),
+                        GitSha = "0123456789abcdef",
+                        ArtifactDigest = "sha256:artifact",
+                        ConfigDigest = "sha256:config"
+                    }
+                ]
+            },
+            Rules = new SloQualificationRules
+            {
+                MaxArtifactAgeHours = 72,
+                MinSamplesPerScenario = 100,
+                MinDurationSeconds = 300,
+                MaxFailureRate = 0.001,
+                ZeroCompletionsDisqualify = true,
+                OnlySkippedRealAzureDisqualifies = true,
+                MinDistinctRuns = 1
+            },
+            Signals =
+            [
+                Signal("p99", "backend_capacity", "blocking", "p99_ms", max: 1000),
+                Signal("network", "network_noise", "report_only", "p95_ms")
+            ],
+            Scenarios =
+            [
+                new SloQualificationScenario
+                {
+                    Id = "put-object",
+                    Service = "s3",
+                    Operation = "PutObject",
+                    EvidenceSource = "real_azure",
+                    Completions = 1000,
+                    Failures = 0,
+                    DurationSeconds = 300,
+                    CapturedAtUtc = Now.AddMinutes(-1)
                 }
             ]
-        },
-        Rules = new SloQualificationRules
+        };
+        if (artifactKind == "real_azure_workload_qualification")
         {
-            MaxArtifactAgeHours = 72,
-            MinSamplesPerScenario = 100,
-            MinDurationSeconds = 300,
-            MaxFailureRate = 0.001,
-            ZeroCompletionsDisqualify = true,
-            OnlySkippedRealAzureDisqualifies = true,
-            MinDistinctRuns = 1
-        },
-        Signals =
-        [
-            Signal("p99", "backend_capacity", "blocking", "p99_ms", max: 1000),
-            Signal("network", "network_noise", "report_only", "p95_ms")
-        ],
-        Scenarios =
-        [
-            new SloQualificationScenario
-            {
-                Id = "put-object",
-                Service = "s3",
-                Operation = "PutObject",
-                EvidenceSource = "real_azure",
-                Completions = 1000,
-                Failures = 0,
-                DurationSeconds = 300,
-                CapturedAtUtc = Now.AddMinutes(-1)
-            }
-        ]
-    };
+            QualificationTrustTestData.AttachSealedTrust(document, Now);
+        }
+        return document;
+    }
 
     private static SloQualificationSignal Signal(
         string id,

@@ -314,9 +314,13 @@ public sealed class ApprovedRuntimeLedgerTests
             Repository = "example/repository",
             SignerWorkflow = "example/repository/.github/workflows/sealed-runtime.yml",
             SourceSha = "1234567890123456789012345678901234567890",
+            SourceRef = "refs/heads/main",
             SubjectName = "Aws2Azure.Proxy",
             SubjectDigest =
                 "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ManifestSubjectName = "sealed-runtime-manifest.json",
+            ManifestSubjectDigest =
+                "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
         },
         Approval = new ApprovedRuntimeApproval
         {

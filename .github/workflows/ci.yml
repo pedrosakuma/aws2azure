@@ -23,7 +23,9 @@ jobs:
         run: ./eng/validate.ps1 pr -RuntimeIdentifier linux-x64 -RequireAot
       - name: Validate sealed runtime manifest tooling
         shell: bash
-        run: ./eng/test-sealed-runtime-manifest.sh
+        run: |
+          ./eng/test-sealed-runtime-manifest.sh
+          ./eng/test-sealed-runtime-consumer.sh
       - name: Validate Entra federation response classification
         shell: bash
         run: ./.github/scripts/test-entra-federation-response-classifier.sh

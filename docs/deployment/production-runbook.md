@@ -145,6 +145,25 @@ is a useful CRUD smoke reference. The
 [performance harness](../perf/README.md) detects proxy regressions against local
 emulators; its throughput values are not Azure capacity targets.
 
+### Repository sealed qualification sequence
+
+For `s3-basic-object-crud` and `secretsmanager-basic-lifecycle`, use the
+[operational qualification runbook](../testing/operational-qualification.md):
+
+1. merge the consumer change;
+2. dispatch `sealed-runtime` on the new protected `main`;
+3. dispatch profile correctness with that exact producer run/attempt;
+4. dispatch three sequential profile load runs with the same exact candidate;
+5. dispatch final qualification with the exact correctness/load run ids and
+   attempts.
+
+Do not substitute a PR build, a later source rebuild, an arbitrary same-repo
+artifact, or the bootstrap runtime as the candidate. The bootstrap is eligible
+only as the prior rollback target. Final qualification verifies that candidate
+and prior bytes are distinct, both archives and attestations are exact, the same
+config/backend carries the canary across the process replacement, and every load
+run contains genuine prior-runtime cleanup evidence.
+
 ## 4. Go/no-go decision
 
 ### Go only when all are true

@@ -138,17 +138,36 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
                 DeterministicFailureQualification.RetryExhaustionScenarioId))
             .ConfigureAwait(false));
 
-        // No sealed previous-artifact deployment target exists to qualify rollback.
-        scenarios.Add(Scenario(
-            "rollback",
-            Service,
-            "GetObject",
-            "real_azure",
-            0,
-            0,
-            1,
-            0,
-            DateTimeOffset.UtcNow));
+        RealAzureRollbackResult? rollback = null;
+        if (fixture.SealedRollbackConfigured)
+        {
+            rollback = await RealAzureRollbackQualification.VerifyS3Async(
+                fixture,
+                timeout.Token).ConfigureAwait(false);
+            scenarios.Add(Scenario(
+                "rollback",
+                Service,
+                "GetObject",
+                "real_azure",
+                1,
+                0,
+                0,
+                rollback.DurationSeconds,
+                rollback.CapturedAtUtc));
+        }
+        else
+        {
+            scenarios.Add(Scenario(
+                "rollback",
+                Service,
+                "GetObject",
+                "real_azure",
+                0,
+                0,
+                1,
+                0,
+                DateTimeOffset.UtcNow));
+        }
         var windowEnd = DateTimeOffset.UtcNow;
         var signals = BuildRepresentativeLoadSignals(
             operationMix,
@@ -184,6 +203,12 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
                 GitSha = RequiredEnvironment("AWS2AZURE_LOAD_GIT_SHA"),
                 ArtifactDigest = RequiredEnvironment("AWS2AZURE_LOAD_ARTIFACT_DIGEST"),
                 ConfigDigest = RequiredEnvironment("AWS2AZURE_LOAD_CONFIG_DIGEST"),
+                QualificationMode = fixture.SealedRollbackConfigured
+                    ? "sealed"
+                    : "source_validation",
+                Runtime = fixture.SealedCandidateConfigured
+                    ? fixture.CandidateRuntimeIdentity
+                    : null,
             },
             Provenance = new RealAzureWorkloadLoadProvenance
             {
@@ -206,6 +231,7 @@ public sealed class S3RealAzureLoadQualificationTests(RealAzureProxyFixture fixt
             OperationMix = operationMix,
             Scenarios = scenarios,
             Signals = signals,
+            RollbackProofs = rollback is null ? [] : [rollback.Proof],
         };
 
         await LoadEvidenceProducerGuard.PublishAsync(

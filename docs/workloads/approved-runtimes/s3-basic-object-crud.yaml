@@ -31,8 +31,11 @@ attestation:
   repository: pedrosakuma/aws2azure
   signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
   source_sha: fd72cda28ca68ad53cd6b30fb3f43cbe923580ef
+  source_ref: refs/heads/main
   subject_name: Aws2Azure.Proxy
   subject_digest: sha256:c7e517aad020c7074ecc9208456ced9d48d35133636309e0016d8d8439918246
+  manifest_subject_name: sealed-runtime-manifest.json
+  manifest_subject_digest: sha256:77d2e0db8ef053889691a1089b2653ec3847d9f6857fccd606ac8b075e52d93f
 approval:
   reason: >-
     First sealed bytes for this profile have no previously approved predecessor,

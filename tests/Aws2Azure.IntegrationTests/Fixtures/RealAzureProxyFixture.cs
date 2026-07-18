@@ -4,6 +4,7 @@ using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using Amazon;
@@ -11,6 +12,7 @@ using Amazon.DynamoDBv2;
 using Amazon.Kinesis;
 using Amazon.S3;
 using Amazon.SQS;
+using Aws2Azure.TestSupport.OperationalQualification;
 using Xunit;
 
 namespace Aws2Azure.IntegrationTests.Fixtures;
@@ -55,7 +57,9 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     private readonly StringBuilder _proxyOutput = new();
     private Process? _proxyProcess;
     private string? _configFile;
+    private string? _privateDirectory;
     private int _proxyPort;
+    private SealedRuntimeSelection _runtimeSelection = null!;
 
     // Parsed backend settings, populated from environment in InitializeAsync.
     private string? _blobAccount;
@@ -150,9 +154,19 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     public string EventHubStream { get; private set; } = string.Empty;
 
     public string ProxyOutput => _proxyOutput.ToString();
+    public string ProxyConfigDigest { get; private set; } = string.Empty;
+    public string BackendIdentityDigest { get; private set; } = string.Empty;
+    public string AwsBindingDigest { get; private set; } = string.Empty;
+    public bool SealedCandidateConfigured => _runtimeSelection.IsSealed;
+    public bool SealedRollbackConfigured => _runtimeSelection.RequiresRollback;
+    public SealedRuntimeIdentity CandidateRuntimeIdentity =>
+        _runtimeSelection.GetTarget(SealedRuntimeRole.Candidate).Identity;
+    public SealedRuntimeIdentity PriorRuntimeIdentity =>
+        _runtimeSelection.GetTarget(SealedRuntimeRole.Prior).Identity;
 
     public async Task InitializeAsync()
     {
+        _runtimeSelection = SealedRuntimeSelection.Load("s3-basic-object-crud", 1);
         ReadEnvironment();
 
         BlobConfigured = !string.IsNullOrWhiteSpace(_blobAccount) && !string.IsNullOrWhiteSpace(_blobKey);
@@ -178,13 +192,24 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         }
 
         _proxyPort = GetFreePort();
-        _configFile = Path.Combine(AppContext.BaseDirectory,
-            "real-azure-it-config-" + Guid.NewGuid().ToString("N") + ".json");
-        await File.WriteAllTextAsync(_configFile, BuildConfigJson()).ConfigureAwait(false);
+        _privateDirectory = SealedRuntimeLauncher.CreatePrivateDirectory(
+            AppContext.BaseDirectory,
+            "real-azure-it");
+        _configFile = Path.Combine(_privateDirectory, "proxy-config.json");
+        var configBytes = Encoding.UTF8.GetBytes(BuildConfigJson());
+        await SealedRuntimeLauncher.WritePrivateFileAsync(_configFile, configBytes)
+            .ConfigureAwait(false);
+        ProxyConfigDigest = Digest(configBytes);
+        BackendIdentityDigest = Digest(
+            (_blobAccount ?? string.Empty) + "\n" + (_blobEndpoint ?? string.Empty));
+        AwsBindingDigest = Digest(AwsAccessKey + "\n" + AwsSecret);
 
         try
         {
-            _proxyProcess = StartProxyProcess(_proxyPort, _configFile);
+            _proxyProcess = StartProxyProcess(
+                _proxyPort,
+                _configFile,
+                SealedRuntimeRole.Candidate);
             await WaitForProxyAsync(_proxyPort, TimeSpan.FromMinutes(2)).ConfigureAwait(false);
             ProxyStarted = true;
         }
@@ -195,7 +220,7 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         }
     }
 
-    public AmazonS3Client CreateS3Client() => new(
+    public AmazonS3Client CreateS3Client(int maxErrorRetry = 2) => new(
         AwsAccessKey, AwsSecret,
         new AmazonS3Config
         {
@@ -203,6 +228,7 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
             ForcePathStyle = true,
             UseHttp = true,
             AuthenticationRegion = AuthRegion,
+            MaxErrorRetry = maxErrorRetry,
             // Intentionally left at AWSSDK.S3 4.x defaults so the smoke exercises
             // the modern STREAMING-…-PAYLOAD-TRAILER chunked upload path the proxy
             // now decodes (issue #258).
@@ -280,8 +306,45 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         }
 
         await StopProxyAsync().ConfigureAwait(false);
-        _proxyProcess = StartProxyProcess(_proxyPort, _configFile);
+        _proxyProcess = StartProxyProcess(
+            _proxyPort,
+            _configFile,
+            SealedRuntimeRole.Candidate);
         await WaitForProxyAsync(_proxyPort, TimeSpan.FromMinutes(2)).ConfigureAwait(false);
+        ProxyStarted = true;
+    }
+
+    public async Task StopForRuntimeSwitchAsync()
+    {
+        if (!ProxyStarted)
+        {
+            throw new InvalidOperationException("The real-Azure proxy is not running.");
+        }
+        await StopProxyAsync().ConfigureAwait(false);
+    }
+
+    public async Task StartRuntimeAsync(SealedRuntimeRole role)
+    {
+        if (_configFile is null || _proxyProcess is not null)
+        {
+            throw new InvalidOperationException("The real-Azure proxy cannot start a runtime now.");
+        }
+        if (role == SealedRuntimeRole.Prior && !_runtimeSelection.RequiresRollback)
+        {
+            throw new InvalidOperationException("No verified prior runtime is configured.");
+        }
+
+        _proxyProcess = StartProxyProcess(_proxyPort, _configFile, role);
+        try
+        {
+            await WaitForProxyAsync(_proxyPort, TimeSpan.FromMinutes(2)).ConfigureAwait(false);
+            ProxyStarted = true;
+        }
+        catch
+        {
+            await StopProxyAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     public async Task DisposeAsync()
@@ -292,6 +355,11 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         {
             try { File.Delete(_configFile); } catch { }
             _configFile = null;
+        }
+        if (_privateDirectory is not null)
+        {
+            try { Directory.Delete(_privateDirectory, recursive: true); } catch { }
+            _privateDirectory = null;
         }
     }
 
@@ -316,6 +384,7 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
 
         _proxyProcess.Dispose();
         _proxyProcess = null;
+        ProxyStarted = false;
     }
 
     private void ReadEnvironment()
@@ -594,19 +663,26 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     private static string JsonEscape(string value) =>
         value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
 
-    private Process StartProxyProcess(int port, string configFile)
+    private Process StartProxyProcess(
+        int port,
+        string configFile,
+        SealedRuntimeRole runtimeRole)
     {
         var repoRoot = FindRepoRoot();
-        var startInfo = new ProcessStartInfo("dotnet", "run -c Release --project src/Aws2Azure.Proxy/Aws2Azure.Proxy.csproj --no-build --no-restore --no-launch-profile")
-        {
-            WorkingDirectory = repoRoot,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        startInfo.Environment["AWS2AZURE_CONFIG_FILE"] = configFile;
-        startInfo.Environment["ASPNETCORE_URLS"] = $"http://127.0.0.1:{port}";
-        startInfo.Environment["DOTNET_ENVIRONMENT"] = "Testing";
+        var startInfo = SealedRuntimeLauncher.CreateStartInfo(
+            _runtimeSelection,
+            runtimeRole,
+            repoRoot,
+            port,
+            configFile,
+            new Dictionary<string, string?>
+            {
+                ["AZURE_TENANT_ID"] = _aadTenantId,
+                ["AZURE_CLIENT_ID"] = _aadClientId,
+                ["AZURE_FEDERATED_TOKEN_FILE"] = _federatedTokenFile,
+                ["AZURE_AUTHORITY_HOST"] =
+                    Environment.GetEnvironmentVariable("AZURE_AUTHORITY_HOST"),
+            });
 
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         process.OutputDataReceived += (_, args) => AppendOutput(args.Data);
@@ -686,6 +762,12 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
 
         throw new InvalidOperationException("Could not locate repo root for real-Azure integration fixture.");
     }
+
+    private static string Digest(string value) =>
+        Digest(Encoding.UTF8.GetBytes(value));
+
+    private static string Digest(ReadOnlySpan<byte> value) =>
+        "sha256:" + Convert.ToHexStringLower(SHA256.HashData(value));
 }
 
 [CollectionDefinition(Name)]
