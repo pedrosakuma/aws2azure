@@ -19,11 +19,15 @@ IMAGE_TOOL = REPO_ROOT / "eng" / "release-candidate-image.py"
 INPUTS_TOOL = REPO_ROOT / "eng" / "release-candidate-inputs.py"
 PACKAGE_TOOL = REPO_ROOT / "eng" / "release-candidate-package.py"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release-candidate-image.yml"
+OBSERVATION_WORKFLOW = (
+    REPO_ROOT / ".github" / "workflows" / "rc-observation-real-azure.yml"
+)
 DOCKERFILE = REPO_ROOT / "docker" / "release-candidate" / "Dockerfile"
 CANDIDATE = "v1.2.3-rc.4"
 REPOSITORY = "pedrosakuma/aws2azure"
 SOURCE_SHA = "0123456789abcdef0123456789abcdef01234567"
 ORCHESTRATION_SHA = "1123456789abcdef0123456789abcdef01234567"
+CURRENT_MAIN_SHA = "2123456789abcdef0123456789abcdef01234567"
 APPROVAL_SHA = ORCHESTRATION_SHA
 RUN_ID = 333
 RUN_ATTEMPT = 2
@@ -63,6 +67,47 @@ def content_digest(value: dict[str, object]) -> str:
 def write_json(path: pathlib.Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(canonical_bytes(value))
+
+
+def identical_comparison(sha: str, *, null_head: bool = False) -> dict[str, object]:
+    comparison: dict[str, object] = {
+        "url": f"https://api.github.com/repos/{REPOSITORY}/compare/{sha}...{sha}",
+        "html_url": f"https://github.com/{REPOSITORY}/compare/{sha}...{sha}",
+        "permalink_url": (
+            f"https://github.com/{REPOSITORY}/compare/pedrosakuma:{sha}"
+            f"...pedrosakuma:{sha}"
+        ),
+        "diff_url": f"https://github.com/{REPOSITORY}/compare/{sha}...{sha}.diff",
+        "patch_url": f"https://github.com/{REPOSITORY}/compare/{sha}...{sha}.patch",
+        "status": "identical",
+        "ahead_by": 0,
+        "behind_by": 0,
+        "total_commits": 0,
+        "base_commit": {"sha": sha},
+        "merge_base_commit": {"sha": sha},
+        "commits": [],
+        "files": [],
+    }
+    if null_head:
+        comparison["head_commit"] = None
+    return comparison
+
+
+def ahead_comparison(source_sha: str, main_sha: str) -> dict[str, object]:
+    return {
+        "url": (
+            f"https://api.github.com/repos/{REPOSITORY}/compare/"
+            f"{source_sha}...{main_sha}"
+        ),
+        "status": "ahead",
+        "ahead_by": 1,
+        "behind_by": 0,
+        "total_commits": 1,
+        "base_commit": {"sha": source_sha},
+        "merge_base_commit": {"sha": source_sha},
+        "commits": [{"sha": main_sha}],
+        "files": [],
+    }
 
 
 def elf(machine: int, marker: bytes) -> bytes:
@@ -615,12 +660,7 @@ class ReleaseCandidateImageTests(unittest.TestCase):
             "protected": True,
             "commit": {"sha": ORCHESTRATION_SHA},
         }
-        main_compare = {
-            "status": "identical",
-            "base_commit": {"sha": ORCHESTRATION_SHA},
-            "merge_base_commit": {"sha": ORCHESTRATION_SHA},
-            "head_commit": {"sha": ORCHESTRATION_SHA},
-        }
+        main_compare = identical_comparison(ORCHESTRATION_SHA)
         write_json(main_branch_path, main_branch)
         write_json(main_compare_path, main_compare)
         output = self.root / "selection.json"
@@ -696,7 +736,7 @@ class ReleaseCandidateImageTests(unittest.TestCase):
         write_json(main_compare_path, main_compare)
         self.run_tool(IMAGE_TOOL, *arguments, expect_success=False)
 
-    def test_protected_main_source_rejects_unprotected_and_diverged(self) -> None:
+    def test_protected_main_source_accepts_real_identical_and_strict_ahead(self) -> None:
         branch_path = self.root / "protected-main.json"
         compare_path = self.root / "protected-main-compare.json"
         branch = {
@@ -704,14 +744,7 @@ class ReleaseCandidateImageTests(unittest.TestCase):
             "protected": True,
             "commit": {"sha": ORCHESTRATION_SHA},
         }
-        comparison = {
-            "status": "identical",
-            "base_commit": {"sha": ORCHESTRATION_SHA},
-            "merge_base_commit": {"sha": ORCHESTRATION_SHA},
-            "head_commit": {"sha": ORCHESTRATION_SHA},
-        }
         write_json(branch_path, branch)
-        write_json(compare_path, comparison)
         arguments = (
             "validate-protected-main",
             "--source-sha",
@@ -721,6 +754,15 @@ class ReleaseCandidateImageTests(unittest.TestCase):
             "--main-compare-json",
             str(compare_path),
         )
+
+        comparison = identical_comparison(ORCHESTRATION_SHA)
+        write_json(compare_path, comparison)
+        self.run_tool(IMAGE_TOOL, *arguments)
+        comparison["head_commit"] = None
+        write_json(compare_path, comparison)
+        self.run_tool(IMAGE_TOOL, *arguments)
+        comparison["head_commit"] = {"sha": ORCHESTRATION_SHA}
+        write_json(compare_path, comparison)
         self.run_tool(IMAGE_TOOL, *arguments)
 
         branch["protected"] = False
@@ -729,10 +771,215 @@ class ReleaseCandidateImageTests(unittest.TestCase):
         branch["protected"] = True
         write_json(branch_path, branch)
 
-        comparison["status"] = "diverged"
-        comparison["merge_base_commit"]["sha"] = SOURCE_SHA
+        branch["commit"]["sha"] = CURRENT_MAIN_SHA
+        write_json(branch_path, branch)
+        comparison = ahead_comparison(ORCHESTRATION_SHA, CURRENT_MAIN_SHA)
         write_json(compare_path, comparison)
-        self.run_tool(IMAGE_TOOL, *arguments, expect_success=False)
+        self.run_tool(IMAGE_TOOL, *arguments)
+        comparison["head_commit"] = {"sha": CURRENT_MAIN_SHA}
+        comparison.pop("commits")
+        write_json(compare_path, comparison)
+        self.run_tool(IMAGE_TOOL, *arguments)
+
+    def test_protected_main_source_rejects_drift_and_malformed_counts(self) -> None:
+        branch_path = self.root / "protected-main.json"
+        compare_path = self.root / "protected-main-compare.json"
+        arguments = (
+            "validate-protected-main",
+            "--source-sha",
+            ORCHESTRATION_SHA,
+            "--main-branch-json",
+            str(branch_path),
+            "--main-compare-json",
+            str(compare_path),
+        )
+
+        write_json(
+            branch_path,
+            {
+                "name": "main",
+                "protected": True,
+                "commit": {"sha": ORCHESTRATION_SHA},
+            },
+        )
+        identical = identical_comparison(ORCHESTRATION_SHA)
+        invalid_identical = (
+            lambda value: value.update(status="behind"),
+            lambda value: value.update(status="diverged"),
+            lambda value: value.update(status="unknown"),
+            lambda value: value.pop("status"),
+            lambda value: value.update(ahead_by=1),
+            lambda value: value.update(ahead_by=None),
+            lambda value: value.pop("ahead_by"),
+            lambda value: value.update(behind_by=1),
+            lambda value: value.update(behind_by=None),
+            lambda value: value.pop("behind_by"),
+            lambda value: value.update(total_commits=1),
+            lambda value: value.update(total_commits=None),
+            lambda value: value.pop("total_commits"),
+            lambda value: value.pop("base_commit"),
+            lambda value: value.pop("merge_base_commit"),
+            lambda value: value.update(base_commit=None),
+            lambda value: value.update(merge_base_commit=None),
+            lambda value: value.update(base_commit={"sha": SOURCE_SHA}),
+            lambda value: value.update(merge_base_commit={"sha": SOURCE_SHA}),
+            lambda value: value.update(head_commit={"sha": SOURCE_SHA}),
+        )
+        for index, mutate in enumerate(invalid_identical):
+            with self.subTest(kind="identical", mutation=index):
+                value = json.loads(json.dumps(identical))
+                mutate(value)
+                write_json(compare_path, value)
+                self.run_tool(IMAGE_TOOL, *arguments, expect_success=False)
+
+        write_json(
+            branch_path,
+            {
+                "name": "main",
+                "protected": True,
+                "commit": {"sha": CURRENT_MAIN_SHA},
+            },
+        )
+        ahead = ahead_comparison(ORCHESTRATION_SHA, CURRENT_MAIN_SHA)
+        invalid_ahead = (
+            lambda value: value.update(ahead_by=0),
+            lambda value: value.update(ahead_by=1.5),
+            lambda value: value.pop("ahead_by"),
+            lambda value: value.update(behind_by=1),
+            lambda value: value.update(behind_by=None),
+            lambda value: value.pop("behind_by"),
+            lambda value: value.update(total_commits=2),
+            lambda value: value.update(total_commits=None),
+            lambda value: value.pop("total_commits"),
+            lambda value: value.update(head_commit=None),
+            lambda value: value.update(head_commit={"sha": SOURCE_SHA}),
+            lambda value: value.pop("commits"),
+            lambda value: value.update(commits=[]),
+            lambda value: value.update(commits=[{"sha": SOURCE_SHA}]),
+            lambda value: value.update(base_commit={"sha": SOURCE_SHA}),
+            lambda value: value.update(merge_base_commit={"sha": SOURCE_SHA}),
+        )
+        for index, mutate in enumerate(invalid_ahead):
+            with self.subTest(kind="ahead", mutation=index):
+                value = json.loads(json.dumps(ahead))
+                mutate(value)
+                write_json(compare_path, value)
+                self.run_tool(IMAGE_TOOL, *arguments, expect_success=False)
+
+        write_json(compare_path, ahead)
+        drifted_arguments = list(arguments)
+        drifted_arguments[drifted_arguments.index(ORCHESTRATION_SHA)] = CURRENT_MAIN_SHA
+        self.run_tool(IMAGE_TOOL, *drifted_arguments, expect_success=False)
+
+    def test_observation_preflight_runs_identical_and_ahead_validation(self) -> None:
+        workflow = OBSERVATION_WORKFLOW.read_text(encoding="utf-8")
+        marker = "      - name: Validate RC and select profiles\n"
+        start = workflow.index(marker)
+        run_start = workflow.index("        run: |\n", start) + len("        run: |\n")
+        next_step = workflow.index("\n  observe:", run_start)
+        script = "\n".join(
+            line[10:] if line.startswith("          ") else line
+            for line in workflow[run_start:next_step].splitlines()
+        )
+
+        runtime_root = self.root / "observation-runtime"
+        mock_bin = runtime_root / "bin"
+        tool_root = runtime_root / "eng"
+        mock_bin.mkdir(parents=True)
+        tool_root.mkdir()
+        shutil.copy2(IMAGE_TOOL, tool_root / IMAGE_TOOL.name)
+        write_json(
+            runtime_root / "main.json",
+            {
+                "name": "main",
+                "protected": True,
+                "commit": {"sha": CURRENT_MAIN_SHA},
+            },
+        )
+        write_json(
+            runtime_root / "identical.json",
+            identical_comparison(CURRENT_MAIN_SHA, null_head=True),
+        )
+        write_json(
+            runtime_root / "ahead.json",
+            ahead_comparison(ORCHESTRATION_SHA, CURRENT_MAIN_SHA),
+        )
+        mock_gh = mock_bin / "gh"
+        mock_gh.write_text(
+            f"""#!/usr/bin/env bash
+set -euo pipefail
+endpoint="${{@: -1}}"
+case "$endpoint" in
+  */branches/main) cat "$MOCK_ROOT/main.json" ;;
+  */compare/{CURRENT_MAIN_SHA}...{CURRENT_MAIN_SHA})
+    cat "$MOCK_ROOT/identical.json"
+    ;;
+  */compare/{ORCHESTRATION_SHA}...{CURRENT_MAIN_SHA})
+    cat "$MOCK_ROOT/ahead.json"
+    ;;
+  *) echo "unexpected endpoint: $endpoint" >&2; exit 1 ;;
+esac
+""",
+            encoding="utf-8",
+        )
+        mock_gh.chmod(0o700)
+        output = runtime_root / "github-output.txt"
+        environment = {
+            **os.environ,
+            "PATH": f"{mock_bin}:{os.environ['PATH']}",
+            "MOCK_ROOT": str(runtime_root),
+            "GITHUB_REPOSITORY": REPOSITORY,
+            "GITHUB_OUTPUT": str(output),
+            "REQUESTED_PROFILE": "all",
+            "RELEASE_CANDIDATE_ID": CANDIDATE,
+            "CANDIDATE_SOURCE_SHA": SOURCE_SHA,
+            "ARCHIVE_WORKFLOW_SOURCE_SHA": CURRENT_MAIN_SHA,
+            "ARCHIVE_RUN_ID": "1",
+            "ARCHIVE_RUN_ATTEMPT": "1",
+            "ARCHIVE_ARTIFACT_ID": "1",
+            "ARCHIVE_ARTIFACT_NAME": "archive",
+            "ARCHIVE_ARTIFACT_DIGEST": digest_bytes(b"archive"),
+            "ARCHIVE_CONTENT_DIGEST": digest_bytes(b"archive content"),
+            "GHCR_WORKFLOW_SOURCE_SHA": ORCHESTRATION_SHA,
+            "GHCR_RUN_ID": "2",
+            "GHCR_RUN_ATTEMPT": "1",
+            "GHCR_ARTIFACT_ID": "2",
+            "GHCR_ARTIFACT_NAME": "ghcr",
+            "GHCR_ARTIFACT_DIGEST": digest_bytes(b"ghcr"),
+            "GHCR_CONTENT_DIGEST": digest_bytes(b"ghcr content"),
+            "WINDOW_MINUTES": "60",
+            "AZURE_LOCATION": "eastus2",
+            "REF": "refs/heads/main",
+            "REF_PROTECTED": "true",
+        }
+        result = subprocess.run(
+            ["bash", "-c", script],
+            cwd=runtime_root,
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            output.read_text(encoding="utf-8"),
+            'profiles=["s3-basic-object-crud","secretsmanager-basic-lifecycle"]\n',
+        )
+
+        ahead = ahead_comparison(ORCHESTRATION_SHA, CURRENT_MAIN_SHA)
+        ahead["head_commit"] = None
+        write_json(runtime_root / "ahead.json", ahead)
+        result = subprocess.run(
+            ["bash", "-c", script],
+            cwd=runtime_root,
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
 
     def test_shell_consumer_rejects_injection_before_network_or_file_effects(self) -> None:
         injected = self.root / "injected"

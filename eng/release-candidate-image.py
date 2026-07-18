@@ -256,13 +256,57 @@ def validate_protected_main_source(
     merge_base = require_object(
         main_compare.get("merge_base_commit"), "comparison merge-base commit"
     )
-    head_commit = require_object(main_compare.get("head_commit"), "comparison head commit")
-    if (
-        main_compare.get("status") not in ("ahead", "identical")
-        or base_commit.get("sha") != source_sha
-        or merge_base.get("sha") != source_sha
-        or head_commit.get("sha") != main_sha
-    ):
+    if base_commit.get("sha") != source_sha or merge_base.get("sha") != source_sha:
+        fail("workflow source is not protected main history")
+
+    status = main_compare.get("status")
+    ahead_by = main_compare.get("ahead_by")
+    behind_by = main_compare.get("behind_by")
+    total_commits = main_compare.get("total_commits")
+    head_commit = main_compare.get("head_commit")
+    if "head_commit" in main_compare:
+        exact_head = (
+            isinstance(head_commit, dict) and head_commit.get("sha") == main_sha
+        )
+    else:
+        commits = main_compare.get("commits")
+        exact_head = (
+            isinstance(commits, list)
+            and bool(commits)
+            and isinstance(commits[-1], dict)
+            and commits[-1].get("sha") == main_sha
+        )
+    counts_are_integers = all(
+        isinstance(value, int) and not isinstance(value, bool)
+        for value in (ahead_by, behind_by, total_commits)
+    )
+    if status == "identical":
+        valid = (
+            source_sha == main_sha
+            and counts_are_integers
+            and ahead_by == 0
+            and behind_by == 0
+            and total_commits == 0
+            and (
+                head_commit is None
+                or (
+                    isinstance(head_commit, dict)
+                    and head_commit.get("sha") == main_sha
+                )
+            )
+        )
+    elif status == "ahead":
+        valid = (
+            source_sha != main_sha
+            and counts_are_integers
+            and ahead_by > 0
+            and behind_by == 0
+            and total_commits == ahead_by
+            and exact_head
+        )
+    else:
+        valid = False
+    if not valid:
         fail("workflow source is not protected main history")
 
 
