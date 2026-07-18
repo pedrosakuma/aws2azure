@@ -521,6 +521,12 @@ class ReleaseCandidateProducerTests(unittest.TestCase):
         self.assertIn("uses: ./orchestration/.github/actions/dotnet-setup", text)
         self.assertNotIn("uses: ./candidate-source/", text)
         self.assertIn("approved-ledger-compare.json", text)
+        self.assertIn("gh api --paginate --slurp", text)
+        self.assertIn("compact-tag-rulesets.json", text)
+        self.assertIn(
+            "orchestration/eng/resolve-release-candidate-rulesets.sh",
+            text,
+        )
         self.assertIn("dispatch ref must be protected main, never the candidate tag", (
             REPO_ROOT / "eng" / "validate-release-candidate-ref.sh"
         ).read_text(encoding="utf-8"))

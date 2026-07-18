@@ -12,20 +12,137 @@ orchestration_sha=1123456789abcdef0123456789abcdef01234567
 approval_sha=$orchestration_sha
 main_sha=2123456789abcdef0123456789abcdef01234567
 candidate=v1.2.3-rc.4
-cat > "$test_root/rulesets.json" <<'JSON'
+cat > "$test_root/compact-rulesets.json" <<'JSON'
 [
   {
+    "id": 19148912,
+    "name": "Protect release candidate tags",
     "target": "tag",
+    "source_type": "Repository",
+    "source": "pedrosakuma/aws2azure",
     "enforcement": "active",
-    "conditions": {
-      "ref_name": {
-        "include": ["refs/tags/v*-rc.*"],
-        "exclude": []
+    "node_id": "RRS_lACqUmVwb3NpdG9yec5KFHRFzgEkMHA",
+    "_links": {
+      "self": {
+        "href": "https://api.github.com/repos/pedrosakuma/aws2azure/rulesets/19148912"
+      },
+      "html": {
+        "href": "https://github.com/pedrosakuma/aws2azure/rules/19148912"
       }
-    }
+    },
+    "created_at": "2026-07-18T18:13:18.367Z",
+    "updated_at": "2026-07-18T18:13:18.386Z"
   }
 ]
 JSON
+mkdir -p "$test_root/mock-bin" "$test_root/details"
+cat > "$test_root/details/19148912.json" <<'JSON'
+{
+  "id": 19148912,
+  "name": "Protect release candidate tags",
+  "target": "tag",
+  "source_type": "Repository",
+  "source": "pedrosakuma/aws2azure",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "exclude": [],
+      "include": ["refs/tags/v*-rc.*"]
+    }
+  },
+  "rules": [
+    {"type": "deletion"},
+    {"type": "non_fast_forward"}
+  ],
+  "updated_at": "2026-07-18T18:13:18.386Z"
+}
+JSON
+cat > "$test_root/mock-bin/gh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$#" == 6 ]]
+[[ "$1" == api ]]
+[[ "$2" == -H ]]
+[[ "$3" == "Accept: application/vnd.github+json" ]]
+[[ "$4" == -H ]]
+[[ "$5" == "X-GitHub-Api-Version: 2022-11-28" ]]
+case "$6" in
+  /repos/pedrosakuma/aws2azure/rulesets/[1-9]*)
+    ruleset_id="${6##*/}"
+    cat "$MOCK_RULESET_DETAIL_DIR/$ruleset_id.json"
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+SH
+chmod +x "$test_root/mock-bin/gh"
+
+resolve_rulesets() {
+  rm -f "$test_root/rulesets.json"
+  GH_BIN="$test_root/mock-bin/gh" \
+    MOCK_RULESET_DETAIL_DIR="$test_root/details" \
+    "$repo_root/eng/resolve-release-candidate-rulesets.sh" \
+      --repository pedrosakuma/aws2azure \
+      --rulesets-json "${1:-$test_root/compact-rulesets.json}" \
+      --output-json "$test_root/rulesets.json"
+}
+
+resolve_rulesets
+cp "$test_root/rulesets.json" "$test_root/resolved-first.json"
+resolve_rulesets
+cmp "$test_root/resolved-first.json" "$test_root/rulesets.json"
+
+expect_fail() {
+  if "$@" >"$test_root/unexpected.out" 2>"$test_root/expected.err"; then
+    echo "expected command to fail: $*" >&2
+    exit 1
+  fi
+}
+
+expect_resolve_fail() {
+  rm -f "$test_root/rulesets.json"
+  expect_fail env \
+    GH_BIN="$test_root/mock-bin/gh" \
+    MOCK_RULESET_DETAIL_DIR="$test_root/details" \
+    "$repo_root/eng/resolve-release-candidate-rulesets.sh" \
+      --repository pedrosakuma/aws2azure \
+      --rulesets-json "$1" \
+      --output-json "$test_root/rulesets.json"
+  [[ ! -e "$test_root/rulesets.json" ]]
+}
+
+printf '[\n' > "$test_root/malformed-list.json"
+expect_resolve_fail "$test_root/malformed-list.json"
+jq '[.]' "$test_root/compact-rulesets.json" > "$test_root/unflattened-pages.json"
+expect_resolve_fail "$test_root/unflattened-pages.json"
+jq '[.[0], .[0]]' "$test_root/compact-rulesets.json" > "$test_root/duplicate-id.json"
+expect_resolve_fail "$test_root/duplicate-id.json"
+jq '.[0] |= del(.id)' "$test_root/compact-rulesets.json" > "$test_root/missing-id.json"
+expect_resolve_fail "$test_root/missing-id.json"
+jq '.[0].target = "branch"' "$test_root/compact-rulesets.json" > "$test_root/wrong-target.json"
+expect_resolve_fail "$test_root/wrong-target.json"
+jq '.[0].enforcement = "disabled"' "$test_root/compact-rulesets.json" > "$test_root/inactive.json"
+expect_resolve_fail "$test_root/inactive.json"
+
+cp "$test_root/details/19148912.json" "$test_root/detail-valid.json"
+for mutation in \
+  '.id = 19148913' \
+  '.source = "other/repository"' \
+  '.target = "branch"' \
+  '.enforcement = "evaluate"' \
+  '.updated_at = "2026-07-18T18:14:00.000Z"' \
+  'del(.conditions)'; do
+  jq "$mutation" "$test_root/detail-valid.json" > "$test_root/details/19148912.json"
+  expect_resolve_fail "$test_root/compact-rulesets.json"
+done
+printf '{\n' > "$test_root/details/19148912.json"
+expect_resolve_fail "$test_root/compact-rulesets.json"
+rm "$test_root/details/19148912.json"
+expect_resolve_fail "$test_root/compact-rulesets.json"
+cp "$test_root/detail-valid.json" "$test_root/details/19148912.json"
+resolve_rulesets
+
 cat > "$test_root/compare.json" <<JSON
 {
   "status": "ahead",
@@ -48,13 +165,6 @@ JSON
   --compare-json "$test_root/compare.json" \
   > "$test_root/ref.txt"
 [[ "$(cat "$test_root/ref.txt")" == "refs/tags/$candidate" ]]
-
-expect_fail() {
-  if "$@" >"$test_root/unexpected.out" 2>"$test_root/expected.err"; then
-    echo "expected command to fail: $*" >&2
-    exit 1
-  fi
-}
 
 base=(
   "$repo_root/eng/validate-release-candidate-ref.sh"
@@ -147,6 +257,7 @@ for path in \
   .github/actions/dotnet-setup/action.yml \
   eng/release-candidate-inputs.py \
   eng/release-candidate-package.py \
+  eng/resolve-release-candidate-rulesets.sh \
   eng/resolve-sealed-runtime.sh \
   eng/smoke-release-candidate.sh; do
   printf 'trusted orchestration\n' > "$orchestration_root/$path"

@@ -54,6 +54,7 @@ for relative in \
   .github/actions/dotnet-setup/action.yml \
   eng/release-candidate-inputs.py \
   eng/release-candidate-package.py \
+  eng/resolve-release-candidate-rulesets.sh \
   eng/resolve-sealed-runtime.sh \
   eng/smoke-release-candidate.sh; do
   path="$orchestration_root/$relative"

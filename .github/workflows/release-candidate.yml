@@ -94,9 +94,19 @@ jobs:
             "refs/tags/$CANDIDATE:refs/tags/$CANDIDATE"
           tag_sha="$(git -C orchestration rev-parse "refs/tags/$CANDIDATE^{commit}")"
           mkdir -p artifacts/trust
-          gh api -H "Accept: application/vnd.github+json" \
+          gh api --paginate --slurp -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
             "/repos/$GITHUB_REPOSITORY/rulesets?includes_parents=true&targets=tag&per_page=100" \
-            > artifacts/trust/tag-rulesets.json
+            | jq -ce '
+                if type == "array" and all(.[]; type == "array")
+                then [.[][]]
+                else error("ruleset pagination did not return JSON arrays")
+                end
+              ' > artifacts/trust/compact-tag-rulesets.json
+          orchestration/eng/resolve-release-candidate-rulesets.sh \
+            --repository "$GITHUB_REPOSITORY" \
+            --rulesets-json artifacts/trust/compact-tag-rulesets.json \
+            --output-json artifacts/trust/tag-rulesets.json
           gh api -H "Accept: application/vnd.github+json" \
             "/repos/$GITHUB_REPOSITORY/branches/main" \
             > artifacts/trust/protected-main.json
