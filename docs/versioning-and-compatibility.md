@@ -46,12 +46,33 @@ digest in their names.
 `release-candidate-archive-inputs.json` is an attested input fragment for the
 canonical `eng/release-candidate-manifest.py` interface, not a completed RC
 manifest. Schema version 1 does not permit invented or placeholder GHCR and
-observation identities. The fragment therefore records those interfaces as
-explicitly pending: #588 must consume the exact archived executables and return
-the immutable amd64/arm64 GHCR identities, while the remaining workflow scope of
-#582 must supply real-Azure observation evidence for both GA profiles. Only then
-may the canonical generator produce the final manifest. This producer creates no
-GitHub Release, stable `v1` publication, or GHCR image.
+observation identities. The archive fragment therefore records both interfaces
+as pending.
+
+`.github/workflows/release-candidate-image.yml` resolves that fragment only by
+exact producer run, attempt, artifact id, artifact name, artifact upload digest,
+and archive-input content digest. It verifies the producer attempt, protected
+candidate tag, complete checksums, deterministic platform manifests and
+archives, executable ELF architecture, and both producer attestations before
+creating a two-file Docker context: the release-only Dockerfile plus the exact
+matching executable. The image path has no SDK, source tree, `dotnet publish`,
+or source-build fallback.
+
+Each architecture uses its pinned chiseled production base manifest and a
+native runner, preserves UID 1654, the sidecar entrypoint and port, and the
+in-image health probe, then smokes before push. Platform tags include the full
+executable digest. The final index is rejected unless it contains exactly
+`linux/amd64` and `linux/arm64`; it is written only to the exact RC tag and an
+archive-content-digest RC tag after proving both tags absent. Stable SemVer,
+major/minor, branch, and `latest` tags are not part of this path.
+
+The resulting attested `release-candidate-ghcr-inputs.json` records each
+platform manifest digest, the index digest, tags, bases, executable/archive
+materials, and the exact archive artifact identity. Its `container` object is
+the canonical GHCR input accepted by `eng/release-candidate-manifest.py`. The
+remaining workflow scope of #582 must still supply real-Azure observation
+evidence for both GA profiles before the final RC manifest can be generated.
+Neither RC workflow creates a GitHub Release or stable `v1` publication.
 
 For a stable major line, the supported window is the latest patch of the current
 minor and the latest patch of the immediately previous minor. "Supported" means

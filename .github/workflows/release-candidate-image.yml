@@ -1,0 +1,837 @@
+name: release-candidate-image
+
+# Consumes one exact immutable artifact from release-candidate.yml. This path
+# never publishes source, invokes dotnet, or creates stable/latest image tags.
+on:
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: Exact protected candidate identity (vMAJOR.MINOR.PATCH-rc.NUMBER)
+        required: true
+        type: string
+      archive_source_sha:
+        description: Exact candidate-tag SHA recorded by the archive producer
+        required: true
+        type: string
+      archive_run_id:
+        description: Exact successful release-candidate workflow run id
+        required: true
+        type: string
+      archive_run_attempt:
+        description: Exact successful release-candidate workflow run attempt
+        required: true
+        type: string
+      archive_artifact_id:
+        description: Exact immutable RC archive artifact id
+        required: true
+        type: string
+      archive_artifact_name:
+        description: Exact digest/run/attempt-bound RC archive artifact name
+        required: true
+        type: string
+      archive_artifact_digest:
+        description: Exact GitHub artifact upload digest (sha256:...)
+        required: true
+        type: string
+      archive_content_digest:
+        description: Exact release-candidate-archive-inputs.json content digest
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rc-image-${{ inputs.candidate }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      attestations: read
+      contents: read
+    outputs:
+      artifact_name: ${{ steps.identity.outputs.artifact_name }}
+      archive_content_digest: ${{ steps.identity.outputs.archive_content_digest }}
+      archive_content_hex: ${{ steps.identity.outputs.archive_content_hex }}
+    steps:
+      - name: Require protected-main image workflow
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != workflow_dispatch ] ||
+             [ "$REF" != refs/heads/main ] ||
+             [ "$REF_PROTECTED" != true ]; then
+            echo "::error::RC images must be dispatched from protected main."
+            exit 1
+          fi
+
+      - name: Checkout exact protected image workflow
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact clean workflow checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ] ||
+             [ -n "$(git status --short)" ]; then
+            echo "::error::Image workflow checkout is not exact and clean."
+            exit 1
+          fi
+
+      - name: Resolve and verify exact RC archive artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE: ${{ inputs.candidate }}
+          ARCHIVE_SOURCE_SHA: ${{ inputs.archive_source_sha }}
+          ARCHIVE_RUN_ID: ${{ inputs.archive_run_id }}
+          ARCHIVE_RUN_ATTEMPT: ${{ inputs.archive_run_attempt }}
+          ARCHIVE_ARTIFACT_ID: ${{ inputs.archive_artifact_id }}
+          ARCHIVE_ARTIFACT_NAME: ${{ inputs.archive_artifact_name }}
+          ARCHIVE_ARTIFACT_DIGEST: ${{ inputs.archive_artifact_digest }}
+          ARCHIVE_CONTENT_DIGEST: ${{ inputs.archive_content_digest }}
+        run: |
+          set -euo pipefail
+          ./eng/resolve-release-candidate-archives.sh \
+            --repository "$GITHUB_REPOSITORY" \
+            --candidate "$CANDIDATE" \
+            --source-sha "$ARCHIVE_SOURCE_SHA" \
+            --run-id "$ARCHIVE_RUN_ID" \
+            --run-attempt "$ARCHIVE_RUN_ATTEMPT" \
+            --artifact-id "$ARCHIVE_ARTIFACT_ID" \
+            --artifact-name "$ARCHIVE_ARTIFACT_NAME" \
+            --artifact-digest "$ARCHIVE_ARTIFACT_DIGEST" \
+            --archive-content-digest "$ARCHIVE_CONTENT_DIGEST" \
+            --destination artifacts/resolved \
+            --identity-output artifacts/resolved/resolved-archive-identity.json
+
+      - name: Record immutable validated-input identity
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          identity=artifacts/resolved/resolved-archive-identity.json
+          digest="$(jq -er '.archive_input.content_digest' "$identity")"
+          digest_hex="${digest#sha256:}"
+          {
+            echo "artifact_name=validated-rc-image-inputs-$digest_hex-run-$GITHUB_RUN_ID-attempt-$GITHUB_RUN_ATTEMPT"
+            echo "archive_content_digest=$digest"
+            echo "archive_content_hex=$digest_hex"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload exact validated RC image inputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.identity.outputs.artifact_name }}
+          path: |
+            artifacts/resolved/bundle/
+            artifacts/resolved/archive-selection.json
+            artifacts/resolved/resolved-archive-identity.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+          overwrite: false
+
+  platform:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            rid: linux-x64
+            arch: amd64
+            runner: ubuntu-latest
+            base_digest: sha256:481d8747c961286738b6ce814c89de840bbc018330283bc54e8d29484ee88b16
+          - platform: linux/arm64
+            rid: linux-arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            base_digest: sha256:84fc5eb352e49b24564ff085ece8de373ed14d019a1d0e9f6d1103ea00c43454
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    steps:
+      - name: Checkout exact protected image workflow
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download exact validated RC inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.resolve.outputs.artifact_name }}
+          path: artifacts/validated
+
+      - name: Revalidate exact bytes and prepare binary-only context
+        shell: bash
+        env:
+          RID: ${{ matrix.rid }}
+        run: |
+          set -euo pipefail
+          python3 eng/release-candidate-image.py validate-bundle \
+            --bundle artifacts/validated/bundle \
+            --selection artifacts/validated/archive-selection.json \
+            --output artifacts/revalidated-archive-identity.json
+          cmp artifacts/validated/resolved-archive-identity.json \
+            artifacts/revalidated-archive-identity.json
+          python3 eng/release-candidate-image.py prepare-context \
+            --bundle artifacts/validated/bundle \
+            --identity artifacts/revalidated-archive-identity.json \
+            --rid "$RID" \
+            --dockerfile docker/release-candidate/Dockerfile \
+            --output artifacts/build-context \
+            > artifacts/context-identity.json
+
+      - name: Require native architecture
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          machine="$(uname -m)"
+          case "$ARCH:$machine" in
+            amd64:x86_64|amd64:amd64|arm64:aarch64|arm64:arm64) ;;
+            *)
+              echo "::error::RC platform images must build and smoke natively."
+              exit 1
+              ;;
+          esac
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive exact immutable image identity
+        id: image
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          BASE_DIGEST: ${{ matrix.base_digest }}
+          CANDIDATE: ${{ inputs.candidate }}
+        run: |
+          set -euo pipefail
+          identity=artifacts/revalidated-archive-identity.json
+          source_sha="$(jq -er '.candidate.source.sha' "$identity")"
+          archive_digest="$(jq -er '.archive_input.content_digest' "$identity")"
+          executable_digest="$(jq -er --arg arch "$ARCH" \
+            '.platforms[] | select(.platform == ("linux/" + $arch)) | .executable.sha256' \
+            "$identity")"
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          tag="$CANDIDATE-$ARCH-${executable_digest#sha256:}"
+          image_ref="$repository:$tag"
+          {
+            echo "repository=$repository"
+            echo "tag=$tag"
+            echo "image_ref=$image_ref"
+            echo "source_sha=$source_sha"
+            echo "archive_digest=$archive_digest"
+            echo "executable_digest=$executable_digest"
+            echo "runtime_base=mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled@$BASE_DIGEST"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve immutable platform tag state
+        id: preflight
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_REF: ${{ steps.image.outputs.image_ref }}
+        run: |
+          set -euo pipefail
+          repository="${IMAGE_REF%%:*}"
+          tag="${IMAGE_REF##*:}"
+          registry_path="${repository#ghcr.io/}"
+          token="$(
+            curl -fsS -u "$GITHUB_ACTOR:$GHCR_TOKEN" \
+              "https://ghcr.io/token?scope=repository:$registry_path:pull" |
+              jq -er '.token'
+          )"
+          printf -v authorization 'Authorization: %s %s' Bearer "$token"
+          status="$(
+            curl -sS -D artifacts/remote-platform-headers.txt \
+              -o artifacts/remote-platform-manifest.json -w '%{http_code}' \
+              -H "$authorization" \
+              -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' \
+              "https://ghcr.io/v2/$registry_path/manifests/$tag"
+          )"
+          if [ "$status" = 200 ]; then
+            tr -d '\r' < artifacts/remote-platform-headers.txt |
+              awk 'tolower($1) == "docker-content-digest:" { print $2 }' \
+              > artifacts/remote-platform-digest.txt
+            grep -Eq '^sha256:[0-9a-f]{64}$' artifacts/remote-platform-digest.txt
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          elif [ "$status" = 404 ]; then
+            rm -f artifacts/remote-platform-headers.txt \
+              artifacts/remote-platform-manifest.json
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Could not resolve RC platform tag state (HTTP $status)."
+            exit 1
+          fi
+
+      - name: Build exact binary-only image locally
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: artifacts/build-context
+          file: artifacts/build-context/Dockerfile
+          load: true
+          push: false
+          provenance: false
+          tags: ${{ steps.image.outputs.image_ref }}
+          build-args: |
+            RUNTIME_BASE=${{ steps.image.outputs.runtime_base }}
+            CANDIDATE=${{ inputs.candidate }}
+            SOURCE_SHA=${{ steps.image.outputs.source_sha }}
+            ARCHIVE_CONTENT_DIGEST=${{ steps.image.outputs.archive_digest }}
+            BASE_IMAGE_DIGEST=${{ matrix.base_digest }}
+
+      - name: Validate image configuration and smoke natively
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          IMAGE_REF: ${{ steps.image.outputs.image_ref }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/smoke
+          docker image inspect "$IMAGE_REF" > artifacts/smoke/image-inspect.json
+          python3 eng/release-candidate-image.py validate-image-config \
+            --identity artifacts/revalidated-archive-identity.json \
+            --platform "linux/$ARCH" \
+            --inspect artifacts/smoke/image-inspect.json
+
+          cat > artifacts/smoke/config.json <<'JSON'
+          {
+            "services": { "s3": { "enabled": true } },
+            "bindings": [{
+              "aws": { "accessKeyId": "test", "secretAccessKey": "test" },
+              "azure": {
+                "s3": {
+                  "kind": "blob",
+                  "target": { "accountName": "test" },
+                  "auth": { "mode": "sharedKey", "key": "dGVzdA==" }
+                }
+              }
+            }]
+          }
+          JSON
+          name="aws2azure-rc-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$ARCH"
+          container_id="$(
+            docker run -d --name "$name" \
+              -p 127.0.0.1::8080 \
+              -v "$PWD/artifacts/smoke/config.json:/app/config.json:ro" \
+              -e AWS2AZURE_CONFIG_FILE=/app/config.json \
+              "$IMAGE_REF"
+          )"
+          cleanup() {
+            docker rm -f "$container_id" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          port="$(docker port "$container_id" 8080/tcp | sed -n 's/.*://p')"
+          for _ in $(seq 1 45); do
+            health="$(docker inspect --format '{{.State.Health.Status}}' "$container_id")"
+            if [ "$health" = healthy ] &&
+               curl -fsS "http://127.0.0.1:$port/_aws2azure/health" >/dev/null; then
+              exit 0
+            fi
+            if [ "$health" = unhealthy ]; then
+              break
+            fi
+            sleep 1
+          done
+          docker logs "$container_id" || true
+          echo "::error::Native RC image smoke did not become healthy."
+          exit 1
+
+      - name: Select an existing immutable platform digest
+        if: steps.preflight.outputs.exists == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp artifacts/remote-platform-manifest.json artifacts/platform-manifest.json
+          cp artifacts/remote-platform-digest.txt artifacts/platform-digest.txt
+
+      - name: Push a missing immutable platform tag
+        if: steps.preflight.outputs.exists == 'false'
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_REF: ${{ steps.image.outputs.image_ref }}
+        run: |
+          set -euo pipefail
+          docker push "$IMAGE_REF"
+          cp artifacts/smoke/image-inspect.json artifacts/final-image-inspect.json
+          repository="${IMAGE_REF%%:*}"
+          tag="${IMAGE_REF##*:}"
+          registry_path="${repository#ghcr.io/}"
+          token="$(
+            curl -fsS -u "$GITHUB_ACTOR:$GHCR_TOKEN" \
+              "https://ghcr.io/token?scope=repository:$registry_path:pull" |
+              jq -er '.token'
+          )"
+          printf -v authorization 'Authorization: %s %s' Bearer "$token"
+          curl -fsS -D artifacts/platform-headers.txt \
+            -H "$authorization" \
+            -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+            "https://ghcr.io/v2/$registry_path/manifests/$tag" \
+            -o artifacts/platform-manifest.json
+          tr -d '\r' < artifacts/platform-headers.txt |
+            awk 'tolower($1) == "docker-content-digest:" { print $2 }' \
+            > artifacts/platform-digest.txt
+          grep -Eq '^sha256:[0-9a-f]{64}$' artifacts/platform-digest.txt
+
+      - name: Validate exact registry image by digest
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_REF: ${{ steps.image.outputs.image_ref }}
+        run: |
+          set -euo pipefail
+          digest="$(cat artifacts/platform-digest.txt)"
+          repository="${IMAGE_REF%%:*}"
+          tag="${IMAGE_REF##*:}"
+          digest_ref="$repository@$digest"
+          docker pull "$digest_ref"
+          docker image inspect "$digest_ref" > artifacts/final-image-inspect.json
+          python3 eng/release-candidate-image.py validate-image-config \
+            --identity artifacts/revalidated-archive-identity.json \
+            --platform "linux/$ARCH" \
+            --inspect artifacts/final-image-inspect.json
+          python3 eng/release-candidate-image.py compare-image-config \
+            --expected artifacts/smoke/image-inspect.json \
+            --actual artifacts/final-image-inspect.json
+          container_id="$(docker create "$digest_ref")"
+          cleanup_exact() {
+            docker rm -f "$container_id" >/dev/null 2>&1 || true
+          }
+          trap cleanup_exact EXIT
+          docker cp "$container_id:/app/Aws2Azure.Proxy" \
+            artifacts/registry-Aws2Azure.Proxy
+          python3 eng/release-candidate-image.py validate-executable \
+            --identity artifacts/revalidated-archive-identity.json \
+            --platform "linux/$ARCH" \
+            --executable artifacts/registry-Aws2Azure.Proxy
+          cleanup_exact
+          trap - EXIT
+
+          name="aws2azure-rc-registry-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$ARCH"
+          running_id="$(
+            docker run -d --name "$name" \
+              -p 127.0.0.1::8080 \
+              -v "$PWD/artifacts/smoke/config.json:/app/config.json:ro" \
+              -e AWS2AZURE_CONFIG_FILE=/app/config.json \
+              "$digest_ref"
+          )"
+          cleanup_running() {
+            docker rm -f "$running_id" >/dev/null 2>&1 || true
+          }
+          trap cleanup_running EXIT
+          port="$(docker port "$running_id" 8080/tcp | sed -n 's/.*://p')"
+          smoke_ok=false
+          for _ in $(seq 1 45); do
+            health="$(docker inspect --format '{{.State.Health.Status}}' "$running_id")"
+            if [ "$health" = healthy ] &&
+               curl -fsS "http://127.0.0.1:$port/_aws2azure/health" >/dev/null; then
+              smoke_ok=true
+              break
+            fi
+            if [ "$health" = unhealthy ]; then
+              break
+            fi
+            sleep 1
+          done
+          if [ "$smoke_ok" != true ]; then
+            docker logs "$running_id" || true
+            echo "::error::Exact registry RC image did not become healthy."
+            exit 1
+          fi
+
+          registry_path="${repository#ghcr.io/}"
+          token="$(
+            curl -fsS -u "$GITHUB_ACTOR:$GHCR_TOKEN" \
+              "https://ghcr.io/token?scope=repository:$registry_path:pull" |
+              jq -er '.token'
+          )"
+          printf -v authorization 'Authorization: %s %s' Bearer "$token"
+          curl -fsS -D artifacts/confirmed-platform-headers.txt \
+            -H "$authorization" \
+            -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+            "https://ghcr.io/v2/$registry_path/manifests/$tag" \
+            -o artifacts/confirmed-platform-manifest.json
+          tr -d '\r' < artifacts/confirmed-platform-headers.txt |
+            awk 'tolower($1) == "docker-content-digest:" { print $2 }' \
+            > artifacts/confirmed-platform-digest.txt
+          cmp artifacts/platform-digest.txt artifacts/confirmed-platform-digest.txt
+          cmp artifacts/platform-manifest.json artifacts/confirmed-platform-manifest.json
+
+      - name: Validate exact pinned base layers
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          BASE_DIGEST: ${{ matrix.base_digest }}
+        run: |
+          set -euo pipefail
+          curl -fsS \
+            -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' \
+            "https://mcr.microsoft.com/v2/dotnet/runtime-deps/manifests/$BASE_DIGEST" \
+            -o artifacts/base-manifest.json
+          python3 eng/release-candidate-image.py validate-base-layers \
+            --platform "linux/$ARCH" \
+            --base-manifest artifacts/base-manifest.json \
+            --image-manifest artifacts/platform-manifest.json
+
+      - name: Record exact platform image digest and materials
+        id: result
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          BASE_DIGEST: ${{ matrix.base_digest }}
+          IMAGE_REF: ${{ steps.image.outputs.image_ref }}
+          REPOSITORY: ${{ steps.image.outputs.repository }}
+          TAG: ${{ steps.image.outputs.tag }}
+        run: |
+          set -euo pipefail
+          digest="$(cat artifacts/platform-digest.txt)"
+          mkdir -p artifacts/platform-result
+          python3 eng/release-candidate-image.py write-platform-result \
+            --identity artifacts/revalidated-archive-identity.json \
+            --platform "linux/$ARCH" \
+            --repository "$REPOSITORY" \
+            --tag "$TAG" \
+            --image-digest "$digest" \
+            --base-digest "$BASE_DIGEST" \
+            --manifest artifacts/platform-manifest.json \
+            --inspect artifacts/final-image-inspect.json \
+            --output "artifacts/platform-result/linux-$ARCH.json"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Attest newly-pushed platform image provenance
+        if: steps.preflight.outputs.exists == 'false'
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        with:
+          subject-name: ${{ steps.image.outputs.repository }}
+          subject-digest: ${{ steps.result.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest recovered platform image materials
+        if: steps.preflight.outputs.exists == 'true'
+        uses: actions/attest@daf44fb950173508f38bd2406030372c1d1162b1 # v3
+        with:
+          subject-name: ${{ steps.image.outputs.repository }}
+          subject-digest: ${{ steps.result.outputs.digest }}
+          predicate-type: https://aws2azure.dev/attestations/release-candidate-platform-image/v1
+          predicate-path: artifacts/platform-result/linux-${{ matrix.arch }}.json
+          push-to-registry: true
+
+      - name: Upload exact platform image result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: rc-image-platform-${{ matrix.arch }}-${{ needs.resolve.outputs.archive_content_hex }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: artifacts/platform-result/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+          overwrite: false
+
+  index:
+    needs: [resolve, platform]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    steps:
+      - name: Checkout exact protected image workflow
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download exact validated RC inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.resolve.outputs.artifact_name }}
+          path: artifacts/validated
+
+      - name: Download exact platform image results
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: rc-image-platform-*-${{ needs.resolve.outputs.archive_content_hex }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: artifacts/results
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve exact index tag states
+        id: index
+        shell: bash
+        env:
+          CANDIDATE: ${{ inputs.candidate }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          identity=artifacts/validated/resolved-archive-identity.json
+          archive_digest="$(jq -er '.archive_input.content_digest' "$identity")"
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          immutable_tag="$CANDIDATE-${archive_digest#sha256:}"
+          registry_path="${repository#ghcr.io/}"
+          token="$(
+            curl -fsS -u "$GITHUB_ACTOR:$GHCR_TOKEN" \
+              "https://ghcr.io/token?scope=repository:$registry_path:pull" |
+              jq -er '.token'
+          )"
+          printf -v authorization 'Authorization: %s %s' Bearer "$token"
+          candidate_exists=false
+          immutable_exists=false
+          for item in "candidate:$CANDIDATE" "immutable:$immutable_tag"; do
+            label="${item%%:*}"
+            tag="${item#*:}"
+            status="$(
+              curl -sS -D "artifacts/existing-index-$label-headers.txt" \
+                -o "artifacts/existing-index-$label.json" -w '%{http_code}' \
+                -H "$authorization" \
+                -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+                "https://ghcr.io/v2/$registry_path/manifests/$tag"
+            )"
+            if [ "$status" = 200 ]; then
+              tr -d '\r' < "artifacts/existing-index-$label-headers.txt" |
+                awk 'tolower($1) == "docker-content-digest:" { print $2 }' \
+                > "artifacts/existing-index-$label-digest.txt"
+              grep -Eq '^sha256:[0-9a-f]{64}$' \
+                "artifacts/existing-index-$label-digest.txt"
+              if [ "$label" = candidate ]; then
+                candidate_exists=true
+              else
+                immutable_exists=true
+              fi
+            elif [ "$status" = 404 ]; then
+              rm -f "artifacts/existing-index-$label-headers.txt" \
+                "artifacts/existing-index-$label.json"
+            else
+              echo "::error::Could not resolve RC index tag state (HTTP $status)."
+              exit 1
+            fi
+          done
+          all_existing=false
+          if [ "$candidate_exists" = true ] && [ "$immutable_exists" = true ]; then
+            all_existing=true
+          fi
+          {
+            echo "repository=$repository"
+            echo "candidate_tag=$CANDIDATE"
+            echo "immutable_tag=$immutable_tag"
+            echo "candidate_exists=$candidate_exists"
+            echo "immutable_exists=$immutable_exists"
+            echo "all_existing=$all_existing"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create or recover exact amd64 and arm64 index
+        shell: bash
+        env:
+          CANDIDATE_EXISTS: ${{ steps.index.outputs.candidate_exists }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMMUTABLE_EXISTS: ${{ steps.index.outputs.immutable_exists }}
+          REPOSITORY: ${{ steps.index.outputs.repository }}
+          CANDIDATE_TAG: ${{ steps.index.outputs.candidate_tag }}
+          IMMUTABLE_TAG: ${{ steps.index.outputs.immutable_tag }}
+        run: |
+          set -euo pipefail
+          amd64="$(jq -er 'select(.platform == "linux/amd64") | .digest' \
+            artifacts/results/linux-amd64.json)"
+          arm64="$(jq -er 'select(.platform == "linux/arm64") | .digest' \
+            artifacts/results/linux-arm64.json)"
+          for item in "candidate:$CANDIDATE_EXISTS" "immutable:$IMMUTABLE_EXISTS"; do
+            label="${item%%:*}"
+            exists="${item#*:}"
+            if [ "$exists" = true ]; then
+              python3 eng/release-candidate-image.py validate-index \
+                --identity artifacts/validated/resolved-archive-identity.json \
+                --results artifacts/results \
+                --index "artifacts/existing-index-$label.json" \
+                --index-digest "$(cat "artifacts/existing-index-$label-digest.txt")"
+            fi
+          done
+          tags=()
+          if [ "$CANDIDATE_EXISTS" = false ]; then
+            tags+=(--tag "$REPOSITORY:$CANDIDATE_TAG")
+          fi
+          if [ "$IMMUTABLE_EXISTS" = false ]; then
+            tags+=(--tag "$REPOSITORY:$IMMUTABLE_TAG")
+          fi
+          if [ "${#tags[@]}" -gt 0 ]; then
+            docker buildx imagetools create \
+              "${tags[@]}" \
+              "$REPOSITORY@$amd64" \
+              "$REPOSITORY@$arm64"
+          fi
+          registry_path="${REPOSITORY#ghcr.io/}"
+          token="$(
+            curl -fsS -u "$GITHUB_ACTOR:$GHCR_TOKEN" \
+              "https://ghcr.io/token?scope=repository:$registry_path:pull" |
+              jq -er '.token'
+          )"
+          printf -v authorization 'Authorization: %s %s' Bearer "$token"
+          for item in "candidate:$CANDIDATE_TAG" "immutable:$IMMUTABLE_TAG"; do
+            label="${item%%:*}"
+            tag="${item#*:}"
+            curl -fsS -D "artifacts/index-$label-headers.txt" \
+              -H "$authorization" \
+              -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+              "https://ghcr.io/v2/$registry_path/manifests/$tag" \
+              -o "artifacts/index-$label.json"
+            tr -d '\r' < "artifacts/index-$label-headers.txt" |
+              awk 'tolower($1) == "docker-content-digest:" { print $2 }' \
+              > "artifacts/index-$label-digest.txt"
+            grep -Eq '^sha256:[0-9a-f]{64}$' "artifacts/index-$label-digest.txt"
+          done
+          cmp artifacts/index-candidate.json artifacts/index-immutable.json
+          cmp artifacts/index-candidate-digest.txt artifacts/index-immutable-digest.txt
+          python3 eng/release-candidate-image.py validate-index \
+            --identity artifacts/validated/resolved-archive-identity.json \
+            --results artifacts/results \
+            --index artifacts/index-candidate.json \
+            --index-digest "$(cat artifacts/index-candidate-digest.txt)"
+
+      - name: Emit canonical GHCR input and materials
+        id: manifest
+        shell: bash
+        env:
+          REPOSITORY: ${{ steps.index.outputs.repository }}
+          CANDIDATE_TAG: ${{ steps.index.outputs.candidate_tag }}
+          IMMUTABLE_TAG: ${{ steps.index.outputs.immutable_tag }}
+        run: |
+          set -euo pipefail
+          index_digest="$(cat artifacts/index-candidate-digest.txt)"
+          mkdir -p artifacts/ghcr-inputs
+          python3 eng/release-candidate-image.py assemble \
+            --identity artifacts/validated/resolved-archive-identity.json \
+            --results artifacts/results \
+            --repository "$REPOSITORY" \
+            --candidate-tag "$CANDIDATE_TAG" \
+            --immutable-tag "$IMMUTABLE_TAG" \
+            --index artifacts/index-candidate.json \
+            --index-digest "$index_digest" \
+            --workflow-sha "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --output artifacts/ghcr-inputs/release-candidate-ghcr-inputs.json \
+            --materials-output artifacts/ghcr-inputs/image-materials-predicate.json
+          python3 eng/release-candidate-image.py validate-ghcr-input \
+            artifacts/ghcr-inputs/release-candidate-ghcr-inputs.json
+          cp artifacts/index-candidate.json artifacts/ghcr-inputs/oci-index.json
+          (
+            cd artifacts/ghcr-inputs
+            sha256sum \
+              image-materials-predicate.json \
+              oci-index.json \
+              release-candidate-ghcr-inputs.json \
+              > SHA256SUMS
+          )
+          {
+            echo "index_digest=$index_digest"
+            echo "content_digest=$(jq -er '.content_digest' artifacts/ghcr-inputs/release-candidate-ghcr-inputs.json)"
+            echo "content_hex=$(jq -er '.content_digest' artifacts/ghcr-inputs/release-candidate-ghcr-inputs.json | cut -d: -f2)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Attest exact multi-architecture index
+        id: attest_index
+        if: steps.index.outputs.all_existing == 'false'
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        with:
+          subject-name: ${{ steps.index.outputs.repository }}
+          subject-digest: ${{ steps.manifest.outputs.index_digest }}
+          push-to-registry: true
+
+      - name: Attest exact index materials
+        id: attest_materials
+        uses: actions/attest@daf44fb950173508f38bd2406030372c1d1162b1 # v3
+        with:
+          subject-name: ${{ steps.index.outputs.repository }}
+          subject-digest: ${{ steps.manifest.outputs.index_digest }}
+          predicate-type: https://aws2azure.dev/attestations/release-candidate-image-materials/v1
+          predicate-path: artifacts/ghcr-inputs/image-materials-predicate.json
+          push-to-registry: true
+
+      - name: Attest canonical GHCR manifest input
+        id: attest_input
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        with:
+          subject-path: |
+            artifacts/ghcr-inputs/release-candidate-ghcr-inputs.json
+            artifacts/ghcr-inputs/SHA256SUMS
+
+      - name: Upload immutable GHCR manifest inputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: aws2azure-rc-ghcr-${{ inputs.candidate }}-${{ steps.manifest.outputs.content_hex }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: artifacts/ghcr-inputs/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+          overwrite: false
+
+      - name: Record immutable GHCR result
+        shell: bash
+        env:
+          REPOSITORY: ${{ steps.index.outputs.repository }}
+          CANDIDATE_TAG: ${{ steps.index.outputs.candidate_tag }}
+          IMMUTABLE_TAG: ${{ steps.index.outputs.immutable_tag }}
+          INDEX_DIGEST: ${{ steps.manifest.outputs.index_digest }}
+          INPUT_DIGEST: ${{ steps.manifest.outputs.content_digest }}
+          INDEX_ATTESTATION: ${{ steps.attest_index.outputs.attestation-url || steps.attest_materials.outputs.attestation-url }}
+          MATERIALS_ATTESTATION: ${{ steps.attest_materials.outputs.attestation-url }}
+          INPUT_ATTESTATION: ${{ steps.attest_input.outputs.attestation-url }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Immutable GHCR release candidate"
+            echo
+            echo "- Candidate tag: \`$REPOSITORY:$CANDIDATE_TAG\`"
+            echo "- Full archive-digest tag: \`$REPOSITORY:$IMMUTABLE_TAG\`"
+            echo "- Index: \`$REPOSITORY@$INDEX_DIGEST\`"
+            echo "- amd64: \`$(jq -er 'select(.platform == "linux/amd64") | .digest' artifacts/results/linux-amd64.json)\`"
+            echo "- arm64: \`$(jq -er 'select(.platform == "linux/arm64") | .digest' artifacts/results/linux-arm64.json)\`"
+            echo "- Canonical GHCR input digest: \`$INPUT_DIGEST\`"
+            echo "- Index provenance: $INDEX_ATTESTATION"
+            echo "- Materials attestation: $MATERIALS_ATTESTATION"
+            echo "- GHCR-input provenance: $INPUT_ATTESTATION"
+            echo
+            echo "No stable SemVer, major/minor, branch, or latest tag was created."
+          } >> "$GITHUB_STEP_SUMMARY"
