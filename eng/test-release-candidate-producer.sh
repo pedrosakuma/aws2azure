@@ -146,6 +146,9 @@ resolve_rulesets
 cat > "$test_root/compare.json" <<JSON
 {
   "status": "ahead",
+  "ahead_by": 1,
+  "behind_by": 0,
+  "total_commits": 1,
   "base_commit": { "sha": "$approval_sha" },
   "merge_base_commit": { "sha": "$approval_sha" },
   "head_commit": { "sha": "$main_sha" }
@@ -208,6 +211,95 @@ expect_fail "$repo_root/eng/validate-release-candidate-ref.sh" \
   --main-sha "$main_sha" --main-protected true \
   --compare-json "$test_root/compare.json"
 
+validate_compare() {
+  local compare_path="$1"
+  local comparison_main_sha="${2:-$main_sha}"
+  "$repo_root/eng/validate-release-candidate-ref.sh" \
+    --candidate "$candidate" \
+    --orchestration-sha "$orchestration_sha" \
+    --dispatch-ref refs/heads/main \
+    --ref-protected true \
+    --tag-sha "$candidate_sha" \
+    --rulesets-json "$test_root/rulesets.json" \
+    --approval-sha "$approval_sha" \
+    --main-sha "$comparison_main_sha" \
+    --main-protected true \
+    --compare-json "$compare_path"
+}
+
+cat > "$test_root/identical.json" <<JSON
+{
+  "url": "https://api.github.com/repos/pedrosakuma/aws2azure/compare/$approval_sha...$approval_sha",
+  "html_url": "https://github.com/pedrosakuma/aws2azure/compare/$approval_sha...$approval_sha",
+  "permalink_url": "https://github.com/pedrosakuma/aws2azure/compare/pedrosakuma:$approval_sha...pedrosakuma:$approval_sha",
+  "diff_url": "https://github.com/pedrosakuma/aws2azure/compare/$approval_sha...$approval_sha.diff",
+  "patch_url": "https://github.com/pedrosakuma/aws2azure/compare/$approval_sha...$approval_sha.patch",
+  "status": "identical",
+  "ahead_by": 0,
+  "behind_by": 0,
+  "total_commits": 0,
+  "base_commit": { "sha": "$approval_sha" },
+  "merge_base_commit": { "sha": "$approval_sha" },
+  "commits": [],
+  "files": []
+}
+JSON
+validate_compare "$test_root/identical.json" "$approval_sha" \
+  > "$test_root/identical-ref.txt"
+[[ "$(cat "$test_root/identical-ref.txt")" == "refs/tags/$candidate" ]]
+
+jq '.head_commit = null' \
+  "$test_root/identical.json" > "$test_root/identical-head-null.json"
+validate_compare "$test_root/identical-head-null.json" "$approval_sha" >/dev/null
+
+jq --arg sha "$approval_sha" '.head_commit = {sha: $sha}' \
+  "$test_root/identical.json" > "$test_root/identical-head-object.json"
+validate_compare "$test_root/identical-head-object.json" "$approval_sha" >/dev/null
+
+expect_fail validate_compare "$test_root/identical.json" "$main_sha"
+for mutation in \
+  '.status = "behind"' \
+  '.status = "diverged"' \
+  '.status = "unknown"' \
+  '.status = null' \
+  '.ahead_by = 1' \
+  '.ahead_by = null' \
+  '.behind_by = 1' \
+  '.behind_by = null' \
+  '.total_commits = 1' \
+  '.total_commits = null' \
+  'del(.base_commit)' \
+  'del(.merge_base_commit)' \
+  '.base_commit = null' \
+  '.merge_base_commit = null' \
+  '.base_commit.sha = null' \
+  '.merge_base_commit.sha = null' \
+  '.base_commit.sha = "3123456789abcdef0123456789abcdef01234567"' \
+  '.merge_base_commit.sha = "3123456789abcdef0123456789abcdef01234567"' \
+  '.head_commit = {"sha":"3123456789abcdef0123456789abcdef01234567"}'; do
+  jq "$mutation" "$test_root/identical.json" > "$test_root/invalid-identical.json"
+  expect_fail validate_compare "$test_root/invalid-identical.json" "$approval_sha"
+done
+
+for mutation in \
+  '.ahead_by = 0' \
+  '.ahead_by = 1.5' \
+  '.behind_by = 1' \
+  '.total_commits = 2' \
+  'del(.ahead_by)' \
+  'del(.behind_by)' \
+  'del(.total_commits)' \
+  '.head_commit = null' \
+  'del(.head_commit)' \
+  '.head_commit.sha = "3123456789abcdef0123456789abcdef01234567"' \
+  'del(.base_commit.sha)' \
+  'del(.merge_base_commit.sha)'; do
+  jq "$mutation" "$test_root/compare.json" > "$test_root/invalid-ahead.json"
+  expect_fail validate_compare "$test_root/invalid-ahead.json"
+done
+printf '{\n' > "$test_root/malformed-compare.json"
+expect_fail validate_compare "$test_root/malformed-compare.json"
+
 cat > "$test_root/excluded.json" <<'JSON'
 [
   {
@@ -232,6 +324,9 @@ expect_fail "$repo_root/eng/validate-release-candidate-ref.sh" \
 cat > "$test_root/diverged.json" <<JSON
 {
   "status": "diverged",
+  "ahead_by": 1,
+  "behind_by": 1,
+  "total_commits": 1,
   "base_commit": { "sha": "$approval_sha" },
   "merge_base_commit": { "sha": "$candidate_sha" },
   "head_commit": { "sha": "$main_sha" }
