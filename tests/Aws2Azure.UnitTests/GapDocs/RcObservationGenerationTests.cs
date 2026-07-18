@@ -394,8 +394,8 @@ public sealed class RcObservationGenerationTests
                 AttemptUrl =
                     $"https://github.com/{candidate.Source.Repository}/actions/runs/" +
                     $"{archiveRunId}/attempts/{archiveRunAttempt}",
-                SourceSha = candidate.Source.Sha,
-                SourceRef = "refs/tags/v1.0.0-rc.1",
+                SourceSha = new string('7', 40),
+                SourceRef = "refs/heads/main",
             },
             Artifact = new RcObservationArtifactIdentity
             {

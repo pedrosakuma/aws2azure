@@ -13,6 +13,10 @@ on:
         description: Exact candidate-tag SHA recorded by the archive producer
         required: true
         type: string
+      archive_workflow_source_sha:
+        description: Exact protected-main SHA that orchestrated the archive producer
+        required: true
+        type: string
       archive_run_id:
         description: Exact successful release-candidate workflow run id
         required: true
@@ -96,6 +100,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE: ${{ inputs.candidate }}
           ARCHIVE_SOURCE_SHA: ${{ inputs.archive_source_sha }}
+          ARCHIVE_WORKFLOW_SOURCE_SHA: ${{ inputs.archive_workflow_source_sha }}
           ARCHIVE_RUN_ID: ${{ inputs.archive_run_id }}
           ARCHIVE_RUN_ATTEMPT: ${{ inputs.archive_run_attempt }}
           ARCHIVE_ARTIFACT_ID: ${{ inputs.archive_artifact_id }}
@@ -108,6 +113,7 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --candidate "$CANDIDATE" \
             --source-sha "$ARCHIVE_SOURCE_SHA" \
+            --workflow-source-sha "$ARCHIVE_WORKFLOW_SOURCE_SHA" \
             --run-id "$ARCHIVE_RUN_ID" \
             --run-attempt "$ARCHIVE_RUN_ATTEMPT" \
             --artifact-id "$ARCHIVE_ARTIFACT_ID" \

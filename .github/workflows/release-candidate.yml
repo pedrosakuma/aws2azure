@@ -9,8 +9,8 @@ on:
         description: Exact protected candidate identity (vMAJOR.MINOR.PATCH-rc.NUMBER)
         required: true
         type: string
-      approved_ledger_sha:
-        description: Exact protected-main commit containing both approved runtime ledgers
+      orchestration_sha:
+        description: Exact protected-main commit containing this workflow, helpers, and approved ledgers
         required: true
         type: string
 
@@ -29,12 +29,13 @@ jobs:
       cancel-in-progress: false
     outputs:
       artifact_name: ${{ steps.identities.outputs.artifact_name }}
+      candidate_sha: ${{ steps.trust.outputs.candidate_sha }}
     steps:
       - name: Require protected trusted RC context
         shell: bash
         env:
           CANDIDATE: ${{ inputs.candidate }}
-          APPROVED_LEDGER_SHA: ${{ inputs.approved_ledger_sha }}
+          ORCHESTRATION_SHA: ${{ inputs.orchestration_sha }}
           EVENT_NAME: ${{ github.event_name }}
           REF: ${{ github.ref }}
           REF_PROTECTED: ${{ github.ref_protected }}
@@ -48,43 +49,50 @@ jobs:
             echo "::error::Candidate must be strict vMAJOR.MINOR.PATCH-rc.NUMBER SemVer."
             exit 1
           fi
-          if [[ ! "$APPROVED_LEDGER_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::Approved-ledger SHA must be an exact lowercase commit SHA."
+          if [[ ! "$ORCHESTRATION_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Orchestration SHA must be an exact lowercase commit SHA."
             exit 1
           fi
-          if [[ "$REF" != "refs/tags/$CANDIDATE" ]]; then
-            echo "::error::Dispatch from the exact protected candidate tag."
+          if [ "$REF" != refs/heads/main ]; then
+            echo "::error::Dispatch the RC producer from protected main, never the candidate tag."
             exit 1
           fi
           if [ "$REF_PROTECTED" != true ]; then
             echo "::error::The dispatch ref is not protected."
             exit 1
           fi
+          if [ "$GITHUB_SHA" != "$ORCHESTRATION_SHA" ]; then
+            echo "::error::Dispatch source does not equal the exact trusted orchestration SHA."
+            exit 1
+          fi
 
-      - name: Checkout exact protected source
+      - name: Checkout exact protected orchestration source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ github.sha }}
+          path: orchestration
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Verify exact checkout and protected candidate tag
+      - name: Verify exact orchestration source and protected candidate tag
+        id: trust
         shell: bash
         env:
           CANDIDATE: ${{ inputs.candidate }}
-          APPROVED_LEDGER_SHA: ${{ inputs.approved_ledger_sha }}
+          ORCHESTRATION_SHA: ${{ inputs.orchestration_sha }}
           GH_TOKEN: ${{ github.token }}
           REF_PROTECTED: ${{ github.ref_protected }}
         run: |
           set -euo pipefail
-          actual_sha="$(git rev-parse HEAD)"
-          if [ "$actual_sha" != "$GITHUB_SHA" ] || [ -n "$(git status --short)" ]; then
-            echo "::error::Checkout is not the exact clean producer source."
+          actual_sha="$(git -C orchestration rev-parse HEAD)"
+          if [ "$actual_sha" != "$GITHUB_SHA" ] ||
+             [ -n "$(git -C orchestration status --short)" ]; then
+            echo "::error::Checkout is not the exact clean orchestration source."
             exit 1
           fi
-          git fetch --force --no-tags origin \
+          git -C orchestration fetch --force --no-tags origin \
             "refs/tags/$CANDIDATE:refs/tags/$CANDIDATE"
-          tag_sha="$(git rev-parse "refs/tags/$CANDIDATE^{commit}")"
+          tag_sha="$(git -C orchestration rev-parse "refs/tags/$CANDIDATE^{commit}")"
           mkdir -p artifacts/trust
           gh api -H "Accept: application/vnd.github+json" \
             "/repos/$GITHUB_REPOSITORY/rulesets?includes_parents=true&targets=tag&per_page=100" \
@@ -95,53 +103,57 @@ jobs:
           main_sha="$(jq -er '.commit.sha' artifacts/trust/protected-main.json)"
           main_protected="$(jq -r '.protected' artifacts/trust/protected-main.json)"
           gh api -H "Accept: application/vnd.github+json" \
-            "/repos/$GITHUB_REPOSITORY/compare/$APPROVED_LEDGER_SHA...$main_sha" \
+            "/repos/$GITHUB_REPOSITORY/compare/$ORCHESTRATION_SHA...$main_sha" \
             > artifacts/trust/approved-ledger-compare.json
-          ./eng/validate-release-candidate-ref.sh \
+          orchestration/eng/validate-release-candidate-ref.sh \
             --candidate "$CANDIDATE" \
-            --source-sha "$GITHUB_SHA" \
+            --orchestration-sha "$GITHUB_SHA" \
             --dispatch-ref "$GITHUB_REF" \
             --ref-protected "$REF_PROTECTED" \
             --tag-sha "$tag_sha" \
             --rulesets-json artifacts/trust/tag-rulesets.json \
-            --approval-sha "$APPROVED_LEDGER_SHA" \
+            --approval-sha "$ORCHESTRATION_SHA" \
             --main-sha "$main_sha" \
             --main-protected "$main_protected" \
             --compare-json artifacts/trust/approved-ledger-compare.json
+          echo "candidate_sha=$tag_sha" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout exact protected-main approved ledgers
+      - name: Checkout exact candidate source separately
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.approved_ledger_sha }}
-          path: approved-ledgers
+          ref: ${{ steps.trust.outputs.candidate_sha }}
+          path: candidate-source
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Verify exact approved-ledger checkout
+      - name: Verify separate exact source checkouts
         shell: bash
         env:
-          APPROVED_LEDGER_SHA: ${{ inputs.approved_ledger_sha }}
+          CANDIDATE_SHA: ${{ steps.trust.outputs.candidate_sha }}
+          ORCHESTRATION_SHA: ${{ inputs.orchestration_sha }}
         run: |
           set -euo pipefail
-          actual_sha="$(git -C approved-ledgers rev-parse HEAD)"
-          if [ "$actual_sha" != "$APPROVED_LEDGER_SHA" ] ||
-             [ -n "$(git -C approved-ledgers status --short)" ]; then
-            echo "::error::Approved ledgers are not the exact clean protected-main commit."
-            exit 1
-          fi
+          orchestration/eng/validate-release-candidate-checkouts.sh \
+            --orchestration-root orchestration \
+            --orchestration-sha "$ORCHESTRATION_SHA" \
+            --candidate-root candidate-source \
+            --candidate-sha "$CANDIDATE_SHA"
 
-      - uses: ./.github/actions/dotnet-setup
+      - uses: ./orchestration/.github/actions/dotnet-setup
+        with:
+          cache-prefix: rc-orchestration-${{ github.sha }}
 
       - name: Export and bind both approved GA runtime ledgers
         shell: bash
         env:
           CANDIDATE: ${{ inputs.candidate }}
-          APPROVED_LEDGER_SHA: ${{ inputs.approved_ledger_sha }}
+          CANDIDATE_SHA: ${{ steps.trust.outputs.candidate_sha }}
+          ORCHESTRATION_SHA: ${{ inputs.orchestration_sha }}
         run: |
           set -euo pipefail
           mkdir -p artifacts/rc-x64/context
           (
-            cd approved-ledgers
+            cd orchestration
             dotnet run --project tools/Aws2Azure.GapDocs -- \
               export-approved-runtime \
               --profile s3-basic-object-crud \
@@ -151,17 +163,18 @@ jobs:
               --profile secretsmanager-basic-lifecycle \
               --output "$GITHUB_WORKSPACE/artifacts/rc-x64/context/secretsmanager-approved-runtime.json"
           )
-          python3 eng/release-candidate-inputs.py create-context \
+          python3 orchestration/eng/release-candidate-inputs.py create-context \
             --candidate "$CANDIDATE" \
             --repository "$GITHUB_REPOSITORY" \
-            --source-sha "$GITHUB_SHA" \
+            --source-sha "$CANDIDATE_SHA" \
             --source-ref "refs/tags/$CANDIDATE" \
-            --approval-sha "$APPROVED_LEDGER_SHA" \
+            --orchestration-sha "$ORCHESTRATION_SHA" \
+            --approval-sha "$ORCHESTRATION_SHA" \
             --s3-ledger artifacts/rc-x64/context/s3-approved-runtime.json \
-            --s3-profile docs/workloads/s3-basic-object-crud.yaml \
+            --s3-profile orchestration/docs/workloads/s3-basic-object-crud.yaml \
             --secrets-ledger artifacts/rc-x64/context/secretsmanager-approved-runtime.json \
-            --secrets-profile docs/workloads/secretsmanager-basic-lifecycle.yaml \
-            --policy docs/versioning-and-compatibility.md \
+            --secrets-profile orchestration/docs/workloads/secretsmanager-basic-lifecycle.yaml \
+            --policy orchestration/docs/versioning-and-compatibility.md \
             --output artifacts/rc-x64/context/release-candidate-context.json
 
       - name: Resolve exact approved sealed linux-x64 bytes
@@ -177,7 +190,7 @@ jobs:
           run_id="$(jq -er '.sealed_runtime.producer.run_id' "$context")"
           run_attempt="$(jq -er '.sealed_runtime.producer.run_attempt' "$context")"
           artifact_id="$(jq -er '.sealed_runtime.artifact.id' "$context")"
-          ./eng/resolve-sealed-runtime.sh \
+          orchestration/eng/resolve-sealed-runtime.sh \
             --repository "$repository" \
             --run-id "$run_id" \
             --run-attempt "$run_attempt" \
@@ -199,7 +212,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./eng/smoke-release-candidate.sh \
+          orchestration/eng/smoke-release-candidate.sh \
             --rid linux-x64 \
             --executable "$AWS2AZURE_SEALED_PRIOR_EXECUTABLE" \
             --work-dir artifacts/smoke-linux-x64
@@ -207,20 +220,21 @@ jobs:
       - name: Package linux-x64 exact bytes deterministically
         shell: bash
         env:
+          CANDIDATE_SHA: ${{ steps.trust.outputs.candidate_sha }}
           CANDIDATE: ${{ inputs.candidate }}
         run: |
           set -euo pipefail
-          python3 eng/release-candidate-package.py package \
+          python3 orchestration/eng/release-candidate-package.py package \
             --candidate "$CANDIDATE" \
             --repository "$GITHUB_REPOSITORY" \
-            --source-sha "$GITHUB_SHA" \
+            --source-sha "$CANDIDATE_SHA" \
             --source-ref "refs/tags/$CANDIDATE" \
             --rid linux-x64 \
             --executable "$AWS2AZURE_SEALED_PRIOR_EXECUTABLE" \
-            --license LICENSE \
-            --config docker/config.json \
+            --license candidate-source/LICENSE \
+            --config candidate-source/docker/config.json \
             --output artifacts/rc-x64/platforms/linux-x64
-          python3 eng/release-candidate-package.py validate \
+          python3 orchestration/eng/release-candidate-package.py validate \
             artifacts/rc-x64/platforms/linux-x64/platform-manifest.json
 
       - name: Record immutable intermediate artifact identity
@@ -254,22 +268,33 @@ jobs:
     outputs:
       artifact_name: ${{ steps.identities.outputs.artifact_name }}
     steps:
-      - name: Checkout exact protected source
+      - name: Checkout exact protected orchestration source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ github.sha }}
+          path: orchestration
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Verify exact native arm64 checkout
+      - name: Checkout exact candidate source separately
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.linux-x64.outputs.candidate_sha }}
+          path: candidate-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact native arm64 source checkouts
         shell: bash
+        env:
+          CANDIDATE_SHA: ${{ needs.linux-x64.outputs.candidate_sha }}
         run: |
           set -euo pipefail
-          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ] ||
-             [ -n "$(git status --short)" ]; then
-            echo "::error::Checkout is not the exact clean producer source."
-            exit 1
-          fi
+          orchestration/eng/validate-release-candidate-checkouts.sh \
+            --orchestration-root orchestration \
+            --orchestration-sha "$GITHUB_SHA" \
+            --candidate-root candidate-source \
+            --candidate-sha "$CANDIDATE_SHA"
           case "$(uname -m)" in
             aarch64|arm64) ;;
             *)
@@ -278,7 +303,9 @@ jobs:
               ;;
           esac
 
-      - uses: ./.github/actions/dotnet-setup
+      - uses: ./orchestration/.github/actions/dotnet-setup
+        with:
+          cache-prefix: rc-orchestration-${{ github.sha }}
 
       - name: Install Native-AOT toolchain
         shell: bash
@@ -289,14 +316,15 @@ jobs:
 
       - name: Publish linux-arm64 Native-AOT exactly once
         shell: bash
+        working-directory: candidate-source
         run: |
           set -euo pipefail
           dotnet publish src/Aws2Azure.Proxy \
             -c Release \
             -r linux-arm64 \
-            -o artifacts/arm64-publish \
+            -o "$GITHUB_WORKSPACE/artifacts/arm64-publish" \
             --nologo
-          executable=artifacts/arm64-publish/Aws2Azure.Proxy
+          executable="$GITHUB_WORKSPACE/artifacts/arm64-publish/Aws2Azure.Proxy"
           if [ ! -f "$executable" ] || [ ! -x "$executable" ]; then
             echo "::error::Native-AOT linux-arm64 executable is missing."
             exit 1
@@ -306,7 +334,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./eng/smoke-release-candidate.sh \
+          orchestration/eng/smoke-release-candidate.sh \
             --rid linux-arm64 \
             --executable artifacts/arm64-publish/Aws2Azure.Proxy \
             --work-dir artifacts/smoke-linux-arm64
@@ -314,20 +342,21 @@ jobs:
       - name: Package linux-arm64 deterministically
         shell: bash
         env:
+          CANDIDATE_SHA: ${{ needs.linux-x64.outputs.candidate_sha }}
           CANDIDATE: ${{ inputs.candidate }}
         run: |
           set -euo pipefail
-          python3 eng/release-candidate-package.py package \
+          python3 orchestration/eng/release-candidate-package.py package \
             --candidate "$CANDIDATE" \
             --repository "$GITHUB_REPOSITORY" \
-            --source-sha "$GITHUB_SHA" \
+            --source-sha "$CANDIDATE_SHA" \
             --source-ref "refs/tags/$CANDIDATE" \
             --rid linux-arm64 \
             --executable artifacts/arm64-publish/Aws2Azure.Proxy \
-            --license LICENSE \
-            --config docker/config.json \
+            --license candidate-source/LICENSE \
+            --config candidate-source/docker/config.json \
             --output artifacts/rc-arm64/platforms/linux-arm64
-          python3 eng/release-candidate-package.py validate \
+          python3 orchestration/eng/release-candidate-package.py validate \
             artifacts/rc-arm64/platforms/linux-arm64/platform-manifest.json
 
       - name: Record immutable intermediate artifact identity
@@ -339,7 +368,8 @@ jobs:
           set -euo pipefail
           platform=artifacts/rc-arm64/platforms/linux-arm64/platform-manifest.json
           archive_hex="$(jq -er '.archive.sha256' "$platform" | cut -d: -f2)"
-          echo "artifact_name=rc-arm64-$CANDIDATE-$GITHUB_SHA-$archive_hex-run-$GITHUB_RUN_ID-attempt-$GITHUB_RUN_ATTEMPT" \
+          candidate_sha="$(jq -er '.candidate.source.sha' "$platform")"
+          echo "artifact_name=rc-arm64-$CANDIDATE-$candidate_sha-$archive_hex-run-$GITHUB_RUN_ID-attempt-$GITHUB_RUN_ATTEMPT" \
             >> "$GITHUB_OUTPUT"
 
       - name: Upload immutable linux-arm64 inputs
@@ -357,10 +387,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout exact protected source
+      - name: Checkout exact protected orchestration source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ github.sha }}
+          path: orchestration
           fetch-depth: 1
           persist-credentials: false
 
@@ -368,8 +399,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ] ||
-             [ -n "$(git status --short)" ]; then
+          if [ "$(git -C orchestration rev-parse HEAD)" != "$GITHUB_SHA" ] ||
+             [ -n "$(git -C orchestration status --short)" ]; then
             echo "::error::Collector checkout is not exact and clean."
             exit 1
           fi
@@ -393,11 +424,11 @@ jobs:
           chmod 0755 \
             artifacts/release-candidate/platforms/linux-x64/Aws2Azure.Proxy \
             artifacts/release-candidate/platforms/linux-arm64/Aws2Azure.Proxy
-          python3 eng/release-candidate-inputs.py validate-context \
+          python3 orchestration/eng/release-candidate-inputs.py validate-context \
             artifacts/release-candidate/context/release-candidate-context.json
-          python3 eng/release-candidate-package.py validate \
+          python3 orchestration/eng/release-candidate-package.py validate \
             artifacts/release-candidate/platforms/linux-x64/platform-manifest.json
-          python3 eng/release-candidate-package.py validate \
+          python3 orchestration/eng/release-candidate-package.py validate \
             artifacts/release-candidate/platforms/linux-arm64/platform-manifest.json
 
       - name: Attest exact executables manifests checksums and archives
@@ -426,7 +457,7 @@ jobs:
           cp "$PAYLOAD_BUNDLE" \
             artifacts/release-candidate/provenance/archive-payload-provenance.json
           bundle_digest="sha256:$(sha256sum "$PAYLOAD_BUNDLE" | cut -d' ' -f1)"
-          python3 eng/release-candidate-inputs.py assemble \
+          python3 orchestration/eng/release-candidate-inputs.py assemble \
             --context artifacts/release-candidate/context/release-candidate-context.json \
             --x64-manifest artifacts/release-candidate/platforms/linux-x64/platform-manifest.json \
             --arm64-manifest artifacts/release-candidate/platforms/linux-arm64/platform-manifest.json \
@@ -436,7 +467,7 @@ jobs:
             --run-attempt "$GITHUB_RUN_ATTEMPT" \
             --attempt-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT" \
             --output artifacts/release-candidate/release-candidate-archive-inputs.json
-          python3 eng/release-candidate-inputs.py validate \
+          python3 orchestration/eng/release-candidate-inputs.py validate \
             artifacts/release-candidate/release-candidate-archive-inputs.json
           (
             cd artifacts/release-candidate
@@ -490,6 +521,7 @@ jobs:
           ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
           ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
           CONTENT_DIGEST: ${{ steps.final.outputs.content_digest }}
+          CANDIDATE_SHA: ${{ needs.linux-x64.outputs.candidate_sha }}
           PAYLOAD_ATTESTATION: ${{ steps.attest_payload.outputs.attestation-url }}
           INPUTS_ATTESTATION: ${{ steps.attest_inputs.outputs.attestation-url }}
         run: |
@@ -498,7 +530,9 @@ jobs:
             echo "## Immutable multi-architecture RC archive inputs"
             echo
             echo "- Candidate: \`$CANDIDATE\`"
-            echo "- Source: \`$GITHUB_REPOSITORY@$GITHUB_SHA\`"
+            echo "- Candidate source: \`$GITHUB_REPOSITORY@$CANDIDATE_SHA\`"
+            echo "- Orchestration source: \`$GITHUB_REPOSITORY@$GITHUB_SHA\`"
+            echo "- Approved-ledger source: \`$GITHUB_REPOSITORY@$GITHUB_SHA\`"
             echo "- Artifact: [\`$ARTIFACT_NAME\`]($ARTIFACT_URL) (id \`$ARTIFACT_ID\`)"
             echo "- Uploaded artifact digest: \`$ARTIFACT_DIGEST\`"
             echo "- Archive-input content digest: \`$CONTENT_DIGEST\`"

@@ -27,14 +27,14 @@ The release support matrix maps the two.
 Release candidates use the stricter `vMAJOR.MINOR.PATCH-rc.NUMBER` identity,
 with no leading zeroes. They are produced by
 `.github/workflows/release-candidate.yml`, not by the stable release workflow.
-The RC producer runs only from the exact protected candidate tag and requires
-that tag to resolve to the checked-out source SHA. Approved ledgers necessarily
-post-date the sealed source commit, so the dispatch also names their exact commit;
-that commit must be an ancestor of protected `main`. The producer checks out the
-ledger commit separately and fails unless both GA records select the candidate
-source and the same exact sealed linux-x64 artifact. This separation avoids an
-impossible self-referential commit whose ledger would need to contain its own
-future Git SHA.
+The RC producer runs only from protected `main` at an explicitly pinned
+orchestration SHA containing the workflow, helpers, and approved ledgers. The
+protected candidate tag is a separate input identity: its commit is checked out
+into a separate path and must equal both GA ledgers' runtime and attestation
+source SHA. The orchestration source, approved-ledger source, and candidate
+source are recorded independently even when the first two identify the same
+trusted main commit. This avoids requiring an older qualified source commit to
+contain a workflow and approvals that were added later.
 
 The RC archive producer never rebuilds linux-x64. It downloads and verifies the
 approved sealed bytes, builds linux-arm64 once on a native arm64 runner, performs

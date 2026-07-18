@@ -51,8 +51,46 @@ public sealed class RcObservationWorkflowTests
             Workflow,
             StringComparison.Ordinal);
         Assert.Contains("candidate_source_sha:", Workflow, StringComparison.Ordinal);
+        Assert.Contains(
+            "archive_workflow_source_sha:",
+            Workflow,
+            StringComparison.Ordinal);
         Assert.DoesNotContain(
             "release_candidate_manifest_digest:",
+            Workflow,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Workflow_rejects_archive_and_ghcr_sources_outside_protected_main_history()
+    {
+        Assert.Contains(
+            "\"/repos/$GITHUB_REPOSITORY/branches/main\"",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "select(.name == \"main\" and .protected == true)",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "for producer in archive ghcr; do",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "\"/repos/$GITHUB_REPOSITORY/compare/$producer_sha...$main_sha\"",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Equal(
+            1,
+            CountOccurrences(
+                Workflow,
+                "python3 eng/release-candidate-image.py validate-protected-main"));
+        Assert.Contains(
+            "--main-branch-json \"$main_branch_json\"",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "--main-compare-json \"$compare_json\"",
             Workflow,
             StringComparison.Ordinal);
     }
@@ -116,6 +154,18 @@ public sealed class RcObservationWorkflowTests
             Workflow,
             StringComparison.Ordinal);
         Assert.Contains(
+            "--expected-sha \"$ARCHIVE_WORKFLOW_SOURCE_SHA\"",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "--expected-ref refs/heads/main",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            ".producer.source_sha == env.ARCHIVE_WORKFLOW_SOURCE_SHA",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
             "python3 eng/release-candidate-inputs.py validate",
             Workflow,
             StringComparison.Ordinal);
@@ -131,6 +181,20 @@ public sealed class RcObservationWorkflowTests
             ".runInvocationURI == $attempt_uri",
             Workflow,
             StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "expected_workflow_ref=",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Equal(
+            3,
+            CountOccurrences(
+                Workflow,
+                "githubWorkflowRef ==\n                    $source_ref"));
+        Assert.Equal(
+            3,
+            CountOccurrences(
+                Workflow,
+                "--signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/"));
         Assert.Contains(
             "archive-input-selection.json",
             Workflow,
