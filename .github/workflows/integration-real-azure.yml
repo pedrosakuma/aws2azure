@@ -64,10 +64,34 @@ on:
         required: false
         default: true
         type: boolean
+      qualification_profile:
+        description: Sealed profile candidate, or source-validation for non-qualifying checks
+        required: true
+        default: source-validation
+        type: choice
+        options:
+          - source-validation
+          - s3-basic-object-crud
+          - secretsmanager-basic-lifecycle
+      candidate_run_id:
+        description: Exact successful sealed-runtime producer run id
+        required: false
+        type: string
+      candidate_run_attempt:
+        description: Exact sealed-runtime producer attempt
+        required: false
+        default: '1'
+        type: string
+      candidate_artifact_id:
+        description: Optional exact sealed artifact id
+        required: false
+        type: string
   pull_request:
     types: [labeled, synchronize, reopened]
 
 permissions:
+  actions: read
+  attestations: read
   id-token: write   # required for the azure/login OIDC token exchange
   contents: read
 
@@ -100,10 +124,68 @@ jobs:
       EVIDENCE_DIR: TestResults/real-azure-conformance
       CONFORMANCE_PLAN: TestResults/real-azure-conformance-plan.json
       QUALIFICATION_DIR: artifacts/real-azure-qualification
+      PRIVATE_DIR: artifacts/real-azure-qualification-private
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: ./.github/actions/dotnet-setup
+
+      - name: Select qualifying or source-validation mode
+        id: mode
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SELECTED_SERVICE: ${{ inputs.service || 'all' }}
+          SELECTED_SCENARIO: ${{ inputs.scenario || '' }}
+          REQUIRE_REAL_AZURE: ${{ inputs.require_real_azure || false }}
+          QUALIFICATION_PROFILE: ${{ inputs.qualification_profile || 'source-validation' }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          REF: ${{ github.ref }}
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          set -euo pipefail
+          qualification_sha="$(git rev-parse HEAD)"
+          qualifying=false
+          runtime_mode=source_validation
+          profile=
+          if [ "$EVENT_NAME" = workflow_dispatch ] &&
+             [ "$QUALIFICATION_PROFILE" != source-validation ]; then
+            case "$QUALIFICATION_PROFILE:$SELECTED_SERVICE" in
+              s3-basic-object-crud:s3|secretsmanager-basic-lifecycle:secretsmanager)
+                profile="$QUALIFICATION_PROFILE"
+                ;;
+              *)
+                echo "::error::Sealed qualification profile must match service s3 or secretsmanager."
+                exit 1
+                ;;
+            esac
+            if [ -n "$SELECTED_SCENARIO" ] || [ "$REQUIRE_REAL_AZURE" != true ]; then
+              echo "::error::Sealed correctness requires the complete profile plan and enforced positive real-Azure evidence."
+              exit 1
+            fi
+            if [[ ! "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]] ||
+               [[ ! "$CANDIDATE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::error::Sealed correctness requires numeric candidate run id and attempt."
+              exit 1
+            fi
+            if [ "$REF_PROTECTED" != true ] ||
+               { [ "$REF" != refs/heads/main ] &&
+                 [[ ! "$REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-rc([.-]?[0-9A-Za-z]+)*$ ]]; }; then
+              echo "::error::Sealed qualification must run from protected main or an allowed RC tag."
+              exit 1
+            fi
+            qualifying=true
+            runtime_mode=candidate
+          fi
+          {
+            echo "qualifying=$qualifying"
+            echo "profile=$profile"
+            echo "qualification_sha=$qualification_sha"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "AWS2AZURE_SEALED_RUNTIME_MODE=$runtime_mode"
+            echo "AWS2AZURE_QUALIFICATION_SHA=$qualification_sha"
+          } >> "$GITHUB_ENV"
 
       # Provisioning needs the OIDC client id. When it is absent (fork PRs, or
       # before an operator has wired up OIDC) we skip provision/login/teardown;
@@ -130,11 +212,46 @@ jobs:
             echo "::notice::AZURE_CLIENT_OBJECT_ID not set — WorkloadIdentity E2E scenario skipped."
           fi
 
-      - name: Restore + build
+      - name: Build test harness and validation tools
         run: dotnet build -c Release --nologo
 
+      - name: Resolve exact sealed correctness candidate
+        if: steps.mode.outputs.qualifying == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_ARTIFACT_ID: ${{ inputs.candidate_artifact_id }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$PRIVATE_DIR"
+          identity_dir="$QUALIFICATION_DIR/sealed-runtimes"
+          install -d -m 0700 "$identity_dir"
+          args=(
+            --repository "$GITHUB_REPOSITORY"
+            --run-id "$CANDIDATE_RUN_ID"
+            --run-attempt "$CANDIDATE_RUN_ATTEMPT"
+            --expected-sha "${{ steps.mode.outputs.qualification_sha }}"
+            --expected-ref "$GITHUB_REF"
+            --profile "${{ steps.mode.outputs.profile }}"
+            --profile-version 1
+            --role candidate
+            --destination "$PRIVATE_DIR/sealed-candidate"
+            --identity-output "$identity_dir/candidate-runtime.json"
+            --github-env "$GITHUB_ENV"
+          )
+          if [ -n "$CANDIDATE_ARTIFACT_ID" ]; then
+            args+=(--artifact-id "$CANDIDATE_ARTIFACT_ID")
+          fi
+          ./eng/resolve-sealed-runtime.sh "${args[@]}"
+          cp "$PRIVATE_DIR/sealed-candidate/bundle/runtime-sha256.txt" \
+            "$QUALIFICATION_DIR/runtime-sha256.txt"
+
       - name: Validate conformance matrix
-        run: dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- --validate
+        run: >-
+          dotnet exec
+          tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll
+          --validate
 
       - name: Plan selected conformance scenarios
         id: plan
@@ -153,7 +270,7 @@ jobs:
           fi
 
           mkdir -p "$(dirname "$CONFORMANCE_PLAN")"
-          dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- \
+          dotnet exec tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll \
             plan-conformance "${args[@]}" --output "$CONFORMANCE_PLAN"
 
           requires_real_azure="$(
@@ -225,7 +342,7 @@ jobs:
           echo "integration=$(filter_for tests/Aws2Azure.IntegrationTests)" >> "$GITHUB_OUTPUT"
           echo "unit=$(filter_for tests/Aws2Azure.UnitTests)" >> "$GITHUB_OUTPUT"
 
-      - name: Seal runtime and non-secret qualification configuration
+      - name: Record runtime and non-secret qualification configuration
         id: provenance
         shell: bash
         run: |
@@ -233,21 +350,22 @@ jobs:
           mkdir -p "$QUALIFICATION_DIR"
 
           runtime_manifest="$QUALIFICATION_DIR/runtime-sha256.txt"
-          (
-            cd src/Aws2Azure.Proxy/bin/Release/net10.0
-            find . -maxdepth 1 -type f \
-              \( -name '*.dll' -o -name '*.json' -o -name 'Aws2Azure.Proxy' \) \
-              -print0 |
-              sort -z |
-              xargs -0 sha256sum
-          ) > "$GITHUB_WORKSPACE/$runtime_manifest"
+          if [ "${{ steps.mode.outputs.qualifying }}" != true ]; then
+            (
+              cd src/Aws2Azure.Proxy/bin/Release/net10.0
+              find . -maxdepth 1 -type f \
+                \( -name '*.dll' -o -name '*.json' -o -name 'Aws2Azure.Proxy' \) \
+                -print0 |
+                sort -z |
+                xargs -0 sha256sum
+            ) > "$GITHUB_WORKSPACE/$runtime_manifest"
+          fi
 
           config_manifest="$QUALIFICATION_DIR/config-manifest.json"
           jq -n \
             --arg schema_version "1" \
             --arg git_sha "$(git rev-parse HEAD)" \
             --arg region "$AZURE_LOCATION" \
-            --arg plan_sha256 "$(sha256sum "$CONFORMANCE_PLAN" | cut -d' ' -f1)" \
             --arg matrix_sha256 "$(sha256sum docs/testing/real-azure-conformance.yaml | cut -d' ' -f1)" \
             --arg bicep_sha256 "$(sha256sum deploy/realazure/main.bicep | cut -d' ' -f1)" \
             --arg workflow_sha256 "$(sha256sum .github/workflows/integration-real-azure.yml | cut -d' ' -f1)" \
@@ -261,14 +379,17 @@ jobs:
                 event_hub: "kinesis-smoke"
               },
               source_digests: {
-                conformance_plan: ("sha256:" + $plan_sha256),
                 conformance_matrix: ("sha256:" + $matrix_sha256),
                 bicep: ("sha256:" + $bicep_sha256),
                 workflow: ("sha256:" + $workflow_sha256)
               }
             }' > "$config_manifest"
 
-          runtime_digest="sha256:$(sha256sum "$runtime_manifest" | cut -d' ' -f1)"
+          if [ "${{ steps.mode.outputs.qualifying }}" = true ]; then
+            runtime_digest="$(jq -er '.runtime.aggregate_digest' "$QUALIFICATION_DIR/sealed-runtimes/candidate-runtime.json")"
+          else
+            runtime_digest="sha256:$(sha256sum "$runtime_manifest" | cut -d' ' -f1)"
+          fi
           config_digest="sha256:$(sha256sum "$config_manifest" | cut -d' ' -f1)"
           {
             echo "runtime_digest=$runtime_digest"
@@ -388,7 +509,8 @@ jobs:
           # azure/login already uses, so no extra Entra federation is needed. The
           # ACTIONS_ID_TOKEN_REQUEST_* vars are injected because the job has
           # `id-token: write`.
-          TOKEN_FILE="$RUNNER_TEMP/azure-federated-token.jwt"
+          install -d -m 0700 "$PRIVATE_DIR/tokens"
+          TOKEN_FILE="$GITHUB_WORKSPACE/$PRIVATE_DIR/tokens/azure-federated-token.jwt"
           RESPONSE="$(curl -fsS \
             -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange")"
@@ -448,14 +570,15 @@ jobs:
             evidence_args+=(--require-real-azure)
           fi
 
-          dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- \
+          dotnet exec tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll \
             --generate-evidence \
             --trx "$TEST_RESULTS_DIR" \
             --run-id "${{ github.run_id }}" \
             --run-url "$RUN_URL" \
             --evidence-output "$EVIDENCE_DIR" \
             "${evidence_args[@]}" || status=$?
-          dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release || status=$?
+          dotnet exec tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll \
+            || status=$?
 
           if [ -f "$EVIDENCE_DIR/summary.md" ]; then
             cat "$EVIDENCE_DIR/summary.md" >> "$GITHUB_STEP_SUMMARY"
@@ -484,6 +607,15 @@ jobs:
           set -euo pipefail
           status=0
           evidence="$EVIDENCE_DIR/real-azure-evidence.json"
+          if [ "${{ steps.mode.outputs.qualifying }}" != true ]; then
+            {
+              echo "## Non-qualifying correctness validation"
+              echo
+              echo "No sealed correctness candidate was emitted. Scheduled, PR, and explicit source-validation runs are ineligible for final qualification."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "exit_code=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           mkdir -p "$QUALIFICATION_DIR/candidates"
           if [ ! -f "$evidence" ]; then
             echo "::error::Conformance evidence is unavailable; workload candidates cannot be generated."
@@ -491,41 +623,46 @@ jobs:
             exit 0
           fi
 
-          for manifest in docs/workloads/*.yaml; do
-            profile="$(basename "$manifest" .yaml)"
-            output="$QUALIFICATION_DIR/candidates/$profile.yaml"
-            set +e
-            dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- \
-              generate-real-azure-workload-qualification \
-              --manifest "$manifest" \
-              --evidence "$evidence" \
-              --output "$output" \
-              --git-sha "$(git rev-parse HEAD)" \
-              --artifact-digest "${{ steps.provenance.outputs.runtime_digest }}" \
-              --config-digest "${{ steps.provenance.outputs.config_digest }}" \
-              --region "$AZURE_LOCATION" \
-              --run-attempt "$GITHUB_RUN_ATTEMPT" \
-              --backend-description "Ephemeral Azure production SKUs from deploy/realazure/main.bicep"
-            command_status=$?
-            set -e
+          profile="${{ steps.mode.outputs.profile }}"
+          manifest="docs/workloads/$profile.yaml"
+          output="$QUALIFICATION_DIR/candidates/$profile.yaml"
+          set +e
+          dotnet exec tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll \
+            generate-real-azure-workload-qualification \
+            --manifest "$manifest" \
+            --evidence "$evidence" \
+            --output "$output" \
+            --git-sha "$(git rev-parse HEAD)" \
+            --artifact-digest "${{ steps.provenance.outputs.runtime_digest }}" \
+            --config-digest "${{ steps.provenance.outputs.config_digest }}" \
+            --sealed-runtime-identity "$QUALIFICATION_DIR/sealed-runtimes/candidate-runtime.json" \
+            --region "$AZURE_LOCATION" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --backend-description "Ephemeral Azure production SKUs from deploy/realazure/main.bicep"
+          command_status=$?
+          set -e
 
-            if [ ! -f "$output" ] || [ "$command_status" -eq 1 ] || [ "$command_status" -eq 2 ]; then
-              echo "::error::Failed to generate workload candidate for $profile (exit $command_status)."
-              status=1
-              continue
-            fi
+          if [ ! -f "$output" ] || [ "$command_status" -eq 1 ] || [ "$command_status" -eq 2 ]; then
+            echo "::error::Failed to generate workload candidate for $profile (exit $command_status)."
+            status=1
+          else
             verdict="$(sed -n 's/^verdict: //p' "$output" | head -n 1)"
+            if [ "$verdict" != candidate ]; then
+              echo "::error::Sealed correctness must produce verdict 'candidate', not '$verdict'."
+              status=1
+            fi
             {
-              echo "### $profile correctness candidate"
+              echo "### $profile sealed correctness candidate"
               echo
               echo "- Verdict: \`$verdict\`"
-              echo "- Capacity claim: none; production-shaped repeated load evidence is still required"
+              echo "- Runtime: exact attested producer bytes; no source-built proxy was launched"
+              echo "- Capacity claim: none; three production-shaped load runs are still required"
             } >> "$GITHUB_STEP_SUMMARY"
-          done
+          fi
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
 
       - name: Upload conformance evidence
-        if: always()
+        if: always() && steps.mode.outputs.qualifying == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: real-azure-conformance
@@ -535,8 +672,21 @@ jobs:
             TestResults/real-azure-conformance/**
             artifacts/real-azure-qualification/runtime-sha256.txt
             artifacts/real-azure-qualification/config-manifest.json
+            artifacts/real-azure-qualification/sealed-runtimes/candidate-runtime.json
             artifacts/real-azure-qualification/candidates/**
           if-no-files-found: error
+
+      - name: Upload explicitly non-qualifying correctness validation
+        if: always() && steps.mode.outputs.qualifying != 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: source-validation-real-azure-conformance
+          path: |
+            TestResults/real-azure-conformance-plan.json
+            TestResults/real-azure/*.trx
+            TestResults/real-azure-conformance/**
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload divergence report
         if: always()
@@ -558,6 +708,10 @@ jobs:
           steps.gate.outputs.enabled == 'true' &&
           steps.plan.outputs.requires_real_azure == 'true'
         run: bash .github/scripts/cleanup-real-azure-resource-groups.sh "$RG_NAME"
+
+      - name: Remove downloaded sealed runtime bytes
+        if: always()
+        run: rm -rf "$PRIVATE_DIR"
 
       - name: Enforce test and report results
         if: always()

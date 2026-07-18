@@ -1,6 +1,6 @@
 # Reviewed policy for the production-shaped Blob Storage workload.
 # The capacity floor is based only on three comparable main-branch real-Azure
-# runs; operational and rollback evidence remain independently blocking.
+# runs; operational and sealed rollback evidence remain independently blocking.
 schema_version: 1
 profile_id: s3-basic-object-crud
 profile_version: 1

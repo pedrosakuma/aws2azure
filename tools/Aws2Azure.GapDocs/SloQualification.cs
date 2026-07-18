@@ -21,6 +21,7 @@ public sealed class SloQualificationDocument
     public SloQualificationRules Rules { get; set; } = new();
     public List<SloQualificationSignal> Signals { get; set; } = new();
     public List<SloQualificationScenario> Scenarios { get; set; } = new();
+    public List<RealAzureRollbackProof> RollbackProofs { get; set; } = new();
     public List<SloQualificationFinding> Findings { get; set; } = new();
     [YamlIgnore]
     public string SourceFile { get; set; } = string.Empty;
@@ -44,6 +45,8 @@ public sealed class SloQualificationCandidate
     public string GitSha { get; set; } = string.Empty;
     public string ArtifactDigest { get; set; } = string.Empty;
     public string ConfigDigest { get; set; } = string.Empty;
+    public string QualificationMode { get; set; } = string.Empty;
+    public QualificationSealedRuntimeIdentity? Runtime { get; set; }
 }
 
 public sealed class SloQualificationProvenance
@@ -70,6 +73,7 @@ public sealed class SloQualificationSourceRun
     public string GitSha { get; set; } = string.Empty;
     public string ArtifactDigest { get; set; } = string.Empty;
     public string ConfigDigest { get; set; } = string.Empty;
+    public QualificationRunArtifactIdentity? EvidenceArtifact { get; set; }
 }
 
 public sealed class SloQualificationRules
@@ -207,11 +211,12 @@ public static class SloQualificationValidator
         }
         ValidateVerdict(document, Err);
         ValidateProfile(document.Profile, Err);
-        ValidateCandidate(document.Candidate, Err);
+        ValidateCandidate(document, Err);
         ValidateProvenance(document, nowUtc.ToUniversalTime(), Err);
         ValidateRules(document.Rules, Err);
         ValidateSignals(document, nowUtc.ToUniversalTime(), Err);
         ValidateScenarios(document, nowUtc.ToUniversalTime(), Err);
+        ValidateRollbackProofs(document, Err);
         ValidateFindings(document, Err);
         return errors;
     }
@@ -224,6 +229,7 @@ public static class SloQualificationValidator
         document.Rules ??= new SloQualificationRules();
         document.Signals ??= new List<SloQualificationSignal>();
         document.Scenarios ??= new List<SloQualificationScenario>();
+        document.RollbackProofs ??= new List<RealAzureRollbackProof>();
         document.Findings ??= new List<SloQualificationFinding>();
         document.Profile.Services ??= new List<SloQualificationProfileService>();
         document.Provenance.SourceRuns ??= new List<SloQualificationSourceRun>();
@@ -315,9 +321,10 @@ public static class SloQualificationValidator
     }
 
     private static void ValidateCandidate(
-        SloQualificationCandidate candidate,
+        SloQualificationDocument document,
         Action<string> err)
     {
+        var candidate = document.Candidate;
         if (string.IsNullOrWhiteSpace(candidate.GitSha))
         {
             err("candidate.git_sha missing");
@@ -329,6 +336,53 @@ public static class SloQualificationValidator
         if (string.IsNullOrWhiteSpace(candidate.ConfigDigest))
         {
             err("candidate.config_digest missing");
+        }
+        if (document.ArtifactKind != "real_azure_workload_qualification")
+        {
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(candidate.QualificationMode)
+            && candidate.Runtime is null)
+        {
+            return;
+        }
+        if (candidate.QualificationMode is not ("sealed" or "source_validation"))
+        {
+            err("candidate.qualification_mode must be sealed or source_validation");
+            return;
+        }
+        if (candidate.QualificationMode == "source_validation")
+        {
+            if (candidate.Runtime is not null)
+            {
+                err("source-validation candidate must not carry sealed runtime identity");
+            }
+            if (document.Verdict == "qualified")
+            {
+                err("source-validation candidate cannot produce a qualified verdict");
+            }
+            return;
+        }
+        if (candidate.Runtime is null)
+        {
+            err("sealed candidate requires its verified runtime identity");
+            return;
+        }
+        try
+        {
+            SealedRuntimeEvidenceValidator.ValidateCandidate(
+                candidate.Runtime,
+                document.Profile.Id,
+                document.Profile.Version,
+                candidate.GitSha,
+                candidate.ArtifactDigest,
+                document.Provenance.GeneratedAtUtc == default
+                    ? DateTimeOffset.UtcNow
+                    : document.Provenance.GeneratedAtUtc);
+        }
+        catch (InvalidDataException exception)
+        {
+            err("candidate sealed runtime invalid: " + exception.Message);
         }
     }
 
@@ -919,6 +973,106 @@ public static class SloQualificationValidator
     private static bool HasValidMaxAge(SloQualificationRules rules) =>
         rules.MaxArtifactAgeHours > 0
         && rules.MaxArtifactAgeHours <= TimeSpan.MaxValue.TotalHours;
+
+    private static void ValidateRollbackProofs(
+        SloQualificationDocument document,
+        Action<string> err)
+    {
+        if (document.ArtifactKind != "real_azure_workload_qualification")
+        {
+            if (document.RollbackProofs.Count > 0)
+            {
+                err("non-real-Azure artifact must not contain rollback_proofs");
+            }
+            return;
+        }
+
+        var rollbackScenario = document.Scenarios.SingleOrDefault(
+            scenario => scenario.Id == "rollback");
+        if (rollbackScenario is null)
+        {
+            if (document.RollbackProofs.Count > 0)
+            {
+                err("rollback_proofs require a rollback scenario");
+            }
+            return;
+        }
+        if (document.Verdict != "qualified")
+        {
+            return;
+        }
+        if (document.Candidate.Runtime is null)
+        {
+            err("qualified rollback proof requires a sealed candidate runtime");
+            return;
+        }
+        if (document.RollbackProofs.Count != document.Provenance.SourceRuns.Count
+            || rollbackScenario.Completions != document.RollbackProofs.Count
+            || rollbackScenario.Failures != 0
+            || rollbackScenario.Skipped != 0)
+        {
+            err("qualified rollback scenario requires one successful proof per source run");
+            return;
+        }
+
+        var candidateKey = SealedRuntimeEvidenceValidator.IdentityKey(
+            document.Candidate.Runtime);
+        var priorKeys = new HashSet<string>(StringComparer.Ordinal);
+        var seenRuns = new HashSet<string>(StringComparer.Ordinal);
+        var seenCanaries = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var proof in document.RollbackProofs)
+        {
+            var sourceRun = document.Provenance.SourceRuns.SingleOrDefault(
+                run => run.RunId == proof.EvidenceRunId
+                       && run.RunAttempt == proof.EvidenceRunAttempt);
+            if (sourceRun is null || !seenRuns.Add(proof.EvidenceRunId))
+            {
+                err("rollback proof does not map one-to-one to an immutable source run");
+                continue;
+            }
+            priorKeys.Add(SealedRuntimeEvidenceValidator.IdentityKey(proof.Prior));
+            if (proof.ScenarioId != "rollback"
+                || proof.Service != rollbackScenario.Service
+                || proof.Operation != rollbackScenario.Operation
+                || SealedRuntimeEvidenceValidator.IdentityKey(proof.Candidate) != candidateKey
+                || proof.Candidate.Source.Sha == proof.Prior.Source.Sha
+                || proof.Candidate.Runtime.AggregateDigest == proof.Prior.Runtime.AggregateDigest
+                || proof.Candidate.Runtime.ExecutableDigest == proof.Prior.Runtime.ExecutableDigest
+                || !proof.Prior.Eligibility.RollbackBaselineEligible
+                || proof.Prior.Status is not ("bootstrap" or "approved")
+                || !SealedRuntimeEvidenceValidator.IsDigest(
+                    proof.Prior.LedgerRecordDigest ?? string.Empty)
+                || !SealedRuntimeEvidenceValidator.IsDigest(proof.CandidateConfigDigest)
+                || proof.CandidateConfigDigest != proof.PriorConfigDigest
+                || !SealedRuntimeEvidenceValidator.IsDigest(
+                    proof.CandidateBackendIdentityDigest)
+                || proof.CandidateBackendIdentityDigest != proof.PriorBackendIdentityDigest
+                || !SealedRuntimeEvidenceValidator.IsDigest(proof.CandidateAwsBindingDigest)
+                || proof.CandidateAwsBindingDigest != proof.PriorAwsBindingDigest
+                || !SealedRuntimeEvidenceValidator.IsDigest(proof.CanaryDigest)
+                || !seenCanaries.Add(proof.CanaryDigest)
+                || proof.StartedAtUtc < sourceRun.WindowStartUtc
+                || proof.StartedAtUtc >= proof.CandidateCreateCompletedAtUtc
+                || proof.CandidateCreateCompletedAtUtc >= proof.CandidateReadCompletedAtUtc
+                || proof.CandidateReadCompletedAtUtc >= proof.CandidateStoppedAtUtc
+                || proof.CandidateStoppedAtUtc >= proof.PriorStartedAtUtc
+                || proof.PriorStartedAtUtc >= proof.PriorReadCompletedAtUtc
+                || proof.PriorReadCompletedAtUtc >= proof.CleanupRequestedAtUtc
+                || proof.CleanupRequestedAtUtc >= proof.CleanupVerifiedAtUtc
+                || proof.CleanupVerifiedAtUtc >= proof.CandidateRestoredAtUtc
+                || proof.CandidateRestoredAtUtc >= proof.CompletedAtUtc
+                || proof.CompletedAtUtc > sourceRun.WindowEndUtc)
+            {
+                err(
+                    $"rollback proof for run {proof.EvidenceRunId}/" +
+                    $"{proof.EvidenceRunAttempt} is inconsistent or out of window");
+            }
+        }
+        if (priorKeys.Count != 1)
+        {
+            err("qualified rollback proofs must use one consistent prior runtime");
+        }
+    }
 
     private static void ValidateFindings(
         SloQualificationDocument document,

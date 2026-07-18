@@ -35,10 +35,13 @@ feature-specific A/B experiments.
   verify the same state plus cleanup. A source build of "main" or a config-only
   restart is not rollback evidence.
 
-The real-Azure conformance matrix includes deterministic retry exhaustion and
-live restart checks for the initial candidate profiles. Rollback remains an
-external deployment action because the repository cannot manufacture a
-previously approved immutable artifact.
+The load workflow executes rollback after representative load and the other
+profile scenarios. It launches the selected candidate bytes first, then the
+profile ledger's exact prior bytes on the same endpoint, generated config, AWS
+binding, and Azure backend. S3 proves candidate create/read followed by prior
+read/delete/absence. Secrets Manager proves candidate create/read followed by
+prior read, force-delete, and the profile's Key Vault soft-delete-compatible
+absence check. The fixture restores the candidate process before teardown.
 
 ## Sealed runtime producer and bootstrap
 
@@ -58,31 +61,23 @@ workflow/run/attempt URLs, and timestamps. Select an artifact by the exact run
 id, attempt, and artifact name; a rerun is a distinct producer identity even
 when its runtime digest is identical. GitHub artifact upload does not preserve
 Unix file modes, so the artifact contains a deterministic tar archive that
-preserves the executable bit. Download, extract, validate, and verify both
-attestations with:
+preserves the executable bit. Consumers do not use `gh run download` by artifact name alone. The repository
+consumer queries the run and artifact APIs, checks the upload digest, safely
+extracts both archive layers, validates the manifest, and verifies both subjects
+against the expected workflow, ref, source SHA, and run attempt:
 
 ```bash
-gh run download "$run_id" \
-  --repo pedrosakuma/aws2azure \
-  --name "$artifact_name" \
-  --dir artifacts/sealed-runtime-download
-mkdir -p artifacts/sealed-runtime-bundle
-tar -xf "artifacts/sealed-runtime-download/$artifact_name.tar" \
-  -C artifacts/sealed-runtime-bundle
-./eng/sealed-runtime-manifest.sh validate \
-  artifacts/sealed-runtime-bundle/sealed-runtime-manifest.json
-gh attestation verify \
-  artifacts/sealed-runtime-bundle/runtime/Aws2Azure.Proxy \
-  --repo pedrosakuma/aws2azure \
-  --signer-workflow pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml \
-  --source-ref "$expected_ref" \
-  --source-digest "$expected_sha"
-gh attestation verify \
-  artifacts/sealed-runtime-bundle/sealed-runtime-manifest.json \
-  --repo pedrosakuma/aws2azure \
-  --signer-workflow pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml \
-  --source-ref "$expected_ref" \
-  --source-digest "$expected_sha"
+./eng/resolve-sealed-runtime.sh \
+ --repository pedrosakuma/aws2azure \
+ --run-id "$run_id" \
+ --run-attempt "$run_attempt" \
+ --expected-sha "$expected_sha" \
+ --expected-ref refs/heads/main \
+ --profile s3-basic-object-crud \
+ --profile-version 1 \
+ --role candidate \
+ --destination artifacts/private/candidate \
+ --identity-output artifacts/candidate-runtime.json
 ```
 
 Producing and attesting an artifact is necessary but is not approval, workload
@@ -94,36 +89,48 @@ rollback can become qualified. The profile-owned ledger under
 `docs/workloads/approved-runtimes/` records this distinction mechanically:
 bootstrap may be a rollback baseline but is never promotion eligible. Only the
 later distinct candidate, with qualification evidence naming both candidate and
-rollback-target digests, may become the first approved runtime. Runtime
-consumers and rollback execution remain intentionally deferred to dependent
-work.
+rollback-target identities, may become the first approved runtime. Bootstrap is
+allowed only as the prior rollback target; it can never be selected as the
+candidate or promoted itself.
 
 ## Reproduce
 
-1. Run `integration-real-azure` for the candidate SHA. Retain the
-   `real-azure-conformance` artifact containing correctness candidates,
-   `runtime-sha256.txt`, and `config-manifest.json`.
-2. Dispatch `workload-load-real-azure` for the profile at least the policy's
-   `min_distinct_runs` (the schedule intentionally remains Secrets Manager only).
-   Each profile uses its own concurrency group and ephemeral resource group and
-   uploads `real-azure-workload-load-<profile>` with exactly one
-   `load-evidence.json` plus the sealed runtime, candidate-config, and
-   producer-config manifests. Do not reuse a run id or mix candidate/config
-   digests, regions, SKUs, emulator results, or A/B arms.
+1. Merge the consumer change to protected `main`. A PR SHA cannot have a trusted
+   `sealed-runtime.yml` artifact whose source SHA already equals its future merge
+   commit, so PR and scheduled source-build paths are explicitly non-qualifying.
+2. Dispatch `sealed-runtime` on the new protected `main`. Record its numeric run
+   id, run attempt, artifact id/name, upload digest, runtime aggregate digest,
+   executable digest, and source SHA. Do not use an older pre-merge seal.
+   Keep qualification checked out at that exact SHA for the whole sequence
+   (coordinate a short `main` freeze or create an allowed protected RC tag).
+3. Dispatch `integration-real-azure` with the matching profile/service and the
+   exact candidate producer run id/attempt (artifact id is optional when the run
+   is unambiguous). Retain the `real-azure-conformance` artifact.
+4. Dispatch `workload-load-real-azure` **three sequential times** for the same
+   profile and exact candidate producer run/attempt. Each run resolves the
+   profile ledger prior independently and produces one genuine rollback proof.
+   Do not reuse a run id or mix candidate/config identities, regions, SKUs,
+   emulator results, A/B arms, or source-validation artifacts.
    The producer publishes the final evidence filename only after every mandatory
    operation completed, the full CRUD iteration count is non-zero, and the
    operation mix has zero failures. A failed producer artifact must not contain
    a consumable `load-evidence.json`.
-3. Complete the rollback action above and include its scenario row in every
-   evidence bundle required by the reviewed policy.
-4. Dispatch `qualification-real-azure` with the correctness run id, all load run
-   ids, and the committed policy path.
-5. Download the emitted YAML and CSV. Review blocking findings and the worst-run
+5. Dispatch `qualification-real-azure` with the correctness run id/attempt, the
+   three load run ids and aligned attempts, and the committed policy path. The
+   workflow accepts only successful manual runs from the expected workflow
+   paths, repository, protected ref, checked-out SHA, and exact unexpired
+   artifact identities.
+6. Download the emitted YAML and CSV. Review blocking findings and the worst-run
    capacity values. Do not average away a breach, raise a threshold, or treat a
    rerun as resolution.
-6. After review, commit the immutable YAML below `docs/workloads/evidence/` and
+7. After review, commit the immutable YAML below `docs/workloads/evidence/` and
    reference it from the matching workload manifest. The GA evaluator verifies
    profile/operation/scenario/source coherence and freshness.
+
+The bootstrap records currently shared by S3 and Secrets Manager remain
+profile-owned. Every load proof records the prior ledger file digest/status and
+the exact prior producer, artifact, manifest, executable, and attestation
+identities. The candidate and prior aggregate and executable digests must differ.
 
 ## Interpretation
 
@@ -154,7 +161,7 @@ authentication-denial error code, or HTTP 409 only with the exact
 is disabled. Both are diagnostic network-noise connectivity responses, not
 workload success, authenticated data-plane health, or Blob capacity. The sealed
 producer-config manifest records the profile, region, backend topology, load
-shape, and source digests, but does not yet record runner SKU/image, logical
+shape, sealed candidate/prior identity digests, ledger source, and qualification
+implementation digests, but does not yet record runner SKU/image, logical
 processors, process count, or affinity. Treat that missing runner/process
-provenance as a limitation in cross-run diagnosis; the shared load-evidence
-schema remains unchanged.
+provenance as a limitation in cross-run diagnosis.

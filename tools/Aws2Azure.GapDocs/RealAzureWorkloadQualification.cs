@@ -15,6 +15,8 @@ public sealed class RealAzureWorkloadQualificationMetadata
     public string ConfigDigest { get; set; } = string.Empty;
     public string Region { get; set; } = string.Empty;
     public string BackendDescription { get; set; } = string.Empty;
+    public string QualificationMode { get; set; } = "source_validation";
+    public QualificationSealedRuntimeIdentity? Runtime { get; set; }
     public int RunAttempt { get; set; } = 1;
     public DateTimeOffset GeneratedAtUtc { get; set; }
     public List<string> RequiredScenarioIds { get; set; } = new();
@@ -94,7 +96,9 @@ public static class RealAzureWorkloadQualificationGenerator
             {
                 GitSha = metadata.GitSha,
                 ArtifactDigest = metadata.ArtifactDigest,
-                ConfigDigest = metadata.ConfigDigest
+                ConfigDigest = metadata.ConfigDigest,
+                QualificationMode = metadata.QualificationMode,
+                Runtime = metadata.Runtime,
             },
             Provenance = new SloQualificationProvenance
             {

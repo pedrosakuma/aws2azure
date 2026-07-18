@@ -12,15 +12,22 @@ on:
         type: choice
         options:
           - s3-basic-object-crud
-          - sqs-standard-messaging
           - secretsmanager-basic-lifecycle
-          - dynamodb-basic-crud
       correctness_run_id:
         description: integration-real-azure run containing the correctness candidate
         required: true
         type: string
+      correctness_run_attempt:
+        description: Exact integration-real-azure run attempt
+        required: true
+        default: '1'
+        type: string
       load_run_ids:
         description: Comma-separated production-shaped load run ids (never emulator or A/B runs)
+        required: true
+        type: string
+      load_run_attempts:
+        description: Comma-separated attempts aligned with load_run_ids
         required: true
         type: string
       policy_path:
@@ -42,9 +49,12 @@ jobs:
     env:
       PROFILE: ${{ inputs.profile }}
       CORRECTNESS_RUN_ID: ${{ inputs.correctness_run_id }}
+      CORRECTNESS_RUN_ATTEMPT: ${{ inputs.correctness_run_attempt }}
       LOAD_RUN_IDS: ${{ inputs.load_run_ids }}
+      LOAD_RUN_ATTEMPTS: ${{ inputs.load_run_attempts }}
       POLICY_PATH: ${{ inputs.policy_path }}
       EVIDENCE_ROOT: artifacts/qualification-input
+      PRIVATE_ROOT: artifacts/qualification-private
       OUTPUT_ROOT: artifacts/qualification-output
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -57,10 +67,22 @@ jobs:
       - name: Validate immutable input selection
         id: validate
         shell: bash
+        env:
+          REF_PROTECTED: ${{ github.ref_protected }}
         run: |
           set -euo pipefail
-          if [[ ! "$CORRECTNESS_RUN_ID" =~ ^[0-9]+$ ]]; then
+          if [[ ! "$CORRECTNESS_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
             echo "::error::correctness_run_id must be a numeric GitHub Actions run id."
+            exit 1
+          fi
+          if [[ ! "$CORRECTNESS_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::correctness_run_attempt must be a positive integer."
+            exit 1
+          fi
+          if [ "$REF_PROTECTED" != true ] ||
+             { [ "$GITHUB_REF" != refs/heads/main ] &&
+               [[ ! "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-rc([.-]?[0-9A-Za-z]+)*$ ]]; }; then
+            echo "::error::Qualification must run from protected main or an allowed RC tag."
             exit 1
           fi
           if [ ! -f "docs/workloads/$PROFILE.yaml" ]; then
@@ -74,6 +96,7 @@ jobs:
             echo "::error::policy_path must name a committed file under docs/workloads/qualification/."
             exit 1
           fi
+          install -d -m 0700 "$PRIVATE_ROOT" "$EVIDENCE_ROOT/selections"
           mkdir -p "$OUTPUT_ROOT"
           cp "$POLICY_PATH" "$OUTPUT_ROOT/policy.yaml"
 
@@ -81,21 +104,45 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$EVIDENCE_ROOT/correctness"
-          gh run download "$CORRECTNESS_RUN_ID" \
-            --repo "$GITHUB_REPOSITORY" \
-            --name real-azure-conformance \
-            --dir "$EVIDENCE_ROOT/correctness"
-          candidate="$EVIDENCE_ROOT/correctness/artifacts/real-azure-qualification/candidates/$PROFILE.yaml"
-          if [ ! -f "$candidate" ]; then
-            echo "::error::Correctness run does not contain candidate $PROFILE."
+          destination="$PRIVATE_ROOT/correctness"
+          selection="$EVIDENCE_ROOT/selections/correctness.json"
+          content="$(
+            ./eng/download-qualified-run-artifact.sh \
+              --repository "$GITHUB_REPOSITORY" \
+              --run-id "$CORRECTNESS_RUN_ID" \
+              --run-attempt "$CORRECTNESS_RUN_ATTEMPT" \
+              --workflow .github/workflows/integration-real-azure.yml \
+              --event workflow_dispatch \
+              --expected-sha "$GITHUB_SHA" \
+              --expected-ref "$GITHUB_REF" \
+              --artifact-name real-azure-conformance \
+              --destination "$destination" \
+              --identity-output "$selection"
+          )"
+          mapfile -t candidates < <(
+            find "$content" -type f -path "*/candidates/$PROFILE.yaml" | sort
+          )
+          if [ "${#candidates[@]}" -ne 1 ]; then
+            echo "::error::Correctness run must contain exactly one candidate $PROFILE."
             exit 1
           fi
+          candidate="${candidates[0]}"
           embedded_run_id="$(sed -n 's/^  run_id: //p' "$candidate" | head -n 1 | tr -d '\"')"
           if [ "$embedded_run_id" != "$CORRECTNESS_RUN_ID" ]; then
             echo "::error::Correctness candidate provenance run_id '$embedded_run_id' does not match selected run $CORRECTNESS_RUN_ID."
             exit 1
           fi
+          embedded_attempt="$(sed -n 's/^  run_attempt: //p' "$candidate" | head -n 1 | tr -d '\"')"
+          if [ "$embedded_attempt" != "$CORRECTNESS_RUN_ATTEMPT" ]; then
+            echo "::error::Correctness candidate attempt '$embedded_attempt' does not match selected attempt."
+            exit 1
+          fi
+          embedded_sha="$(sed -n 's/^  git_sha: //p' "$candidate" | head -n 1 | tr -d '\"')"
+          if [ "$embedded_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::Correctness candidate SHA '$embedded_sha' does not match checked-out qualification SHA."
+            exit 1
+          fi
+          printf '%s\n' "$candidate" > "$EVIDENCE_ROOT/correctness-candidate-path.txt"
 
       - name: Download repeated production-shaped load evidence
         shell: bash
@@ -103,13 +150,26 @@ jobs:
           set -euo pipefail
           mkdir -p "$EVIDENCE_ROOT/load"
           evidence_paths="$EVIDENCE_ROOT/load-evidence-paths.txt"
+          selection_paths="$EVIDENCE_ROOT/load-selection-paths.txt"
           : > "$evidence_paths"
+          : > "$selection_paths"
           IFS=',' read -ra run_ids <<< "$LOAD_RUN_IDS"
+          IFS=',' read -ra run_attempts <<< "$LOAD_RUN_ATTEMPTS"
+          if [ "${#run_ids[@]}" -ne "${#run_attempts[@]}" ]; then
+            echo "::error::load_run_attempts must align one-to-one with load_run_ids."
+            exit 1
+          fi
           seen=()
-          for raw in "${run_ids[@]}"; do
+          for index in "${!run_ids[@]}"; do
+            raw="${run_ids[$index]}"
             run_id="$(echo "$raw" | xargs)"
-            if [[ ! "$run_id" =~ ^[0-9]+$ ]]; then
+            run_attempt="$(echo "${run_attempts[$index]}" | xargs)"
+            if [[ ! "$run_id" =~ ^[1-9][0-9]*$ ]]; then
               echo "::error::Invalid load run id: $run_id"
+              exit 1
+            fi
+            if [[ ! "$run_attempt" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::error::Invalid load run attempt: $run_attempt"
               exit 1
             fi
             if printf '%s\n' "${seen[@]:-}" | grep -Fxq "$run_id"; then
@@ -117,14 +177,23 @@ jobs:
               exit 1
             fi
             seen+=("$run_id")
-            destination="$EVIDENCE_ROOT/load/$run_id"
-            mkdir -p "$destination"
-            gh run download "$run_id" \
-              --repo "$GITHUB_REPOSITORY" \
-              --name "real-azure-workload-load-$PROFILE" \
-              --dir "$destination"
+            destination="$PRIVATE_ROOT/load/$run_id"
+            selection="$EVIDENCE_ROOT/selections/load-$run_id.json"
+            content="$(
+              ./eng/download-qualified-run-artifact.sh \
+                --repository "$GITHUB_REPOSITORY" \
+                --run-id "$run_id" \
+                --run-attempt "$run_attempt" \
+                --workflow .github/workflows/workload-load-real-azure.yml \
+                --event workflow_dispatch \
+                --expected-sha "$GITHUB_SHA" \
+                --expected-ref "$GITHUB_REF" \
+                --artifact-name "real-azure-workload-load-$PROFILE" \
+                --destination "$destination" \
+                --identity-output "$selection"
+            )"
             mapfile -t downloaded < <(
-              find "$destination" -type f -name 'load-evidence.json' | sort
+              find "$content" -type f -name 'load-evidence.json' | sort
             )
             if [ "${#downloaded[@]}" -ne 1 ]; then
               echo "::error::Load run $run_id must contribute exactly one load-evidence.json."
@@ -135,11 +204,27 @@ jobs:
               echo "::error::Load evidence provenance run_id '$embedded_run_id' does not match selected run $run_id."
               exit 1
             fi
+            embedded_attempt="$(jq -r '.provenance.run_attempt // empty' "${downloaded[0]}")"
+            if [ "$embedded_attempt" != "$run_attempt" ]; then
+              echo "::error::Load evidence attempt '$embedded_attempt' does not match selected attempt $run_attempt."
+              exit 1
+            fi
+            embedded_sha="$(jq -r '.candidate.git_sha // empty' "${downloaded[0]}")"
+            mode="$(jq -r '.candidate.qualification_mode // empty' "${downloaded[0]}")"
+            if [ "$embedded_sha" != "$GITHUB_SHA" ] || [ "$mode" != sealed ]; then
+              echo "::error::Load evidence is not sealed evidence for the checked-out qualification SHA."
+              exit 1
+            fi
             printf '%s\n' "${downloaded[0]}" >> "$evidence_paths"
+            printf '%s\n' "$selection" >> "$selection_paths"
           done
 
           if [ "$(wc -l < "$evidence_paths")" -ne "${#seen[@]}" ]; then
             echo "::error::The immutable evidence path list is incomplete."
+            exit 1
+          fi
+          if [ "$(wc -l < "$selection_paths")" -ne "${#seen[@]}" ]; then
+            echo "::error::The immutable load selection list is incomplete."
             exit 1
           fi
 
@@ -149,23 +234,29 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$OUTPUT_ROOT"
+          candidate="$(cat "$EVIDENCE_ROOT/correctness-candidate-path.txt")"
           args=(
             generate-real-azure-load-qualification
             --manifest "docs/workloads/$PROFILE.yaml"
-            --candidate "$EVIDENCE_ROOT/correctness/artifacts/real-azure-qualification/candidates/$PROFILE.yaml"
+            --candidate "$candidate"
             --policy "$POLICY_PATH"
+            --correctness-selection "$EVIDENCE_ROOT/selections/correctness.json"
             --output "$OUTPUT_ROOT/$PROFILE.yaml"
             --trend-output "$OUTPUT_ROOT/$PROFILE-trend.csv"
             --run-id "$GITHUB_RUN_ID"
             --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
             --run-attempt "$GITHUB_RUN_ATTEMPT"
           )
-          while IFS= read -r evidence; do
+          exec 3< "$EVIDENCE_ROOT/load-selection-paths.txt"
+          while IFS= read -r evidence && IFS= read -r selection <&3; do
             args+=(--evidence "$evidence")
+            args+=(--evidence-selection "$selection")
           done < "$EVIDENCE_ROOT/load-evidence-paths.txt"
+          exec 3<&-
 
           set +e
-          dotnet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- "${args[@]}"
+          dotnet exec tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll \
+            "${args[@]}"
           status=$?
           set -e
           if [ ! -f "$OUTPUT_ROOT/$PROFILE.yaml" ]; then
@@ -198,8 +289,7 @@ jobs:
           name: real-azure-workload-qualification-${{ inputs.profile }}
           path: |
             artifacts/qualification-output/**
-            artifacts/qualification-input/correctness/artifacts/real-azure-qualification/runtime-sha256.txt
-            artifacts/qualification-input/correctness/artifacts/real-azure-qualification/config-manifest.json
+            artifacts/qualification-input/selections/**
           if-no-files-found: error
           retention-days: 90
 
@@ -212,3 +302,7 @@ jobs:
             echo "::error::Qualification did not produce a qualified verdict. Investigate the evidence; do not raise thresholds or rerun blindly."
             exit 1
           fi
+
+      - name: Remove downloaded source evidence
+        if: always()
+        run: rm -rf "$PRIVATE_ROOT"

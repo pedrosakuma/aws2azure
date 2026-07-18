@@ -36,6 +36,13 @@ qualification evidence linking both digests. Only that later candidate can
 become the first `approved` runtime for the profile. A revoked runtime is
 eligible for neither promotion nor rollback.
 
+The consumer resolves the prior from this committed profile record on every
+load run. It verifies the exact GitHub run/attempt and artifact API identity,
+upload digest, safe archive extraction, sealed manifest, executable and manifest
+attestations, and ledger fields before launch. S3 and Secrets Manager may point
+to the same bootstrap bytes, but their eligibility remains independently
+profile-owned.
+
 Verdicts are mechanical:
 
 | Verdict | Meaning |

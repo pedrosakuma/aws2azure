@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
@@ -20,7 +22,32 @@ public sealed class ApprovedRuntimeRecord
     public ApprovedRuntimeRevocation? Revocation { get; set; }
 
     [YamlIgnore]
+    [JsonIgnore]
     public string SourceFile { get; set; } = string.Empty;
+}
+
+public sealed class ApprovedRuntimeLedgerExport
+{
+    public int SchemaVersion { get; set; } = 1;
+    public string LedgerRecordDigest { get; set; } = string.Empty;
+    public ApprovedRuntimeRecord Record { get; set; } = new();
+
+    public static ApprovedRuntimeLedgerExport Create(ApprovedRuntimeRecord record)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        if (string.IsNullOrWhiteSpace(record.SourceFile) || !File.Exists(record.SourceFile))
+        {
+            throw new InvalidDataException(
+                "Approved-runtime export requires a committed source record.");
+        }
+
+        return new ApprovedRuntimeLedgerExport
+        {
+            LedgerRecordDigest = "sha256:" + Convert.ToHexStringLower(
+                SHA256.HashData(File.ReadAllBytes(record.SourceFile))),
+            Record = record,
+        };
+    }
 }
 
 public sealed class ApprovedRuntimeProfile
@@ -81,8 +108,11 @@ public sealed class ApprovedRuntimeAttestation
     public string Repository { get; set; } = string.Empty;
     public string SignerWorkflow { get; set; } = string.Empty;
     public string SourceSha { get; set; } = string.Empty;
+    public string SourceRef { get; set; } = string.Empty;
     public string SubjectName { get; set; } = string.Empty;
     public string SubjectDigest { get; set; } = string.Empty;
+    public string ManifestSubjectName { get; set; } = string.Empty;
+    public string ManifestSubjectDigest { get; set; } = string.Empty;
 }
 
 public sealed class ApprovedRuntimeConfigContract
@@ -183,8 +213,11 @@ public static class ApprovedRuntimeLedgerLoader
         record.Attestation.Repository ??= string.Empty;
         record.Attestation.SignerWorkflow ??= string.Empty;
         record.Attestation.SourceSha ??= string.Empty;
+        record.Attestation.SourceRef ??= string.Empty;
         record.Attestation.SubjectName ??= string.Empty;
         record.Attestation.SubjectDigest ??= string.Empty;
+        record.Attestation.ManifestSubjectName ??= string.Empty;
+        record.Attestation.ManifestSubjectDigest ??= string.Empty;
         if (record.ConfigContract is not null)
         {
             record.ConfigContract.Reference ??= string.Empty;
@@ -292,15 +325,15 @@ public static partial class ApprovedRuntimeLedgerValidator
     private static void ValidateRuntime(ApprovedRuntimeRecord record, Action<string> err)
     {
         var runtime = record.Runtime;
-        if (string.IsNullOrWhiteSpace(runtime.Target.OperatingSystem)
-            || string.IsNullOrWhiteSpace(runtime.Target.Architecture)
-            || string.IsNullOrWhiteSpace(runtime.Target.Rid))
+        if (runtime.Target.OperatingSystem != "linux"
+            || runtime.Target.Architecture != "x64"
+            || runtime.Target.Rid != "linux-x64")
         {
-            err("runtime.target operating_system, architecture, and rid are required");
+            err("runtime.target must be linux/x64 with rid linux-x64");
         }
-        if (string.IsNullOrWhiteSpace(runtime.SourceRepository))
+        if (!RepositoryRegex().IsMatch(runtime.SourceRepository))
         {
-            err("runtime.source_repository missing");
+            err("runtime.source_repository must be an owner/repository identity");
         }
         if (!GitShaRegex().IsMatch(runtime.SourceSha))
         {
@@ -317,10 +350,11 @@ public static partial class ApprovedRuntimeLedgerValidator
     private static void ValidateProducer(ApprovedRuntimeRecord record, Action<string> err)
     {
         var producer = record.Producer;
-        if (!producer.Workflow.StartsWith(".github/workflows/", StringComparison.Ordinal)
-            || !producer.Workflow.EndsWith(".yml", StringComparison.Ordinal))
+        if (!producer.Workflow.Equals(
+                ".github/workflows/sealed-runtime.yml",
+                StringComparison.Ordinal))
         {
-            err("producer.workflow must be a repository workflow path ending in .yml");
+            err("producer.workflow must be '.github/workflows/sealed-runtime.yml'");
         }
         if (producer.RunId <= 0)
         {
@@ -418,9 +452,11 @@ public static partial class ApprovedRuntimeLedgerValidator
         Action<string> err)
     {
         var attestation = record.Attestation;
-        if (string.IsNullOrWhiteSpace(attestation.PredicateType))
+        if (!attestation.PredicateType.Equals(
+                "https://slsa.dev/provenance/v1",
+                StringComparison.Ordinal))
         {
-            err("attestation.predicate_type missing");
+            err("attestation.predicate_type must be the SLSA provenance v1 predicate");
         }
         if (!attestation.Repository.Equals(record.Runtime.SourceRepository, StringComparison.Ordinal))
         {
@@ -436,6 +472,11 @@ public static partial class ApprovedRuntimeLedgerValidator
         {
             err("attestation.source_sha must match runtime.source_sha");
         }
+        if (!attestation.SourceRef.Equals("refs/heads/main", StringComparison.Ordinal)
+            && !ReleaseCandidateRefRegex().IsMatch(attestation.SourceRef))
+        {
+            err("attestation.source_ref must be protected main or an allowed release-candidate tag");
+        }
         if (!attestation.SubjectName.Equals("Aws2Azure.Proxy", StringComparison.Ordinal))
         {
             err("attestation.subject_name must be 'Aws2Azure.Proxy'");
@@ -446,6 +487,22 @@ public static partial class ApprovedRuntimeLedgerValidator
                 StringComparison.Ordinal))
         {
             err("attestation.subject_digest must match runtime.executable_digest");
+        }
+        if (!attestation.ManifestSubjectName.Equals(
+                "sealed-runtime-manifest.json",
+                StringComparison.Ordinal))
+        {
+            err("attestation.manifest_subject_name must be 'sealed-runtime-manifest.json'");
+        }
+        RequireDigest(
+            attestation.ManifestSubjectDigest,
+            "attestation.manifest_subject_digest",
+            err);
+        if (attestation.ManifestSubjectDigest.Equals(
+                attestation.SubjectDigest,
+                StringComparison.Ordinal))
+        {
+            err("attestation executable and manifest subjects must have distinct digests");
         }
     }
 
@@ -646,7 +703,23 @@ public static partial class ApprovedRuntimeLedgerValidator
     private static partial Regex GitShaRegex();
 
     [GeneratedRegex(
+        "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex RepositoryRegex();
+
+    [GeneratedRegex(
         "^aws2azure-sealed-linux-x64-(?<digest>[0-9a-f]{64})-run-(?<run>[1-9][0-9]*)-attempt-(?<attempt>[1-9][0-9]*)$",
         RegexOptions.CultureInvariant)]
     private static partial Regex ArtifactNameRegex();
+
+    [GeneratedRegex(
+        "^refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+-rc([.-]?[0-9A-Za-z]+)*$",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex ReleaseCandidateRefRegex();
 }
+
+[JsonSerializable(typeof(ApprovedRuntimeLedgerExport))]
+[JsonSourceGenerationOptions(
+    PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
+    WriteIndented = true)]
+internal sealed partial class ApprovedRuntimeLedgerJsonContext : JsonSerializerContext;

@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Aws2Azure.TestSupport.OperationalQualification;
 
 namespace Aws2Azure.IntegrationTests.OperationalQualification;
 
@@ -271,6 +272,7 @@ internal sealed class RealAzureWorkloadLoadEvidence
     public List<RealAzureWorkloadLoadScenario> Scenarios { get; set; } = new();
     public List<RealAzureWorkloadLoadSignal> Signals { get; set; } = new();
     public List<RealAzureCredentialRotationProof> CredentialRotationProofs { get; set; } = new();
+    public List<RealAzureRollbackProof> RollbackProofs { get; set; } = new();
 }
 
 internal sealed class RealAzureWorkloadLoadProfile
@@ -291,6 +293,8 @@ internal sealed class RealAzureWorkloadLoadCandidate
     public string GitSha { get; set; } = string.Empty;
     public string ArtifactDigest { get; set; } = string.Empty;
     public string ConfigDigest { get; set; } = string.Empty;
+    public string QualificationMode { get; set; } = string.Empty;
+    public SealedRuntimeIdentity? Runtime { get; set; }
 }
 
 internal sealed class RealAzureWorkloadLoadProvenance
@@ -385,6 +389,35 @@ internal sealed class RealAzureCredentialRotationProof
     public DateTimeOffset StartedAtUtc { get; set; }
     public DateTimeOffset RevocationRequestedAtUtc { get; set; }
     public DateTimeOffset OldAccessDeniedAtUtc { get; set; }
+    public DateTimeOffset CompletedAtUtc { get; set; }
+}
+
+internal sealed class RealAzureRollbackProof
+{
+    public string ScenarioId { get; set; } = string.Empty;
+    public string Service { get; set; } = string.Empty;
+    public string Operation { get; set; } = string.Empty;
+    public string EvidenceRunId { get; set; } = string.Empty;
+    public int EvidenceRunAttempt { get; set; }
+    public SealedRuntimeIdentity Candidate { get; set; } = new();
+    public SealedRuntimeIdentity Prior { get; set; } = new();
+    public string CandidateConfigDigest { get; set; } = string.Empty;
+    public string PriorConfigDigest { get; set; } = string.Empty;
+    public string CandidateBackendIdentityDigest { get; set; } = string.Empty;
+    public string PriorBackendIdentityDigest { get; set; } = string.Empty;
+    public string CandidateAwsBindingDigest { get; set; } = string.Empty;
+    public string PriorAwsBindingDigest { get; set; } = string.Empty;
+    public string CanaryDigest { get; set; } = string.Empty;
+    public string CleanupSemantics { get; set; } = string.Empty;
+    public DateTimeOffset StartedAtUtc { get; set; }
+    public DateTimeOffset CandidateCreateCompletedAtUtc { get; set; }
+    public DateTimeOffset CandidateReadCompletedAtUtc { get; set; }
+    public DateTimeOffset CandidateStoppedAtUtc { get; set; }
+    public DateTimeOffset PriorStartedAtUtc { get; set; }
+    public DateTimeOffset PriorReadCompletedAtUtc { get; set; }
+    public DateTimeOffset CleanupRequestedAtUtc { get; set; }
+    public DateTimeOffset CleanupVerifiedAtUtc { get; set; }
+    public DateTimeOffset CandidateRestoredAtUtc { get; set; }
     public DateTimeOffset CompletedAtUtc { get; set; }
 }
 
