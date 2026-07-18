@@ -30,7 +30,7 @@ parity**.
 | In-place upgrade | `v...` | `vX.Y.Z` | Supported / Unsupported | Steps or `None` |
 | Mixed-version rollout | `v...` + `vX.Y.Z` | Same backend | Supported / Unsupported | Maximum coexistence/drain period |
 | Rollback | `vX.Y.Z` | `v...` | Supported / Unsupported | Candidate-write/previous-read evidence |
-| Configuration | old schema | new schema | Compatible / Migration required | Exact non-secret edit |
+| Configuration/startup environment | old schema and controls | new schema and controls | Compatible / Migration required | Exact non-secret edit |
 | Published manifests/schemas | accepted/emitted versions | accepted/emitted versions | Compatible / Migration required | Details |
 | Durable persisted formats | inventory rows | same backend | Compatible / Migration required | Details |
 | Rolling-upgrade formats | inventory rows | active lifetime | Compatible / Drain required | Details |
