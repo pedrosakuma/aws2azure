@@ -1,0 +1,1251 @@
+name: rc-observation-real-azure
+
+# Manual-only because the reviewed minimum observation window is one hour.
+# This workflow never substitutes emulator or source-built bytes.
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: RC workload profile to observe
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - s3-basic-object-crud
+          - secretsmanager-basic-lifecycle
+      release_candidate_id:
+        description: Exact semantic-version RC tag (for example v1.0.0-rc.1)
+        required: true
+        type: string
+      candidate_source_sha:
+        description: Exact protected RC tag commit SHA
+        required: true
+        type: string
+      archive_run_id:
+        description: Exact successful release-candidate workflow run id
+        required: true
+        type: string
+      archive_run_attempt:
+        description: Exact release-candidate workflow run attempt
+        required: true
+        default: '1'
+        type: string
+      archive_artifact_id:
+        description: Exact immutable RC archive artifact id
+        required: true
+        type: string
+      archive_artifact_name:
+        description: Exact immutable RC archive artifact name
+        required: true
+        type: string
+      archive_artifact_digest:
+        description: Exact GitHub archive artifact upload digest (sha256:...)
+        required: true
+        type: string
+      archive_content_digest:
+        description: Exact release-candidate-archive-inputs.json content digest
+        required: true
+        type: string
+      ghcr_workflow_source_sha:
+        description: Exact protected-main SHA used by release-candidate-image
+        required: true
+        type: string
+      ghcr_run_id:
+        description: Exact successful release-candidate-image workflow run id
+        required: true
+        type: string
+      ghcr_run_attempt:
+        description: Exact release-candidate-image workflow run attempt
+        required: true
+        default: '1'
+        type: string
+      ghcr_artifact_id:
+        description: Exact immutable GHCR input artifact id
+        required: true
+        type: string
+      ghcr_artifact_name:
+        description: Exact digest/run/attempt-bound GHCR input artifact name
+        required: true
+        type: string
+      ghcr_artifact_digest:
+        description: Exact GitHub GHCR input artifact upload digest (sha256:...)
+        required: true
+        type: string
+      ghcr_content_digest:
+        description: Exact release-candidate-ghcr-inputs.json content digest
+        required: true
+        type: string
+      observation_window_minutes:
+        description: Observation duration; each profile policy enforces 60-180 minutes
+        required: true
+        default: '60'
+        type: string
+      azure_location:
+        description: Azure region for the isolated ephemeral profile topology
+        required: true
+        default: eastus2
+        type: string
+
+permissions:
+  actions: read
+  attestations: read
+  contents: read
+  id-token: write
+
+jobs:
+  select:
+    runs-on: ubuntu-latest
+    outputs:
+      profiles: ${{ steps.profiles.outputs.profiles }}
+    steps:
+      - name: Validate RC and select profiles
+        id: profiles
+        env:
+          REQUESTED_PROFILE: ${{ inputs.profile }}
+          RELEASE_CANDIDATE_ID: ${{ inputs.release_candidate_id }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          ARCHIVE_RUN_ID: ${{ inputs.archive_run_id }}
+          ARCHIVE_RUN_ATTEMPT: ${{ inputs.archive_run_attempt }}
+          ARCHIVE_ARTIFACT_ID: ${{ inputs.archive_artifact_id }}
+          ARCHIVE_ARTIFACT_NAME: ${{ inputs.archive_artifact_name }}
+          ARCHIVE_ARTIFACT_DIGEST: ${{ inputs.archive_artifact_digest }}
+          ARCHIVE_CONTENT_DIGEST: ${{ inputs.archive_content_digest }}
+          GHCR_WORKFLOW_SOURCE_SHA: ${{ inputs.ghcr_workflow_source_sha }}
+          GHCR_RUN_ID: ${{ inputs.ghcr_run_id }}
+          GHCR_RUN_ATTEMPT: ${{ inputs.ghcr_run_attempt }}
+          GHCR_ARTIFACT_ID: ${{ inputs.ghcr_artifact_id }}
+          GHCR_ARTIFACT_NAME: ${{ inputs.ghcr_artifact_name }}
+          GHCR_ARTIFACT_DIGEST: ${{ inputs.ghcr_artifact_digest }}
+          GHCR_CONTENT_DIGEST: ${{ inputs.ghcr_content_digest }}
+          WINDOW_MINUTES: ${{ inputs.observation_window_minutes }}
+          AZURE_LOCATION: ${{ inputs.azure_location }}
+          REF: ${{ github.ref }}
+          REF_PROTECTED: ${{ github.ref_protected }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${#RELEASE_CANDIDATE_ID}" -gt 128 ] ||
+             [[ ! "$RELEASE_CANDIDATE_ID" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc\.[1-9][0-9]*$ ]] ||
+             [ "$REF" != refs/heads/main ] ||
+             [ "$REF_PROTECTED" != true ]; then
+            echo "::error::RC observation must run from protected main."
+            exit 1
+          fi
+          if [[ ! "$CANDIDATE_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+             [[ ! "$GHCR_WORKFLOW_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Candidate and GHCR workflow source SHAs must be exact lowercase Git SHAs."
+            exit 1
+          fi
+          if [[ ! "$ARCHIVE_RUN_ID" =~ ^[1-9][0-9]*$ ]] ||
+             [[ ! "$ARCHIVE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] ||
+             [[ ! "$ARCHIVE_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] ||
+             [[ ! "$ARCHIVE_ARTIFACT_NAME" =~ ^[A-Za-z0-9._-]{1,255}$ ]] ||
+             [[ ! "$GHCR_RUN_ID" =~ ^[1-9][0-9]*$ ]] ||
+             [[ ! "$GHCR_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] ||
+             [[ ! "$GHCR_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] ||
+             [[ ! "$GHCR_ARTIFACT_NAME" =~ ^[A-Za-z0-9._-]{1,255}$ ]]; then
+            echo "::error::Archive or GHCR run, attempt, artifact id, or name is invalid."
+            exit 1
+          fi
+          for digest in \
+            "$ARCHIVE_ARTIFACT_DIGEST" "$ARCHIVE_CONTENT_DIGEST" \
+            "$GHCR_ARTIFACT_DIGEST" "$GHCR_CONTENT_DIGEST"; do
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::Every archive and GHCR digest must be an exact lowercase sha256 identity."
+              exit 1
+            fi
+          done
+          if [[ ! "$WINDOW_MINUTES" =~ ^[0-9]+$ ]] ||
+             [ "$WINDOW_MINUTES" -lt 60 ] ||
+             [ "$WINDOW_MINUTES" -gt 180 ]; then
+            echo "::error::observation_window_minutes must be between 60 and 180."
+            exit 1
+          fi
+          if [[ ! "$AZURE_LOCATION" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]]; then
+            echo "::error::azure_location is not a valid Azure region identifier."
+            exit 1
+          fi
+          case "$REQUESTED_PROFILE" in
+            all)
+              profiles='["s3-basic-object-crud","secretsmanager-basic-lifecycle"]'
+              ;;
+            s3-basic-object-crud|secretsmanager-basic-lifecycle)
+              profiles="[\"$REQUESTED_PROFILE\"]"
+              ;;
+            *)
+              echo "::error::Unsupported RC observation profile: $REQUESTED_PROFILE"
+              exit 1
+              ;;
+          esac
+          echo "profiles=$profiles" >> "$GITHUB_OUTPUT"
+
+  observe:
+    needs: select
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: ${{ fromJSON(needs.select.outputs.profiles) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    concurrency:
+      group: rc-observation-real-azure-${{ matrix.profile }}-${{ inputs.release_candidate_id }}
+      cancel-in-progress: false
+    env:
+      PROFILE: ${{ matrix.profile }}
+      RELEASE_CANDIDATE_ID: ${{ inputs.release_candidate_id }}
+      CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+      ARCHIVE_RUN_ID: ${{ inputs.archive_run_id }}
+      ARCHIVE_RUN_ATTEMPT: ${{ inputs.archive_run_attempt }}
+      ARCHIVE_ARTIFACT_ID: ${{ inputs.archive_artifact_id }}
+      ARCHIVE_ARTIFACT_NAME: ${{ inputs.archive_artifact_name }}
+      ARCHIVE_ARTIFACT_DIGEST: ${{ inputs.archive_artifact_digest }}
+      ARCHIVE_CONTENT_DIGEST: ${{ inputs.archive_content_digest }}
+      GHCR_WORKFLOW_SOURCE_SHA: ${{ inputs.ghcr_workflow_source_sha }}
+      GHCR_RUN_ID: ${{ inputs.ghcr_run_id }}
+      GHCR_RUN_ATTEMPT: ${{ inputs.ghcr_run_attempt }}
+      GHCR_ARTIFACT_ID: ${{ inputs.ghcr_artifact_id }}
+      GHCR_ARTIFACT_NAME: ${{ inputs.ghcr_artifact_name }}
+      GHCR_ARTIFACT_DIGEST: ${{ inputs.ghcr_artifact_digest }}
+      GHCR_CONTENT_DIGEST: ${{ inputs.ghcr_content_digest }}
+      WINDOW_MINUTES: ${{ inputs.observation_window_minutes }}
+      AZURE_LOCATION: ${{ inputs.azure_location }}
+      RG_NAME: aws2azure-rc-observe-${{ matrix.profile }}-${{ github.run_id }}-${{ github.run_attempt }}
+      PRIVATE_ROOT: artifacts/rc-observation-private/${{ matrix.profile }}
+      CAPTURE_ROOT: artifacts/rc-observation-capture/${{ matrix.profile }}
+      OUTPUT_ROOT: artifacts/rc-observation/${{ matrix.profile }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      CAPTURE_ARTIFACT_NAME: real-azure-rc-observation-capture-${{ matrix.profile }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+      EVIDENCE_ARTIFACT_NAME: real-azure-rc-observation-${{ matrix.profile }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+      SELECTION_ARTIFACT_NAME: real-azure-rc-observation-selection-${{ matrix.profile }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify exact clean protected-main checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ] ||
+             [ "$GITHUB_REF" != refs/heads/main ] ||
+             [ -n "$(git status --short)" ]; then
+            echo "::error::Observation workflow checkout is not exact protected main."
+            exit 1
+          fi
+      - uses: ./.github/actions/dotnet-setup
+
+      - name: Configure exact profile policy and runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          policy="docs/workloads/observation/$PROFILE.yaml"
+          [ -f "$policy" ] || {
+            echo "::error::Missing committed RC observation policy for $PROFILE."
+            exit 1
+          }
+          policy_min="$(sed -n 's/^minimum_window_minutes: //p' "$policy")"
+          policy_max="$(sed -n 's/^maximum_window_minutes: //p' "$policy")"
+          if [[ ! "$policy_min" =~ ^[0-9]+$ ]] ||
+             [[ ! "$policy_max" =~ ^[0-9]+$ ]] ||
+             [ "$WINDOW_MINUTES" -lt "$policy_min" ] ||
+             [ "$WINDOW_MINUTES" -gt "$policy_max" ]; then
+            echo "::error::Requested window violates the committed profile observation policy."
+            exit 1
+          fi
+          case "$PROFILE" in
+            s3-basic-object-crud)
+              {
+                echo "DEPLOYMENT_NAME=aws2azure-rc-observe-s3"
+                echo "BICEP_PATH=deploy/realazure/s3-load.bicep"
+                echo "TEST_FILTER=Category=S3RcObservation"
+              } >> "$GITHUB_ENV"
+              ;;
+            secretsmanager-basic-lifecycle)
+              {
+                echo "DEPLOYMENT_NAME=aws2azure-rc-observe-secretsmanager"
+                echo "BICEP_PATH=deploy/realazure/secretsmanager-load.bicep"
+                echo "TEST_FILTER=Category=SecretsManagerRcObservation"
+              } >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "::error::Unsupported profile: $PROFILE"
+              exit 1
+              ;;
+          esac
+
+      - name: Require complete Azure OIDC provisioning
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_OBJECT_ID: ${{ secrets.AZURE_CLIENT_OBJECT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$AZURE_CLIENT_ID" ] ||
+             [ -z "$AZURE_TENANT_ID" ] ||
+             [ -z "$AZURE_SUBSCRIPTION_ID" ]; then
+            echo "::error::RC observation requires Azure OIDC; no skip or emulator fallback is allowed."
+            exit 1
+          fi
+          if [ "$PROFILE" = secretsmanager-basic-lifecycle ] &&
+             [ -z "$AZURE_CLIENT_OBJECT_ID" ]; then
+            echo "::error::Secrets Manager RC observation requires AZURE_CLIENT_OBJECT_ID."
+            exit 1
+          fi
+
+      - name: Build harness and strict evidence tooling
+        run: dotnet build -c Release --nologo --verbosity minimal
+
+      - name: Validate repository contracts
+        run: >-
+          dotnet exec
+          tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll
+          --validate
+
+      - name: Resolve exact RC archive inputs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          archive_root="$PRIVATE_ROOT/rc-archive"
+          artifact_identity="$CAPTURE_ROOT/archive-artifact-identity.json"
+          selection="$CAPTURE_ROOT/archive-input-selection.json"
+          archive_inputs="$archive_root/content/release-candidate-archive-inputs.json"
+          attestations="$PRIVATE_ROOT/archive-attestations.json"
+          ledger_attestations="$PRIVATE_ROOT/approved-ledger-attestations.json"
+
+          install -d -m 0700 "$PRIVATE_ROOT"
+          mkdir -p "$CAPTURE_ROOT"
+          tag_ref_json="$PRIVATE_ROOT/candidate-tag-ref.json"
+          gh api -H "Accept: application/vnd.github+json" \
+            "/repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_CANDIDATE_ID" \
+            > "$tag_ref_json"
+          tag_object_type="$(jq -er '.object.type' "$tag_ref_json")"
+          tag_object_sha="$(jq -er '.object.sha' "$tag_ref_json")"
+          for depth in $(seq 1 8); do
+            if [ "$tag_object_type" = commit ]; then
+              break
+            fi
+            if [ "$tag_object_type" != tag ] ||
+               [[ ! "$tag_object_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::Candidate ref does not resolve through commit or annotated-tag objects."
+              exit 1
+            fi
+            tag_object_json="$PRIVATE_ROOT/candidate-tag-object-$depth.json"
+            gh api -H "Accept: application/vnd.github+json" \
+              "/repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha" \
+              > "$tag_object_json"
+            tag_object_type="$(jq -er '.object.type' "$tag_object_json")"
+            tag_object_sha="$(jq -er '.object.sha' "$tag_object_json")"
+          done
+          if [ "$tag_object_type" != commit ] ||
+             [ "$tag_object_sha" != "$CANDIDATE_SOURCE_SHA" ]; then
+            echo "::error::Current protected candidate tag does not resolve to the selected source SHA."
+            exit 1
+          fi
+
+          ./eng/download-qualified-run-artifact.sh \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$ARCHIVE_RUN_ID" \
+            --run-attempt "$ARCHIVE_RUN_ATTEMPT" \
+            --expected-sha "$CANDIDATE_SOURCE_SHA" \
+            --expected-ref "refs/tags/$RELEASE_CANDIDATE_ID" \
+            --workflow ".github/workflows/release-candidate.yml" \
+            --event "workflow_dispatch" \
+            --profile "release-candidate-archives" \
+            --destination "$archive_root" \
+            --artifact-name "$ARCHIVE_ARTIFACT_NAME" \
+            --artifact-id "$ARCHIVE_ARTIFACT_ID" \
+            --identity-output "$artifact_identity"
+
+          python3 eng/release-candidate-inputs.py validate "$archive_inputs"
+          jq -e \
+            --arg candidate "$RELEASE_CANDIDATE_ID" \
+            --arg source_sha "$CANDIDATE_SOURCE_SHA" \
+            --arg source_ref "refs/tags/$RELEASE_CANDIDATE_ID" \
+            --arg profile "$PROFILE" \
+            --argjson run_id "$ARCHIVE_RUN_ID" \
+            --argjson run_attempt "$ARCHIVE_RUN_ATTEMPT" \
+            '
+              .candidate.identifier == $candidate and
+              .candidate.source.repository == env.GITHUB_REPOSITORY and
+              .candidate.source.sha == $source_sha and
+              .candidate.source.ref == $source_ref and
+              .producer.workflow == ".github/workflows/release-candidate.yml" and
+              .producer.event_name == "workflow_dispatch" and
+              .producer.run_id == $run_id and
+              .producer.run_attempt == $run_attempt and
+              .pending_interfaces.observation_evidence.status == "pending" and
+              .pending_interfaces.observation_evidence.issue == 582 and
+              ([.workloads[] | select(.profile.id == $profile)] | length) == 1
+            ' "$archive_inputs" >/dev/null
+
+          content_digest="$(jq -er '.content_digest' "$archive_inputs")"
+          if [ "$content_digest" != "$ARCHIVE_CONTENT_DIGEST" ]; then
+            echo "::error::Selected archive inputs do not match the approved content digest."
+            exit 1
+          fi
+          expected_name="aws2azure-rc-archives-${RELEASE_CANDIDATE_ID}-${content_digest#sha256:}-run-${ARCHIVE_RUN_ID}-attempt-${ARCHIVE_RUN_ATTEMPT}"
+          if [[ "$ARCHIVE_ARTIFACT_NAME" != "$expected_name" ]]; then
+            echo "::error::Selected RC archive artifact name is not bound to its canonical inputs digest and producer attempt."
+            exit 1
+          fi
+
+          jq -e \
+            --argjson artifact_id "$ARCHIVE_ARTIFACT_ID" \
+            --arg artifact_name "$ARCHIVE_ARTIFACT_NAME" \
+            --arg upload_digest "$ARCHIVE_ARTIFACT_DIGEST" \
+            '
+              .artifact.id == $artifact_id and
+              .artifact.name == $artifact_name and
+              .artifact.upload_digest == $upload_digest
+            ' "$artifact_identity" >/dev/null
+
+          archive_inputs_sha="$(sha256sum "$archive_inputs" | awk '{print $1}')"
+          gh attestation verify "$archive_inputs" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-candidate.yml" \
+            --source-digest "$CANDIDATE_SOURCE_SHA" \
+            --source-ref "refs/tags/$RELEASE_CANDIDATE_ID" \
+            --predicate-type "https://slsa.dev/provenance/v1" \
+            --deny-self-hosted-runners \
+            --format json > "$attestations"
+          expected_attempt_uri="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${ARCHIVE_RUN_ID}/attempts/${ARCHIVE_RUN_ATTEMPT}"
+          expected_workflow_ref="${GITHUB_REPOSITORY}/.github/workflows/release-candidate.yml@refs/tags/${RELEASE_CANDIDATE_ID}"
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg workflow_ref "$expected_workflow_ref" \
+            --arg source_sha "$CANDIDATE_SOURCE_SHA" \
+            --arg source_ref "refs/tags/$RELEASE_CANDIDATE_ID" \
+            --arg attempt_uri "$expected_attempt_uri" \
+            --arg digest "$archive_inputs_sha" \
+            '
+              [
+                .[]
+                | select(.verificationResult.statement.predicateType ==
+                    "https://slsa.dev/provenance/v1")
+                | select(.verificationResult.signature.certificate.githubWorkflowTrigger ==
+                    "workflow_dispatch")
+                | select(.verificationResult.signature.certificate.githubWorkflowRepository ==
+                    $repository)
+                | select(.verificationResult.signature.certificate.githubWorkflowRef ==
+                    $workflow_ref)
+                | select(.verificationResult.signature.certificate.githubWorkflowSHA ==
+                    $source_sha)
+                | select(.verificationResult.signature.certificate.sourceRepositoryDigest ==
+                    $source_sha)
+                | select(.verificationResult.signature.certificate.sourceRepositoryRef ==
+                    $source_ref)
+                | select(.verificationResult.signature.certificate.runInvocationURI == $attempt_uri)
+                | select(.verificationResult.statement.predicate.runDetails.metadata.invocationId ==
+                    $attempt_uri)
+                | select(any(.verificationResult.statement.subject[];
+                    .name == "release-candidate-archive-inputs.json" and
+                    .digest.sha256 == $digest))
+              ] | length == 1
+            ' "$attestations" >/dev/null
+
+          case "$PROFILE" in
+            s3-basic-object-crud)
+              ledger_name="s3-approved-runtime.json"
+              ;;
+            secretsmanager-basic-lifecycle)
+              ledger_name="secretsmanager-approved-runtime.json"
+              ;;
+          esac
+          approved_ledger="$archive_root/content/context/$ledger_name"
+          if [ ! -f "$approved_ledger" ] || [ -L "$approved_ledger" ]; then
+            echo "::error::RC archive does not contain the exact regular approved-runtime export."
+            exit 1
+          fi
+          approved_ledger_sha="$(sha256sum "$approved_ledger" | awk '{print $1}')"
+          gh attestation verify "$approved_ledger" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-candidate.yml" \
+            --source-digest "$CANDIDATE_SOURCE_SHA" \
+            --source-ref "refs/tags/$RELEASE_CANDIDATE_ID" \
+            --predicate-type "https://slsa.dev/provenance/v1" \
+            --deny-self-hosted-runners \
+            --format json > "$ledger_attestations"
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg workflow_ref "$expected_workflow_ref" \
+            --arg source_sha "$CANDIDATE_SOURCE_SHA" \
+            --arg source_ref "refs/tags/$RELEASE_CANDIDATE_ID" \
+            --arg attempt_uri "$expected_attempt_uri" \
+            --arg subject_name "$ledger_name" \
+            --arg digest "$approved_ledger_sha" \
+            '
+              [
+                .[]
+                | select(.verificationResult.statement.predicateType ==
+                    "https://slsa.dev/provenance/v1")
+                | select(.verificationResult.signature.certificate.githubWorkflowTrigger ==
+                    "workflow_dispatch")
+                | select(.verificationResult.signature.certificate.githubWorkflowRepository ==
+                    $repository)
+                | select(.verificationResult.signature.certificate.githubWorkflowRef ==
+                    $workflow_ref)
+                | select(.verificationResult.signature.certificate.githubWorkflowSHA ==
+                    $source_sha)
+                | select(.verificationResult.signature.certificate.sourceRepositoryDigest ==
+                    $source_sha)
+                | select(.verificationResult.signature.certificate.sourceRepositoryRef ==
+                    $source_ref)
+                | select(.verificationResult.signature.certificate.runInvocationURI == $attempt_uri)
+                | select(.verificationResult.statement.predicate.runDetails.metadata.invocationId ==
+                    $attempt_uri)
+                | select(any(.verificationResult.statement.subject[];
+                    .name == $subject_name and .digest.sha256 == $digest))
+              ] | length == 1
+            ' "$ledger_attestations" >/dev/null
+          cp -- "$approved_ledger" "$CAPTURE_ROOT/current-approved-runtime.json"
+          chmod 0600 "$CAPTURE_ROOT/current-approved-runtime.json"
+          jq -S '.approved_ledger_source' "$archive_inputs" \
+            > "$CAPTURE_ROOT/approved-ledger-source.json"
+
+          jq -n \
+            --slurpfile archive "$archive_inputs" \
+            --slurpfile identity "$artifact_identity" \
+            --arg profile "$PROFILE" \
+            '
+              ($archive[0].workloads[] | select(.profile.id == $profile)) as $workload
+              | {
+                  schema_version: 1,
+                  candidate_id: $archive[0].candidate.identifier,
+                  content_digest: $archive[0].content_digest,
+                  source_sha: $archive[0].candidate.source.sha,
+                  source_ref: $archive[0].candidate.source.ref,
+                  producer: {
+                    repository: $archive[0].candidate.source.repository,
+                    workflow_path: $archive[0].producer.workflow,
+                    event_name: $archive[0].producer.event_name,
+                    run_id: $archive[0].producer.run_id,
+                    run_attempt: $archive[0].producer.run_attempt,
+                    attempt_url: $archive[0].producer.attempt_url,
+                    source_sha: $archive[0].candidate.source.sha,
+                    source_ref: $archive[0].candidate.source.ref
+                  },
+                  artifact: {
+                    id: $identity[0].artifact.id,
+                    name: $identity[0].artifact.name,
+                    upload_digest: $identity[0].artifact.upload_digest
+                  },
+                  workload: {
+                    profile_id: $workload.profile.id,
+                    profile_version: $workload.profile.version,
+                    workload_manifest_digest: $workload.profile.digest,
+                    approved_runtime_ledger_digest:
+                      $workload.approved_runtime.ledger_record_digest,
+                    approved_runtime_source_sha: $workload.approved_runtime.source_sha,
+                    approved_runtime_aggregate_digest:
+                      $workload.approved_runtime.aggregate_digest,
+                    approved_runtime_executable_digest:
+                      $workload.approved_runtime.executable_digest,
+                    approved_runtime_artifact: $workload.approved_runtime.artifact
+                  }
+                }
+            ' > "$selection"
+
+      - name: Resolve exact GHCR inputs and canonical RC identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ghcr_root="$PRIVATE_ROOT/rc-ghcr"
+          ghcr_identity="$CAPTURE_ROOT/ghcr-artifact-identity.json"
+          ghcr_selection="$CAPTURE_ROOT/ghcr-input-selection.json"
+          identity_selection="$CAPTURE_ROOT/canonical-identity-selection.json"
+          ghcr_inputs="$ghcr_root/content/release-candidate-ghcr-inputs.json"
+          archive_inputs="$PRIVATE_ROOT/rc-archive/content/release-candidate-archive-inputs.json"
+          archive_selection="$CAPTURE_ROOT/archive-input-selection.json"
+          attestations="$PRIVATE_ROOT/ghcr-input-attestations.json"
+
+          ./eng/download-qualified-run-artifact.sh \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$GHCR_RUN_ID" \
+            --run-attempt "$GHCR_RUN_ATTEMPT" \
+            --expected-sha "$GHCR_WORKFLOW_SOURCE_SHA" \
+            --expected-ref refs/heads/main \
+            --workflow ".github/workflows/release-candidate-image.yml" \
+            --event workflow_dispatch \
+            --profile release-candidate-ghcr \
+            --destination "$ghcr_root" \
+            --artifact-name "$GHCR_ARTIFACT_NAME" \
+            --artifact-id "$GHCR_ARTIFACT_ID" \
+            --identity-output "$ghcr_identity"
+
+          (
+            cd "$ghcr_root/content"
+            sha256sum -c SHA256SUMS
+          )
+          python3 eng/release-candidate-image.py validate-ghcr-input "$ghcr_inputs"
+          jq -e \
+            --arg candidate "$RELEASE_CANDIDATE_ID" \
+            --arg candidate_sha "$CANDIDATE_SOURCE_SHA" \
+            --arg workflow_sha "$GHCR_WORKFLOW_SOURCE_SHA" \
+            --argjson run_id "$GHCR_RUN_ID" \
+            --argjson run_attempt "$GHCR_RUN_ATTEMPT" \
+            '
+              .candidate.identifier == $candidate and
+              .candidate.source.repository == env.GITHUB_REPOSITORY and
+              .candidate.source.sha == $candidate_sha and
+              .candidate.source.ref == ("refs/tags/" + $candidate) and
+              .producer.workflow == ".github/workflows/release-candidate-image.yml" and
+              .producer.event_name == "workflow_dispatch" and
+              .producer.run_id == $run_id and
+              .producer.run_attempt == $run_attempt and
+              .producer.workflow_source_sha == $workflow_sha
+            ' "$ghcr_inputs" >/dev/null
+
+          content_digest="$(jq -er '.content_digest' "$ghcr_inputs")"
+          if [ "$content_digest" != "$GHCR_CONTENT_DIGEST" ]; then
+            echo "::error::Selected GHCR inputs do not match the approved content digest."
+            exit 1
+          fi
+          expected_name="aws2azure-rc-ghcr-${RELEASE_CANDIDATE_ID}-${content_digest#sha256:}-run-${GHCR_RUN_ID}-attempt-${GHCR_RUN_ATTEMPT}"
+          if [ "$GHCR_ARTIFACT_NAME" != "$expected_name" ]; then
+            echo "::error::Selected GHCR artifact name is not bound to its canonical inputs digest and producer attempt."
+            exit 1
+          fi
+          jq -e \
+            --argjson artifact_id "$GHCR_ARTIFACT_ID" \
+            --arg artifact_name "$GHCR_ARTIFACT_NAME" \
+            --arg upload_digest "$GHCR_ARTIFACT_DIGEST" \
+            '
+              .artifact.id == $artifact_id and
+              .artifact.name == $artifact_name and
+              .artifact.upload_digest == $upload_digest
+            ' "$ghcr_identity" >/dev/null
+
+          archive_manifest_sha="sha256:$(sha256sum "$archive_inputs" | awk '{print $1}')"
+          jq -e \
+            --slurpfile archive "$archive_inputs" \
+            --slurpfile selection "$archive_selection" \
+            --arg archive_manifest_sha "$archive_manifest_sha" \
+            '
+              .candidate == $archive[0].candidate and
+              .archive_input.producer.workflow == $archive[0].producer.workflow and
+              .archive_input.producer.event_name == $archive[0].producer.event_name and
+              .archive_input.producer.run_id == $archive[0].producer.run_id and
+              .archive_input.producer.run_attempt == $archive[0].producer.run_attempt and
+              .archive_input.producer.attempt_url == $archive[0].producer.attempt_url and
+              .archive_input.producer.source_sha == $archive[0].producer.source_sha and
+              .archive_input.content_digest == $archive[0].content_digest and
+              .archive_input.manifest_sha256 == $archive_manifest_sha and
+              .archive_input.artifact.id == $selection[0].artifact.id and
+              .archive_input.artifact.name == $selection[0].artifact.name and
+              .archive_input.artifact.upload_digest == $selection[0].artifact.upload_digest
+            ' "$ghcr_inputs" >/dev/null || {
+              echo "::error::GHCR inputs do not consume the exact selected archive interface."
+              exit 1
+            }
+
+          ghcr_inputs_sha="$(sha256sum "$ghcr_inputs" | awk '{print $1}')"
+          gh attestation verify "$ghcr_inputs" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-candidate-image.yml" \
+            --source-digest "$GHCR_WORKFLOW_SOURCE_SHA" \
+            --source-ref refs/heads/main \
+            --predicate-type "https://slsa.dev/provenance/v1" \
+            --deny-self-hosted-runners \
+            --format json > "$attestations"
+          expected_attempt_uri="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GHCR_RUN_ID}/attempts/${GHCR_RUN_ATTEMPT}"
+          expected_workflow_ref="${GITHUB_REPOSITORY}/.github/workflows/release-candidate-image.yml@refs/heads/main"
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg workflow_ref "$expected_workflow_ref" \
+            --arg source_sha "$GHCR_WORKFLOW_SOURCE_SHA" \
+            --arg attempt_uri "$expected_attempt_uri" \
+            --arg digest "$ghcr_inputs_sha" \
+            '
+              [
+                .[]
+                | select(.verificationResult.statement.predicateType ==
+                    "https://slsa.dev/provenance/v1")
+                | select(.verificationResult.signature.certificate.githubWorkflowTrigger ==
+                    "workflow_dispatch")
+                | select(.verificationResult.signature.certificate.githubWorkflowRepository ==
+                    $repository)
+                | select(.verificationResult.signature.certificate.githubWorkflowRef ==
+                    $workflow_ref)
+                | select(.verificationResult.signature.certificate.githubWorkflowSHA ==
+                    $source_sha)
+                | select(.verificationResult.signature.certificate.sourceRepositoryDigest ==
+                    $source_sha)
+                | select(.verificationResult.signature.certificate.sourceRepositoryRef ==
+                    "refs/heads/main")
+                | select(.verificationResult.signature.certificate.runInvocationURI ==
+                    $attempt_uri)
+                | select(.verificationResult.statement.predicate.runDetails.metadata.invocationId ==
+                    $attempt_uri)
+                | select(any(.verificationResult.statement.subject[];
+                    .name == "release-candidate-ghcr-inputs.json" and
+                    .digest.sha256 == $digest))
+              ] | length == 1
+            ' "$attestations" >/dev/null
+
+          jq -S -n \
+            --slurpfile ghcr "$ghcr_inputs" \
+            --slurpfile identity "$ghcr_identity" \
+            --slurpfile archive "$archive_selection" \
+            '{
+              schema_version: 1,
+              candidate_id: $ghcr[0].candidate.identifier,
+              content_digest: $ghcr[0].content_digest,
+              source_sha: $ghcr[0].candidate.source.sha,
+              producer: {
+                repository: $ghcr[0].candidate.source.repository,
+                workflow_path: $ghcr[0].producer.workflow,
+                event_name: $ghcr[0].producer.event_name,
+                run_id: $ghcr[0].producer.run_id,
+                run_attempt: $ghcr[0].producer.run_attempt,
+                attempt_url: $ghcr[0].producer.attempt_url,
+                source_sha: $ghcr[0].producer.workflow_source_sha,
+                source_ref: "refs/heads/main"
+              },
+              artifact: {
+                id: $identity[0].artifact.id,
+                name: $identity[0].artifact.name,
+                upload_digest: $identity[0].artifact.upload_digest
+              },
+              archive_content_digest: $ghcr[0].archive_input.content_digest,
+              archive_artifact: $archive[0].artifact,
+              index_digest: $ghcr[0].container.index_digest
+            }' > "$ghcr_selection"
+
+          descriptor="$PRIVATE_ROOT/rc-archive/content/rc-identity-descriptor.json"
+          receipt="$CAPTURE_ROOT/release-candidate-identity.json"
+          jq -S -n \
+            --slurpfile archive "$archive_inputs" \
+            --slurpfile ghcr "$ghcr_inputs" \
+            '{
+              schema_version: 1,
+              candidate: $archive[0].candidate,
+              producer: $archive[0].producer,
+              platforms: $archive[0].platforms,
+              container: $ghcr[0].container,
+              workloads: $archive[0].workloads,
+              compatibility_policy: $archive[0].compatibility_policy
+            }' > "$descriptor"
+          python3 eng/release-candidate-manifest.py identity "$descriptor" "$receipt"
+          python3 eng/release-candidate-manifest.py validate-identity "$receipt"
+          jq -S -n \
+            --slurpfile receipt "$receipt" \
+            --arg archive_digest "$ARCHIVE_CONTENT_DIGEST" \
+            --arg ghcr_digest "$GHCR_CONTENT_DIGEST" \
+            '{
+              schema_version: 1,
+              artifact_kind: $receipt[0].artifact_kind,
+              candidate_id: $receipt[0].candidate.identifier,
+              identity_digest: $receipt[0].identity_digest,
+              content_digest: $receipt[0].content_digest,
+              archive_inputs_digest: $archive_digest,
+              ghcr_inputs_digest: $ghcr_digest
+            }' > "$identity_selection"
+
+      - name: Resolve exact approved candidate and committed rollback target
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$PRIVATE_ROOT"
+          mkdir -p "$CAPTURE_ROOT" "$OUTPUT_ROOT"
+          gap_docs="tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll"
+          current_ledger="$CAPTURE_ROOT/current-approved-runtime.json"
+          prior_ledger="$CAPTURE_ROOT/prior-approved-runtime.json"
+          candidate_identity="$CAPTURE_ROOT/candidate-runtime.json"
+          prior_identity="$CAPTURE_ROOT/prior-runtime.json"
+
+          [ -f "$current_ledger" ] || {
+            echo "::error::The attested RC archive approved-runtime export is missing."
+            exit 1
+          }
+          candidate_sha="$(jq -er '.record.runtime.source_sha' "$current_ledger")"
+          if [ "$candidate_sha" != "$CANDIDATE_SOURCE_SHA" ]; then
+            echo "::error::The RC tag SHA does not equal the profile's exact approved runtime source SHA."
+            exit 1
+          fi
+          jq -e \
+            --slurpfile selection "$CAPTURE_ROOT/archive-input-selection.json" \
+            '
+              $selection[0].workload.profile_id == .record.profile.id and
+              $selection[0].workload.profile_version == .record.profile.version and
+              $selection[0].workload.approved_runtime_ledger_digest ==
+                .ledger_record_digest and
+              $selection[0].workload.approved_runtime_source_sha ==
+                .record.runtime.source_sha and
+              $selection[0].workload.approved_runtime_aggregate_digest ==
+                .record.runtime.aggregate_digest and
+              $selection[0].workload.approved_runtime_executable_digest ==
+                .record.runtime.executable_digest and
+              $selection[0].workload.approved_runtime_artifact.id == .record.artifact.id and
+              $selection[0].workload.approved_runtime_artifact.name == .record.artifact.name and
+              $selection[0].workload.approved_runtime_artifact.upload_digest ==
+                .record.artifact.upload_digest
+            ' "$current_ledger" >/dev/null || {
+              echo "::error::RC archive inputs do not bind the current profile's exact approved runtime."
+              exit 1
+            }
+          candidate_run_id="$(jq -er '.record.producer.run_id' "$current_ledger")"
+          candidate_attempt="$(jq -er '.record.producer.run_attempt' "$current_ledger")"
+          candidate_ref="$(jq -er '.record.attestation.source_ref' "$current_ledger")"
+          candidate_artifact_id="$(jq -er '.record.artifact.id' "$current_ledger")"
+          ./eng/resolve-sealed-runtime.sh \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$candidate_run_id" \
+            --run-attempt "$candidate_attempt" \
+            --expected-sha "$candidate_sha" \
+            --expected-ref "$candidate_ref" \
+            --profile "$PROFILE" \
+            --profile-version 1 \
+            --role candidate \
+            --artifact-id "$candidate_artifact_id" \
+            --destination "$PRIVATE_ROOT/sealed-candidate" \
+            --identity-output "$candidate_identity" \
+            --github-env "$GITHUB_ENV"
+
+          dotnet exec "$gap_docs" export-approved-runtime \
+            --profile "$PROFILE" \
+            --rollback-target \
+            --candidate "$candidate_identity" \
+            --ledger-json "$current_ledger" \
+            --output "$prior_ledger"
+          prior_run_id="$(jq -er '.record.producer.run_id' "$prior_ledger")"
+          prior_attempt="$(jq -er '.record.producer.run_attempt' "$prior_ledger")"
+          prior_sha="$(jq -er '.record.runtime.source_sha' "$prior_ledger")"
+          prior_ref="$(jq -er '.record.attestation.source_ref' "$prior_ledger")"
+          prior_artifact_id="$(jq -er '.record.artifact.id' "$prior_ledger")"
+          ./eng/resolve-sealed-runtime.sh \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$prior_run_id" \
+            --run-attempt "$prior_attempt" \
+            --expected-sha "$prior_sha" \
+            --expected-ref "$prior_ref" \
+            --profile "$PROFILE" \
+            --profile-version 1 \
+            --role prior \
+            --artifact-id "$prior_artifact_id" \
+            --ledger-json "$prior_ledger" \
+            --destination "$PRIVATE_ROOT/sealed-prior" \
+            --identity-output "$prior_identity" \
+            --github-env "$GITHUB_ENV"
+
+          candidate_runtime="$(jq -er '.runtime.aggregate_digest' "$candidate_identity")"
+          prior_runtime="$(jq -er '.runtime.aggregate_digest' "$prior_identity")"
+          if [ "$candidate_runtime" = "$prior_runtime" ]; then
+            echo "::error::Candidate and trusted prior runtime digests must be distinct."
+            exit 1
+          fi
+          {
+            echo "AWS2AZURE_SEALED_RUNTIME_MODE=rollback"
+            echo "AWS2AZURE_QUALIFICATION_SHA=$candidate_sha"
+          } >> "$GITHUB_ENV"
+          chmod 0644 "$current_ledger" "$prior_ledger" \
+            "$candidate_identity" "$prior_identity"
+
+      - name: Azure login (OIDC)
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Provision isolated candidate and stable backend
+        env:
+          AZURE_CLIENT_OBJECT_ID: ${{ secrets.AZURE_CLIENT_OBJECT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          az group create -n "$RG_NAME" -l "$AZURE_LOCATION" \
+            --tags purpose=aws2azure-rc-observation \
+                   profile="$PROFILE" \
+                   rc="$RELEASE_CANDIDATE_ID" \
+                   run-id="$GITHUB_RUN_ID" \
+                   created="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o none
+          args=(
+            az deployment group create
+            -g "$RG_NAME"
+            -n "$DEPLOYMENT_NAME"
+            -f "$BICEP_PATH"
+          )
+          if [ "$PROFILE" = secretsmanager-basic-lifecycle ]; then
+            args+=(-p bootstrapPrincipalId="$AZURE_CLIENT_OBJECT_ID")
+          fi
+          "${args[@]}" -o none
+
+      - name: Export the exact backend without logging credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$PROFILE" = secretsmanager-basic-lifecycle ]; then
+            endpoint="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
+              --query properties.outputs.keyVaultUri.value -o tsv)"
+            name="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
+              --query properties.outputs.keyVaultName.value -o tsv)"
+            if [ -z "$endpoint" ] || [ -z "$name" ]; then
+              echo "::error::Key Vault deployment outputs are incomplete."
+              exit 1
+            fi
+            ready=false
+            for attempt in $(seq 1 30); do
+              if az keyvault secret list --vault-name "$name" --maxresults 1 -o none \
+                   2>/dev/null; then
+                ready=true
+                break
+              fi
+              sleep 10
+            done
+            if [ "$ready" != true ]; then
+              echo "::error::Key Vault RBAC did not become ready within five minutes."
+              exit 1
+            fi
+            echo "AZURE_KEYVAULT_URL=$endpoint" >> "$GITHUB_ENV"
+          else
+            account="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
+              --query properties.outputs.storageAccountName.value -o tsv)"
+            endpoint="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
+              --query properties.outputs.blobEndpoint.value -o tsv)"
+            key="$(az storage account keys list -g "$RG_NAME" -n "$account" \
+              --query '[0].value' -o tsv)"
+            if [ -z "$account" ] || [ -z "$endpoint" ] || [ -z "$key" ]; then
+              echo "::error::Blob Storage deployment outputs are incomplete."
+              exit 1
+            fi
+            echo "::add-mask::$key"
+            {
+              echo "AZURE_BLOB_ACCOUNT=$account"
+              echo "AZURE_BLOB_KEY=$key"
+              echo "AZURE_BLOB_ENDPOINT=$endpoint"
+            } >> "$GITHUB_ENV"
+          fi
+
+      - name: Mint renewable projected token for Key Vault sidecars
+        if: matrix.profile == 'secretsmanager-basic-lifecycle'
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          token_dir="$GITHUB_WORKSPACE/$PRIVATE_ROOT/tokens"
+          install -d -m 0700 "$token_dir"
+          token_file="$token_dir/azure-federated-token.jwt"
+          ( umask 077
+            curl -fsS \
+              -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" |
+              python3 -c \
+                'import json,pathlib,sys; value=json.load(sys.stdin).get("value"); assert value; pathlib.Path(sys.argv[1]).write_text(value)' \
+                "$token_file"
+          )
+          chmod 0600 "$token_file"
+          {
+            echo "AZURE_TENANT_ID=$AZURE_TENANT_ID"
+            echo "AZURE_CLIENT_ID=$AZURE_CLIENT_ID"
+            echo "AZURE_FEDERATED_TOKEN_FILE=$token_file"
+          } >> "$GITHUB_ENV"
+
+      - name: Run isolated candidate and stable cohorts
+        id: observe
+        env:
+          AWS2AZURE_RC_OBSERVATION_CAPTURE_PATH: ${{ env.CAPTURE_ROOT }}/capture.json
+          AWS2AZURE_RC_OBSERVATION_WINDOW_MINUTES: ${{ env.WINDOW_MINUTES }}
+          AWS2AZURE_RC_OBSERVATION_CONCURRENCY: '8'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_timeout=$((WINDOW_MINUTES * 60 + 1200))
+          timeout --signal=TERM --kill-after=120s "${test_timeout}s" \
+            dotnet test tests/Aws2Azure.IntegrationTests \
+              -c Release --no-build --nologo \
+              --filter "$TEST_FILTER" \
+              --logger "console;verbosity=normal"
+          jq -e \
+            --arg profile "$PROFILE" \
+            '
+              .schema_version == 1 and
+              .profile.id == $profile and
+              .profile.version == 1 and
+              (.cohorts | length) == 2 and
+              (.metrics | length) == 2 and
+              .restoration.verified == true
+            ' "$CAPTURE_ROOT/capture.json" >/dev/null
+
+      - name: Upload immutable raw capture and selected identities
+        id: capture_upload
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.CAPTURE_ARTIFACT_NAME }}
+          path: artifacts/rc-observation-capture/${{ matrix.profile }}/**
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Bind the exact capture upload identity
+        if: always() && steps.capture_upload.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_id="${{ steps.capture_upload.outputs.artifact-id }}"
+          upload_digest="${{ steps.capture_upload.outputs.artifact-digest }}"
+          if [[ "$upload_digest" =~ ^[0-9a-f]{64}$ ]]; then
+            upload_digest="sha256:$upload_digest"
+          fi
+          if [[ ! "$artifact_id" =~ ^[1-9][0-9]*$ ]] ||
+             [[ ! "$upload_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Capture upload did not return an exact artifact identity."
+            exit 1
+          fi
+          jq -S -n \
+            --argjson schema_version 1 \
+            --arg profile "$PROFILE" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg workflow ".github/workflows/rc-observation-real-azure.yml" \
+            --arg event_name "$GITHUB_EVENT_NAME" \
+            --argjson run_id "$GITHUB_RUN_ID" \
+            --argjson run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg run_url "$RUN_URL" \
+            --arg attempt_url "$RUN_URL/attempts/$GITHUB_RUN_ATTEMPT" \
+            --arg source_sha "$GITHUB_SHA" \
+            --arg source_ref "$GITHUB_REF" \
+            --argjson artifact_id "$artifact_id" \
+            --arg artifact_name "$CAPTURE_ARTIFACT_NAME" \
+            --arg upload_digest "$upload_digest" \
+            '{
+              schema_version: $schema_version,
+              profile_id: $profile,
+              repository: $repository,
+              workflow_path: $workflow,
+              event_name: $event_name,
+              run_id: $run_id,
+              run_attempt: $run_attempt,
+              run_url: $run_url,
+              attempt_url: $attempt_url,
+              source_sha: $source_sha,
+              source_ref: $source_ref,
+              artifact: {
+                id: $artifact_id,
+                name: $artifact_name,
+                upload_digest: $upload_digest
+              }
+            }' > "$CAPTURE_ROOT/capture-artifact-selection.json"
+
+      - name: Generate immutable profile observation YAML
+        id: generate
+        if: >-
+          always() &&
+          steps.observe.outcome == 'success' &&
+          steps.capture_upload.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          gap_docs="tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll"
+          dotnet exec "$gap_docs" generate-rc-observation \
+            --capture "$CAPTURE_ROOT/capture.json" \
+            --capture-selection "$CAPTURE_ROOT/capture-artifact-selection.json" \
+            --archive-selection "$CAPTURE_ROOT/archive-input-selection.json" \
+            --ghcr-selection "$CAPTURE_ROOT/ghcr-input-selection.json" \
+            --identity-selection "$CAPTURE_ROOT/canonical-identity-selection.json" \
+            --approved-runtime "$CAPTURE_ROOT/current-approved-runtime.json" \
+            --candidate "$CAPTURE_ROOT/candidate-runtime.json" \
+            --prior "$CAPTURE_ROOT/prior-runtime.json" \
+            --workload "docs/workloads/$PROFILE.yaml" \
+            --qualification-policy "docs/workloads/qualification/$PROFILE.yaml" \
+            --observation-policy "docs/workloads/observation/$PROFILE.yaml" \
+            --release-candidate-id "$RELEASE_CANDIDATE_ID" \
+            --owner "$GITHUB_ACTOR" \
+            --output "$OUTPUT_ROOT/observation.yaml" \
+            --binding-output "$OUTPUT_ROOT/binding.json"
+          digest="$(sed -n 's/^evidence_digest: \"\(sha256:[0-9a-f]\{64\}\)\"$/\1/p' \
+            "$OUTPUT_ROOT/observation.yaml")"
+          verdict="$(sed -n 's/^  verdict: \"\(pass\|rollback\)\"$/\1/p' \
+            "$OUTPUT_ROOT/observation.yaml")"
+          if [ -z "$digest" ] || [ -z "$verdict" ]; then
+            echo "::error::Generated observation lacks a strict digest or verdict."
+            exit 1
+          fi
+          {
+            echo "evidence_digest=$digest"
+            echo "verdict=$verdict"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Strictly validate generated evidence against its trusted digest
+        id: strict_validate
+        if: always() && steps.generate.outcome == 'success'
+        continue-on-error: true
+        run: >-
+          dotnet exec
+          tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll
+          validate-rc-observation
+          --evidence "${{ env.OUTPUT_ROOT }}/observation.yaml"
+          --binding "${{ env.OUTPUT_ROOT }}/binding.json"
+          --expected-evidence-digest "${{ steps.generate.outputs.evidence_digest }}"
+
+      - name: Upload immutable RC observation evidence
+        id: evidence_upload
+        if: always() && steps.strict_validate.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.EVIDENCE_ARTIFACT_NAME }}
+          path: artifacts/rc-observation/${{ matrix.profile }}/**
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Record exact evidence upload identity
+        if: always() && steps.evidence_upload.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUTPUT_ROOT/upload-identity"
+          artifact_id="${{ steps.evidence_upload.outputs.artifact-id }}"
+          upload_digest="${{ steps.evidence_upload.outputs.artifact-digest }}"
+          if [[ "$upload_digest" =~ ^[0-9a-f]{64}$ ]]; then
+            upload_digest="sha256:$upload_digest"
+          fi
+          if [[ ! "$artifact_id" =~ ^[1-9][0-9]*$ ]] ||
+             [[ ! "$upload_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Evidence upload did not return an exact artifact identity."
+            exit 1
+          fi
+          rc_identity_digest="$(
+            jq -er '.identity_digest' "$CAPTURE_ROOT/canonical-identity-selection.json"
+          )"
+          manifest_identifier="github-actions:$GITHUB_REPOSITORY:run-$GITHUB_RUN_ID:attempt-$GITHUB_RUN_ATTEMPT:artifact-$artifact_id:$upload_digest"
+          jq -S -n \
+            --argjson schema_version 1 \
+            --arg profile "$PROFILE" \
+            --arg rc "$RELEASE_CANDIDATE_ID" \
+            --arg rc_identity_digest "$rc_identity_digest" \
+            --arg evidence_digest "${{ steps.generate.outputs.evidence_digest }}" \
+            --arg verdict "${{ steps.generate.outputs.verdict }}" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg workflow ".github/workflows/rc-observation-real-azure.yml" \
+            --argjson run_id "$GITHUB_RUN_ID" \
+            --argjson run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg run_url "$RUN_URL" \
+            --arg source_sha "$GITHUB_SHA" \
+            --arg source_ref "$GITHUB_REF" \
+            --argjson artifact_id "$artifact_id" \
+            --arg artifact_name "$EVIDENCE_ARTIFACT_NAME" \
+            --arg upload_digest "$upload_digest" \
+            --arg manifest_identifier "$manifest_identifier" \
+            --slurpfile archive "$CAPTURE_ROOT/archive-input-selection.json" \
+            --slurpfile ghcr "$CAPTURE_ROOT/ghcr-input-selection.json" \
+            '{
+              schema_version: $schema_version,
+              profile_id: $profile,
+              release_candidate_id: $rc,
+              release_candidate_identity_digest: $rc_identity_digest,
+              evidence_digest: $evidence_digest,
+              verdict: $verdict,
+              producer: {
+                repository: $repository,
+                workflow_path: $workflow,
+                run_id: $run_id,
+                run_attempt: $run_attempt,
+                run_url: $run_url,
+                source_sha: $source_sha,
+                source_ref: $source_ref
+              },
+              artifact: {
+                id: $artifact_id,
+                name: $artifact_name,
+                upload_digest: $upload_digest
+              },
+              archive_inputs: {
+                content_digest: $archive[0].content_digest,
+                producer: $archive[0].producer,
+                artifact: $archive[0].artifact
+              },
+              ghcr_inputs: {
+                content_digest: $ghcr[0].content_digest,
+                producer: $ghcr[0].producer,
+                artifact: $ghcr[0].artifact,
+                index_digest: $ghcr[0].index_digest
+              },
+              manifest_observation: {
+                profile: {
+                  id: $profile,
+                  version: 1
+                },
+                identifier: $manifest_identifier,
+                digest: $evidence_digest,
+                verdict: $verdict
+              }
+            }' > "$OUTPUT_ROOT/upload-identity/observation-upload-identity.json"
+
+      - name: Upload evidence selection receipt
+        id: receipt_upload
+        if: always() && steps.evidence_upload.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.SELECTION_ARTIFACT_NAME }}
+          path: artifacts/rc-observation/${{ matrix.profile }}/upload-identity/**
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summarize RC observation
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Real-Azure RC observation"
+            echo
+            echo "- Profile: \`$PROFILE\`"
+            echo "- RC: \`$RELEASE_CANDIDATE_ID\`"
+            echo "- Candidate source: \`$CANDIDATE_SOURCE_SHA\`"
+            echo "- Observation workflow source: \`$GITHUB_SHA\` (protected main)"
+            echo "- Archive producer: run \`$ARCHIVE_RUN_ID\`, attempt \`$ARCHIVE_RUN_ATTEMPT\`"
+            echo "- Archive artifact: \`$ARCHIVE_ARTIFACT_ID\` / \`$ARCHIVE_ARTIFACT_NAME\`"
+            echo "- GHCR producer: run \`$GHCR_RUN_ID\`, attempt \`$GHCR_RUN_ATTEMPT\`"
+            echo "- GHCR artifact: \`$GHCR_ARTIFACT_ID\` / \`$GHCR_ARTIFACT_NAME\`"
+            echo "- GHCR index: \`$(jq -er '.index_digest' "$CAPTURE_ROOT/ghcr-input-selection.json" 2>/dev/null || echo not-resolved)\`"
+            echo "- Canonical RC identity: \`$(jq -er '.identity_digest' "$CAPTURE_ROOT/canonical-identity-selection.json" 2>/dev/null || echo not-produced)\`"
+            echo "- Region: \`$AZURE_LOCATION\`"
+            echo "- Requested window: \`${WINDOW_MINUTES} minutes\`"
+            echo "- Verdict: \`${{ steps.generate.outputs.verdict || 'not-produced' }}\`"
+            echo "- Evidence digest: \`${{ steps.generate.outputs.evidence_digest || 'not-produced' }}\`"
+            echo "- Candidate/stable cohorts: distinct proxy endpoints and worker namespaces"
+            echo "- Exact-prior restoration drill: required and verified before evidence generation"
+            echo "- Emulator or source-build fallback: no"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove runtime bytes and projected credentials
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$PRIVATE_ROOT"
+          find tests/Aws2Azure.IntegrationTests/bin \
+            -type d \
+            \( -name 'real-azure-it-*' -o -name 'secretsmanager-it-*' \) \
+            -prune -exec rm -rf -- {} +
+
+      - name: Deallocate ephemeral Azure resources
+        if: always()
+        shell: bash
+        run: bash .github/scripts/cleanup-real-azure-resource-groups.sh "$RG_NAME"
+
+      - name: Enforce successful trigger-free observation
+        if: always()
+        shell: bash
+        run: |
+          if [ "${{ steps.observe.outcome }}" != success ] ||
+             [ "${{ steps.capture_upload.outcome }}" != success ] ||
+             [ "${{ steps.generate.outcome }}" != success ] ||
+             [ "${{ steps.strict_validate.outcome }}" != success ] ||
+             [ "${{ steps.evidence_upload.outcome }}" != success ] ||
+             [ "${{ steps.receipt_upload.outcome }}" != success ] ||
+             [ "${{ steps.generate.outputs.verdict }}" != pass ]; then
+            echo "::error::RC observation did not produce a complete trigger-free pass. Any fired trigger has already forced and verified exact-prior restoration; do not suppress it."
+            exit 1
+          fi

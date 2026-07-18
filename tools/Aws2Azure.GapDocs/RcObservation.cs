@@ -21,7 +21,10 @@ public sealed record RcObservationEvidence
     public RcObservationRuntimeIdentity Candidate { get; init; } = new();
     public RcObservationRuntimeIdentity Prior { get; init; } = new();
     public RcObservationProfile Profile { get; init; } = new();
+    public RcObservationPolicyIdentity Policy { get; init; } = new();
     public RcObservationAzureEnvironment Azure { get; init; } = new();
+    public RcObservationProducer Producer { get; init; } = new();
+    public RcObservationArtifactIdentity CaptureArtifact { get; init; } = new();
     public RcObservationWindow Observation { get; init; } = new();
     public IReadOnlyList<RcObservationCohort> Cohorts
     {
@@ -53,6 +56,35 @@ public sealed record RcObservationReleaseCandidate
     public string Id { get; init; } = string.Empty;
     public string ManifestDigest { get; init; } = string.Empty;
     public string SourceSha { get; init; } = string.Empty;
+    public RcObservationArchiveInputsIdentity ArchiveInputs { get; init; } = new();
+    public RcObservationGhcrInputsIdentity GhcrInputs { get; init; } = new();
+}
+
+public sealed record RcObservationArchiveInputsIdentity
+{
+    public string ContentDigest { get; init; } = string.Empty;
+    public RcObservationArchiveProducer Producer { get; init; } = new();
+    public RcObservationArtifactIdentity Artifact { get; init; } = new();
+}
+
+public sealed record RcObservationGhcrInputsIdentity
+{
+    public string ContentDigest { get; init; } = string.Empty;
+    public RcObservationArchiveProducer Producer { get; init; } = new();
+    public RcObservationArtifactIdentity Artifact { get; init; } = new();
+    public string IndexDigest { get; init; } = string.Empty;
+}
+
+public sealed record RcObservationArchiveProducer
+{
+    public string Repository { get; init; } = string.Empty;
+    public string WorkflowPath { get; init; } = string.Empty;
+    public string EventName { get; init; } = string.Empty;
+    public long RunId { get; init; }
+    public int RunAttempt { get; init; }
+    public string AttemptUrl { get; init; } = string.Empty;
+    public string SourceSha { get; init; } = string.Empty;
+    public string SourceRef { get; init; } = string.Empty;
 }
 
 public sealed record RcObservationRuntimeIdentity
@@ -68,6 +100,13 @@ public sealed record RcObservationProfile
     public int Version { get; init; }
 }
 
+public sealed record RcObservationPolicyIdentity
+{
+    public string WorkloadManifestDigest { get; init; } = string.Empty;
+    public string QualificationPolicyDigest { get; init; } = string.Empty;
+    public string ObservationPolicyDigest { get; init; } = string.Empty;
+}
+
 public sealed record RcObservationAzureEnvironment
 {
     public string BackendKind { get; init; } = string.Empty;
@@ -75,6 +114,26 @@ public sealed record RcObservationAzureEnvironment
     public string BackendIdentityDigest { get; init; } = string.Empty;
     public string ConfigDigest { get; init; } = string.Empty;
     public string AwsBindingDigest { get; init; } = string.Empty;
+}
+
+public sealed record RcObservationProducer
+{
+    public string Repository { get; init; } = string.Empty;
+    public string WorkflowPath { get; init; } = string.Empty;
+    public string EventName { get; init; } = string.Empty;
+    public long RunId { get; init; }
+    public int RunAttempt { get; init; }
+    public string RunUrl { get; init; } = string.Empty;
+    public string AttemptUrl { get; init; } = string.Empty;
+    public string SourceSha { get; init; } = string.Empty;
+    public string SourceRef { get; init; } = string.Empty;
+}
+
+public sealed record RcObservationArtifactIdentity
+{
+    public long Id { get; init; }
+    public string Name { get; init; } = string.Empty;
+    public string UploadDigest { get; init; } = string.Empty;
 }
 
 public sealed record RcObservationWindow
@@ -155,6 +214,26 @@ public sealed record RcObservationValidationContext
     public string ExpectedEvidenceDigest { get; init; } = string.Empty;
     public string ReleaseCandidateId { get; init; } = string.Empty;
     public string RcManifestDigest { get; init; } = string.Empty;
+    public string ArchiveInputsDigest { get; init; } = string.Empty;
+    public string ArchiveProducerRepository { get; init; } = string.Empty;
+    public string ArchiveProducerWorkflowPath { get; init; } = string.Empty;
+    public long ArchiveProducerRunId { get; init; }
+    public int ArchiveProducerRunAttempt { get; init; }
+    public string ArchiveProducerSourceRef { get; init; } = string.Empty;
+    public long ArchiveArtifactId { get; init; }
+    public string ArchiveArtifactName { get; init; } = string.Empty;
+    public string ArchiveArtifactUploadDigest { get; init; } = string.Empty;
+    public string GhcrInputsDigest { get; init; } = string.Empty;
+    public string GhcrProducerRepository { get; init; } = string.Empty;
+    public string GhcrProducerWorkflowPath { get; init; } = string.Empty;
+    public long GhcrProducerRunId { get; init; }
+    public int GhcrProducerRunAttempt { get; init; }
+    public string GhcrProducerSourceSha { get; init; } = string.Empty;
+    public string GhcrProducerSourceRef { get; init; } = string.Empty;
+    public long GhcrArtifactId { get; init; }
+    public string GhcrArtifactName { get; init; } = string.Empty;
+    public string GhcrArtifactUploadDigest { get; init; } = string.Empty;
+    public string GhcrIndexDigest { get; init; } = string.Empty;
     public string CandidateSourceSha { get; init; } = string.Empty;
     public string CandidateIdentityDigest { get; init; } = string.Empty;
     public string CandidateRuntimeDigest { get; init; } = string.Empty;
@@ -163,11 +242,23 @@ public sealed record RcObservationValidationContext
     public string PriorRuntimeDigest { get; init; } = string.Empty;
     public string ProfileId { get; init; } = string.Empty;
     public int ProfileVersion { get; init; }
+    public string WorkloadManifestDigest { get; init; } = string.Empty;
+    public string QualificationPolicyDigest { get; init; } = string.Empty;
+    public string ObservationPolicyDigest { get; init; } = string.Empty;
     public string AzureBackendKind { get; init; } = string.Empty;
     public string AzureRegion { get; init; } = string.Empty;
     public string AzureBackendIdentityDigest { get; init; } = string.Empty;
     public string ConfigDigest { get; init; } = string.Empty;
     public string AwsBindingDigest { get; init; } = string.Empty;
+    public string ProducerRepository { get; init; } = string.Empty;
+    public string ProducerWorkflowPath { get; init; } = string.Empty;
+    public long ProducerRunId { get; init; }
+    public int ProducerRunAttempt { get; init; }
+    public string ProducerSourceSha { get; init; } = string.Empty;
+    public string ProducerSourceRef { get; init; } = string.Empty;
+    public long CaptureArtifactId { get; init; }
+    public string CaptureArtifactName { get; init; } = string.Empty;
+    public string CaptureArtifactUploadDigest { get; init; } = string.Empty;
     public int MinimumWindowMinutes { get; init; }
     public TimeSpan MaximumEvidenceAge { get; init; }
 }
@@ -200,7 +291,10 @@ public static class RcObservationLoader
         Candidate = Map(document.Candidate),
         Prior = Map(document.Prior),
         Profile = Map(document.Profile),
+        Policy = Map(document.Policy),
         Azure = Map(document.Azure),
+        Producer = Map(document.Producer),
+        CaptureArtifact = Map(document.CaptureArtifact),
         Observation = Map(document.Observation),
         Cohorts = (document.Cohorts ?? []).Select(Map).ToArray(),
         Metrics = (document.Metrics ?? []).Select(Map).ToArray(),
@@ -215,6 +309,38 @@ public static class RcObservationLoader
         Id = value?.Id!,
         ManifestDigest = value?.ManifestDigest!,
         SourceSha = value?.SourceSha!,
+        ArchiveInputs = Map(value?.ArchiveInputs),
+        GhcrInputs = Map(value?.GhcrInputs),
+    };
+
+    private static RcObservationArchiveInputsIdentity Map(
+        RcObservationArchiveInputsIdentityYaml? value) => new()
+    {
+        ContentDigest = value?.ContentDigest!,
+        Producer = Map(value?.Producer),
+        Artifact = Map(value?.Artifact),
+    };
+
+    private static RcObservationGhcrInputsIdentity Map(
+        RcObservationGhcrInputsIdentityYaml? value) => new()
+    {
+        ContentDigest = value?.ContentDigest!,
+        Producer = Map(value?.Producer),
+        Artifact = Map(value?.Artifact),
+        IndexDigest = value?.IndexDigest!,
+    };
+
+    private static RcObservationArchiveProducer Map(
+        RcObservationArchiveProducerYaml? value) => new()
+    {
+        Repository = value?.Repository!,
+        WorkflowPath = value?.WorkflowPath!,
+        EventName = value?.EventName!,
+        RunId = value?.RunId ?? 0,
+        RunAttempt = value?.RunAttempt ?? 0,
+        AttemptUrl = value?.AttemptUrl!,
+        SourceSha = value?.SourceSha!,
+        SourceRef = value?.SourceRef!,
     };
 
     private static RcObservationRuntimeIdentity Map(
@@ -231,6 +357,14 @@ public static class RcObservationLoader
         Version = value?.Version ?? 0,
     };
 
+    private static RcObservationPolicyIdentity Map(
+        RcObservationPolicyIdentityYaml? value) => new()
+    {
+        WorkloadManifestDigest = value?.WorkloadManifestDigest!,
+        QualificationPolicyDigest = value?.QualificationPolicyDigest!,
+        ObservationPolicyDigest = value?.ObservationPolicyDigest!,
+    };
+
     private static RcObservationAzureEnvironment Map(
         RcObservationAzureEnvironmentYaml? value) => new()
     {
@@ -239,6 +373,27 @@ public static class RcObservationLoader
         BackendIdentityDigest = value?.BackendIdentityDigest!,
         ConfigDigest = value?.ConfigDigest!,
         AwsBindingDigest = value?.AwsBindingDigest!,
+    };
+
+    private static RcObservationProducer Map(RcObservationProducerYaml? value) => new()
+    {
+        Repository = value?.Repository!,
+        WorkflowPath = value?.WorkflowPath!,
+        EventName = value?.EventName!,
+        RunId = value?.RunId ?? 0,
+        RunAttempt = value?.RunAttempt ?? 0,
+        RunUrl = value?.RunUrl!,
+        AttemptUrl = value?.AttemptUrl!,
+        SourceSha = value?.SourceSha!,
+        SourceRef = value?.SourceRef!,
+    };
+
+    private static RcObservationArtifactIdentity Map(
+        RcObservationArtifactIdentityYaml? value) => new()
+    {
+        Id = value?.Id ?? 0,
+        Name = value?.Name!,
+        UploadDigest = value?.UploadDigest!,
     };
 
     private static RcObservationWindow Map(RcObservationWindowYaml? value) => new()
@@ -318,7 +473,10 @@ public static class RcObservationLoader
         public RcObservationRuntimeIdentityYaml? Candidate { get; set; }
         public RcObservationRuntimeIdentityYaml? Prior { get; set; }
         public RcObservationProfileYaml? Profile { get; set; }
+        public RcObservationPolicyIdentityYaml? Policy { get; set; }
         public RcObservationAzureEnvironmentYaml? Azure { get; set; }
+        public RcObservationProducerYaml? Producer { get; set; }
+        public RcObservationArtifactIdentityYaml? CaptureArtifact { get; set; }
         public RcObservationWindowYaml? Observation { get; set; }
         public List<RcObservationCohortYaml?>? Cohorts { get; set; }
         public List<RcObservationMetricYaml?>? Metrics { get; set; }
@@ -332,6 +490,35 @@ public static class RcObservationLoader
         public string? Id { get; set; }
         public string? ManifestDigest { get; set; }
         public string? SourceSha { get; set; }
+        public RcObservationArchiveInputsIdentityYaml? ArchiveInputs { get; set; }
+        public RcObservationGhcrInputsIdentityYaml? GhcrInputs { get; set; }
+    }
+
+    private sealed class RcObservationArchiveInputsIdentityYaml
+    {
+        public string? ContentDigest { get; set; }
+        public RcObservationArchiveProducerYaml? Producer { get; set; }
+        public RcObservationArtifactIdentityYaml? Artifact { get; set; }
+    }
+
+    private sealed class RcObservationGhcrInputsIdentityYaml
+    {
+        public string? ContentDigest { get; set; }
+        public RcObservationArchiveProducerYaml? Producer { get; set; }
+        public RcObservationArtifactIdentityYaml? Artifact { get; set; }
+        public string? IndexDigest { get; set; }
+    }
+
+    private sealed class RcObservationArchiveProducerYaml
+    {
+        public string? Repository { get; set; }
+        public string? WorkflowPath { get; set; }
+        public string? EventName { get; set; }
+        public long RunId { get; set; }
+        public int RunAttempt { get; set; }
+        public string? AttemptUrl { get; set; }
+        public string? SourceSha { get; set; }
+        public string? SourceRef { get; set; }
     }
 
     private sealed class RcObservationRuntimeIdentityYaml
@@ -347,6 +534,13 @@ public static class RcObservationLoader
         public int Version { get; set; }
     }
 
+    private sealed class RcObservationPolicyIdentityYaml
+    {
+        public string? WorkloadManifestDigest { get; set; }
+        public string? QualificationPolicyDigest { get; set; }
+        public string? ObservationPolicyDigest { get; set; }
+    }
+
     private sealed class RcObservationAzureEnvironmentYaml
     {
         public string? BackendKind { get; set; }
@@ -354,6 +548,26 @@ public static class RcObservationLoader
         public string? BackendIdentityDigest { get; set; }
         public string? ConfigDigest { get; set; }
         public string? AwsBindingDigest { get; set; }
+    }
+
+    private sealed class RcObservationProducerYaml
+    {
+        public string? Repository { get; set; }
+        public string? WorkflowPath { get; set; }
+        public string? EventName { get; set; }
+        public long RunId { get; set; }
+        public int RunAttempt { get; set; }
+        public string? RunUrl { get; set; }
+        public string? AttemptUrl { get; set; }
+        public string? SourceSha { get; set; }
+        public string? SourceRef { get; set; }
+    }
+
+    private sealed class RcObservationArtifactIdentityYaml
+    {
+        public long Id { get; set; }
+        public string? Name { get; set; }
+        public string? UploadDigest { get; set; }
     }
 
     private sealed class RcObservationWindowYaml
@@ -437,6 +651,106 @@ public static class RcObservationIntegrity
             "release_candidate.manifest_digest",
             evidence.ReleaseCandidate.ManifestDigest);
         Append(canonical, "release_candidate.source_sha", evidence.ReleaseCandidate.SourceSha);
+        Append(
+            canonical,
+            "release_candidate.archive_inputs.content_digest",
+            evidence.ReleaseCandidate.ArchiveInputs.ContentDigest);
+        Append(
+            canonical,
+            "release_candidate.archive_inputs.producer.repository",
+            evidence.ReleaseCandidate.ArchiveInputs.Producer.Repository);
+        Append(
+            canonical,
+            "release_candidate.archive_inputs.producer.workflow_path",
+            evidence.ReleaseCandidate.ArchiveInputs.Producer.WorkflowPath);
+        Append(
+            canonical,
+            "release_candidate.archive_inputs.producer.event_name",
+            evidence.ReleaseCandidate.ArchiveInputs.Producer.EventName);
+        Append(
+            canonical,
+            "release_candidate.archive_inputs.producer.run_id",
+            evidence.ReleaseCandidate.ArchiveInputs.Producer.RunId);
+        Append(
+            canonical,
+            "release_candidate.archive_inputs.producer.run_attempt",
+            evidence.ReleaseCandidate.ArchiveInputs.Producer.RunAttempt);
+        Append(
+            canonical,
+            "release_candidate.archive_inputs.producer.attempt_url",
+            evidence.ReleaseCandidate.ArchiveInputs.Producer.AttemptUrl);
+        Append(
+            canonical,
+            "release_candidate.archive_inputs.producer.source_sha",
+            evidence.ReleaseCandidate.ArchiveInputs.Producer.SourceSha);
+        Append(
+            canonical,
+            "release_candidate.archive_inputs.producer.source_ref",
+            evidence.ReleaseCandidate.ArchiveInputs.Producer.SourceRef);
+        Append(
+            canonical,
+            "release_candidate.archive_inputs.artifact.id",
+            evidence.ReleaseCandidate.ArchiveInputs.Artifact.Id);
+        Append(
+            canonical,
+            "release_candidate.archive_inputs.artifact.name",
+            evidence.ReleaseCandidate.ArchiveInputs.Artifact.Name);
+        Append(
+            canonical,
+            "release_candidate.archive_inputs.artifact.upload_digest",
+            evidence.ReleaseCandidate.ArchiveInputs.Artifact.UploadDigest);
+        Append(
+            canonical,
+            "release_candidate.ghcr_inputs.content_digest",
+            evidence.ReleaseCandidate.GhcrInputs.ContentDigest);
+        Append(
+            canonical,
+            "release_candidate.ghcr_inputs.producer.repository",
+            evidence.ReleaseCandidate.GhcrInputs.Producer.Repository);
+        Append(
+            canonical,
+            "release_candidate.ghcr_inputs.producer.workflow_path",
+            evidence.ReleaseCandidate.GhcrInputs.Producer.WorkflowPath);
+        Append(
+            canonical,
+            "release_candidate.ghcr_inputs.producer.event_name",
+            evidence.ReleaseCandidate.GhcrInputs.Producer.EventName);
+        Append(
+            canonical,
+            "release_candidate.ghcr_inputs.producer.run_id",
+            evidence.ReleaseCandidate.GhcrInputs.Producer.RunId);
+        Append(
+            canonical,
+            "release_candidate.ghcr_inputs.producer.run_attempt",
+            evidence.ReleaseCandidate.GhcrInputs.Producer.RunAttempt);
+        Append(
+            canonical,
+            "release_candidate.ghcr_inputs.producer.attempt_url",
+            evidence.ReleaseCandidate.GhcrInputs.Producer.AttemptUrl);
+        Append(
+            canonical,
+            "release_candidate.ghcr_inputs.producer.source_sha",
+            evidence.ReleaseCandidate.GhcrInputs.Producer.SourceSha);
+        Append(
+            canonical,
+            "release_candidate.ghcr_inputs.producer.source_ref",
+            evidence.ReleaseCandidate.GhcrInputs.Producer.SourceRef);
+        Append(
+            canonical,
+            "release_candidate.ghcr_inputs.artifact.id",
+            evidence.ReleaseCandidate.GhcrInputs.Artifact.Id);
+        Append(
+            canonical,
+            "release_candidate.ghcr_inputs.artifact.name",
+            evidence.ReleaseCandidate.GhcrInputs.Artifact.Name);
+        Append(
+            canonical,
+            "release_candidate.ghcr_inputs.artifact.upload_digest",
+            evidence.ReleaseCandidate.GhcrInputs.Artifact.UploadDigest);
+        Append(
+            canonical,
+            "release_candidate.ghcr_inputs.index_digest",
+            evidence.ReleaseCandidate.GhcrInputs.IndexDigest);
         Append(canonical, "candidate.identity_digest", evidence.Candidate.IdentityDigest);
         Append(canonical, "candidate.runtime_digest", evidence.Candidate.RuntimeDigest);
         Append(canonical, "candidate.source_sha", evidence.Candidate.SourceSha);
@@ -445,6 +759,18 @@ public static class RcObservationIntegrity
         Append(canonical, "prior.source_sha", evidence.Prior.SourceSha);
         Append(canonical, "profile.id", evidence.Profile.Id);
         Append(canonical, "profile.version", evidence.Profile.Version);
+        Append(
+            canonical,
+            "policy.workload_manifest_digest",
+            evidence.Policy.WorkloadManifestDigest);
+        Append(
+            canonical,
+            "policy.qualification_policy_digest",
+            evidence.Policy.QualificationPolicyDigest);
+        Append(
+            canonical,
+            "policy.observation_policy_digest",
+            evidence.Policy.ObservationPolicyDigest);
         Append(canonical, "azure.backend_kind", evidence.Azure.BackendKind);
         Append(canonical, "azure.region", evidence.Azure.Region);
         Append(
@@ -453,6 +779,21 @@ public static class RcObservationIntegrity
             evidence.Azure.BackendIdentityDigest);
         Append(canonical, "azure.config_digest", evidence.Azure.ConfigDigest);
         Append(canonical, "azure.aws_binding_digest", evidence.Azure.AwsBindingDigest);
+        Append(canonical, "producer.repository", evidence.Producer.Repository);
+        Append(canonical, "producer.workflow_path", evidence.Producer.WorkflowPath);
+        Append(canonical, "producer.event_name", evidence.Producer.EventName);
+        Append(canonical, "producer.run_id", evidence.Producer.RunId);
+        Append(canonical, "producer.run_attempt", evidence.Producer.RunAttempt);
+        Append(canonical, "producer.run_url", evidence.Producer.RunUrl);
+        Append(canonical, "producer.attempt_url", evidence.Producer.AttemptUrl);
+        Append(canonical, "producer.source_sha", evidence.Producer.SourceSha);
+        Append(canonical, "producer.source_ref", evidence.Producer.SourceRef);
+        Append(canonical, "capture_artifact.id", evidence.CaptureArtifact.Id);
+        Append(canonical, "capture_artifact.name", evidence.CaptureArtifact.Name);
+        Append(
+            canonical,
+            "capture_artifact.upload_digest",
+            evidence.CaptureArtifact.UploadDigest);
         Append(canonical, "observation.started_at_utc", evidence.Observation.StartedAtUtc);
         Append(canonical, "observation.ended_at_utc", evidence.Observation.EndedAtUtc);
         Append(canonical, "observation.generated_at_utc", evidence.Observation.GeneratedAtUtc);
@@ -579,7 +920,7 @@ public static class RcObservationIntegrity
 
 public static partial class RcObservationValidator
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     public static IReadOnlyList<string> Validate(
         RcObservationEvidence evidence,
@@ -603,6 +944,7 @@ public static partial class RcObservationValidator
         }
         ValidateIntegrity(evidence, context, Err);
         ValidateIdentities(evidence, context, Err);
+        ValidatePolicyAndProducer(evidence, context, Err);
         ValidateEnvironment(evidence, context, Err);
         ValidateWindow(evidence, context, nowUtc, Err);
         ValidateCohorts(evidence, context, Err);
@@ -618,16 +960,56 @@ public static partial class RcObservationValidator
         && evidence.ReleaseCandidate.Id is not null
         && evidence.ReleaseCandidate.ManifestDigest is not null
         && evidence.ReleaseCandidate.SourceSha is not null
+        && evidence.ReleaseCandidate.ArchiveInputs is not null
+        && evidence.ReleaseCandidate.ArchiveInputs.ContentDigest is not null
+        && evidence.ReleaseCandidate.ArchiveInputs.Producer is not null
+        && evidence.ReleaseCandidate.ArchiveInputs.Producer.Repository is not null
+        && evidence.ReleaseCandidate.ArchiveInputs.Producer.WorkflowPath is not null
+        && evidence.ReleaseCandidate.ArchiveInputs.Producer.EventName is not null
+        && evidence.ReleaseCandidate.ArchiveInputs.Producer.AttemptUrl is not null
+        && evidence.ReleaseCandidate.ArchiveInputs.Producer.SourceSha is not null
+        && evidence.ReleaseCandidate.ArchiveInputs.Producer.SourceRef is not null
+        && evidence.ReleaseCandidate.ArchiveInputs.Artifact is not null
+        && evidence.ReleaseCandidate.ArchiveInputs.Artifact.Name is not null
+        && evidence.ReleaseCandidate.ArchiveInputs.Artifact.UploadDigest is not null
+        && evidence.ReleaseCandidate.GhcrInputs is not null
+        && evidence.ReleaseCandidate.GhcrInputs.ContentDigest is not null
+        && evidence.ReleaseCandidate.GhcrInputs.Producer is not null
+        && evidence.ReleaseCandidate.GhcrInputs.Producer.Repository is not null
+        && evidence.ReleaseCandidate.GhcrInputs.Producer.WorkflowPath is not null
+        && evidence.ReleaseCandidate.GhcrInputs.Producer.EventName is not null
+        && evidence.ReleaseCandidate.GhcrInputs.Producer.AttemptUrl is not null
+        && evidence.ReleaseCandidate.GhcrInputs.Producer.SourceSha is not null
+        && evidence.ReleaseCandidate.GhcrInputs.Producer.SourceRef is not null
+        && evidence.ReleaseCandidate.GhcrInputs.Artifact is not null
+        && evidence.ReleaseCandidate.GhcrInputs.Artifact.Name is not null
+        && evidence.ReleaseCandidate.GhcrInputs.Artifact.UploadDigest is not null
+        && evidence.ReleaseCandidate.GhcrInputs.IndexDigest is not null
         && HasRuntimeShape(evidence.Candidate)
         && HasRuntimeShape(evidence.Prior)
         && evidence.Profile is not null
         && evidence.Profile.Id is not null
+        && evidence.Policy is not null
+        && evidence.Policy.WorkloadManifestDigest is not null
+        && evidence.Policy.QualificationPolicyDigest is not null
+        && evidence.Policy.ObservationPolicyDigest is not null
         && evidence.Azure is not null
         && evidence.Azure.BackendKind is not null
         && evidence.Azure.Region is not null
         && evidence.Azure.BackendIdentityDigest is not null
         && evidence.Azure.ConfigDigest is not null
         && evidence.Azure.AwsBindingDigest is not null
+        && evidence.Producer is not null
+        && evidence.Producer.Repository is not null
+        && evidence.Producer.WorkflowPath is not null
+        && evidence.Producer.EventName is not null
+        && evidence.Producer.RunUrl is not null
+        && evidence.Producer.AttemptUrl is not null
+        && evidence.Producer.SourceSha is not null
+        && evidence.Producer.SourceRef is not null
+        && evidence.CaptureArtifact is not null
+        && evidence.CaptureArtifact.Name is not null
+        && evidence.CaptureArtifact.UploadDigest is not null
         && evidence.Observation is not null
         && evidence.Cohorts is not null
         && evidence.Cohorts.All(cohort =>
@@ -676,8 +1058,30 @@ public static partial class RcObservationValidator
     private static void ValidateContext(RcObservationValidationContext context)
     {
         if (!IsDigest(context.ExpectedEvidenceDigest)
-            || string.IsNullOrWhiteSpace(context.ReleaseCandidateId)
+            || !ReleaseCandidateIdRegex().IsMatch(context.ReleaseCandidateId)
             || !IsDigest(context.RcManifestDigest)
+            || !IsDigest(context.ArchiveInputsDigest)
+            || !RepositoryRegex().IsMatch(context.ArchiveProducerRepository)
+            || context.ArchiveProducerWorkflowPath !=
+                ".github/workflows/release-candidate.yml"
+            || context.ArchiveProducerRunId <= 0
+            || context.ArchiveProducerRunAttempt <= 0
+            || !TrustedRefRegex().IsMatch(context.ArchiveProducerSourceRef)
+            || context.ArchiveArtifactId <= 0
+            || string.IsNullOrWhiteSpace(context.ArchiveArtifactName)
+            || !IsDigest(context.ArchiveArtifactUploadDigest)
+            || !IsDigest(context.GhcrInputsDigest)
+            || !RepositoryRegex().IsMatch(context.GhcrProducerRepository)
+            || context.GhcrProducerWorkflowPath !=
+                ".github/workflows/release-candidate-image.yml"
+            || context.GhcrProducerRunId <= 0
+            || context.GhcrProducerRunAttempt <= 0
+            || !IsGitSha(context.GhcrProducerSourceSha)
+            || context.GhcrProducerSourceRef != "refs/heads/main"
+            || context.GhcrArtifactId <= 0
+            || string.IsNullOrWhiteSpace(context.GhcrArtifactName)
+            || !IsDigest(context.GhcrArtifactUploadDigest)
+            || !IsDigest(context.GhcrIndexDigest)
             || !IsGitSha(context.CandidateSourceSha)
             || !IsDigest(context.CandidateIdentityDigest)
             || !IsDigest(context.CandidateRuntimeDigest)
@@ -686,15 +1090,75 @@ public static partial class RcObservationValidator
             || !IsDigest(context.PriorRuntimeDigest)
             || string.IsNullOrWhiteSpace(context.ProfileId)
             || context.ProfileVersion <= 0
+            || !IsDigest(context.WorkloadManifestDigest)
+            || !IsDigest(context.QualificationPolicyDigest)
+            || !IsDigest(context.ObservationPolicyDigest)
             || string.IsNullOrWhiteSpace(context.AzureBackendKind)
             || !RegionRegex().IsMatch(context.AzureRegion)
             || !IsDigest(context.AzureBackendIdentityDigest)
             || !IsDigest(context.ConfigDigest)
             || !IsDigest(context.AwsBindingDigest)
+            || !RepositoryRegex().IsMatch(context.ProducerRepository)
+            || context.ProducerWorkflowPath !=
+                ".github/workflows/rc-observation-real-azure.yml"
+            || context.ProducerRunId <= 0
+            || context.ProducerRunAttempt <= 0
+            || !IsGitSha(context.ProducerSourceSha)
+            || !ObservationProducerRefRegex().IsMatch(context.ProducerSourceRef)
+            || context.CaptureArtifactId <= 0
+            || string.IsNullOrWhiteSpace(context.CaptureArtifactName)
+            || !IsDigest(context.CaptureArtifactUploadDigest)
             || context.MinimumWindowMinutes <= 0
             || context.MaximumEvidenceAge <= TimeSpan.Zero)
         {
             throw new ArgumentException("RC observation validation context is incomplete or invalid.");
+        }
+    }
+
+    private static void ValidatePolicyAndProducer(
+        RcObservationEvidence evidence,
+        RcObservationValidationContext context,
+        Action<string> err)
+    {
+        if (evidence.Policy.WorkloadManifestDigest != context.WorkloadManifestDigest
+            || evidence.Policy.QualificationPolicyDigest !=
+                context.QualificationPolicyDigest
+            || evidence.Policy.ObservationPolicyDigest != context.ObservationPolicyDigest
+            || !IsDigest(evidence.Policy.WorkloadManifestDigest)
+            || !IsDigest(evidence.Policy.QualificationPolicyDigest)
+            || !IsDigest(evidence.Policy.ObservationPolicyDigest))
+        {
+            err("reviewed workload or observation policy identity drift detected");
+        }
+
+        var producer = evidence.Producer;
+        var expectedRunUrl =
+            $"https://github.com/{context.ProducerRepository}/actions/runs/" +
+            context.ProducerRunId;
+        if (producer.Repository != context.ProducerRepository
+            || producer.WorkflowPath != context.ProducerWorkflowPath
+            || producer.EventName != "workflow_dispatch"
+            || producer.RunId != context.ProducerRunId
+            || producer.RunAttempt != context.ProducerRunAttempt
+            || producer.RunUrl != expectedRunUrl
+            || producer.AttemptUrl != expectedRunUrl + "/attempts/" +
+                context.ProducerRunAttempt
+            || producer.SourceSha != context.ProducerSourceSha
+            || producer.SourceRef != context.ProducerSourceRef
+            || !RepositoryRegex().IsMatch(producer.Repository)
+            || !ObservationProducerRefRegex().IsMatch(producer.SourceRef))
+        {
+            err("observation producer does not match the exact trusted workflow attempt");
+        }
+
+        if (evidence.CaptureArtifact.Id != context.CaptureArtifactId
+            || evidence.CaptureArtifact.Name != context.CaptureArtifactName
+            || evidence.CaptureArtifact.UploadDigest !=
+                context.CaptureArtifactUploadDigest
+            || evidence.CaptureArtifact.Id <= 0
+            || !IsDigest(evidence.CaptureArtifact.UploadDigest))
+        {
+            err("capture artifact does not match its exact immutable upload identity");
         }
     }
 
@@ -740,6 +1204,70 @@ public static partial class RcObservationValidator
             || evidence.ReleaseCandidate.SourceSha != context.CandidateSourceSha)
         {
             err("release_candidate does not exactly match the trusted RC manifest identity");
+        }
+        var archive = evidence.ReleaseCandidate.ArchiveInputs;
+        var archiveProducer = archive.Producer;
+        var expectedArchiveAttempt =
+            $"https://github.com/{context.ArchiveProducerRepository}/actions/runs/" +
+            $"{context.ArchiveProducerRunId}/attempts/" +
+            context.ArchiveProducerRunAttempt;
+        var expectedArchiveName =
+            $"aws2azure-rc-archives-{context.ReleaseCandidateId}-" +
+            $"{context.ArchiveInputsDigest["sha256:".Length..]}-run-" +
+            $"{context.ArchiveProducerRunId}-attempt-" +
+            context.ArchiveProducerRunAttempt;
+        if (archive.ContentDigest != context.ArchiveInputsDigest
+            || archiveProducer.Repository != context.ArchiveProducerRepository
+            || archiveProducer.WorkflowPath != context.ArchiveProducerWorkflowPath
+            || archiveProducer.EventName != "workflow_dispatch"
+            || archiveProducer.RunId != context.ArchiveProducerRunId
+            || archiveProducer.RunAttempt != context.ArchiveProducerRunAttempt
+            || archiveProducer.AttemptUrl != expectedArchiveAttempt
+            || archiveProducer.SourceSha != context.CandidateSourceSha
+            || archiveProducer.SourceRef != context.ArchiveProducerSourceRef
+            || archive.Artifact.Id != context.ArchiveArtifactId
+            || archive.Artifact.Name != context.ArchiveArtifactName
+            || archive.Artifact.Name != expectedArchiveName
+            || archive.Artifact.UploadDigest != context.ArchiveArtifactUploadDigest
+            || !IsDigest(archive.ContentDigest)
+            || !IsDigest(archive.Artifact.UploadDigest))
+        {
+            err(
+                "release_candidate archive inputs do not match the exact trusted " +
+                "workflow attempt and artifact");
+        }
+        var ghcr = evidence.ReleaseCandidate.GhcrInputs;
+        var ghcrProducer = ghcr.Producer;
+        var expectedGhcrAttempt =
+            $"https://github.com/{context.GhcrProducerRepository}/actions/runs/" +
+            $"{context.GhcrProducerRunId}/attempts/" +
+            context.GhcrProducerRunAttempt;
+        var expectedGhcrName =
+            $"aws2azure-rc-ghcr-{context.ReleaseCandidateId}-" +
+            $"{context.GhcrInputsDigest["sha256:".Length..]}-run-" +
+            $"{context.GhcrProducerRunId}-attempt-" +
+            context.GhcrProducerRunAttempt;
+        if (ghcr.ContentDigest != context.GhcrInputsDigest
+            || ghcrProducer.Repository != context.GhcrProducerRepository
+            || ghcrProducer.WorkflowPath != context.GhcrProducerWorkflowPath
+            || ghcrProducer.EventName != "workflow_dispatch"
+            || ghcrProducer.RunId != context.GhcrProducerRunId
+            || ghcrProducer.RunAttempt != context.GhcrProducerRunAttempt
+            || ghcrProducer.AttemptUrl != expectedGhcrAttempt
+            || ghcrProducer.SourceSha != context.GhcrProducerSourceSha
+            || ghcrProducer.SourceRef != context.GhcrProducerSourceRef
+            || ghcr.Artifact.Id != context.GhcrArtifactId
+            || ghcr.Artifact.Name != context.GhcrArtifactName
+            || ghcr.Artifact.Name != expectedGhcrName
+            || ghcr.Artifact.UploadDigest != context.GhcrArtifactUploadDigest
+            || ghcr.IndexDigest != context.GhcrIndexDigest
+            || !IsDigest(ghcr.ContentDigest)
+            || !IsDigest(ghcr.Artifact.UploadDigest)
+            || !IsDigest(ghcr.IndexDigest))
+        {
+            err(
+                "release_candidate GHCR inputs do not match the exact trusted " +
+                "workflow attempt, artifact, and index");
         }
         if (evidence.Candidate.IdentityDigest != context.CandidateIdentityDigest
             || evidence.Candidate.RuntimeDigest != context.CandidateRuntimeDigest
@@ -806,6 +1334,13 @@ public static partial class RcObservationValidator
             || duration < TimeSpan.FromMinutes(window.MinimumWindowMinutes))
         {
             err("observation window is incomplete or below the trusted minimum");
+        }
+        if (evidence.Decision.Verdict == "rollback"
+            && evidence.Restoration is not null
+            && evidence.Restoration.StartedAtUtc - window.StartedAtUtc
+                < TimeSpan.FromMinutes(window.MinimumWindowMinutes))
+        {
+            err("rollback was initiated before the trusted minimum observation window elapsed");
         }
         if (window.StartedAtUtc > nowUtc
             || window.EndedAtUtc > nowUtc
@@ -908,10 +1443,15 @@ public static partial class RcObservationValidator
         {
             err($"cohort '{cohort.Id}' contains backend, region, config, or binding drift");
         }
+        var expectedUntil = cohort.Role == "candidate"
+                            && evidence.Decision.Verdict == "rollback"
+                            && evidence.Restoration is not null
+            ? evidence.Restoration.StartedAtUtc
+            : evidence.Observation.EndedAtUtc;
         if (cohort.ObservedFromUtc != evidence.Observation.StartedAtUtc
-            || cohort.ObservedUntilUtc != evidence.Observation.EndedAtUtc)
+            || cohort.ObservedUntilUtc != expectedUntil)
         {
-            err($"cohort '{cohort.Id}' does not cover the exact observation window");
+            err($"cohort '{cohort.Id}' does not cover its exact attributable window");
         }
     }
 
@@ -1081,6 +1621,26 @@ public static partial class RcObservationValidator
     [GeneratedRegex("^[0-9a-f]{40}$", RegexOptions.CultureInvariant)]
     private static partial Regex GitShaRegex();
 
+    [GeneratedRegex(
+        "^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)-rc\\.[1-9][0-9]*$",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex ReleaseCandidateIdRegex();
+
     [GeneratedRegex("^[a-z0-9][a-z0-9-]{0,62}$", RegexOptions.CultureInvariant)]
     private static partial Regex RegionRegex();
+
+    [GeneratedRegex(
+        "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex RepositoryRegex();
+
+    [GeneratedRegex(
+        "^refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+-rc([.-]?[0-9A-Za-z]+)*$",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex TrustedRefRegex();
+
+    [GeneratedRegex(
+        "^(refs/heads/main|refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+-rc([.-]?[0-9A-Za-z]+)*)$",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex ObservationProducerRefRegex();
 }

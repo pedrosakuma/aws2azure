@@ -10,6 +10,7 @@ feature-specific A/B experiments.
 | Emulator `perf.yml` qualification | Proxy-overhead regression | Azure capacity or workload GA |
 | Real-Azure workload load evidence | Profile capacity/reliability under a production-shaped topology | A/B feature causality |
 | `perf-real-azure.yml` | CosmosBinary/LSI A/B falsification | Workload qualification |
+| Real-Azure RC observation | Candidate/stable canary thresholds and exact-prior restoration | Qualification of unapproved or rebuilt bytes |
 
 ## Required scenario semantics
 
@@ -131,6 +132,16 @@ The bootstrap records currently shared by S3 and Secrets Manager remain
 profile-owned. Every load proof records the prior ledger file digest/status and
 the exact prior producer, artifact, manifest, executable, and attestation
 identities. The candidate and prior aggregate and executable digests must differ.
+
+After qualification, produce archives from the protected RC tag and GHCR inputs
+from protected `main`, then run `rc-observation-real-azure.yml` from protected
+`main`. It verifies both exact attested producer attempts and artifacts, derives
+a canonical pre-observation RC identity without fabricating a final manifest,
+selects the approved candidate and its ledger-pinned rollback target, applies
+the existing qualification thresholds through committed observation policies,
+and emits immutable per-profile YAML suitable for final RC-manifest binding. See
+[RC staging and canary observation](rc-staging-canary.md) for the dispatch
+command, artifact chain, and failure semantics.
 
 ## Interpretation
 
