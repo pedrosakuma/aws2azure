@@ -3,6 +3,9 @@
 > **Release status:** Stable | Alpha | Beta | Release candidate
 > **Support window:** Current minor `X.Y`; previous supported minor `X.(Y-1)` or `None`
 
+Replace every `vX.Y.Z` placeholder, including documentation-link tags, before
+publishing.
+
 ## Artifacts and provenance
 
 | Artifact | Platform | Immutable digest/checksum | Provenance/attestation |
@@ -62,8 +65,8 @@ parity**.
 
 ## Evidence and documentation
 
-- [Versioning and compatibility policy](../docs/versioning-and-compatibility.md)
-- [Project maturity and support terms](../docs/project-maturity.md)
-- [Workload compatibility](../docs/site/workload-compatibility.md)
-- [Coverage matrix](../docs/site/coverage.md)
-- [Production runbook](../docs/deployment/production-runbook.md)
+- [Versioning and compatibility policy](https://github.com/pedrosakuma/aws2azure/blob/vX.Y.Z/docs/versioning-and-compatibility.md)
+- [Project maturity and support terms](https://github.com/pedrosakuma/aws2azure/blob/vX.Y.Z/docs/project-maturity.md)
+- [Workload compatibility](https://github.com/pedrosakuma/aws2azure/blob/vX.Y.Z/docs/site/workload-compatibility.md)
+- [Coverage matrix](https://github.com/pedrosakuma/aws2azure/blob/vX.Y.Z/docs/site/coverage.md)
+- [Production runbook](https://github.com/pedrosakuma/aws2azure/blob/vX.Y.Z/docs/deployment/production-runbook.md)
