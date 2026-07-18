@@ -265,7 +265,7 @@ cat > "$test_root/compare.json" <<JSON
   "total_commits": 1,
   "base_commit": { "sha": "$approval_sha" },
   "merge_base_commit": { "sha": "$approval_sha" },
-  "head_commit": { "sha": "$main_sha" }
+  "commits": [{ "sha": "$main_sha" }]
 }
 JSON
 
@@ -404,8 +404,10 @@ for mutation in \
   'del(.behind_by)' \
   'del(.total_commits)' \
   '.head_commit = null' \
-  'del(.head_commit)' \
   '.head_commit.sha = "3123456789abcdef0123456789abcdef01234567"' \
+  'del(.commits)' \
+  '.commits = []' \
+  '.commits[-1].sha = "3123456789abcdef0123456789abcdef01234567"' \
   'del(.base_commit.sha)' \
   'del(.merge_base_commit.sha)'; do
   jq "$mutation" "$test_root/compare.json" > "$test_root/invalid-ahead.json"

@@ -93,6 +93,17 @@ public sealed class RcObservationWorkflowTests
             "--main-compare-json \"$compare_json\"",
             Workflow,
             StringComparison.Ordinal);
+        Assert.Contains(
+            "--source-sha \"$producer_sha\"",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.True(
+            Workflow.IndexOf(
+                "\"/repos/$GITHUB_REPOSITORY/branches/main\"",
+                StringComparison.Ordinal) <
+            Workflow.IndexOf(
+                "\"/repos/$GITHUB_REPOSITORY/compare/$producer_sha...$main_sha\"",
+                StringComparison.Ordinal));
     }
 
     [Fact]

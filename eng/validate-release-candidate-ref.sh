@@ -114,6 +114,16 @@ jq -e \
       has("sha") and
       .sha == $sha;
 
+    def exact_head($sha):
+      if has("head_commit") then
+        (.head_commit | exact_commit($sha))
+      else
+        (.commits |
+          type == "array" and
+          length > 0 and
+          (.[-1] | exact_commit($sha)))
+      end;
+
     type == "object" and
     (.base_commit | exact_commit($approval_sha)) and
     (.merge_base_commit | exact_commit($approval_sha)) and
@@ -131,7 +141,7 @@ jq -e \
       (.ahead_by | type == "number" and . > 0 and floor == .) and
       .behind_by == 0 and
       .total_commits == .ahead_by and
-      (.head_commit | exact_commit($main_sha))
+      exact_head($main_sha)
     else
       false
     end
