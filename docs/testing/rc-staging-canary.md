@@ -120,6 +120,9 @@ The immutable archive producer in
 `.github/workflows/release-candidate.yml` stops before this step. Its attested
 `release-candidate-archive-inputs.json` records observation evidence as pending
 on the remaining workflow scope of #582 rather than fabricating a digest or pass
-verdict. After #588 binds GHCR to the exact released executables, the observation
-workflow must bind each profile's evidence to the archive-input identity and the
+verdict. `.github/workflows/release-candidate-image.yml` consumes that exact
+artifact by run, attempt, id, name, upload digest, and content digest and emits
+attested `release-candidate-ghcr-inputs.json`. Use its recorded index digest, not
+an RC tag alone, for deployment. The observation workflow must bind each
+profile's evidence to the archive-input identity, GHCR index digest, and
 eventual canonical RC-manifest identity before promotion.
