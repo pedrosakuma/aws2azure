@@ -242,6 +242,12 @@ promote in steps. At each step compare:
 Stop promotion on any rollback trigger. Do not average the candidate and stable
 cohorts together when deciding.
 
+For an immutable release candidate, follow the
+[RC staging and canary observation contract](../testing/rc-staging-canary.md).
+It binds each profile observation to the exact RC manifest, candidate and prior
+runtimes, Azure environment, isolated cohorts, thresholds, decision, and any
+verified exact-prior restoration.
+
 ## 6. Observe and alert
 
 ### Health and platform signals

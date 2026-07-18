@@ -1,0 +1,22 @@
+schema_version: 1
+artifact_kind: rc_observation
+cohorts:
+  - id: candidate-a
+    role: candidate
+    member_digests:
+      - sha256:3333333333333333333333333333333333333333333333333333333333333333
+metrics:
+  - id: error_rate
+    unit: ratio
+    comparison: less_than_or_equal
+    threshold: 0.01
+    candidate_value: 0.001
+    stable_value: 0.001
+    samples: 100
+    result: pass
+rollback_triggers:
+  - id: candidate-error-rate
+    metric_id: error_rate
+    status: armed
+    override_applied: false
+    suppressed: false
