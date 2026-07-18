@@ -28,6 +28,9 @@ Before staging, create a durable release record with:
 
 Do not use `latest` as the recorded artifact. A rollback must identify the exact
 previous binary or image.
+Confirm that the candidate and previous release are within the supported span in
+the [versioning and compatibility policy](../versioning-and-compatibility.md),
+and retain the release-note compatibility matrix with this record.
 
 ## 1. Qualify the workload
 
@@ -56,6 +59,10 @@ when its documented difference has been tested and explicitly accepted.
 ### Artifact and modules
 
 - Build or select an immutable Native-AOT artifact for the target architecture.
+- Read the candidate release notes. Confirm configuration, manifest/schema,
+  durable-format, rolling-upgrade, mixed-version, and rollback compatibility
+  against the retained previous release. Use configuration accepted by both
+  versions until rollback risk has passed.
 - Compile only the modules the workload needs when a smaller artifact is useful;
   see [build-time module selection](./module-selection.md).
 - At startup, verify the artifact contains the expected modules:
