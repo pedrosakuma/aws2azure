@@ -5,6 +5,12 @@ cohorts:
     role: candidate
     member_digests:
       - sha256:3333333333333333333333333333333333333333333333333333333333333333
+    operation_diagnostics:
+      - service: s3
+        operation: GetObject
+        completions: 100
+        failures: 0
+        throttles: 0
 metrics:
   - id: error_rate
     unit: ratio
@@ -12,6 +18,8 @@ metrics:
     threshold: 0.01
     candidate_value: 0.001
     stable_value: 0.001
+    candidate_samples: 100
+    stable_samples: 100
     samples: 100
     result: pass
 rollback_triggers:

@@ -166,7 +166,8 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
                         fixture.BackendIdentityDigest,
                         fixture.ProxyConfigDigest,
                         fixture.AwsBindingDigest,
-                        fixture.ProxyServiceUrl),
+                        fixture.ProxyServiceUrl,
+                        candidateTracker),
                     Cohort(
                         "stable",
                         fixture.PriorRuntimeIdentityDigest,
@@ -177,7 +178,8 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
                         fixture.BackendIdentityDigest,
                         fixture.ProxyConfigDigest,
                         fixture.AwsBindingDigest,
-                        stable.ServiceUrl),
+                        stable.ServiceUrl,
+                        stableTracker),
                 ],
                 Metrics =
                 [
@@ -261,7 +263,8 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
         string backendIdentityDigest,
         string configDigest,
         string awsBindingDigest,
-        string endpoint) => new()
+        string endpoint,
+        RealAzureWorkloadLoadTracker tracker) => new()
     {
         Id = RcObservationCaptureWriter.CohortId(role),
         Role = role,
@@ -281,6 +284,7 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
                 worker,
                 endpoint))
             .ToList(),
+        OperationDiagnostics = RcObservationCaptureWriter.OperationDiagnostics(tracker),
     };
 
     private static async Task RunWorkerAsync(

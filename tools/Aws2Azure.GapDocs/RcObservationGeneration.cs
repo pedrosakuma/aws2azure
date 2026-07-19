@@ -438,6 +438,8 @@ public static class RcObservationGenerator
             prior,
             selection,
             input,
+            qualificationPolicy,
+            workloadManifest,
             resolvedPolicy);
 
         var metrics = resolvedPolicy.Select(item =>
@@ -458,6 +460,8 @@ public static class RcObservationGenerator
                 Threshold = item.Threshold,
                 CandidateValue = measured.CandidateValue,
                 StableValue = measured.StableValue,
+                CandidateSamples = measured.CandidateSamples,
+                StableSamples = measured.StableSamples,
                 Samples = Math.Min(measured.CandidateSamples, measured.StableSamples),
                 CapturedAtUtc = measured.CapturedAtUtc.ToUniversalTime(),
                 Result = breached ? "breach" : "pass",
@@ -884,6 +888,8 @@ public static class RcObservationGenerator
         QualificationSealedRuntimeIdentity prior,
         RcObservationCaptureArtifactSelection selection,
         RcObservationGenerationInput input,
+        WorkloadQualificationPolicy qualification,
+        WorkloadGaManifest workload,
         IReadOnlyList<ResolvedMetric> resolvedPolicy)
     {
         if (capture.SchemaVersion != 1
@@ -981,7 +987,154 @@ public static class RcObservationGenerator
             throw new InvalidDataException(
                 "RC observation capture cohorts do not match the exact selected runtimes.");
         }
+        ValidateCaptureDiagnostics(
+            capture,
+            qualification,
+            workload,
+            candidateCohort,
+            stableCohort);
     }
+
+    private static void ValidateCaptureDiagnostics(
+        RcObservationCapture capture,
+        WorkloadQualificationPolicy qualification,
+        WorkloadGaManifest workload,
+        RcObservationCohort candidateCohort,
+        RcObservationCohort stableCohort)
+    {
+        var failureMetric = capture.Metrics.SingleOrDefault(metric =>
+            metric.Id == "operation-failure-rate");
+        var throughputMetric = capture.Metrics.SingleOrDefault(metric =>
+            metric.Id == "representative-load-throughput");
+        var representativeScenario = qualification.Scenarios.SingleOrDefault(scenario =>
+            scenario.Id == "representative-load");
+        if (failureMetric is null
+            || throughputMetric is null
+            || representativeScenario is null)
+        {
+            throw new InvalidDataException(
+                "RC observation capture is missing required aggregate diagnostics.");
+        }
+
+        var expectedOperations = workload.Operations
+            .Select(ParseOperationReference)
+            .OrderBy(item => item.Service, StringComparer.Ordinal)
+            .ThenBy(item => item.Operation, StringComparer.Ordinal)
+            .ToArray();
+        if (expectedOperations.Length == 0)
+        {
+            throw new InvalidDataException(
+                "RC observation workload does not declare attributable operations.");
+        }
+
+        ValidateCohortDiagnostics(
+            candidateCohort,
+            expectedOperations,
+            representativeScenario.Service,
+            representativeScenario.Operation,
+            failureMetric.CandidateSamples,
+            failureMetric.CandidateValue,
+            throughputMetric.CandidateSamples);
+        ValidateCohortDiagnostics(
+            stableCohort,
+            expectedOperations,
+            representativeScenario.Service,
+            representativeScenario.Operation,
+            failureMetric.StableSamples,
+            failureMetric.StableValue,
+            throughputMetric.StableSamples);
+    }
+
+    private static void ValidateCohortDiagnostics(
+        RcObservationCohort cohort,
+        IReadOnlyList<(string Service, string Operation)> expectedOperations,
+        string representativeService,
+        string representativeOperation,
+        long expectedFailureSamples,
+        double expectedFailureRate,
+        long expectedThroughputSamples)
+    {
+        if (cohort.OperationDiagnostics.Count != expectedOperations.Count)
+        {
+            throw new InvalidDataException(
+                $"RC observation cohort '{cohort.Id}' diagnostics do not cover every operation.");
+        }
+
+        var diagnostics = new Dictionary<string, RcObservationOperationDiagnostic>(
+            StringComparer.Ordinal);
+        foreach (var diagnostic in cohort.OperationDiagnostics)
+        {
+            if (diagnostic.Completions < 0
+                || diagnostic.Failures < 0
+                || diagnostic.Throttles < 0
+                || diagnostic.Throttles > diagnostic.Failures
+                || (diagnostic.Failures == 0) != (diagnostic.FirstFailure is null)
+                || (diagnostic.FirstFailure is not null
+                    && !IsSanitizedFirstFailure(diagnostic.FirstFailure)))
+            {
+                throw new InvalidDataException(
+                    $"RC observation cohort '{cohort.Id}' contains malformed operation diagnostics.");
+            }
+            if (!diagnostics.TryAdd(
+                    diagnostic.Service + ":" + diagnostic.Operation,
+                    diagnostic))
+            {
+                throw new InvalidDataException(
+                    $"RC observation cohort '{cohort.Id}' has duplicate operation diagnostics.");
+            }
+        }
+
+        foreach (var expected in expectedOperations)
+        {
+            if (!diagnostics.ContainsKey(expected.Service + ":" + expected.Operation))
+            {
+                throw new InvalidDataException(
+                    $"RC observation cohort '{cohort.Id}' diagnostics omit {expected.Service}:{expected.Operation}.");
+            }
+        }
+
+        var completions = cohort.OperationDiagnostics.Sum(item => item.Completions);
+        var failures = cohort.OperationDiagnostics.Sum(item => item.Failures);
+        var attempts = completions + failures;
+        if (attempts != expectedFailureSamples
+            || !NearlyEqual(attempts == 0 ? 1 : (double)failures / attempts, expectedFailureRate))
+        {
+            throw new InvalidDataException(
+                $"RC observation cohort '{cohort.Id}' diagnostics do not match aggregate failure-rate samples.");
+        }
+
+        var representative = diagnostics[
+            representativeService + ":" + representativeOperation];
+        if (representative.Completions + representative.Failures != expectedThroughputSamples)
+        {
+            throw new InvalidDataException(
+                $"RC observation cohort '{cohort.Id}' diagnostics do not match representative throughput samples.");
+        }
+    }
+
+    private static (string Service, string Operation) ParseOperationReference(string value)
+    {
+        var separator = value.IndexOf(':', StringComparison.Ordinal);
+        if (separator <= 0 || separator == value.Length - 1)
+        {
+            throw new InvalidDataException(
+                $"RC observation workload operation reference '{value}' is invalid.");
+        }
+        return (value[..separator], value[(separator + 1)..]);
+    }
+
+    private static bool NearlyEqual(double left, double right) =>
+        Math.Abs(left - right) <= Math.Max(Math.Abs(left), Math.Abs(right)) * 1e-12;
+
+    private static bool IsSanitizedFirstFailure(RcObservationFirstFailure failure) =>
+        IsSafeToken(failure.Category)
+        && (failure.StatusCode is null or >= 100 and <= 599)
+        && IsSafeToken(failure.ErrorCode);
+
+    private static bool IsSafeToken(string value) =>
+        value.Length is > 0 and <= 128
+        && value.AsSpan().IndexOfAnyExcept(
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-") < 0;
 
     private static bool IsDigest(string value) =>
         value.Length == 71
@@ -1148,6 +1301,25 @@ public static class RcObservationRenderer
             {
                 builder.Append(' ', 6).Append("- ").Append(Quote(member)).AppendLine();
             }
+            builder.Append(' ', 4).AppendLine("operation_diagnostics:");
+            foreach (var diagnostic in cohort.OperationDiagnostics)
+            {
+                Line(builder, 3, "- service", diagnostic.Service);
+                Line(builder, 4, "operation", diagnostic.Operation);
+                Line(builder, 4, "completions", diagnostic.Completions);
+                Line(builder, 4, "failures", diagnostic.Failures);
+                Line(builder, 4, "throttles", diagnostic.Throttles);
+                if (diagnostic.FirstFailure is not null)
+                {
+                    builder.Append(' ', 8).AppendLine("first_failure:");
+                    Line(builder, 5, "category", diagnostic.FirstFailure.Category);
+                    if (diagnostic.FirstFailure.StatusCode is int statusCode)
+                    {
+                        Line(builder, 5, "status_code", statusCode);
+                    }
+                    Line(builder, 5, "error_code", diagnostic.FirstFailure.ErrorCode);
+                }
+            }
         }
         builder.AppendLine("metrics:");
         foreach (var metric in evidence.Metrics)
@@ -1158,6 +1330,8 @@ public static class RcObservationRenderer
             Line(builder, 2, "threshold", metric.Threshold!.Value);
             Line(builder, 2, "candidate_value", metric.CandidateValue!.Value);
             Line(builder, 2, "stable_value", metric.StableValue!.Value);
+            Line(builder, 2, "candidate_samples", metric.CandidateSamples);
+            Line(builder, 2, "stable_samples", metric.StableSamples);
             Line(builder, 2, "samples", metric.Samples);
             Line(builder, 2, "captured_at_utc", metric.CapturedAtUtc);
             Line(builder, 2, "result", metric.Result);

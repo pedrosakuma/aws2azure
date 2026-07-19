@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Amazon.Runtime;
 using Aws2Azure.TestSupport.OperationalQualification;
 
 namespace Aws2Azure.IntegrationTests.OperationalQualification;
@@ -202,6 +203,11 @@ internal sealed class RealAzureWorkloadLoadTracker
 
     public string? FirstFailure(string operation)
     {
+        return _operations[operation].FirstFailure?.ToString();
+    }
+
+    public RealAzureWorkloadFirstFailure? FirstFailureDetail(string operation)
+    {
         return _operations[operation].FirstFailure;
     }
 
@@ -211,11 +217,11 @@ internal sealed class RealAzureWorkloadLoadTracker
         private long _completions;
         private long _failures;
         private long _throttles;
-        private string? _firstFailure;
+        private RealAzureWorkloadFirstFailure? _firstFailure;
 
         public IEnumerable<double> Latencies => _latencies;
         public long Throttles => Interlocked.Read(ref _throttles);
-        public string? FirstFailure => Volatile.Read(ref _firstFailure);
+        public RealAzureWorkloadFirstFailure? FirstFailure => Volatile.Read(ref _firstFailure);
 
         public void RecordSuccess(double elapsedMilliseconds)
         {
@@ -234,7 +240,7 @@ internal sealed class RealAzureWorkloadLoadTracker
             {
                 Interlocked.CompareExchange(
                     ref _firstFailure,
-                    $"{exception.GetType().Name}: {exception.Message}",
+                    RealAzureWorkloadFirstFailure.FromException(exception, throttled),
                     null);
             }
             if (throttled)
@@ -258,6 +264,75 @@ internal sealed class RealAzureWorkloadLoadTracker
                 P99Milliseconds = RealAzureWorkloadLoad.Percentile(latencies, 0.99),
             };
         }
+    }
+}
+
+internal sealed class RealAzureWorkloadFirstFailure
+{
+    public string Category { get; init; } = string.Empty;
+    public int? StatusCode { get; init; }
+    public string ErrorCode { get; init; } = string.Empty;
+
+    public static RealAzureWorkloadFirstFailure FromException(
+        Exception exception,
+        bool throttled)
+    {
+        var statusCode = exception switch
+        {
+            AmazonServiceException serviceException
+                when serviceException.StatusCode != default => (int?)serviceException.StatusCode,
+            HttpRequestException { StatusCode: { } httpStatus } => (int?)httpStatus,
+            _ => null,
+        };
+        var errorCode = exception is AmazonServiceException { ErrorCode.Length: > 0 } service
+            ? service.ErrorCode
+            : exception.GetType().Name;
+        return new RealAzureWorkloadFirstFailure
+        {
+            Category = throttled ? "throttle" : CategoryFor(exception),
+            StatusCode = statusCode,
+            ErrorCode = SafeToken(errorCode),
+        };
+    }
+
+    public override string ToString()
+    {
+        var status = StatusCode is int statusCode
+            ? statusCode.ToString(CultureInfo.InvariantCulture)
+            : "none";
+        return $"{Category}/status-{status}/code-{ErrorCode}";
+    }
+
+    private static string CategoryFor(Exception exception) => exception switch
+    {
+        AmazonServiceException => "aws_service",
+        OperationCanceledException => "canceled",
+        TimeoutException => "timeout",
+        HttpRequestException => "http_request",
+        _ => "exception",
+    };
+
+    private static string SafeToken(string value)
+    {
+        Span<char> buffer = stackalloc char[Math.Min(value.Length, 128)];
+        var written = 0;
+        foreach (var ch in value)
+        {
+            if (written == buffer.Length)
+            {
+                break;
+            }
+            if (ch is >= 'A' and <= 'Z'
+                or >= 'a' and <= 'z'
+                or >= '0' and <= '9'
+                or '.'
+                or '_'
+                or '-')
+            {
+                buffer[written++] = ch;
+            }
+        }
+        return written == 0 ? "unspecified" : new string(buffer[..written]);
     }
 }
 
