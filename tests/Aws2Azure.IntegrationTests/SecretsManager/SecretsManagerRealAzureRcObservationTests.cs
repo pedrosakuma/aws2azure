@@ -25,20 +25,44 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
         "ListSecrets",
         "DeleteSecret",
     ];
+    private static readonly string[] LifecycleOperationSchedule =
+    [
+        "CreateSecret",
+        "DescribeSecret",
+        "GetSecretValue",
+        "PutSecretValue",
+        "GetSecretValue",
+        "UpdateSecret",
+        "GetSecretValue",
+        "ListSecrets",
+        "DeleteSecret",
+    ];
 
     [SkippableFact]
     public async Task Candidate_and_stable_cohorts_capture_lifecycle_and_exact_prior_restore()
     {
-        Skip.If(string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(
-            "AWS2AZURE_RC_OBSERVATION_CAPTURE_PATH")),
-            "AWS2AZURE_RC_OBSERVATION_CAPTURE_PATH is not set.");
+        var observationCapturePath = Environment.GetEnvironmentVariable(
+            "AWS2AZURE_RC_OBSERVATION_CAPTURE_PATH");
+        var calibrationReportPath = Environment.GetEnvironmentVariable(
+            "AWS2AZURE_RC_CALIBRATION_REPORT_PATH");
+        var calibrationMode = !string.IsNullOrWhiteSpace(calibrationReportPath);
+        Skip.If(string.IsNullOrWhiteSpace(observationCapturePath)
+                && string.IsNullOrWhiteSpace(calibrationReportPath),
+            "RC observation capture or calibration report path is not set.");
         Skip.IfNot(fixture.Configured,
             fixture.SkipReason ?? "Real Azure Key Vault is not configured.");
         Assert.True(fixture.SealedRollbackConfigured,
             "RC observation requires exact candidate and prior sealed runtimes.");
 
-        var minutes = RcObservationCaptureWriter.ReadWindowMinutes();
-        var concurrency = RcObservationCaptureWriter.ReadConcurrency();
+        var minutes = calibrationMode
+            ? RcObservationCaptureWriter.ReadCalibrationDurationMinutes()
+            : RcObservationCaptureWriter.ReadWindowMinutes();
+        var candidateConcurrency = calibrationMode
+            ? RcObservationCaptureWriter.ReadCalibrationConcurrency("candidate")
+            : RcObservationCaptureWriter.ReadConcurrency();
+        var stableConcurrency = calibrationMode
+            ? RcObservationCaptureWriter.ReadCalibrationConcurrency("stable")
+            : candidateConcurrency;
         var duration = TimeSpan.FromMinutes(minutes);
         using var timeout = new CancellationTokenSource(duration + TimeSpan.FromMinutes(20));
         using var refresh = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
@@ -59,6 +83,7 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
         var canaryName = "a2a-rc-canary-" + Guid.NewGuid().ToString("N");
         var canaryValue = "rc-observation-" + Guid.NewGuid().ToString("N");
         var canaryExists = false;
+        var restoredPrior = false;
 
         try
         {
@@ -79,8 +104,8 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
 
             var startedAt = DateTimeOffset.UtcNow;
             var stopwatch = Stopwatch.StartNew();
-            var workers = new List<Task>(concurrency * 2);
-            for (var worker = 0; worker < concurrency; worker++)
+            var workers = new List<Task>(candidateConcurrency + stableConcurrency);
+            for (var worker = 0; worker < candidateConcurrency; worker++)
             {
                 workers.Add(RunWorkerAsync(
                     candidateClient,
@@ -90,6 +115,9 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
                     duration,
                     stopwatch,
                     timeout.Token));
+            }
+            for (var worker = 0; worker < stableConcurrency; worker++)
+            {
                 workers.Add(RunWorkerAsync(
                     stableClient,
                     stableTracker,
@@ -126,12 +154,98 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
                 .ConfigureAwait(false);
             canaryExists = false;
             var restorationVerifiedAt = DateTimeOffset.UtcNow;
+            restoredPrior = true;
 
             var candidateGet = candidateTracker.Snapshot("GetSecretValue");
             var stableGet = stableTracker.Snapshot("GetSecretValue");
             var candidateAttempts = RcObservationCaptureWriter.TotalAttempts(
                 candidateTracker);
             var stableAttempts = RcObservationCaptureWriter.TotalAttempts(stableTracker);
+            if (calibrationMode)
+            {
+                var report = new RcCalibrationReport
+                {
+                    Profile = new RcObservationCaptureProfile
+                    {
+                        Id = "secretsmanager-basic-lifecycle",
+                        Version = 1,
+                    },
+                    ReleaseCandidate = new RcCalibrationReleaseCandidate
+                    {
+                        Id = RequiredEnvironment(
+                            "AWS2AZURE_RC_CALIBRATION_RELEASE_CANDIDATE_ID"),
+                        ManifestDigest = RequiredEnvironment(
+                            "AWS2AZURE_RC_CALIBRATION_MANIFEST_DIGEST"),
+                        SourceSha = RequiredEnvironment(
+                            "AWS2AZURE_RC_CALIBRATION_CANDIDATE_SOURCE_SHA"),
+                        ArchiveInputsDigest = RequiredEnvironment(
+                            "AWS2AZURE_RC_CALIBRATION_ARCHIVE_INPUTS_DIGEST"),
+                        GhcrInputsDigest = RequiredEnvironment(
+                            "AWS2AZURE_RC_CALIBRATION_GHCR_INPUTS_DIGEST"),
+                    },
+                    Candidate = new RcObservationCaptureCohortIdentity
+                    {
+                        RuntimeIdentityDigest = fixture.CandidateRuntimeIdentityDigest,
+                        RuntimeDigest =
+                            fixture.CandidateRuntimeIdentity.Runtime.AggregateDigest,
+                        SourceSha = fixture.CandidateRuntimeIdentity.Source.Sha,
+                    },
+                    Prior = new RcObservationCaptureCohortIdentity
+                    {
+                        RuntimeIdentityDigest = fixture.PriorRuntimeIdentityDigest,
+                        RuntimeDigest = fixture.PriorRuntimeIdentity.Runtime.AggregateDigest,
+                        SourceSha = fixture.PriorRuntimeIdentity.Source.Sha,
+                    },
+                    Azure = new RcObservationCaptureAzure
+                    {
+                        BackendKind = "keyVault",
+                        Region = RequiredEnvironment("AZURE_LOCATION"),
+                        BackendIdentityDigest = fixture.BackendIdentityDigest,
+                        ConfigDigest = fixture.ProxyConfigDigest,
+                        AwsBindingDigest = fixture.AwsBindingDigest,
+                    },
+                    Calibration = new RcCalibrationWindow
+                    {
+                        StartedAtUtc = startedAt,
+                        MeasurementEndedAtUtc = measurementEndedAt,
+                        EndedAtUtc = restorationVerifiedAt,
+                        RequestedDurationMinutes = minutes,
+                    },
+                    PerCohortConcurrency = new RcCalibrationConcurrency
+                    {
+                        Candidate = candidateConcurrency,
+                        Stable = stableConcurrency,
+                    },
+                    TotalConcurrency = candidateConcurrency + stableConcurrency,
+                    OperationMixIdentity =
+                        RcObservationCaptureWriter.OperationMixIdentity(
+                            "secretsmanager-basic-lifecycle",
+                            LifecycleOperationSchedule),
+                    Cohorts =
+                    [
+                        CalibrationCohort(
+                            "candidate",
+                            candidateConcurrency,
+                            candidateGet,
+                            measurementEndedAt - startedAt,
+                            candidateTracker),
+                        CalibrationCohort(
+                            "stable",
+                            stableConcurrency,
+                            stableGet,
+                            measurementEndedAt - startedAt,
+                            stableTracker),
+                    ],
+                    Restoration = Restoration(
+                        fixture,
+                        restorationStartedAt,
+                        restorationVerifiedAt),
+                };
+                await RcObservationCaptureWriter.PublishCalibrationAsync(report)
+                    .ConfigureAwait(false);
+                return;
+            }
+
             var evidence = new RcObservationCaptureEvidence
             {
                 Profile = new RcObservationCaptureProfile
@@ -162,7 +276,7 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
                         fixture.CandidateRuntimeIdentity.Runtime.AggregateDigest,
                         startedAt,
                         restorationStartedAt,
-                        concurrency,
+                        candidateConcurrency,
                         fixture.BackendIdentityDigest,
                         fixture.ProxyConfigDigest,
                         fixture.AwsBindingDigest,
@@ -174,7 +288,7 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
                         fixture.PriorRuntimeIdentity.Runtime.AggregateDigest,
                         startedAt,
                         restorationVerifiedAt,
-                        concurrency,
+                        stableConcurrency,
                         fixture.BackendIdentityDigest,
                         fixture.ProxyConfigDigest,
                         fixture.AwsBindingDigest,
@@ -209,22 +323,31 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
                         CapturedAtUtc = measurementEndedAt,
                     },
                 ],
-                Restoration = new RcObservationCaptureRestoration
-                {
-                    Verified = true,
-                    RuntimeIdentityDigest = fixture.PriorRuntimeIdentityDigest,
-                    RuntimeDigest = fixture.PriorRuntimeIdentity.Runtime.AggregateDigest,
-                    BackendIdentityDigest = fixture.BackendIdentityDigest,
-                    ConfigDigest = fixture.ProxyConfigDigest,
-                    AwsBindingDigest = fixture.AwsBindingDigest,
-                    StartedAtUtc = restorationStartedAt,
-                    VerifiedAtUtc = restorationVerifiedAt,
-                },
+                Restoration = Restoration(
+                    fixture,
+                    restorationStartedAt,
+                    restorationVerifiedAt),
             };
             await RcObservationCaptureWriter.PublishAsync(evidence).ConfigureAwait(false);
         }
         finally
         {
+            if (!restoredPrior && fixture.Configured && fixture.SealedRollbackConfigured)
+            {
+                try
+                {
+                    await SecretsManagerCredentialRotationQualification
+                        .RefreshGitHubOidcTokenAsync(
+                            RequiredEnvironment("AZURE_FEDERATED_TOKEN_FILE"),
+                            CancellationToken.None).ConfigureAwait(false);
+                    await fixture.StopForRuntimeSwitchAsync().ConfigureAwait(false);
+                    await fixture.StartRuntimeAsync(SealedRuntimeRole.Prior)
+                        .ConfigureAwait(false);
+                }
+                catch
+                {
+                }
+            }
             refresh.Cancel();
             try
             {
@@ -285,6 +408,36 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
                 endpoint))
             .ToList(),
         OperationDiagnostics = RcObservationCaptureWriter.OperationDiagnostics(tracker),
+    };
+
+    private static RcCalibrationCohort CalibrationCohort(
+        string role,
+        int concurrency,
+        RealAzureWorkloadLoadOperationMeasurement getSecretValue,
+        TimeSpan elapsed,
+        RealAzureWorkloadLoadTracker tracker) => new()
+    {
+        Role = role,
+        Concurrency = concurrency,
+        GetSecretValueThroughputPerSecond =
+            elapsed.TotalSeconds <= 0 ? 0 : getSecretValue.Completions / elapsed.TotalSeconds,
+        GetSecretValueSamples = getSecretValue.Completions + getSecretValue.Failures,
+        OperationDiagnostics = RcObservationCaptureWriter.OperationDiagnostics(tracker),
+    };
+
+    private static RcObservationCaptureRestoration Restoration(
+        SecretsManagerRealAzureProxyFixture fixture,
+        DateTimeOffset startedAt,
+        DateTimeOffset verifiedAt) => new()
+    {
+        Verified = true,
+        RuntimeIdentityDigest = fixture.PriorRuntimeIdentityDigest,
+        RuntimeDigest = fixture.PriorRuntimeIdentity.Runtime.AggregateDigest,
+        BackendIdentityDigest = fixture.BackendIdentityDigest,
+        ConfigDigest = fixture.ProxyConfigDigest,
+        AwsBindingDigest = fixture.AwsBindingDigest,
+        StartedAtUtc = startedAt,
+        VerifiedAtUtc = verifiedAt,
     };
 
     private static async Task RunWorkerAsync(

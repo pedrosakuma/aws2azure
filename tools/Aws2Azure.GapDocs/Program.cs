@@ -69,6 +69,11 @@ if (args.Length > 0 && args[0] == "validate-rc-observation")
     return ValidateRcObservation(args[1..]);
 }
 
+if (args.Length > 0 && args[0] == "validate-rc-calibration-report")
+{
+    return ValidateRcCalibrationReport(args[1..]);
+}
+
 return RunGapDocs(args, repoRoot, gapsRoot, workloadsRoot, siteRoot, generatedCode);
 
 static int RunGapDocs(
@@ -1316,6 +1321,52 @@ static int ValidateRcObservation(string[] args)
                                       or JsonException
                                       or UnauthorizedAccessException
                                       or YamlException)
+    {
+        Console.Error.WriteLine("[gap-docs] " + exception.Message);
+        return 2;
+    }
+}
+
+static int ValidateRcCalibrationReport(string[] args)
+{
+    string? reportPath = null;
+    for (var index = 0; index < args.Length; index++)
+    {
+        var option = args[index];
+        if (++index >= args.Length || args[index].StartsWith("--", StringComparison.Ordinal))
+        {
+            Console.Error.WriteLine($"Incomplete option '{option}'.");
+            return 1;
+        }
+        var value = args[index];
+        switch (option)
+        {
+            case "--report" when reportPath is null:
+                reportPath = value;
+                break;
+            default:
+                Console.Error.WriteLine($"Unknown or duplicate option '{option}'.");
+                return 1;
+        }
+    }
+    if (reportPath is null)
+    {
+        Console.Error.WriteLine("Usage: validate-rc-calibration-report --report <json>");
+        return 1;
+    }
+
+    try
+    {
+        RcCalibrationReportValidator.ValidateFile(reportPath);
+        Console.WriteLine("[gap-docs] non-promotable RC calibration report validated");
+        return 0;
+    }
+    catch (Exception exception) when (exception is ArgumentException
+                                      or FileNotFoundException
+                                      or InvalidDataException
+                                      or IOException
+                                      or JsonException
+                                      or UnauthorizedAccessException)
     {
         Console.Error.WriteLine("[gap-docs] " + exception.Message);
         return 2;

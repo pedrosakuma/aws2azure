@@ -96,6 +96,63 @@ internal sealed class RcObservationCaptureRestoration
     public DateTimeOffset VerifiedAtUtc { get; set; }
 }
 
+internal sealed class RcCalibrationReport
+{
+    public int SchemaVersion { get; set; } = 1;
+    public string ArtifactKind { get; set; } = "rc_observation_calibration";
+    public bool Promotable { get; set; }
+    public RcObservationCaptureProfile Profile { get; set; } = new();
+    public RcCalibrationReleaseCandidate ReleaseCandidate { get; set; } = new();
+    public RcObservationCaptureCohortIdentity Candidate { get; set; } = new();
+    public RcObservationCaptureCohortIdentity Prior { get; set; } = new();
+    public RcObservationCaptureAzure Azure { get; set; } = new();
+    public RcCalibrationWindow Calibration { get; set; } = new();
+    public RcCalibrationConcurrency PerCohortConcurrency { get; set; } = new();
+    public int TotalConcurrency { get; set; }
+    public string OperationMixIdentity { get; set; } = string.Empty;
+    public List<RcCalibrationCohort> Cohorts { get; set; } = [];
+    public RcObservationCaptureRestoration Restoration { get; set; } = new();
+}
+
+internal sealed class RcCalibrationReleaseCandidate
+{
+    public string Id { get; set; } = string.Empty;
+    public string ManifestDigest { get; set; } = string.Empty;
+    public string SourceSha { get; set; } = string.Empty;
+    public string ArchiveInputsDigest { get; set; } = string.Empty;
+    public string GhcrInputsDigest { get; set; } = string.Empty;
+}
+
+internal sealed class RcObservationCaptureCohortIdentity
+{
+    public string RuntimeIdentityDigest { get; set; } = string.Empty;
+    public string RuntimeDigest { get; set; } = string.Empty;
+    public string SourceSha { get; set; } = string.Empty;
+}
+
+internal sealed class RcCalibrationWindow
+{
+    public DateTimeOffset StartedAtUtc { get; set; }
+    public DateTimeOffset MeasurementEndedAtUtc { get; set; }
+    public DateTimeOffset EndedAtUtc { get; set; }
+    public int RequestedDurationMinutes { get; set; }
+}
+
+internal sealed class RcCalibrationConcurrency
+{
+    public int Candidate { get; set; }
+    public int Stable { get; set; }
+}
+
+internal sealed class RcCalibrationCohort
+{
+    public string Role { get; set; } = string.Empty;
+    public int Concurrency { get; set; }
+    public double GetSecretValueThroughputPerSecond { get; set; }
+    public long GetSecretValueSamples { get; set; }
+    public List<RcObservationOperationDiagnostic> OperationDiagnostics { get; set; } = [];
+}
+
 internal static class RcObservationCaptureWriter
 {
     public static int ReadWindowMinutes()
@@ -117,6 +174,35 @@ internal static class RcObservationCaptureWriter
             : throw new InvalidDataException(
                 "AWS2AZURE_RC_OBSERVATION_CONCURRENCY must be between 1 and 32.");
     }
+
+    public static int ReadCalibrationDurationMinutes()
+    {
+        var value = Environment.GetEnvironmentVariable(
+            "AWS2AZURE_RC_CALIBRATION_DURATION_MINUTES");
+        return int.TryParse(value, out var minutes) && minutes is >= 5 and <= 20
+            ? minutes
+            : throw new InvalidDataException(
+                "AWS2AZURE_RC_CALIBRATION_DURATION_MINUTES must be between 5 and 20.");
+    }
+
+    public static int ReadCalibrationConcurrency(string cohort)
+    {
+        var name = cohort switch
+        {
+            "candidate" => "AWS2AZURE_RC_CALIBRATION_CANDIDATE_CONCURRENCY",
+            "stable" => "AWS2AZURE_RC_CALIBRATION_STABLE_CONCURRENCY",
+            _ => throw new ArgumentOutOfRangeException(nameof(cohort)),
+        };
+        var value = Environment.GetEnvironmentVariable(name);
+        return int.TryParse(value, out var concurrency) && concurrency is >= 1 and <= 32
+            ? concurrency
+            : throw new InvalidDataException($"{name} must be between 1 and 32.");
+    }
+
+    public static string OperationMixIdentity(
+        string profile,
+        IReadOnlyList<string> operationSchedule) =>
+        Digest(profile + "\n" + string.Join("\n", operationSchedule));
 
     public static string MemberDigest(
         string profile,
@@ -161,6 +247,48 @@ internal static class RcObservationCaptureWriter
                     evidence,
                     RcObservationCaptureJsonContext.Default
                         .RcObservationCaptureEvidence)).ConfigureAwait(false);
+            File.Move(pending, fullPath, true);
+        }
+        finally
+        {
+            File.Delete(pending);
+        }
+    }
+
+    public static async Task PublishCalibrationAsync(RcCalibrationReport report)
+    {
+        if (report.ArtifactKind != "rc_observation_calibration"
+            || report.Promotable
+            || report.Profile.Id != "secretsmanager-basic-lifecycle"
+            || report.Calibration.RequestedDurationMinutes is < 5 or > 20
+            || report.PerCohortConcurrency.Candidate <= 0
+            || report.PerCohortConcurrency.Stable <= 0
+            || report.TotalConcurrency != report.PerCohortConcurrency.Candidate
+                + report.PerCohortConcurrency.Stable
+            || report.OperationMixIdentity.Length == 0
+            || report.Cohorts.Count != 2
+            || report.Cohorts.Any(cohort => cohort.OperationDiagnostics.Count == 0)
+            || !report.Restoration.Verified)
+        {
+            throw new InvalidDataException(
+                "RC calibration report must be complete, sanitized, and non-promotable.");
+        }
+
+        var configured = RequiredEnvironment("AWS2AZURE_RC_CALIBRATION_REPORT_PATH");
+        var fullPath = Path.IsPathRooted(configured)
+            ? configured
+            : Path.GetFullPath(Path.Combine(FindRepoRoot(), configured));
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        var pending = fullPath + ".pending";
+        File.Delete(pending);
+        try
+        {
+            await File.WriteAllTextAsync(
+                pending,
+                JsonSerializer.Serialize(
+                    report,
+                    RcObservationCaptureJsonContext.Default.RcCalibrationReport))
+                .ConfigureAwait(false);
             File.Move(pending, fullPath, true);
         }
         finally
@@ -234,5 +362,6 @@ internal static class RcObservationCaptureWriter
 }
 
 [JsonSerializable(typeof(RcObservationCaptureEvidence))]
+[JsonSerializable(typeof(RcCalibrationReport))]
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower)]
 internal sealed partial class RcObservationCaptureJsonContext : JsonSerializerContext;
