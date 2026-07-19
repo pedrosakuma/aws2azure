@@ -428,9 +428,6 @@ jobs:
             --identity artifacts/revalidated-archive-identity.json \
             --platform "linux/$ARCH" \
             --inspect artifacts/final-image-inspect.json
-          python3 eng/release-candidate-image.py compare-image-config \
-            --expected artifacts/smoke/image-inspect.json \
-            --actual artifacts/final-image-inspect.json
           container_id="$(docker create "$digest_ref")"
           cleanup_exact() {
             docker rm -f "$container_id" >/dev/null 2>&1 || true
@@ -494,6 +491,15 @@ jobs:
             > artifacts/confirmed-platform-digest.txt
           cmp artifacts/platform-digest.txt artifacts/confirmed-platform-digest.txt
           cmp artifacts/platform-manifest.json artifacts/confirmed-platform-manifest.json
+
+      - name: Confirm newly-pushed registry image matches local build
+        if: steps.preflight.outputs.exists == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/release-candidate-image.py compare-image-config \
+            --expected artifacts/smoke/image-inspect.json \
+            --actual artifacts/final-image-inspect.json
 
       - name: Validate exact pinned base layers
         shell: bash
