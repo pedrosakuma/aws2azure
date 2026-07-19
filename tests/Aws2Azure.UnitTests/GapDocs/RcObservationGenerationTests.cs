@@ -49,6 +49,60 @@ public sealed class RcObservationGenerationTests
     }
 
     [Fact]
+    public void Observation_policies_bind_the_reviewed_per_profile_load_shapes()
+    {
+        var root = FindRepoRoot();
+        var secrets = RcObservationPolicyLoader.Load(Path.Combine(
+            root,
+            "docs",
+            "workloads",
+            "observation",
+            "secretsmanager-basic-lifecycle.yaml"));
+        var s3 = RcObservationPolicyLoader.Load(Path.Combine(
+            root,
+            "docs",
+            "workloads",
+            "observation",
+            "s3-basic-object-crud.yaml"));
+
+        Assert.Equal(5, secrets.LoadShape.CandidateConcurrency);
+        Assert.Equal(5, secrets.LoadShape.StableConcurrency);
+        Assert.Equal(
+            "sha256:a1eb9a5a04c0d38239ef7266b1c4a9d4e7e154edaf741b5d87db1a680a5f57bb",
+            secrets.LoadShape.OperationMixIdentity);
+        Assert.Equal(8, s3.LoadShape.CandidateConcurrency);
+        Assert.Equal(8, s3.LoadShape.StableConcurrency);
+        Assert.Equal(
+            "sha256:83b92539e232cece8433271d2d04284eeb87e2509d4a12b7f3c3e86334dea9d3",
+            s3.LoadShape.OperationMixIdentity);
+    }
+
+    [Fact]
+    public void Generator_rejects_capture_load_shape_drift()
+    {
+        var data = CreateData();
+        data.Capture.LoadShape.CandidateConcurrency++;
+
+        var exception = Assert.Throws<InvalidDataException>(() => Generate(data));
+
+        Assert.Contains("capture is incomplete", exception.Message);
+    }
+
+    [Fact]
+    public void Generator_rejects_cohort_membership_that_does_not_match_load_shape()
+    {
+        var data = CreateData();
+        data.Capture.Cohorts[0] = data.Capture.Cohorts[0] with
+        {
+            MemberDigests = data.Capture.Cohorts[0].MemberDigests.Skip(1).ToArray(),
+        };
+
+        var exception = Assert.Throws<InvalidDataException>(() => Generate(data));
+
+        Assert.Contains("capture cohorts", exception.Message);
+    }
+
+    [Fact]
     public void Rendered_evidence_round_trips_archive_ghcr_and_identity_binding()
     {
         var result = Generate(CreateData());
@@ -301,6 +355,12 @@ public sealed class RcObservationGenerationTests
         var candidateIdentityDigest = Digest('4');
         var priorIdentityDigest = Digest('5');
         var workloadManifestDigest = Digest('a');
+        var observationPolicy = RcObservationPolicyLoader.Load(Path.Combine(
+            root,
+            "docs",
+            "workloads",
+            "observation",
+            profile + ".yaml"));
         var capture = new RcObservationCapture
         {
             SchemaVersion = 1,
@@ -317,6 +377,15 @@ public sealed class RcObservationGenerationTests
                 EndedAtUtc = restorationVerified,
                 RequestedWindowMinutes = 60,
             },
+            LoadShape = new RcObservationCaptureLoadShape
+            {
+                CandidateConcurrency =
+                    observationPolicy.LoadShape.CandidateConcurrency,
+                StableConcurrency =
+                    observationPolicy.LoadShape.StableConcurrency,
+                OperationMixIdentity =
+                    observationPolicy.LoadShape.OperationMixIdentity,
+            },
             Cohorts =
             [
                 Cohort(
@@ -328,6 +397,7 @@ public sealed class RcObservationGenerationTests
                     started,
                     restorationStarted,
                     Digest('6'),
+                    observationPolicy.LoadShape.CandidateConcurrency,
                     5000,
                     1000),
                 Cohort(
@@ -339,6 +409,7 @@ public sealed class RcObservationGenerationTests
                     started,
                     restorationVerified,
                     Digest('7'),
+                    observationPolicy.LoadShape.StableConcurrency,
                     4500,
                     900),
             ],
@@ -513,12 +584,7 @@ public sealed class RcObservationGenerationTests
                 "workloads",
                 "qualification",
                 profile + ".yaml")),
-            Policy = RcObservationPolicyLoader.Load(Path.Combine(
-                root,
-                "docs",
-                "workloads",
-                "observation",
-                profile + ".yaml")),
+            Policy = observationPolicy,
             Capture = capture,
             ArchiveSelection = archiveSelection,
             GhcrSelection = ghcrSelection,
@@ -609,6 +675,7 @@ public sealed class RcObservationGenerationTests
         DateTimeOffset started,
         DateTimeOffset ended,
         string member,
+        int memberCount,
         long failureSamples,
         long throughputSamples) => new()
     {
@@ -623,7 +690,9 @@ public sealed class RcObservationGenerationTests
         AwsBindingDigest = environment.AwsBindingDigest,
         ObservedFromUtc = started,
         ObservedUntilUtc = ended,
-        MemberDigests = [member],
+        MemberDigests = Enumerable.Range(0, memberCount)
+            .Select(index => member[..^2] + index.ToString("x2"))
+            .ToList(),
         OperationDiagnostics = OperationDiagnostics(failureSamples, throughputSamples),
     };
 

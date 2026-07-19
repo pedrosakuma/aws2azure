@@ -92,6 +92,40 @@ public sealed class RcObservationWorkflowTests
     }
 
     [Fact]
+    public void Observation_load_shape_comes_only_from_the_committed_profile_policy()
+    {
+        Assert.Contains(
+            "if: env.MODE == 'observation'",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "policy=\"docs/workloads/observation/$PROFILE.yaml\"",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "AWS2AZURE_RC_OBSERVATION_CANDIDATE_CONCURRENCY=$candidate_concurrency",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "AWS2AZURE_RC_OBSERVATION_STABLE_CONCURRENCY=$stable_concurrency",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "AWS2AZURE_RC_OBSERVATION_OPERATION_MIX_IDENTITY=$operation_mix_identity",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "AWS2AZURE_RC_OBSERVATION_CONCURRENCY:",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "AWS2AZURE_RC_OBSERVATION_CANDIDATE_CONCURRENCY=" +
+            "$CALIBRATION_CANDIDATE_CONCURRENCY",
+            Workflow,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Calibration_branch_cannot_upload_observation_evidence_or_receipts()
     {
         Assert.Contains(

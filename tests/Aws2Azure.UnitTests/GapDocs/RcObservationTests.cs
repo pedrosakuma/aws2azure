@@ -438,6 +438,32 @@ public sealed class RcObservationTests
     }
 
     [Fact]
+    public void Load_shape_tampering_is_digest_bound_and_membership_validated()
+    {
+        var (evidence, context) = ValidEvidence();
+        evidence = evidence with
+        {
+            LoadShape = evidence.LoadShape with
+            {
+                CandidateConcurrency = evidence.LoadShape.CandidateConcurrency + 1,
+            },
+        };
+        evidence = evidence with
+        {
+            EvidenceDigest = RcObservationIntegrity.ComputePayloadDigest(evidence),
+        };
+
+        var errors = RcObservationValidator.Validate(evidence, context, Now);
+
+        Assert.Contains(errors, error =>
+            error.Contains(
+                "digest bound by the trusted RC manifest",
+                StringComparison.Ordinal));
+        Assert.Contains(errors, error =>
+            error.Contains("cohort membership", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Diagnostic_tampering_is_digest_bound_and_consistency_validated()
     {
         var (evidence, context) = ValidEvidence();
@@ -687,6 +713,12 @@ public sealed class RcObservationTests
                 EndedAtUtc = ended,
                 GeneratedAtUtc = ended.AddMinutes(10),
                 MinimumWindowMinutes = 60,
+            },
+            LoadShape = new RcObservationLoadShape
+            {
+                CandidateConcurrency = 1,
+                StableConcurrency = 1,
+                OperationMixIdentity = Digest('a'),
             },
             Cohorts =
             [

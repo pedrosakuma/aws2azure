@@ -59,10 +59,19 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
             : RcObservationCaptureWriter.ReadWindowMinutes();
         var candidateConcurrency = calibrationMode
             ? RcObservationCaptureWriter.ReadCalibrationConcurrency("candidate")
-            : RcObservationCaptureWriter.ReadConcurrency();
+            : RcObservationCaptureWriter.ReadConcurrency("candidate");
         var stableConcurrency = calibrationMode
             ? RcObservationCaptureWriter.ReadCalibrationConcurrency("stable")
-            : candidateConcurrency;
+            : RcObservationCaptureWriter.ReadConcurrency("stable");
+        var operationMixIdentity = RcObservationCaptureWriter.OperationMixIdentity(
+            "secretsmanager-basic-lifecycle",
+            LifecycleOperationSchedule);
+        if (!calibrationMode)
+        {
+            Assert.Equal(
+                RequiredEnvironment("AWS2AZURE_RC_OBSERVATION_OPERATION_MIX_IDENTITY"),
+                operationMixIdentity);
+        }
         var duration = TimeSpan.FromMinutes(minutes);
         using var timeout = new CancellationTokenSource(duration + TimeSpan.FromMinutes(20));
         using var refresh = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
@@ -267,6 +276,12 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
                     MeasurementEndedAtUtc = measurementEndedAt,
                     EndedAtUtc = restorationVerifiedAt,
                     RequestedWindowMinutes = minutes,
+                },
+                LoadShape = new RcObservationCaptureLoadShape
+                {
+                    CandidateConcurrency = candidateConcurrency,
+                    StableConcurrency = stableConcurrency,
+                    OperationMixIdentity = operationMixIdentity,
                 },
                 Cohorts =
                 [

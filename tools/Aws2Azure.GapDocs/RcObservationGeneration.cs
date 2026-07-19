@@ -18,10 +18,18 @@ public sealed class RcObservationPolicy
     public int MaximumWindowMinutes { get; set; }
     public int MaximumEvidenceAgeHours { get; set; }
     public long MinimumSamplesPerCohort { get; set; }
+    public RcObservationPolicyLoadShape LoadShape { get; set; } = new();
     public List<RcObservationPolicyMetric> Metrics { get; set; } = [];
 
     [YamlIgnore]
     public string SourceFile { get; set; } = string.Empty;
+}
+
+public sealed class RcObservationPolicyLoadShape
+{
+    public int CandidateConcurrency { get; set; }
+    public int StableConcurrency { get; set; }
+    public string OperationMixIdentity { get; set; } = string.Empty;
 }
 
 public sealed class RcObservationPolicyMetric
@@ -162,9 +170,17 @@ public sealed class RcObservationCapture
     public RcObservationCaptureProfile Profile { get; set; } = new();
     public RcObservationAzureEnvironment Azure { get; set; } = new();
     public RcObservationCaptureWindow Observation { get; set; } = new();
+    public RcObservationCaptureLoadShape LoadShape { get; set; } = new();
     public List<RcObservationCohort> Cohorts { get; set; } = [];
     public List<RcObservationCaptureMetric> Metrics { get; set; } = [];
     public RcObservationRestoration? Restoration { get; set; }
+}
+
+public sealed class RcObservationCaptureLoadShape
+{
+    public int CandidateConcurrency { get; set; }
+    public int StableConcurrency { get; set; }
+    public string OperationMixIdentity { get; set; } = string.Empty;
 }
 
 public sealed class RcObservationCaptureProfile
@@ -552,6 +568,12 @@ public static class RcObservationGenerator
                 GeneratedAtUtc = generatedAt,
                 MinimumWindowMinutes = policy.MinimumWindowMinutes,
             },
+            LoadShape = new RcObservationLoadShape
+            {
+                CandidateConcurrency = capture.LoadShape.CandidateConcurrency,
+                StableConcurrency = capture.LoadShape.StableConcurrency,
+                OperationMixIdentity = capture.LoadShape.OperationMixIdentity,
+            },
             Cohorts = cohorts,
             Metrics = metrics,
             RollbackTriggers = metrics.Select(metric => new RcObservationRollbackTrigger
@@ -799,6 +821,9 @@ public static class RcObservationGenerator
             || policy.MaximumWindowMinutes > 180
             || policy.MaximumEvidenceAgeHours != qualification.Rules.MaxArtifactAgeHours
             || policy.MinimumSamplesPerCohort != qualification.Rules.MinSamplesPerScenario
+            || policy.LoadShape.CandidateConcurrency <= 0
+            || policy.LoadShape.StableConcurrency <= 0
+            || !IsDigest(policy.LoadShape.OperationMixIdentity)
             || policy.Metrics.Count == 0
             || policy.Metrics.Select(metric => metric.Id)
                 .Distinct(StringComparer.Ordinal).Count() != policy.Metrics.Count
@@ -895,6 +920,12 @@ public static class RcObservationGenerator
         if (capture.SchemaVersion != 1
             || capture.Profile.Id != policy.ProfileId
             || capture.Profile.Version != policy.ProfileVersion
+            || capture.LoadShape.CandidateConcurrency
+                != policy.LoadShape.CandidateConcurrency
+            || capture.LoadShape.StableConcurrency
+                != policy.LoadShape.StableConcurrency
+            || capture.LoadShape.OperationMixIdentity
+                != policy.LoadShape.OperationMixIdentity
             || capture.Observation.RequestedWindowMinutes < policy.MinimumWindowMinutes
             || capture.Observation.RequestedWindowMinutes > policy.MaximumWindowMinutes
             || capture.Observation.MeasurementEndedAtUtc
@@ -979,6 +1010,10 @@ public static class RcObservationGenerator
             cohort.Role == "stable");
         if (candidateCohort is null
             || stableCohort is null
+            || candidateCohort.MemberDigests.Count
+                != capture.LoadShape.CandidateConcurrency
+            || stableCohort.MemberDigests.Count
+                != capture.LoadShape.StableConcurrency
             || candidateCohort.RuntimeIdentityDigest != input.CandidateIdentityDigest
             || candidateCohort.RuntimeDigest != candidate.Runtime.AggregateDigest
             || stableCohort.RuntimeIdentityDigest != input.PriorIdentityDigest
@@ -1282,6 +1317,10 @@ public static class RcObservationRenderer
         Line(builder, 1, "ended_at_utc", evidence.Observation.EndedAtUtc);
         Line(builder, 1, "generated_at_utc", evidence.Observation.GeneratedAtUtc);
         Line(builder, 1, "minimum_window_minutes", evidence.Observation.MinimumWindowMinutes);
+        builder.AppendLine("load_shape:");
+        Line(builder, 1, "candidate_concurrency", evidence.LoadShape.CandidateConcurrency);
+        Line(builder, 1, "stable_concurrency", evidence.LoadShape.StableConcurrency);
+        Line(builder, 1, "operation_mix_identity", evidence.LoadShape.OperationMixIdentity);
         builder.AppendLine("cohorts:");
         foreach (var cohort in evidence.Cohorts)
         {
