@@ -1866,6 +1866,14 @@ esac
         )
         self.assertIn("Select an existing immutable platform digest", workflow)
         self.assertIn("Validate exact registry image by digest", workflow)
+        self.assertRegex(
+            workflow,
+            (
+                r"- name: Confirm newly-pushed registry image matches local build\n"
+                r"\s+if: steps\.preflight\.outputs\.exists == 'false'"
+            ),
+        )
+        self.assertEqual(workflow.count("compare-image-config"), 1)
         self.assertIn("--expected-application-layers 2", workflow)
         self.assertIn('digest_ref="$repository@$digest"', workflow)
         self.assertIn("Create or recover exact amd64 and arm64 index", workflow)
