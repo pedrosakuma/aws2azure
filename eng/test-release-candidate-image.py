@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -24,6 +25,7 @@ OBSERVATION_WORKFLOW = (
     REPO_ROOT / ".github" / "workflows" / "rc-observation-real-azure.yml"
 )
 DOCKERFILE = REPO_ROOT / "docker" / "release-candidate" / "Dockerfile"
+IMAGE_FIXTURES = REPO_ROOT / "eng" / "fixtures" / "release-candidate-image"
 CANDIDATE = "v1.2.3-rc.4"
 REPOSITORY = "pedrosakuma/aws2azure"
 SOURCE_SHA = "0123456789abcdef0123456789abcdef01234567"
@@ -38,6 +40,14 @@ BASES = {
     ),
     "linux/arm64": (
         "sha256:84fc5eb352e49b24564ff085ece8de373ed14d019a1d0e9f6d1103ea00c43454"
+    ),
+}
+REAL_IMAGE_DIGESTS = {
+    "linux/amd64": (
+        "sha256:6745420ce462e2d5abc2da175cb88ce95babdb4d5e81d8be33f19167ead42d5d"
+    ),
+    "linux/arm64": (
+        "sha256:f1e7846393d313856e46da8e5807e8115679a01605da241b080e4ef0c2f960a5"
     ),
 }
 
@@ -1614,6 +1624,99 @@ esac
             expect_success=False,
         )
 
+    def test_real_registry_manifests_validate_exact_pinned_base_prefix(self) -> None:
+        for platform, arch in (
+            ("linux/amd64", "amd64"),
+            ("linux/arm64", "arm64"),
+        ):
+            with self.subTest(platform=platform):
+                base = self.root / f"{arch}-base.json"
+                image = self.root / f"{arch}-image.json"
+                base.write_bytes(
+                    base64.b64decode(
+                        (IMAGE_FIXTURES / f"{arch}-base.json.b64")
+                        .read_text(encoding="ascii")
+                        .strip(),
+                        validate=True,
+                    )
+                )
+                image.write_bytes(
+                    base64.b64decode(
+                        (IMAGE_FIXTURES / f"{arch}-image.json.b64")
+                        .read_text(encoding="ascii")
+                        .strip(),
+                        validate=True,
+                    )
+                )
+                self.assertEqual(digest_file(base), BASES[platform])
+                self.assertEqual(digest_file(image), REAL_IMAGE_DIGESTS[platform])
+                self.run_tool(
+                    IMAGE_TOOL,
+                    "validate-base-layers",
+                    "--platform",
+                    platform,
+                    "--base-manifest",
+                    str(base),
+                    "--image-manifest",
+                    str(image),
+                    "--expected-application-layers",
+                    "2",
+                )
+
+                self.run_tool(
+                    IMAGE_TOOL,
+                    "validate-base-layers",
+                    "--platform",
+                    platform,
+                    "--base-manifest",
+                    str(base),
+                    "--image-manifest",
+                    str(image),
+                    "--expected-application-layers",
+                    "1",
+                    expect_success=False,
+                )
+                tampered = json.loads(image.read_text(encoding="utf-8"))
+                tampered["layers"].append(
+                    {
+                        "mediaType": (
+                            "application/vnd.docker.image.rootfs.diff.tar.gzip"
+                        ),
+                        "size": 1,
+                        "digest": digest_bytes(b"unexpected application layer"),
+                    }
+                )
+                write_json(image, tampered)
+                self.run_tool(
+                    IMAGE_TOOL,
+                    "validate-base-layers",
+                    "--platform",
+                    platform,
+                    "--base-manifest",
+                    str(base),
+                    "--image-manifest",
+                    str(image),
+                    "--expected-application-layers",
+                    "2",
+                    expect_success=False,
+                )
+                tampered["layers"].pop()
+                tampered["layers"][0]["digest"] = digest_bytes(b"unapproved base")
+                write_json(image, tampered)
+                self.run_tool(
+                    IMAGE_TOOL,
+                    "validate-base-layers",
+                    "--platform",
+                    platform,
+                    "--base-manifest",
+                    str(base),
+                    "--image-manifest",
+                    str(image),
+                    "--expected-application-layers",
+                    "2",
+                    expect_success=False,
+                )
+
     def test_platform_images_and_exact_two_platform_index_assemble(self) -> None:
         bundle, selection, identity_path = self.create_bundle()
         self.validate_bundle(bundle, selection, identity_path)
@@ -1763,6 +1866,7 @@ esac
         )
         self.assertIn("Select an existing immutable platform digest", workflow)
         self.assertIn("Validate exact registry image by digest", workflow)
+        self.assertIn("--expected-application-layers 2", workflow)
         self.assertIn('digest_ref="$repository@$digest"', workflow)
         self.assertIn("Create or recover exact amd64 and arm64 index", workflow)
         self.assertEqual(workflow.count("docker run -d --name"), 2)

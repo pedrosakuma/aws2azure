@@ -509,7 +509,8 @@ jobs:
           python3 eng/release-candidate-image.py validate-base-layers \
             --platform "linux/$ARCH" \
             --base-manifest artifacts/base-manifest.json \
-            --image-manifest artifacts/platform-manifest.json
+            --image-manifest artifacts/platform-manifest.json \
+            --expected-application-layers 2
 
       - name: Record exact platform image digest and materials
         id: result

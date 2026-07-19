@@ -1249,6 +1249,9 @@ def validate_base_layers(args: argparse.Namespace) -> None:
     platform_name = require_string(args.platform, "platform")
     if platform_name not in PLATFORMS:
         fail("platform must be linux/amd64 or linux/arm64")
+    expected_application_layers = require_integer(
+        args.expected_application_layers, "expected application layers"
+    )
     expected_digest = PLATFORMS[platform_name]["base_digest"]
     base_raw = regular_file(args.base_manifest.resolve(), "base manifest").read_bytes()
     if f"sha256:{hashlib.sha256(base_raw).hexdigest()}" != expected_digest:
@@ -1261,7 +1264,7 @@ def validate_base_layers(args: argparse.Namespace) -> None:
         not isinstance(base_layers, list)
         or not base_layers
         or not isinstance(image_layers, list)
-        or len(image_layers) != len(base_layers) + 1
+        or len(image_layers) != len(base_layers) + expected_application_layers
         or image_layers[: len(base_layers)] != base_layers
     ):
         fail("image layers are not based on the exact pinned production manifest")
@@ -1821,6 +1824,9 @@ def main() -> None:
     base_layers.add_argument("--platform", required=True)
     base_layers.add_argument("--base-manifest", type=pathlib.Path, required=True)
     base_layers.add_argument("--image-manifest", type=pathlib.Path, required=True)
+    base_layers.add_argument(
+        "--expected-application-layers", type=int, required=True
+    )
 
     platform_result = subparsers.add_parser("write-platform-result")
     platform_result.add_argument("--identity", type=pathlib.Path, required=True)
