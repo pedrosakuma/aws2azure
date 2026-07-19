@@ -147,6 +147,8 @@ public sealed record RcObservationWindow
 public sealed record RcObservationCohort
 {
     private IReadOnlyList<string> memberDigests = Array.Empty<string>();
+    private IReadOnlyList<RcObservationOperationDiagnostic> operationDiagnostics =
+        Array.Empty<RcObservationOperationDiagnostic>();
 
     public string Id { get; init; } = string.Empty;
     public string Role { get; init; } = string.Empty;
@@ -165,6 +167,29 @@ public sealed record RcObservationCohort
         init => memberDigests = Array.AsReadOnly(
             (value ?? Array.Empty<string>()).ToArray());
     }
+    public IReadOnlyList<RcObservationOperationDiagnostic> OperationDiagnostics
+    {
+        get => operationDiagnostics;
+        init => operationDiagnostics = Array.AsReadOnly(
+            (value ?? Array.Empty<RcObservationOperationDiagnostic>()).ToArray());
+    }
+}
+
+public sealed record RcObservationOperationDiagnostic
+{
+    public string Service { get; init; } = string.Empty;
+    public string Operation { get; init; } = string.Empty;
+    public long Completions { get; init; }
+    public long Failures { get; init; }
+    public long Throttles { get; init; }
+    public RcObservationFirstFailure? FirstFailure { get; init; }
+}
+
+public sealed record RcObservationFirstFailure
+{
+    public string Category { get; init; } = string.Empty;
+    public int? StatusCode { get; init; }
+    public string ErrorCode { get; init; } = string.Empty;
 }
 
 public sealed record RcObservationMetric
@@ -175,6 +200,8 @@ public sealed record RcObservationMetric
     public double? Threshold { get; init; }
     public double? CandidateValue { get; init; }
     public double? StableValue { get; init; }
+    public long CandidateSamples { get; init; }
+    public long StableSamples { get; init; }
     public long Samples { get; init; }
     public DateTimeOffset CapturedAtUtc { get; init; }
     public string Result { get; init; } = string.Empty;
@@ -420,6 +447,27 @@ public static class RcObservationLoader
         ObservedUntilUtc = value?.ObservedUntilUtc ?? default,
         MemberDigests = value?.MemberDigests?.Select(item => item!).ToArray()
             ?? Array.Empty<string>(),
+        OperationDiagnostics = value?.OperationDiagnostics?.Select(Map).ToArray()
+            ?? Array.Empty<RcObservationOperationDiagnostic>(),
+    };
+
+    private static RcObservationOperationDiagnostic Map(
+        RcObservationOperationDiagnosticYaml? value) => new()
+    {
+        Service = value?.Service!,
+        Operation = value?.Operation!,
+        Completions = value?.Completions ?? 0,
+        Failures = value?.Failures ?? 0,
+        Throttles = value?.Throttles ?? 0,
+        FirstFailure = value?.FirstFailure is null ? null : Map(value.FirstFailure),
+    };
+
+    private static RcObservationFirstFailure Map(
+        RcObservationFirstFailureYaml value) => new()
+    {
+        Category = value.Category!,
+        StatusCode = value.StatusCode,
+        ErrorCode = value.ErrorCode!,
     };
 
     private static RcObservationMetric Map(RcObservationMetricYaml? value) => new()
@@ -430,6 +478,8 @@ public static class RcObservationLoader
         Threshold = value?.Threshold,
         CandidateValue = value?.CandidateValue,
         StableValue = value?.StableValue,
+        CandidateSamples = value?.CandidateSamples ?? 0,
+        StableSamples = value?.StableSamples ?? 0,
         Samples = value?.Samples ?? 0,
         CapturedAtUtc = value?.CapturedAtUtc ?? default,
         Result = value?.Result!,
@@ -593,6 +643,24 @@ public static class RcObservationLoader
         public DateTimeOffset ObservedFromUtc { get; set; }
         public DateTimeOffset ObservedUntilUtc { get; set; }
         public List<string?>? MemberDigests { get; set; }
+        public List<RcObservationOperationDiagnosticYaml?>? OperationDiagnostics { get; set; }
+    }
+
+    private sealed class RcObservationOperationDiagnosticYaml
+    {
+        public string? Service { get; set; }
+        public string? Operation { get; set; }
+        public long Completions { get; set; }
+        public long Failures { get; set; }
+        public long Throttles { get; set; }
+        public RcObservationFirstFailureYaml? FirstFailure { get; set; }
+    }
+
+    private sealed class RcObservationFirstFailureYaml
+    {
+        public string? Category { get; set; }
+        public int? StatusCode { get; set; }
+        public string? ErrorCode { get; set; }
     }
 
     private sealed class RcObservationMetricYaml
@@ -603,6 +671,8 @@ public static class RcObservationLoader
         public double? Threshold { get; set; }
         public double? CandidateValue { get; set; }
         public double? StableValue { get; set; }
+        public long CandidateSamples { get; set; }
+        public long StableSamples { get; set; }
         public long Samples { get; set; }
         public DateTimeOffset CapturedAtUtc { get; set; }
         public string? Result { get; set; }
@@ -826,6 +896,42 @@ public static class RcObservationIntegrity
                     $"{prefix}.member_digests[{memberIndex}]",
                     cohort.MemberDigests[memberIndex]);
             }
+            Append(
+                canonical,
+                prefix + ".operation_diagnostics.count",
+                cohort.OperationDiagnostics.Count);
+            for (var diagnosticIndex = 0;
+                 diagnosticIndex < cohort.OperationDiagnostics.Count;
+                 diagnosticIndex++)
+            {
+                var diagnostic = cohort.OperationDiagnostics[diagnosticIndex];
+                var diagnosticPrefix =
+                    $"{prefix}.operation_diagnostics[{diagnosticIndex}]";
+                Append(canonical, diagnosticPrefix + ".service", diagnostic.Service);
+                Append(canonical, diagnosticPrefix + ".operation", diagnostic.Operation);
+                Append(canonical, diagnosticPrefix + ".completions", diagnostic.Completions);
+                Append(canonical, diagnosticPrefix + ".failures", diagnostic.Failures);
+                Append(canonical, diagnosticPrefix + ".throttles", diagnostic.Throttles);
+                Append(
+                    canonical,
+                    diagnosticPrefix + ".first_failure.present",
+                    diagnostic.FirstFailure is not null);
+                if (diagnostic.FirstFailure is not null)
+                {
+                    Append(
+                        canonical,
+                        diagnosticPrefix + ".first_failure.category",
+                        diagnostic.FirstFailure.Category);
+                    Append(
+                        canonical,
+                        diagnosticPrefix + ".first_failure.status_code",
+                        diagnostic.FirstFailure.StatusCode);
+                    Append(
+                        canonical,
+                        diagnosticPrefix + ".first_failure.error_code",
+                        diagnostic.FirstFailure.ErrorCode);
+                }
+            }
         }
         Append(canonical, "metrics.count", evidence.Metrics.Count);
         for (var index = 0; index < evidence.Metrics.Count; index++)
@@ -838,6 +944,8 @@ public static class RcObservationIntegrity
             Append(canonical, prefix + ".threshold", metric.Threshold);
             Append(canonical, prefix + ".candidate_value", metric.CandidateValue);
             Append(canonical, prefix + ".stable_value", metric.StableValue);
+            Append(canonical, prefix + ".candidate_samples", metric.CandidateSamples);
+            Append(canonical, prefix + ".stable_samples", metric.StableSamples);
             Append(canonical, prefix + ".samples", metric.Samples);
             Append(canonical, prefix + ".captured_at_utc", metric.CapturedAtUtc);
             Append(canonical, prefix + ".result", metric.Result);
@@ -915,13 +1023,16 @@ public static class RcObservationIntegrity
     private static void Append(StringBuilder builder, string name, bool? value) =>
         Append(builder, name, value is null ? "<missing>" : value.Value ? "true" : "false");
 
+    private static void Append(StringBuilder builder, string name, int? value) =>
+        Append(builder, name, value?.ToString(CultureInfo.InvariantCulture) ?? "<missing>");
+
     private static void Append(StringBuilder builder, string name, DateTimeOffset value) =>
         Append(builder, name, value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
 }
 
 public static partial class RcObservationValidator
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     public static IReadOnlyList<string> Validate(
         RcObservationEvidence evidence,
@@ -950,6 +1061,7 @@ public static partial class RcObservationValidator
         ValidateWindow(evidence, context, nowUtc, Err);
         ValidateCohorts(evidence, context, Err);
         var breachedMetrics = ValidateMetricsAndTriggers(evidence, Err);
+        ValidateDiagnosticConsistency(evidence, Err);
         ValidateDecisionAndRestoration(evidence, context, breachedMetrics, nowUtc, Err);
         return errors;
     }
@@ -1025,7 +1137,15 @@ public static partial class RcObservationValidator
             && cohort.ConfigDigest is not null
             && cohort.AwsBindingDigest is not null
             && cohort.MemberDigests is not null
-            && cohort.MemberDigests.All(member => member is not null))
+            && cohort.MemberDigests.All(member => member is not null)
+            && cohort.OperationDiagnostics is not null
+            && cohort.OperationDiagnostics.All(diagnostic =>
+                diagnostic is not null
+                && diagnostic.Service is not null
+                && diagnostic.Operation is not null
+                && (diagnostic.FirstFailure is null
+                    || diagnostic.FirstFailure.Category is not null
+                    && diagnostic.FirstFailure.ErrorCode is not null)))
         && evidence.Metrics is not null
         && evidence.Metrics.All(metric =>
             metric is not null
@@ -1482,7 +1602,10 @@ public static partial class RcObservationValidator
                 || !double.IsFinite(threshold)
                 || !double.IsFinite(candidateValue)
                 || !double.IsFinite(stableValue)
-                || metric.Samples <= 0)
+                || metric.CandidateSamples <= 0
+                || metric.StableSamples <= 0
+                || metric.Samples <= 0
+                || metric.Samples != Math.Min(metric.CandidateSamples, metric.StableSamples))
             {
                 err($"metric '{metric.Id}' contains malformed or non-finite values");
                 continue;
@@ -1549,6 +1672,198 @@ public static partial class RcObservationValidator
         }
         return breached;
     }
+
+    private static void ValidateDiagnosticConsistency(
+        RcObservationEvidence evidence,
+        Action<string> err)
+    {
+        var candidates = evidence.Cohorts.Where(cohort =>
+            cohort.Role == "candidate").ToArray();
+        var stables = evidence.Cohorts.Where(cohort =>
+            cohort.Role == "stable").ToArray();
+        if (candidates.Length != 1 || stables.Length != 1)
+        {
+            return;
+        }
+        var candidate = candidates[0];
+        var stable = stables[0];
+
+        var failureMetrics = evidence.Metrics.Where(metric =>
+            metric.Id == "operation-failure-rate").ToArray();
+        var throughputMetrics = evidence.Metrics.Where(metric =>
+            metric.Id == "representative-load-throughput").ToArray();
+        if (failureMetrics.Length != 1 || throughputMetrics.Length != 1)
+        {
+            err("operation diagnostics require aggregate failure-rate and representative throughput metrics");
+            return;
+        }
+        var failureMetric = failureMetrics[0];
+        var throughputMetric = throughputMetrics[0];
+
+        ValidateCohortDiagnostics(
+            candidate,
+            null,
+            failureMetric.CandidateSamples,
+            failureMetric.CandidateValue,
+            throughputMetric.CandidateSamples,
+            evidence.Profile.Id,
+            err);
+        ValidateCohortDiagnostics(
+            stable,
+            candidate,
+            failureMetric.StableSamples,
+            failureMetric.StableValue,
+            throughputMetric.StableSamples,
+            evidence.Profile.Id,
+            err);
+    }
+
+    private static void ValidateCohortDiagnostics(
+        RcObservationCohort cohort,
+        RcObservationCohort? baseline,
+        long expectedFailureSamples,
+        double? expectedFailureRate,
+        long expectedThroughputSamples,
+        string profileId,
+        Action<string> err)
+    {
+        if (cohort.OperationDiagnostics.Count == 0)
+        {
+            err($"cohort '{cohort.Id}' must include per-operation diagnostics");
+            return;
+        }
+
+        var diagnostics = new Dictionary<string, RcObservationOperationDiagnostic>(
+            StringComparer.Ordinal);
+        foreach (var diagnostic in cohort.OperationDiagnostics)
+        {
+            if (string.IsNullOrWhiteSpace(diagnostic.Service)
+                || string.IsNullOrWhiteSpace(diagnostic.Operation)
+                || diagnostic.Completions < 0
+                || diagnostic.Failures < 0
+                || diagnostic.Throttles < 0
+                || diagnostic.Throttles > diagnostic.Failures)
+            {
+                err($"cohort '{cohort.Id}' contains malformed operation diagnostics");
+                continue;
+            }
+
+            if ((diagnostic.Failures == 0) != (diagnostic.FirstFailure is null))
+            {
+                err(
+                    $"cohort '{cohort.Id}' first-failure diagnostic must be present only when failures were recorded");
+            }
+            if (diagnostic.FirstFailure is not null
+                && !IsSanitizedFirstFailure(diagnostic.FirstFailure))
+            {
+                err(
+                    $"cohort '{cohort.Id}' first-failure diagnostic is not sanitized");
+            }
+
+            if (!diagnostics.TryAdd(
+                    diagnostic.Service + ":" + diagnostic.Operation,
+                    diagnostic))
+            {
+                err($"cohort '{cohort.Id}' contains duplicate operation diagnostics");
+            }
+        }
+
+        if (baseline is not null)
+        {
+            var expectedKeys = baseline.OperationDiagnostics
+                .Select(item => item.Service + ":" + item.Operation)
+                .ToHashSet(StringComparer.Ordinal);
+            var actualKeys = diagnostics.Keys.ToHashSet(StringComparer.Ordinal);
+            if (!expectedKeys.SetEquals(actualKeys))
+            {
+                err("candidate and stable operation diagnostics must cover the same operations");
+            }
+        }
+        var profileOperations = ExpectedOperations(profileId);
+        if (profileOperations is not null)
+        {
+            var actualKeys = diagnostics.Keys.ToHashSet(StringComparer.Ordinal);
+            if (!profileOperations.SetEquals(actualKeys))
+            {
+                err($"cohort '{cohort.Id}' diagnostics do not cover the exact profile operations");
+            }
+        }
+
+        var completions = cohort.OperationDiagnostics.Sum(item => item.Completions);
+        var failures = cohort.OperationDiagnostics.Sum(item => item.Failures);
+        var attempts = completions + failures;
+        if (expectedFailureRate is not double failureRate
+            || attempts != expectedFailureSamples
+            || !NearlyEqual(attempts == 0 ? 1 : (double)failures / attempts, failureRate))
+        {
+            err(
+                $"cohort '{cohort.Id}' diagnostics do not match aggregate operation-failure-rate samples");
+        }
+
+        var representative = RepresentativeOperation(profileId);
+        if (representative is null)
+        {
+            err($"profile '{profileId}' does not define a representative diagnostic operation");
+            return;
+        }
+        if (!diagnostics.TryGetValue(
+                representative.Value.Service + ":" + representative.Value.Operation,
+                out var representativeDiagnostic)
+            || representativeDiagnostic.Completions + representativeDiagnostic.Failures
+                != expectedThroughputSamples)
+        {
+            err(
+                $"cohort '{cohort.Id}' diagnostics do not match representative throughput samples");
+        }
+    }
+
+    private static (string Service, string Operation)? RepresentativeOperation(
+        string profileId) => profileId switch
+        {
+            "s3-basic-object-crud" => ("s3", "GetObject"),
+            "secretsmanager-basic-lifecycle" => ("secretsmanager", "GetSecretValue"),
+            _ => null,
+        };
+
+    private static HashSet<string>? ExpectedOperations(string profileId) => profileId switch
+    {
+        "s3-basic-object-crud" => new HashSet<string>(
+        [
+            "s3:CreateBucket",
+            "s3:DeleteBucket",
+            "s3:DeleteObject",
+            "s3:GetObject",
+            "s3:HeadObject",
+            "s3:ListObjectsV2",
+            "s3:PutObject",
+        ],
+        StringComparer.Ordinal),
+        "secretsmanager-basic-lifecycle" => new HashSet<string>(
+        [
+            "secretsmanager:CreateSecret",
+            "secretsmanager:DeleteSecret",
+            "secretsmanager:DescribeSecret",
+            "secretsmanager:GetSecretValue",
+            "secretsmanager:ListSecrets",
+            "secretsmanager:PutSecretValue",
+            "secretsmanager:UpdateSecret",
+        ],
+        StringComparer.Ordinal),
+        _ => null,
+    };
+
+    private static bool NearlyEqual(double left, double right) =>
+        Math.Abs(left - right) <= Math.Max(Math.Abs(left), Math.Abs(right)) * 1e-12;
+
+    private static bool IsSanitizedFirstFailure(RcObservationFirstFailure failure) =>
+        IsSafeDiagnosticToken(failure.Category)
+        && (failure.StatusCode is null or >= 100 and <= 599)
+        && IsSafeDiagnosticToken(failure.ErrorCode);
+
+    private static bool IsSafeDiagnosticToken(string value) =>
+        value.Length is > 0 and <= 128
+        && value.AsSpan().IndexOfAnyExcept(
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-") < 0;
 
     private static void ValidateDecisionAndRestoration(
         RcObservationEvidence evidence,

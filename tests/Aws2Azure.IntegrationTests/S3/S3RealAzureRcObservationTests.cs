@@ -166,7 +166,8 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
                         fixture.BackendIdentityDigest,
                         fixture.ProxyConfigDigest,
                         fixture.AwsBindingDigest,
-                        fixture.S3ServiceUrl),
+                        fixture.S3ServiceUrl,
+                        candidateTracker),
                     Cohort(
                         "stable",
                         fixture.PriorRuntimeIdentityDigest,
@@ -177,7 +178,8 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
                         fixture.BackendIdentityDigest,
                         fixture.ProxyConfigDigest,
                         fixture.AwsBindingDigest,
-                        stable.ServiceUrl),
+                        stable.ServiceUrl,
+                        stableTracker),
                 ],
                 Metrics =
                 [
@@ -256,7 +258,8 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
         string backendIdentityDigest,
         string configDigest,
         string awsBindingDigest,
-        string endpoint) => new()
+        string endpoint,
+        RealAzureWorkloadLoadTracker tracker) => new()
     {
         Id = RcObservationCaptureWriter.CohortId(role),
         Role = role,
@@ -276,6 +279,7 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
                 worker,
                 endpoint))
             .ToList(),
+        OperationDiagnostics = RcObservationCaptureWriter.OperationDiagnostics(tracker),
     };
 
     private static async Task RunWorkerAsync(

@@ -438,6 +438,86 @@ public sealed class RcObservationTests
     }
 
     [Fact]
+    public void Diagnostic_tampering_is_digest_bound_and_consistency_validated()
+    {
+        var (evidence, context) = ValidEvidence();
+        evidence = evidence with
+        {
+            Cohorts =
+            [
+                evidence.Cohorts[0] with
+                {
+                    OperationDiagnostics =
+                    [
+                        OperationDiagnostic("s3", "CreateBucket", 0, 0),
+                        OperationDiagnostic("s3", "DeleteBucket", 0, 0),
+                        OperationDiagnostic("s3", "DeleteObject", 0, 0),
+                        OperationDiagnostic("s3", "GetObject", 198, 2),
+                        OperationDiagnostic("s3", "HeadObject", 0, 0),
+                        OperationDiagnostic("s3", "ListObjectsV2", 0, 0),
+                        OperationDiagnostic("s3", "PutObject", 800, 0),
+                    ],
+                },
+                evidence.Cohorts[1],
+            ],
+        };
+        evidence = evidence with
+        {
+            EvidenceDigest = RcObservationIntegrity.ComputePayloadDigest(evidence),
+        };
+
+        var errors = RcObservationValidator.Validate(evidence, context, Now);
+
+        Assert.Contains(errors, error => error.Contains(
+            "digest bound by the trusted RC manifest",
+            StringComparison.Ordinal));
+        Assert.Contains(errors, error => error.Contains(
+            "operation-failure-rate samples",
+            StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void First_failure_diagnostics_must_be_sanitized()
+    {
+        var (evidence, context) = ValidEvidence();
+        evidence = evidence with
+        {
+            Cohorts =
+            [
+                evidence.Cohorts[0] with
+                {
+                    OperationDiagnostics =
+                    [
+                        OperationDiagnostic("s3", "CreateBucket", 0, 0),
+                        OperationDiagnostic("s3", "DeleteBucket", 0, 0),
+                        OperationDiagnostic("s3", "DeleteObject", 0, 0),
+                        OperationDiagnostic("s3", "GetObject", 199, 1) with
+                        {
+                            FirstFailure = new RcObservationFirstFailure
+                            {
+                                Category = "aws service",
+                                StatusCode = 503,
+                                ErrorCode = "https://vault/secrets/name?token=abc",
+                            },
+                        },
+                        OperationDiagnostic("s3", "HeadObject", 0, 0),
+                        OperationDiagnostic("s3", "ListObjectsV2", 0, 0),
+                        OperationDiagnostic("s3", "PutObject", 800, 0),
+                    ],
+                },
+                evidence.Cohorts[1],
+            ],
+        };
+        (evidence, context) = Reseal(evidence, context);
+
+        var errors = RcObservationValidator.Validate(evidence, context, Now);
+
+        Assert.Contains(errors, error => error.Contains(
+            "first-failure diagnostic is not sanitized",
+            StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Payload_digest_does_not_hash_itself()
     {
         var (evidence, _) = ValidEvidence();
@@ -476,6 +556,9 @@ public sealed class RcObservationTests
             ((IList<RcObservationCohort>)evidence.Cohorts).Add(new RcObservationCohort()));
         Assert.Throws<NotSupportedException>(() =>
             ((IList<string>)evidence.Cohorts[0].MemberDigests).Add(Digest('9')));
+        Assert.Throws<NotSupportedException>(() =>
+            ((IList<RcObservationOperationDiagnostic>)evidence.Cohorts[0]
+                .OperationDiagnostics).Add(new RcObservationOperationDiagnostic()));
     }
 
     private static (RcObservationEvidence Evidence, RcObservationValidationContext Context)
@@ -625,13 +708,29 @@ public sealed class RcObservationTests
             [
                 new RcObservationMetric
                 {
-                    Id = "error_rate",
+                    Id = "operation-failure-rate",
                     Unit = "ratio",
                     Comparison = "less_than_or_equal",
                     Threshold = 0.01,
                     CandidateValue = 0.001,
                     StableValue = 0.001,
+                    CandidateSamples = 1000,
+                    StableSamples = 1000,
                     Samples = 1000,
+                    CapturedAtUtc = started.AddMinutes(30),
+                    Result = "pass",
+                },
+                new RcObservationMetric
+                {
+                    Id = "representative-load-throughput",
+                    Unit = "throughput_per_sec",
+                    Comparison = "greater_than_or_equal",
+                    Threshold = 40,
+                    CandidateValue = 50,
+                    StableValue = 45,
+                    CandidateSamples = 200,
+                    StableSamples = 200,
+                    Samples = 200,
                     CapturedAtUtc = started.AddMinutes(30),
                     Result = "pass",
                 },
@@ -641,7 +740,15 @@ public sealed class RcObservationTests
                 new RcObservationRollbackTrigger
                 {
                     Id = "candidate-error-rate",
-                    MetricId = "error_rate",
+                    MetricId = "operation-failure-rate",
+                    Status = "armed",
+                    OverrideApplied = false,
+                    Suppressed = false,
+                },
+                new RcObservationRollbackTrigger
+                {
+                    Id = "candidate-throughput",
+                    MetricId = "representative-load-throughput",
                     Status = "armed",
                     OverrideApplied = false,
                     Suppressed = false,
@@ -745,6 +852,37 @@ public sealed class RcObservationTests
         ObservedFromUtc = started,
         ObservedUntilUtc = ended,
         MemberDigests = [memberDigest],
+        OperationDiagnostics =
+        [
+            OperationDiagnostic("s3", "CreateBucket", 0, 0),
+            OperationDiagnostic("s3", "DeleteBucket", 0, 0),
+            OperationDiagnostic("s3", "DeleteObject", 0, 0),
+            OperationDiagnostic("s3", "GetObject", 199, 1),
+            OperationDiagnostic("s3", "HeadObject", 0, 0),
+            OperationDiagnostic("s3", "ListObjectsV2", 0, 0),
+            OperationDiagnostic("s3", "PutObject", 800, 0),
+        ],
+    };
+
+    private static RcObservationOperationDiagnostic OperationDiagnostic(
+        string service,
+        string operation,
+        long completions,
+        long failures) => new()
+    {
+        Service = service,
+        Operation = operation,
+        Completions = completions,
+        Failures = failures,
+        Throttles = 0,
+        FirstFailure = failures == 0
+            ? null
+            : new RcObservationFirstFailure
+            {
+                Category = "aws_service",
+                StatusCode = 503,
+                ErrorCode = "ServiceUnavailable",
+            },
     };
 
     private static RcObservationEvidence MakeRollback(
@@ -765,6 +903,16 @@ public sealed class RcObservationTests
                 evidence.Cohorts.Single(cohort => cohort.Role == "candidate") with
                 {
                     ObservedUntilUtc = restorationStarted,
+                    OperationDiagnostics =
+                    [
+                        OperationDiagnostic("s3", "CreateBucket", 0, 0),
+                        OperationDiagnostic("s3", "DeleteBucket", 0, 0),
+                        OperationDiagnostic("s3", "DeleteObject", 0, 0),
+                        OperationDiagnostic("s3", "GetObject", 180, 20),
+                        OperationDiagnostic("s3", "HeadObject", 0, 0),
+                        OperationDiagnostic("s3", "ListObjectsV2", 0, 0),
+                        OperationDiagnostic("s3", "PutObject", 800, 0),
+                    ],
                 },
                 evidence.Cohorts.Single(cohort => cohort.Role == "stable") with
                 {
@@ -778,10 +926,12 @@ public sealed class RcObservationTests
                     CandidateValue = 0.02,
                     Result = "breach",
                 },
+                evidence.Metrics[1],
             ],
             RollbackTriggers =
             [
                 evidence.RollbackTriggers[0] with { Status = "fired" },
+                evidence.RollbackTriggers[1],
             ],
             Decision = evidence.Decision with
             {

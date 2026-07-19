@@ -53,6 +53,24 @@ internal sealed class RcObservationCaptureCohort
     public DateTimeOffset ObservedFromUtc { get; set; }
     public DateTimeOffset ObservedUntilUtc { get; set; }
     public List<string> MemberDigests { get; set; } = [];
+    public List<RcObservationOperationDiagnostic> OperationDiagnostics { get; set; } = [];
+}
+
+internal sealed class RcObservationOperationDiagnostic
+{
+    public string Service { get; set; } = string.Empty;
+    public string Operation { get; set; } = string.Empty;
+    public long Completions { get; set; }
+    public long Failures { get; set; }
+    public long Throttles { get; set; }
+    public RcObservationFirstFailure? FirstFailure { get; set; }
+}
+
+internal sealed class RcObservationFirstFailure
+{
+    public string Category { get; set; } = string.Empty;
+    public int? StatusCode { get; set; }
+    public string ErrorCode { get; set; } = string.Empty;
 }
 
 internal sealed class RcObservationCaptureMetric
@@ -121,6 +139,7 @@ internal static class RcObservationCaptureWriter
         if (evidence.Metrics.Count == 0
             || evidence.Metrics.Any(metric =>
                 metric.CandidateSamples <= 0 || metric.StableSamples <= 0)
+            || evidence.Cohorts.Any(cohort => cohort.OperationDiagnostics.Count == 0)
             || !evidence.Restoration.Verified)
         {
             throw new InvalidDataException(
@@ -161,6 +180,31 @@ internal static class RcObservationCaptureWriter
 
     public static long TotalAttempts(RealAzureWorkloadLoadTracker tracker) =>
         tracker.Snapshot().Sum(item => item.Completions + item.Failures);
+
+    public static List<RcObservationOperationDiagnostic> OperationDiagnostics(
+        RealAzureWorkloadLoadTracker tracker)
+    {
+        return tracker.Snapshot().Select(item =>
+        {
+            var firstFailure = tracker.FirstFailureDetail(item.Operation);
+            return new RcObservationOperationDiagnostic
+            {
+                Service = item.Service,
+                Operation = item.Operation,
+                Completions = item.Completions,
+                Failures = item.Failures,
+                Throttles = tracker.Throttles(item.Operation),
+                FirstFailure = firstFailure is null
+                    ? null
+                    : new RcObservationFirstFailure
+                    {
+                        Category = firstFailure.Category,
+                        StatusCode = firstFailure.StatusCode,
+                        ErrorCode = firstFailure.ErrorCode,
+                    },
+            };
+        }).ToList();
+    }
 
     private static string RequiredEnvironment(string name)
     {

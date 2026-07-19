@@ -20,6 +20,11 @@ public sealed class RcObservationGenerationTests
             metric.Id == "representative-load-throughput").Threshold);
         Assert.Equal(0, result.Evidence.Metrics.Single(metric =>
             metric.Id == "operation-failure-rate").Threshold);
+        var candidate = result.Evidence.Cohorts.Single(cohort =>
+            cohort.Role == "candidate");
+        Assert.Contains(candidate.OperationDiagnostics, diagnostic =>
+            diagnostic.Operation == "GetObject"
+            && diagnostic.Completions + diagnostic.Failures == 1000);
         Assert.Equal(
             data.Capture.Observation.MeasurementEndedAtUtc,
             result.Evidence.Observation.EndedAtUtc);
@@ -27,6 +32,20 @@ public sealed class RcObservationGenerationTests
             result.Evidence,
             result.Binding,
             Now));
+    }
+
+    [Fact]
+    public void Generator_rejects_diagnostics_that_do_not_match_aggregate_samples()
+    {
+        var data = CreateData();
+        data.Capture.Cohorts[0] = data.Capture.Cohorts[0] with
+        {
+            OperationDiagnostics = OperationDiagnostics(4999, 1000),
+        };
+
+        var exception = Assert.Throws<InvalidDataException>(() => Generate(data));
+
+        Assert.Contains("failure-rate samples", exception.Message);
     }
 
     [Fact]
@@ -64,6 +83,10 @@ public sealed class RcObservationGenerationTests
             metric.Id == "representative-load-throughput").CandidateValue = 39;
         data.Capture.Metrics.Single(metric =>
             metric.Id == "operation-failure-rate").CandidateValue = 0.001;
+        data.Capture.Cohorts[0] = data.Capture.Cohorts[0] with
+        {
+            OperationDiagnostics = OperationDiagnostics(5000, 1000, failures: 5),
+        };
 
         var result = Generate(data);
 
@@ -304,7 +327,9 @@ public sealed class RcObservationGenerationTests
                     environment,
                     started,
                     restorationStarted,
-                    Digest('6')),
+                    Digest('6'),
+                    5000,
+                    1000),
                 Cohort(
                     "stable-run",
                     "stable",
@@ -313,7 +338,9 @@ public sealed class RcObservationGenerationTests
                     environment,
                     started,
                     restorationVerified,
-                    Digest('7')),
+                    Digest('7'),
+                    4500,
+                    900),
             ],
             Metrics =
             [
@@ -581,7 +608,9 @@ public sealed class RcObservationGenerationTests
         RcObservationAzureEnvironment environment,
         DateTimeOffset started,
         DateTimeOffset ended,
-        string member) => new()
+        string member,
+        long failureSamples,
+        long throughputSamples) => new()
     {
         Id = id,
         Role = role,
@@ -595,7 +624,83 @@ public sealed class RcObservationGenerationTests
         ObservedFromUtc = started,
         ObservedUntilUtc = ended,
         MemberDigests = [member],
+        OperationDiagnostics = OperationDiagnostics(failureSamples, throughputSamples),
     };
+
+    private static RcObservationOperationDiagnostic[] OperationDiagnostics(
+        long failureSamples,
+        long throughputSamples,
+        long failures = 0)
+    {
+        var remainingSamples = failureSamples - throughputSamples;
+        return
+        [
+            new RcObservationOperationDiagnostic
+            {
+                Service = "s3",
+                Operation = "GetObject",
+                Completions = throughputSamples - failures,
+                Failures = failures,
+                Throttles = 0,
+                FirstFailure = failures == 0
+                    ? null
+                    : new RcObservationFirstFailure
+                    {
+                        Category = "aws_service",
+                        StatusCode = 503,
+                        ErrorCode = "ServiceUnavailable",
+                    },
+            },
+            new RcObservationOperationDiagnostic
+            {
+                Service = "s3",
+                Operation = "CreateBucket",
+                Completions = remainingSamples,
+                Failures = 0,
+                Throttles = 0,
+            },
+            new RcObservationOperationDiagnostic
+            {
+                Service = "s3",
+                Operation = "DeleteBucket",
+                Completions = 0,
+                Failures = 0,
+                Throttles = 0,
+            },
+            new RcObservationOperationDiagnostic
+            {
+                Service = "s3",
+                Operation = "DeleteObject",
+                Completions = 0,
+                Failures = 0,
+                Throttles = 0,
+            },
+            new RcObservationOperationDiagnostic
+            {
+                Service = "s3",
+                Operation = "HeadObject",
+                Completions = 0,
+                Failures = 0,
+                Throttles = 0,
+            },
+            new RcObservationOperationDiagnostic
+            {
+                Service = "s3",
+                Operation = "ListObjectsV2",
+                Completions = 0,
+                Failures = 0,
+                Throttles = 0,
+            },
+            new RcObservationOperationDiagnostic
+            {
+                Service = "s3",
+                Operation = "PutObject",
+                Completions = 0,
+                Failures = 0,
+                Throttles = 0,
+            },
+        ];
+    }
 
     private static string Digest(char value) => "sha256:" + new string(value, 64);
 
