@@ -561,6 +561,9 @@ public sealed class RcObservationTests
                 .OperationDiagnostics).Add(new RcObservationOperationDiagnostic()));
     }
 
+    internal static (RcObservationEvidence Evidence, RcObservationValidationContext Context)
+        ValidEvidenceForCalibrationGuard() => ValidEvidence();
+
     private static (RcObservationEvidence Evidence, RcObservationValidationContext Context)
         ValidEvidence()
     {

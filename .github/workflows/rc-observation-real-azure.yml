@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       profile:
-        description: RC workload profile to observe
+        description: RC workload profile to observe or calibrate
         required: true
         default: all
         type: choice
@@ -14,6 +14,14 @@ on:
           - all
           - s3-basic-object-crud
           - secretsmanager-basic-lifecycle
+      mode:
+        description: observation emits promotable evidence; calibration emits a non-promotable Secrets report
+        required: true
+        default: observation
+        type: choice
+        options:
+          - observation
+          - secretsmanager-calibration
       release_candidate_id:
         description: Exact semantic-version RC tag (for example v1.0.0-rc.1)
         required: true
@@ -85,6 +93,21 @@ on:
         required: true
         default: '60'
         type: string
+      calibration_duration_minutes:
+        description: Secrets calibration duration; enforced 5-20 minutes and never promotable
+        required: true
+        default: '10'
+        type: string
+      calibration_candidate_concurrency:
+        description: Secrets calibration candidate workers; selected per-cohort shape
+        required: true
+        default: '6'
+        type: string
+      calibration_stable_concurrency:
+        description: Secrets calibration stable workers; selected per-cohort shape
+        required: true
+        default: '6'
+        type: string
       azure_location:
         description: Azure region for the isolated ephemeral profile topology
         required: true
@@ -113,6 +136,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_PROFILE: ${{ inputs.profile }}
+          MODE: ${{ inputs.mode }}
           RELEASE_CANDIDATE_ID: ${{ inputs.release_candidate_id }}
           CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
           ARCHIVE_WORKFLOW_SOURCE_SHA: ${{ inputs.archive_workflow_source_sha }}
@@ -130,6 +154,9 @@ jobs:
           GHCR_ARTIFACT_DIGEST: ${{ inputs.ghcr_artifact_digest }}
           GHCR_CONTENT_DIGEST: ${{ inputs.ghcr_content_digest }}
           WINDOW_MINUTES: ${{ inputs.observation_window_minutes }}
+          CALIBRATION_DURATION_MINUTES: ${{ inputs.calibration_duration_minutes }}
+          CALIBRATION_CANDIDATE_CONCURRENCY: ${{ inputs.calibration_candidate_concurrency }}
+          CALIBRATION_STABLE_CONCURRENCY: ${{ inputs.calibration_stable_concurrency }}
           AZURE_LOCATION: ${{ inputs.azure_location }}
           REF: ${{ github.ref }}
           REF_PROTECTED: ${{ github.ref_protected }}
@@ -198,28 +225,54 @@ jobs:
               exit 1
             fi
           done
+          if [ "$MODE" != observation ] && [ "$MODE" != secretsmanager-calibration ]; then
+            echo "::error::Unsupported RC observation mode."
+            exit 1
+          fi
           if [[ ! "$WINDOW_MINUTES" =~ ^[0-9]+$ ]] ||
              [ "$WINDOW_MINUTES" -lt 60 ] ||
              [ "$WINDOW_MINUTES" -gt 180 ]; then
             echo "::error::observation_window_minutes must be between 60 and 180."
             exit 1
           fi
+          if [[ ! "$CALIBRATION_DURATION_MINUTES" =~ ^[0-9]+$ ]] ||
+             [ "$CALIBRATION_DURATION_MINUTES" -lt 5 ] ||
+             [ "$CALIBRATION_DURATION_MINUTES" -gt 20 ]; then
+            echo "::error::calibration_duration_minutes must be between 5 and 20."
+            exit 1
+          fi
+          if [[ ! "$CALIBRATION_CANDIDATE_CONCURRENCY" =~ ^[1-9][0-9]*$ ]] ||
+             [[ ! "$CALIBRATION_STABLE_CONCURRENCY" =~ ^[1-9][0-9]*$ ]] ||
+             [ "$CALIBRATION_CANDIDATE_CONCURRENCY" -gt 32 ] ||
+             [ "$CALIBRATION_STABLE_CONCURRENCY" -gt 32 ]; then
+            echo "::error::calibration per-cohort concurrency must be between 1 and 32."
+            exit 1
+          fi
+          if [ "$MODE" = secretsmanager-calibration ] &&
+             [ "$REQUESTED_PROFILE" != secretsmanager-basic-lifecycle ]; then
+            echo "::error::Secrets calibration must dispatch only profile=secretsmanager-basic-lifecycle."
+            exit 1
+          fi
           if [[ ! "$AZURE_LOCATION" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]]; then
             echo "::error::azure_location is not a valid Azure region identifier."
             exit 1
           fi
-          case "$REQUESTED_PROFILE" in
-            all)
-              profiles='["s3-basic-object-crud","secretsmanager-basic-lifecycle"]'
-              ;;
-            s3-basic-object-crud|secretsmanager-basic-lifecycle)
-              profiles="[\"$REQUESTED_PROFILE\"]"
-              ;;
-            *)
-              echo "::error::Unsupported RC observation profile: $REQUESTED_PROFILE"
-              exit 1
-              ;;
-          esac
+          if [ "$MODE" = secretsmanager-calibration ]; then
+            profiles='["secretsmanager-basic-lifecycle"]'
+          else
+            case "$REQUESTED_PROFILE" in
+              all)
+                profiles='["s3-basic-object-crud","secretsmanager-basic-lifecycle"]'
+                ;;
+              s3-basic-object-crud|secretsmanager-basic-lifecycle)
+                profiles="[\"$REQUESTED_PROFILE\"]"
+                ;;
+              *)
+                echo "::error::Unsupported RC observation profile: $REQUESTED_PROFILE"
+                exit 1
+                ;;
+            esac
+          fi
           echo "profiles=$profiles" >> "$GITHUB_OUTPUT"
 
   observe:
@@ -231,10 +284,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 240
     concurrency:
-      group: rc-observation-real-azure-${{ matrix.profile }}-${{ inputs.release_candidate_id }}
+      group: rc-observation-real-azure-${{ inputs.mode }}-${{ matrix.profile }}-${{ inputs.release_candidate_id }}
       cancel-in-progress: false
     env:
       PROFILE: ${{ matrix.profile }}
+      MODE: ${{ inputs.mode }}
       RELEASE_CANDIDATE_ID: ${{ inputs.release_candidate_id }}
       CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
       ARCHIVE_WORKFLOW_SOURCE_SHA: ${{ inputs.archive_workflow_source_sha }}
@@ -252,6 +306,9 @@ jobs:
       GHCR_ARTIFACT_DIGEST: ${{ inputs.ghcr_artifact_digest }}
       GHCR_CONTENT_DIGEST: ${{ inputs.ghcr_content_digest }}
       WINDOW_MINUTES: ${{ inputs.observation_window_minutes }}
+      CALIBRATION_DURATION_MINUTES: ${{ inputs.calibration_duration_minutes }}
+      CALIBRATION_CANDIDATE_CONCURRENCY: ${{ inputs.calibration_candidate_concurrency }}
+      CALIBRATION_STABLE_CONCURRENCY: ${{ inputs.calibration_stable_concurrency }}
       AZURE_LOCATION: ${{ inputs.azure_location }}
       RG_NAME: aws2azure-rc-observe-${{ matrix.profile }}-${{ github.run_id }}-${{ github.run_attempt }}
       PRIVATE_ROOT: artifacts/rc-observation-private/${{ matrix.profile }}
@@ -259,6 +316,7 @@ jobs:
       OUTPUT_ROOT: artifacts/rc-observation/${{ matrix.profile }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       CAPTURE_ARTIFACT_NAME: real-azure-rc-observation-capture-${{ matrix.profile }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+      CALIBRATION_ARTIFACT_NAME: real-azure-rc-calibration-${{ matrix.profile }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
       EVIDENCE_ARTIFACT_NAME: real-azure-rc-observation-${{ matrix.profile }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
       SELECTION_ARTIFACT_NAME: real-azure-rc-observation-selection-${{ matrix.profile }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
     steps:
@@ -1002,32 +1060,67 @@ jobs:
       - name: Run isolated candidate and stable cohorts
         id: observe
         env:
-          AWS2AZURE_RC_OBSERVATION_CAPTURE_PATH: ${{ env.CAPTURE_ROOT }}/capture.json
-          AWS2AZURE_RC_OBSERVATION_WINDOW_MINUTES: ${{ env.WINDOW_MINUTES }}
           AWS2AZURE_RC_OBSERVATION_CONCURRENCY: '8'
         shell: bash
         run: |
           set -euo pipefail
-          test_timeout=$((WINDOW_MINUTES * 60 + 1200))
-          timeout --signal=TERM --kill-after=120s "${test_timeout}s" \
-            dotnet test tests/Aws2Azure.IntegrationTests \
-              -c Release --no-build --nologo \
-              --filter "$TEST_FILTER" \
-              --logger "console;verbosity=normal"
-          jq -e \
-            --arg profile "$PROFILE" \
-            '
-              .schema_version == 1 and
-              .profile.id == $profile and
-              .profile.version == 1 and
-              (.cohorts | length) == 2 and
-              (.metrics | length) == 2 and
-              .restoration.verified == true
-            ' "$CAPTURE_ROOT/capture.json" >/dev/null
+          if [ "$MODE" = secretsmanager-calibration ]; then
+            [ "$PROFILE" = secretsmanager-basic-lifecycle ] || {
+              echo "::error::Calibration is available only for Secrets Manager."
+              exit 1
+            }
+            test_timeout=$((CALIBRATION_DURATION_MINUTES * 60 + 1200))
+            AWS2AZURE_RC_CALIBRATION_REPORT_PATH="$CAPTURE_ROOT/calibration-report.json" \
+            AWS2AZURE_RC_CALIBRATION_DURATION_MINUTES="$CALIBRATION_DURATION_MINUTES" \
+            AWS2AZURE_RC_CALIBRATION_CANDIDATE_CONCURRENCY="$CALIBRATION_CANDIDATE_CONCURRENCY" \
+            AWS2AZURE_RC_CALIBRATION_STABLE_CONCURRENCY="$CALIBRATION_STABLE_CONCURRENCY" \
+            AWS2AZURE_RC_CALIBRATION_RELEASE_CANDIDATE_ID="$RELEASE_CANDIDATE_ID" \
+            AWS2AZURE_RC_CALIBRATION_MANIFEST_DIGEST="$(jq -er '.identity_digest' "$CAPTURE_ROOT/canonical-identity-selection.json")" \
+            AWS2AZURE_RC_CALIBRATION_CANDIDATE_SOURCE_SHA="$CANDIDATE_SOURCE_SHA" \
+            AWS2AZURE_RC_CALIBRATION_ARCHIVE_INPUTS_DIGEST="$ARCHIVE_CONTENT_DIGEST" \
+            AWS2AZURE_RC_CALIBRATION_GHCR_INPUTS_DIGEST="$GHCR_CONTENT_DIGEST" \
+            timeout --signal=TERM --kill-after=120s "${test_timeout}s" \
+              dotnet test tests/Aws2Azure.IntegrationTests \
+                -c Release --no-build --nologo \
+                --filter "$TEST_FILTER" \
+                --logger "console;verbosity=normal"
+            jq -e \
+              '
+                .schema_version == 1 and
+                .artifact_kind == "rc_observation_calibration" and
+                .promotable == false and
+                .profile.id == "secretsmanager-basic-lifecycle" and
+                .calibration.requested_duration_minutes >= 5 and
+                .calibration.requested_duration_minutes <= 20 and
+                .per_cohort_concurrency.candidate == (env.CALIBRATION_CANDIDATE_CONCURRENCY | tonumber) and
+                .per_cohort_concurrency.stable == (env.CALIBRATION_STABLE_CONCURRENCY | tonumber) and
+                .total_concurrency == (.per_cohort_concurrency.candidate + .per_cohort_concurrency.stable) and
+                .restoration.verified == true
+              ' "$CAPTURE_ROOT/calibration-report.json" >/dev/null
+          else
+            test_timeout=$((WINDOW_MINUTES * 60 + 1200))
+            AWS2AZURE_RC_OBSERVATION_CAPTURE_PATH="$CAPTURE_ROOT/capture.json" \
+            AWS2AZURE_RC_OBSERVATION_WINDOW_MINUTES="$WINDOW_MINUTES" \
+            timeout --signal=TERM --kill-after=120s "${test_timeout}s" \
+              dotnet test tests/Aws2Azure.IntegrationTests \
+                -c Release --no-build --nologo \
+                --filter "$TEST_FILTER" \
+                --logger "console;verbosity=normal"
+            jq -e \
+              --arg profile "$PROFILE" \
+              '
+                .schema_version == 1 and
+                .profile.id == $profile and
+                .profile.version == 1 and
+                (.cohorts | length) == 2 and
+                (.metrics | length) == 2 and
+                .restoration.verified == true
+              ' "$CAPTURE_ROOT/capture.json" >/dev/null
+          fi
 
       - name: Upload immutable raw capture and selected identities
         id: capture_upload
-        if: always()
+        if: always() && env.MODE == 'observation'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ env.CAPTURE_ARTIFACT_NAME }}
@@ -1036,7 +1129,7 @@ jobs:
           retention-days: 90
 
       - name: Bind the exact capture upload identity
-        if: always() && steps.capture_upload.outcome == 'success'
+        if: always() && env.MODE == 'observation' && steps.capture_upload.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -1084,10 +1177,30 @@ jobs:
               }
             }' > "$CAPTURE_ROOT/capture-artifact-selection.json"
 
+      - name: Strictly validate non-promotable calibration report
+        id: calibration_validate
+        if: always() && env.MODE == 'secretsmanager-calibration' && steps.observe.outcome == 'success'
+        run: >-
+          dotnet exec
+          tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll
+          validate-rc-calibration-report
+          --report "${{ env.CAPTURE_ROOT }}/calibration-report.json"
+
+      - name: Upload non-promotable calibration report
+        id: calibration_upload
+        if: always() && env.MODE == 'secretsmanager-calibration' && steps.calibration_validate.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.CALIBRATION_ARTIFACT_NAME }}
+          path: artifacts/rc-observation-capture/${{ matrix.profile }}/calibration-report.json
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Generate immutable profile observation YAML
         id: generate
         if: >-
           always() &&
+          env.MODE == 'observation' &&
           steps.observe.outcome == 'success' &&
           steps.capture_upload.outcome == 'success'
         continue-on-error: true
@@ -1126,7 +1239,7 @@ jobs:
 
       - name: Strictly validate generated evidence against its trusted digest
         id: strict_validate
-        if: always() && steps.generate.outcome == 'success'
+        if: always() && env.MODE == 'observation' && steps.generate.outcome == 'success'
         continue-on-error: true
         run: >-
           dotnet exec
@@ -1138,7 +1251,7 @@ jobs:
 
       - name: Upload immutable RC observation evidence
         id: evidence_upload
-        if: always() && steps.strict_validate.outcome == 'success'
+        if: always() && env.MODE == 'observation' && steps.strict_validate.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ env.EVIDENCE_ARTIFACT_NAME }}
@@ -1147,7 +1260,7 @@ jobs:
           retention-days: 90
 
       - name: Record exact evidence upload identity
-        if: always() && steps.evidence_upload.outcome == 'success'
+        if: always() && env.MODE == 'observation' && steps.evidence_upload.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -1231,7 +1344,7 @@ jobs:
 
       - name: Upload evidence selection receipt
         id: receipt_upload
-        if: always() && steps.evidence_upload.outcome == 'success'
+        if: always() && env.MODE == 'observation' && steps.evidence_upload.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ env.SELECTION_ARTIFACT_NAME }}
@@ -1257,7 +1370,15 @@ jobs:
             echo "- GHCR index: \`$(jq -er '.index_digest' "$CAPTURE_ROOT/ghcr-input-selection.json" 2>/dev/null || echo not-resolved)\`"
             echo "- Canonical RC identity: \`$(jq -er '.identity_digest' "$CAPTURE_ROOT/canonical-identity-selection.json" 2>/dev/null || echo not-produced)\`"
             echo "- Region: \`$AZURE_LOCATION\`"
-            echo "- Requested window: \`${WINDOW_MINUTES} minutes\`"
+            echo "- Mode: \`$MODE\`"
+            if [ "$MODE" = secretsmanager-calibration ]; then
+              echo "- Requested calibration duration: \`${CALIBRATION_DURATION_MINUTES} minutes\`"
+              echo "- Candidate/stable concurrency: \`${CALIBRATION_CANDIDATE_CONCURRENCY}/${CALIBRATION_STABLE_CONCURRENCY}\`"
+              echo "- Calibration artifact: \`${CALIBRATION_ARTIFACT_NAME}\`"
+              echo "- Promotable observation evidence: \`false\`"
+            else
+              echo "- Requested window: \`${WINDOW_MINUTES} minutes\`"
+            fi
             echo "- Verdict: \`${{ steps.generate.outputs.verdict || 'not-produced' }}\`"
             echo "- Evidence digest: \`${{ steps.generate.outputs.evidence_digest || 'not-produced' }}\`"
             echo "- Candidate/stable cohorts: distinct proxy endpoints and worker namespaces"
@@ -1293,6 +1414,15 @@ jobs:
         if: always()
         shell: bash
         run: |
+          if [ "$MODE" = secretsmanager-calibration ]; then
+            if [ "${{ steps.observe.outcome }}" != success ] ||
+               [ "${{ steps.calibration_validate.outcome }}" != success ] ||
+               [ "${{ steps.calibration_upload.outcome }}" != success ]; then
+              echo "::error::RC calibration did not produce a strict non-promotable report."
+              exit 1
+            fi
+            exit 0
+          fi
           if [ "${{ steps.observe.outcome }}" != success ] ||
              [ "${{ steps.capture_upload.outcome }}" != success ] ||
              [ "${{ steps.generate.outcome }}" != success ] ||

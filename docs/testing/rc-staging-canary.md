@@ -263,6 +263,53 @@ interfaces. Because canonical identity excludes `observation_evidence`, the
 eventual final manifest can add the real per-profile descriptors and reproduce
 the same identity without circularity.
 
+### Short Secrets Manager calibration
+
+Use calibration only to review shared-Key-Vault pressure before a full
+observation. It reuses the exact RC archive/GHCR/runtime/backend resolution
+above, runs only `secretsmanager-basic-lifecycle`, restores the exact prior
+runtime, and uploads one sanitized JSON report with
+`artifact_kind: rc_observation_calibration` and `promotable: false`. It never
+generates or uploads `observation.yaml`, `binding.json`, or a manifest
+selection receipt, and it cannot satisfy promotion gates.
+
+Dispatch one shape at a time (for example candidate/stable `6/6`, then `5/5`
+if needed) by reusing the same immutable identities:
+
+```bash
+gh workflow run rc-observation-real-azure.yml \
+  --ref main \
+  -f mode=secretsmanager-calibration \
+  -f profile=secretsmanager-basic-lifecycle \
+  -f release_candidate_id=v1.2.3-rc.1 \
+  -f candidate_source_sha=<40-hex-protected-tag-sha> \
+  -f archive_workflow_source_sha=<40-hex-protected-main-archive-sha> \
+  -f archive_run_id=<release-candidate-workflow-run-id> \
+  -f archive_run_attempt=<release-candidate-workflow-attempt> \
+  -f archive_artifact_id=<immutable-archive-artifact-id> \
+  -f archive_artifact_name=aws2azure-rc-archives-v1.2.3-rc.1-<64-hex-content-digest>-run-<run-id>-attempt-<attempt> \
+  -f archive_artifact_digest=sha256:<64-hex-upload-digest> \
+  -f archive_content_digest=sha256:<64-hex-content-digest> \
+  -f ghcr_workflow_source_sha=<40-hex-protected-main-sha> \
+  -f ghcr_run_id=<release-candidate-image-run-id> \
+  -f ghcr_run_attempt=<release-candidate-image-attempt> \
+  -f ghcr_artifact_id=<immutable-ghcr-artifact-id> \
+  -f ghcr_artifact_name=aws2azure-rc-ghcr-v1.2.3-rc.1-<64-hex-content-digest>-run-<run-id>-attempt-<attempt> \
+  -f ghcr_artifact_digest=sha256:<64-hex-upload-digest> \
+  -f ghcr_content_digest=sha256:<64-hex-content-digest> \
+  -f observation_window_minutes=60 \
+  -f calibration_duration_minutes=10 \
+  -f calibration_candidate_concurrency=6 \
+  -f calibration_stable_concurrency=6 \
+  -f azure_location=eastus2
+```
+
+The report captures requested duration, candidate/stable/total concurrency,
+operation-mix identity, exact identity linkage, per-operation completions,
+failures, throttles, first failure category/code, and per-cohort
+`GetSecretValue` throughput. Treat it as diagnostic input for choosing a later
+reviewed observation shape only; do not bind it into an RC manifest.
+
 Do not provide candidate/prior sealed-runtime run or artifact ids: those are
 selected from the exact attested
 approved-runtime export carried by the archive and its ledger-pinned rollback

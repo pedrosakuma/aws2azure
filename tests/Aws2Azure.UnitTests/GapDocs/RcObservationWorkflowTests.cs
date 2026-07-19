@@ -62,6 +62,65 @@ public sealed class RcObservationWorkflowTests
     }
 
     [Fact]
+    public void Workflow_has_non_promotable_secrets_calibration_branch()
+    {
+        Assert.Contains("mode:", Workflow, StringComparison.Ordinal);
+        Assert.Contains("secretsmanager-calibration", Workflow, StringComparison.Ordinal);
+        Assert.Contains("calibration_duration_minutes:", Workflow, StringComparison.Ordinal);
+        Assert.Contains("calibration_candidate_concurrency:", Workflow, StringComparison.Ordinal);
+        Assert.Contains("calibration_stable_concurrency:", Workflow, StringComparison.Ordinal);
+        Assert.Contains(
+            "[ \"$MODE\" = secretsmanager-calibration ] &&",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "Secrets calibration must dispatch only profile=secretsmanager-basic-lifecycle",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "AWS2AZURE_RC_CALIBRATION_REPORT_PATH=\"$CAPTURE_ROOT/calibration-report.json\"",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "validate-rc-calibration-report",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "real-azure-rc-calibration-${{ matrix.profile }}-run-",
+            Workflow,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Calibration_branch_cannot_upload_observation_evidence_or_receipts()
+    {
+        Assert.Contains(
+            "if: always() && env.MODE == 'observation'",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "env.MODE == 'observation' &&\n          steps.observe.outcome == 'success'",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "env.MODE == 'observation' && steps.strict_validate.outcome == 'success'",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "env.MODE == 'observation' && steps.evidence_upload.outcome == 'success'",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "[ \"${{ steps.calibration_upload.outcome }}\" != success ]",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "Promotable observation evidence: \\`false\\`",
+            Workflow,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Workflow_rejects_archive_and_ghcr_sources_outside_protected_main_history()
     {
         Assert.Contains(
@@ -377,11 +436,11 @@ public sealed class RcObservationWorkflowTests
     public void Workflow_fails_closed_and_always_attempts_private_cleanup()
     {
         Assert.Contains(
-            "if: always() && steps.capture_upload.outcome == 'success'",
+            "if: always() && env.MODE == 'observation' && steps.capture_upload.outcome == 'success'",
             Workflow,
             StringComparison.Ordinal);
         Assert.Contains(
-            "steps.observe.outcome == 'success' &&",
+            "env.MODE == 'observation' &&\n          steps.observe.outcome == 'success' &&",
             Workflow,
             StringComparison.Ordinal);
         Assert.Contains("rm -rf \"$PRIVATE_ROOT\"", Workflow, StringComparison.Ordinal);
