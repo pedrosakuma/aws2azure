@@ -4,8 +4,9 @@ name: real-azure-reaper
 # (issue #257). The `integration-real-azure` job deletes its resource group in
 # an `if: always()` teardown, but a force-cancelled run (e.g. the runner is
 # killed) can leak one. This scheduled reaper deletes any resource group tagged
-# `purpose=aws2azure-nightly` whose `created` tag is older than MAX_AGE_HOURS,
-# or that carries no `created` tag at all (manual / interrupted provisioning).
+# `purpose=aws2azure-nightly` or `purpose=aws2azure-rc-observation` whose
+# `created` tag is older than MAX_AGE_HOURS, or that carries no `created` tag
+# at all (manual / interrupted provisioning).
 # Before deleting each group it permanently removes every immutable blob
 # version; Azure otherwise rejects account deletion with
 # AccountProtectedFromDeletion.
@@ -17,6 +18,15 @@ on:
   schedule:
     - cron: '30 */6 * * *'
   workflow_dispatch:
+    inputs:
+      rc_observation_resource_groups_json:
+        description: >-
+          Optional JSON array of exact RC observation resource group names to
+          validate and clean, for example
+          ["aws2azure-rc-observe-s3-basic-object-crud-29667841798-1"].
+        required: false
+        default: '[]'
+        type: string
 
 permissions:
   id-token: write
@@ -51,45 +61,93 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Delete exact RC observation resource groups
+        if: >-
+          steps.gate.outputs.enabled == 'true' &&
+          github.event_name == 'workflow_dispatch' &&
+          inputs.rc_observation_resource_groups_json != '' &&
+          inputs.rc_observation_resource_groups_json != '[]'
+        env:
+          RC_OBSERVATION_RESOURCE_GROUPS_JSON: ${{ inputs.rc_observation_resource_groups_json }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/cleanup-rc-observation-resource-groups.sh \
+            "$RC_OBSERVATION_RESOURCE_GROUPS_JSON"
+
       - name: Delete orphaned resource groups
-        if: steps.gate.outputs.enabled == 'true'
+        if: >-
+          steps.gate.outputs.enabled == 'true' &&
+          (github.event_name != 'workflow_dispatch' ||
+           inputs.rc_observation_resource_groups_json == '' ||
+           inputs.rc_observation_resource_groups_json == '[]')
         run: |
           set -euo pipefail
           now="$(date -u +%s)"
           max_age_secs=$(( MAX_AGE_HOURS * 3600 ))
-          candidates=()
+          nightly_candidates=()
+          observation_candidates=()
 
-          # One row per candidate RG: name + its `created` tag (may be empty).
-          groups_json="$(az group list --tag purpose=aws2azure-nightly \
-            --query "[].{name:name, created:tags.created}" -o json)"
-          group_rows="$(jq -c '.[]' <<< "$groups_json")"
-          while IFS= read -r row; do
-            [ -z "$row" ] && continue
-            name="$(echo "$row" | jq -r '.name')"
-            created="$(echo "$row" | jq -r '.created // empty')"
+          for purpose in aws2azure-nightly aws2azure-rc-observation; do
+            # One row per candidate RG: name + its `created` tag (may be empty).
+            groups_json="$(az group list --tag "purpose=$purpose" \
+              --query "[].{name:name, created:tags.created}" -o json)"
+            group_rows="$(jq -c '.[]' <<< "$groups_json")"
+            while IFS= read -r row; do
+              [ -z "$row" ] && continue
+              name="$(echo "$row" | jq -r '.name')"
+              created="$(echo "$row" | jq -r '.created // empty')"
 
-            if [ -z "$created" ]; then
-              echo "::warning::$name has no 'created' tag — treating it as an orphan."
-              candidates+=("$name")
-              continue
-            fi
+              if [ -z "$created" ]; then
+                echo "::warning::$name has no 'created' tag — treating it as an orphan."
+                if [ "$purpose" = aws2azure-rc-observation ]; then
+                  observation_candidates+=("$name")
+                else
+                  nightly_candidates+=("$name")
+                fi
+                continue
+              fi
 
-            created_secs="$(date -u -d "$created" +%s 2>/dev/null || echo 0)"
-            age=$(( now - created_secs ))
-            if [ "$created_secs" -eq 0 ]; then
-              echo "::warning::$name has an unparseable 'created' tag ('$created') — treating it as an orphan."
-              candidates+=("$name")
-            elif [ "$age" -gt "$max_age_secs" ]; then
-              echo "Reaping $name (age ${age}s > ${max_age_secs}s)."
-              candidates+=("$name")
-            else
-              echo "Keeping $name (age ${age}s <= ${max_age_secs}s — likely an active run)."
-            fi
-          done <<< "$group_rows"
+              created_secs="$(date -u -d "$created" +%s 2>/dev/null || echo 0)"
+              age=$(( now - created_secs ))
+              if [ "$created_secs" -eq 0 ]; then
+                echo "::warning::$name has an unparseable 'created' tag ('$created') — treating it as an orphan."
+                if [ "$purpose" = aws2azure-rc-observation ]; then
+                  observation_candidates+=("$name")
+                else
+                  nightly_candidates+=("$name")
+                fi
+              elif [ "$age" -gt "$max_age_secs" ]; then
+                echo "Reaping $name (purpose $purpose, age ${age}s > ${max_age_secs}s)."
+                if [ "$purpose" = aws2azure-rc-observation ]; then
+                  observation_candidates+=("$name")
+                else
+                  nightly_candidates+=("$name")
+                fi
+              else
+                echo "Keeping $name (purpose $purpose, age ${age}s <= ${max_age_secs}s — likely an active run)."
+              fi
+            done <<< "$group_rows"
+          done
 
-          if [ "${#candidates[@]}" -eq 0 ]; then
+          if [ "${#nightly_candidates[@]}" -eq 0 ] &&
+             [ "${#observation_candidates[@]}" -eq 0 ]; then
             echo "No orphaned resource groups found."
             exit 0
           fi
 
-          bash .github/scripts/cleanup-real-azure-resource-groups.sh "${candidates[@]}"
+          cleanup_failed=0
+          if [ "${#nightly_candidates[@]}" -gt 0 ] &&
+             ! bash .github/scripts/cleanup-real-azure-resource-groups.sh \
+               "${nightly_candidates[@]}"; then
+            cleanup_failed=1
+          fi
+          if [ "${#observation_candidates[@]}" -gt 0 ]; then
+            observation_json="$(
+              printf '%s\n' "${observation_candidates[@]}" | jq -R . | jq -s -c .
+            )"
+            if ! bash .github/scripts/cleanup-rc-observation-resource-groups.sh \
+              "$observation_json"; then
+              cleanup_failed=1
+            fi
+          fi
+          exit "$cleanup_failed"
