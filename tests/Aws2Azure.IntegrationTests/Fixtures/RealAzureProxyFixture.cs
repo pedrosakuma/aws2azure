@@ -72,6 +72,15 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     private const string InvalidAzureSharedKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
     private const string InvalidAzureSasKeyName = "aws2azure-invalid-sas-key";
 
+    // Fixed HMAC key (32 decoded bytes) for Kinesis shard-iterator tokens, so a
+    // shard iterator minted before RestartAsync() still verifies after the
+    // out-of-process proxy respawns. Without an explicit key, each process
+    // falls back to its own ephemeral, randomly generated signing key
+    // (ShardIteratorTokenCodecFactory), which would make every pre-restart
+    // iterator fail signature verification against the new process.
+    private const string KinesisShardIteratorSigningKey =
+        "cmVhbC1henVyZS1yZXN0YXJ0LXNoYXJkLWl0ZXJhdG9yLWtleS0h";
+
     private readonly StringBuilder _proxyOutput = new();
     private readonly List<RuntimeInstance> _additionalInstances = [];
     private Process? _proxyProcess;
@@ -615,7 +624,7 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         if (EventHubsConfigured)
         {
             AppendAzure(azure, $$"""
-                "kinesis": { "kind": "eventHubs", "target": { "namespace": "{{JsonEscape(_ehNamespace!)}}" }, "auth": { "mode": "sas", "keyName": "{{JsonEscape(_ehSasKeyName!)}}", "key": "{{JsonEscape(_ehSasKey!)}}" } }
+                "kinesis": { "kind": "eventHubs", "target": { "namespace": "{{JsonEscape(_ehNamespace!)}}" }, "auth": { "mode": "sas", "keyName": "{{JsonEscape(_ehSasKeyName!)}}", "key": "{{JsonEscape(_ehSasKey!)}}" }, "shardIteratorSigningKey": "{{KinesisShardIteratorSigningKey}}" }
                 """);
         }
 
@@ -632,7 +641,7 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         if (EventHubsWorkloadIdentityConfigured)
         {
             AppendAzure(wiAzure, $$"""
-                "kinesis": { "kind": "eventHubs", "target": { "namespace": "{{JsonEscape(_ehNamespace!)}}" }, "auth": { "mode": "workloadIdentity" } }
+                "kinesis": { "kind": "eventHubs", "target": { "namespace": "{{JsonEscape(_ehNamespace!)}}" }, "auth": { "mode": "workloadIdentity" }, "shardIteratorSigningKey": "{{KinesisShardIteratorSigningKey}}" }
                 """);
         }
 
