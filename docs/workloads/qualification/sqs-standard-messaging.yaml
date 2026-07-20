@@ -1,0 +1,173 @@
+# Initial reviewed policy for the production-shaped Service Bus (SQS
+# standard messaging) workload (issue #626).
+#
+# The representative-load capacity floor is deliberately unresolved: it must
+# be selected from at least three comparable AMQP-transport artifacts
+# produced by workload-load-real-azure.yml against the exact sealed
+# candidate. Until that review occurs, the blocking unresolved signal keeps
+# the mechanical verdict at candidate; it is not a GA claim. REST-transport
+# evidence (representative-load-rest, rollback-rest) is intentionally kept
+# out of this policy's scenario set — it is supplementary, non-required
+# evidence recorded on every run, never blended into the AMQP-default
+# numbers graded here, and never required for promotion.
+schema_version: 1
+profile_id: sqs-standard-messaging
+profile_version: 1
+rules:
+  max_artifact_age_hours: 72
+  min_samples_per_scenario: 300
+  min_duration_seconds: 300
+  max_failure_rate: 0
+  zero_completions_disqualify: true
+  only_skipped_real_azure_disqualifies: true
+  min_distinct_runs: 3
+load_shape:
+  concurrency: 8
+  requested_duration_seconds: 300
+scenarios:
+  - id: representative-load
+    service: sqs
+    operation: ReceiveMessage
+    evidence_source: real_azure
+    signals:
+      - id: representative-load-throughput
+        source: backend_capacity
+        disposition: blocking
+        metric: throughput_per_sec
+        threshold_status: unresolved
+        threshold_reason: >-
+          No comparable repeated live-Service-Bus AMQP-transport runs have
+          been reviewed. Select a floor from the worst healthy run without
+          using emulator, REST-transport, or A/B data.
+      - id: representative-load-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+      - id: crud-iterations-per-sec
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: aws-operations-per-sec
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: representative-load-create-queue-throughput
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: representative-load-create-queue-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-create-queue-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+      - id: representative-load-get-queue-url-throughput
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: representative-load-get-queue-url-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-get-queue-url-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+      - id: representative-load-list-queues-throughput
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: representative-load-list-queues-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-list-queues-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+      - id: representative-load-send-message-throughput
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: representative-load-send-message-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-send-message-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+      - id: representative-load-delete-message-throughput
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: representative-load-delete-message-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-delete-message-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+      - id: representative-load-delete-queue-throughput
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: representative-load-delete-queue-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-delete-queue-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+      - id: representative-load-throttle-rate
+        source: backend_capacity
+        disposition: report_only
+        metric: throttle_rate
+  - id: redelivery
+    service: sqs
+    operation: ReceiveMessage
+    evidence_source: real_azure
+    signals: []
+  - id: throttling
+    service: sqs
+    operation: SendMessage
+    evidence_source: deterministic
+    signals: []
+  - id: timeout
+    service: sqs
+    operation: SendMessage
+    evidence_source: deterministic
+    signals: []
+  - id: service-unavailable
+    service: sqs
+    operation: SendMessage
+    evidence_source: deterministic
+    signals: []
+  - id: concurrency
+    service: sqs
+    operation: ReceiveMessage
+    evidence_source: real_azure
+    signals: []
+  - id: restart
+    service: sqs
+    operation: SendMessage
+    evidence_source: real_azure
+    signals: []
+  - id: retry-exhaustion
+    service: sqs
+    operation: SendMessage
+    evidence_source: deterministic
+    signals: []
+  - id: rollback
+    service: sqs
+    operation: DeleteMessage
+    evidence_source: real_azure
+    signals: []

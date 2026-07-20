@@ -34,7 +34,15 @@ feature-specific A/B experiments.
 - **rollback**: deploy the sealed candidate, create/read canary state, replace it
   with the previously approved sealed runtime without changing the backend, and
   verify the same state plus cleanup. A source build of "main" or a config-only
-  restart is not rollback evidence.
+  restart is not rollback evidence. For `sqs-standard-messaging` this also
+  documents a transport-scoped receipt-handle/lock boundary: an AMQP receipt
+  handle is bound to the receiver link that produced it, so it cannot redeem
+  against the prior runtime's fresh receiver and the message must be
+  re-received; the REST receipt handle instead carries a broker-scoped
+  message-id/lock-token pair that Service Bus validates statelessly, so it
+  redeems successfully across the same restart. The graded rollback scenario
+  uses the namespace-default AMQP transport; the REST counterpart is recorded
+  as separate, non-required `rollback-rest` evidence.
 
 The load workflow executes rollback after representative load and the other
 profile scenarios. It launches the selected candidate bytes first, then the
@@ -44,8 +52,9 @@ read/delete/absence. Secrets Manager proves candidate create/read followed by
 prior read, force-delete, and the profile's Key Vault soft-delete-compatible
 absence check. DynamoDB proves candidate create-table/put-item/read followed
 by the prior runtime's read, `DeleteTable`, and a `ResourceNotFoundException`
-absence check on `DescribeTable`. The fixture restores the candidate process
-before teardown.
+absence check on `DescribeTable`. SQS proves candidate send/receive (leaving the message
+in-flight) followed by prior redelivery, settlement, and queue absence after
+cleanup. The fixture restores the candidate process before teardown.
 
 ## Sealed runtime producer and bootstrap
 
@@ -131,7 +140,7 @@ candidate or promoted itself.
    reference it from the matching workload manifest. The GA evaluator verifies
    profile/operation/scenario/source coherence and freshness.
 
-The bootstrap records currently shared by S3 and Secrets Manager remain
+The bootstrap records currently held for S3, Secrets Manager, and SQS remain
 profile-owned. Every load proof records the prior ledger file digest/status and
 the exact prior producer, artifact, manifest, executable, and attestation
 identities. The candidate and prior aggregate and executable digests must differ.

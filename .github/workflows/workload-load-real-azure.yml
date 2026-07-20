@@ -3,7 +3,7 @@ name: workload-load-real-azure
 # Produces immutable production-shaped workload evidence against ephemeral real
 # Azure resources. Only manual runs with an exact sealed producer are qualifying;
 # scheduled/PR runs remain explicit source validation. Manual runs can select S3,
-# Secrets Manager, or both. Emulator and A/B artifacts are never consumed.
+# Secrets Manager, SQS, DynamoDB, or all profiles. Emulator and A/B artifacts are never consumed.
 on:
   schedule:
     - cron: '15 6 * * *'
@@ -18,6 +18,7 @@ on:
           - secretsmanager-basic-lifecycle
           - s3-basic-object-crud
           - dynamodb-basic-crud
+          - sqs-standard-messaging
           - all
       candidate_run_id:
         description: Exact successful sealed-runtime producer run id
@@ -66,11 +67,11 @@ jobs:
               ;;
             workflow_dispatch)
               case "$REQUESTED_PROFILE" in
-                secretsmanager-basic-lifecycle|s3-basic-object-crud|dynamodb-basic-crud)
+                secretsmanager-basic-lifecycle|s3-basic-object-crud|dynamodb-basic-crud|sqs-standard-messaging)
                   profiles="[\"$REQUESTED_PROFILE\"]"
                   ;;
                 all)
-                  profiles='["secretsmanager-basic-lifecycle","s3-basic-object-crud","dynamodb-basic-crud"]'
+                  profiles='["secretsmanager-basic-lifecycle","s3-basic-object-crud","dynamodb-basic-crud","sqs-standard-messaging"]'
                   ;;
                 *)
                   echo "::error::Unsupported workload profile: $REQUESTED_PROFILE"
@@ -79,7 +80,7 @@ jobs:
               esac
               ;;
             pull_request)
-              profiles='["secretsmanager-basic-lifecycle","s3-basic-object-crud","dynamodb-basic-crud"]'
+              profiles='["secretsmanager-basic-lifecycle","s3-basic-object-crud","dynamodb-basic-crud","sqs-standard-messaging"]'
               ;;
             *)
               echo "::error::Unsupported event: $EVENT_NAME"
@@ -182,6 +183,15 @@ jobs:
                 echo "RUNNER_PATH=tests/Aws2Azure.IntegrationTests/DynamoDb/DynamoDbRealAzureLoadQualificationTests.cs"
                 echo "TEST_FILTER=Category=DynamoDbLoadQualification"
                 echo "BACKEND_DESCRIPTION=Ephemeral Azure Cosmos DB serverless SQL API, Strong consistency"
+              } >> "$GITHUB_ENV"
+              ;;
+            sqs-standard-messaging)
+              {
+                echo "DEPLOYMENT_NAME=aws2azure-load-sqs"
+                echo "BICEP_PATH=deploy/realazure/sqs-load.bicep"
+                echo "RUNNER_PATH=tests/Aws2Azure.IntegrationTests/Sqs/SqsRealAzureLoadQualificationTests.cs"
+                echo "TEST_FILTER=Category=SqsLoadQualification"
+                echo "BACKEND_DESCRIPTION=Ephemeral Service Bus Standard namespace (AMQP default, REST lane override)"
               } >> "$GITHUB_ENV"
               ;;
             *)
@@ -350,6 +360,12 @@ jobs:
               "backend": "Cosmos DB serverless SQL API",
               "consistency": "Strong",
               "database_pre_created": true
+            }'
+          elif [ "$PROFILE" = sqs-standard-messaging ]; then
+            topology='{
+              "backend": "Service Bus Standard",
+              "namespace_default_transport": "amqp",
+              "rest_lane_queue_override": true
             }'
           else
             topology='{
@@ -534,6 +550,22 @@ jobs:
               echo "AZURE_COSMOS_KEY=$key"
               echo "AZURE_COSMOS_DATABASE=$database"
             } >> "$GITHUB_ENV"
+          elif [ "$PROFILE" = sqs-standard-messaging ]; then
+            ns="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
+              --query properties.outputs.serviceBusNamespaceName.value -o tsv)"
+            if [ -z "$ns" ]; then
+              echo "::error::The deployment did not produce a Service Bus namespace."
+              exit 1
+            fi
+            conn="$(az servicebus namespace authorization-rule keys list -g "$RG_NAME" \
+              --namespace-name "$ns" --name RootManageSharedAccessKey \
+              --query primaryConnectionString -o tsv)"
+            if [ -z "$conn" ]; then
+              echo "::error::The deployment did not produce a usable Service Bus connection string."
+              exit 1
+            fi
+            echo "::add-mask::$conn"
+            echo "AZURE_SB_CONNSTR=$conn" >> "$GITHUB_ENV"
           else
             account="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
               --query properties.outputs.storageAccountName.value -o tsv)"

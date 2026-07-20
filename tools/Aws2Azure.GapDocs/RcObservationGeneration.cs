@@ -144,7 +144,7 @@ public static class RcObservationPolicyValidator
             }
         }
 
-        var approvedKeys = approvedRuntimes
+        var approvedKeysAll = approvedRuntimes
             .Select(item => (item.Profile.Id, item.Profile.Version))
             .ToHashSet();
         var approvedStatusByKey = approvedRuntimes
@@ -195,7 +195,7 @@ public static class RcObservationPolicyValidator
                 $"missing RC observation policy for approved runtime " +
                 $"'{missing.Id}' v{missing.Version}");
         }
-        foreach (var extra in policyKeys.Except(approvedKeys).Order())
+        foreach (var extra in policyKeys.Except(approvedKeysAll).Order())
         {
             errors.Add(
                 $"RC observation policy '{extra.Id}' v{extra.Version} has no " +

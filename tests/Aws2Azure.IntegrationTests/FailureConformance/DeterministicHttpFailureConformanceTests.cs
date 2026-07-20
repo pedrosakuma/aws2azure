@@ -28,6 +28,23 @@ public sealed class DeterministicHttpFailureConformanceTests
     }
 
     [Fact]
+    public async Task Sqs_shared_qualification_helper_matches_rest_conformance_mappings()
+    {
+        // Exercises DeterministicFailureQualification.VerifySqsScenarioAsync
+        // directly — the same entry point the SQS real-Azure load runner
+        // calls to produce load-evidence scenario rows — so the shared
+        // helper is covered independently of the raw wire assertions above.
+        await DeterministicFailureQualification.VerifySqsScenarioAsync(
+            DeterministicFailureQualification.ThrottlingScenarioId);
+        await DeterministicFailureQualification.VerifySqsScenarioAsync(
+            DeterministicFailureQualification.TimeoutScenarioId);
+        await DeterministicFailureQualification.VerifySqsScenarioAsync(
+            DeterministicFailureQualification.ServiceUnavailableScenarioId);
+        await DeterministicFailureQualification.VerifySqsScenarioAsync(
+            DeterministicFailureQualification.RetryExhaustionScenarioId);
+    }
+
+    [Fact]
     public async Task DynamoDb_injected_backend_failures_return_native_retryable_errors()
     {
         await DeterministicFailureQualification.VerifyDynamoDbScenarioAsync(

@@ -9,6 +9,8 @@ using Amazon.S3;
 using Amazon.S3.Model;
 using Amazon.SecretsManager;
 using Amazon.SecretsManager.Model;
+using Amazon.SQS;
+using Amazon.SQS.Model;
 using Aws2Azure.IntegrationTests.Fixtures;
 using Aws2Azure.TestSupport.OperationalQualification;
 
@@ -18,6 +20,22 @@ internal sealed record RealAzureRollbackResult(
     double DurationSeconds,
     DateTimeOffset CapturedAtUtc,
     RealAzureRollbackProof Proof);
+
+/// <summary>
+/// SQS rollback additionally documents the receipt-handle/lock boundary
+/// across a proxy process replacement (issue #626): the graded AMQP
+/// <see cref="Proof"/> is required by the workload manifest, while the
+/// REST-transport finding is supplementary evidence kept in its own
+/// scenario row rather than a second <see cref="RealAzureRollbackProof"/>
+/// (the qualifier requires exactly one rollback proof per run).
+/// </summary>
+internal sealed record RealAzureSqsRollbackResult(
+    double DurationSeconds,
+    DateTimeOffset CapturedAtUtc,
+    RealAzureRollbackProof Proof,
+    bool RestReceiptHandleSurvivedRestart,
+    double RestDurationSeconds,
+    DateTimeOffset RestCapturedAtUtc);
 
 internal static class RealAzureRollbackQualification
 {
@@ -445,6 +463,183 @@ internal static class RealAzureRollbackQualification
         }
     }
 
+    /// <summary>
+    /// Sends a canary on both the AMQP-default and REST-lane transports,
+    /// receives (but does not settle) each on the candidate, switches to the
+    /// prior sealed runtime, and proves: (1) queued state remains usable —
+    /// both canaries are still deliverable — and (2) the receipt-handle/lock
+    /// boundary at the transport level. The AMQP receipt handle is minted
+    /// against an in-process receiver link; when the candidate process is
+    /// replaced that link is gone, so Service Bus cannot resolve the old lock
+    /// token against the prior runtime's fresh receiver and redemption must
+    /// fail (<c>ReceiptHandleIsInvalid</c>) before a freshly received handle
+    /// completes the message. The REST receipt handle instead carries a
+    /// Service Bus message-id/lock-token pair that the broker validates
+    /// statelessly, so it redeems successfully even though the process that
+    /// received it is gone — the boundary is transport-scoped, not merely a
+    /// property of "the proxy restarted".
+    /// </summary>
+    public static async Task<RealAzureSqsRollbackResult> VerifySqsAsync(
+        RealAzureProxyFixture fixture,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(fixture);
+        if (!fixture.SealedRollbackConfigured)
+        {
+            throw new InvalidOperationException(
+                "Real rollback requires verified candidate and prior sealed runtimes.");
+        }
+
+        var startedAt = DateTimeOffset.UtcNow;
+        var stopwatch = Stopwatch.StartNew();
+        var restStopwatch = Stopwatch.StartNew();
+        var amqpQueue = "aws2azure-rollback-" + Guid.NewGuid().ToString("N")[..20];
+        var restQueue = RealAzureProxyFixture.SqsRestLaneQueueName;
+        var amqpCanary = "sqs-rollback-amqp-" + Guid.NewGuid().ToString("N");
+        var restCanary = "sqs-rollback-rest-" + Guid.NewGuid().ToString("N");
+        var amqpCanaryDigest = Digest(amqpCanary);
+        var amqpQueueCreated = false;
+        var candidateRestored = false;
+        var candidateStoppedForRollback = false;
+        string? amqpQueueUrl = null;
+        AmazonSQSClient? priorClient = null;
+
+        using var candidateClient = fixture.CreateSqsClient(maxErrorRetry: 0);
+        try
+        {
+            var restQueueUrl = (await candidateClient.CreateQueueAsync(restQueue, cancellationToken)
+                .ConfigureAwait(false)).QueueUrl;
+            await PurgeQueueAsync(candidateClient, restQueueUrl, cancellationToken)
+                .ConfigureAwait(false);
+
+            amqpQueueUrl = (await candidateClient.CreateQueueAsync(amqpQueue, cancellationToken)
+                .ConfigureAwait(false)).QueueUrl;
+            amqpQueueCreated = true;
+
+            await candidateClient.SendMessageAsync(
+                new SendMessageRequest { QueueUrl = amqpQueueUrl, MessageBody = amqpCanary },
+                cancellationToken).ConfigureAwait(false);
+            await candidateClient.SendMessageAsync(
+                new SendMessageRequest { QueueUrl = restQueueUrl, MessageBody = restCanary },
+                cancellationToken).ConfigureAwait(false);
+            var candidateCreateCompletedAt = DateTimeOffset.UtcNow;
+
+            var candidateAmqpReceipt = await ReceiveExpectedAsync(
+                candidateClient, amqpQueueUrl, amqpCanary, cancellationToken).ConfigureAwait(false);
+            var candidateRestReceipt = await ReceiveExpectedAsync(
+                candidateClient, restQueueUrl, restCanary, cancellationToken).ConfigureAwait(false);
+            var candidateReadCompletedAt = DateTimeOffset.UtcNow;
+
+            await fixture.StopForRuntimeSwitchAsync().ConfigureAwait(false);
+            candidateStoppedForRollback = true;
+            var candidateStoppedAt = DateTimeOffset.UtcNow;
+            await fixture.StartRuntimeAsync(SealedRuntimeRole.Prior).ConfigureAwait(false);
+            var priorStartedAt = DateTimeOffset.UtcNow;
+            priorClient = fixture.CreateSqsClient(maxErrorRetry: 0);
+
+            // Receipt-handle/lock boundary: the AMQP handle minted before the
+            // switch must NOT redeem on the prior runtime's fresh receiver.
+            var oldAmqpHandleRejected = await TryDeleteAsync(
+                priorClient, amqpQueueUrl, candidateAmqpReceipt, cancellationToken)
+                .ConfigureAwait(false);
+            if (oldAmqpHandleRejected)
+            {
+                throw new InvalidDataException(
+                    "The AMQP receipt handle minted before the proxy restart unexpectedly " +
+                    "redeemed against the prior runtime; the link-scoped lock boundary no " +
+                    "longer holds.");
+            }
+
+            // Queued state remains usable: a fresh receive on the prior
+            // runtime redelivers the same canary, which can then be settled.
+            var priorAmqpReceipt = await ReceiveExpectedAsync(
+                priorClient, amqpQueueUrl, amqpCanary, cancellationToken).ConfigureAwait(false);
+            await priorClient.DeleteMessageAsync(
+                new DeleteMessageRequest
+                {
+                    QueueUrl = amqpQueueUrl,
+                    ReceiptHandle = priorAmqpReceipt,
+                },
+                cancellationToken).ConfigureAwait(false);
+            var priorReadCompletedAt = DateTimeOffset.UtcNow;
+
+            // REST-transport counterpart: the broker-scoped lock token DOES
+            // redeem against the prior runtime, because Service Bus validates
+            // it statelessly rather than through a process-local receiver.
+            var restHandleRedeemed = await TryDeleteAsync(
+                priorClient, restQueueUrl, candidateRestReceipt, cancellationToken)
+                .ConfigureAwait(false);
+            restStopwatch.Stop();
+            var restCapturedAt = DateTimeOffset.UtcNow;
+
+            var cleanupRequestedAt = TimestampAfter(priorReadCompletedAt);
+            await AssertSqsQueueEmptyAsync(priorClient, amqpQueueUrl, cancellationToken)
+                .ConfigureAwait(false);
+            await priorClient.DeleteQueueAsync(amqpQueueUrl, cancellationToken)
+                .ConfigureAwait(false);
+            amqpQueueCreated = false;
+            var cleanupVerifiedAt = DateTimeOffset.UtcNow;
+
+            await fixture.StopForRuntimeSwitchAsync().ConfigureAwait(false);
+            priorClient.Dispose();
+            priorClient = null;
+            await fixture.StartRuntimeAsync(SealedRuntimeRole.Candidate).ConfigureAwait(false);
+            candidateRestored = true;
+            candidateStoppedForRollback = false;
+            var candidateRestoredAt = DateTimeOffset.UtcNow;
+            var completedAt = TimestampAfter(candidateRestoredAt);
+
+            return new RealAzureSqsRollbackResult(
+                stopwatch.Elapsed.TotalSeconds,
+                completedAt,
+                Proof(
+                    "sqs",
+                    "DeleteMessage",
+                    fixture,
+                    amqpCanaryDigest,
+                    SqsAmqpRollbackCleanupSemantics,
+                    startedAt,
+                    candidateCreateCompletedAt,
+                    candidateReadCompletedAt,
+                    candidateStoppedAt,
+                    priorStartedAt,
+                    priorReadCompletedAt,
+                    cleanupRequestedAt,
+                    cleanupVerifiedAt,
+                    candidateRestoredAt,
+                    completedAt),
+                restHandleRedeemed,
+                restStopwatch.Elapsed.TotalSeconds,
+                restCapturedAt);
+        }
+        finally
+        {
+            priorClient?.Dispose();
+            priorClient = null;
+            if (candidateStoppedForRollback && !candidateRestored)
+            {
+                if (fixture.ProxyStarted)
+                {
+                    await fixture.StopForRuntimeSwitchAsync().ConfigureAwait(false);
+                }
+                await fixture.StartRuntimeAsync(SealedRuntimeRole.Candidate)
+                    .ConfigureAwait(false);
+            }
+
+            if (amqpQueueCreated && amqpQueueUrl is not null)
+            {
+                try
+                {
+                    await candidateClient.DeleteQueueAsync(
+                        amqpQueueUrl, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch
+                {
+                }
+            }
+        }
+    }
+
     private static RealAzureRollbackProof Proof(
         string service,
         string operation,
@@ -762,6 +957,131 @@ internal static class RealAzureRollbackQualification
                     "Prior sealed runtime cleanup did not make the secret absent.");
             }
             await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private const string SqsAmqpRollbackCleanupSemantics =
+        "amqp_link_scoped_lock_requires_redelivery_after_restart_delete_queue_verify_empty";
+
+    /// <summary>
+    /// SQS <c>ReceiveMessage</c> uses long polling (5s) with a bounded
+    /// overall deadline, then asserts the received body matches the
+    /// expected canary before returning the receipt handle. Mirrors the
+    /// receive loop already used by <c>SqsRealAzureSmokeTests</c>.
+    /// </summary>
+    private static async Task<string> ReceiveExpectedAsync(
+        IAmazonSQS client,
+        string queueUrl,
+        string expectedBody,
+        CancellationToken cancellationToken)
+    {
+        var deadline = DateTimeOffset.UtcNow + AbsenceTimeout;
+        while (true)
+        {
+            var response = await client.ReceiveMessageAsync(
+                new ReceiveMessageRequest
+                {
+                    QueueUrl = queueUrl,
+                    MaxNumberOfMessages = 1,
+                    WaitTimeSeconds = 5,
+                },
+                cancellationToken).ConfigureAwait(false);
+            if (response.Messages is { Count: > 0 } messages)
+            {
+                if (!string.Equals(messages[0].Body, expectedBody, StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException(
+                        "Sealed runtime rollback returned the wrong SQS canary.");
+                }
+                return messages[0].ReceiptHandle;
+            }
+            if (DateTimeOffset.UtcNow >= deadline)
+            {
+                throw new InvalidDataException(
+                    "No message received from Service Bus within the rollback deadline.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Attempts <c>DeleteMessage</c> with a receipt handle that may no longer
+    /// be redeemable (the AMQP boundary case). Returns whether it succeeded
+    /// instead of throwing, so callers can assert either outcome explicitly.
+    /// </summary>
+    private static async Task<bool> TryDeleteAsync(
+        IAmazonSQS client,
+        string queueUrl,
+        string receiptHandle,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await client.DeleteMessageAsync(
+                new DeleteMessageRequest { QueueUrl = queueUrl, ReceiptHandle = receiptHandle },
+                cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (ReceiptHandleIsInvalidException)
+        {
+            return false;
+        }
+    }
+
+    private static async Task PurgeQueueAsync(
+        IAmazonSQS client,
+        string queueUrl,
+        CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            var response = await client.ReceiveMessageAsync(
+                new ReceiveMessageRequest
+                {
+                    QueueUrl = queueUrl,
+                    MaxNumberOfMessages = 10,
+                    WaitTimeSeconds = 1,
+                },
+                cancellationToken).ConfigureAwait(false);
+            if (response.Messages is not { Count: > 0 } messages)
+            {
+                return;
+            }
+            foreach (var message in messages)
+            {
+                try
+                {
+                    await client.DeleteMessageAsync(
+                        new DeleteMessageRequest
+                        {
+                            QueueUrl = queueUrl,
+                            ReceiptHandle = message.ReceiptHandle,
+                        },
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                }
+            }
+        }
+    }
+
+    private static async Task AssertSqsQueueEmptyAsync(
+        IAmazonSQS client,
+        string queueUrl,
+        CancellationToken cancellationToken)
+    {
+        var response = await client.ReceiveMessageAsync(
+            new ReceiveMessageRequest
+            {
+                QueueUrl = queueUrl,
+                MaxNumberOfMessages = 1,
+                WaitTimeSeconds = 1,
+            },
+            cancellationToken).ConfigureAwait(false);
+        if (response.Messages is { Count: > 0 })
+        {
+            throw new InvalidDataException(
+                "Prior sealed runtime cleanup left an unexpected message queued.");
         }
     }
 

@@ -37,9 +37,15 @@ message again rather than reusing the old receipt handle.
 Before adoption, exercise representative concurrent producers and consumers,
 long-poll duration, lock expiry/redelivery, settlement, proxy restart, bounded
 retry exhaustion, and the selected Service Bus capacity. The repository's
-real-Azure conformance seals establish operation correctness; the profile
-remains `candidate` until production-shaped SLO and rollback qualification are
-reviewed and committed.
+real-Azure conformance seals establish operation correctness. A sealed
+real-Azure load runner (`SqsRealAzureLoadQualificationTests`, issue #626)
+exercises long polling, forced redelivery, concurrent multi-consumer settlement,
+throttling/timeout/service-unavailable/retry-exhaustion, restart, and rollback
+— separating REST and AMQP evidence rather than blending them, and never
+depending on FIFO. The profile remains `candidate` until at least three
+comparable production-shaped real-Azure load runs against the exact sealed
+candidate are reviewed and a production-shaped SLO is committed from that
+evidence.
 
 ## Transport and excluded capabilities
 

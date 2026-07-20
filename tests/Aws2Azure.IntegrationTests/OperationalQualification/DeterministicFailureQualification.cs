@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 using Amazon;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
@@ -10,6 +11,8 @@ using Amazon.S3;
 using Amazon.S3.Model;
 using Amazon.SecretsManager;
 using Amazon.SecretsManager.Model;
+using Amazon.SQS;
+using Amazon.SQS.Model;
 using Aws2Azure.Conformance.Canonicalization;
 using Aws2Azure.IntegrationTests.FailureConformance;
 using Xunit;
@@ -138,6 +141,52 @@ internal static class DeterministicFailureQualification
                     nameof(scenarioId),
                     scenarioId,
                     "Unsupported DynamoDB deterministic qualification scenario.");
+        }
+    }
+
+    /// <summary>
+    /// SQS deterministic scenarios exercise the REST wire path only (the
+    /// harness is HTTP-based; AMQP failures are a distinct transport with
+    /// no comparable stateless-HTTP-mock story, so AMQP evidence stays in
+    /// the real-Azure load runner). Expected mappings come straight from
+    /// <see cref="Aws2Azure.Modules.Sqs.Errors.SqsErrorMapping.FromServiceBus"/>:
+    /// 429 → 503 ServiceUnavailable, a bare 408 falls through every named
+    /// case to the generic 500 InternalFailure, and &gt;=500 → 502
+    /// ServiceUnavailable.
+    /// </summary>
+    public static async Task VerifySqsScenarioAsync(string scenarioId)
+    {
+        switch (scenarioId)
+        {
+            case ThrottlingScenarioId:
+                await VerifySqsFailureAsync(new FailureCase(
+                    HttpStatusCode.TooManyRequests,
+                    null,
+                    503,
+                    "ServiceUnavailable")).ConfigureAwait(false);
+                break;
+            case TimeoutScenarioId:
+                await VerifySqsFailureAsync(new FailureCase(
+                    HttpStatusCode.RequestTimeout,
+                    null,
+                    500,
+                    "InternalFailure")).ConfigureAwait(false);
+                break;
+            case ServiceUnavailableScenarioId:
+                await VerifySqsFailureAsync(new FailureCase(
+                    HttpStatusCode.ServiceUnavailable,
+                    null,
+                    502,
+                    "ServiceUnavailable")).ConfigureAwait(false);
+                break;
+            case RetryExhaustionScenarioId:
+                await VerifySqsRetryExhaustionAsync().ConfigureAwait(false);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(
+                    nameof(scenarioId),
+                    scenarioId,
+                    "Unsupported SQS deterministic qualification scenario.");
         }
     }
 
@@ -270,6 +319,88 @@ internal static class DeterministicFailureQualification
         AssertSdkError(exception, failure);
         AssertSdkRetriedOnce(harness);
         Assert.InRange(harness.Backend.TokenRequestCount, 0, 1);
+    }
+
+    private static async Task VerifySqsFailureAsync(FailureCase failure)
+    {
+        using var harness = DeterministicFailureHarness.Create("sqs");
+        using var sdk = CreateSqsClient(harness);
+        harness.Backend.PlanStatus(failure.BackendStatus, failure.AzureErrorCode);
+
+        using var response = await harness.RawClient.SendAsync(
+            CreateSqsSendMessageRequest(harness.RawClient.BaseAddress!)).ConfigureAwait(false);
+        await AssertCanonicalErrorAsync(
+            response,
+            failure,
+            CanonicalResponse.BodyKindJsonError).ConfigureAwait(false);
+
+        var exception = await Assert.ThrowsAnyAsync<AmazonServiceException>(
+            () => sdk.SendMessageAsync(new SendMessageRequest
+            {
+                QueueUrl = SqsDeterministicQueueUrl,
+                MessageBody = "deterministic-failure",
+            }));
+        AssertSdkError(exception, failure);
+        AssertSdkRetriedOnce(harness);
+    }
+
+    private const string SqsDeterministicQueueUrl =
+        "https://sqs.us-east-1.amazonaws.com/000000000000/deterministic-failure";
+
+    private static async Task VerifySqsRetryExhaustionAsync()
+    {
+        using var harness = DeterministicFailureHarness.Create("sqs");
+        harness.Backend.PlanStatus(HttpStatusCode.ServiceUnavailable);
+        using var sdk = CreateSqsClient(harness, maxErrorRetry: 2);
+
+        await Assert.ThrowsAnyAsync<AmazonServiceException>(
+            () => sdk.SendMessageAsync(new SendMessageRequest
+            {
+                QueueUrl = SqsDeterministicQueueUrl,
+                MessageBody = "payload",
+            }));
+
+        Assert.Equal(3, harness.Backend.BackendRequestCount);
+    }
+
+    private static AmazonSQSClient CreateSqsClient(
+        DeterministicFailureHarness harness,
+        int maxErrorRetry = 1) =>
+        new(
+            DeterministicFailureHarness.AccessKey,
+            DeterministicFailureHarness.SecretKey,
+            new AmazonSQSConfig
+            {
+                ServiceURL = harness.RawClient.BaseAddress!.GetLeftPart(UriPartial.Authority),
+                RegionEndpoint = RegionEndpoint.USEast1,
+                UseHttp = true,
+                AuthenticationRegion = DeterministicFailureHarness.Region,
+                MaxErrorRetry = maxErrorRetry,
+                HttpClientFactory = harness.AwsHttpClientFactory,
+            });
+
+    private static HttpRequestMessage CreateSqsSendMessageRequest(Uri baseAddress)
+    {
+        var body = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            QueueUrl = SqsDeterministicQueueUrl,
+            MessageBody = "deterministic-failure",
+        });
+        var request = new HttpRequestMessage(HttpMethod.Post, new Uri(baseAddress, "/"))
+        {
+            Content = new ByteArrayContent(body),
+        };
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/x-amz-json-1.0");
+        request.Headers.TryAddWithoutValidation("X-Amz-Target", "AmazonSQS.SendMessage");
+        TestSigV4Signer.SignHeader(
+            request,
+            body,
+            DeterministicFailureHarness.AccessKey,
+            DeterministicFailureHarness.SecretKey,
+            DeterministicFailureHarness.Region,
+            "sqs",
+            extraSignedHeaders: ["x-amz-target"]);
+        return request;
     }
 
     private static async Task VerifyCancellationAsync(

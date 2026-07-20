@@ -50,6 +50,13 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     public const string WiAwsAccessKey = "AKIA-REAL-AZURE-NIGHTLY-WI";
     public const string WiAwsSecret = "real-azure-nightly-wi-secret";
 
+    // The namespace-wide SQS transport default is AMQP (below). This one queue
+    // name is pinned to the REST transport via a per-queue override so the SQS
+    // real-Azure load runner (issue #626) can produce REST-path evidence
+    // alongside the AMQP-default path from the same proxy process, without
+    // requiring a second deployment or a second credential entry.
+    public const string SqsRestLaneQueueName = "aws2azure-sqs-rest-lane";
+
     private const string AuthRegion = "us-east-1";
     private const string InvalidAzureSharedKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
     private const string InvalidAzureSasKeyName = "aws2azure-invalid-sas-key";
@@ -265,13 +272,14 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
             AuthenticationRegion = AuthRegion,
         });
 
-    public AmazonSQSClient CreateSqsClient() => new(
+    public AmazonSQSClient CreateSqsClient(int? maxErrorRetry = null) => new(
         AwsAccessKey, AwsSecret,
         new AmazonSQSConfig
         {
             ServiceURL = ServiceUrlFor("sqs"),
             UseHttp = true,
             AuthenticationRegion = AuthRegion,
+            MaxErrorRetry = maxErrorRetry ?? new AmazonSQSConfig().MaxErrorRetry,
         });
 
     public HttpClient CreateSnsClient() => new()
@@ -537,7 +545,7 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         if (ServiceBusConfigured)
         {
             AppendAzure(azure, $$"""
-                "sqs": { "kind": "serviceBus", "target": { "namespace": "{{JsonEscape(_sbNamespace!)}}", "transport": "Amqp" }, "auth": { "mode": "sas", "keyName": "{{JsonEscape(_sbSasKeyName!)}}", "key": "{{JsonEscape(_sbSasKey!)}}" } }
+                "sqs": { "kind": "serviceBus", "target": { "namespace": "{{JsonEscape(_sbNamespace!)}}", "transport": "Amqp" }, "auth": { "mode": "sas", "keyName": "{{JsonEscape(_sbSasKeyName!)}}", "key": "{{JsonEscape(_sbSasKey!)}}" }, "queues": { "{{JsonEscape(SqsRestLaneQueueName)}}": { "transport": "Rest" } } }
                 """);
             AppendAzure(azure, $$"""
                 "sns": { "kind": "serviceBusTopics", "target": { "namespace": "{{JsonEscape(_sbNamespace!)}}" }, "auth": { "mode": "sas", "keyName": "{{JsonEscape(_sbSasKeyName!)}}", "key": "{{JsonEscape(_sbSasKey!)}}" } }
