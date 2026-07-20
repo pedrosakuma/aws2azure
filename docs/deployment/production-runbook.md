@@ -36,6 +36,8 @@ and retain the release-note compatibility matrix with this record.
 
 1. Find the closest pattern in
    [Workload compatibility](../site/workload-compatibility.md).
+   For the candidate DynamoDB CRUD contract, also follow the
+   [DynamoDB basic CRUD profile guide](../workloads/dynamodb-basic-crud.md).
 2. Inventory every AWS operation the application calls, including startup,
    health, cleanup, retry, and rarely used administrative paths. Confirm each
    operation and required sub-feature in the
