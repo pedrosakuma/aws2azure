@@ -17,7 +17,7 @@ Legend: ✅ supported · 🟡 conditional · ⛔ blocked
 | [s3](s3.md) | Available | 27 | 10 | 12 | 25 | 15/74 |
 | [secretsmanager](secretsmanager.md) | Available | 6 | 1 | 0 | 1 | 7/8 |
 | [sns](sns.md) | Available | 0 | 14 | 0 | 0 | 8/14 |
-| [sqs](sqs.md) | Available | 10 | 8 | 2 | 0 | 6/20 |
+| [sqs](sqs.md) | Available | 10 | 8 | 2 | 0 | 9/20 |
 
 ## Adoption decision
 
@@ -111,8 +111,8 @@ an explicit migration decision.
 
 | Workload pattern | Assessment | Operation coverage | Operation seals | Decision guidance | Requirement ID |
 |---|---|---|---:|---|---|
-| Standard queue messaging | 🟡 conditional | 7 implemented | 4/7 | Create, discover, send, receive, settle, and delete standard queues and messages through the core SQS operations.<br>Suitable for standard queues after validating visibility timeout and dead-letter behavior with the selected Service Bus transport.<br>[Design gap](design-gaps.md#sqs-transport-dependent-capability-differences): Transport-dependent capability differences | `sqs_standard_messaging` |
-| FIFO queue messaging | 🟡 conditional | 5 implemented | 3/5 | FIFO group ordering is available only through the AMQP transport and receipt settlement remains connection-affine.<br>Configure transport: Amqp and test the full receive/delete lifecycle under concurrency before production.<br>[Design gap](design-gaps.md#sqs-fifo-ordering-requires-the-amqp-transport): FIFO ordering requires the AMQP transport<br>[Design gap](design-gaps.md#sqs-transport-dependent-capability-differences): Transport-dependent capability differences | `sqs_fifo` |
+| Standard queue messaging | 🟡 conditional | 7 implemented | 7/7 | Create, discover, send, receive, settle, and delete standard queues and messages through the core SQS operations.<br>Suitable for standard queues after validating visibility timeout and dead-letter behavior with the selected Service Bus transport.<br>[Design gap](design-gaps.md#sqs-transport-dependent-capability-differences): Transport-dependent capability differences | `sqs_standard_messaging` |
+| FIFO queue messaging | 🟡 conditional | 5 implemented | 5/5 | FIFO group ordering is available only through the AMQP transport and receipt settlement remains connection-affine.<br>Configure transport: Amqp and test the full receive/delete lifecycle under concurrency before production.<br>[Design gap](design-gaps.md#sqs-fifo-ordering-requires-the-amqp-transport): FIFO ordering requires the AMQP transport<br>[Design gap](design-gaps.md#sqs-transport-dependent-capability-differences): Transport-dependent capability differences | `sqs_fifo` |
 | Hard queue purge | 🟡 conditional | 1 partial | 0/1 | PurgeQueue is emulated with a bounded drain and may leave messages while producers remain active.<br>Pause producers before purge when the workload requires a guaranteed empty queue.<br>[PurgeQueue](sqs.md#purgequeue) is partial<br>[Design gap](design-gaps.md#sqs-purgequeue-is-best-effort-emulation): PurgeQueue is best-effort emulation | `sqs_hard_purge` |
 | Queue permission administration | ⛔ blocked | 2 stub | 0/2 | AddPermission and RemovePermission validate the queue but cannot reproduce the SQS IAM permission model.<br>Enforce access through Azure RBAC, SAS credentials, and network controls.<br>[AddPermission](sqs.md#addpermission) is stub<br>[RemovePermission](sqs.md#removepermission) is stub | `sqs_permission_administration` |
 

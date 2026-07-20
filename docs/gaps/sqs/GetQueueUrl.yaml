@@ -2,6 +2,10 @@ service: sqs
 operation: GetQueueUrl
 azure_equivalent: "GET https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (existence probe)"
 status: implemented
+verified_real_azure:
+  date: "2026-07-20"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29769257977
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29769257977
 sub_features:
   - name: QueueOwnerAWSAccountId
     status: unsupported
@@ -9,6 +13,6 @@ sub_features:
 behavior_differences:
   - "Returned QueueUrl is '{request-scheme}://{request-host}/000000000000/{queue}' so the AWS SDK keeps routing back to the same proxy endpoint the caller reached."
   - "Existence check uses Service Bus GET; an unknown queue returns AWS.SimpleQueueService.NonExistentQueue."
-  - "The restart qualification exercises queue discovery against real Azure, but a fresh standard-lifecycle run is required before applying an operation seal."
+  - "Validated against real Azure Service Bus through both the standard message lifecycle and queue discovery after proxy restart."
 references:
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_GetQueueUrl.html

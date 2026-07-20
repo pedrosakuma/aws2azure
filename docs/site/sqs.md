@@ -213,6 +213,7 @@
 
 - **Status:** ✅ implemented
 - **Azure equivalent:** `GET https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (existence probe)`
+- **Real-Azure verified:** ✅ 2026-07-20 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29769257977) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29769257977)
 
 ### Sub-features
 
@@ -224,7 +225,7 @@
 
 - Returned QueueUrl is '{request-scheme}://{request-host}/000000000000/{queue}' so the AWS SDK keeps routing back to the same proxy endpoint the caller reached.
 - Existence check uses Service Bus GET; an unknown queue returns AWS.SimpleQueueService.NonExistentQueue.
-- The restart qualification exercises queue discovery against real Azure, but a fresh standard-lifecycle run is required before applying an operation seal.
+- Validated against real Azure Service Bus through both the standard message lifecycle and queue discovery after proxy restart.
 
 ### References
 
@@ -332,6 +333,7 @@
 
 - **Status:** ✅ implemented
 - **Azure equivalent:** `Azure Service Bus queue runtime REST API — POST /{queue}/messages/head?timeout={waitSeconds}&api-version=2021-05 (peek-lock semantics)`
+- **Real-Azure verified:** ✅ 2026-07-20 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29769257977) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29769257977)
 
 ### Sub-features
 
@@ -356,7 +358,7 @@
 - FIFO ordering — AMQP vs REST: SQS FIFO guarantees strict per-MessageGroupId order on receive (one in-flight message per group at a time, others stay invisible until the in-flight one is deleted). This is IMPLEMENTED on the AMQP transport (`transport: Amqp`): the receive path acquires a broker-assigned session receiver (AcceptNextSession) and holds the session lock, so a group's in-flight messages stay pinned to one consumer and strict order is preserved. The session-id is carried in the v3 receipt handle so DeleteMessage / ChangeMessageVisibility route the settle back to the same live session link. The REST transport cannot express session-receive and therefore does NOT provide strict per-group ordering — it surfaces MessageGroupId on each message (so application-side de-grouping still works) but does not block concurrent delivery of the same group to different consumers (won't implement — inherent SB REST limitation). FIFO settle is connection-affine: an in-flight FIFO message cannot be settled from a different live connection while its session lock is held (SB session locks are connection-bound and non-serializable); on lock expiry the broker releases the session and the group becomes redeliverable, which matches SQS visibility-timeout semantics and enables scale-up rebalance. Proactive idle-TTL eviction of pooled session receivers is implemented (#262): a background sweeper closes session-receiver links with no receive/settle activity within a configurable idle window (default 5 min, AWS2AZURE_SB_SESSION_IDLE_SECONDS), returning the broker session for another consumer and freeing the AMQP link — resource hygiene, not a correctness gap.
 - MessageGroupId is surfaced from BrokerProperties.SessionId; MessageDeduplicationId from BrokerProperties.MessageId. Both only appear in the response when the AttributeNames filter requests them (or 'All').
 - FIFO session receive is not yet conformant on real Azure. Run 29472731381 timed out AcceptNextSession for one ready MessageGroupId; runs 29471929057 and 29471188679 failed on the same path with concurrent groups. The scenario remains explicitly skipped as optional FIFO coverage, while the standard non-FIFO lifecycle is covered separately.
-- The standard-queue long-poll and receipt-handle path is covered by the real-Azure message-lifecycle scenario. A fresh run of the revised matrix is required before applying an operation seal.
+- The standard-queue long-poll and receipt-handle path is validated against real Azure Service Bus through the message-lifecycle scenario.
 - AMQP transport (Phase 2.5 slice 8b.4c, MessageAttributes round-trip in Phase 6 / #99): when a queue is configured with `transport: Amqp` (see ServiceBusCredentials.Queues), ReceiveMessage uses the in-process Service Bus AMQP 1.0 client via a shared connection pool. The receipt handle minted on the AMQP path is a distinct opaque format (version `2`, base64 of `{queueName, lockToken-GUID, lockedUntilUtc}`) carrying the SB lock-token directly rather than the REST messageId/lockToken pair. Long polling (WaitTimeSeconds) is honoured on the first receive; the polling-loop emulation that the REST path uses to batch up to 10 messages is replaced by a single `ReceiveBatchAsync` call against the cached AMQP link, which is more efficient. MessageAttributes (String/Number/Binary DataType round-trip) are now reconstructed from the `Aws2Azure-AttrTypes` application-property registry written by the AMQP send path; MD5OfMessageAttributes is computed via the shared `SqsMessageMd5.OfAttributes` helper so both transports produce the same hash. FIFO MessageGroupId is surfaced from `properties.group-id` (with the receiver's session-id as a fallback).
 - Dead-letter attribution (AMQP path, Phase 2.5): when SB delivers a message from a `<queue>/$DeadLetterQueue` subqueue, the proxy surfaces three system attributes — `DeadLetterQueueSourceArn` (synthesised as `arn:aws:sqs:us-east-1:000000000000:<sourceQueueName>` from the SB `x-opt-deadletter-source` annotation; us-east-1 is a placeholder since the proxy doesn't model AWS regions, and the account id is `QueueUrlBuilder.PlaceholderAccountId`), `Aws2Azure-DeadLetterReason`, and `Aws2Azure-DeadLetterErrorDescription` (the latter two read from the dead-lettered message's application-properties, prefixed `Aws2Azure-` because SQS has no AWS-standard counterpart). All three respect the AttributeNames filter, are omitted entirely for non-DLQ messages, and are only emitted on the AMQP path (the REST path does not subscribe to DLQ subqueues yet).
 - Emulator divergence (Phase 2.7 Slice 6): the Azure Service Bus emulator does NOT echo the broker-assigned session-id back in the receiver attach response's `com.microsoft:session-filter` when the client requests `sessionId=null` (broker-assigned), so FIFO end-to-end coverage against the emulator is impossible. Real Azure accepts the raw string/null filter shape, but current live runs wait until timeout before a session is assigned; no successful broker-assigned FIFO receive is claimed.
@@ -391,6 +393,7 @@
 
 - **Status:** ✅ implemented
 - **Azure equivalent:** `Azure Service Bus queue runtime REST API — POST /{queue}/messages?api-version=2021-05`
+- **Real-Azure verified:** ✅ 2026-07-20 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29769257977) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29769257977)
 
 ### Sub-features
 
@@ -415,7 +418,7 @@
 - SQS's per-message cap is 1 MiB (1,048,576 bytes) — raised from 256 KiB in August 2025 — and includes the body plus every message attribute's name + data type + value bytes. The proxy enforces the same 1 MiB cap. The *effective* cap is also bounded by the backing Service Bus tier: SB Standard rejects anything over 256 KiB regardless, SB Premium honours up to 100 MiB. Per-queue MaximumMessageSize (1024..1048576) is recorded at CreateQueue time but not re-validated per send — SB itself rejects oversized payloads.
 - Payloads larger than 1 MiB must use the AWS Extended Client Library, which stores the body in S3 and embeds a JSON pointer in the SQS message. That pointer flows through this proxy unchanged: the receive side returns the same pointer, and the embedded S3 reference resolves against the proxy's S3 → Blob translation, so end-to-end large-message support works as long as the client uses the Extended Client and the same proxy fronts both S3 and SQS.
 - ScheduledEnqueueTimeUtc has millisecond resolution in SB; SQS DelaySeconds is integer seconds, so no loss occurs.
-- The standard-queue send path is covered by the real-Azure message-lifecycle scenario. A fresh run of the revised matrix is required before applying an operation seal; FIFO session delivery remains optional coverage outside the standard profile.
+- The standard-queue send path is validated against real Azure Service Bus through the message-lifecycle scenario; FIFO session delivery remains optional coverage outside the standard profile.
 
 ### References
 

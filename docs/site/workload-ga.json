@@ -107,31 +107,19 @@
     "profile_version": 1,
     "name": "SQS standard messaging",
     "minimum_proxy_version": "0.1.0",
-    "verdict": "conditional",
+    "verdict": "candidate",
     "findings": [
-      {
-        "code": "real_azure_seal_missing",
-        "disposition": "blocking",
-        "subject": "sqs:GetQueueUrl",
-        "message": "Required operation has no real-Azure verification seal."
-      },
-      {
-        "code": "real_azure_seal_missing",
-        "disposition": "blocking",
-        "subject": "sqs:ReceiveMessage",
-        "message": "Required operation has no real-Azure verification seal."
-      },
-      {
-        "code": "real_azure_seal_missing",
-        "disposition": "blocking",
-        "subject": "sqs:SendMessage",
-        "message": "Required operation has no real-Azure verification seal."
-      },
       {
         "code": "design_gap_accepted",
         "disposition": "advisory",
         "subject": "sqs:Transport-dependent capability differences",
         "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_standard_messaging\u0027."
+      },
+      {
+        "code": "qualification_evidence_missing",
+        "disposition": "blocking",
+        "subject": "sqs-standard-messaging",
+        "message": "No reviewed real-Azure workload qualification artifact is referenced."
       }
     ]
   }
