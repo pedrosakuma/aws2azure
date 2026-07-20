@@ -359,6 +359,7 @@ public sealed class RcObservationGenerationTests
         var approved = new ApprovedRuntimeRecord
         {
             Profile = new ApprovedRuntimeProfile { Id = "new-profile", Version = 1 },
+            Status = "bootstrap",
         };
 
         try
@@ -370,6 +371,73 @@ public sealed class RcObservationGenerationTests
                 tempRoot);
 
             Assert.Empty(errors);
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Approved_runtime_with_unresolved_qualification_still_requires_observation_policy()
+    {
+        // Only a "bootstrap" record is exempt from the observation-policy
+        // requirement while its qualification is unresolved. An "approved"
+        // record must always have a resolved qualification, so an inconsistent
+        // approved+unresolved combination must still be reported rather than
+        // silently masked by the bootstrap exemption.
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"aws2azure-rcobs-{Guid.NewGuid():N}");
+        var qualificationDir = Path.Combine(tempRoot, "qualification");
+        Directory.CreateDirectory(qualificationDir);
+        File.WriteAllText(
+            Path.Combine(qualificationDir, "new-profile.yaml"),
+            """
+            schema_version: 1
+            profile_id: new-profile
+            profile_version: 1
+            rules:
+              max_artifact_age_hours: 72
+              min_samples_per_scenario: 300
+              min_duration_seconds: 300
+              max_failure_rate: 0
+              zero_completions_disqualify: true
+              only_skipped_real_azure_disqualifies: true
+              min_distinct_runs: 3
+            load_shape:
+              concurrency: 8
+              requested_duration_seconds: 300
+            scenarios:
+              - id: representative-load
+                service: new
+                operation: Get
+                evidence_source: real_azure
+                signals:
+                  - id: representative-load-throughput
+                    source: backend_capacity
+                    disposition: blocking
+                    metric: throughput_per_sec
+                    threshold_status: unresolved
+                    threshold_reason: "no comparable runs yet"
+            """);
+        var approved = new ApprovedRuntimeRecord
+        {
+            Profile = new ApprovedRuntimeProfile { Id = "new-profile", Version = 1 },
+            Status = "approved",
+        };
+
+        try
+        {
+            var errors = RcObservationPolicyValidator.Validate(
+                [],
+                [],
+                [approved],
+                tempRoot);
+
+            Assert.Contains(
+                errors,
+                error => error.Contains(
+                    "missing RC observation policy for approved runtime 'new-profile' v1",
+                    StringComparison.Ordinal));
         }
         finally
         {

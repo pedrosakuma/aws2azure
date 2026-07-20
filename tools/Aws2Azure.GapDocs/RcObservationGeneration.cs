@@ -147,6 +147,9 @@ public static class RcObservationPolicyValidator
         var approvedKeys = approvedRuntimes
             .Select(item => (item.Profile.Id, item.Profile.Version))
             .ToHashSet();
+        var approvedStatusByKey = approvedRuntimes
+            .GroupBy(item => (item.Profile.Id, item.Profile.Version))
+            .ToDictionary(group => group.Key, group => group.First().Status);
         foreach (var missing in approvedKeys.Except(policyKeys).Order())
         {
             // A brand-new profile's approved-runtime ledger legitimately starts as a
@@ -155,30 +158,37 @@ public static class RcObservationPolicyValidator
             // comparable production-shaped runs exist yet to review a threshold
             // from). An RC observation policy exists to compare live runs against
             // an already-reviewed floor, so it has nothing meaningful to validate
-            // against until that floor is resolved — do not require one yet.
-            var qualificationPath = Path.Combine(
-                workloadsRoot,
-                "qualification",
-                missing.Id + ".yaml");
-            try
+            // against until that floor is resolved — do not require one yet. This
+            // exemption is scoped to "bootstrap" records only: an "approved" record
+            // must always have a resolved qualification (a bootstrap-only
+            // exemption must never mask a genuinely inconsistent approved record).
+            if (approvedStatusByKey.TryGetValue(missing, out var status)
+                && status == "bootstrap")
             {
-                var qualification = WorkloadQualificationPolicyLoader.Load(qualificationPath);
-                var hasUnresolvedBlockingSignal = qualification.Scenarios
-                    .SelectMany(scenario => scenario.Signals)
-                    .Any(signal =>
-                        signal.Disposition == "blocking"
-                        && signal.ThresholdStatus == "unresolved");
-                if (hasUnresolvedBlockingSignal)
+                var qualificationPath = Path.Combine(
+                    workloadsRoot,
+                    "qualification",
+                    missing.Id + ".yaml");
+                try
                 {
-                    continue;
+                    var qualification = WorkloadQualificationPolicyLoader.Load(qualificationPath);
+                    var hasUnresolvedBlockingSignal = qualification.Scenarios
+                        .SelectMany(scenario => scenario.Signals)
+                        .Any(signal =>
+                            signal.Disposition == "blocking"
+                            && signal.ThresholdStatus == "unresolved");
+                    if (hasUnresolvedBlockingSignal)
+                    {
+                        continue;
+                    }
                 }
-            }
-            catch (Exception exception) when (exception is FileNotFoundException
-                                              or InvalidDataException)
-            {
-                // Missing/invalid qualification policy is already reported by the
-                // qualification-policy validator; fall through so this loop still
-                // reports the observation-policy gap.
+                catch (Exception exception) when (exception is FileNotFoundException
+                                                  or InvalidDataException)
+                {
+                    // Missing/invalid qualification policy is already reported by
+                    // the qualification-policy validator; fall through so this
+                    // loop still reports the observation-policy gap.
+                }
             }
 
             errors.Add(
