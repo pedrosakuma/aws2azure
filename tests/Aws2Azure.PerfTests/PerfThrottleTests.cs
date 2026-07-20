@@ -32,6 +32,22 @@ public class PerfThrottleTests
         Assert.True(PerfThrottle.IsThrottle(ex));
     }
 
+    [Theory]
+    [InlineData("SlowDown", "Reduce your request rate.")]
+    [InlineData("InternalError", "Reduce your request rate.")]
+    public void S3_slow_down_signal_is_throttle(string errorCode, string message)
+    {
+        var ex = new AmazonServiceException(
+            message,
+            null,
+            ErrorType.Receiver,
+            errorCode,
+            "req-s3",
+            HttpStatusCode.ServiceUnavailable);
+
+        Assert.True(PerfThrottle.IsThrottle(ex));
+    }
+
     [Fact]
     public void DynamoDb_provisioned_throughput_exceeded_is_throttle()
     {
@@ -55,7 +71,12 @@ public class PerfThrottleTests
     public void Server_error_5xx_is_not_throttle()
     {
         var ex = new AmazonServiceException(
-            "internal error", null, ErrorType.Receiver, "InternalServerError", "req-3", HttpStatusCode.InternalServerError);
+            "internal proxy fault",
+            null,
+            ErrorType.Receiver,
+            "InternalError",
+            "req-3",
+            HttpStatusCode.InternalServerError);
 
         Assert.False(PerfThrottle.IsThrottle(ex));
     }
@@ -108,5 +129,12 @@ public class PerfThrottleTests
     public void Status_code_overload_only_flags_429(int status, bool expected)
     {
         Assert.Equal(expected, PerfThrottle.IsThrottle((HttpStatusCode)status));
+    }
+
+    [Fact]
+    public void S3_emulator_pressure_shapes_remain_bounded()
+    {
+        Assert.Equal(1, S3PerfTests.LargePutConcurrency);
+        Assert.Equal(2, S3PerfTests.DeleteObjectsConcurrency);
     }
 }

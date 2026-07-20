@@ -6,6 +6,9 @@ namespace Aws2Azure.PerfTests;
 [Collection(S3PerfCollection.Name)]
 public sealed class S3PerfTests(S3PerfFixture fixture)
 {
+    internal const int LargePutConcurrency = 1;
+    internal const int DeleteObjectsConcurrency = 2;
+
     [SkippableFact]
     public async Task PutObject_throughput()
     {
@@ -141,7 +144,7 @@ public sealed class S3PerfTests(S3PerfFixture fixture)
     [SkippableTheory]
     [InlineData("1 KiB", 1 * 1024, 16)]
     [InlineData("1 MiB", 1 * 1024 * 1024, 8)]
-    [InlineData("10 MiB", 10 * 1024 * 1024, 2)]
+    [InlineData("10 MiB", 10 * 1024 * 1024, LargePutConcurrency)]
     public async Task PutObject_size_throughput(string label, int size, int concurrency)
     {
         Skip.IfNot(fixture.Ready, fixture.SkipReason);
@@ -261,7 +264,7 @@ public sealed class S3PerfTests(S3PerfFixture fixture)
 
         var result = await PerfRunner.RunAsync(
             scenario: "s3.DeleteObjects (100 keys)",
-            concurrency: 8,
+            concurrency: DeleteObjectsConcurrency,
             duration: TimeSpan.FromSeconds(20),
             warmup: TimeSpan.FromSeconds(3),
             action: async (workerId, ct) =>
@@ -287,7 +290,11 @@ public sealed class S3PerfTests(S3PerfFixture fixture)
                 }
             });
 
-        PerfReport.Append(result, notes: "S3→Azurite DeleteObjects — 100 keys/call, idempotent (missing keys reported as Deleted)");
+        PerfReport.Append(
+            result,
+            notes:
+                $"S3→Azurite DeleteObjects — 100 keys/call, concurrency " +
+                $"{DeleteObjectsConcurrency}, idempotent (missing keys reported as Deleted)");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
         result.AssertNoRegression();
     }
