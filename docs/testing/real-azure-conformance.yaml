@@ -505,6 +505,33 @@ services:
         operations: [PublishBatch]
         tests:
           - Aws2Azure.IntegrationTests.Sns.SnsRealAzureConformanceTests.PublishBatch_reports_real_service_bus_results
+      - id: publish-event-grid
+        priority: p0
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Publish routes to a live Event Grid custom topic (backend=EventGrid per-topic override); subject and message attributes are asserted end to end via the topic's Storage Queue event subscription, not only HTTP-level publish acceptance.
+        operations: [Publish]
+        tests:
+          - Aws2Azure.IntegrationTests.Sns.SnsPublishEventGridRealAzureTests.Publish_delivers_subject_and_message_attributes_via_event_grid
+      - id: publish-batch-event-grid
+        priority: p0
+        category: batch
+        evidence_source: real_azure
+        establishes_verification: true
+        description: PublishBatch delivers every entry to a live Event Grid custom topic, verified via the Storage Queue event subscription.
+        operations: [PublishBatch]
+        tests:
+          - Aws2Azure.IntegrationTests.Sns.SnsPublishEventGridRealAzureTests.PublishBatch_delivers_all_entries_via_event_grid
+      - id: publish-batch-event-grid-partial-failure
+        priority: p0
+        category: batch
+        evidence_source: real_azure
+        establishes_verification: true
+        description: A batch mixing a normal entry with a genuinely oversized entry (over the 1 MB classic Event Grid schema limit) against a live Event Grid custom topic reports one success and one per-entry failure; the successful entry's delivered content is confirmed via the Storage Queue event subscription.
+        operations: [PublishBatch]
+        tests:
+          - Aws2Azure.IntegrationTests.Sns.SnsPublishEventGridRealAzureTests.PublishBatch_reports_per_entry_failure_for_oversized_entry_via_event_grid
       - id: publish-throttled
         priority: p1
         category: throttling
