@@ -121,6 +121,74 @@ public sealed class RelativeRegressionGateEvaluatorTests
         Assert.Single(report.Checked);
     }
 
+    [Theory]
+    [InlineData("dynamodb", 858.7, 16.0, 73.1, 1094.0, 14.5, 21.4, 0.40, 0.0, 4.5)]
+    [InlineData("dynamodb", 660.0, 21.2, 58.5, 1363.1, 11.6, 15.4, 0.40, 0.0, 4.5)]
+    [InlineData("dynamodb", 817.8, 18.4, 42.9, 1435.9, 11.1, 13.5, 0.40, 0.0, 4.5)]
+    [InlineData("s3", 351.1, 27.7, 282.6, 282.3, 25.6, 527.8, 0.50, 2.0, 0.0)]
+    [InlineData("s3", 355.4, 40.0, 216.4, 358.1, 36.4, 112.5, 0.50, 2.0, 0.0)]
+    [InlineData("s3", 406.8, 35.3, 99.9, 484.4, 26.5, 72.7, 0.50, 2.0, 0.0)]
+    public void Calibrated_gate_accepts_observed_unchanged_code_runs(
+        string scenario,
+        double proxyThroughput,
+        double proxyP50,
+        double proxyP99,
+        double baselineThroughput,
+        double baselineP50,
+        double baselineP99,
+        double minThroughputRatio,
+        double maxP50Ratio,
+        double maxP99Ratio)
+    {
+        var results = new Dictionary<string, PerfResultRow>
+        {
+            [scenario] = Row(proxyThroughput, proxyP99, proxyP50),
+            ["sdk"] = Row(baselineThroughput, baselineP99, baselineP50),
+        };
+        var pairings = new Dictionary<string, PerfBaselinePairing>
+        {
+            [scenario] = Pair(
+                "sdk",
+                minThroughputRatio,
+                maxP99Ratio,
+                maxP50Ratio),
+        };
+
+        var report = RelativeRegressionGate.Evaluate(results, pairings);
+
+        Assert.Empty(report.Violations);
+        Assert.Single(report.Checked);
+    }
+
+    [Theory]
+    [InlineData(2.01, 0.0)]
+    [InlineData(1.0, 4.51)]
+    public void Calibrated_latency_gate_rejects_a_ratio_above_its_ceiling(
+        double proxyP50Ratio,
+        double proxyP99Ratio)
+    {
+        var results = new Dictionary<string, PerfResultRow>
+        {
+            ["proxy"] = Row(
+                throughput: 100,
+                p99Ms: proxyP99Ratio == 0 ? 100 : proxyP99Ratio * 100,
+                p50Ms: proxyP50Ratio * 100),
+            ["sdk"] = Row(throughput: 100, p99Ms: 100, p50Ms: 100),
+        };
+        var pairings = new Dictionary<string, PerfBaselinePairing>
+        {
+            ["proxy"] = Pair(
+                "sdk",
+                minThroughputRatio: 0,
+                maxP99Ratio: proxyP99Ratio == 0 ? 0 : 4.5,
+                maxP50Ratio: proxyP99Ratio == 0 ? 2.0 : 0),
+        };
+
+        var report = RelativeRegressionGate.Evaluate(results, pairings);
+
+        Assert.Single(report.Violations);
+    }
+
     [Fact]
     public void Zero_p50_ratio_opts_out_of_median_half()
     {
