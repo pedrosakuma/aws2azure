@@ -1057,10 +1057,26 @@ jobs:
             echo "AZURE_FEDERATED_TOKEN_FILE=$token_file"
           } >> "$GITHUB_ENV"
 
+      - name: Load reviewed observation shape
+        if: env.MODE == 'observation'
+        shell: bash
+        run: |
+          set -euo pipefail
+          policy="docs/workloads/observation/$PROFILE.yaml"
+          candidate_concurrency="$(awk '$1 == "candidate_concurrency:" { print $2 }' "$policy")"
+          stable_concurrency="$(awk '$1 == "stable_concurrency:" { print $2 }' "$policy")"
+          operation_mix_identity="$(awk '$1 == "operation_mix_identity:" { print $2 }' "$policy")"
+          [[ "$candidate_concurrency" =~ ^[1-9][0-9]*$ ]]
+          [[ "$stable_concurrency" =~ ^[1-9][0-9]*$ ]]
+          [[ "$operation_mix_identity" =~ ^sha256:[0-9a-f]{64}$ ]]
+          {
+            echo "AWS2AZURE_RC_OBSERVATION_CANDIDATE_CONCURRENCY=$candidate_concurrency"
+            echo "AWS2AZURE_RC_OBSERVATION_STABLE_CONCURRENCY=$stable_concurrency"
+            echo "AWS2AZURE_RC_OBSERVATION_OPERATION_MIX_IDENTITY=$operation_mix_identity"
+          } >> "$GITHUB_ENV"
+
       - name: Run isolated candidate and stable cohorts
         id: observe
-        env:
-          AWS2AZURE_RC_OBSERVATION_CONCURRENCY: '8'
         shell: bash
         run: |
           set -euo pipefail

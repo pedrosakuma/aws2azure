@@ -7,6 +7,10 @@ minimum_window_minutes: 60
 maximum_window_minutes: 180
 maximum_evidence_age_hours: 72
 minimum_samples_per_cohort: 300
+load_shape:
+  candidate_concurrency: 8
+  stable_concurrency: 8
+  operation_mix_identity: sha256:83b92539e232cece8433271d2d04284eeb87e2509d4a12b7f3c3e86334dea9d3
 metrics:
   - id: representative-load-throughput
     unit: throughput_per_sec

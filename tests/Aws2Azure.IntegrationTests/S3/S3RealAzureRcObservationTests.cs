@@ -24,6 +24,19 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
         "DeleteObject",
         "DeleteBucket",
     ];
+    private static readonly string[] LifecycleOperationSchedule =
+    [
+        "CreateBucket",
+        "PutObject",
+        "HeadObject",
+        "HeadObject",
+        "GetObject",
+        "GetObject",
+        "GetObject",
+        "ListObjectsV2",
+        "DeleteObject",
+        "DeleteBucket",
+    ];
 
     [SkippableFact]
     public async Task Candidate_and_stable_cohorts_capture_object_crud_and_exact_prior_restore()
@@ -37,7 +50,15 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
             "RC observation requires exact candidate and prior sealed runtimes.");
 
         var minutes = RcObservationCaptureWriter.ReadWindowMinutes();
-        var concurrency = RcObservationCaptureWriter.ReadConcurrency();
+        var candidateConcurrency =
+            RcObservationCaptureWriter.ReadConcurrency("candidate");
+        var stableConcurrency = RcObservationCaptureWriter.ReadConcurrency("stable");
+        var operationMixIdentity = RcObservationCaptureWriter.OperationMixIdentity(
+            "s3-basic-object-crud",
+            LifecycleOperationSchedule);
+        Assert.Equal(
+            RequiredEnvironment("AWS2AZURE_RC_OBSERVATION_OPERATION_MIX_IDENTITY"),
+            operationMixIdentity);
         var duration = TimeSpan.FromMinutes(minutes);
         using var timeout = new CancellationTokenSource(duration + TimeSpan.FromMinutes(15));
         var candidateTracker = new RealAzureWorkloadLoadTracker("s3", Operations);
@@ -76,8 +97,8 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
 
             var startedAt = DateTimeOffset.UtcNow;
             var stopwatch = Stopwatch.StartNew();
-            var workers = new List<Task>(concurrency * 2);
-            for (var worker = 0; worker < concurrency; worker++)
+            var workers = new List<Task>(candidateConcurrency + stableConcurrency);
+            for (var worker = 0; worker < candidateConcurrency; worker++)
             {
                 workers.Add(RunWorkerAsync(
                     candidateClient,
@@ -87,6 +108,9 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
                     duration,
                     stopwatch,
                     timeout.Token));
+            }
+            for (var worker = 0; worker < stableConcurrency; worker++)
+            {
                 workers.Add(RunWorkerAsync(
                     stableClient,
                     stableTracker,
@@ -154,6 +178,12 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
                     EndedAtUtc = restorationVerifiedAt,
                     RequestedWindowMinutes = minutes,
                 },
+                LoadShape = new RcObservationCaptureLoadShape
+                {
+                    CandidateConcurrency = candidateConcurrency,
+                    StableConcurrency = stableConcurrency,
+                    OperationMixIdentity = operationMixIdentity,
+                },
                 Cohorts =
                 [
                     Cohort(
@@ -162,7 +192,7 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
                         fixture.CandidateRuntimeIdentity.Runtime.AggregateDigest,
                         startedAt,
                         restorationStartedAt,
-                        concurrency,
+                        candidateConcurrency,
                         fixture.BackendIdentityDigest,
                         fixture.ProxyConfigDigest,
                         fixture.AwsBindingDigest,
@@ -174,7 +204,7 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
                         fixture.PriorRuntimeIdentity.Runtime.AggregateDigest,
                         startedAt,
                         restorationVerifiedAt,
-                        concurrency,
+                        stableConcurrency,
                         fixture.BackendIdentityDigest,
                         fixture.ProxyConfigDigest,
                         fixture.AwsBindingDigest,

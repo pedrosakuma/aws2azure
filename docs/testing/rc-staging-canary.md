@@ -310,6 +310,16 @@ failures, throttles, first failure category/code, and per-cohort
 `GetSecretValue` throughput. Treat it as diagnostic input for choosing a later
 reviewed observation shape only; do not bind it into an RC manifest.
 
+The reviewed `secretsmanager-basic-lifecycle` observation policy uses five
+candidate and five stable workers against the shared Key Vault. Calibration
+showed that `6/6` and `5/5` completed without failures or throttles, while
+`4/4` fell below the unchanged absolute throughput floor; `5/5` is therefore
+the smallest tested parallel shape satisfying both constraints. S3 retains
+`8/8`. Normal observation reads these values and the operation-mix identity
+from the committed per-profile policy; calibration inputs cannot override
+them. The capture and final evidence bind the shape and reject cohort-count or
+operation-mix drift.
+
 Do not provide candidate/prior sealed-runtime run or artifact ids: those are
 selected from the exact attested
 approved-runtime export carried by the archive and its ledger-pinned rollback

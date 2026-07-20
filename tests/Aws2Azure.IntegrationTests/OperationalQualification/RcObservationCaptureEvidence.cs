@@ -11,9 +11,17 @@ internal sealed class RcObservationCaptureEvidence
     public RcObservationCaptureProfile Profile { get; set; } = new();
     public RcObservationCaptureAzure Azure { get; set; } = new();
     public RcObservationCaptureWindow Observation { get; set; } = new();
+    public RcObservationCaptureLoadShape LoadShape { get; set; } = new();
     public List<RcObservationCaptureCohort> Cohorts { get; set; } = [];
     public List<RcObservationCaptureMetric> Metrics { get; set; } = [];
     public RcObservationCaptureRestoration Restoration { get; set; } = new();
+}
+
+internal sealed class RcObservationCaptureLoadShape
+{
+    public int CandidateConcurrency { get; set; }
+    public int StableConcurrency { get; set; }
+    public string OperationMixIdentity { get; set; } = string.Empty;
 }
 
 internal sealed class RcObservationCaptureProfile
@@ -165,14 +173,15 @@ internal static class RcObservationCaptureWriter
                 "AWS2AZURE_RC_OBSERVATION_WINDOW_MINUTES must be between 60 and 180.");
     }
 
-    public static int ReadConcurrency()
+    public static int ReadConcurrency(string role)
     {
         var value = Environment.GetEnvironmentVariable(
-            "AWS2AZURE_RC_OBSERVATION_CONCURRENCY");
+            $"AWS2AZURE_RC_OBSERVATION_{role.ToUpperInvariant()}_CONCURRENCY");
         return int.TryParse(value, out var concurrency) && concurrency is >= 1 and <= 32
             ? concurrency
             : throw new InvalidDataException(
-                "AWS2AZURE_RC_OBSERVATION_CONCURRENCY must be between 1 and 32.");
+                $"AWS2AZURE_RC_OBSERVATION_{role.ToUpperInvariant()}_CONCURRENCY " +
+                "must be between 1 and 32.");
     }
 
     public static int ReadCalibrationDurationMinutes()
@@ -223,6 +232,9 @@ internal static class RcObservationCaptureWriter
     public static async Task PublishAsync(RcObservationCaptureEvidence evidence)
     {
         if (evidence.Metrics.Count == 0
+            || evidence.LoadShape.CandidateConcurrency <= 0
+            || evidence.LoadShape.StableConcurrency <= 0
+            || string.IsNullOrWhiteSpace(evidence.LoadShape.OperationMixIdentity)
             || evidence.Metrics.Any(metric =>
                 metric.CandidateSamples <= 0 || metric.StableSamples <= 0)
             || evidence.Cohorts.Any(cohort => cohort.OperationDiagnostics.Count == 0)

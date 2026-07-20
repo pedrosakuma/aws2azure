@@ -26,6 +26,7 @@ public sealed record RcObservationEvidence
     public RcObservationProducer Producer { get; init; } = new();
     public RcObservationArtifactIdentity CaptureArtifact { get; init; } = new();
     public RcObservationWindow Observation { get; init; } = new();
+    public RcObservationLoadShape LoadShape { get; init; } = new();
     public IReadOnlyList<RcObservationCohort> Cohorts
     {
         get => cohorts;
@@ -49,6 +50,13 @@ public sealed record RcObservationEvidence
 
     private static IReadOnlyList<T> Copy<T>(IEnumerable<T>? values) =>
         Array.AsReadOnly((values ?? Array.Empty<T>()).ToArray());
+}
+
+public sealed record RcObservationLoadShape
+{
+    public int CandidateConcurrency { get; init; }
+    public int StableConcurrency { get; init; }
+    public string OperationMixIdentity { get; init; } = string.Empty;
 }
 
 public sealed record RcObservationReleaseCandidate
@@ -324,6 +332,7 @@ public static class RcObservationLoader
         Producer = Map(document.Producer),
         CaptureArtifact = Map(document.CaptureArtifact),
         Observation = Map(document.Observation),
+        LoadShape = Map(document.LoadShape),
         Cohorts = (document.Cohorts ?? []).Select(Map).ToArray(),
         Metrics = (document.Metrics ?? []).Select(Map).ToArray(),
         RollbackTriggers = (document.RollbackTriggers ?? []).Select(Map).ToArray(),
@@ -432,6 +441,13 @@ public static class RcObservationLoader
         MinimumWindowMinutes = value?.MinimumWindowMinutes ?? 0,
     };
 
+    private static RcObservationLoadShape Map(RcObservationLoadShapeYaml? value) => new()
+    {
+        CandidateConcurrency = value?.CandidateConcurrency ?? 0,
+        StableConcurrency = value?.StableConcurrency ?? 0,
+        OperationMixIdentity = value?.OperationMixIdentity!,
+    };
+
     private static RcObservationCohort Map(RcObservationCohortYaml? value) => new()
     {
         Id = value?.Id!,
@@ -529,6 +545,7 @@ public static class RcObservationLoader
         public RcObservationProducerYaml? Producer { get; set; }
         public RcObservationArtifactIdentityYaml? CaptureArtifact { get; set; }
         public RcObservationWindowYaml? Observation { get; set; }
+        public RcObservationLoadShapeYaml? LoadShape { get; set; }
         public List<RcObservationCohortYaml?>? Cohorts { get; set; }
         public List<RcObservationMetricYaml?>? Metrics { get; set; }
         public List<RcObservationRollbackTriggerYaml?>? RollbackTriggers { get; set; }
@@ -627,6 +644,13 @@ public static class RcObservationLoader
         public DateTimeOffset EndedAtUtc { get; set; }
         public DateTimeOffset GeneratedAtUtc { get; set; }
         public int MinimumWindowMinutes { get; set; }
+    }
+
+    private sealed class RcObservationLoadShapeYaml
+    {
+        public int CandidateConcurrency { get; set; }
+        public int StableConcurrency { get; set; }
+        public string? OperationMixIdentity { get; set; }
     }
 
     private sealed class RcObservationCohortYaml
@@ -872,6 +896,18 @@ public static class RcObservationIntegrity
             canonical,
             "observation.minimum_window_minutes",
             evidence.Observation.MinimumWindowMinutes);
+        Append(
+            canonical,
+            "load_shape.candidate_concurrency",
+            evidence.LoadShape.CandidateConcurrency);
+        Append(
+            canonical,
+            "load_shape.stable_concurrency",
+            evidence.LoadShape.StableConcurrency);
+        Append(
+            canonical,
+            "load_shape.operation_mix_identity",
+            evidence.LoadShape.OperationMixIdentity);
         Append(canonical, "cohorts.count", evidence.Cohorts.Count);
         for (var index = 0; index < evidence.Cohorts.Count; index++)
         {
@@ -1123,6 +1159,8 @@ public static partial class RcObservationValidator
         && evidence.CaptureArtifact is not null
         && evidence.CaptureArtifact.Name is not null
         && evidence.CaptureArtifact.UploadDigest is not null
+        && evidence.LoadShape is not null
+        && evidence.LoadShape.OperationMixIdentity is not null
         && evidence.Observation is not null
         && evidence.Cohorts is not null
         && evidence.Cohorts.All(cohort =>
@@ -1505,6 +1543,17 @@ public static partial class RcObservationValidator
         }
         var candidate = candidateCohorts[0];
         var stable = stableCohorts[0];
+        if (evidence.LoadShape.CandidateConcurrency <= 0
+            || evidence.LoadShape.StableConcurrency <= 0
+            || !IsDigest(evidence.LoadShape.OperationMixIdentity))
+        {
+            err("observation load shape is incomplete");
+        }
+        if (candidate.MemberDigests.Count != evidence.LoadShape.CandidateConcurrency
+            || stable.MemberDigests.Count != evidence.LoadShape.StableConcurrency)
+        {
+            err("cohort membership does not match the immutable observation load shape");
+        }
         if (string.IsNullOrWhiteSpace(candidate.Id)
             || string.IsNullOrWhiteSpace(stable.Id)
             || candidate.Id == stable.Id)
