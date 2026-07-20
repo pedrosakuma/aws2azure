@@ -1,0 +1,378 @@
+name: release-candidate-promote
+
+# One-shot stable promotion of already-built and already-observed RC bytes.
+# The gate job is read-only. The promote job creates aliases/releases only after
+# every immutable input and exact workflow run has been revalidated.
+on:
+  workflow_dispatch:
+    inputs:
+      plan_path:
+        description: Repository-relative immutable promotion plan
+        required: true
+        type: string
+      orchestration_sha:
+        description: Exact protected-main SHA containing this workflow and plan
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      bundle_name: ${{ steps.bundle.outputs.name }}
+      stable_tag: ${{ steps.plan.outputs.stable_tag }}
+      candidate_sha: ${{ steps.plan.outputs.candidate_sha }}
+      index_digest: ${{ steps.plan.outputs.index_digest }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.orchestration_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify protected orchestration identity
+        env:
+          EXPECTED_SHA: ${{ inputs.orchestration_sha }}
+          PLAN_PATH: ${{ inputs.plan_path }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || {
+            echo "::error::Stable promotion must be dispatched from main."
+            exit 1
+          }
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED_SHA" ]] || {
+            echo "::error::Checkout does not match orchestration_sha."
+            exit 1
+          }
+          [[ "$PLAN_PATH" != /* && "$PLAN_PATH" != *".."* ]] || {
+            echo "::error::plan_path must be repository-relative."
+            exit 1
+          }
+
+      - uses: ./.github/actions/dotnet-setup
+
+      - name: Validate promotion plan
+        id: plan
+        env:
+          PLAN_PATH: ${{ inputs.plan_path }}
+        run: |
+          set -euo pipefail
+          python3 eng/release-promotion.py "$PLAN_PATH"
+          python3 eng/release-readiness-gate.py validate-plan \
+            "$(jq -r .readiness_plan "$PLAN_PATH")"
+          echo "stable_tag=$(jq -r .stable_tag "$PLAN_PATH")" >> "$GITHUB_OUTPUT"
+          echo "candidate_sha=$(jq -r .candidate.source_sha "$PLAN_PATH")" >> "$GITHUB_OUTPUT"
+          echo "index_digest=$(jq -r .ghcr.index_digest "$PLAN_PATH")" >> "$GITHUB_OUTPUT"
+
+      - name: Download exact immutable inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN_PATH: ${{ inputs.plan_path }}
+        run: |
+          set -euo pipefail
+          mkdir -p promotion-inputs
+
+          download_exact_artifact() {
+            local id="$1" name="$2" digest="$3" run_id="$4" destination="$5"
+            local metadata zip
+            metadata="$(mktemp)"
+            zip="$(mktemp)"
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id" > "$metadata"
+            jq -e \
+              --argjson id "$id" \
+              --arg name "$name" \
+              --arg digest "$digest" \
+              --argjson run_id "$run_id" \
+              '.id == $id and .name == $name and .digest == $digest and
+               .expired == false and .workflow_run.id == $run_id' \
+              "$metadata" >/dev/null
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$zip"
+            mkdir -p "$destination"
+            unzip -q "$zip" -d "$destination"
+            rm -f "$metadata" "$zip"
+          }
+
+          archive_id="$(jq -r .archive.artifact.id "$PLAN_PATH")"
+          archive_name="$(jq -r .archive.artifact.name "$PLAN_PATH")"
+          archive_digest="$(jq -r .archive.artifact.upload_digest "$PLAN_PATH")"
+          archive_run="$(jq -r .archive.producer.run_id "$PLAN_PATH")"
+          download_exact_artifact \
+            "$archive_id" "$archive_name" "$archive_digest" "$archive_run" \
+            promotion-inputs/archive
+
+          ghcr_id="$(jq -r .ghcr.artifact.id "$PLAN_PATH")"
+          ghcr_name="$(jq -r .ghcr.artifact.name "$PLAN_PATH")"
+          ghcr_digest="$(jq -r .ghcr.artifact.upload_digest "$PLAN_PATH")"
+          ghcr_run="$(jq -r .ghcr.producer.run_id "$PLAN_PATH")"
+          download_exact_artifact \
+            "$ghcr_id" "$ghcr_name" "$ghcr_digest" "$ghcr_run" \
+            promotion-inputs/ghcr
+
+          jq -c '.observations[]' "$PLAN_PATH" | while read -r observation; do
+            profile="$(jq -r .profile <<<"$observation")"
+            run_id="$(jq -r .producer.run_id <<<"$observation")"
+            selection_id="$(jq -r .selection_artifact.id <<<"$observation")"
+            selection_name="$(jq -r .selection_artifact.name <<<"$observation")"
+            selection_digest="$(jq -r .selection_artifact.upload_digest <<<"$observation")"
+            evidence_id="$(jq -r .evidence_artifact.id <<<"$observation")"
+            evidence_name="$(jq -r .evidence_artifact.name <<<"$observation")"
+            evidence_upload_digest="$(jq -r .evidence_artifact.upload_digest <<<"$observation")"
+            download_exact_artifact \
+              "$selection_id" "$selection_name" "$selection_digest" "$run_id" \
+              "promotion-inputs/observations/$profile/selection"
+            download_exact_artifact \
+              "$evidence_id" "$evidence_name" "$evidence_upload_digest" "$run_id" \
+              "promotion-inputs/observations/$profile/evidence"
+          done
+
+      - name: Reproduce canonical RC identity and final manifest
+        env:
+          PLAN_PATH: ${{ inputs.plan_path }}
+        run: |
+          set -euo pipefail
+          archive_root=promotion-inputs/archive
+          archive_inputs="$archive_root/release-candidate-archive-inputs.json"
+          ghcr_inputs=promotion-inputs/ghcr/release-candidate-ghcr-inputs.json
+          expected_archive_digest="$(jq -r .archive.content_digest "$PLAN_PATH")"
+          expected_ghcr_digest="$(jq -r .ghcr.content_digest "$PLAN_PATH")"
+          expected_index_digest="$(jq -r .ghcr.index_digest "$PLAN_PATH")"
+          [[ "$(jq -r .content_digest "$archive_inputs")" == "$expected_archive_digest" ]]
+          [[ "$(jq -r .content_digest "$ghcr_inputs")" == "$expected_ghcr_digest" ]]
+          [[ "$(jq -r .container.index_digest "$ghcr_inputs")" == "$expected_index_digest" ]]
+
+          descriptor="$archive_root/release-candidate-identity-inputs.json"
+          identity="$archive_root/release-candidate-identity.json"
+          manifest="$archive_root/release-candidate-manifest.json"
+          jq -S -n \
+            --slurpfile archive "$archive_inputs" \
+            --slurpfile ghcr "$ghcr_inputs" \
+            '{
+              schema_version: 1,
+              candidate: $archive[0].candidate,
+              producer: $archive[0].producer,
+              platforms: $archive[0].platforms,
+              container: $ghcr[0].container,
+              workloads: $archive[0].workloads,
+              compatibility_policy: $archive[0].compatibility_policy
+            }' > "$descriptor"
+          python3 eng/release-candidate-manifest.py identity "$descriptor" "$identity"
+          expected_identity="$(jq -r .candidate.identity_digest "$PLAN_PATH")"
+          [[ "$(jq -r .identity_digest "$identity")" == "$expected_identity" ]] || {
+            echo "::error::Reproduced RC identity does not match the promotion plan."
+            exit 1
+          }
+
+          observations=()
+          jq -c '.observations[]' "$PLAN_PATH" | while read -r observation; do
+            profile="$(jq -r .profile <<<"$observation")"
+            expected_evidence="$(jq -r .evidence_digest <<<"$observation")"
+            selection="promotion-inputs/observations/$profile/selection/observation-upload-identity.json"
+            evidence_root="promotion-inputs/observations/$profile/evidence"
+            [[ "$(jq -r .release_candidate_identity_digest "$selection")" == "$expected_identity" ]]
+            [[ "$(jq -r .evidence_digest "$selection")" == "$expected_evidence" ]]
+            actual_artifact_id="$(jq -r .artifact.id "$selection")"
+            expected_artifact_id="$(jq -r .evidence_artifact.id <<<"$observation")"
+            [[ "$actual_artifact_id" == "$expected_artifact_id" ]]
+            dotnet run --project tools/Aws2Azure.GapDocs -c Release -- \
+              validate-rc-observation \
+              --evidence "$evidence_root/observation.yaml" \
+              --binding "$evidence_root/binding.json" \
+              --expected-evidence-digest "$expected_evidence"
+          done
+
+          mapfile -t selections < <(
+            find promotion-inputs/observations -path '*/selection/observation-upload-identity.json' -type f |
+              sort
+          )
+          finalize_args=()
+          for selection in "${selections[@]}"; do
+            finalize_args+=(--observation "$selection")
+          done
+          python3 eng/release-candidate-manifest.py finalize \
+            "$identity" "$manifest" "${finalize_args[@]}"
+          python3 eng/release-candidate-manifest.py validate \
+            "$manifest" \
+            --expected-source-sha "$(jq -r .candidate.source_sha "$PLAN_PATH")" \
+            --expected-content-digest "$(jq -r .content_digest "$manifest")"
+
+      - name: Enforce read-only exact-run readiness gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN_PATH: ${{ inputs.plan_path }}
+        run: |
+          set -euo pipefail
+          python3 eng/release-readiness-gate.py gate \
+            "$(jq -r .readiness_plan "$PLAN_PATH")" \
+            > promotion-inputs/release-readiness-gate.json
+
+      - name: Build promotion bundle without rebuilding payloads
+        id: bundle
+        env:
+          PLAN_PATH: ${{ inputs.plan_path }}
+        run: |
+          set -euo pipefail
+          bundle=promotion-bundle
+          mkdir -p "$bundle"
+          cp promotion-inputs/archive/platforms/linux-*/*.tar.gz "$bundle/"
+          cp promotion-inputs/archive/SHA256SUMS.all "$bundle/"
+          cp promotion-inputs/archive/release-candidate-identity.json "$bundle/"
+          cp promotion-inputs/archive/release-candidate-manifest.json "$bundle/"
+          cp promotion-inputs/release-readiness-gate.json "$bundle/"
+          cp "$(jq -r .release_notes "$PLAN_PATH")" "$bundle/RELEASE_NOTES.md"
+          jq -c '.observations[]' "$PLAN_PATH" | while read -r observation; do
+            profile="$(jq -r .profile <<<"$observation")"
+            cp "promotion-inputs/observations/$profile/evidence/observation.yaml" \
+              "$bundle/rc-observation-$profile.yaml"
+            cp "promotion-inputs/observations/$profile/evidence/binding.json" \
+              "$bundle/rc-observation-$profile-binding.json"
+            cp "promotion-inputs/observations/$profile/selection/observation-upload-identity.json" \
+              "$bundle/rc-observation-$profile-selection.json"
+          done
+          content_digest="$(jq -r .content_digest "$bundle/release-candidate-manifest.json")"
+          name="stable-promotion-${{ steps.plan.outputs.stable_tag }}-${content_digest#sha256:}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.bundle.outputs.name }}
+          path: promotion-bundle/
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 90
+
+  promote:
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.gate.outputs.bundle_name }}
+          path: promotion-bundle
+
+      - name: Preflight non-clobbering stable identities
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STABLE_TAG: ${{ needs.gate.outputs.stable_tag }}
+          INDEX_DIGEST: ${{ needs.gate.outputs.index_digest }}
+        run: |
+          set -euo pipefail
+          if gh release view "$STABLE_TAG" >/dev/null 2>&1; then
+            echo "::error::Stable release already exists; promotion never clobbers."
+            exit 1
+          fi
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$STABLE_TAG" >/dev/null 2>&1; then
+            echo "::error::Stable git tag already exists; promotion never moves tags."
+            exit 1
+          fi
+          package="${GITHUB_REPOSITORY#*/}"
+          registry_token="$(
+            curl --fail --silent --show-error \
+              --user "$GITHUB_ACTOR:$GH_TOKEN" \
+              "https://ghcr.io/token?service=ghcr.io&scope=repository:$GITHUB_REPOSITORY:pull,push" |
+              jq -er .token
+          )"
+          status="$(
+            curl --silent --output /dev/null --write-out '%{http_code}' \
+              --header "Authorization: Bearer $registry_token" \
+              --header 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+              "https://ghcr.io/v2/$GITHUB_REPOSITORY/manifests/$STABLE_TAG"
+          )"
+          [[ "$status" == "404" ]] || {
+            echo "::error::Stable GHCR tag already exists or could not be inspected (HTTP $status)."
+            exit 1
+          }
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer $registry_token" \
+            --header 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+            "https://ghcr.io/v2/$GITHUB_REPOSITORY/manifests/$INDEX_DIGEST" \
+            --output /tmp/rc-index.json
+          [[ "sha256:$(sha256sum /tmp/rc-index.json | cut -d' ' -f1)" == "$INDEX_DIGEST" ]]
+          jq -er '
+            .mediaType |
+            select(
+              . == "application/vnd.oci.image.index.v1+json" or
+              . == "application/vnd.docker.distribution.manifest.list.v2+json"
+            )
+          ' /tmp/rc-index.json > /tmp/index-media-type
+          printf '%s' "$registry_token" > /tmp/registry-token
+          chmod 600 /tmp/registry-token
+
+      - name: Create draft release from exact RC archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STABLE_TAG: ${{ needs.gate.outputs.stable_tag }}
+          CANDIDATE_SHA: ${{ needs.gate.outputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          gh release create "$STABLE_TAG" \
+            promotion-bundle/*.tar.gz \
+            promotion-bundle/SHA256SUMS.all \
+            promotion-bundle/release-candidate-identity.json \
+            promotion-bundle/release-candidate-manifest.json \
+            promotion-bundle/release-readiness-gate.json \
+            promotion-bundle/rc-observation-* \
+            --target "$CANDIDATE_SHA" \
+            --title "aws2azure $STABLE_TAG" \
+            --notes-file promotion-bundle/RELEASE_NOTES.md \
+            --draft
+          gh release view "$STABLE_TAG" --json tagName,isDraft,targetCommitish |
+            jq -e \
+              --arg tag "$STABLE_TAG" \
+              --arg target "$CANDIDATE_SHA" \
+              '.tagName == $tag and .isDraft == true and .targetCommitish == $target' \
+              >/dev/null || {
+            echo "::error::Draft release does not target the observed candidate source."
+            exit 1
+          }
+
+      - name: Create exact GHCR stable alias
+        env:
+          STABLE_TAG: ${{ needs.gate.outputs.stable_tag }}
+          INDEX_DIGEST: ${{ needs.gate.outputs.index_digest }}
+        run: |
+          set -euo pipefail
+          registry_token="$(cat /tmp/registry-token)"
+          index_media_type="$(cat /tmp/index-media-type)"
+          curl --fail --silent --show-error \
+            --request PUT \
+            --header "Authorization: Bearer $registry_token" \
+            --header "Content-Type: $index_media_type" \
+            --data-binary @/tmp/rc-index.json \
+            "https://ghcr.io/v2/$GITHUB_REPOSITORY/manifests/$STABLE_TAG"
+          actual="$(
+            curl --fail --silent --show-error --head \
+              --header "Authorization: Bearer $registry_token" \
+              --header 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+              "https://ghcr.io/v2/$GITHUB_REPOSITORY/manifests/$STABLE_TAG" |
+              tr -d '\r' |
+              awk 'tolower($1) == "docker-content-digest:" {print $2}'
+          )"
+          [[ "$actual" == "$INDEX_DIGEST" ]] || {
+            echo "::error::Stable GHCR tag does not resolve to the exact observed index."
+            exit 1
+          }
+          rm -f /tmp/registry-token /tmp/rc-index.json /tmp/index-media-type
+
+      - name: Publish stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STABLE_TAG: ${{ needs.gate.outputs.stable_tag }}
+          CANDIDATE_SHA: ${{ needs.gate.outputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          gh release edit "$STABLE_TAG" --draft=false --latest
+          resolved="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$STABLE_TAG" --jq .object.sha)"
+          [[ "$resolved" == "$CANDIDATE_SHA" ]] || {
+            echo "::error::Published stable tag does not resolve to the observed candidate source."
+            exit 1
+          }

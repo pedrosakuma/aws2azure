@@ -6,11 +6,11 @@
 Replace every `vX.Y.Z` placeholder, including documentation-link tags, before
 announcing or treating the release as supported.
 
-> **Current automation note:** The release workflow may initially create the
-> release with GitHub-generated notes. After assets upload, replace that body
-> with this completed template using `gh release edit vX.Y.Z --notes-file
-> <completed-template>`. Do not announce or mark the release supported until no
-> placeholder remains and every mandatory section is complete.
+> **Automation note:** Stable `v1+` releases use the immutable RC promotion
+> workflow and a completed notes file derived from this template. The promotion
+> gate rejects placeholders, rebuilds, and existing stable identities. Do not
+> announce or mark a release supported until every mandatory section is
+> complete.
 
 ## Artifacts and provenance
 

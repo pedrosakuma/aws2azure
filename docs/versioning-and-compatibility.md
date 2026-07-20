@@ -69,10 +69,23 @@ major/minor, branch, and `latest` tags are not part of this path.
 The resulting attested `release-candidate-ghcr-inputs.json` records each
 platform manifest digest, the index digest, tags, bases, executable/archive
 materials, and the exact archive artifact identity. Its `container` object is
-the canonical GHCR input accepted by `eng/release-candidate-manifest.py`. The
-remaining workflow scope of #582 must still supply real-Azure observation
-evidence for both GA profiles before the final RC manifest can be generated.
-Neither RC workflow creates a GitHub Release or stable `v1` publication.
+the canonical GHCR input accepted by `eng/release-candidate-manifest.py`.
+
+The real-Azure observation workflow supplies immutable evidence for both GA
+profiles. `eng/release-candidate-manifest.py finalize` combines the canonical
+identity receipt with the exact observation-selection receipts, reproduces the
+pre-observation identity digest, and emits the final manifest only when every
+supported workload has a distinct `pass` verdict.
+
+Stable `v1+` publication uses
+`.github/workflows/release-candidate-promote.yml`. Its first job is a read-only
+gate over exact successful workflow runs and immutable artifact identities. The
+write-scoped job attaches the already-produced archives to a GitHub Release and
+copies the exact existing GHCR index bytes to the stable tag. It contains no
+`dotnet publish`, archive creation, or container build path, rejects existing
+stable tags/releases instead of clobbering them, and targets the stable Git tag
+at the observed candidate source SHA. The legacy `.github/workflows/release.yml`
+rejects `v1+` tags.
 
 For a stable major line, the supported window is the latest patch of the current
 minor and the latest patch of the immediately previous minor. "Supported" means
