@@ -1,0 +1,137 @@
+name: release-candidate-perf
+
+# Runs the current reviewed perf harness against the exact immutable candidate
+# source. Harness-only fixes may advance after the candidate tag; shipping source
+# remains checked out from the candidate SHA and is never replaced.
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_id:
+        description: Exact protected RC tag
+        required: true
+        type: string
+      candidate_source_sha:
+        description: Exact source SHA resolved by the RC identity
+        required: true
+        type: string
+      orchestration_sha:
+        description: Exact protected-main SHA containing the reviewed harness
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    env:
+      AWS2AZURE_PERF: "1"
+      AWS2AZURE_PERF_UPDATE_DOCS: "0"
+    steps:
+      - name: Checkout reviewed harness
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.orchestration_sha }}
+          path: orchestration
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout exact candidate source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.candidate_id }}
+          path: candidate-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify source identities
+        env:
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          ORCHESTRATION_SHA: ${{ inputs.orchestration_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || {
+            echo "::error::Candidate perf must be dispatched from protected main."
+            exit 1
+          }
+          [[ "$CANDIDATE_ID" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[1-9][0-9]*$ ]]
+          [[ "$(git -C orchestration rev-parse HEAD)" == "$ORCHESTRATION_SHA" ]]
+          [[ "$(git -C candidate-source rev-parse HEAD)" == "$CANDIDATE_SOURCE_SHA" ]]
+
+      - uses: ./orchestration/.github/actions/dotnet-setup
+
+      - name: Apply reviewed harness without changing candidate shipping source
+        run: |
+          set -euo pipefail
+          rsync -a --delete \
+            orchestration/tests/Aws2Azure.PerfTests/ \
+            candidate-source/tests/Aws2Azure.PerfTests/
+          install -Dm644 \
+            orchestration/docs/perf/baseline-reference.json \
+            candidate-source/docs/perf/baseline-reference.json
+          changed_shipping="$(
+            git -C candidate-source status --short -- \
+              src Directory.Build.props global.json Dockerfile docker
+          )"
+          [[ -z "$changed_shipping" ]] || {
+            echo "::error::Harness overlay changed candidate shipping source."
+            printf '%s\n' "$changed_shipping"
+            exit 1
+          }
+
+      - name: Verify Docker available
+        run: docker info
+
+      - name: Build exact candidate with reviewed perf harness
+        working-directory: candidate-source
+        run: dotnet build -c Release --nologo
+
+      - name: Run perf scenarios
+        working-directory: candidate-source
+        run: >-
+          dotnet test tests/Aws2Azure.PerfTests -c Release --no-build --nologo
+          --filter "Category!=RelativeGate"
+          --logger "console;verbosity=normal"
+
+      - name: Run relative regression gate
+        working-directory: candidate-source
+        run: >-
+          dotnet test tests/Aws2Azure.PerfTests -c Release --no-build --nologo
+          --filter "Category=RelativeGate"
+          --logger "console;verbosity=normal"
+
+      - name: Emit exact candidate gate receipt
+        env:
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          ORCHESTRATION_SHA: ${{ inputs.orchestration_sha }}
+        run: |
+          set -euo pipefail
+          jq -S -n \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg workflow_path ".github/workflows/release-candidate-perf.yml" \
+            --argjson run_id "$GITHUB_RUN_ID" \
+            --argjson run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg candidate_source_sha "$CANDIDATE_SOURCE_SHA" \
+            --arg orchestration_source_sha "$ORCHESTRATION_SHA" \
+            '{
+              schema_version: 1,
+              artifact_kind: "release_candidate_gate",
+              repository: $repository,
+              workflow_path: $workflow_path,
+              run_id: $run_id,
+              run_attempt: $run_attempt,
+              candidate_source_sha: $candidate_source_sha,
+              orchestration_source_sha: $orchestration_source_sha,
+              verdict: "pass"
+            }' > release-candidate-perf.json
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-candidate-perf-${{ inputs.candidate_id }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: release-candidate-perf.json
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 90

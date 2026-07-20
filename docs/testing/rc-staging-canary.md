@@ -363,6 +363,22 @@ with the downloaded `observation.yaml`, `binding.json`, and receipt
 a retained but stale 90-day artifact is diagnostic only and must not be bound
 into a new RC manifest.
 
+Finalize the canonical manifest from the reproduced identity receipt and both
+selection receipts:
+
+```bash
+python3 eng/release-candidate-manifest.py finalize \
+  release-candidate-identity.json \
+  release-candidate-manifest.json \
+  --observation s3-observation-upload-identity.json \
+  --observation secretsmanager-observation-upload-identity.json
+```
+
+The command fails closed on rollback verdicts, candidate/identity drift,
+duplicate evidence, or incomplete profile coverage. It then runs the strict
+manifest validator against the exact archive files; it does not rebuild or
+repackage them.
+
 The workflow deletes projected credentials and sealed runtime bytes, then
 deallocates its tagged resource group even on failure. Missing Azure
 credentials, missing artifacts, test skips, incomplete cleanup evidence,

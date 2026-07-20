@@ -510,6 +510,101 @@ class ReleaseCandidateManifestTests(unittest.TestCase):
             expect_success=False,
         )
 
+    def test_finalizer_binds_exact_observation_receipts(self) -> None:
+        identity_descriptor = dict(self.descriptor)
+        observations = identity_descriptor.pop("observation_evidence")
+        identity_descriptor_path = self.root / "release-candidate-identity-inputs.json"
+        identity_receipt_path = self.root / "release-candidate-identity.json"
+        finalized_path = self.root / "release-candidate-finalized.json"
+        write_json(identity_descriptor_path, identity_descriptor)
+        self.run_tool(
+            "identity",
+            str(identity_descriptor_path),
+            str(identity_receipt_path),
+        )
+        identity = json.loads(identity_receipt_path.read_text(encoding="utf-8"))
+        observation_paths: list[pathlib.Path] = []
+        for index, observation in enumerate(observations):
+            path = self.root / f"observation-selection-{index}.json"
+            write_json(
+                path,
+                {
+                    "schema_version": 1,
+                    "release_candidate_id": identity["candidate"]["identifier"],
+                    "release_candidate_identity_digest": identity["identity_digest"],
+                    "profile_id": observation["profile"]["id"],
+                    "verdict": observation["verdict"],
+                    "evidence_digest": observation["digest"],
+                    "artifact": {},
+                    "archive_inputs": {},
+                    "ghcr_inputs": {},
+                    "producer": {},
+                    "manifest_observation": observation,
+                },
+            )
+            observation_paths.append(path)
+
+        arguments = [
+            "finalize",
+            str(identity_receipt_path),
+            str(finalized_path),
+        ]
+        for path in reversed(observation_paths):
+            arguments.extend(["--observation", str(path)])
+        self.run_tool(*arguments)
+        finalized = json.loads(finalized_path.read_text(encoding="utf-8"))
+        generated = self.generate()
+        self.assertEqual(finalized, generated)
+
+        tampered = json.loads(observation_paths[0].read_text(encoding="utf-8"))
+        tampered["release_candidate_identity_digest"] = digest_bytes(b"other identity")
+        write_json(observation_paths[0], tampered)
+        finalized_path.unlink()
+        self.run_tool(*arguments, expect_success=False)
+
+    def test_finalizer_rejects_rollback_and_incomplete_coverage(self) -> None:
+        identity_descriptor = dict(self.descriptor)
+        observations = identity_descriptor.pop("observation_evidence")
+        identity_descriptor_path = self.root / "release-candidate-identity-inputs.json"
+        identity_receipt_path = self.root / "release-candidate-identity.json"
+        finalized_path = self.root / "release-candidate-finalized.json"
+        write_json(identity_descriptor_path, identity_descriptor)
+        self.run_tool(
+            "identity",
+            str(identity_descriptor_path),
+            str(identity_receipt_path),
+        )
+        identity = json.loads(identity_receipt_path.read_text(encoding="utf-8"))
+        path = self.root / "observation-selection.json"
+        observation = observations[0]
+        write_json(
+            path,
+            {
+                "schema_version": 1,
+                "release_candidate_id": identity["candidate"]["identifier"],
+                "release_candidate_identity_digest": identity["identity_digest"],
+                "profile_id": observation["profile"]["id"],
+                "verdict": "rollback",
+                "evidence_digest": observation["digest"],
+                "artifact": {},
+                "archive_inputs": {},
+                "ghcr_inputs": {},
+                "producer": {},
+                "manifest_observation": {
+                    **observation,
+                    "verdict": "rollback",
+                },
+            },
+        )
+        self.run_tool(
+            "finalize",
+            str(identity_receipt_path),
+            str(finalized_path),
+            "--observation",
+            str(path),
+            expect_success=False,
+        )
+
     def test_descriptor_rejects_unknown_missing_and_duplicate_fields(self) -> None:
         descriptor = dict(self.descriptor)
         descriptor["unknown"] = True

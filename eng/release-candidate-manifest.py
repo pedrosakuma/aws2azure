@@ -1370,6 +1370,144 @@ def validate_identity(receipt_path: pathlib.Path) -> None:
         fail("identity receipt JSON is not in canonical deterministic form")
 
 
+def finalize(
+    receipt_path: pathlib.Path,
+    observation_paths: list[pathlib.Path],
+    output_path: pathlib.Path,
+) -> None:
+    validate_identity(receipt_path)
+    receipt = load_json(receipt_path.resolve())
+    candidate = require_object(
+        receipt["candidate"], "identity receipt candidate", {"identifier", "source"}
+    )
+    identity_digest = require_digest(
+        receipt["identity_digest"], "identity receipt identity digest"
+    )
+    workload_keys = {
+        (
+            workload["profile"]["id"],
+            workload["profile"]["version"],
+        )
+        for workload in require_array(receipt["workloads"], "identity receipt workloads")
+    }
+
+    observations: list[dict[str, Any]] = []
+    observation_keys: set[tuple[str, int]] = set()
+    identifiers: set[str] = set()
+    digests: set[str] = set()
+    for index, path in enumerate(observation_paths):
+        try:
+            mode = path.lstat().st_mode
+        except OSError as error:
+            fail(f"cannot inspect observation receipt: {error}")
+        if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+            fail("observation receipt must be a regular non-symbolic-link file")
+        selection = require_object(
+            load_json(path.resolve()),
+            f"observation receipt[{index}]",
+            {
+                "schema_version",
+                "release_candidate_id",
+                "release_candidate_identity_digest",
+                "profile_id",
+                "verdict",
+                "evidence_digest",
+                "artifact",
+                "archive_inputs",
+                "ghcr_inputs",
+                "producer",
+                "manifest_observation",
+            },
+        )
+        if require_integer(
+            selection["schema_version"], f"observation receipt[{index}].schema_version"
+        ) != SCHEMA_VERSION:
+            fail(f"observation receipt[{index}] schema version is invalid")
+        if (
+            require_string(
+                selection["release_candidate_id"],
+                f"observation receipt[{index}].release_candidate_id",
+            )
+            != candidate["identifier"]
+        ):
+            fail(f"observation receipt[{index}] targets a different candidate")
+        if (
+            require_digest(
+                selection["release_candidate_identity_digest"],
+                f"observation receipt[{index}].release_candidate_identity_digest",
+            )
+            != identity_digest
+        ):
+            fail(f"observation receipt[{index}] does not bind the identity receipt")
+        if selection["verdict"] != "pass":
+            fail(f"observation receipt[{index}] is not promotable")
+
+        observation = validate_observation(
+            selection["manifest_observation"],
+            f"observation receipt[{index}].manifest_observation",
+        )
+        key = (observation["profile"]["id"], observation["profile"]["version"])
+        if key != (
+            require_identifier(
+                selection["profile_id"],
+                f"observation receipt[{index}].profile_id",
+            ),
+            observation["profile"]["version"],
+        ):
+            fail(f"observation receipt[{index}] profile identity is inconsistent")
+        if observation["verdict"] != selection["verdict"]:
+            fail(f"observation receipt[{index}] verdict is inconsistent")
+        if observation["digest"] != require_digest(
+            selection["evidence_digest"],
+            f"observation receipt[{index}].evidence_digest",
+        ):
+            fail(f"observation receipt[{index}] evidence digest is inconsistent")
+        if key in observation_keys:
+            fail(f"duplicate observation profile identity: {key[0]} v{key[1]}")
+        if observation["identifier"] in identifiers:
+            fail(f"duplicate observation identifier: {observation['identifier']}")
+        if observation["digest"] in digests:
+            fail(f"duplicate observation digest: {observation['digest']}")
+        observation_keys.add(key)
+        identifiers.add(observation["identifier"])
+        digests.add(observation["digest"])
+        observations.append(observation)
+
+    if observation_keys != workload_keys:
+        fail("observation receipts must cover every supported workload exactly once")
+    observations.sort(
+        key=lambda item: (item["profile"]["id"], item["profile"]["version"])
+    )
+    manifest = {
+        key: value
+        for key, value in receipt.items()
+        if key not in {"artifact_kind", "content_digest"}
+    }
+    manifest["observation_evidence"] = [
+        {
+            **observation,
+            "release_candidate_manifest_digest": identity_digest,
+        }
+        for observation in observations
+    ]
+    manifest["content_digest"] = canonical_body_digest(manifest)
+    output_path = output_path.resolve()
+    if output_path.exists():
+        fail(f"output already exists: {output_path}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with output_path.open("xb") as stream:
+            stream.write(rendered_manifest(manifest))
+    except OSError as error:
+        fail(f"cannot write manifest {output_path}: {error}")
+    validate(
+        output_path,
+        candidate["source"]["sha"],
+        manifest["content_digest"],
+    )
+    print(output_path)
+
+
 def validate(
     manifest_path: pathlib.Path,
     expected_source_sha: str,
@@ -1579,6 +1717,15 @@ def main() -> None:
     identity_parser = subparsers.add_parser("identity")
     identity_parser.add_argument("descriptor", type=pathlib.Path)
     identity_parser.add_argument("output", type=pathlib.Path)
+    finalize_parser = subparsers.add_parser("finalize")
+    finalize_parser.add_argument("identity_receipt", type=pathlib.Path)
+    finalize_parser.add_argument("output", type=pathlib.Path)
+    finalize_parser.add_argument(
+        "--observation",
+        action="append",
+        required=True,
+        type=pathlib.Path,
+    )
     validate_parser = subparsers.add_parser("validate")
     validate_parser.add_argument("manifest", type=pathlib.Path)
     validate_parser.add_argument("--expected-source-sha", required=True)
@@ -1590,6 +1737,8 @@ def main() -> None:
         generate(args.descriptor, args.output)
     elif args.command == "identity":
         generate(args.descriptor, args.output, identity_only=True)
+    elif args.command == "finalize":
+        finalize(args.identity_receipt, args.observation, args.output)
     elif args.command == "validate":
         validate(
             args.manifest,

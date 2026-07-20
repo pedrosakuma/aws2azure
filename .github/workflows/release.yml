@@ -1,4 +1,7 @@
-# aws2azure release workflow.
+# Legacy pre-v1 release workflow.
+#
+# Stable v1+ releases are promoted from immutable observed RC bytes by
+# release-candidate-promote.yml. This workflow must never rebuild those tags.
 #
 # Tagging a commit with a semver tag (e.g. `v0.1.0`) builds the self-contained
 # Native-AOT proxy binary for linux-x64 and linux-arm64, packages each as a
@@ -58,6 +61,16 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Reject promotion-managed stable tags
+        env:
+          STABLE_TAG_INPUT: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$STABLE_TAG_INPUT" =~ ^v([1-9][0-9]*)\. ]]; then
+            echo "::error::v1+ releases must use release-candidate-promote.yml; rebuilding is forbidden."
+            exit 1
+          fi
 
       # NOTE: do not use the local ./.github/actions/dotnet-setup composite here.
       # This job checks out an arbitrary (possibly old) tag, and a local action
