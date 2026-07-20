@@ -55,3 +55,7 @@ Verdicts are mechanical:
 The default gap-doc generation writes the same aggregate verdicts to
 `docs/site/workload-ga.md` and `docs/site/workload-ga.json`; CI evaluates every
 manifest independently and rejects stale generated output.
+
+Profile-specific adoption guidance:
+
+- [SQS standard messaging](sqs-standard-messaging.md)

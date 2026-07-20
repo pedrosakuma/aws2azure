@@ -15,7 +15,7 @@ public sealed class WorkloadGaCertificationTests
     [Theory]
     [InlineData("s3-basic-object-crud.yaml", "ga")]
     [InlineData("secretsmanager-basic-lifecycle.yaml", "ga")]
-    [InlineData("sqs-standard-messaging.yaml", "conditional")]
+    [InlineData("sqs-standard-messaging.yaml", "candidate")]
     [InlineData("dynamodb-basic-crud.yaml", "candidate")]
     public void Repository_profiles_have_expected_mechanical_verdict(
         string fileName,

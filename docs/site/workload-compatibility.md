@@ -3,6 +3,8 @@
 Use this page before adopting the proxy. A module being available means it can
 route that AWS wire protocol; it does **not** mean full AWS service parity.
 The assessments below are generated from the operation and design-gap YAMLs.
+Operation-seal counts show only that each referenced operation has positive
+real-Azure evidence; they do not certify every sub-feature or accepted design gap.
 
 Legend: ✅ supported · 🟡 conditional · ⛔ blocked
 
@@ -15,7 +17,7 @@ Legend: ✅ supported · 🟡 conditional · ⛔ blocked
 | [s3](s3.md) | Available | 27 | 10 | 12 | 25 | 15/74 |
 | [secretsmanager](secretsmanager.md) | Available | 6 | 1 | 0 | 1 | 7/8 |
 | [sns](sns.md) | Available | 0 | 14 | 0 | 0 | 8/14 |
-| [sqs](sqs.md) | Available | 10 | 8 | 2 | 0 | 6/20 |
+| [sqs](sqs.md) | Available | 10 | 8 | 2 | 0 | 9/20 |
 
 ## Adoption decision
 
@@ -61,7 +63,7 @@ an explicit migration decision.
 
 ## dynamodb
 
-| Workload pattern | Assessment | Operation coverage | Real-Azure | Decision guidance | Requirement ID |
+| Workload pattern | Assessment | Operation coverage | Operation seals | Decision guidance | Requirement ID |
 |---|---|---|---:|---|---|
 | Basic table and item CRUD | 🟡 conditional | 3 implemented, 4 partial | 7/7 | Table lifecycle and item CRUD are translated, with expression, consistency, key-encoding, and Cosmos storage-model caveats.<br>Use a proxy-managed Cosmos database, keep keys within the documented limit, and select an account consistency level that matches the workload.<br>[PutItem](dynamodb.md#putitem) is partial<br>[GetItem](dynamodb.md#getitem) is partial<br>[UpdateItem](dynamodb.md#updateitem) is partial<br>[DeleteItem](dynamodb.md#deleteitem) is partial<br>[Design gap](design-gaps.md#dynamodb-consistency-and-read-your-writes): Consistency and read-your-writes<br>[Design gap](design-gaps.md#dynamodb-key-encoding-and-on-disk-storage-format): Key encoding and on-disk storage format | `dynamodb_basic_crud` |
 | Query, Scan, and secondary-index reads | 🟡 conditional | 1 implemented, 2 partial | 2/3 | Query and Scan work for documented expression subsets; GSI/LSI reads add cross-partition, collation, ordering, and backfill caveats.<br>Validate every expression and index access pattern against representative data before migration.<br>[Query](dynamodb.md#query) is partial<br>[Scan](dynamodb.md#scan) is partial<br>[Design gap](design-gaps.md#dynamodb-secondary-indexes--gsi---lsi): Secondary indexes (GSI / LSI)<br>[Design gap](design-gaps.md#dynamodb-throughput-and-throttling-model): Throughput and throttling model | `dynamodb_query_scan_indexes` |
@@ -71,7 +73,7 @@ an explicit migration decision.
 
 ## kinesis
 
-| Workload pattern | Assessment | Operation coverage | Real-Azure | Decision guidance | Requirement ID |
+| Workload pattern | Assessment | Operation coverage | Operation seals | Decision guidance | Requirement ID |
 |---|---|---|---:|---|---|
 | Basic record ingestion | 🟡 conditional | 2 partial | 2/2 | PutRecord and PutRecords publish to provisioned Event Hubs partitions, but ordering-related request fields and returned sequence numbers differ.<br>Use partition keys for routing and do not depend on SequenceNumberForOrdering or exact AWS sequence-number semantics.<br>[PutRecord](kinesis.md#putrecord) is partial<br>[PutRecords](kinesis.md#putrecords) is partial<br>[Design gap](design-gaps.md#kinesis-synthetic-sequence-numbers-and-iterator-positioning): Synthetic sequence numbers and iterator positioning | `kinesis_record_ingestion` |
 | Single consumer per shard | 🟡 conditional | 3 partial | 3/3 | Shard discovery and polling work best with one consumer loop per partition and timestamp/latest iterator positioning.<br>Prefer TRIM_HORIZON, LATEST, or AT_TIMESTAMP and dedicate a consumer group to each independent consumer.<br>[ListShards](kinesis.md#listshards) is partial<br>[GetShardIterator](kinesis.md#getsharditerator) is partial<br>[GetRecords](kinesis.md#getrecords) is partial<br>[Design gap](design-gaps.md#kinesis-synthetic-sequence-numbers-and-iterator-positioning): Synthetic sequence numbers and iterator positioning<br>[Design gap](design-gaps.md#kinesis-shared-broker-cursor-per-consumer-group): Shared broker cursor per consumer group | `kinesis_single_consumer_per_shard` |
@@ -80,7 +82,7 @@ an explicit migration decision.
 
 ## s3
 
-| Workload pattern | Assessment | Operation coverage | Real-Azure | Decision guidance | Requirement ID |
+| Workload pattern | Assessment | Operation coverage | Operation seals | Decision guidance | Requirement ID |
 |---|---|---|---:|---|---|
 | Basic object CRUD | ✅ supported | 5 implemented | 5/5 | Upload, download, inspect, list, and delete ordinary objects through the standard S3 data-plane operations.<br>Suitable when the application does not depend on AWS IAM, bucket policies, lifecycle configuration, or an AWS-specific encryption mode. | `s3_basic_object_crud` |
 | Multipart upload | 🟡 conditional | 5 implemented | 0/5 | Multipart initiation, part upload/listing, completion, and abort are translated to Azure block operations.<br>Accept only if clients do not overwrite a part number with different content and then depend on CompleteMultipartUpload rejecting the old ETag.<br>[Design gap](design-gaps.md#s3-stateless-multipart-upload-without-per-part-etag-validation): Stateless multipart upload without per-part ETag validation | `s3_multipart_upload` |
@@ -89,7 +91,7 @@ an explicit migration decision.
 
 ## secretsmanager
 
-| Workload pattern | Assessment | Operation coverage | Real-Azure | Decision guidance | Requirement ID |
+| Workload pattern | Assessment | Operation coverage | Operation seals | Decision guidance | Requirement ID |
 |---|---|---|---:|---|---|
 | Basic secret lifecycle | 🟡 conditional | 6 implemented | 6/6 | Create, inspect, retrieve, update, list, and delete secrets through the corresponding Key Vault data-plane APIs.<br>Suitable after configuring Entra ID authentication and validating Key Vault soft-delete behavior for the deployment.<br>[Design gap](design-gaps.md#secretsmanager-deletion-recovery-semantics-differ): Deletion recovery semantics differ | `secretsmanager_basic_lifecycle` |
 | Version stages | 🟡 conditional | 2 implemented, 1 partial | 3/3 | AWS version stages are represented through Key Vault versions and tags rather than a native staging model.<br>Avoid out-of-band edits to version tags and test rapid successive version creation.<br>[PutSecretValue](secretsmanager.md#putsecretvalue) is partial<br>[Design gap](design-gaps.md#secretsmanager-versioning-and-staging-modelled-on-key-vault-version-tags): Versioning and staging modelled on Key Vault version tags | `secretsmanager_version_stages` |
@@ -98,7 +100,7 @@ an explicit migration decision.
 
 ## sns
 
-| Workload pattern | Assessment | Operation coverage | Real-Azure | Decision guidance | Requirement ID |
+| Workload pattern | Assessment | Operation coverage | Operation seals | Decision guidance | Requirement ID |
 |---|---|---|---:|---|---|
 | Standard topic publish | 🟡 conditional | 4 partial | 4/4 | Publish and PublishBatch route through Service Bus Topics or Event Grid, whose delivery and partial-failure semantics differ.<br>Select the backend deliberately and validate message shape, delivery, and partial failures against that backend.<br>[CreateTopic](sns.md#createtopic) is partial<br>[Publish](sns.md#publish) is partial<br>[PublishBatch](sns.md#publishbatch) is partial<br>[DeleteTopic](sns.md#deletetopic) is partial<br>[Design gap](design-gaps.md#sns-two-backends-with-different-fidelity): Two backends with different fidelity | `sns_standard_publish` |
 | Subscription management | 🟡 conditional | 7 partial | 3/7 | Subscription lifecycle and attributes are translated through Service Bus management APIs with synthetic AWS identifiers.<br>Avoid parsing AWS account identity from returned ARNs and test the selected backend's subscription behavior.<br>[Subscribe](sns.md#subscribe) is partial<br>[ConfirmSubscription](sns.md#confirmsubscription) is partial<br>[ListSubscriptions](sns.md#listsubscriptions) is partial<br>[ListSubscriptionsByTopic](sns.md#listsubscriptionsbytopic) is partial<br>[GetSubscriptionAttributes](sns.md#getsubscriptionattributes) is partial<br>[SetSubscriptionAttributes](sns.md#setsubscriptionattributes) is partial<br>[Unsubscribe](sns.md#unsubscribe) is partial<br>[Design gap](design-gaps.md#sns-two-backends-with-different-fidelity): Two backends with different fidelity<br>[Design gap](design-gaps.md#sns-no-aws-region---account-namespace): No AWS region / account namespace | `sns_subscription_management` |
@@ -107,10 +109,10 @@ an explicit migration decision.
 
 ## sqs
 
-| Workload pattern | Assessment | Operation coverage | Real-Azure | Decision guidance | Requirement ID |
+| Workload pattern | Assessment | Operation coverage | Operation seals | Decision guidance | Requirement ID |
 |---|---|---|---:|---|---|
-| Standard queue messaging | 🟡 conditional | 7 implemented | 4/7 | Create, discover, send, receive, settle, and delete standard queues and messages through the core SQS operations.<br>Suitable for standard queues after validating visibility timeout and dead-letter behavior with the selected Service Bus transport.<br>[Design gap](design-gaps.md#sqs-transport-dependent-capability-differences): Transport-dependent capability differences | `sqs_standard_messaging` |
-| FIFO queue messaging | 🟡 conditional | 5 implemented | 3/5 | FIFO group ordering is available only through the AMQP transport and receipt settlement remains connection-affine.<br>Configure transport: Amqp and test the full receive/delete lifecycle under concurrency before production.<br>[Design gap](design-gaps.md#sqs-fifo-ordering-requires-the-amqp-transport): FIFO ordering requires the AMQP transport<br>[Design gap](design-gaps.md#sqs-transport-dependent-capability-differences): Transport-dependent capability differences | `sqs_fifo` |
+| Standard queue messaging | 🟡 conditional | 7 implemented | 7/7 | Create, discover, send, receive, settle, and delete standard queues and messages through the core SQS operations.<br>Suitable for standard queues after validating visibility timeout and dead-letter behavior with the selected Service Bus transport.<br>[Design gap](design-gaps.md#sqs-transport-dependent-capability-differences): Transport-dependent capability differences | `sqs_standard_messaging` |
+| FIFO queue messaging | 🟡 conditional | 5 implemented | 5/5 | FIFO group ordering is available only through the AMQP transport and receipt settlement remains connection-affine.<br>Configure transport: Amqp and test the full receive/delete lifecycle under concurrency before production.<br>[Design gap](design-gaps.md#sqs-fifo-ordering-requires-the-amqp-transport): FIFO ordering requires the AMQP transport<br>[Design gap](design-gaps.md#sqs-transport-dependent-capability-differences): Transport-dependent capability differences | `sqs_fifo` |
 | Hard queue purge | 🟡 conditional | 1 partial | 0/1 | PurgeQueue is emulated with a bounded drain and may leave messages while producers remain active.<br>Pause producers before purge when the workload requires a guaranteed empty queue.<br>[PurgeQueue](sqs.md#purgequeue) is partial<br>[Design gap](design-gaps.md#sqs-purgequeue-is-best-effort-emulation): PurgeQueue is best-effort emulation | `sqs_hard_purge` |
 | Queue permission administration | ⛔ blocked | 2 stub | 0/2 | AddPermission and RemovePermission validate the queue but cannot reproduce the SQS IAM permission model.<br>Enforce access through Azure RBAC, SAS credentials, and network controls.<br>[AddPermission](sqs.md#addpermission) is stub<br>[RemovePermission](sqs.md#removepermission) is stub | `sqs_permission_administration` |
 

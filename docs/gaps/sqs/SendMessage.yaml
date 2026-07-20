@@ -2,6 +2,10 @@ service: sqs
 operation: SendMessage
 azure_equivalent: "Azure Service Bus queue runtime REST API — POST /{queue}/messages?api-version=2021-05"
 status: implemented
+verified_real_azure:
+  date: "2026-07-20"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29769257977
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29769257977
 sub_features:
   - {name: "MessageBody round-trip (≤1 MiB)", status: implemented, notes: "1 MiB cap counts the body and message attributes together, matching SQS's August 2025 quota increase from 256 KiB to 1 MiB."}
   - {name: "MessageAttributes (String/Number)", status: implemented, notes: "Mapped to SB application properties as strings."}
@@ -20,7 +24,7 @@ behavior_differences:
   - "SQS's per-message cap is 1 MiB (1,048,576 bytes) — raised from 256 KiB in August 2025 — and includes the body plus every message attribute's name + data type + value bytes. The proxy enforces the same 1 MiB cap. The *effective* cap is also bounded by the backing Service Bus tier: SB Standard rejects anything over 256 KiB regardless, SB Premium honours up to 100 MiB. Per-queue MaximumMessageSize (1024..1048576) is recorded at CreateQueue time but not re-validated per send — SB itself rejects oversized payloads."
   - "Payloads larger than 1 MiB must use the AWS Extended Client Library, which stores the body in S3 and embeds a JSON pointer in the SQS message. That pointer flows through this proxy unchanged: the receive side returns the same pointer, and the embedded S3 reference resolves against the proxy's S3 → Blob translation, so end-to-end large-message support works as long as the client uses the Extended Client and the same proxy fronts both S3 and SQS."
   - "ScheduledEnqueueTimeUtc has millisecond resolution in SB; SQS DelaySeconds is integer seconds, so no loss occurs."
-  - "Verified against in-process fakes; end-to-end emulator validation deferred to Slice 3 where the receive path co-validates send. Real-Azure verification pending."
+  - "The standard-queue send path is validated against real Azure Service Bus through the message-lifecycle scenario; FIFO session delivery remains optional coverage outside the standard profile."
 references:
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessage.html
   - https://learn.microsoft.com/rest/api/servicebus/send-message-to-queue
