@@ -100,6 +100,8 @@ public static class MarkdownRenderer
         sb.AppendLine("Use this page before adopting the proxy. A module being available means it can");
         sb.AppendLine("route that AWS wire protocol; it does **not** mean full AWS service parity.");
         sb.AppendLine("The assessments below are generated from the operation and design-gap YAMLs.");
+        sb.AppendLine("Operation-seal counts show only that each referenced operation has positive");
+        sb.AppendLine("real-Azure evidence; they do not certify every sub-feature or accepted design gap.");
         sb.AppendLine();
         sb.AppendLine("Legend: ✅ supported · 🟡 conditional · ⛔ blocked");
         sb.AppendLine();
@@ -170,7 +172,7 @@ public static class MarkdownRenderer
 
             sb.AppendLine($"## {serviceDoc.Service.ToLowerInvariant()}");
             sb.AppendLine();
-            sb.AppendLine("| Workload pattern | Assessment | Operation coverage | Real-Azure | Decision guidance | Requirement ID |");
+            sb.AppendLine("| Workload pattern | Assessment | Operation coverage | Operation seals | Decision guidance | Requirement ID |");
             sb.AppendLine("|---|---|---|---:|---|---|");
             foreach (var pattern in serviceDoc.WorkloadPatterns)
             {

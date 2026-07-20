@@ -9,6 +9,6 @@ sub_features:
 behavior_differences:
   - "Returned QueueUrl is '{request-scheme}://{request-host}/000000000000/{queue}' so the AWS SDK keeps routing back to the same proxy endpoint the caller reached."
   - "Existence check uses Service Bus GET; an unknown queue returns AWS.SimpleQueueService.NonExistentQueue."
-  - "Verified against Service Bus emulator only; real-Azure validation pending."
+  - "The restart qualification exercises queue discovery against real Azure, but a fresh standard-lifecycle run is required before applying an operation seal."
 references:
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_GetQueueUrl.html

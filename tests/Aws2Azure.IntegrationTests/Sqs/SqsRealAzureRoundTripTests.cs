@@ -43,6 +43,9 @@ public sealed class SqsRealAzureSmokeTests
             queueUrl = created.QueueUrl;
             Assert.False(string.IsNullOrWhiteSpace(queueUrl));
 
+            var discovered = await client.GetQueueUrlAsync(queueName).ConfigureAwait(false);
+            Assert.Equal(queueUrl, discovered.QueueUrl);
+
             await client.SendMessageAsync(new SendMessageRequest
             {
                 QueueUrl = queueUrl,
