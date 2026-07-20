@@ -205,6 +205,104 @@
   },
   {
     "schema_version": 1,
+    "profile_id": "sns-standard-publish-event-grid",
+    "profile_version": 1,
+    "name": "SNS standard publish (Event Grid backend)",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "conditional",
+    "findings": [
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:CreateTopic",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:DeleteTopic",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:Publish",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:PublishBatch",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sns:Two backends with different fidelity",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_standard_publish\u0027."
+      },
+      {
+        "code": "sub_feature_real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sns:Publish#Event Grid publish path",
+        "message": "Required backend-specific sub-feature has no real-Azure verification seal."
+      },
+      {
+        "code": "sub_feature_real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sns:PublishBatch#Event Grid batch publish path",
+        "message": "Required backend-specific sub-feature has no real-Azure verification seal."
+      }
+    ]
+  },
+  {
+    "schema_version": 1,
+    "profile_id": "sns-standard-publish-service-bus",
+    "profile_version": 1,
+    "name": "SNS standard publish (Service Bus Topics backend)",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "candidate",
+    "findings": [
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:CreateTopic",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:DeleteTopic",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:Publish",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:PublishBatch",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sns:Two backends with different fidelity",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_standard_publish\u0027."
+      },
+      {
+        "code": "qualification_evidence_missing",
+        "disposition": "blocking",
+        "subject": "sns-standard-publish-service-bus",
+        "message": "No reviewed real-Azure workload qualification artifact is referenced."
+      }
+    ]
+  },
+  {
+    "schema_version": 1,
     "profile_id": "sqs-standard-messaging",
     "profile_version": 1,
     "name": "SQS standard messaging",

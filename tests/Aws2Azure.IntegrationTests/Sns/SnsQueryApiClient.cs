@@ -102,6 +102,9 @@ internal static class SnsQueryApiClient
     public static string ReadSubscriptionArn(SnsXmlResponse response)
         => ReadRequiredElement(response, "SubscriptionArn");
 
+    public static string ReadMessageId(SnsXmlResponse response)
+        => ReadRequiredElement(response, "MessageId");
+
     public static IReadOnlyList<string> ReadTopicArns(SnsXmlResponse response)
         => response.Xml?.Descendants(Ns + "TopicArn").Select(x => x.Value).ToArray()
            ?? Array.Empty<string>();

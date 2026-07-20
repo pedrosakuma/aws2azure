@@ -21,9 +21,28 @@ public sealed class WorkloadGaManifest
     public List<string> Requirements { get; set; } = new();
     public List<string> AcceptedPartialOperations { get; set; } = new();
     public List<string> AcceptedDesignGaps { get; set; } = new();
+
+    /// <summary>
+    /// Optional narrower real-Azure evidence requirements for a profile whose
+    /// required operations can be served by more than one Azure backend (for
+    /// example SNS Publish over Service Bus Topics vs. Event Grid). Each entry
+    /// requires the named documented sub-feature to carry its own fresh
+    /// <c>verified_real_azure</c> seal, in addition to the operation-level seal,
+    /// so a profile that claims one specific backend cannot be mechanically
+    /// certified from evidence that only ever exercised a different backend
+    /// (issue #630).
+    /// </summary>
+    public List<WorkloadGaSubFeatureSeal> RequiredSubFeatureSeals { get; set; } = new();
+
     public WorkloadGaEvidence Evidence { get; set; } = new();
     [YamlIgnore]
     public string SourceFile { get; set; } = string.Empty;
+}
+
+public sealed class WorkloadGaSubFeatureSeal
+{
+    public string Operation { get; set; } = string.Empty;
+    public string SubFeature { get; set; } = string.Empty;
 }
 
 public sealed class WorkloadGaEvidence
@@ -92,6 +111,7 @@ public static class WorkloadGaManifestLoader
         manifest.Requirements ??= new List<string>();
         manifest.AcceptedPartialOperations ??= new List<string>();
         manifest.AcceptedDesignGaps ??= new List<string>();
+        manifest.RequiredSubFeatureSeals ??= new List<WorkloadGaSubFeatureSeal>();
         manifest.Evidence ??= new WorkloadGaEvidence();
         manifest.Evidence.RequiredScenarios ??= new List<string>();
         manifest.Evidence.RequiredRealAzureScenarios ??= new List<string>();
@@ -211,6 +231,39 @@ public static class WorkloadGaManifestValidator
             "accepted design gap",
             designGaps.Contains,
             Err);
+
+        var seenSubFeatureSeals = new HashSet<(string Operation, string SubFeature)>();
+        foreach (var seal in manifest.RequiredSubFeatureSeals)
+        {
+            if (string.IsNullOrWhiteSpace(seal.Operation) || string.IsNullOrWhiteSpace(seal.SubFeature))
+            {
+                Err("required_sub_feature_seals entry must set both operation and sub_feature");
+                continue;
+            }
+            if (!seenSubFeatureSeals.Add((seal.Operation, seal.SubFeature)))
+            {
+                Err($"duplicate required sub-feature seal '{seal.Operation}#{seal.SubFeature}'");
+            }
+            if (!manifest.Operations.Contains(seal.Operation, StringComparer.OrdinalIgnoreCase))
+            {
+                Err($"required sub-feature seal operation '{seal.Operation}' is not required by the profile");
+                continue;
+            }
+            if (!WorkloadManifestValidator.TryParseOperation(seal.Operation, out var service, out var operation)
+                || !operationsByKey.TryGetValue(
+                    WorkloadManifestValidator.OperationKey(service, operation),
+                    out var doc))
+            {
+                continue;
+            }
+            if (!doc.SubFeatures.Any(
+                    feature => feature.Name.Equals(seal.SubFeature, StringComparison.OrdinalIgnoreCase)))
+            {
+                Err(
+                    $"required sub-feature seal '{seal.SubFeature}' does not exist under operation " +
+                    $"'{seal.Operation}'");
+            }
+        }
 
         ValidateUnique(manifest.Evidence.RequiredScenarios, "evidence scenario", Err);
         ValidateUnique(
@@ -353,6 +406,40 @@ public static class WorkloadGaEvaluator
                     Add(report, "design_gap_accepted", "advisory", reference,
                         $"The profile explicitly accepts this documented design gap for requirement '{requirement}'.");
                 }
+            }
+        }
+
+        foreach (var seal in manifest.RequiredSubFeatureSeals
+                     .OrderBy(value => value.Operation, StringComparer.OrdinalIgnoreCase)
+                     .ThenBy(value => value.SubFeature, StringComparer.OrdinalIgnoreCase))
+        {
+            var subject = $"{seal.Operation}#{seal.SubFeature}";
+            if (!WorkloadManifestValidator.TryParseOperation(seal.Operation, out var service, out var operation)
+                || !operationsByKey.TryGetValue(
+                    WorkloadManifestValidator.OperationKey(service, operation),
+                    out var sealDoc))
+            {
+                continue;
+            }
+            var subFeature = sealDoc.SubFeatures.FirstOrDefault(
+                feature => feature.Name.Equals(seal.SubFeature, StringComparison.OrdinalIgnoreCase));
+            if (subFeature is null)
+            {
+                continue;
+            }
+            if (!HasFreshSeal(subFeature.VerifiedRealAzure, currentDate, manifest.RealAzureSealMaxAgeDays))
+            {
+                hasSealBlocker = true;
+                Add(
+                    report,
+                    subFeature.VerifiedRealAzure is null
+                        ? "sub_feature_real_azure_seal_missing"
+                        : "sub_feature_real_azure_seal_expired",
+                    "blocking",
+                    subject,
+                    subFeature.VerifiedRealAzure is null
+                        ? "Required backend-specific sub-feature has no real-Azure verification seal."
+                        : $"Backend-specific real-Azure verification is older than {manifest.RealAzureSealMaxAgeDays} days.");
             }
         }
 
