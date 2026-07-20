@@ -161,6 +161,31 @@ public sealed partial class KnownPerfScenariosTests
             "Invalid pairings in baseline-reference.json:\n  - " + string.Join("\n  - ", problems));
     }
 
+    [Fact]
+    public void Volatile_emulator_paths_use_evidence_backed_catastrophe_gates()
+    {
+        var path = FindRepoPath("docs", "perf", "baseline-reference.json");
+        var doc = JsonSerializer.Deserialize(
+            File.ReadAllText(path),
+            PerfBaselineJsonContext.Default.PerfBaselineDocument);
+        Assert.NotNull(doc?.Scenarios);
+        Assert.NotNull(doc?.Pairings);
+
+        var batch = doc!.Scenarios!["kinesis.PutRecords (25×256 B)"];
+        Assert.Equal(1.8, batch.MinThroughputPerSec);
+        Assert.Equal(0.0, batch.MaxP99Ms);
+
+        var s3 = doc.Pairings!["s3.PutObject (4 KiB)"];
+        Assert.Equal(0.50, s3.MinThroughputRatio);
+        Assert.Equal(2.0, s3.MaxP50Ratio);
+        Assert.Equal(0.0, s3.MaxP99Ratio);
+
+        var dynamodb = doc.Pairings["dynamodb.GetItem (small)"];
+        Assert.Equal(0.40, dynamodb.MinThroughputRatio);
+        Assert.Equal(0.0, dynamodb.MaxP50Ratio);
+        Assert.Equal(4.5, dynamodb.MaxP99Ratio);
+    }
+
     private static string FindRepoPath(params string[] segments)
         => Path.Combine(new[] { FindRepoRoot() }.Concat(segments).ToArray());
 

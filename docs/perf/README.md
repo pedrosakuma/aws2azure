@@ -109,12 +109,10 @@ Runs inside each scenario. `AssertHealthy()` fails on no completions or a
 compares against per-scenario floors/ceilings in
 [`baseline-reference.json`](baseline-reference.json) (`minThroughputPerSec`
 / `maxP99Ms`). Every static scenario must have an entry; zero thresholds are
-an explicit bring-up waiver, while a missing entry fails. **On emulator-bound
-AMQP paths these absolutes are set to
-`0` (disabled)** because the emulator's multi-second cold-connect tail
-stalls move p99 by 20× run-to-run — an absolute ceiling there only produces
-chronic false reds. Those paths are gated relatively instead (below). REST
-paths (S3/DynamoDB) keep meaningful absolute floors.
+an explicit bring-up waiver, while a missing entry fails. **On emulator-bound AMQP paths latency ceilings are set to `0` (disabled)**
+because multi-second cold-connect stalls move p99 by 20× run-to-run. A small
+number of paths retain a deliberately low throughput floor as a catastrophe
+detector when no stable SDK-relative ruler exists.
 
 ### 2. Relative proxy-vs-SDK gate — `RelativeRegressionGate`
 
@@ -126,8 +124,8 @@ above — a configured *multiple* of that baseline:
 
 ```jsonc
 "pairings": {
-  // REST / receive: gate on p99-ratio (+ throughput)
-  "dynamodb.GetItem (small)": { "baseline": "azure-sdk.Cosmos.ReadItem (small)", "minThroughputRatio": 0.45, "maxP99Ratio": 3.0 },
+  // This REST pair has a stable 3-4× p99 ratio and gates at 4.5×.
+  "dynamodb.GetItem (small)": { "baseline": "azure-sdk.Cosmos.ReadItem (small)", "minThroughputRatio": 0.40, "maxP99Ratio": 4.5 },
   // AMQP send: gate on p50-ratio only (p99 is cold-attach noise)
   "sns.Publish (256 B)":      { "baseline": "azure-sdk.ServiceBusTopics.SendMessage (256 B)", "minThroughputRatio": 0.0, "maxP50Ratio": 5.0 }
 }
@@ -136,16 +134,25 @@ above — a configured *multiple* of that baseline:
 `azure-sdk.*` baselines never fail the build — they are reference rulers,
 never the proxy side of a pairing.
 
-Because the emulator's tail-latency jitter hits **both** sides equally, the
-ratio cancels the noise — a failure here is genuine proxy overhead, not
-flakiness. A `0` ratio opts out of that dimension.
+The ratio cancels noise only when the chosen SDK statistic is itself stable.
+Each pairing therefore uses p50 or p99 based on measured repeatability. A `0`
+ratio opts out of that dimension.
 
 **Metric by path shape** — the gate picks the statistic that is *stable* for
 each path, and only pairs against a baseline that is itself a stable ruler:
 
-- **REST + AMQP receive** pairs gate on **p99-ratio** (and usually
-  throughput-ratio): their latency distribution is unimodal and their SDK
-  baseline is stable, so p99 is a reliable signal.
+- **S3 PutObject** gates on **p50-ratio plus throughput-ratio**. Across
+  unchanged-main and PR #614 runs its p50 ratio stayed within
+  **1.08×–1.33×**, while p99 moved between **0.54× and 4.68×**. A **2.0×**
+  p50 ceiling preserves 50% headroom over the observed maximum without
+  treating an unstable tail sample as a regression.
+- **DynamoDB GetItem** retains **p99-ratio plus throughput-ratio**. Its p99
+  ratio was consistently **3.18×–3.80×**, so the former 3.0× ceiling was
+  below every observed healthy run rather than measuring instability. The
+  calibrated ceiling is **4.5×**; its throughput floor is **0.40×**, below
+  the observed minimum of **0.484×**.
+- Other **REST + AMQP receive** pairs keep **p99-ratio** when their latency
+  distribution and SDK baseline are demonstrated stable.
 - **EventHubs send** (`kinesis.PutRecord`) gates on **p50-ratio (median)**. A
   send's distribution is bimodal — a steady mode plus rare multi-second cold
   link-attach spikes — and which side those spikes land in p99 (vs max) is
@@ -164,6 +171,12 @@ each path, and only pairs against a baseline that is itself a stable ruler:
   paths rely on `AssertHealthy` (no completions / >10% failures) plus a
   throughput floor (`minThroughputPerSec`) as the catastrophe detector; the
   latency tail carries no stable signal at any threshold.
+- **Kinesis PutRecords** has no like-for-like SDK batch pairing and keeps a
+  **1.8 ops/s** absolute catastrophe floor. Equivalent unchanged-code runs
+  ranged from **2.5 to 6.2 ops/s**; the prior 3 ops/s floor sat inside that
+  observed range and therefore classified runner/emulator variance as a
+  product regression. The new floor is 28% below the observed minimum and
+  still rejects a near-stalled batch path.
 - **DynamoDB BatchGetItem** is also **NOT paired** — it gates on an **absolute
   p99 ceiling** instead. Here the *proxy* is the stable side (Cosmos REST p99
   ~240–340 ms across runs, unimodal), while the `Cosmos.ReadManyItems` baseline
