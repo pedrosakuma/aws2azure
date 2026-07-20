@@ -2,9 +2,10 @@
 #
 # Pull requests that touch the Dockerfile, sources, or this workflow build the
 # image and run a smoke test WITHOUT pushing — so a broken Dockerfile is caught
-# before merge. Pushes to main, manual dispatch, and calls from release.yml
+# before merge. Pushes to main, manual dispatch, and calls from legacy release.yml
 # (workflow_call) additionally build and publish a multi-arch (amd64 + arm64)
-# image to GHCR.
+# image to GHCR. Stable v1+ releases use immutable manifest promotion and must
+# not trigger a source rebuild here.
 
 name: Container Image
 
@@ -22,8 +23,6 @@ on:
       - 'Dockerfile'
       - '.dockerignore'
       - '.github/workflows/container.yml'
-  release:
-    types: [published]
   workflow_call:
   workflow_dispatch:
 

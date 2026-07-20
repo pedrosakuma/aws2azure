@@ -18,6 +18,7 @@ PACKAGE_TOOL = REPO_ROOT / "eng" / "release-candidate-package.py"
 INPUTS_TOOL = REPO_ROOT / "eng" / "release-candidate-inputs.py"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release-candidate.yml"
 STABLE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
+CONTAINER_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "container.yml"
 CANDIDATE = "v1.2.3-rc.4"
 REPOSITORY = "pedrosakuma/aws2azure"
 SOURCE_SHA = "0123456789abcdef0123456789abcdef01234567"
@@ -554,8 +555,11 @@ class ReleaseCandidateProducerTests(unittest.TestCase):
         self.assertIn("#588", text)
         self.assertIn("#582", text)
         stable_text = STABLE_WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("'!v*.*.*-rc.*'", stable_text)
-        self.assertIn("only accepts stable vMAJOR.MINOR.PATCH tags", stable_text)
+        self.assertIn("'v0.*.*'", stable_text)
+        self.assertIn("'!v0.*.*-rc.*'", stable_text)
+        self.assertIn("only accepts stable v0.MINOR.PATCH tags", stable_text)
+        self.assertNotIn("'v*.*.*'", stable_text)
+        self.assertIn("build:\n    needs: guard", stable_text)
         self.assertIn('"refs/tags/$REF"', stable_text)
         self.assertIn("github.ref_name == inputs.tag", stable_text)
         self.assertNotIn(
@@ -564,7 +568,9 @@ class ReleaseCandidateProducerTests(unittest.TestCase):
         self.assertNotIn(
             'TAG="${{ github.event.inputs.tag || github.ref_name }}"', stable_text
         )
-        self.assertEqual(stable_text.count("RELEASE_TAG:"), 2)
+        self.assertEqual(stable_text.count("RELEASE_TAG:"), 3)
+        container_text = CONTAINER_WORKFLOW.read_text(encoding="utf-8")
+        self.assertNotIn("release:\n    types: [published]", container_text)
 
 
 if __name__ == "__main__":

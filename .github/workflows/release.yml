@@ -3,7 +3,7 @@
 # Stable v1+ releases are promoted from immutable observed RC bytes by
 # release-candidate-promote.yml. This workflow must never rebuild those tags.
 #
-# Tagging a commit with a semver tag (e.g. `v0.1.0`) builds the self-contained
+# Tagging a commit with a legacy 0.x tag (e.g. `v0.1.0`) builds the self-contained
 # Native-AOT proxy binary for linux-x64 and linux-arm64, packages each as a
 # tarball with a SHA-256 checksum, and publishes a GitHub Release with the
 # archives attached.
@@ -20,32 +20,46 @@
 #
 #   git tag v0.1.0 && git push origin v0.1.0
 #
-# `workflow_dispatch` rebuilds and re-uploads assets for an existing tag; run it
+# `workflow_dispatch` rebuilds and re-uploads assets for an existing 0.x tag; run it
 # with `--ref <tag>` to also rebuild the container image (otherwise the
 # `container` job is skipped because github.ref is not a tag).
-
 name: release
 
 on:
   push:
     tags:
-      - 'v*.*.*'
-      - '!v*.*.*-rc.*'
+      - 'v0.*.*'
+      - '!v0.*.*-rc.*'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing tag to (re)build, e.g. v0.1.0'
+        description: 'Existing legacy 0.x tag to (re)build, e.g. v0.1.0'
         required: true
 
 permissions:
   contents: read
 
 jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require a legacy stable 0.x tag
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::The legacy release workflow only accepts stable v0.MINOR.PATCH tags."
+            exit 1
+          fi
+
   # ---------------------------------------------------------------------------
   # Build + package the AOT binary per RID. linux-x64 on the x64 runner,
   # linux-arm64 natively on the arm64 runner (no cross-compilation).
   # ---------------------------------------------------------------------------
   build:
+    needs: guard
     strategy:
       fail-fast: false
       matrix:
@@ -93,8 +107,8 @@ jobs:
         run: |
           set -euo pipefail
           REF="$RELEASE_TAG"
-          if [[ ! "$REF" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "::error::The release workflow only accepts stable vMAJOR.MINOR.PATCH tags."
+          if [[ ! "$REF" =~ ^v0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::The legacy release workflow only accepts stable v0.MINOR.PATCH tags."
             exit 1
           fi
           if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF" != "refs/tags/$REF" ]]; then
@@ -163,8 +177,8 @@ jobs:
         run: |
           set -euo pipefail
           TAG="$RELEASE_TAG"
-          if [[ ! "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "::error::The release workflow only accepts stable vMAJOR.MINOR.PATCH tags."
+          if [[ ! "$TAG" =~ ^v0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::The legacy release workflow only accepts stable v0.MINOR.PATCH tags."
             exit 1
           fi
           if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF" != "refs/tags/$TAG" ]]; then
