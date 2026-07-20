@@ -92,4 +92,39 @@ internal static class KinesisTestHelpers
 
     public static DateTime ToSdkTimestamp(DateTimeOffset value)
         => DateTime.SpecifyKind(value.UtcDateTime, DateTimeKind.Utc);
+
+    public static async Task<(string ShardId, string PartitionKey)> ResolvePartitionTargetAsync(
+        IAmazonKinesis client,
+        string streamName,
+        CancellationToken cancellationToken)
+    {
+        var response = await client.ListShardsAsync(new ListShardsRequest
+        {
+            StreamName = streamName,
+            MaxResults = 100,
+        }, cancellationToken).ConfigureAwait(false);
+        if (response.Shards.Count == 0)
+        {
+            throw new InvalidOperationException($"Event Hub '{streamName}' has no shards.");
+        }
+
+        var selected = PickPartitionKeys(
+            response.Shards.Count,
+            totalRecords: 1,
+            requiredPartitions: 1).Single();
+        return ($"shardId-{selected.Key:D12}", selected.Value.Single());
+    }
+
+    public static async Task<string> PrimeIteratorAsync(
+        IAmazonKinesis client,
+        string shardIterator,
+        CancellationToken cancellationToken)
+    {
+        var response = await client.GetRecordsAsync(new GetRecordsRequest
+        {
+            ShardIterator = shardIterator,
+            Limit = 1,
+        }, cancellationToken).ConfigureAwait(false);
+        return response.NextShardIterator;
+    }
 }

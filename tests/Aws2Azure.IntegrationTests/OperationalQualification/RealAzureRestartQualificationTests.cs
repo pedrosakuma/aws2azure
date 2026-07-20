@@ -66,4 +66,12 @@ public sealed class RealAzureRestartQualificationTests(RealAzureProxyFixture fix
         Skip.IfNot(fixture.ServiceBusConfigured, "Real Azure Service Bus is not configured.");
         await RealAzureRestartQualification.VerifySqsAsync(fixture).ConfigureAwait(false);
     }
+
+    [SkippableFact]
+    public async Task Kinesis_state_remains_readable_after_proxy_restart()
+    {
+        Skip.IfNot(fixture.EventHubsConfigured,
+            "AZURE_EVENTHUBS_* / AZURE_EVENTHUBS_STREAM not set — Real Azure Event Hubs is not configured.");
+        await RealAzureRestartQualification.VerifyKinesisAsync(fixture).ConfigureAwait(false);
+    }
 }

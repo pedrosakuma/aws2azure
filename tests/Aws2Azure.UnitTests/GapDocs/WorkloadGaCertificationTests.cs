@@ -19,6 +19,7 @@ public sealed class WorkloadGaCertificationTests
     [InlineData("dynamodb-basic-crud.yaml", "candidate")]
     [InlineData("sns-standard-publish-service-bus.yaml", "candidate")]
     [InlineData("sns-standard-publish-event-grid.yaml", "candidate")]
+    [InlineData("kinesis-basic-record-ingestion.yaml", "candidate")]
     public void Repository_profiles_have_expected_mechanical_verdict(
         string fileName,
         string expectedVerdict)
@@ -715,6 +716,18 @@ public sealed class WorkloadGaCertificationTests
                 report.Findings,
                 finding => finding.Code is "rollback_ledger_mismatch"
                     or "qualification_evidence_invalid");
+            // Regression guard: a committed report must regenerate identically
+            // regardless of the checkout's absolute path. tempRoot here stands
+            // in for "a different machine's checkout path" (it is itself an
+            // absolute, machine-specific temp directory), so no finding may
+            // embed it. This specifically covers the rollback-ledger path,
+            // which is a separate leak site from the qualification-artifact
+            // path already covered elsewhere.
+            Assert.All(report.Findings, finding =>
+            {
+                Assert.DoesNotContain(tempRoot, finding.Subject, StringComparison.Ordinal);
+                Assert.DoesNotContain(tempRoot, finding.Message, StringComparison.Ordinal);
+            });
         }
         finally
         {

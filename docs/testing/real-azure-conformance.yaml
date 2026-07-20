@@ -475,6 +475,15 @@ services:
         operations: [GetShardIterator, GetRecords]
         tests:
           - Aws2Azure.IntegrationTests.Kinesis.KinesisRealAzureConformanceTests.Concurrent_consumers_maintain_iterator_progress
+      - id: restart
+        priority: p0
+        category: restart
+        evidence_source: real_azure
+        establishes_verification: false
+        description: A record written through the candidate remains readable from its pre-restart shard iterator after the out-of-process proxy is terminated and restarted with the same immutable configuration.
+        operations: [PutRecord, GetShardIterator, GetRecords]
+        tests:
+          - Aws2Azure.IntegrationTests.OperationalQualification.RealAzureRestartQualificationTests.Kinesis_state_remains_readable_after_proxy_restart
 
   - service: sns
     scenarios:

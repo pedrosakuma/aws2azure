@@ -1,10 +1,13 @@
+using System.Text;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
+using Amazon.Kinesis.Model;
 using DynamoDbResourceNotFoundException = Amazon.DynamoDBv2.Model.ResourceNotFoundException;
 using Amazon.S3.Model;
 using Amazon.SecretsManager.Model;
 using Amazon.SQS.Model;
 using Aws2Azure.IntegrationTests.Fixtures;
+using Aws2Azure.IntegrationTests.Kinesis;
 using Xunit;
 
 namespace Aws2Azure.IntegrationTests.OperationalQualification;
@@ -115,6 +118,49 @@ internal static class RealAzureRestartQualification
             try { await client.DeleteObjectAsync(bucket, key).ConfigureAwait(false); } catch { }
             try { await client.DeleteBucketAsync(bucket).ConfigureAwait(false); } catch { }
         }
+    }
+
+    /// <summary>
+    /// Writes a record before restart, then confirms it is still readable
+    /// from the exact pre-restart shard iterator after the proxy is
+    /// terminated and restarted with the same immutable configuration. The
+    /// Event Hub retains the data independently of proxy process state, and
+    /// the shard-iterator token itself must remain valid without any
+    /// proxy-held cursor, so this both proves record durability and that
+    /// iterator resumption is stateless across a restart.
+    /// </summary>
+    public static async Task VerifyKinesisAsync(RealAzureProxyFixture fixture)
+    {
+        using var client = fixture.CreateKinesisClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var target = await KinesisTestHelpers.ResolvePartitionTargetAsync(
+            client, fixture.EventHubStream, timeout.Token).ConfigureAwait(false);
+        var iterator = await client.GetShardIteratorAsync(new GetShardIteratorRequest
+        {
+            StreamName = fixture.EventHubStream,
+            ShardId = target.ShardId,
+            ShardIteratorType = "LATEST",
+        }, timeout.Token).ConfigureAwait(false);
+        var primedIterator = await KinesisTestHelpers.PrimeIteratorAsync(
+            client, iterator.ShardIterator, timeout.Token).ConfigureAwait(false);
+
+        var payload = "restart-" + Guid.NewGuid().ToString("N");
+        using var data = new MemoryStream(Encoding.UTF8.GetBytes(payload));
+        await client.PutRecordAsync(new PutRecordRequest
+        {
+            StreamName = fixture.EventHubStream,
+            PartitionKey = target.PartitionKey,
+            Data = data,
+        }, timeout.Token).ConfigureAwait(false);
+
+        await fixture.RestartAsync().ConfigureAwait(false);
+
+        var records = await KinesisTestHelpers.ReadUntilAsync(
+            client,
+            primedIterator,
+            record => KinesisTestHelpers.Utf8(record) == payload,
+            TimeSpan.FromSeconds(45)).ConfigureAwait(false);
+        Assert.Contains(records, record => KinesisTestHelpers.Utf8(record) == payload);
     }
 
     public static async Task VerifySecretsManagerAsync(

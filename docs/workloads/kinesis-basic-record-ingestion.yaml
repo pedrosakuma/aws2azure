@@ -1,0 +1,34 @@
+schema_version: 1
+id: kinesis-basic-record-ingestion
+version: 1
+name: Kinesis basic record ingestion
+minimum_proxy_version: 0.1.0
+real_azure_seal_max_age_days: 90
+operations:
+  - kinesis:PutRecord
+  - kinesis:PutRecords
+requirements:
+  - kinesis_record_ingestion
+accepted_partial_operations:
+  - kinesis:PutRecord
+  - kinesis:PutRecords
+accepted_design_gaps:
+  - "kinesis:Synthetic sequence numbers and iterator positioning"
+evidence:
+  qualification_artifact: ""
+  required_scenarios:
+    - representative-load
+    - partition-key-routing
+    - batch-partial-failure
+    - throttling
+    - timeout
+    - service-unavailable
+    - restart
+    - retry-exhaustion
+    - rollback
+  required_real_azure_scenarios:
+    - representative-load
+    - partition-key-routing
+    - batch-partial-failure
+    - restart
+    - rollback
