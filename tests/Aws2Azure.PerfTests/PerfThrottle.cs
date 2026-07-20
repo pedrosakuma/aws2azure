@@ -5,7 +5,7 @@ namespace Aws2Azure.PerfTests;
 
 /// <summary>
 /// Classifies a caught perf-action exception as <b>backend throttling</b>
-/// (HTTP 429 / "request rate too large") versus a genuine proxy/transport
+/// (HTTP 429 / S3 SlowDown / "request rate too large") versus a genuine proxy/transport
 /// <b>defect</b> (issue #456).
 ///
 /// <para>Against a serverless Azure backend (e.g. serverless Cosmos, which has a
@@ -44,6 +44,7 @@ internal static class PerfThrottle
         "RequestThrottled",
         "RequestRateTooLarge",
         "TooManyRequests",
+        "SlowDown",
     };
 
     /// <summary>
@@ -59,6 +60,7 @@ internal static class PerfThrottle
         "TooManyRequests",
         "ThrottlingException",
         "ProvisionedThroughputExceeded",
+        "Reduce your request rate",
     };
 
     /// <summary>

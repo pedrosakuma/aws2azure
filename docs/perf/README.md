@@ -114,6 +114,13 @@ because multi-second cold-connect stalls move p99 by 20× run-to-run. A small
 number of paths retain a deliberately low throughput floor as a catastrophe
 detector when no stable SDK-relative ruler exists.
 
+S3 `503 SlowDown` (`Reduce your request rate`) is recorded as backend
+throttling rather than a proxy failure, just like HTTP 429. The large-object
+and batch-delete emulator shapes are also intentionally bounded:
+`PutObject (10 MiB)` uses concurrency 1, and `DeleteObjects (100 keys)` uses
+concurrency 2 (at most 200 backend deletes in flight). Fully throttled
+emulator windows still fail because they produce no usable measurement.
+
 ### 2. Relative proxy-vs-SDK gate — `RelativeRegressionGate`
 
 Each proxy scenario is paired in `baseline-reference.json`'s `pairings`
