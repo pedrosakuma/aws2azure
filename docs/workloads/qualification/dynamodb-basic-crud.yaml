@@ -1,0 +1,170 @@
+# Initial reviewed policy for the production-shaped Cosmos DB workload. The
+# capacity floor is deliberately unresolved: it must be selected from at
+# least three comparable artifacts produced by workload-load-real-azure.yml.
+# Until that review occurs, the blocking unresolved signal keeps the
+# mechanical verdict at candidate; it is not a GA claim.
+schema_version: 1
+profile_id: dynamodb-basic-crud
+profile_version: 1
+rules:
+  max_artifact_age_hours: 72
+  min_samples_per_scenario: 300
+  min_duration_seconds: 300
+  max_failure_rate: 0
+  zero_completions_disqualify: true
+  only_skipped_real_azure_disqualifies: true
+  min_distinct_runs: 3
+load_shape:
+  concurrency: 8
+  requested_duration_seconds: 300
+scenarios:
+  - id: representative-load
+    service: dynamodb
+    operation: GetItem
+    evidence_source: real_azure
+    signals:
+      - id: representative-load-throughput
+        source: backend_capacity
+        disposition: blocking
+        metric: throughput_per_sec
+        threshold_status: unresolved
+        threshold_reason: >-
+          No comparable repeated live-Cosmos-DB runs have been reviewed.
+          Select a floor from the worst healthy run without using emulator or
+          A/B data.
+      - id: representative-load-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+      - id: crud-iterations-per-sec
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: aws-operations-per-sec
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: representative-load-create-table-throughput
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: representative-load-create-table-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-create-table-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+      - id: representative-load-describe-table-throughput
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: representative-load-describe-table-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-describe-table-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+      - id: representative-load-put-item-throughput
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: representative-load-put-item-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-put-item-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+      - id: representative-load-update-item-throughput
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: representative-load-update-item-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-update-item-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+      - id: representative-load-delete-item-throughput
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: representative-load-delete-item-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-delete-item-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+      - id: representative-load-delete-table-throughput
+        source: backend_capacity
+        disposition: report_only
+        metric: throughput_per_sec
+      - id: representative-load-delete-table-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-delete-table-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+      - id: representative-load-unauthenticated-connectivity-header-p95
+        source: network_noise
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-throttle-rate
+        source: backend_capacity
+        disposition: report_only
+        metric: throttle_rate
+  - id: conditional-write-concurrency
+    service: dynamodb
+    operation: PutItem
+    evidence_source: real_azure
+    signals: []
+  - id: throttling
+    service: dynamodb
+    operation: GetItem
+    evidence_source: deterministic
+    signals: []
+  - id: timeout
+    service: dynamodb
+    operation: GetItem
+    evidence_source: deterministic
+    signals: []
+  - id: service-unavailable
+    service: dynamodb
+    operation: GetItem
+    evidence_source: deterministic
+    signals: []
+  - id: read-after-write
+    service: dynamodb
+    operation: GetItem
+    evidence_source: real_azure
+    signals: []
+  - id: restart
+    service: dynamodb
+    operation: PutItem
+    evidence_source: real_azure
+    signals: []
+  - id: retry-exhaustion
+    service: dynamodb
+    operation: PutItem
+    evidence_source: deterministic
+    signals: []
+  - id: rollback
+    service: dynamodb
+    operation: GetItem
+    evidence_source: real_azure
+    signals: []

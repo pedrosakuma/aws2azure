@@ -3,6 +3,8 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using Amazon;
+using Amazon.DynamoDBv2;
+using Amazon.DynamoDBv2.Model;
 using Amazon.Runtime;
 using Amazon.S3;
 using Amazon.S3.Model;
@@ -101,6 +103,126 @@ internal static class DeterministicFailureQualification
                     scenarioId,
                     "Unsupported Secrets Manager deterministic qualification scenario.");
         }
+    }
+
+    public static async Task VerifyDynamoDbScenarioAsync(string scenarioId)
+    {
+        switch (scenarioId)
+        {
+            case ThrottlingScenarioId:
+                await VerifyDynamoDbFailureAsync(new FailureCase(
+                    HttpStatusCode.TooManyRequests,
+                    null,
+                    400,
+                    "ProvisionedThroughputExceededException")).ConfigureAwait(false);
+                break;
+            case TimeoutScenarioId:
+                await VerifyDynamoDbFailureAsync(new FailureCase(
+                    HttpStatusCode.RequestTimeout,
+                    null,
+                    500,
+                    "InternalServerError")).ConfigureAwait(false);
+                break;
+            case ServiceUnavailableScenarioId:
+                await VerifyDynamoDbFailureAsync(new FailureCase(
+                    HttpStatusCode.ServiceUnavailable,
+                    null,
+                    500,
+                    "InternalServerError")).ConfigureAwait(false);
+                break;
+            case RetryExhaustionScenarioId:
+                await VerifyDynamoDbRetryExhaustionAsync().ConfigureAwait(false);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(
+                    nameof(scenarioId),
+                    scenarioId,
+                    "Unsupported DynamoDB deterministic qualification scenario.");
+        }
+    }
+
+    private static async Task VerifyDynamoDbFailureAsync(FailureCase failure)
+    {
+        using var harness = DeterministicFailureHarness.Create("dynamodb");
+        using var sdk = CreateDynamoDbClient(harness);
+        harness.Backend.PlanStatus(failure.BackendStatus, failure.AzureErrorCode);
+
+        using var response = await harness.RawClient.SendAsync(
+            CreateDynamoDbGetItemRequest(harness.RawClient.BaseAddress!)).ConfigureAwait(false);
+        await AssertCanonicalErrorAsync(
+            response,
+            failure,
+            CanonicalResponse.BodyKindJsonError).ConfigureAwait(false);
+
+        var exception = await Assert.ThrowsAnyAsync<AmazonServiceException>(
+            () => sdk.GetItemAsync(new GetItemRequest
+            {
+                TableName = "deterministic-failure",
+                Key = new Dictionary<string, AttributeValue>
+                {
+                    ["pk"] = new AttributeValue { S = "item" },
+                },
+                ConsistentRead = true,
+            }));
+        AssertSdkError(exception, failure);
+        AssertSdkRetriedOnce(harness);
+    }
+
+    private static async Task VerifyDynamoDbRetryExhaustionAsync()
+    {
+        using var harness = DeterministicFailureHarness.Create("dynamodb");
+        harness.Backend.PlanStatus(HttpStatusCode.ServiceUnavailable);
+        using var sdk = CreateDynamoDbClient(harness, maxErrorRetry: 2);
+
+        await Assert.ThrowsAnyAsync<AmazonServiceException>(
+            () => sdk.PutItemAsync(new PutItemRequest
+            {
+                TableName = "retry-exhaustion",
+                Item = new Dictionary<string, AttributeValue>
+                {
+                    ["pk"] = new AttributeValue { S = "item" },
+                },
+            }));
+
+        Assert.Equal(3, harness.Backend.BackendRequestCount);
+    }
+
+    private static AmazonDynamoDBClient CreateDynamoDbClient(
+        DeterministicFailureHarness harness,
+        int maxErrorRetry = 1) =>
+        new(
+            DeterministicFailureHarness.AccessKey,
+            DeterministicFailureHarness.SecretKey,
+            new AmazonDynamoDBConfig
+            {
+                ServiceURL = harness.RawClient.BaseAddress!.GetLeftPart(UriPartial.Authority),
+                UseHttp = true,
+                AuthenticationRegion = DeterministicFailureHarness.Region,
+                MaxErrorRetry = maxErrorRetry,
+                HttpClientFactory = harness.AwsHttpClientFactory,
+            });
+
+    private static HttpRequestMessage CreateDynamoDbGetItemRequest(Uri baseAddress)
+    {
+        const string body = """{"TableName":"deterministic-failure","Key":{"pk":{"S":"item"}},"ConsistentRead":true}""";
+        var bytes = Encoding.UTF8.GetBytes(body);
+        var request = new HttpRequestMessage(HttpMethod.Post, new Uri(baseAddress, "/"))
+        {
+            Content = new ByteArrayContent(bytes),
+        };
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/x-amz-json-1.0");
+        request.Headers.TryAddWithoutValidation(
+            "X-Amz-Target",
+            "DynamoDB_20120810.GetItem");
+        TestSigV4Signer.SignHeader(
+            request,
+            bytes,
+            DeterministicFailureHarness.AccessKey,
+            DeterministicFailureHarness.SecretKey,
+            DeterministicFailureHarness.Region,
+            "dynamodb",
+            extraSignedHeaders: ["x-amz-target"]);
+        return request;
     }
 
     private static async Task VerifyS3FailureAsync(FailureCase failure)

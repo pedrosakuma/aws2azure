@@ -23,15 +23,24 @@ public sealed class ApprovedRuntimeLedgerTests
             ValidationTime);
 
         Assert.Empty(errors);
-        Assert.Equal(2, records.Count);
-        Assert.All(records, record =>
+        Assert.Equal(3, records.Count);
+        var approved = records.Where(record => record.Status == "approved").ToArray();
+        var bootstrap = records.Where(record => record.Status == "bootstrap").ToArray();
+        Assert.Equal(2, approved.Length);
+        Assert.Single(bootstrap);
+        Assert.All(approved, record =>
         {
-            Assert.Equal("approved", record.Status);
             Assert.True(record.Eligibility.RollbackBaselineEligible);
             Assert.True(record.Eligibility.PromotionEligible);
             Assert.NotNull(record.Qualification);
         });
-        Assert.Single(records.Select(record => record.Artifact.Id).Distinct());
+        Assert.All(bootstrap, record =>
+        {
+            Assert.True(record.Eligibility.RollbackBaselineEligible);
+            Assert.False(record.Eligibility.PromotionEligible);
+            Assert.Null(record.Qualification);
+        });
+        Assert.Single(approved.Select(record => record.Artifact.Id).Distinct());
     }
 
     [Fact]

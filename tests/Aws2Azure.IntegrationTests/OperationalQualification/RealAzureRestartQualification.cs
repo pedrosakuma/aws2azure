@@ -1,3 +1,6 @@
+using Amazon.DynamoDBv2;
+using Amazon.DynamoDBv2.Model;
+using DynamoDbResourceNotFoundException = Amazon.DynamoDBv2.Model.ResourceNotFoundException;
 using Amazon.S3.Model;
 using Amazon.SecretsManager.Model;
 using Aws2Azure.IntegrationTests.Fixtures;
@@ -7,6 +10,83 @@ namespace Aws2Azure.IntegrationTests.OperationalQualification;
 
 internal static class RealAzureRestartQualification
 {
+    public static async Task VerifyDynamoDbAsync(DynamoDbRealAzureProxyFixture fixture)
+    {
+        var table = "aws2azure-restart-" + Guid.NewGuid().ToString("N")[..10];
+        using var client = fixture.CreateDynamoDbClient();
+        var tableCreated = false;
+        try
+        {
+            await client.CreateTableAsync(new CreateTableRequest
+            {
+                TableName = table,
+                AttributeDefinitions = [new AttributeDefinition("pk", ScalarAttributeType.S)],
+                KeySchema = [new KeySchemaElement("pk", KeyType.HASH)],
+                BillingMode = BillingMode.PAY_PER_REQUEST,
+            }).ConfigureAwait(false);
+            tableCreated = true;
+            await WaitForTableActiveAsync(client, table).ConfigureAwait(false);
+
+            await client.PutItemAsync(new PutItemRequest
+            {
+                TableName = table,
+                Item = new Dictionary<string, AttributeValue>
+                {
+                    ["pk"] = new AttributeValue { S = "state" },
+                    ["payload"] = new AttributeValue { S = "survives-restart" },
+                },
+            }).ConfigureAwait(false);
+
+            await fixture.RestartAsync().ConfigureAwait(false);
+
+            var response = await client.GetItemAsync(new GetItemRequest
+            {
+                TableName = table,
+                Key = new Dictionary<string, AttributeValue> { ["pk"] = new AttributeValue { S = "state" } },
+                ConsistentRead = true,
+            }).ConfigureAwait(false);
+            Assert.True(response.IsItemSet);
+            Assert.Equal("survives-restart", response.Item["payload"].S);
+        }
+        finally
+        {
+            if (tableCreated)
+            {
+                try
+                {
+                    await client.DeleteTableAsync(new DeleteTableRequest { TableName = table })
+                        .ConfigureAwait(false);
+                }
+                catch
+                {
+                }
+            }
+        }
+    }
+
+    private static async Task WaitForTableActiveAsync(
+        Amazon.DynamoDBv2.IAmazonDynamoDB client,
+        string table)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                var desc = await client.DescribeTableAsync(table).ConfigureAwait(false);
+                if (desc.Table.TableStatus == TableStatus.ACTIVE)
+                {
+                    return;
+                }
+            }
+            catch (DynamoDbResourceNotFoundException)
+            {
+            }
+
+            await Task.Delay(500).ConfigureAwait(false);
+        }
+    }
+
     public static async Task VerifyS3Async(RealAzureProxyFixture fixture)
     {
         var bucket = "aws2azure-restart-" + Guid.NewGuid().ToString("N")[..10];

@@ -2,8 +2,10 @@
 
 This profile covers `CreateTable`, `DescribeTable`, `PutItem`, `GetItem`,
 `UpdateItem`, `DeleteItem`, and `DeleteTable` against Azure Cosmos DB for NoSQL.
-It is a `candidate`: operation compatibility and real-Azure seals pass, while
-production-shaped load, rollback, and SLO qualification remain outstanding.
+It is a `candidate`: operation compatibility and real-Azure seals pass, and a
+production-shaped load/rollback runner now exists (issue #627), but reviewed
+SLO qualification evidence from comparable sealed real-Azure runs remains
+outstanding.
 
 ## Required configuration
 
@@ -84,10 +86,19 @@ failures, and three distinct comparable runs before a capacity threshold can be
 reviewed. Representative load must report throughput, p95, p99, and throttle
 rate alongside the fixed operation mix and Cosmos capacity/topology.
 
-The blocking throughput or latency threshold is intentionally unresolved.
-The repository does not yet expose a DynamoDB sealed-load runner, so the
-profile must remain `candidate` and no qualification artifact may be committed.
-Do not copy emulator baselines or feature-specific A/B measurements into an
-SLO. A future qualification change must add the production-shaped runner and
-review at least three comparable sealed real-Azure runs before resolving the
-capacity gate.
+The blocking throughput or latency threshold is intentionally unresolved
+(issue #627). `workload-load-real-azure.yml` now provisions an isolated
+ephemeral Cosmos DB serverless SQL account
+(`deploy/realazure/dynamodb-load.bicep`) and drives the seven-operation CRUD
+mix, conditional-write concurrency, Strong-consistency read-after-write,
+deterministic throttling/timeout/service-unavailable/retry-exhaustion, restart,
+and sealed candidate-to-prior rollback through
+`DynamoDbRealAzureLoadQualificationTests`. The profile's approved-runtime
+ledger (`docs/workloads/approved-runtimes/dynamodb-basic-crud.yaml`) currently
+carries only a `bootstrap` record — a rollback baseline with no qualification
+evidence yet — so the profile must remain `candidate` and no qualification
+artifact may be committed. Do not copy emulator baselines or feature-specific
+A/B measurements into an SLO. A future qualification change must review at
+least three comparable sealed real-Azure runs before resolving the capacity
+gate and promoting the ledger to `approved`.
+

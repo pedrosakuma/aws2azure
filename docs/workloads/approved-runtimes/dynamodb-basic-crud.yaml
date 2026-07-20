@@ -1,0 +1,45 @@
+schema_version: 1
+profile:
+  id: dynamodb-basic-crud
+  version: 1
+status: bootstrap
+eligibility:
+  rollback_baseline_eligible: true
+  promotion_eligible: false
+runtime:
+  target:
+    operating_system: linux
+    architecture: x64
+    rid: linux-x64
+  source_repository: pedrosakuma/aws2azure
+  source_sha: 72b093b97c22aaf591f52cbd7190ba289b301d46
+  aggregate_digest: sha256:4baafd0d726841f9315578df272edd2db7347b5e8b28235c6195ae0438d28b89
+  executable_digest: sha256:e0ba755c0f2a84a37e52d7f029717e63fcdfd513380083ad1585230689b6d4b3
+producer:
+  workflow: .github/workflows/sealed-runtime.yml
+  run_id: 29783723283
+  run_attempt: 1
+  run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29783723283
+artifact:
+  id: 8477661099
+  name: aws2azure-sealed-linux-x64-4baafd0d726841f9315578df272edd2db7347b5e8b28235c6195ae0438d28b89-run-29783723283-attempt-1
+  upload_digest: sha256:fdc13736e2b7160cfd2b040ae69121e3b4b016de45bb0426565ff0fb97300a1d
+  created_at: 2026-07-20T22:25:21Z
+  expires_at: 2026-10-18T22:23:07Z
+attestation:
+  predicate_type: https://slsa.dev/provenance/v1
+  repository: pedrosakuma/aws2azure
+  signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
+  source_sha: 72b093b97c22aaf591f52cbd7190ba289b301d46
+  source_ref: refs/heads/main
+  subject_name: Aws2Azure.Proxy
+  subject_digest: sha256:e0ba755c0f2a84a37e52d7f029717e63fcdfd513380083ad1585230689b6d4b3
+  manifest_subject_name: sealed-runtime-manifest.json
+  manifest_subject_digest: sha256:3c03d93be6dfa27c1c885d9018c01c95063e9f3c35fe0da7d570a01f68391d08
+approval:
+  reason: >-
+    First sealed bytes for this profile have no previously approved predecessor,
+    so they cannot prove rollback and are recorded only as a bootstrap baseline.
+  review_url: https://github.com/pedrosakuma/aws2azure/issues/627
+  reviewed_at: 2026-07-20T22:30:00Z
+  reviewed_by: pedrosakuma

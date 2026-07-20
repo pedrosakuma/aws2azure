@@ -42,7 +42,10 @@ profile ledger's exact prior bytes on the same endpoint, generated config, AWS
 binding, and Azure backend. S3 proves candidate create/read followed by prior
 read/delete/absence. Secrets Manager proves candidate create/read followed by
 prior read, force-delete, and the profile's Key Vault soft-delete-compatible
-absence check. The fixture restores the candidate process before teardown.
+absence check. DynamoDB proves candidate create-table/put-item/read followed
+by the prior runtime's read, `DeleteTable`, and a `ResourceNotFoundException`
+absence check on `DescribeTable`. The fixture restores the candidate process
+before teardown.
 
 ## Sealed runtime producer and bootstrap
 

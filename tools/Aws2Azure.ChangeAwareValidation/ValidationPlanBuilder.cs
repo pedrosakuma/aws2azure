@@ -131,10 +131,13 @@ public static class ValidationPlanBuilder
         var isWorkloadLoadProducer = isWorkloadLoadWorkflow
             || path == "deploy/realazure/secretsmanager-load.bicep"
             || path == "deploy/realazure/s3-load.bicep"
+            || path == "deploy/realazure/dynamodb-load.bicep"
             || path
                 == "tests/Aws2Azure.IntegrationTests/SecretsManager/SecretsManagerRealAzureLoadQualificationTests.cs"
             || path
                 == "tests/Aws2Azure.IntegrationTests/S3/S3RealAzureLoadQualificationTests.cs"
+            || path
+                == "tests/Aws2Azure.IntegrationTests/DynamoDb/DynamoDbRealAzureLoadQualificationTests.cs"
             || path
                 == "tests/Aws2Azure.IntegrationTests/OperationalQualification/RealAzureWorkloadLoadEvidence.cs";
         var isRcObservationProducer = isRcObservationWorkflow
