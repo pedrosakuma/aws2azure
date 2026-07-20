@@ -25,11 +25,16 @@ class ReleasePromotionWorkflowTests(unittest.TestCase):
         self.assertIn(".digest == $digest", workflow)
         self.assertIn("--target \"$CANDIDATE_SHA\"", workflow)
         self.assertIn("--draft", workflow)
+        self.assertGreaterEqual(
+            workflow.count('--repo "$GITHUB_REPOSITORY"'),
+            4,
+        )
         self.assertIn("application/vnd.docker.distribution.manifest.list.v2+json", workflow)
         self.assertIn("application/vnd.oci.image.index.v1+json", workflow)
         self.assertIn('Content-Type: $index_media_type', workflow)
         self.assertIn("--data-binary @/tmp/rc-index.json", workflow)
-        self.assertIn("--draft=false --latest", workflow)
+        self.assertIn("--draft=false", workflow)
+        self.assertIn("--latest", workflow)
 
     def test_read_only_gate_is_separate_from_write_scoped_promotion(self) -> None:
         workflow = PROMOTION.read_text(encoding="utf-8")
