@@ -209,7 +209,7 @@
     "profile_version": 1,
     "name": "SQS standard messaging",
     "minimum_proxy_version": "0.1.0",
-    "verdict": "candidate",
+    "verdict": "ga",
     "findings": [
       {
         "code": "design_gap_accepted",
@@ -218,10 +218,10 @@
         "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_standard_messaging\u0027."
       },
       {
-        "code": "qualification_evidence_missing",
-        "disposition": "blocking",
+        "code": "profile_ga",
+        "disposition": "report_only",
         "subject": "sqs-standard-messaging",
-        "message": "No reviewed real-Azure workload qualification artifact is referenced."
+        "message": "Compatibility, real-Azure seals, and operational qualification gates are satisfied."
       }
     ]
   }

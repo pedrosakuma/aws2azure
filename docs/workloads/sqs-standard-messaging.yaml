@@ -18,7 +18,7 @@ accepted_partial_operations: []
 accepted_design_gaps:
   - "sqs:Transport-dependent capability differences"
 evidence:
-  qualification_artifact: ""
+  qualification_artifact: docs/workloads/evidence/sqs-standard-messaging.yaml
   required_scenarios:
     - representative-load
     - redelivery
