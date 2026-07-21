@@ -5,7 +5,7 @@
     "profile_version": 1,
     "name": "DynamoDB basic table and item CRUD",
     "minimum_proxy_version": "0.1.0",
-    "verdict": "candidate",
+    "verdict": "ga",
     "findings": [
       {
         "code": "partial_operation_accepted",
@@ -44,10 +44,10 @@
         "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_basic_crud\u0027."
       },
       {
-        "code": "qualification_evidence_missing",
-        "disposition": "blocking",
+        "code": "profile_ga",
+        "disposition": "report_only",
         "subject": "dynamodb-basic-crud",
-        "message": "No reviewed real-Azure workload qualification artifact is referenced."
+        "message": "Compatibility, real-Azure seals, and operational qualification gates are satisfied."
       }
     ]
   },
@@ -57,13 +57,61 @@
     "profile_version": 1,
     "name": "S3 basic object CRUD",
     "minimum_proxy_version": "0.1.0",
-    "verdict": "ga",
+    "verdict": "candidate",
     "findings": [
       {
-        "code": "profile_ga",
-        "disposition": "report_only",
-        "subject": "s3-basic-object-crud",
-        "message": "Compatibility, real-Azure seals, and operational qualification gates are satisfied."
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: provenance.source_runs[0] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: provenance.source_runs[1] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: provenance.source_runs[2] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: provenance.correctness_run is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: signal \u0027representative-load-throughput\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: qualified real-Azure artifact is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: scenario \u0027representative-load\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: scenario \u0027restart\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: scenario \u0027rollback\u0027 measurement is stale"
       }
     ]
   },
@@ -73,7 +121,7 @@
     "profile_version": 1,
     "name": "Secrets Manager basic lifecycle",
     "minimum_proxy_version": "0.1.0",
-    "verdict": "ga",
+    "verdict": "candidate",
     "findings": [
       {
         "code": "partial_operation_accepted",
@@ -94,10 +142,64 @@
         "message": "The profile explicitly accepts this documented design gap for requirement \u0027secretsmanager_version_stages\u0027."
       },
       {
-        "code": "profile_ga",
-        "disposition": "report_only",
-        "subject": "secretsmanager-basic-lifecycle",
-        "message": "Compatibility, real-Azure seals, and operational qualification gates are satisfied."
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: provenance.source_runs[0] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: provenance.source_runs[1] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: provenance.source_runs[2] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: provenance.correctness_run is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: signal \u0027representative-load-throughput\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: qualified real-Azure artifact is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: scenario \u0027representative-load\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: scenario \u0027restart\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: scenario \u0027credential-rotation\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: scenario \u0027rollback\u0027 measurement is stale"
       }
     ]
   },

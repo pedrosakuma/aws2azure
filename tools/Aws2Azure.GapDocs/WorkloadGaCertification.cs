@@ -412,7 +412,12 @@ public static class WorkloadGaEvaluator
         catch (Exception exception) when (exception is InvalidDataException or IOException or YamlException)
         {
             report.Verdict = "candidate";
-            Add(report, "qualification_evidence_invalid", "blocking", qualificationPath, exception.Message);
+            Add(
+                report,
+                "qualification_evidence_invalid",
+                "blocking",
+                qualificationPath,
+                ToRepoRelativeMessage(exception.Message, resolvedPath, qualificationPath));
             return report;
         }
         var qualificationErrors = SloQualificationValidator.Validate(
@@ -420,7 +425,12 @@ public static class WorkloadGaEvaluator
             currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
         foreach (var error in qualificationErrors)
         {
-            Add(report, "qualification_evidence_invalid", "blocking", qualificationPath, error);
+            Add(
+                report,
+                "qualification_evidence_invalid",
+                "blocking",
+                qualificationPath,
+                ToRepoRelativeMessage(error, resolvedPath, qualificationPath));
         }
         if (qualificationErrors.Count > 0
             || !QualificationMatches(
@@ -610,6 +620,21 @@ public static class WorkloadGaEvaluator
                    DateTimeStyles.None,
                    out var date)
                && date >= currentDate.AddDays(-maxAgeDays);
+    }
+
+    /// <summary>
+    /// Qualification errors are generated against the resolved absolute
+    /// evidence path (required for the symlink/traversal checks above), but
+    /// committed findings must never embed a machine-local absolute path —
+    /// replace any occurrence with the repository-relative path the manifest
+    /// actually references.
+    /// </summary>
+    private static string ToRepoRelativeMessage(
+        string message,
+        string absolutePath,
+        string relativePath)
+    {
+        return message.Replace(absolutePath, relativePath, StringComparison.Ordinal);
     }
 
     private static bool ContainsSymbolicLink(string root, string path)

@@ -2,10 +2,9 @@
 
 This profile covers `CreateTable`, `DescribeTable`, `PutItem`, `GetItem`,
 `UpdateItem`, `DeleteItem`, and `DeleteTable` against Azure Cosmos DB for NoSQL.
-It is a `candidate`: operation compatibility and real-Azure seals pass, and a
-production-shaped load/rollback runner now exists (issue #627), but reviewed
-SLO qualification evidence from comparable sealed real-Azure runs remains
-outstanding.
+It is `ga`: operation compatibility, real-Azure seals, and a reviewed
+production-shaped load/rollback qualification (issue #627) all pass against
+three comparable sealed real-Azure runs.
 
 ## Required configuration
 
@@ -78,27 +77,29 @@ procedures. Streams, DAX, global tables, point-in-time recovery/on-demand
 backups, auto-scaling control-plane calls, and DynamoDB RCU/WCU accounting are
 outside this profile.
 
-## Initial SLO contract
+## SLO contract
 
-The candidate contract requires a 300-second production-shaped real-Azure run
+The qualified contract requires a 300-second production-shaped real-Azure run
 with at least 300 successful samples per required scenario, zero accepted
 failures, and three distinct comparable runs before a capacity threshold can be
-reviewed. Representative load must report throughput, p95, p99, and throttle
+reviewed. Representative load reports throughput, p95, p99, and throttle
 rate alongside the fixed operation mix and Cosmos capacity/topology.
 
-The blocking throughput or latency threshold is intentionally unresolved
-(issue #627). `workload-load-real-azure.yml` now provisions an isolated
-ephemeral Cosmos DB serverless SQL account
+The reviewed `representative-load-throughput` floor is **17 completions/s**
+(issue #627), derived from three comparable sealed real-Azure runs against the
+exact candidate sha `9fa2ec1b` / rollback baseline sha `72b093b9`: 44.55,
+105.36, and 19.50 GetItem completions/s, all with zero failures across every
+required scenario including rollback. `workload-load-real-azure.yml`
+provisions an isolated ephemeral Cosmos DB serverless SQL account
 (`deploy/realazure/dynamodb-load.bicep`) and drives the seven-operation CRUD
 mix, conditional-write concurrency, Strong-consistency read-after-write,
 deterministic throttling/timeout/service-unavailable/retry-exhaustion, restart,
 and sealed candidate-to-prior rollback through
-`DynamoDbRealAzureLoadQualificationTests`. The profile's approved-runtime
-ledger (`docs/workloads/approved-runtimes/dynamodb-basic-crud.yaml`) currently
-carries only a `bootstrap` record — a rollback baseline with no qualification
-evidence yet — so the profile must remain `candidate` and no qualification
-artifact may be committed. Do not copy emulator baselines or feature-specific
-A/B measurements into an SLO. A future qualification change must review at
-least three comparable sealed real-Azure runs before resolving the capacity
-gate and promoting the ledger to `approved`.
+`DynamoDbRealAzureLoadQualificationTests`. The reviewed qualification artifact
+is committed at `docs/workloads/evidence/dynamodb-basic-crud.yaml`, and the
+profile's approved-runtime ledger
+(`docs/workloads/approved-runtimes/dynamodb-basic-crud.yaml`) is `approved`,
+rolling back to the original bootstrap baseline. Do not copy emulator
+baselines or feature-specific A/B measurements into this SLO, and do not
+raise the floor without a fresh set of comparable reviewed runs.
 
