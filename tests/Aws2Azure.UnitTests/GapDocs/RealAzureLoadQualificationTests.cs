@@ -915,6 +915,64 @@ public sealed class RealAzureLoadQualificationTests
     }
 
     [Fact]
+    public void Generate_exempts_a_supplementary_non_policy_scenario_from_the_operation_mix_bound()
+    {
+        // Mirrors issue #626's SQS "rollback-rest" row: a producer may record a
+        // real-backend outcome for a scenario id that is not part of the
+        // reviewed policy at all (e.g. a REST-transport counterpart kept
+        // deliberately separate from the AMQP-default representative-load
+        // numbers). Its failure count exceeding the tracked operation mix
+        // must not fail the whole run, because that activity was never
+        // routed through the tracked representative-load closed loop.
+        var evidence = Evidence(1);
+        evidence.Scenarios.Add(new SloQualificationScenario
+        {
+            Id = "supplementary-not-in-policy",
+            Service = "s3",
+            Operation = "PutObject",
+            EvidenceSource = "real_azure",
+            Completions = 0,
+            Failures = 1,
+            DurationSeconds = 1,
+            CapturedAtUtc = evidence.Provenance.WindowEndUtc,
+        });
+
+        var document = RealAzureLoadQualificationGenerator.Generate(
+            Manifest(),
+            Candidate(),
+            Policy(),
+            [evidence, Evidence(2), Evidence(3)],
+            Metadata());
+
+        Assert.NotNull(document);
+    }
+
+    [Fact]
+    public void Generate_still_enforces_the_operation_mix_bound_for_a_required_scenario()
+    {
+        // The exemption above must not weaken the check for scenarios the
+        // reviewed policy actually declares (e.g. representative-load
+        // itself): a required scenario claiming more completions than the
+        // operation mix supports is still evidence corruption and must
+        // still throw.
+        var evidence = Evidence(1);
+        evidence.Scenarios[0].Completions = evidence.OperationMix[0].Completions + 1;
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            RealAzureLoadQualificationGenerator.Generate(
+                Manifest(),
+                Candidate(),
+                Policy(),
+                [evidence, Evidence(2), Evidence(3)],
+                Metadata()));
+
+        Assert.Contains(
+            "is not supported by its operation mix",
+            exception.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void SecretsManager_policy_uses_reviewed_real_azure_capacity_floor()
     {
         var repoRoot = FindRepoRoot();
