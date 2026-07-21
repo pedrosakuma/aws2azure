@@ -190,13 +190,23 @@ public static class SloQualificationValidator
 
     public static IReadOnlyList<string> Validate(
         SloQualificationDocument document,
-        DateTimeOffset nowUtc)
+        DateTimeOffset nowUtc,
+        string? displayPath = null)
     {
         Normalize(document);
         var errors = new List<string>();
-        var source = string.IsNullOrWhiteSpace(document.SourceFile)
-            ? "SLO qualification artifact"
-            : document.SourceFile;
+        // displayPath lets a caller (e.g. WorkloadGaCertification, which
+        // loads from a resolved absolute checkout path) report a stable,
+        // repo-relative identifier instead of document.SourceFile — the
+        // absolute path used for file I/O — so committed generated output
+        // referencing these messages is identical across every checkout
+        // location rather than only matching whichever machine most
+        // recently ran the generator.
+        var source = !string.IsNullOrWhiteSpace(displayPath)
+            ? displayPath
+            : string.IsNullOrWhiteSpace(document.SourceFile)
+                ? "SLO qualification artifact"
+                : document.SourceFile;
         void Err(string message) => errors.Add($"{source}: {message}");
 
         if (document.SchemaVersion != CurrentSchemaVersion)

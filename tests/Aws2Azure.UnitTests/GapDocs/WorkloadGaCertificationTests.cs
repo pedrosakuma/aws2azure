@@ -35,6 +35,32 @@ public sealed class WorkloadGaCertificationTests
     }
 
     [Fact]
+    public void Stale_qualification_findings_never_embed_the_absolute_checkout_path()
+    {
+        // Regression coverage (issue #626): committed generated output
+        // (docs/site/workload-ga.json/.md) must be identical no matter which
+        // machine's checkout path produced it. Evaluating far enough past the
+        // committed evidence's freshness window forces real staleness
+        // findings; every message must reference the repo-relative evidence
+        // path, never the resolved absolute one.
+        var manifest = LoadManifest("s3-basic-object-crud.yaml");
+        var report = WorkloadGaEvaluator.Evaluate(
+            manifest,
+            Operations,
+            Designs,
+            RepoRoot,
+            new DateOnly(2026, 7, 25));
+
+        Assert.Equal("candidate", report.Verdict);
+        Assert.NotEmpty(report.Findings);
+        Assert.All(report.Findings, finding =>
+        {
+            Assert.DoesNotContain(RepoRoot, finding.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain(RepoRoot, finding.Subject, StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
     public void New_unaccepted_partial_operation_blocks_profile()
     {
         var manifest = LoadManifest("dynamodb-basic-crud.yaml");
