@@ -17,6 +17,8 @@ public sealed class WorkloadGaCertificationTests
     [InlineData("secretsmanager-basic-lifecycle.yaml", "ga")]
     [InlineData("sqs-standard-messaging.yaml", "candidate")]
     [InlineData("dynamodb-basic-crud.yaml", "candidate")]
+    [InlineData("sns-standard-publish-service-bus.yaml", "candidate")]
+    [InlineData("sns-standard-publish-event-grid.yaml", "candidate")]
     public void Repository_profiles_have_expected_mechanical_verdict(
         string fileName,
         string expectedVerdict)

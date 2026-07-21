@@ -52,17 +52,14 @@ the proxy drops them and logs a warning rather than rejecting the request.
 Before adoption, exercise representative concurrent publish load, a batch
 containing both a genuinely oversized entry and normal entries (to observe the
 real per-entry vs. whole-batch failure shapes above), bounded retry
-exhaustion, and proxy restart. As of profile version 1 this backend's own
-`Event Grid publish path` / `Event Grid batch publish path` sub-features have
-no dedicated `verified_real_azure` seal yet (see
-`required_sub_feature_seals` in the manifest), so the profile mechanically
-certifies as `conditional`, not `candidate` — the shared `CreateTopic`/
-`DeleteTopic`/`Publish`/`PublishBatch` operation-level seals are fresh, but
-they were established against the Service Bus backend and do not by
-themselves prove Event Grid delivery. The profile advances to `candidate`
-once a real-Azure run exercises this backend's Publish/PublishBatch sub-
-features and that seal is recorded, and to GA only after production-shaped
-SLO and rollback qualification are also reviewed and committed.
+exhaustion, and proxy restart. This backend's own `Event Grid publish path` /
+`Event Grid batch publish path` sub-features each carry their own
+`verified_real_azure` seal (see `required_sub_feature_seals` in the
+manifest), captured against a live Event Grid custom topic and its Storage
+Queue event subscription — not merely inherited from the shared Service Bus
+seal on the same operations. The profile mechanically certifies as
+`candidate`; GA additionally requires production-shaped SLO, restart, and
+rollback qualification to be reviewed and committed.
 
 ## Capabilities outside version 1
 
