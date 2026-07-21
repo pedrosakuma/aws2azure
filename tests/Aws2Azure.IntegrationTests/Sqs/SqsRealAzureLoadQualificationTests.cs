@@ -711,9 +711,27 @@ public sealed class SqsRealAzureLoadQualificationTests(RealAzureProxyFixture fix
             CancellationToken cancellationToken)
     {
         using var client = fixture.CreateSqsClient();
-        var queueUrl = (await client.CreateQueueAsync(
-            new CreateQueueRequest { QueueName = RealAzureProxyFixture.SqsRestLaneQueueName },
-            cancellationToken).ConfigureAwait(false)).QueueUrl;
+        // The REST-lane queue is shared and intentionally never deleted
+        // within a run (see RealAzureRollbackQualification, which purges
+        // rather than deletes it) — creating it again here when the
+        // rollback scenario already created it earlier in the same run is
+        // an ordinary idempotent re-create, not a conflict. Fall back to
+        // resolving the existing queue's URL rather than failing the whole
+        // load run if Service Bus ever reports a transient attribute
+        // mismatch on that idempotent re-create.
+        string queueUrl;
+        try
+        {
+            queueUrl = (await client.CreateQueueAsync(
+                new CreateQueueRequest { QueueName = RealAzureProxyFixture.SqsRestLaneQueueName },
+                cancellationToken).ConfigureAwait(false)).QueueUrl;
+        }
+        catch (QueueNameExistsException)
+        {
+            queueUrl = (await client.GetQueueUrlAsync(
+                new GetQueueUrlRequest { QueueName = RealAzureProxyFixture.SqsRestLaneQueueName },
+                cancellationToken).ConfigureAwait(false)).QueueUrl;
+        }
         await PurgeRestLaneQueueAsync(client, queueUrl, cancellationToken).ConfigureAwait(false);
 
         var stopwatch = Stopwatch.StartNew();
