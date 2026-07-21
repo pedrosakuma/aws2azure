@@ -1,15 +1,25 @@
-# Initial reviewed policy for the production-shaped Service Bus (SQS
-# standard messaging) workload (issue #626).
+# Reviewed policy for the production-shaped Service Bus (SQS standard
+# messaging) workload (issue #626).
 #
-# The representative-load capacity floor is deliberately unresolved: it must
-# be selected from at least three comparable AMQP-transport artifacts
-# produced by workload-load-real-azure.yml against the exact sealed
-# candidate. Until that review occurs, the blocking unresolved signal keeps
-# the mechanical verdict at candidate; it is not a GA claim. REST-transport
-# evidence (representative-load-rest, rollback-rest) is intentionally kept
-# out of this policy's scenario set — it is supplementary, non-required
-# evidence recorded on every run, never blended into the AMQP-default
-# numbers graded here, and never required for promotion.
+# The representative-load capacity floor is resolved from three comparable
+# AMQP-transport main-branch real-Azure runs against the exact sealed
+# candidate (git_sha 0135a0ab5ea80d6eaaa8b40626337fe7a42517d4, sealed by
+# run 29859441342): runs 29861232053, 29862345558, and 29863436605 measured
+# 5.1912, 5.9066, and 5.1151 ReceiveMessage completions/s with zero
+# failures across all 7 profile operations and every required scenario.
+# Each value divides the representative-load scenario's ReceiveMessage
+# completions by its window duration for the fixed eight-worker closed-loop
+# CRUD-style topology (CreateQueue, SendMessage, ReceiveMessage,
+# GetQueueUrl, ListQueues, DeleteMessage, DeleteQueue); it is not standalone
+# Service Bus or ReceiveMessage capacity. REST-transport evidence
+# (representative-load-rest, rollback-rest) is intentionally kept out of
+# this policy's scenario set — it is supplementary, non-required evidence
+# recorded on every run, never blended into the AMQP-default numbers graded
+# here, and never required for promotion. All three runs also recorded the
+# supplementary rollback-rest REST counterpart failing to redeem after the
+# candidate->prior restart (see docs/gaps/sqs/DeleteMessage.yaml) — expected
+# per the documented lock-expiry behavior, not a regression, and not part of
+# the graded AMQP rollback proof (which passed all three runs).
 schema_version: 1
 profile_id: sqs-standard-messaging
 profile_version: 1
@@ -34,11 +44,18 @@ scenarios:
         source: backend_capacity
         disposition: blocking
         metric: throughput_per_sec
-        threshold_status: unresolved
+        threshold_status: resolved
+        min_value: 4
         threshold_reason: >-
-          No comparable repeated live-Service-Bus AMQP-transport runs have
-          been reviewed. Select a floor from the worst healthy run without
-          using emulator, REST-transport, or A/B data.
+          Reviewed main-branch runs 29861232053, 29862345558, and 29863436605
+          (candidate git_sha 0135a0ab5ea80d6eaaa8b40626337fe7a42517d4)
+          measured 5.1912, 5.9066, and 5.1151 ReceiveMessage completions/s
+          with zero failures for the fixed eight-worker closed-loop topology
+          (CreateQueue, SendMessage, ReceiveMessage, GetQueueUrl, ListQueues,
+          DeleteMessage, DeleteQueue). The 4/s floor is conservatively below
+          the worst reviewed healthy run (5.1151), leaving headroom for the
+          ~15% run-to-run variance already observed across only three real
+          runs; no emulator, REST-transport, or A/B measurements were used.
       - id: representative-load-p95
         source: backend_capacity
         disposition: report_only
