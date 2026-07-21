@@ -577,6 +577,8 @@ internal static class RealAzureRollbackQualification
                 .ConfigureAwait(false);
             await priorClient.DeleteQueueAsync(amqpQueueUrl, cancellationToken)
                 .ConfigureAwait(false);
+            await AssertSqsQueueAbsentAsync(priorClient, amqpQueueUrl, cancellationToken)
+                .ConfigureAwait(false);
             amqpQueueCreated = false;
             var cleanupVerifiedAt = DateTimeOffset.UtcNow;
 
@@ -1082,6 +1084,42 @@ internal static class RealAzureRollbackQualification
         {
             throw new InvalidDataException(
                 "Prior sealed runtime cleanup left an unexpected message queued.");
+        }
+    }
+
+    private static async Task AssertSqsQueueAbsentAsync(
+        IAmazonSQS client,
+        string queueUrl,
+        CancellationToken cancellationToken)
+    {
+        var queueName = new Uri(queueUrl).Segments[^1].Trim('/');
+        if (queueName.Length == 0)
+        {
+            throw new InvalidDataException("SQS rollback queue URL does not contain a queue name.");
+        }
+
+        var deadline = DateTimeOffset.UtcNow + AbsenceTimeout;
+        while (true)
+        {
+            try
+            {
+                await client.GetQueueUrlAsync(
+                    new GetQueueUrlRequest { QueueName = queueName },
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (AmazonSQSException exception)
+                when (exception.ErrorCode is "AWS.SimpleQueueService.NonExistentQueue"
+                      or "NonExistentQueue")
+            {
+                return;
+            }
+
+            if (DateTimeOffset.UtcNow >= deadline)
+            {
+                throw new InvalidDataException(
+                    "Prior sealed runtime cleanup did not make the SQS queue absent.");
+            }
+            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
         }
     }
 

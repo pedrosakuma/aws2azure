@@ -151,6 +151,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           {
             echo "AWS2AZURE_SEALED_RUNTIME_MODE=$runtime_mode"
+            echo "AWS2AZURE_QUALIFICATION_PROFILE=$PROFILE"
             echo "AWS2AZURE_QUALIFICATION_SHA=$qualification_sha"
           } >> "$GITHUB_ENV"
 
