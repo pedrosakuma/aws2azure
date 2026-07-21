@@ -1,8 +1,7 @@
-# Initial reviewed policy for the production-shaped Cosmos DB workload. The
-# capacity floor is deliberately unresolved: it must be selected from at
-# least three comparable artifacts produced by workload-load-real-azure.yml.
-# Until that review occurs, the blocking unresolved signal keeps the
-# mechanical verdict at candidate; it is not a GA claim.
+# Reviewed policy for the production-shaped Cosmos DB workload.
+# The capacity floor is based only on three comparable main-branch real-Azure
+# runs; operational and sealed rollback evidence remain independently
+# blocking.
 schema_version: 1
 profile_id: dynamodb-basic-crud
 profile_version: 1
@@ -27,11 +26,19 @@ scenarios:
         source: backend_capacity
         disposition: blocking
         metric: throughput_per_sec
-        threshold_status: unresolved
+        threshold_status: resolved
+        min_value: 19
         threshold_reason: >-
-          No comparable repeated live-Cosmos-DB runs have been reviewed.
-          Select a floor from the worst healthy run without using emulator or
-          A/B data.
+          Reviewed main-branch runs 29790909306, 29792180399, and 29793306745
+          (exact sealed candidate sha b8cc59c4ac743146eedd9b8f68574c1090c0c46e,
+          rollback baseline sha 72b093b97c22aaf591f52cbd7190ba289b301d46)
+          measured 39.43, 21.96, and 21.43 GetItem completions/s with zero
+          failures. Each value divides GetItem completions by the total window
+          for the fixed eight-worker closed-loop CRUD topology (CreateTable,
+          DescribeTable, PutItem, two GetItem reads, UpdateItem, DeleteItem,
+          and DeleteTable); it is not standalone Cosmos or GetItem capacity.
+          The 19/s floor is conservatively below the worst reviewed healthy
+          run; no emulator or A/B measurements were used.
       - id: representative-load-p95
         source: backend_capacity
         disposition: report_only
