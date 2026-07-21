@@ -804,6 +804,17 @@ public static class RealAzureLoadQualificationGenerator
         var seenRotationIdentities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var seenPriorRuntimeIdentities = new HashSet<string>(StringComparer.Ordinal);
         var seenRollbackCanaries = new HashSet<string>(StringComparer.Ordinal);
+        // Only the reviewed policy's declared (required, graded) scenarios are held
+        // to the operation-mix superset invariant below. Supplementary rows a
+        // producer may attach outside the policy (e.g. SQS's REST-transport
+        // "rollback-rest" / "representative-load-rest", kept deliberately separate
+        // from the AMQP-default representative-load numbers per issue #626) exercise
+        // real backend calls made outside the tracked representative-load closed loop,
+        // so their counts are not necessarily reflected in operation_mix and must not
+        // be forced into it.
+        var requiredScenarioIds = policy.Scenarios
+            .Select(item => item.Id)
+            .ToHashSet(StringComparer.Ordinal);
         var rollbackRequired = policy.Scenarios.Any(item => item.Id == "rollback");
         if (rollbackRequired && priorRuntime is null)
         {
@@ -839,7 +850,7 @@ public static class RealAzureLoadQualificationGenerator
                 throw new InvalidDataException(
                     "Load evidence provenance, candidate, environment, or run identity is inconsistent.");
             }
-            ValidateLoadShapeAndOperationMix(run, expectedOperations);
+            ValidateLoadShapeAndOperationMix(run, expectedOperations, requiredScenarioIds);
             if (run.LoadShape.Concurrency != policy.LoadShape.Concurrency
                 || run.LoadShape.RequestedDurationSeconds
                     != policy.LoadShape.RequestedDurationSeconds
@@ -1228,7 +1239,8 @@ public static class RealAzureLoadQualificationGenerator
 
     private static void ValidateLoadShapeAndOperationMix(
         RealAzureLoadEvidence run,
-        IReadOnlySet<string> expectedOperations)
+        IReadOnlySet<string> expectedOperations,
+        IReadOnlySet<string> requiredScenarioIds)
     {
         if (run.LoadShape.Concurrency <= 0
             || !double.IsFinite(run.LoadShape.RequestedDurationSeconds)
@@ -1268,8 +1280,17 @@ public static class RealAzureLoadQualificationGenerator
                 "Load evidence operation mix must exactly match the workload profile.");
         }
 
+        // Supplementary (non-required) scenario rows are exempt: they may exercise
+        // real backend calls outside the tracked representative-load closed loop
+        // (e.g. a REST-transport counterpart kept deliberately separate from the
+        // AMQP-default operation mix), so their counts are not guaranteed to be a
+        // subset of operation_mix. Required scenarios still must be.
         foreach (var scenario in run.Scenarios)
         {
+            if (!requiredScenarioIds.Contains(scenario.Id))
+            {
+                continue;
+            }
             var operation = run.OperationMix.SingleOrDefault(item =>
                 item.Service.Equals(scenario.Service, StringComparison.OrdinalIgnoreCase)
                 && item.Operation.Equals(scenario.Operation, StringComparison.OrdinalIgnoreCase));
