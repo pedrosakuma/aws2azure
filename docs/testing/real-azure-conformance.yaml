@@ -480,8 +480,8 @@ services:
         category: restart
         evidence_source: real_azure
         establishes_verification: false
-        description: A record written through the candidate remains readable from its pre-restart shard iterator after the out-of-process proxy is terminated and restarted with the same immutable configuration.
-        operations: [PutRecord, GetShardIterator, GetRecords]
+        description: A record written before the out-of-process proxy is terminated and restarted with the same immutable configuration remains readable afterward through a durable AT_TIMESTAMP iterator obtained post-restart (a LATEST-type iterator is deliberately not carried across the restart; its live position is bound to the pooled per-process AMQP link per the documented shared-broker-cursor design gap).
+        operations: [PutRecord, ListShards, GetShardIterator, GetRecords]
         tests:
           - Aws2Azure.IntegrationTests.OperationalQualification.RealAzureRestartQualificationTests.Kinesis_state_remains_readable_after_proxy_restart
 
