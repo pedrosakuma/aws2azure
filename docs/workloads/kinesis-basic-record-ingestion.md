@@ -63,6 +63,14 @@ real-Azure conformance seals establish operation correctness for both
 operations; the profile remains `candidate` until production-shaped SLO and
 rollback qualification are reviewed and committed.
 
+A restarted proxy loses any pooled, per-process AMQP link state; a `LATEST`
+shard iterator obtained before a restart is not guaranteed to resume from
+where it left off (see the "shared broker cursor per consumer group" design
+gap). Client applications that must tolerate a proxy restart mid-consumption
+should re-derive a durable iterator (`AT_TIMESTAMP` or the last-seen
+`AFTER_SEQUENCE_NUMBER`) rather than reuse a `LATEST` iterator across a
+reconnect.
+
 ## Scope boundaries and non-goals
 
 - Resharding, enhanced fan-out, and KCL lease management have no in-scope
