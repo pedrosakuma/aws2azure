@@ -31,7 +31,8 @@ and no long-lived account-key secrets:
    (`aws2azure-it-<run_id>-<attempt>`) from
    [`deploy/realazure/main.bicep`](../../deploy/realazure/main.bicep): a Storage
    account, a Service Bus namespace, a serverless Cosmos DB account + database,
-   an Event Hubs namespace + hub, and an RBAC Key Vault.
+   an Event Hubs namespace + hub, an Event Grid custom topic + Storage Queue
+   event subscription, and an RBAC Key Vault.
 5. **Export** the freshly-minted connection details (fetched with
    `az … keys list`, masked) into the test environment.
 6. **Run** the real-Azure matrix tests and write a separate TRX. If OIDC is
@@ -72,13 +73,15 @@ Management budget cap both duration and cost; investigate any run approaching
 the timeout rather than increasing workloads or the timeout.
 
 The operational cost ceiling is **one active ephemeral resource group**:
-Standard LRS Storage, one Standard Service Bus namespace, one serverless Cosmos
+Standard LRS Storage (including a Storage Queue used only as Event Grid
+delivery evidence), one Standard Service Bus namespace, one serverless Cosmos
 account, one capacity-1 Standard Event Hubs namespace with a two-partition hub,
-and one Key Vault. No test scales SKU/capacity or derives request count from
-input. Azure prices vary by agreement and region, so the currency-denominated
-limit belongs in the subscription Cost Management budget; set that budget to
-the operator-approved nightly amount and do not raise these SKUs/counts to make
-a conformance test pass.
+one Event Grid custom topic + event subscription, and one Key Vault. No test
+scales SKU/capacity or derives request count from input. Azure prices vary by
+agreement and region, so the currency-denominated limit belongs in the
+subscription Cost Management budget; set that budget to the operator-approved
+nightly amount and do not raise these SKUs/counts to make a conformance test
+pass.
 
 ## What runs
 
@@ -116,6 +119,7 @@ proxy ([`RealAzureProxyFixture`](../../tests/Aws2Azure.IntegrationTests/Fixtures
 | SQS | Service Bus | Queue/message lifecycle, queue pagination, send/delete batch, concurrent FIFO ordering | Ephemeral (Bicep); the proxy creates the queue |
 | Kinesis | Event Hubs | Put/Get records, shard pagination, record batch, concurrent consumer progress | Ephemeral (Bicep) namespace + **hub** (`CreateStream` is not implemented) |
 | SNS | Service Bus Topics | Topic/subscription lifecycle, list pagination, PublishBatch results | Ephemeral (Bicep); the test owns topics and subscriptions |
+| SNS *(Event Grid backend, issue #630)* | Event Grid | Publish/PublishBatch via a per-topic `backend=EventGrid` override; subject, message attributes, and a genuine per-entry partial failure (oversized entry) verified end to end through the topic's Storage Queue event subscription — not only HTTP-level publish acceptance | Ephemeral (Bicep) custom topic + Storage Queue + event subscription; topic administration still uses the Service Bus Topics backend above |
 | Secrets Manager | Key Vault | Secret lifecycle, version write/idempotency, list pagination | Ephemeral (Bicep) + data-plane RBAC; authenticates via a **federated token**, no client secret (issue #307) |
 | DynamoDB *(Workload Identity)* | Cosmos DB | Put/Get/Delete item (table provisioned with the shared key — Cosmos rejects container DDL over an AAD token) | Ephemeral (Bicep) + data-plane RBAC; item CRUD via a **federated token** (issue #307) |
 | Kinesis *(Workload Identity)* | Event Hubs | PutRecord | Ephemeral (Bicep) + data-plane RBAC; authenticates via a **federated token**, no SAS key (issue #307) |
