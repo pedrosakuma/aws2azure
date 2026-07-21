@@ -23,25 +23,30 @@ internal static class PerfRunner
         TimeSpan? warmup = null,
         int? maxOps = null,
         ProxyMemoryProbe? memoryProbe = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        TimeProvider? timeProvider = null)
     {
         // Warmup — closed-loop at concurrency 1 (enough to JIT hot paths and
         // open the AMQP/HTTP connection pool, without flooding the backend
         // before the measure window starts). Failures discarded.
         if (warmup is { } warmupSpan && warmupSpan > TimeSpan.Zero)
         {
-            using var warmupCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            warmupCts.CancelAfter(warmupSpan);
-            try
+            var warmupTimeProvider = timeProvider ?? TimeProvider.System;
+            var warmupStarted = warmupTimeProvider.GetTimestamp();
+            while (warmupTimeProvider.GetElapsedTime(warmupStarted) < warmupSpan)
             {
-                while (!warmupCts.IsCancellationRequested)
+                cancellationToken.ThrowIfCancellationRequested();
+                try
                 {
-                    try { await action(-1, warmupCts.Token).ConfigureAwait(false); }
-                    catch (OperationCanceledException) when (warmupCts.IsCancellationRequested) { break; }
-                    catch { /* warmup failures swallowed */ }
+                    await action(-1, cancellationToken).ConfigureAwait(false);
                 }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch { /* warmup failures swallowed */ }
             }
-            catch (OperationCanceledException) { }
+            cancellationToken.ThrowIfCancellationRequested();
         }
 
         var latenciesUs = new System.Collections.Concurrent.ConcurrentQueue<long>();
