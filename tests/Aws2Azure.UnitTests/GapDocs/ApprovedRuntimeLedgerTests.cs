@@ -26,18 +26,24 @@ public sealed class ApprovedRuntimeLedgerTests
         Assert.Equal(4, records.Count);
         var approved = records.Where(record => record.Status == "approved").ToArray();
         var bootstrap = records.Where(record => record.Status == "bootstrap").ToArray();
-        Assert.Equal(3, approved.Length);
-        var sqsBootstrap = Assert.Single(bootstrap);
+        // sqs-standard-messaging promoted to approved for issue #626: all four
+        // repository profiles (S3, SecretsManager, DynamoDB, SQS) are now
+        // approved with no remaining bootstrap-only record.
+        Assert.Equal(4, approved.Length);
+        Assert.Empty(bootstrap);
         Assert.All(approved, record =>
         {
             Assert.True(record.Eligibility.RollbackBaselineEligible);
             Assert.True(record.Eligibility.PromotionEligible);
             Assert.NotNull(record.Qualification);
         });
-        Assert.Equal("sqs-standard-messaging", sqsBootstrap.Profile.Id);
-        Assert.True(sqsBootstrap.Eligibility.RollbackBaselineEligible);
-        Assert.False(sqsBootstrap.Eligibility.PromotionEligible);
-        Assert.Null(sqsBootstrap.Qualification);
+        var sqsApproved = Assert.Single(
+            approved,
+            record => record.Profile.Id == "sqs-standard-messaging");
+        Assert.True(sqsApproved.Eligibility.RollbackBaselineEligible);
+        Assert.True(sqsApproved.Eligibility.PromotionEligible);
+        Assert.NotNull(sqsApproved.Qualification);
+        Assert.Equal("qualified", sqsApproved.Qualification!.Verdict);
     }
 
     [Fact]

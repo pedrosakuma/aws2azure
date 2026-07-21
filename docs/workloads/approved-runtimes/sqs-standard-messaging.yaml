@@ -2,46 +2,108 @@ schema_version: 1
 profile:
   id: sqs-standard-messaging
   version: 1
-status: bootstrap
+status: approved
 eligibility:
   rollback_baseline_eligible: true
-  promotion_eligible: false
+  promotion_eligible: true
 runtime:
   target:
     operating_system: linux
     architecture: x64
     rid: linux-x64
   source_repository: pedrosakuma/aws2azure
-  source_sha: 72b093b97c22aaf591f52cbd7190ba289b301d46
-  aggregate_digest: sha256:4baafd0d726841f9315578df272edd2db7347b5e8b28235c6195ae0438d28b89
-  executable_digest: sha256:e0ba755c0f2a84a37e52d7f029717e63fcdfd513380083ad1585230689b6d4b3
+  source_sha: 72e877384f16c6868e4f5ad6141025c9100115a3
+  aggregate_digest: sha256:e298eb1f20615ef56c4ea709b3c09a14fa75c496df2a57a72c1ef0b1b24a8464
+  executable_digest: sha256:326f7d71b6465080d5b21e2fb90a707b79f5f2033f841cb3f635cd546c61a627
 producer:
   workflow: .github/workflows/sealed-runtime.yml
-  run_id: 29785652675
+  run_id: 29866098673
   run_attempt: 1
-  run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29785652675
+  run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29866098673
 artifact:
-  id: 8478374855
-  name: aws2azure-sealed-linux-x64-4baafd0d726841f9315578df272edd2db7347b5e8b28235c6195ae0438d28b89-run-29785652675-attempt-1
-  upload_digest: sha256:58a578edfdd8a3ab1f7afb8d1155b6a06412744ee2931917ec6605da63bd3607
-  created_at: 2026-07-20T22:59:27.0000000+00:00
-  expires_at: 2026-10-18T22:57:30.0000000+00:00
+  id: 8509297661
+  name: aws2azure-sealed-linux-x64-e298eb1f20615ef56c4ea709b3c09a14fa75c496df2a57a72c1ef0b1b24a8464-run-29866098673-attempt-1
+  upload_digest: sha256:fe517ec817d67471b71fa3f8401b2631a9fef448c174c0904c2f986290e6811e
+  created_at: 2026-07-21T20:33:22.0000000+00:00
+  expires_at: 2026-10-19T20:31:10.0000000+00:00
 attestation:
   predicate_type: https://slsa.dev/provenance/v1
   repository: pedrosakuma/aws2azure
   signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
-  source_sha: 72b093b97c22aaf591f52cbd7190ba289b301d46
+  source_sha: 72e877384f16c6868e4f5ad6141025c9100115a3
   source_ref: refs/heads/main
   subject_name: Aws2Azure.Proxy
-  subject_digest: sha256:e0ba755c0f2a84a37e52d7f029717e63fcdfd513380083ad1585230689b6d4b3
+  subject_digest: sha256:326f7d71b6465080d5b21e2fb90a707b79f5f2033f841cb3f635cd546c61a627
   manifest_subject_name: sealed-runtime-manifest.json
-  manifest_subject_digest: sha256:d47b34ab4c9f5873a3836cadccc9d3bd2c4eb300e31fc60b1e75f274dd990807
+  manifest_subject_digest: sha256:ffd3c570e7a3e7de0e927cac2918fec4fcdbd14c2d1cf4c27ad1ec32ce852d76
+qualification:
+  artifact: docs/workloads/evidence/sqs-standard-messaging.yaml
+  digest: sha256:300457d8ce169ec970f718a912e8ed7ae480f64de997930df541651e8fb427a3
+  verdict: qualified
+  candidate_runtime_digest: sha256:e298eb1f20615ef56c4ea709b3c09a14fa75c496df2a57a72c1ef0b1b24a8464
+  rollback_target_runtime_digest: sha256:4baafd0d726841f9315578df272edd2db7347b5e8b28235c6195ae0438d28b89
+  rollback_target:
+    schema_version: 1
+    role: prior
+    profile:
+      id: sqs-standard-messaging
+      version: 1
+    status: bootstrap
+    eligibility:
+      rollback_baseline_eligible: true
+      promotion_eligible: false
+    ledger_record_digest: sha256:d54040515f0ef301be5412bc4d9ac15b6172ea4f9a3cdfb5cd8847ebd59f5d33
+    source:
+      repository: pedrosakuma/aws2azure
+      sha: 72b093b97c22aaf591f52cbd7190ba289b301d46
+      ref: refs/heads/main
+    runtime:
+      aggregate_digest: sha256:4baafd0d726841f9315578df272edd2db7347b5e8b28235c6195ae0438d28b89
+      executable_digest: sha256:e0ba755c0f2a84a37e52d7f029717e63fcdfd513380083ad1585230689b6d4b3
+      manifest_digest: sha256:d47b34ab4c9f5873a3836cadccc9d3bd2c4eb300e31fc60b1e75f274dd990807
+    producer:
+      workflow: .github/workflows/sealed-runtime.yml
+      event_name: workflow_dispatch
+      run_id: 29785652675
+      run_attempt: 1
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29785652675
+      attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29785652675/attempts/1
+      run_started_at: 2026-07-20T22:57:29.0000000+00:00
+    artifact:
+      id: 8478374855
+      name: aws2azure-sealed-linux-x64-4baafd0d726841f9315578df272edd2db7347b5e8b28235c6195ae0438d28b89-run-29785652675-attempt-1
+      upload_digest: sha256:58a578edfdd8a3ab1f7afb8d1155b6a06412744ee2931917ec6605da63bd3607
+      created_at: 2026-07-20T22:59:27.0000000+00:00
+      expires_at: 2026-10-18T22:57:30.0000000+00:00
+    attestation:
+      predicate_type: https://slsa.dev/provenance/v1
+      repository: pedrosakuma/aws2azure
+      signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
+      source_sha: 72b093b97c22aaf591f52cbd7190ba289b301d46
+      source_ref: refs/heads/main
+      run_invocation_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29785652675/attempts/1
+      bundle_digest: sha256:7f91fe3a60d1c49f47456d4bbf0f1669f9d7619737045a3f3c96be90152dc241
+      executable_subject_name: Aws2Azure.Proxy
+      executable_subject_digest: sha256:e0ba755c0f2a84a37e52d7f029717e63fcdfd513380083ad1585230689b6d4b3
+      manifest_subject_name: sealed-runtime-manifest.json
+      manifest_subject_digest: sha256:d47b34ab4c9f5873a3836cadccc9d3bd2c4eb300e31fc60b1e75f274dd990807
+  review_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29871549659
+  qualified_at: 2026-07-21T21:51:31.4468525+00:00
 approval:
   reason: >-
-    First sealed linux-x64 bytes recorded for the sqs-standard-messaging
-    profile (issue #626). They have no previously approved predecessor, so
-    they cannot prove rollback yet and are recorded only as a bootstrap
-    baseline pending a future qualifying real-Azure load run.
-  review_url: https://github.com/pedrosakuma/aws2azure/issues/626
-  reviewed_at: 2026-07-20T23:05:00Z
+    Real-Azure qualification run 29871549659 satisfied the reviewed SQS
+    standard-messaging profile gates for issue #626 against the exact sealed
+    candidate runtime: three comparable production-shaped
+    workload-load-real-azure.yml runs (29868388417, 29869468549,
+    29870524014) each recorded zero failures across all 7 profile operations
+    and every required scenario (representative-load, redelivery,
+    throttling, timeout, service-unavailable, concurrency, restart,
+    retry-exhaustion, rollback), plus a passing integration-real-azure.yml
+    correctness run (29866497339). The AMQP rollback proof confirmed queued
+    state remains usable and the receipt-handle/lock boundary holds across
+    process replacement; REST-transport evidence was recorded separately
+    and never blended into the graded AMQP-default numbers. Standard-profile
+    qualification did not depend on FIFO.
+  review_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29871549659
+  reviewed_at: 2026-07-21T21:55:12Z
   reviewed_by: pedrosakuma
