@@ -140,8 +140,8 @@ candidate or promoted itself.
    reference it from the matching workload manifest. The GA evaluator verifies
    profile/operation/scenario/source coherence and freshness.
 
-The bootstrap records currently held for S3, Secrets Manager, and SQS remain
-profile-owned. Every load proof records the prior ledger file digest/status and
+The bootstrap records currently held for DynamoDB and SQS remain profile-owned.
+Every load proof records the prior ledger file digest/status and
 the exact prior producer, artifact, manifest, executable, and attestation
 identities. The candidate and prior aggregate and executable digests must differ.
 

@@ -150,7 +150,7 @@ public static class RcObservationPolicyValidator
         var approvedStatusByKey = approvedRuntimes
             .GroupBy(item => (item.Profile.Id, item.Profile.Version))
             .ToDictionary(group => group.Key, group => group.First().Status);
-        foreach (var missing in approvedKeys.Except(policyKeys).Order())
+        foreach (var missing in approvedKeysAll.Except(policyKeys).Order())
         {
             // A brand-new profile's approved-runtime ledger legitimately starts as a
             // rollback-baseline-only "bootstrap" record while its qualification
