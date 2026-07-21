@@ -14,6 +14,7 @@ on:
           - s3-basic-object-crud
           - secretsmanager-basic-lifecycle
           - dynamodb-basic-crud
+          - sqs-standard-messaging
       correctness_run_id:
         description: integration-real-azure run containing the correctness candidate
         required: true
