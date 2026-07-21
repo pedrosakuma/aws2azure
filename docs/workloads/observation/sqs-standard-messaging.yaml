@@ -1,0 +1,30 @@
+# Reviewed RC observation generation policy, not runtime evidence.
+# The real-Azure workflow emits measured evidence only as immutable run artifacts.
+#
+# operation_mix_identity is the sha256 of the profile id followed by its
+# manifest-ordered operations (CreateQueue, GetQueueUrl, ListQueues,
+# SendMessage, ReceiveMessage, DeleteMessage, DeleteQueue — see
+# docs/workloads/sqs-standard-messaging.yaml), joined with newlines. It is a
+# stable shape identity, not derived from any single captured run; a future
+# RC-observation capture for this profile must reproduce it from the same
+# manifest-ordered operation list to be accepted against this policy.
+schema_version: 1
+profile_id: sqs-standard-messaging
+profile_version: 1
+minimum_window_minutes: 60
+maximum_window_minutes: 180
+maximum_evidence_age_hours: 72
+minimum_samples_per_cohort: 300
+load_shape:
+  candidate_concurrency: 8
+  stable_concurrency: 8
+  operation_mix_identity: sha256:064ed9a6d3c611845d8f7191a894400c55f8f4342282339b210ddfc6685b86f6
+metrics:
+  - id: representative-load-throughput
+    unit: throughput_per_sec
+    threshold_source: qualification_signal
+    threshold_reference: representative-load-throughput
+  - id: operation-failure-rate
+    unit: ratio
+    threshold_source: qualification_rule
+    threshold_reference: max_failure_rate
