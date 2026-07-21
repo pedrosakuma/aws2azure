@@ -186,6 +186,7 @@ jobs:
           {
             echo "AWS2AZURE_SEALED_RUNTIME_MODE=$runtime_mode"
             echo "AWS2AZURE_QUALIFICATION_SHA=$qualification_sha"
+            echo "AWS2AZURE_QUALIFICATION_PROFILE=$profile"
           } >> "$GITHUB_ENV"
 
       # Provisioning needs the OIDC client id. When it is absent (fork PRs, or

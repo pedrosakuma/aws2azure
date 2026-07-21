@@ -174,7 +174,19 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _runtimeSelection = SealedRuntimeSelection.Load("s3-basic-object-crud", 1);
+        // The shared multi-backend fixture (S3, DynamoDB, SQS, Kinesis, SNS
+        // smoke) is qualified for exactly one profile per real-Azure run, but
+        // that profile varies by which producer dispatched
+        // integration-real-azure.yml. Read it from the environment (the
+        // workflow's "Select qualifying or source-validation mode" step
+        // exports it) rather than hardcoding "s3-basic-object-crud" — the
+        // s3-basic-object-crud default preserves behavior for source
+        // validation / scheduled runs and any environment that predates this
+        // variable, where SealedRuntimeSelection.Load never validates a
+        // profile identity anyway (source_validation mode returns before any
+        // profile check).
+        var qualificationProfile = Env("AWS2AZURE_QUALIFICATION_PROFILE") ?? "s3-basic-object-crud";
+        _runtimeSelection = SealedRuntimeSelection.Load(qualificationProfile, 1);
         ReadEnvironment();
 
         BlobConfigured = !string.IsNullOrWhiteSpace(_blobAccount) && !string.IsNullOrWhiteSpace(_blobKey);
