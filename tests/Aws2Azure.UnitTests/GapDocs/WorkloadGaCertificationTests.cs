@@ -335,6 +335,53 @@ public sealed class WorkloadGaCertificationTests
         }
     }
 
+    [Fact]
+    public void Qualification_evidence_invalid_finding_never_leaks_the_resolved_absolute_path()
+    {
+        // The evaluator resolves the committed repo-relative qualification_artifact
+        // path to an absolute filesystem path for its own symlink/traversal checks,
+        // but any finding message surfaced to a committed report must reference
+        // only the repo-relative path — never a machine-local absolute path
+        // (issue #627 review finding).
+        var tempRoot = Path.Combine(
+            AppContext.BaseDirectory,
+            $"aws2azure-ga-relative-path-{Guid.NewGuid():N}");
+        var evidencePath = Path.Combine(
+            tempRoot,
+            "docs",
+            "workloads",
+            "evidence",
+            "qualification.yaml");
+        Directory.CreateDirectory(Path.GetDirectoryName(evidencePath)!);
+        var qualification = QualifiedDocument();
+        qualification.SchemaVersion = 999;
+        SloQualificationRenderer.RenderYaml(qualification, evidencePath);
+
+        try
+        {
+            var report = WorkloadGaEvaluator.Evaluate(
+                MinimalManifest(),
+                MinimalOperations(),
+                [],
+                tempRoot,
+                new DateOnly(2026, 7, 16));
+
+            Assert.Equal("candidate", report.Verdict);
+            var finding = Assert.Single(
+                report.Findings,
+                finding => finding.Code == "qualification_evidence_invalid");
+            Assert.DoesNotContain(tempRoot, finding.Message, StringComparison.Ordinal);
+            Assert.Contains(
+                "docs/workloads/evidence/qualification.yaml",
+                finding.Message,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
     private static void MutateEvidenceArtifactTrust(
         SloQualificationDocument qualification,
         string mutation)

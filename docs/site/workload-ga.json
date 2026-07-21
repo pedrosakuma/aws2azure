@@ -63,55 +63,55 @@
         "code": "qualification_evidence_invalid",
         "disposition": "blocking",
         "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
-        "message": "/tmp/aws2azure-627/docs/workloads/evidence/s3-basic-object-crud.yaml: provenance.source_runs[0] is stale"
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: provenance.source_runs[0] is stale"
       },
       {
         "code": "qualification_evidence_invalid",
         "disposition": "blocking",
         "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
-        "message": "/tmp/aws2azure-627/docs/workloads/evidence/s3-basic-object-crud.yaml: provenance.source_runs[1] is stale"
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: provenance.source_runs[1] is stale"
       },
       {
         "code": "qualification_evidence_invalid",
         "disposition": "blocking",
         "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
-        "message": "/tmp/aws2azure-627/docs/workloads/evidence/s3-basic-object-crud.yaml: provenance.source_runs[2] is stale"
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: provenance.source_runs[2] is stale"
       },
       {
         "code": "qualification_evidence_invalid",
         "disposition": "blocking",
         "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
-        "message": "/tmp/aws2azure-627/docs/workloads/evidence/s3-basic-object-crud.yaml: provenance.correctness_run is stale"
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: provenance.correctness_run is stale"
       },
       {
         "code": "qualification_evidence_invalid",
         "disposition": "blocking",
         "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
-        "message": "/tmp/aws2azure-627/docs/workloads/evidence/s3-basic-object-crud.yaml: signal \u0027representative-load-throughput\u0027 measurement is stale"
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: signal \u0027representative-load-throughput\u0027 measurement is stale"
       },
       {
         "code": "qualification_evidence_invalid",
         "disposition": "blocking",
         "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
-        "message": "/tmp/aws2azure-627/docs/workloads/evidence/s3-basic-object-crud.yaml: qualified real-Azure artifact is stale"
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: qualified real-Azure artifact is stale"
       },
       {
         "code": "qualification_evidence_invalid",
         "disposition": "blocking",
         "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
-        "message": "/tmp/aws2azure-627/docs/workloads/evidence/s3-basic-object-crud.yaml: scenario \u0027representative-load\u0027 measurement is stale"
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: scenario \u0027representative-load\u0027 measurement is stale"
       },
       {
         "code": "qualification_evidence_invalid",
         "disposition": "blocking",
         "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
-        "message": "/tmp/aws2azure-627/docs/workloads/evidence/s3-basic-object-crud.yaml: scenario \u0027restart\u0027 measurement is stale"
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: scenario \u0027restart\u0027 measurement is stale"
       },
       {
         "code": "qualification_evidence_invalid",
         "disposition": "blocking",
         "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
-        "message": "/tmp/aws2azure-627/docs/workloads/evidence/s3-basic-object-crud.yaml: scenario \u0027rollback\u0027 measurement is stale"
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: scenario \u0027rollback\u0027 measurement is stale"
       }
     ]
   },
@@ -145,61 +145,61 @@
         "code": "qualification_evidence_invalid",
         "disposition": "blocking",
         "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
-        "message": "/tmp/aws2azure-627/docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: provenance.source_runs[0] is stale"
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: provenance.source_runs[0] is stale"
       },
       {
         "code": "qualification_evidence_invalid",
         "disposition": "blocking",
         "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
-        "message": "/tmp/aws2azure-627/docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: provenance.source_runs[1] is stale"
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: provenance.source_runs[1] is stale"
       },
       {
         "code": "qualification_evidence_invalid",
         "disposition": "blocking",
         "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
-        "message": "/tmp/aws2azure-627/docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: provenance.source_runs[2] is stale"
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: provenance.source_runs[2] is stale"
       },
       {
         "code": "qualification_evidence_invalid",
         "disposition": "blocking",
         "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
-        "message": "/tmp/aws2azure-627/docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: provenance.correctness_run is stale"
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: provenance.correctness_run is stale"
       },
       {
         "code": "qualification_evidence_invalid",
         "disposition": "blocking",
         "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
-        "message": "/tmp/aws2azure-627/docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: signal \u0027representative-load-throughput\u0027 measurement is stale"
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: signal \u0027representative-load-throughput\u0027 measurement is stale"
       },
       {
         "code": "qualification_evidence_invalid",
         "disposition": "blocking",
         "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
-        "message": "/tmp/aws2azure-627/docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: qualified real-Azure artifact is stale"
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: qualified real-Azure artifact is stale"
       },
       {
         "code": "qualification_evidence_invalid",
         "disposition": "blocking",
         "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
-        "message": "/tmp/aws2azure-627/docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: scenario \u0027representative-load\u0027 measurement is stale"
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: scenario \u0027representative-load\u0027 measurement is stale"
       },
       {
         "code": "qualification_evidence_invalid",
         "disposition": "blocking",
         "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
-        "message": "/tmp/aws2azure-627/docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: scenario \u0027restart\u0027 measurement is stale"
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: scenario \u0027restart\u0027 measurement is stale"
       },
       {
         "code": "qualification_evidence_invalid",
         "disposition": "blocking",
         "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
-        "message": "/tmp/aws2azure-627/docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: scenario \u0027credential-rotation\u0027 measurement is stale"
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: scenario \u0027credential-rotation\u0027 measurement is stale"
       },
       {
         "code": "qualification_evidence_invalid",
         "disposition": "blocking",
         "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
-        "message": "/tmp/aws2azure-627/docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: scenario \u0027rollback\u0027 measurement is stale"
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: scenario \u0027rollback\u0027 measurement is stale"
       }
     ]
   },

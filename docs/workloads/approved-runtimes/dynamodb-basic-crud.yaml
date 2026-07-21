@@ -98,5 +98,5 @@ approval:
     service-unavailable/retry-exhaustion, restart, and rollback to the
     bootstrap baseline with zero failures across three comparable runs.
   review_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29827997968
-  reviewed_at: 2026-07-21T11:47:37Z
+  reviewed_at: 2026-07-21T11:56:02Z
   reviewed_by: pedrosakuma
