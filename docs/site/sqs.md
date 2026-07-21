@@ -298,6 +298,7 @@
 - Service Bus iteration is by $skip/$top; the cursor is not stable across queue deletions. AWS SQS tokens are likewise opaque, so no public contract is broken.
 - Prefix filtering happens after the page is returned, so the same NextToken may visit a partially-filtered page. This is consistent with AWS-SDK pagination but may surface fewer than MaxResults entries per call.
 - Pagination is validated against real Azure Service Bus across multiple management API pages.
+- Eventual consistency shortly after CreateQueue (issue #626): the real-Azure production-shaped load runner observed occasional (~0.3%) transient misses when a worker called ListQueues immediately after CreateQueue against a live namespace — the freshly created queue was already usable for Send/ReceiveMessage but not yet visible on the Service Bus management ($Resources/queues) listing. This matches AWS's own documented ListQueues eventual-consistency caveat (results may be inconsistent for a short time after a queue is created or deleted) and is not a proxy defect; load-testing and production clients should tolerate a short bounded propagation delay rather than treating a single miss as a hard failure.
 
 ### References
 

@@ -405,14 +405,30 @@ public sealed class SqsRealAzureLoadQualificationTests(RealAzureProxyFixture fix
 
                     await MeasureAsync(tracker, "ListQueues", async () =>
                     {
-                        var response = await client.ListQueuesAsync(
-                            new ListQueuesRequest { QueueNamePrefix = queueName, MaxResults = 2 },
-                            cancellationToken).ConfigureAwait(false);
-                        if (response.QueueUrls is null
-                            || !response.QueueUrls.Contains(queueUrl))
+                        // ListQueues is documented by AWS as potentially
+                        // eventually consistent shortly after a queue is
+                        // created/deleted, and Azure Service Bus's management
+                        // listing endpoint can lag briefly behind a queue's
+                        // own data-plane availability. Tolerate a short,
+                        // bounded propagation delay rather than treating a
+                        // transient miss as a hard load-run failure.
+                        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+                        while (true)
                         {
-                            throw new InvalidDataException(
-                                "ListQueues did not return the worker's queue.");
+                            var response = await client.ListQueuesAsync(
+                                new ListQueuesRequest { QueueNamePrefix = queueName, MaxResults = 2 },
+                                cancellationToken).ConfigureAwait(false);
+                            if (response.QueueUrls is not null && response.QueueUrls.Contains(queueUrl))
+                            {
+                                return;
+                            }
+                            if (DateTimeOffset.UtcNow >= deadline)
+                            {
+                                throw new InvalidDataException(
+                                    "ListQueues did not return the worker's queue.");
+                            }
+                            await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken)
+                                .ConfigureAwait(false);
                         }
                     }, IsThrottle).ConfigureAwait(false);
 
