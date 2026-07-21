@@ -507,8 +507,8 @@ internal static class RealAzureRollbackQualification
         using var candidateClient = fixture.CreateSqsClient(maxErrorRetry: 0);
         try
         {
-            var restQueueUrl = (await candidateClient.CreateQueueAsync(restQueue, cancellationToken)
-                .ConfigureAwait(false)).QueueUrl;
+            var restQueueUrl = await EnsureQueueUrlAsync(candidateClient, restQueue, cancellationToken)
+                .ConfigureAwait(false);
             await PurgeQueueAsync(candidateClient, restQueueUrl, cancellationToken)
                 .ConfigureAwait(false);
 
@@ -1047,6 +1047,36 @@ internal static class RealAzureRollbackQualification
         catch (ReceiptHandleIsInvalidException)
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Creates the shared, fixed-name REST-transport lane queue used by both
+    /// this rollback proof and the load runner's REST-representative
+    /// scenario. It is intentionally never deleted within a run (only
+    /// purged — see <see cref="PurgeQueueAsync"/>), so a later caller in the
+    /// same run creating it again is an ordinary idempotent re-create, not a
+    /// conflict; fall back to resolving the existing queue's URL rather than
+    /// failing the whole load run if Service Bus ever reports a transient
+    /// attribute mismatch on that idempotent re-create.
+    /// </summary>
+    private static async Task<string> EnsureQueueUrlAsync(
+        IAmazonSQS client,
+        string queueName,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await client.CreateQueueAsync(queueName, cancellationToken)
+                .ConfigureAwait(false);
+            return response.QueueUrl;
+        }
+        catch (QueueNameExistsException)
+        {
+            var existing = await client.GetQueueUrlAsync(
+                new GetQueueUrlRequest { QueueName = queueName },
+                cancellationToken).ConfigureAwait(false);
+            return existing.QueueUrl;
         }
     }
 
