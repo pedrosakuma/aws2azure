@@ -26,21 +26,14 @@ public sealed class ApprovedRuntimeLedgerTests
         Assert.Equal(3, records.Count);
         var approved = records.Where(record => record.Status == "approved").ToArray();
         var bootstrap = records.Where(record => record.Status == "bootstrap").ToArray();
-        Assert.Equal(2, approved.Length);
-        Assert.Single(bootstrap);
+        Assert.Equal(3, approved.Length);
+        Assert.Empty(bootstrap);
         Assert.All(approved, record =>
         {
             Assert.True(record.Eligibility.RollbackBaselineEligible);
             Assert.True(record.Eligibility.PromotionEligible);
             Assert.NotNull(record.Qualification);
         });
-        Assert.All(bootstrap, record =>
-        {
-            Assert.True(record.Eligibility.RollbackBaselineEligible);
-            Assert.False(record.Eligibility.PromotionEligible);
-            Assert.Null(record.Qualification);
-        });
-        Assert.Single(approved.Select(record => record.Artifact.Id).Distinct());
     }
 
     [Fact]

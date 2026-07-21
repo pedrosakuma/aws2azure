@@ -23,7 +23,7 @@ accepted_design_gaps:
   - "dynamodb:Consistency and read-your-writes"
   - "dynamodb:Key encoding and on-disk storage format"
 evidence:
-  qualification_artifact: ""
+  qualification_artifact: docs/workloads/evidence/dynamodb-basic-crud.yaml
   required_scenarios:
     - representative-load
     - conditional-write-concurrency
