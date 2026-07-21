@@ -33,7 +33,7 @@ public sealed class SnsPublishEventGridRealAzureTests(RealAzureProxyFixture fixt
             "AZURE_EVENTGRID_TOPIC_ENDPOINT/AZURE_EVENTGRID_TOPIC_KEY not set — skipping real-Azure SNS Event Grid conformance.");
 
         using var client = fixture.CreateSnsClient();
-        var topicArn = await SnsServiceBusTestSupport.CreateTopicAsync(
+        var topicArn = await CreateTopicAsync(
             client, RealAzureProxyFixture.EventGridTopicNamePrefix + "publish").ConfigureAwait(false);
 
         try
@@ -66,7 +66,7 @@ public sealed class SnsPublishEventGridRealAzureTests(RealAzureProxyFixture fixt
         }
         finally
         {
-            await SnsServiceBusTestSupport.DeleteTopicAsync(client, topicArn).ConfigureAwait(false);
+            await DeleteTopicAsync(client, topicArn).ConfigureAwait(false);
         }
     }
 
@@ -77,7 +77,7 @@ public sealed class SnsPublishEventGridRealAzureTests(RealAzureProxyFixture fixt
             "AZURE_EVENTGRID_TOPIC_ENDPOINT/AZURE_EVENTGRID_TOPIC_KEY not set — skipping real-Azure SNS Event Grid conformance.");
 
         using var client = fixture.CreateSnsClient();
-        var topicArn = await SnsServiceBusTestSupport.CreateTopicAsync(
+        var topicArn = await CreateTopicAsync(
             client, RealAzureProxyFixture.EventGridTopicNamePrefix + "batch").ConfigureAwait(false);
 
         try
@@ -107,7 +107,7 @@ public sealed class SnsPublishEventGridRealAzureTests(RealAzureProxyFixture fixt
         }
         finally
         {
-            await SnsServiceBusTestSupport.DeleteTopicAsync(client, topicArn).ConfigureAwait(false);
+            await DeleteTopicAsync(client, topicArn).ConfigureAwait(false);
         }
     }
 
@@ -126,7 +126,7 @@ public sealed class SnsPublishEventGridRealAzureTests(RealAzureProxyFixture fixt
             "AZURE_EVENTGRID_TOPIC_ENDPOINT/AZURE_EVENTGRID_TOPIC_KEY not set — skipping real-Azure SNS Event Grid conformance.");
 
         using var client = fixture.CreateSnsClient();
-        var topicArn = await SnsServiceBusTestSupport.CreateTopicAsync(
+        var topicArn = await CreateTopicAsync(
             client, RealAzureProxyFixture.EventGridTopicNamePrefix + "partial").ConfigureAwait(false);
 
         try
@@ -157,7 +157,7 @@ public sealed class SnsPublishEventGridRealAzureTests(RealAzureProxyFixture fixt
         }
         finally
         {
-            await SnsServiceBusTestSupport.DeleteTopicAsync(client, topicArn).ConfigureAwait(false);
+            await DeleteTopicAsync(client, topicArn).ConfigureAwait(false);
         }
     }
 
@@ -212,4 +212,22 @@ public sealed class SnsPublishEventGridRealAzureTests(RealAzureProxyFixture fixt
             parameters,
             RealAzureProxyFixture.AwsAccessKey,
             RealAzureProxyFixture.AwsSecret);
+
+    // Deliberately does not reuse SnsServiceBusTestSupport.CreateTopicAsync /
+    // DeleteTopicAsync: those default to SnsServiceBusProxyFixture's emulator
+    // AWS credentials, which are not configured on the RealAzureProxyFixture
+    // proxy instance this test class runs against.
+    private static async Task<string> CreateTopicAsync(HttpClient client, string prefix)
+    {
+        var topicName = SnsQueryApiClient.CreateTopicName(prefix);
+        var response = await SendAsync(client, "CreateTopic", [new("Name", topicName)]).ConfigureAwait(false);
+        SnsServiceBusTestSupport.AssertStatus(response, HttpStatusCode.OK, "CreateTopic");
+        return SnsQueryApiClient.ReadTopicArn(response);
+    }
+
+    private static async Task DeleteTopicAsync(HttpClient client, string topicArn)
+    {
+        var response = await SendAsync(client, "DeleteTopic", [new("TopicArn", topicArn)]).ConfigureAwait(false);
+        SnsServiceBusTestSupport.AssertStatus(response, HttpStatusCode.OK, "DeleteTopic");
+    }
 }
