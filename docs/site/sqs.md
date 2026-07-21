@@ -172,6 +172,7 @@
 - Service Bus deletes the queue synchronously; AWS SQS may take up to 60 seconds of eventual consistency before the queue stops accepting messages. Callers that delete-then-recreate within seconds may need to retry on QueueDeletedRecently — not currently surfaced by the proxy.
 - Unknown-queue 404 is mapped to AWS.SimpleQueueService.NonExistentQueue (HTTP 400) per SQS spec.
 - Validated against real Azure Service Bus through the standard queue/message lifecycle scenario.
+- Existence-probe eventual consistency after DeleteQueue (issue #626): a production-shaped real-Azure GA load run observed a GetQueueUrl existence probe continuing to find a queue for over a minute after its DeleteQueue call had already returned success, on a namespace with many other queues churning concurrently. Service Bus's DELETE call itself is synchronous for the data plane, but the management-plane read path a GetQueueUrl existence probe uses can lag behind that delete, mirroring the ListQueues creation-lag caveat documented in docs/gaps/sqs/ListQueues.yaml. The rollback qualification's post-delete absence check now allows up to three minutes (rather than the shared one-minute resource-absence budget used by other services) before treating this as a failure; this is not a proxy defect.
 
 ### References
 
