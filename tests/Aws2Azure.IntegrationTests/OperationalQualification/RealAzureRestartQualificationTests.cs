@@ -1,6 +1,5 @@
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
-using Amazon.SQS.Model;
 using Aws2Azure.IntegrationTests.Fixtures;
 using Xunit;
 
@@ -62,27 +61,9 @@ public sealed class RealAzureRestartQualificationTests(RealAzureProxyFixture fix
     }
 
     [SkippableFact]
-    public async Task Sqs_queue_remains_addressable_after_proxy_restart()
+    public async Task Sqs_queued_message_remains_deliverable_after_proxy_restart()
     {
         Skip.IfNot(fixture.ServiceBusConfigured, "Real Azure Service Bus is not configured.");
-        var queue = "aws2azure-restart-" + Guid.NewGuid().ToString("N")[..10];
-        using var client = fixture.CreateSqsClient();
-        string? queueUrl = null;
-        try
-        {
-            queueUrl = (await client.CreateQueueAsync(queue).ConfigureAwait(false)).QueueUrl;
-
-            await fixture.RestartAsync().ConfigureAwait(false);
-
-            var response = await client.GetQueueUrlAsync(queue).ConfigureAwait(false);
-            Assert.Equal(queueUrl, response.QueueUrl);
-        }
-        finally
-        {
-            if (queueUrl is not null)
-            {
-                try { await client.DeleteQueueAsync(queueUrl).ConfigureAwait(false); } catch { }
-            }
-        }
+        await RealAzureRestartQualification.VerifySqsAsync(fixture).ConfigureAwait(false);
     }
 }

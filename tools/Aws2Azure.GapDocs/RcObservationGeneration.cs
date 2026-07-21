@@ -144,13 +144,13 @@ public static class RcObservationPolicyValidator
             }
         }
 
-        var approvedKeys = approvedRuntimes
+        var approvedKeysAll = approvedRuntimes
             .Select(item => (item.Profile.Id, item.Profile.Version))
             .ToHashSet();
         var approvedStatusByKey = approvedRuntimes
             .GroupBy(item => (item.Profile.Id, item.Profile.Version))
             .ToDictionary(group => group.Key, group => group.First().Status);
-        foreach (var missing in approvedKeys.Except(policyKeys).Order())
+        foreach (var missing in approvedKeysAll.Except(policyKeys).Order())
         {
             // A brand-new profile's approved-runtime ledger legitimately starts as a
             // rollback-baseline-only "bootstrap" record while its qualification
@@ -195,7 +195,7 @@ public static class RcObservationPolicyValidator
                 $"missing RC observation policy for approved runtime " +
                 $"'{missing.Id}' v{missing.Version}");
         }
-        foreach (var extra in policyKeys.Except(approvedKeys).Order())
+        foreach (var extra in policyKeys.Except(approvedKeysAll).Order())
         {
             errors.Add(
                 $"RC observation policy '{extra.Id}' v{extra.Version} has no " +

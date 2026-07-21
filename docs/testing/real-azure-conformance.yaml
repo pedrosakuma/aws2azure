@@ -368,10 +368,10 @@ services:
         category: restart
         evidence_source: real_azure
         establishes_verification: false
-        description: Queue topology created through the candidate remains addressable after the out-of-process proxy is terminated and restarted with the same immutable configuration.
-        operations: [CreateQueue, GetQueueUrl, DeleteQueue]
+        description: A message enqueued through the candidate remains deliverable, and the queue stays addressable, after the out-of-process proxy is terminated and restarted with the same immutable configuration.
+        operations: [CreateQueue, GetQueueUrl, SendMessage, ReceiveMessage, DeleteMessage, DeleteQueue]
         tests:
-          - Aws2Azure.IntegrationTests.OperationalQualification.RealAzureRestartQualificationTests.Sqs_queue_remains_addressable_after_proxy_restart
+          - Aws2Azure.IntegrationTests.OperationalQualification.RealAzureRestartQualificationTests.Sqs_queued_message_remains_deliverable_after_proxy_restart
 
   - service: kinesis
     scenarios:

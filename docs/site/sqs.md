@@ -298,11 +298,13 @@
 - Service Bus iteration is by $skip/$top; the cursor is not stable across queue deletions. AWS SQS tokens are likewise opaque, so no public contract is broken.
 - Prefix filtering happens after the page is returned, so the same NextToken may visit a partially-filtered page. This is consistent with AWS-SDK pagination but may surface fewer than MaxResults entries per call.
 - Pagination is validated against real Azure Service Bus across multiple management API pages.
+- Eventual consistency shortly after CreateQueue (issue #626): real-Azure workload run 29790063721 observed 4 transient misses across 1,634 ListQueues attempts (~0.24%) when a worker listed immediately after CreateQueue against a live namespace — the freshly created queue was already usable for Send/ReceiveMessage but not yet visible on the Service Bus management ($Resources/queues) listing. This matches AWS's documented ListQueues eventual-consistency caveat and is not a proxy defect; load-testing and production clients should tolerate a short bounded propagation delay rather than treating a single miss as a hard failure.
 
 ### References
 
 - <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListQueues.html>
 - <https://learn.microsoft.com/rest/api/servicebus/list-queues>
+- <https://github.com/pedrosakuma/aws2azure/actions/runs/29790063721>
 
 ## PurgeQueue
 
@@ -343,7 +345,7 @@
 | Long polling (WaitTimeSeconds 1..20) | ✅ implemented | — | Uses SB's native server-side wait on the first peek-lock call (timeout query parameter); subsequent calls inside the same batch fall back to timeout=0 to drain quickly, matching the SQS 'return as soon as one message is available or WaitTimeSeconds elapses' contract. |  |  |
 | MaxNumberOfMessages 1..10 | ✅ implemented | — | SB REST is single-message peek-lock; the proxy loops until count or queue empty. The first call blocks up to WaitTimeSeconds (long-poll); follow-up calls share a 5s aggregate budget added on top of WaitTimeSeconds. |  |  |
 | VisibilityTimeout parameter | 🟡 partial | — | Accepted and validated (0..43200) but ignored at SB level — see behavior_differences. |  |  |
-| AttributeNames / MessageAttributeNames filters | ✅ implemented | — | Includes 'All' shorthand. Returned system attributes: SentTimestamp, ApproximateReceiveCount, SequenceNumber, MessageGroupId (FIFO, from BrokerProperties.SessionId), MessageDeduplicationId (FIFO, from BrokerProperties.MessageId), DeadLetterQueueSourceArn (AMQP path only, when the message came from a /$DeadLetterQueue subqueue), and the proxy-prefixed Aws2Azure-DeadLetterReason / Aws2Azure-DeadLetterErrorDescription (AMQP path only, read from the dead-lettered message's application-properties). |  |  |
+| AttributeNames / MessageAttributeNames filters | ✅ implemented | — | Includes 'All' shorthand. Accepts both the deprecated AttributeNames and the current AWS-SDK MessageSystemAttributeNames JSON property as equivalent system-attribute filters (issue #626); MessageAttributeNames is unchanged. Returned system attributes: SentTimestamp, ApproximateReceiveCount, SequenceNumber, MessageGroupId (FIFO, from BrokerProperties.SessionId), MessageDeduplicationId (FIFO, from BrokerProperties.MessageId), DeadLetterQueueSourceArn (AMQP path only, when the message came from a /$DeadLetterQueue subqueue), and the proxy-prefixed Aws2Azure-DeadLetterReason / Aws2Azure-DeadLetterErrorDescription (AMQP path only, read from the dead-lettered message's application-properties). |  |  |
 | Receipt handle round-trip | ✅ implemented | — | Opaque length-prefixed base64 of (MessageId, LockToken, SequenceNumber, LockedUntilUtc) — self-contained for DeleteMessage / ChangeMessageVisibility, safe against caller-controlled metacharacters in MessageDeduplicationId. |  |  |
 | MessageAttributes (String/Number/Binary) round-trip | ✅ implemented | — | Reconstructed from Aws2Azure-AttrTypes side-channel header emitted by SendMessage. |  |  |
 | MD5OfBody / MD5OfMessageAttributes | ✅ implemented | — |  |  |  |

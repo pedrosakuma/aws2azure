@@ -23,17 +23,21 @@ public sealed class ApprovedRuntimeLedgerTests
             ValidationTime);
 
         Assert.Empty(errors);
-        Assert.Equal(3, records.Count);
+        Assert.Equal(4, records.Count);
         var approved = records.Where(record => record.Status == "approved").ToArray();
         var bootstrap = records.Where(record => record.Status == "bootstrap").ToArray();
         Assert.Equal(3, approved.Length);
-        Assert.Empty(bootstrap);
+        var sqsBootstrap = Assert.Single(bootstrap);
         Assert.All(approved, record =>
         {
             Assert.True(record.Eligibility.RollbackBaselineEligible);
             Assert.True(record.Eligibility.PromotionEligible);
             Assert.NotNull(record.Qualification);
         });
+        Assert.Equal("sqs-standard-messaging", sqsBootstrap.Profile.Id);
+        Assert.True(sqsBootstrap.Eligibility.RollbackBaselineEligible);
+        Assert.False(sqsBootstrap.Eligibility.PromotionEligible);
+        Assert.Null(sqsBootstrap.Qualification);
     }
 
     [Fact]

@@ -3,6 +3,7 @@ using Amazon.DynamoDBv2.Model;
 using DynamoDbResourceNotFoundException = Amazon.DynamoDBv2.Model.ResourceNotFoundException;
 using Amazon.S3.Model;
 using Amazon.SecretsManager.Model;
+using Amazon.SQS.Model;
 using Aws2Azure.IntegrationTests.Fixtures;
 using Xunit;
 
@@ -149,6 +150,64 @@ internal static class RealAzureRestartQualification
             }
             catch
             {
+            }
+        }
+    }
+
+    /// <summary>
+    /// Proves a queued message survives a proxy process replacement: the
+    /// queue itself stays addressable (matching the pre-existing addressability
+    /// check) and, more importantly, a message enqueued before the restart is
+    /// still deliverable afterwards — the message lives in Azure Service Bus,
+    /// not in proxy process memory, so a bounce of the proxy must not lose or
+    /// corrupt in-flight queue contents.
+    /// </summary>
+    public static async Task VerifySqsAsync(RealAzureProxyFixture fixture)
+    {
+        var queue = "aws2azure-restart-" + Guid.NewGuid().ToString("N")[..10];
+        const string body = "survives-restart";
+        using var client = fixture.CreateSqsClient();
+        string? queueUrl = null;
+        try
+        {
+            queueUrl = (await client.CreateQueueAsync(queue).ConfigureAwait(false)).QueueUrl;
+            await client.SendMessageAsync(new SendMessageRequest
+            {
+                QueueUrl = queueUrl,
+                MessageBody = body,
+            }).ConfigureAwait(false);
+
+            await fixture.RestartAsync().ConfigureAwait(false);
+
+            var urlResponse = await client.GetQueueUrlAsync(queue).ConfigureAwait(false);
+            Assert.Equal(queueUrl, urlResponse.QueueUrl);
+
+            ReceiveMessageResponse received = new();
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+            while (DateTime.UtcNow < deadline && received.Messages is not { Count: > 0 })
+            {
+                received = await client.ReceiveMessageAsync(new ReceiveMessageRequest
+                {
+                    QueueUrl = queueUrl,
+                    MaxNumberOfMessages = 1,
+                    WaitTimeSeconds = 5,
+                }).ConfigureAwait(false);
+            }
+            Assert.True(received.Messages is { Count: > 0 },
+                "No message received from the restarted proxy within timeout.");
+            Assert.Equal(body, received.Messages[0].Body);
+
+            await client.DeleteMessageAsync(new DeleteMessageRequest
+            {
+                QueueUrl = queueUrl,
+                ReceiptHandle = received.Messages[0].ReceiptHandle,
+            }).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (queueUrl is not null)
+            {
+                try { await client.DeleteQueueAsync(queueUrl).ConfigureAwait(false); } catch { }
             }
         }
     }

@@ -1,0 +1,47 @@
+schema_version: 1
+profile:
+  id: sqs-standard-messaging
+  version: 1
+status: bootstrap
+eligibility:
+  rollback_baseline_eligible: true
+  promotion_eligible: false
+runtime:
+  target:
+    operating_system: linux
+    architecture: x64
+    rid: linux-x64
+  source_repository: pedrosakuma/aws2azure
+  source_sha: 72b093b97c22aaf591f52cbd7190ba289b301d46
+  aggregate_digest: sha256:4baafd0d726841f9315578df272edd2db7347b5e8b28235c6195ae0438d28b89
+  executable_digest: sha256:e0ba755c0f2a84a37e52d7f029717e63fcdfd513380083ad1585230689b6d4b3
+producer:
+  workflow: .github/workflows/sealed-runtime.yml
+  run_id: 29785652675
+  run_attempt: 1
+  run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29785652675
+artifact:
+  id: 8478374855
+  name: aws2azure-sealed-linux-x64-4baafd0d726841f9315578df272edd2db7347b5e8b28235c6195ae0438d28b89-run-29785652675-attempt-1
+  upload_digest: sha256:58a578edfdd8a3ab1f7afb8d1155b6a06412744ee2931917ec6605da63bd3607
+  created_at: 2026-07-20T22:59:27.0000000+00:00
+  expires_at: 2026-10-18T22:57:30.0000000+00:00
+attestation:
+  predicate_type: https://slsa.dev/provenance/v1
+  repository: pedrosakuma/aws2azure
+  signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
+  source_sha: 72b093b97c22aaf591f52cbd7190ba289b301d46
+  source_ref: refs/heads/main
+  subject_name: Aws2Azure.Proxy
+  subject_digest: sha256:e0ba755c0f2a84a37e52d7f029717e63fcdfd513380083ad1585230689b6d4b3
+  manifest_subject_name: sealed-runtime-manifest.json
+  manifest_subject_digest: sha256:d47b34ab4c9f5873a3836cadccc9d3bd2c4eb300e31fc60b1e75f274dd990807
+approval:
+  reason: >-
+    First sealed linux-x64 bytes recorded for the sqs-standard-messaging
+    profile (issue #626). They have no previously approved predecessor, so
+    they cannot prove rollback yet and are recorded only as a bootstrap
+    baseline pending a future qualifying real-Azure load run.
+  review_url: https://github.com/pedrosakuma/aws2azure/issues/626
+  reviewed_at: 2026-07-20T23:05:00Z
+  reviewed_by: pedrosakuma

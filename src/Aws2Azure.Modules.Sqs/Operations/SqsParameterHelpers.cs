@@ -30,6 +30,12 @@ internal static class SqsParameterHelpers
             {
                 using var doc = JsonDocument.Parse(parsed.JsonBody);
                 AddJsonAttributeNames(doc.RootElement, "AttributeNames", system);
+                // Modern AWS SDKs marshal ReceiveMessage's system-attribute filter
+                // under MessageSystemAttributeNames (AttributeNames is deprecated
+                // but still accepted for older callers); both must be honored or
+                // a caller using the current SDK property silently gets no
+                // system attributes back (e.g. ApproximateReceiveCount).
+                AddJsonAttributeNames(doc.RootElement, "MessageSystemAttributeNames", system);
                 AddJsonAttributeNames(doc.RootElement, "MessageAttributeNames", message);
             }
             catch (JsonException) { /* protocol parser already validated */ }
@@ -49,6 +55,13 @@ internal static class SqsParameterHelpers
             {
                 using var doc = JsonDocument.Parse(parsed.JsonBody);
                 AddJsonAttributeNames(doc.RootElement, prefix + "s", set);
+                // See ParseAttributeNameSets: modern SDKs marshal the system
+                // (non-message) attribute filter under MessageSystemAttributeNames
+                // rather than the deprecated AttributeNames.
+                if (prefix == "AttributeName")
+                {
+                    AddJsonAttributeNames(doc.RootElement, "MessageSystemAttributeNames", set);
+                }
             }
             catch (JsonException) { /* protocol parser already validated */ }
         }

@@ -422,7 +422,8 @@ public static class WorkloadGaEvaluator
         }
         var qualificationErrors = SloQualificationValidator.Validate(
             qualification,
-            currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
+            currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc),
+            qualificationPath);
         foreach (var error in qualificationErrors)
         {
             Add(

@@ -82,6 +82,63 @@ public sealed class SqsLifecycleEmulatorTests
     }
 
     [SkippableFact]
+    public async Task ReceiveMessage_honors_MessageSystemAttributeNames_filter()
+    {
+        // Regression coverage for issue #626: the proxy previously only
+        // recognized the deprecated AttributeNames JSON property. Modern AWS
+        // SDKs marshal ReceiveMessageRequest.MessageSystemAttributeNames onto
+        // its own distinct wire property, so a caller using the current SDK
+        // API silently got no system attributes back (e.g.
+        // ApproximateReceiveCount) even though AttributeNames-based callers
+        // worked. Exercise the modern wire property directly.
+        Skip.IfNot(_fixture.DockerAvailable, "Docker not available.");
+
+        var queueName = ServiceBusEmulatorFixture.StandardQueue;
+        var body = "attr-filter-" + Guid.NewGuid().ToString("N");
+
+        using var client = _fixture.CreateSqsClient();
+
+        using (var sendResp = await PostAsync(client, "SendMessage", new
+        {
+            QueueUrl = QueueUrl(queueName),
+            MessageBody = body,
+        }).ConfigureAwait(false))
+        {
+            Assert.Equal(HttpStatusCode.OK, sendResp.StatusCode);
+        }
+
+        string receiptHandle;
+        using (var recvResp = await PostAsync(client, "ReceiveMessage", new
+        {
+            QueueUrl = QueueUrl(queueName),
+            MaxNumberOfMessages = 1,
+            WaitTimeSeconds = 2,
+            MessageSystemAttributeNames = new[] { "ApproximateReceiveCount" },
+        }).ConfigureAwait(false))
+        {
+            Assert.Equal(HttpStatusCode.OK, recvResp.StatusCode);
+            using var doc = JsonDocument.Parse(
+                await recvResp.Content.ReadAsStringAsync().ConfigureAwait(false));
+            var messages = doc.RootElement.GetProperty("Messages");
+            Assert.Equal(1, messages.GetArrayLength());
+            var msg = messages[0];
+            Assert.Equal(body, msg.GetProperty("Body").GetString());
+            var attributes = msg.GetProperty("Attributes");
+            Assert.Equal("1", attributes.GetProperty("ApproximateReceiveCount").GetString());
+            receiptHandle = msg.GetProperty("ReceiptHandle").GetString()!;
+        }
+
+        using (var delResp = await PostAsync(client, "DeleteMessage", new
+        {
+            QueueUrl = QueueUrl(queueName),
+            ReceiptHandle = receiptHandle,
+        }).ConfigureAwait(false))
+        {
+            Assert.Equal(HttpStatusCode.OK, delResp.StatusCode);
+        }
+    }
+
+    [SkippableFact]
     public async Task ReceiveMessage_long_poll_returns_message_published_mid_poll()
     {
         Skip.IfNot(_fixture.DockerAvailable, "Docker not available.");

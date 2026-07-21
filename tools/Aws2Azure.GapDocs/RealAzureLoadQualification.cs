@@ -1034,6 +1034,8 @@ public static class RealAzureLoadQualificationGenerator
             "secretsmanager" =>
                 "force_delete_without_recovery_verify_resource_not_found_key_vault_soft_delete",
             "dynamodb" => "delete_table_verify_resource_not_found_exception",
+            "sqs" =>
+                "amqp_link_scoped_lock_requires_redelivery_after_restart_delete_queue_verify_empty",
             _ => string.Empty,
         };
         if (proof.CleanupSemantics != expectedCleanup

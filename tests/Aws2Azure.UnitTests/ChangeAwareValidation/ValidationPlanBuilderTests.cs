@@ -54,6 +54,7 @@ public sealed class ValidationPlanBuilderTests
     [InlineData("deploy/realazure/secretsmanager-load.bicep", "perf", "required")]
     [InlineData("deploy/realazure/s3-load.bicep", "perf", "required")]
     [InlineData("deploy/realazure/dynamodb-load.bicep", "perf", "required")]
+    [InlineData("deploy/realazure/sqs-load.bicep", "perf", "required")]
     [InlineData(
         "tests/Aws2Azure.IntegrationTests/SecretsManager/SecretsManagerRealAzureLoadQualificationTests.cs",
         "perf",
@@ -64,6 +65,10 @@ public sealed class ValidationPlanBuilderTests
         "required")]
     [InlineData(
         "tests/Aws2Azure.IntegrationTests/DynamoDb/DynamoDbRealAzureLoadQualificationTests.cs",
+        "perf",
+        "required")]
+    [InlineData(
+        "tests/Aws2Azure.IntegrationTests/Sqs/SqsRealAzureLoadQualificationTests.cs",
         "perf",
         "required")]
     [InlineData(
