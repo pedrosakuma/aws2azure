@@ -1033,6 +1033,7 @@ public static class RealAzureLoadQualificationGenerator
             "s3" => "delete_object_delete_bucket_verify_no_such_bucket",
             "secretsmanager" =>
                 "force_delete_without_recovery_verify_resource_not_found_key_vault_soft_delete",
+            "dynamodb" => "delete_table_verify_resource_not_found_exception",
             _ => string.Empty,
         };
         if (proof.CleanupSemantics != expectedCleanup

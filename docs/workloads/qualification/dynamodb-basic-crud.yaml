@@ -27,17 +27,17 @@ scenarios:
         disposition: blocking
         metric: throughput_per_sec
         threshold_status: resolved
-        min_value: 19
+        min_value: 17
         threshold_reason: >-
-          Reviewed main-branch runs 29790909306, 29792180399, and 29793306745
-          (exact sealed candidate sha b8cc59c4ac743146eedd9b8f68574c1090c0c46e,
+          Reviewed main-branch runs 29803900578, 29804505233, and 29805515910
+          (exact sealed candidate sha 80714e99a443a77350c7e95459adb3d05ee49250,
           rollback baseline sha 72b093b97c22aaf591f52cbd7190ba289b301d46)
-          measured 39.43, 21.96, and 21.43 GetItem completions/s with zero
+          measured 44.55, 105.36, and 19.50 GetItem completions/s with zero
           failures. Each value divides GetItem completions by the total window
           for the fixed eight-worker closed-loop CRUD topology (CreateTable,
           DescribeTable, PutItem, two GetItem reads, UpdateItem, DeleteItem,
           and DeleteTable); it is not standalone Cosmos or GetItem capacity.
-          The 19/s floor is conservatively below the worst reviewed healthy
+          The 17/s floor is conservatively below the worst reviewed healthy
           run; no emulator or A/B measurements were used.
       - id: representative-load-p95
         source: backend_capacity
