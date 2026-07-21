@@ -1871,6 +1871,7 @@ public static partial class RcObservationValidator
         {
             "s3-basic-object-crud" => ("s3", "GetObject"),
             "secretsmanager-basic-lifecycle" => ("secretsmanager", "GetSecretValue"),
+            "dynamodb-basic-crud" => ("dynamodb", "GetItem"),
             _ => null,
         };
 
@@ -1896,6 +1897,17 @@ public static partial class RcObservationValidator
             "secretsmanager:ListSecrets",
             "secretsmanager:PutSecretValue",
             "secretsmanager:UpdateSecret",
+        ],
+        StringComparer.Ordinal),
+        "dynamodb-basic-crud" => new HashSet<string>(
+        [
+            "dynamodb:CreateTable",
+            "dynamodb:DescribeTable",
+            "dynamodb:PutItem",
+            "dynamodb:GetItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:DeleteItem",
+            "dynamodb:DeleteTable",
         ],
         StringComparer.Ordinal),
         _ => null,

@@ -2,8 +2,6 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using Amazon;
-using Amazon.DynamoDBv2;
-using Amazon.DynamoDBv2.Model;
 using Amazon.Runtime;
 using Amazon.SecretsManager;
 using Amazon.SecretsManager.Model;
@@ -32,31 +30,12 @@ public sealed class DeterministicHttpFailureConformanceTests
     [Fact]
     public async Task DynamoDb_injected_backend_failures_return_native_retryable_errors()
     {
-        using var harness = DeterministicFailureHarness.Create("dynamodb");
-        using var sdk = CreateDynamoDbClient(harness);
-        var cases = new[]
-        {
-            new FailureCase(HttpStatusCode.TooManyRequests, null, 400, "ProvisionedThroughputExceededException"),
-            new FailureCase(HttpStatusCode.RequestTimeout, null, 500, "InternalServerError"),
-            new FailureCase(HttpStatusCode.ServiceUnavailable, null, 500, "InternalServerError"),
-        };
-
-        foreach (var failure in cases)
-        {
-            harness.Backend.PlanStatus(failure.BackendStatus, failure.AzureErrorCode);
-            using var response = await harness.RawClient.SendAsync(
-                CreateJsonRequest(
-                    harness.RawClient.BaseAddress!,
-                    "dynamodb",
-                    "DynamoDB_20120810.ListTables",
-                    "{}"));
-            await AssertCanonicalErrorAsync(response, failure, CanonicalResponse.BodyKindJsonError);
-
-            var exception = await Assert.ThrowsAnyAsync<AmazonServiceException>(
-                () => sdk.ListTablesAsync(new ListTablesRequest()));
-            AssertSdkError(exception, failure);
-            AssertSdkRetriedOnce(harness);
-        }
+        await DeterministicFailureQualification.VerifyDynamoDbScenarioAsync(
+            DeterministicFailureQualification.ThrottlingScenarioId);
+        await DeterministicFailureQualification.VerifyDynamoDbScenarioAsync(
+            DeterministicFailureQualification.TimeoutScenarioId);
+        await DeterministicFailureQualification.VerifyDynamoDbScenarioAsync(
+            DeterministicFailureQualification.ServiceUnavailableScenarioId);
     }
 
     [Fact]
@@ -143,20 +122,8 @@ public sealed class DeterministicHttpFailureConformanceTests
     {
         await DeterministicFailureQualification.VerifyS3ScenarioAsync(
             DeterministicFailureQualification.RetryExhaustionScenarioId);
-        await AssertRetryExhaustionAsync(
-            "dynamodb",
-            async harness =>
-            {
-                using var sdk = CreateDynamoDbClient(harness, maxErrorRetry: 2);
-                await sdk.PutItemAsync(new PutItemRequest
-                {
-                    TableName = "retry-exhaustion",
-                    Item = new Dictionary<string, AttributeValue>
-                    {
-                        ["pk"] = new() { S = "value" },
-                    },
-                }).ConfigureAwait(false);
-            });
+        await DeterministicFailureQualification.VerifyDynamoDbScenarioAsync(
+            DeterministicFailureQualification.RetryExhaustionScenarioId);
         await AssertRetryExhaustionAsync(
             "sqs",
             async harness =>
@@ -180,21 +147,6 @@ public sealed class DeterministicHttpFailureConformanceTests
                 }).ConfigureAwait(false);
             });
     }
-
-    private static AmazonDynamoDBClient CreateDynamoDbClient(
-        DeterministicFailureHarness harness,
-        int maxErrorRetry = 1) =>
-        new(
-            DeterministicFailureHarness.AccessKey,
-            DeterministicFailureHarness.SecretKey,
-            new AmazonDynamoDBConfig
-            {
-                ServiceURL = harness.RawClient.BaseAddress!.GetLeftPart(UriPartial.Authority),
-                UseHttp = true,
-                AuthenticationRegion = DeterministicFailureHarness.Region,
-                MaxErrorRetry = maxErrorRetry,
-                HttpClientFactory = harness.AwsHttpClientFactory,
-            });
 
     private static AmazonSQSClient CreateSqsClient(
         DeterministicFailureHarness harness,

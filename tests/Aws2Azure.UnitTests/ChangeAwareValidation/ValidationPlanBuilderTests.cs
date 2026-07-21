@@ -53,12 +53,17 @@ public sealed class ValidationPlanBuilderTests
     [InlineData(".github/workflows/rc-observation-real-azure.yml", "real-azure", "required")]
     [InlineData("deploy/realazure/secretsmanager-load.bicep", "perf", "required")]
     [InlineData("deploy/realazure/s3-load.bicep", "perf", "required")]
+    [InlineData("deploy/realazure/dynamodb-load.bicep", "perf", "required")]
     [InlineData(
         "tests/Aws2Azure.IntegrationTests/SecretsManager/SecretsManagerRealAzureLoadQualificationTests.cs",
         "perf",
         "required")]
     [InlineData(
         "tests/Aws2Azure.IntegrationTests/S3/S3RealAzureLoadQualificationTests.cs",
+        "perf",
+        "required")]
+    [InlineData(
+        "tests/Aws2Azure.IntegrationTests/DynamoDb/DynamoDbRealAzureLoadQualificationTests.cs",
         "perf",
         "required")]
     [InlineData(
@@ -71,6 +76,11 @@ public sealed class ValidationPlanBuilderTests
     [InlineData("docs/workloads/approved-runtimes/s3-basic-object-crud.yaml", "perf", "required")]
     [InlineData(
         "docs/workloads/approved-runtimes/s3-basic-object-crud.yaml",
+        "real-azure",
+        "required")]
+    [InlineData("docs/workloads/approved-runtimes/dynamodb-basic-crud.yaml", "perf", "required")]
+    [InlineData(
+        "docs/workloads/approved-runtimes/dynamodb-basic-crud.yaml",
         "real-azure",
         "required")]
     [InlineData(

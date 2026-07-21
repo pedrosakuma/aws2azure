@@ -17,6 +17,7 @@ on:
         options:
           - secretsmanager-basic-lifecycle
           - s3-basic-object-crud
+          - dynamodb-basic-crud
           - all
       candidate_run_id:
         description: Exact successful sealed-runtime producer run id
@@ -65,11 +66,11 @@ jobs:
               ;;
             workflow_dispatch)
               case "$REQUESTED_PROFILE" in
-                secretsmanager-basic-lifecycle|s3-basic-object-crud)
+                secretsmanager-basic-lifecycle|s3-basic-object-crud|dynamodb-basic-crud)
                   profiles="[\"$REQUESTED_PROFILE\"]"
                   ;;
                 all)
-                  profiles='["secretsmanager-basic-lifecycle","s3-basic-object-crud"]'
+                  profiles='["secretsmanager-basic-lifecycle","s3-basic-object-crud","dynamodb-basic-crud"]'
                   ;;
                 *)
                   echo "::error::Unsupported workload profile: $REQUESTED_PROFILE"
@@ -78,7 +79,7 @@ jobs:
               esac
               ;;
             pull_request)
-              profiles='["secretsmanager-basic-lifecycle","s3-basic-object-crud"]'
+              profiles='["secretsmanager-basic-lifecycle","s3-basic-object-crud","dynamodb-basic-crud"]'
               ;;
             *)
               echo "::error::Unsupported event: $EVENT_NAME"
@@ -172,6 +173,15 @@ jobs:
                 echo "RUNNER_PATH=tests/Aws2Azure.IntegrationTests/S3/S3RealAzureLoadQualificationTests.cs"
                 echo "TEST_FILTER=Category=S3LoadQualification"
                 echo "BACKEND_DESCRIPTION=Ephemeral Azure Blob StorageV2 Standard_LRS"
+              } >> "$GITHUB_ENV"
+              ;;
+            dynamodb-basic-crud)
+              {
+                echo "DEPLOYMENT_NAME=aws2azure-load-dynamodb"
+                echo "BICEP_PATH=deploy/realazure/dynamodb-load.bicep"
+                echo "RUNNER_PATH=tests/Aws2Azure.IntegrationTests/DynamoDb/DynamoDbRealAzureLoadQualificationTests.cs"
+                echo "TEST_FILTER=Category=DynamoDbLoadQualification"
+                echo "BACKEND_DESCRIPTION=Ephemeral Azure Cosmos DB serverless SQL API, Strong consistency"
               } >> "$GITHUB_ENV"
               ;;
             *)
@@ -335,6 +345,12 @@ jobs:
               "soft_delete_retention_days": 7,
               "purge_protection": false
             }'
+          elif [ "$PROFILE" = dynamodb-basic-crud ]; then
+            topology='{
+              "backend": "Cosmos DB serverless SQL API",
+              "consistency": "Strong",
+              "database_pre_created": true
+            }'
           else
             topology='{
               "backend": "Blob StorageV2",
@@ -380,6 +396,7 @@ jobs:
             --arg approved_runtime_ledger_sha256 "$(sha256sum "docs/workloads/approved-runtimes/$PROFILE.yaml" | cut -d' ' -f1)" \
             --arg secretsmanager_fixture_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/Fixtures/SecretsManagerRealAzureProxyFixture.cs | cut -d' ' -f1)" \
             --arg realazure_fixture_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/Fixtures/RealAzureProxyFixture.cs | cut -d' ' -f1)" \
+            --arg dynamodb_fixture_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/Fixtures/DynamoDbRealAzureProxyFixture.cs | cut -d' ' -f1)" \
             --arg federation_classifier_sha256 "$(sha256sum .github/scripts/classify-entra-federation-response.sh | cut -d' ' -f1)" \
             --arg manifest_sha256 "$(sha256sum "docs/workloads/$PROFILE.yaml" | cut -d' ' -f1)" \
             --arg policy_sha256 "$(sha256sum "docs/workloads/qualification/$PROFILE.yaml" | cut -d' ' -f1)" \
@@ -418,6 +435,7 @@ jobs:
                 approved_runtime_ledger: ("sha256:" + $approved_runtime_ledger_sha256),
                 secretsmanager_fixture: ("sha256:" + $secretsmanager_fixture_sha256),
                 realazure_fixture: ("sha256:" + $realazure_fixture_sha256),
+                dynamodb_fixture: ("sha256:" + $dynamodb_fixture_sha256),
                 federation_response_classifier: ("sha256:" + $federation_classifier_sha256),
                 workload_manifest: ("sha256:" + $manifest_sha256),
                 qualification_policy: ("sha256:" + $policy_sha256)
@@ -496,6 +514,25 @@ jobs:
             {
               echo "AZURE_KEYVAULT_URL=$endpoint"
               echo "AZURE_KEYVAULT_ID=$vault_id"
+            } >> "$GITHUB_ENV"
+          elif [ "$PROFILE" = dynamodb-basic-crud ]; then
+            account="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
+              --query properties.outputs.cosmosAccountName.value -o tsv)"
+            database="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
+              --query properties.outputs.cosmosDatabaseName.value -o tsv)"
+            endpoint="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
+              --query properties.outputs.cosmosEndpoint.value -o tsv)"
+            key="$(az cosmosdb keys list -g "$RG_NAME" -n "$account" \
+              --query primaryMasterKey -o tsv)"
+            if [ -z "$account" ] || [ -z "$database" ] || [ -z "$endpoint" ] || [ -z "$key" ]; then
+              echo "::error::The deployment did not produce usable Cosmos DB credentials."
+              exit 1
+            fi
+            echo "::add-mask::$key"
+            {
+              echo "AZURE_COSMOS_ENDPOINT=$endpoint"
+              echo "AZURE_COSMOS_KEY=$key"
+              echo "AZURE_COSMOS_DATABASE=$database"
             } >> "$GITHUB_ENV"
           else
             account="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
