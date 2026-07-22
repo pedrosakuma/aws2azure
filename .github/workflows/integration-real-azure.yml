@@ -78,6 +78,7 @@ on:
           - secretsmanager-basic-lifecycle
           - dynamodb-basic-crud
           - sqs-standard-messaging
+          - kinesis-single-consumer-per-shard
       candidate_run_id:
         description: Exact successful sealed-runtime producer run id
         required: false
@@ -156,11 +157,11 @@ jobs:
           if [ "$EVENT_NAME" = workflow_dispatch ] &&
              [ "$QUALIFICATION_PROFILE" != source-validation ]; then
             case "$QUALIFICATION_PROFILE:$SELECTED_SERVICE" in
-              s3-basic-object-crud:s3|secretsmanager-basic-lifecycle:secretsmanager|dynamodb-basic-crud:dynamodb|sqs-standard-messaging:sqs)
+              s3-basic-object-crud:s3|secretsmanager-basic-lifecycle:secretsmanager|dynamodb-basic-crud:dynamodb|sqs-standard-messaging:sqs|kinesis-single-consumer-per-shard:kinesis)
                 profile="$QUALIFICATION_PROFILE"
                 ;;
               *)
-                echo "::error::Sealed qualification profile must match service s3, secretsmanager, dynamodb, or sqs."
+                echo "::error::Sealed qualification profile must match service s3, secretsmanager, dynamodb, sqs, or kinesis."
                 exit 1
                 ;;
             esac
