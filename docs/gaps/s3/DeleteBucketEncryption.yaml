@@ -1,10 +1,16 @@
 service: s3
 operation: DeleteBucketEncryption
-azure_equivalent: "(no equivalent — proxy treats it as a no-op)"
-status: stub
+azure_equivalent: "Conditional container-metadata update"
+status: partial
 sub_features:
-  - name: "idempotent clear"
+  - name: "idempotent AES256-intent clear"
     status: implemented
-    notes: "Returns 204 No Content because the underlying configuration is never set in the first place."
+    notes: "Removes only the proxy-owned encryption-intent key, resets the compatibility response to default SSE-S3 AES256, and returns 204."
+  - name: "Azure encryption change"
+    status: unsupported
+    notes: "Azure Storage encryption remains enabled and account-managed."
+behavior_differences:
+  - "Deleting the intent does not disable or reconfigure Azure encryption."
+  - "A subsequent GetBucketEncryption returns the synthetic default SSE-S3 AES256 configuration."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketEncryption.html

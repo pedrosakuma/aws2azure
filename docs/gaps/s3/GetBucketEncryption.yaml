@@ -1,12 +1,16 @@
 service: s3
 operation: GetBucketEncryption
-azure_equivalent: "(no equivalent — proxy returns 404 ServerSideEncryptionConfigurationNotFoundError)"
-status: unsupported
+azure_equivalent: "Container metadata for SSE-S3 intent; Azure Storage encryption remains account-managed"
+status: partial
 sub_features:
-  - name: "configuration storage"
+  - name: "SSE-S3 AES256 intent"
+    status: implemented
+    notes: "Returns a persisted AES256 ServerSideEncryptionConfiguration and survives proxy restart."
+  - name: "SSE-KMS and SSE-C"
     status: unsupported
-    notes: "Azure Storage encrypts all data at rest by default with Microsoft-managed keys; per-container SSE configuration is not exposed through the data plane."
+    notes: "Customer-managed KMS identity and customer-provided key semantics are not representable through this data-plane proxy."
 behavior_differences:
-  - "GET returns HTTP 404 with code ServerSideEncryptionConfigurationNotFoundError so clients receive the same shape as a never-configured S3 bucket instead of InternalError."
+  - "AES256 is compatibility intent only. Azure encrypts data at rest according to storage-account settings, not this metadata value."
+  - "When no explicit intent is stored, the response reports the AWS default SSE-S3 AES256 configuration."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketEncryption.html

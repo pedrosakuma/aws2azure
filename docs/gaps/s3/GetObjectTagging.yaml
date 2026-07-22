@@ -7,10 +7,12 @@ sub_features:
     status: implemented
     notes: "Azure response's <Tags><TagSet> is rewrapped as S3 <Tagging><TagSet>."
   - name: "versionId qualifier"
-    status: unsupported
-    notes: "The proxy has no versioning story; ignored on input."
+    status: implemented
+    notes: "Maps the opaque S3 versionId to Azure versionid. Unqualified requests HEAD and pin the current Azure version before Get Blob Tags so x-amz-version-id identifies the returned tag set."
 behavior_differences:
   - "Returns an empty TagSet (200) when no tags are set, matching Azure's behaviour. Azure surfaces 'no tags' as an empty set rather than a NoSuchTagSet error."
+  - "Version selection depends on Azure Blob versioning being enabled by the operator."
+  - "Azure BlobVersionNotFound maps to S3 NoSuchVersion."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectTagging.html
   - https://learn.microsoft.com/rest/api/storageservices/get-blob-tags

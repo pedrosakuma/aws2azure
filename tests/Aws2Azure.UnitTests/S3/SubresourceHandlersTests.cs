@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Xml.Linq;
@@ -98,6 +99,7 @@ public sealed class SubresourceHandlersTests
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, putContext.Response.StatusCode);
+        Assert.Equal("current-version", putContext.Response.Headers["x-amz-version-id"].ToString());
         Assert.Contains("<Tags>", backend.Blobs[("bucket", "key.txt")].TagsXml, StringComparison.Ordinal);
         Assert.DoesNotContain("<Tagging", backend.Blobs[("bucket", "key.txt")].TagsXml, StringComparison.Ordinal);
 
@@ -113,6 +115,7 @@ public sealed class SubresourceHandlersTests
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, getContext.Response.StatusCode);
+        Assert.Equal("current-version", getContext.Response.Headers["x-amz-version-id"].ToString());
         AssertTaggingXml(TestHttpContext.ReadBody(getContext), ("project", "aws2azure"), ("tier", "tests"));
 
         var deleteContext = TestHttpContext.CreateContext(
@@ -127,6 +130,7 @@ public sealed class SubresourceHandlersTests
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status204NoContent, deleteContext.Response.StatusCode);
+        Assert.Equal("current-version", deleteContext.Response.Headers["x-amz-version-id"].ToString());
         Assert.Empty(ParseAzureTags(backend.Blobs[("bucket", "key.txt")].TagsXml));
 
         var getAfterDeleteContext = TestHttpContext.CreateContext(
@@ -217,6 +221,220 @@ public sealed class SubresourceHandlersTests
         var metadataPuts = backend.Requests.Where(IsContainerMetadataPut).ToList();
         Assert.Equal(2, metadataPuts.Count);
         Assert.All(metadataPuts, request => AssertHeader(request.Headers, "x-ms-meta-existing", "keep-me"));
+    }
+
+    [Fact]
+    public async Task HandleAsync_bucket_compatibility_intents_roundtrip_and_preserve_unrelated_metadata()
+    {
+        var backend = new FakeBlobBackend();
+        backend.AddContainer("bucket", new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["existing"] = "keep-me",
+            ["aws2azureversioning"] = "Enabled"
+        });
+
+        await InvokeAsync(
+            backend,
+            S3Operation.PutBucketOwnershipControls,
+            HttpMethods.Put,
+            "?ownershipControls",
+            OwnershipControlsXml("ObjectWriter"));
+        await InvokeAsync(
+            backend,
+            S3Operation.PutPublicAccessBlock,
+            HttpMethods.Put,
+            "?publicAccessBlock",
+            PublicAccessBlockXml(true, false, true, false));
+        await InvokeAsync(
+            backend,
+            S3Operation.PutBucketEncryption,
+            HttpMethods.Put,
+            "?encryption",
+            BucketEncryptionXml("AES256"));
+
+        var metadata = backend.ContainerMetadata["bucket"];
+        Assert.Equal("keep-me", metadata["existing"]);
+        Assert.Equal("Enabled", metadata["aws2azureversioning"]);
+        Assert.Equal("ObjectWriter", metadata["aws2azureownership"]);
+        Assert.Equal("1010", metadata["aws2azurepublicaccessblock"]);
+        Assert.Equal("AES256", metadata["aws2azureencryption"]);
+
+        var ownership = await InvokeAsync(
+            backend, S3Operation.GetBucketOwnershipControls, HttpMethods.Get, "?ownershipControls");
+        Assert.Equal("ObjectWriter", ParseS3Element(TestHttpContext.ReadBody(ownership), "Rule", "ObjectOwnership"));
+
+        var publicAccess = await InvokeAsync(
+            backend, S3Operation.GetPublicAccessBlock, HttpMethods.Get, "?publicAccessBlock");
+        Assert.Equal("true", ParseS3Element(TestHttpContext.ReadBody(publicAccess), "BlockPublicAcls"));
+        Assert.Equal("false", ParseS3Element(TestHttpContext.ReadBody(publicAccess), "IgnorePublicAcls"));
+        Assert.Equal("true", ParseS3Element(TestHttpContext.ReadBody(publicAccess), "BlockPublicPolicy"));
+        Assert.Equal("false", ParseS3Element(TestHttpContext.ReadBody(publicAccess), "RestrictPublicBuckets"));
+
+        var encryption = await InvokeAsync(
+            backend, S3Operation.GetBucketEncryption, HttpMethods.Get, "?encryption");
+        Assert.Equal("AES256", ParseS3Element(
+            TestHttpContext.ReadBody(encryption), "Rule", "ApplyServerSideEncryptionByDefault", "SSEAlgorithm"));
+
+        var deleteEncryption = await InvokeAsync(
+            backend, S3Operation.DeleteBucketEncryption, HttpMethods.Delete, "?encryption");
+        Assert.Equal(StatusCodes.Status204NoContent, deleteEncryption.Response.StatusCode);
+        var defaultEncryption = await InvokeAsync(
+            backend, S3Operation.GetBucketEncryption, HttpMethods.Get, "?encryption");
+        Assert.Equal(StatusCodes.Status200OK, defaultEncryption.Response.StatusCode);
+        Assert.Equal("AES256", ParseS3Element(
+            TestHttpContext.ReadBody(defaultEncryption), "Rule",
+            "ApplyServerSideEncryptionByDefault", "SSEAlgorithm"));
+    }
+
+    [Fact]
+    public async Task HandleAsync_metadata_conflict_retries_from_fresh_state_and_preserves_concurrent_metadata()
+    {
+        var backend = new FakeBlobBackend
+        {
+            MetadataConflictsRemaining = 1,
+            MetadataAddedOnConflict = new KeyValuePair<string, string>("concurrent", "keep-too")
+        };
+        backend.AddContainer("bucket", new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["existing"] = "keep-me"
+        });
+
+        var context = await InvokeAsync(
+            backend,
+            S3Operation.PutBucketVersioning,
+            HttpMethods.Put,
+            "?versioning",
+            VersioningXml("Enabled"));
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal("keep-me", backend.ContainerMetadata["bucket"]["existing"]);
+        Assert.Equal("keep-too", backend.ContainerMetadata["bucket"]["concurrent"]);
+        Assert.Equal("Enabled", backend.ContainerMetadata["bucket"]["aws2azureversioning"]);
+
+        var puts = backend.Requests.Where(IsContainerMetadataPut).ToArray();
+        Assert.Equal(2, puts.Length);
+        AssertHeader(puts[0].Headers, "If-Match", "\"etag-1\"");
+        AssertHeader(puts[1].Headers, "If-Match", "\"etag-2\"");
+    }
+
+    [Fact]
+    public async Task HandleAsync_public_access_block_accepts_optional_case_insensitive_booleans()
+    {
+        var backend = new FakeBlobBackend();
+        backend.AddContainer("bucket");
+
+        var put = await InvokeAsync(
+            backend,
+            S3Operation.PutPublicAccessBlock,
+            HttpMethods.Put,
+            "?publicAccessBlock",
+            "<PublicAccessBlockConfiguration><BlockPublicAcls>TRUE</BlockPublicAcls></PublicAccessBlockConfiguration>");
+
+        Assert.Equal(StatusCodes.Status200OK, put.Response.StatusCode);
+        Assert.Equal("1000", backend.ContainerMetadata["bucket"]["aws2azurepublicaccessblock"]);
+
+        var get = await InvokeAsync(
+            backend, S3Operation.GetPublicAccessBlock, HttpMethods.Get, "?publicAccessBlock");
+        Assert.Equal("true", ParseS3Element(TestHttpContext.ReadBody(get), "BlockPublicAcls"));
+        Assert.Equal("false", ParseS3Element(TestHttpContext.ReadBody(get), "IgnorePublicAcls"));
+    }
+
+    [Fact]
+    public async Task HandleAsync_stable_request_payment_and_acceleration_no_op_contracts()
+    {
+        var backend = new FakeBlobBackend();
+        backend.AddContainer("bucket");
+
+        var requestPayment = await InvokeAsync(
+            backend,
+            S3Operation.PutBucketRequestPayment,
+            HttpMethods.Put,
+            "?requestPayment",
+            RequestPaymentXml("BucketOwner"));
+        Assert.Equal(StatusCodes.Status200OK, requestPayment.Response.StatusCode);
+
+        var accelerate = await InvokeAsync(
+            backend,
+            S3Operation.PutBucketAccelerateConfiguration,
+            HttpMethods.Put,
+            "?accelerate",
+            AccelerateXml("Suspended"));
+        Assert.Equal(StatusCodes.Status200OK, accelerate.Response.StatusCode);
+
+        var getAccelerate = await InvokeAsync(
+            backend, S3Operation.GetBucketAccelerateConfiguration, HttpMethods.Get, "?accelerate");
+        Assert.Equal("Suspended", ParseS3Element(TestHttpContext.ReadBody(getAccelerate), "Status"));
+    }
+
+    [Theory]
+    [InlineData(S3Operation.PutBucketRequestPayment, "?requestPayment", "<RequestPaymentConfiguration><Payer>Requester</Payer></RequestPaymentConfiguration>")]
+    [InlineData(S3Operation.PutBucketAccelerateConfiguration, "?accelerate", "<AccelerateConfiguration><Status>Enabled</Status></AccelerateConfiguration>")]
+    [InlineData(S3Operation.PutBucketEncryption, "?encryption", "<ServerSideEncryptionConfiguration><Rule><ApplyServerSideEncryptionByDefault><KMSMasterKeyID>key</KMSMasterKeyID><SSEAlgorithm>aws:kms</SSEAlgorithm></ApplyServerSideEncryptionByDefault></Rule></ServerSideEncryptionConfiguration>")]
+    [InlineData(S3Operation.PutBucketEncryption, "?encryption", "<ServerSideEncryptionConfiguration><Rule><ApplyServerSideEncryptionByDefault><SSEAlgorithm>AES256</SSEAlgorithm></ApplyServerSideEncryptionByDefault><BlockedEncryptionTypes><EncryptionType>SSE-C</EncryptionType></BlockedEncryptionTypes></Rule></ServerSideEncryptionConfiguration>")]
+    public async Task HandleAsync_unrepresentable_compatibility_variants_remain_not_implemented(
+        S3Operation operation, string query, string body)
+    {
+        var backend = new FakeBlobBackend();
+        backend.AddContainer("bucket");
+
+        var context = await InvokeAsync(backend, operation, HttpMethods.Put, query, body);
+
+        Assert.Equal(StatusCodes.Status501NotImplemented, context.Response.StatusCode);
+        Assert.Equal("NotImplemented", ParseErrorCode(TestHttpContext.ReadBody(context)));
+    }
+
+    [Fact]
+    public async Task HandleAsync_object_tagging_and_acl_forward_version_id_to_azure()
+    {
+        var backend = new FakeBlobBackend();
+        backend.AddBlob("bucket", "key.txt");
+
+        var put = await InvokeAsync(
+            backend,
+            S3Operation.PutObjectTagging,
+            HttpMethods.Put,
+            "?tagging&versionId=ver-1",
+            BucketTaggingXml(("version", "one")),
+            "key.txt");
+        Assert.Equal(StatusCodes.Status200OK, put.Response.StatusCode);
+        Assert.Equal("ver-1", put.Response.Headers["x-amz-version-id"].ToString());
+
+        var get = await InvokeAsync(
+            backend,
+            S3Operation.GetObjectTagging,
+            HttpMethods.Get,
+            "?tagging&versionId=ver-1",
+            key: "key.txt");
+        Assert.Equal(StatusCodes.Status200OK, get.Response.StatusCode);
+        Assert.Equal("ver-1", get.Response.Headers["x-amz-version-id"].ToString());
+
+        var delete = await InvokeAsync(
+            backend,
+            S3Operation.DeleteObjectTagging,
+            HttpMethods.Delete,
+            "?tagging&versionId=ver-1",
+            key: "key.txt");
+        Assert.Equal(StatusCodes.Status204NoContent, delete.Response.StatusCode);
+        Assert.Equal("ver-1", delete.Response.Headers["x-amz-version-id"].ToString());
+
+        var acl = await InvokeAsync(
+            backend,
+            S3Operation.GetObjectAcl,
+            HttpMethods.Get,
+            "?acl&versionId=ver-1",
+            key: "key.txt");
+        Assert.Equal(StatusCodes.Status200OK, acl.Response.StatusCode);
+        Assert.Equal("ver-1", acl.Response.Headers["x-amz-version-id"].ToString());
+
+        Assert.Contains(backend.Requests, request =>
+            request.Method == HttpMethod.Put
+            && string.Equals(request.RequestUri!.Query, "?comp=tags&versionid=ver-1", StringComparison.Ordinal));
+        Assert.Contains(backend.Requests, request =>
+            request.Method == HttpMethod.Get
+            && string.Equals(request.RequestUri!.Query, "?comp=tags&versionid=ver-1", StringComparison.Ordinal));
+        Assert.Contains(backend.Requests, request =>
+            request.Method == HttpMethod.Head
+            && string.Equals(request.RequestUri!.Query, "?versionid=ver-1", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -429,6 +647,27 @@ public sealed class SubresourceHandlersTests
     private static S3RouteResult Route(S3Operation operation, string bucket, string? key = null)
         => new(operation, bucket, key, false);
 
+    private static async Task<HttpContext> InvokeAsync(
+        FakeBlobBackend backend,
+        S3Operation operation,
+        string method,
+        string query,
+        string? body = null,
+        string? key = null)
+    {
+        var context = TestHttpContext.CreateContext(
+            body: body ?? string.Empty,
+            method: method,
+            path: key is null ? "/bucket" : "/bucket/" + key,
+            queryString: query);
+        await SubresourceHandlers.HandleAsync(
+            context,
+            Route(operation, "bucket", key),
+            backend.Client,
+            CancellationToken.None);
+        return context;
+    }
+
     private static string BucketTaggingXml(params (string Key, string Value)[] tags)
     {
         var tagXml = string.Join(string.Empty, tags.Select(tag =>
@@ -444,6 +683,30 @@ public sealed class SubresourceHandlersTests
 
     private static string LegalHoldXml(string status)
         => $"<LegalHold xmlns=\"{S3Ns}\"><Status>{status}</Status></LegalHold>";
+
+    private static string OwnershipControlsXml(string value)
+        => $"<OwnershipControls xmlns=\"{S3Ns}\"><Rule><ObjectOwnership>{value}</ObjectOwnership></Rule></OwnershipControls>";
+
+    private static string PublicAccessBlockXml(
+        bool blockPublicAcls, bool ignorePublicAcls, bool blockPublicPolicy, bool restrictPublicBuckets)
+        => $"<PublicAccessBlockConfiguration xmlns=\"{S3Ns}\">"
+           + $"<BlockPublicAcls>{blockPublicAcls.ToString().ToLowerInvariant()}</BlockPublicAcls>"
+           + $"<IgnorePublicAcls>{ignorePublicAcls.ToString().ToLowerInvariant()}</IgnorePublicAcls>"
+           + $"<BlockPublicPolicy>{blockPublicPolicy.ToString().ToLowerInvariant()}</BlockPublicPolicy>"
+           + $"<RestrictPublicBuckets>{restrictPublicBuckets.ToString().ToLowerInvariant()}</RestrictPublicBuckets>"
+           + "</PublicAccessBlockConfiguration>";
+
+    private static string BucketEncryptionXml(string algorithm)
+        => $"<ServerSideEncryptionConfiguration xmlns=\"{S3Ns}\"><Rule>"
+           + "<ApplyServerSideEncryptionByDefault>"
+           + $"<SSEAlgorithm>{algorithm}</SSEAlgorithm>"
+           + "</ApplyServerSideEncryptionByDefault></Rule></ServerSideEncryptionConfiguration>";
+
+    private static string RequestPaymentXml(string payer)
+        => $"<RequestPaymentConfiguration xmlns=\"{S3Ns}\"><Payer>{payer}</Payer></RequestPaymentConfiguration>";
+
+    private static string AccelerateXml(string status)
+        => $"<AccelerateConfiguration xmlns=\"{S3Ns}\"><Status>{status}</Status></AccelerateConfiguration>";
 
     private static void AssertTaggingXml(string xml, params (string Key, string Value)[] expectedTags)
     {
@@ -478,6 +741,16 @@ public sealed class SubresourceHandlersTests
 
     private static string ParseS3Element(string xml, string localName)
         => XDocument.Parse(xml).Root!.Element(S3Ns + localName)!.Value;
+
+    private static string ParseS3Element(string xml, params string[] path)
+    {
+        XElement current = XDocument.Parse(xml).Root!;
+        foreach (var segment in path)
+        {
+            current = current.Element(S3Ns + segment)!;
+        }
+        return current.Value;
+    }
 
     private static string ParseErrorCode(string xml)
         => XDocument.Parse(xml).Root!.Element("Code")!.Value;
@@ -530,10 +803,19 @@ public sealed class SubresourceHandlersTests
 
         public IReadOnlyList<CapturedHttpRequest> Requests => _handler.Requests;
 
+        public int MetadataConflictsRemaining { get; set; }
+
+        public KeyValuePair<string, string>? MetadataAddedOnConflict { get; set; }
+
+        private Dictionary<string, int> ContainerEtags { get; } = new(StringComparer.Ordinal);
+
         public void AddContainer(string bucket, Dictionary<string, string>? metadata = null)
-            => ContainerMetadata[bucket] = metadata is null
+        {
+            ContainerMetadata[bucket] = metadata is null
                 ? new Dictionary<string, string>(StringComparer.Ordinal)
                 : new Dictionary<string, string>(metadata, StringComparer.Ordinal);
+            ContainerEtags[bucket] = 1;
+        }
 
         public void AddBlob(string bucket, string key)
         {
@@ -559,7 +841,7 @@ public sealed class SubresourceHandlersTests
             if (string.Equals(query, "?restype=container", StringComparison.Ordinal))
             {
                 return ContainerMetadata.TryGetValue(bucket, out var metadata)
-                    ? ContainerResponse(HttpStatusCode.OK, metadata)
+                    ? ContainerResponse(HttpStatusCode.OK, metadata, ContainerEtags[bucket])
                     : ErrorResponse(HttpStatusCode.NotFound, "ContainerNotFound");
             }
 
@@ -572,22 +854,40 @@ public sealed class SubresourceHandlersTests
 
                 if (request.Method == HttpMethod.Get)
                 {
-                    return ContainerResponse(HttpStatusCode.OK, metadata);
+                    return ContainerResponse(HttpStatusCode.OK, metadata, ContainerEtags[bucket]);
                 }
 
                 if (request.Method == HttpMethod.Put)
                 {
+                    var expected = request.Headers.IfMatch.SingleOrDefault()?.Tag;
+                    var currentEtag = Etag(ContainerEtags[bucket]);
+                    if (!string.Equals(expected, currentEtag, StringComparison.Ordinal))
+                    {
+                        return ErrorResponse(HttpStatusCode.PreconditionFailed, "ConditionNotMet");
+                    }
+                    if (MetadataConflictsRemaining > 0)
+                    {
+                        MetadataConflictsRemaining--;
+                        if (MetadataAddedOnConflict is { } added)
+                        {
+                            metadata[added.Key] = added.Value;
+                        }
+                        ContainerEtags[bucket]++;
+                        return ErrorResponse(HttpStatusCode.PreconditionFailed, "ConditionNotMet");
+                    }
+
                     ContainerMetadata[bucket] = request.Headers
                         .Where(header => header.Key.StartsWith("x-ms-meta-", StringComparison.OrdinalIgnoreCase))
                         .ToDictionary(
                             header => header.Key["x-ms-meta-".Length..].ToLowerInvariant(),
                             header => header.Value.First(),
                             StringComparer.Ordinal);
+                    ContainerEtags[bucket]++;
                     return new HttpResponseMessage(HttpStatusCode.OK);
                 }
             }
 
-            if (string.Equals(query, "?comp=tags", StringComparison.Ordinal) && key is not null)
+            if (query.StartsWith("?comp=tags", StringComparison.Ordinal) && key is not null)
             {
                 if (!Blobs.TryGetValue((bucket, key), out var blob))
                 {
@@ -596,23 +896,29 @@ public sealed class SubresourceHandlersTests
 
                 if (request.Method == HttpMethod.Get)
                 {
-                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    var response = new HttpResponseMessage(HttpStatusCode.OK)
                     {
                         Content = new StringContent(blob.TagsXml, Encoding.UTF8, "application/xml")
                     };
+                    response.Headers.TryAddWithoutValidation(
+                        "x-ms-version-id", VersionIdFromQuery(query) ?? "current-version");
+                    return response;
                 }
 
                 if (request.Method == HttpMethod.Put)
                 {
                     blob.TagsXml = await request.Content!.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-                    return new HttpResponseMessage(HttpStatusCode.NoContent);
+                    var response = new HttpResponseMessage(HttpStatusCode.NoContent);
+                    response.Headers.TryAddWithoutValidation(
+                        "x-ms-version-id", VersionIdFromQuery(query) ?? "current-version");
+                    return response;
                 }
             }
 
             if (key is not null && request.Method == HttpMethod.Head)
             {
                 return Blobs.TryGetValue((bucket, key), out var blob)
-                    ? BlobHeadResponse(blob)
+                    ? BlobHeadResponse(blob, VersionIdFromQuery(query) ?? "current-version")
                     : ErrorResponse(HttpStatusCode.NotFound, "BlobNotFound");
             }
 
@@ -649,9 +955,11 @@ public sealed class SubresourceHandlersTests
             throw new InvalidOperationException($"Unhandled fake Blob request: {request.Method} {request.RequestUri}");
         }
 
-        private static HttpResponseMessage ContainerResponse(HttpStatusCode statusCode, IReadOnlyDictionary<string, string> metadata)
+        private static HttpResponseMessage ContainerResponse(
+            HttpStatusCode statusCode, IReadOnlyDictionary<string, string> metadata, int etag)
         {
             var response = new HttpResponseMessage(statusCode);
+            response.Headers.ETag = new EntityTagHeaderValue(Etag(etag));
             foreach (var (key, value) in metadata)
             {
                 response.Headers.TryAddWithoutValidation("x-ms-meta-" + key, value);
@@ -660,9 +968,20 @@ public sealed class SubresourceHandlersTests
             return response;
         }
 
-        private static HttpResponseMessage BlobHeadResponse(BlobState blob)
+        private static string Etag(int value) => $"\"etag-{value}\"";
+
+        private static string? VersionIdFromQuery(string query)
+        {
+            const string marker = "versionid=";
+            var index = query.IndexOf(marker, StringComparison.Ordinal);
+            if (index < 0) return null;
+            return Uri.UnescapeDataString(query[(index + marker.Length)..]);
+        }
+
+        private static HttpResponseMessage BlobHeadResponse(BlobState blob, string versionId)
         {
             var response = new HttpResponseMessage(HttpStatusCode.OK);
+            response.Headers.TryAddWithoutValidation("x-ms-version-id", versionId);
             if (blob.ImmutabilityUntilRfc1123 is not null)
             {
                 response.Headers.TryAddWithoutValidation("x-ms-immutability-policy-until-date", blob.ImmutabilityUntilRfc1123);

@@ -118,6 +118,24 @@ public sealed class S3IntegrationFixture : IAsyncLifetime
         }
     }
 
+    public Task RestartProxyAsync()
+    {
+        if (!DockerAvailable || _configFile is null)
+        {
+            throw new InvalidOperationException("The S3 integration fixture is not running.");
+        }
+
+        Client.Dispose();
+        _factory?.Dispose();
+        _factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(b => b.UseEnvironment("Testing"));
+        Client = _factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("http://s3.us-east-1.amazonaws.com/"),
+        });
+        return Task.CompletedTask;
+    }
+
     private static bool IsDockerUnavailable(Exception ex)
         => ex is ArgumentException
            || ex is InvalidOperationException

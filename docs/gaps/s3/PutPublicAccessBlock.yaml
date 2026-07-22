@@ -1,12 +1,15 @@
 service: s3
 operation: PutPublicAccessBlock
-azure_equivalent: "(no equivalent — proxy returns 501 NotImplemented)"
-status: unsupported
+azure_equivalent: "Conditional container-metadata update (persisted compatibility intent only)"
+status: partial
 sub_features:
-  - name: "configuration storage"
+  - name: "four-flag configuration storage"
+    status: implemented
+    notes: "Persists the four boolean fields with bounded ETag/If-Match retry while preserving unrelated metadata; omitted fields default to false."
+  - name: "public-access enforcement"
     status: unsupported
-    notes: "See the matching Get* gap doc for the Azure-side reason."
+    notes: "Does not change Azure container access level, account AllowBlobPublicAccess, RBAC, SAS, or network policy."
 behavior_differences:
-  - "PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape."
+  - "The AWS document round-trips for compatibility but has no enforcement effect."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutPublicAccessBlock.html

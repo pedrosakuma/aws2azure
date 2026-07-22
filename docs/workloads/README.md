@@ -91,6 +91,7 @@ manifest independently and rejects stale generated output.
 
 Profile-specific adoption guidance:
 
+- [S3 metadata and compatibility controls](s3-metadata-compatibility.md)
 - [SQS standard messaging](sqs-standard-messaging.md)
 - [Kinesis basic record ingestion](kinesis-basic-record-ingestion.md)
 - [Kinesis single consumer per shard](kinesis-single-consumer-per-shard.md)

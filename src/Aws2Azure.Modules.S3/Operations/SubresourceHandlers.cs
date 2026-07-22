@@ -25,9 +25,10 @@ namespace Aws2Azure.Modules.S3.Operations;
 ///         DELETE → 204 idempotent.</item>
 /// </list>
 /// </summary>
-internal static class SubresourceHandlers
+internal static partial class SubresourceHandlers
 {
     private const long MaxTagBodyBytes = 64 * 1024;
+    private const int MetadataMutationMaxAttempts = 3;
     private const int MaxObjectTags = 10;
     private const int MaxBucketTags = 50;
     private const int MaxTagKeyLength = 128;
@@ -85,11 +86,18 @@ internal static class SubresourceHandlers
         // must also confirm the blob exists.
         if (RequiresObjectExistenceProbe(op))
         {
-            var (ok, err) = await ObjectExistsAsync(blob, bucket, key!, ct).ConfigureAwait(false);
+            var versionId = StringOrNullQuery(context, "versionId");
+            var (ok, err, resolvedVersionId) = await ObjectExistsAsync(
+                blob, bucket, key!, versionId, ct).ConfigureAwait(false);
             if (!ok)
             {
                 await S3ErrorMapping.WriteAsync(context, err!.Value).ConfigureAwait(false);
                 return;
+            }
+            if (op is S3Operation.GetObjectAcl or S3Operation.PutObjectAcl
+                && !string.IsNullOrEmpty(resolvedVersionId))
+            {
+                context.Response.Headers["x-amz-version-id"] = resolvedVersionId;
             }
         }
 
@@ -143,17 +151,14 @@ internal static class SubresourceHandlers
                     "ReplicationConfigurationNotFoundError", "replication configuration")).ConfigureAwait(false);
                 return;
             case S3Operation.GetBucketEncryption:
-                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchConfiguration(
-                    "ServerSideEncryptionConfigurationNotFoundError",
-                    "server side encryption configuration")).ConfigureAwait(false);
+                await GetBucketEncryptionAsync(context, blob, bucket, ct).ConfigureAwait(false);
                 return;
             case S3Operation.GetObjectLockConfiguration:
                 await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchConfiguration(
                     "ObjectLockConfigurationNotFoundError", "object lock configuration")).ConfigureAwait(false);
                 return;
             case S3Operation.GetPublicAccessBlock:
-                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchConfiguration(
-                    "NoSuchPublicAccessBlockConfiguration", "public access block configuration")).ConfigureAwait(false);
+                await GetPublicAccessBlockAsync(context, blob, bucket, ct).ConfigureAwait(false);
                 return;
             case S3Operation.GetBucketPolicy:
             case S3Operation.GetBucketPolicyStatus:
@@ -161,8 +166,7 @@ internal static class SubresourceHandlers
                     "NoSuchBucketPolicy", "bucket policy")).ConfigureAwait(false);
                 return;
             case S3Operation.GetBucketOwnershipControls:
-                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchConfiguration(
-                    "OwnershipControlsNotFoundError", "ownership controls configuration")).ConfigureAwait(false);
+                await GetBucketOwnershipControlsAsync(context, blob, bucket, ct).ConfigureAwait(false);
                 return;
 
             // ── Bucket configuration: GET 200 empty/default ──
@@ -182,7 +186,7 @@ internal static class SubresourceHandlers
                 await WriteXmlAsync(context, S3XmlWriter.EmptyConfiguration("NotificationConfiguration")).ConfigureAwait(false);
                 return;
             case S3Operation.GetBucketAccelerateConfiguration:
-                await WriteXmlAsync(context, S3XmlWriter.EmptyConfiguration("AccelerateConfiguration")).ConfigureAwait(false);
+                await WriteXmlAsync(context, S3XmlWriter.AccelerateConfigurationSuspended()).ConfigureAwait(false);
                 return;
 
             // ── Bucket configuration: PUT NotImplemented ──
@@ -190,16 +194,26 @@ internal static class SubresourceHandlers
             case S3Operation.PutBucketCors:
             case S3Operation.PutBucketWebsite:
             case S3Operation.PutBucketReplication:
-            case S3Operation.PutBucketEncryption:
             case S3Operation.PutBucketLogging:
-            case S3Operation.PutBucketRequestPayment:
             case S3Operation.PutObjectLockConfiguration:
-            case S3Operation.PutPublicAccessBlock:
             case S3Operation.PutBucketPolicy:
             case S3Operation.PutBucketNotificationConfiguration:
-            case S3Operation.PutBucketAccelerateConfiguration:
-            case S3Operation.PutBucketOwnershipControls:
                 await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NotImplemented(op)).ConfigureAwait(false);
+                return;
+            case S3Operation.PutBucketEncryption:
+                await PutBucketEncryptionAsync(context, blob, bucket, ct).ConfigureAwait(false);
+                return;
+            case S3Operation.PutBucketRequestPayment:
+                await PutBucketRequestPaymentAsync(context, ct).ConfigureAwait(false);
+                return;
+            case S3Operation.PutPublicAccessBlock:
+                await PutPublicAccessBlockAsync(context, blob, bucket, ct).ConfigureAwait(false);
+                return;
+            case S3Operation.PutBucketAccelerateConfiguration:
+                await PutBucketAccelerateConfigurationAsync(context, ct).ConfigureAwait(false);
+                return;
+            case S3Operation.PutBucketOwnershipControls:
+                await PutBucketOwnershipControlsAsync(context, blob, bucket, ct).ConfigureAwait(false);
                 return;
 
             // ── Bucket configuration: DELETE 204 idempotent ──
@@ -207,11 +221,17 @@ internal static class SubresourceHandlers
             case S3Operation.DeleteBucketCors:
             case S3Operation.DeleteBucketWebsite:
             case S3Operation.DeleteBucketReplication:
-            case S3Operation.DeleteBucketEncryption:
-            case S3Operation.DeletePublicAccessBlock:
             case S3Operation.DeleteBucketPolicy:
-            case S3Operation.DeleteBucketOwnershipControls:
                 context.Response.StatusCode = StatusCodes.Status204NoContent;
+                return;
+            case S3Operation.DeleteBucketEncryption:
+                await DeleteBucketEncryptionAsync(context, blob, bucket, ct).ConfigureAwait(false);
+                return;
+            case S3Operation.DeletePublicAccessBlock:
+                await DeletePublicAccessBlockAsync(context, blob, bucket, ct).ConfigureAwait(false);
+                return;
+            case S3Operation.DeleteBucketOwnershipControls:
+                await DeleteBucketOwnershipControlsAsync(context, blob, bucket, ct).ConfigureAwait(false);
                 return;
 
             // ── Object-scoped stubs ──
@@ -251,7 +271,10 @@ internal static class SubresourceHandlers
             return;
         }
 
-        using var response = await blob.GetBlobTagsAsync(bucket, key, ct).ConfigureAwait(false);
+        var (resolved, versionId) = await ResolveTaggingVersionIdAsync(
+            context, blob, bucket, key, S3Operation.GetObjectTagging, ct).ConfigureAwait(false);
+        if (!resolved) return;
+        using var response = await blob.GetBlobTagsAsync(bucket, key, versionId, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.GetObjectTagging)).ConfigureAwait(false);
@@ -260,6 +283,7 @@ internal static class SubresourceHandlers
 
         var xml = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         var tags = SafeParseTagSet(xml) ?? Array.Empty<S3XmlWriter.Tag>();
+        SetVersionIdHeader(context, response, versionId);
         await WriteXmlAsync(context, S3XmlWriter.Tagging(tags)).ConfigureAwait(false);
     }
 
@@ -280,12 +304,16 @@ internal static class SubresourceHandlers
         }
 
         var body = S3XmlWriter.AzureBlobTagsBody(tags!);
-        using var response = await blob.PutBlobTagsAsync(bucket, key, body, ct).ConfigureAwait(false);
+        var (resolved, versionId) = await ResolveTaggingVersionIdAsync(
+            context, blob, bucket, key, S3Operation.PutObjectTagging, ct).ConfigureAwait(false);
+        if (!resolved) return;
+        using var response = await blob.PutBlobTagsAsync(bucket, key, body, versionId, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.PutObjectTagging)).ConfigureAwait(false);
             return;
         }
+        SetVersionIdHeader(context, response, versionId);
         context.Response.StatusCode = StatusCodes.Status200OK;
     }
 
@@ -299,12 +327,16 @@ internal static class SubresourceHandlers
         }
 
         var body = S3XmlWriter.AzureBlobTagsBody(Array.Empty<S3XmlWriter.Tag>());
-        using var response = await blob.PutBlobTagsAsync(bucket, key, body, ct).ConfigureAwait(false);
+        var (resolved, versionId) = await ResolveTaggingVersionIdAsync(
+            context, blob, bucket, key, S3Operation.DeleteObjectTagging, ct).ConfigureAwait(false);
+        if (!resolved) return;
+        using var response = await blob.PutBlobTagsAsync(bucket, key, body, versionId, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.DeleteObjectTagging)).ConfigureAwait(false);
             return;
         }
+        SetVersionIdHeader(context, response, versionId);
         context.Response.StatusCode = StatusCodes.Status204NoContent;
     }
 
@@ -418,6 +450,40 @@ internal static class SubresourceHandlers
         return null;
     }
 
+    private static void SetVersionIdHeader(
+        HttpContext context, HttpResponseMessage response, string? requestedVersionId)
+    {
+        var versionId = FirstHeader(response, "x-ms-version-id") ?? requestedVersionId;
+        if (!string.IsNullOrEmpty(versionId))
+        {
+            context.Response.Headers["x-amz-version-id"] = versionId;
+        }
+    }
+
+    private static async Task<(bool Ok, string? VersionId)> ResolveTaggingVersionIdAsync(
+        HttpContext context,
+        BlobClient blob,
+        string bucket,
+        string key,
+        S3Operation operation,
+        CancellationToken ct)
+    {
+        var requestedVersionId = StringOrNullQuery(context, "versionId");
+        if (requestedVersionId is not null)
+        {
+            return (true, requestedVersionId);
+        }
+
+        using var head = await blob.HeadBlobAsync(bucket, key, versionId: null, ct).ConfigureAwait(false);
+        if (!head.IsSuccessStatusCode)
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(head, operation)).ConfigureAwait(false);
+            return (false, null);
+        }
+
+        return (true, FirstHeader(head, "x-ms-version-id"));
+    }
+
     private static string? FirstHeader(HttpResponseMessage response, string name)
     {
         if (response.Headers.TryGetValues(name, out var values))
@@ -513,16 +579,9 @@ internal static class SubresourceHandlers
         // Azure SetContainerMetadata REPLACES all metadata. Read the
         // existing metadata first and merge our tag entry so unrelated
         // metadata set by Azure-side tooling is preserved.
-        var metadata = await ReadExistingMetadataAsync(blob, bucket, S3Operation.PutBucketTagging, context, ct).ConfigureAwait(false);
-        if (metadata is null) return; // error already written
-        metadata[BucketTagsMetadataKey] = b64;
-
-        using var response = await blob.SetContainerMetadataAsync(bucket, metadata, ct).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
-        {
-            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.PutBucketTagging)).ConfigureAwait(false);
-            return;
-        }
+        if (!await MutateContainerMetadataAsync(
+                context, blob, bucket, S3Operation.PutBucketTagging, BucketTagsMetadataKey, b64, ct)
+            .ConfigureAwait(false)) return;
         context.Response.StatusCode = StatusCodes.Status204NoContent;
     }
 
@@ -531,16 +590,9 @@ internal static class SubresourceHandlers
     {
         // Read-merge-write: drop our tag entry but keep any unrelated
         // container metadata intact.
-        var metadata = await ReadExistingMetadataAsync(blob, bucket, S3Operation.DeleteBucketTagging, context, ct).ConfigureAwait(false);
-        if (metadata is null) return;
-        metadata.Remove(BucketTagsMetadataKey);
-
-        using var response = await blob.SetContainerMetadataAsync(bucket, metadata, ct).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
-        {
-            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.DeleteBucketTagging)).ConfigureAwait(false);
-            return;
-        }
+        if (!await MutateContainerMetadataAsync(
+                context, blob, bucket, S3Operation.DeleteBucketTagging, BucketTagsMetadataKey, null, ct)
+            .ConfigureAwait(false)) return;
         context.Response.StatusCode = StatusCodes.Status204NoContent;
     }
 
@@ -582,20 +634,9 @@ internal static class SubresourceHandlers
             return;
         }
 
-        // Read-merge-write so unrelated container metadata (e.g. bucket tags) is
-        // preserved — SetContainerMetadata replaces the whole bag. Same accepted
-        // last-writer-wins race as bucket tagging: concurrent metadata updates may
-        // drop each other (no ETag/If-Match guard); rare control-plane op.
-        var metadata = await ReadExistingMetadataAsync(blob, bucket, S3Operation.PutBucketVersioning, context, ct).ConfigureAwait(false);
-        if (metadata is null) return;
-        metadata[BucketVersioningMetadataKey] = status;
-
-        using var response = await blob.SetContainerMetadataAsync(bucket, metadata, ct).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
-        {
-            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.PutBucketVersioning)).ConfigureAwait(false);
-            return;
-        }
+        if (!await MutateContainerMetadataAsync(
+                context, blob, bucket, S3Operation.PutBucketVersioning, BucketVersioningMetadataKey, status, ct)
+            .ConfigureAwait(false)) return;
         context.Response.StatusCode = StatusCodes.Status200OK;
     }
 
@@ -898,22 +939,67 @@ internal static class SubresourceHandlers
         request.Headers.ContainsKey(name);
 
     /// <summary>
-    /// Reads the current container metadata so the caller can apply a
-    /// surgical change (add/remove a single entry) and write back the full
-    /// set without clobbering metadata set by external Azure-side tooling.
-    /// On Azure failure, writes the S3 error and returns null.
+    /// Applies one container-metadata key mutation with optimistic concurrency.
+    /// Azure replaces the whole metadata bag, so every attempt re-reads and
+    /// merges unrelated entries, then writes with If-Match. A 412 retries from
+    /// fresh state up to a small fixed bound.
     /// </summary>
-    private static async Task<Dictionary<string, string>?> ReadExistingMetadataAsync(
-        BlobClient blob, string bucket, S3Operation op, HttpContext context, CancellationToken ct)
+    private static async Task<bool> MutateContainerMetadataAsync(
+        HttpContext context,
+        BlobClient blob,
+        string bucket,
+        S3Operation op,
+        string metadataKey,
+        string? value,
+        CancellationToken ct)
     {
-        using var response = await blob.GetContainerPropertiesAsync(bucket, ct).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
+        for (var attempt = 0; attempt < MetadataMutationMaxAttempts; attempt++)
         {
-            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, op)).ConfigureAwait(false);
-            return null;
+            using var read = await blob.GetContainerMetadataAsync(bucket, ct).ConfigureAwait(false);
+            if (!read.IsSuccessStatusCode)
+            {
+                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(read, op)).ConfigureAwait(false);
+                return false;
+            }
+
+            var etag = read.Headers.ETag?.ToString();
+            if (string.IsNullOrWhiteSpace(etag))
+            {
+                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.MetadataUpdateConflict()).ConfigureAwait(false);
+                return false;
+            }
+
+            var metadata = new Dictionary<string, string>(
+                BlobClient.ReadContainerMetadata(read), StringComparer.Ordinal);
+            var changed = value is null
+                ? metadata.Remove(metadataKey)
+                : !metadata.TryGetValue(metadataKey, out var current)
+                    || !string.Equals(current, value, StringComparison.Ordinal);
+            if (value is not null)
+            {
+                metadata[metadataKey] = value;
+            }
+            if (!changed)
+            {
+                return true;
+            }
+
+            using var write = await blob.SetContainerMetadataAsync(bucket, metadata, etag, ct).ConfigureAwait(false);
+            if (write.IsSuccessStatusCode)
+            {
+                return true;
+            }
+            if (write.StatusCode == System.Net.HttpStatusCode.PreconditionFailed)
+            {
+                continue;
+            }
+
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(write, op)).ConfigureAwait(false);
+            return false;
         }
-        var existing = BlobClient.ReadContainerMetadata(response);
-        return new Dictionary<string, string>(existing, StringComparer.Ordinal);
+
+        await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.MetadataUpdateConflict()).ConfigureAwait(false);
+        return false;
     }
 
     private static async Task WriteXmlAsync(HttpContext context, string xml)
@@ -963,17 +1049,18 @@ internal static class SubresourceHandlers
         return resp.IsSuccessStatusCode;
     }
 
-    private static async Task<(bool ok, S3ErrorMapping.Mapping? err)> ObjectExistsAsync(
-        BlobClient blob, string bucket, string key, CancellationToken ct)
+    private static async Task<(bool ok, S3ErrorMapping.Mapping? err, string? versionId)> ObjectExistsAsync(
+        BlobClient blob, string bucket, string key, string? versionId, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(key) || !S3ObjectKey.IsValid(key))
         {
-            return (false, S3ErrorMapping.InvalidObjectKey());
+            return (false, S3ErrorMapping.InvalidObjectKey(), null);
         }
-        var uri = blob.BuildBlobUri(bucket, key);
-        using var req = new HttpRequestMessage(HttpMethod.Head, uri);
-        using var resp = await blob.SendBlobRequestAsync(req, ct).ConfigureAwait(false);
-        if (resp.IsSuccessStatusCode) return (true, null);
-        return (false, S3ErrorMapping.FromAzure(resp, S3Operation.HeadObject));
+        using var resp = await blob.HeadBlobAsync(bucket, key, versionId, ct).ConfigureAwait(false);
+        if (resp.IsSuccessStatusCode)
+        {
+            return (true, null, FirstHeader(resp, "x-ms-version-id") ?? versionId);
+        }
+        return (false, S3ErrorMapping.FromAzure(resp, S3Operation.HeadObject), null);
     }
 }

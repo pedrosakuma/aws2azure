@@ -19,6 +19,6 @@ sub_features:
     notes: "MFADelete is silently ignored / unsupported."
 behavior_differences:
   - "Stores the S3 bucket-level intent only; does not toggle account-level Azure Blob versioning (no control-plane). Operators must enable account versioning out-of-band for versionId retention to function (opt-in, documented per topology)."
-  - "Read-merge-write of container metadata is last-writer-wins (no If-Match), so concurrent PutBucketVersioning/PutBucketTagging may drop each other; rare control-plane op."
+  - "Container metadata updates use bounded ETag/If-Match retry and re-merge fresh metadata on conflict so concurrent tagging/versioning/compatibility-intent updates do not silently clobber unrelated entries."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketVersioning.html

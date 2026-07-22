@@ -1,12 +1,18 @@
 service: s3
 operation: PutBucketEncryption
-azure_equivalent: "(no equivalent — proxy returns 501 NotImplemented)"
-status: unsupported
+azure_equivalent: "Conditional container-metadata update for SSE-S3 intent"
+status: partial
 sub_features:
-  - name: "configuration storage"
+  - name: "SSE-S3 AES256 intent"
+    status: implemented
+    notes: "Accepts one AES256 rule without KMS key material or BucketKeyEnabled=true and persists it with bounded ETag/If-Match retry."
+  - name: "SSE-KMS"
     status: unsupported
-    notes: "See the matching Get* gap doc for the Azure-side reason."
+    notes: "aws:kms, KMSMasterKeyID, and bucket keys return 501 NotImplemented."
+  - name: "SSE-C"
+    status: unsupported
+    notes: "Customer-provided keys remain unsupported on object operations; BlockedEncryptionTypes rules are recognized but return 501 because the proxy cannot enforce them."
 behavior_differences:
-  - "PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape."
+  - "The AES256 document records application intent only and does not alter Azure Storage encryption configuration."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketEncryption.html

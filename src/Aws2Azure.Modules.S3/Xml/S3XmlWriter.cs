@@ -797,4 +797,73 @@ internal static class S3XmlWriter
         }
         return sb.ToString();
     }
+
+    public static string OwnershipControls(string objectOwnership)
+    {
+        var sb = new StringBuilder(128);
+        using (var writer = XmlWriter.Create(sb, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("OwnershipControls", S3Namespace);
+            writer.WriteStartElement("Rule");
+            writer.WriteElementString("ObjectOwnership", objectOwnership);
+            writer.WriteEndElement();
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        return sb.ToString();
+    }
+
+    public static string PublicAccessBlockConfiguration(
+        bool blockPublicAcls,
+        bool ignorePublicAcls,
+        bool blockPublicPolicy,
+        bool restrictPublicBuckets)
+    {
+        var sb = new StringBuilder(192);
+        using (var writer = XmlWriter.Create(sb, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("PublicAccessBlockConfiguration", S3Namespace);
+            writer.WriteElementString("BlockPublicAcls", XmlConvert.ToString(blockPublicAcls));
+            writer.WriteElementString("IgnorePublicAcls", XmlConvert.ToString(ignorePublicAcls));
+            writer.WriteElementString("BlockPublicPolicy", XmlConvert.ToString(blockPublicPolicy));
+            writer.WriteElementString("RestrictPublicBuckets", XmlConvert.ToString(restrictPublicBuckets));
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        return sb.ToString();
+    }
+
+    public static string BucketEncryptionAes256()
+    {
+        var sb = new StringBuilder(192);
+        using (var writer = XmlWriter.Create(sb, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("ServerSideEncryptionConfiguration", S3Namespace);
+            writer.WriteStartElement("Rule");
+            writer.WriteStartElement("ApplyServerSideEncryptionByDefault");
+            writer.WriteElementString("SSEAlgorithm", "AES256");
+            writer.WriteEndElement();
+            writer.WriteEndElement();
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        return sb.ToString();
+    }
+
+    public static string AccelerateConfigurationSuspended()
+    {
+        var sb = new StringBuilder(96);
+        using (var writer = XmlWriter.Create(sb, Settings))
+        {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("AccelerateConfiguration", S3Namespace);
+            writer.WriteElementString("Status", "Suspended");
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        return sb.ToString();
+    }
 }

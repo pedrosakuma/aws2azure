@@ -8,6 +8,7 @@ public class S3ErrorMappingTests
     [Theory]
     [InlineData(404, "ContainerNotFound", 404, "NoSuchBucket")]
     [InlineData(404, "BlobNotFound", 404, "NoSuchKey")]
+    [InlineData(404, "BlobVersionNotFound", 404, "NoSuchVersion")]
     [InlineData(412, "ConditionNotMet", 412, "PreconditionFailed")]
     [InlineData(416, "InvalidRange", 416, "InvalidRange")]
     [InlineData(400, "InvalidHeaderValue", 400, "InvalidArgument")]

@@ -227,25 +227,33 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | CreateMultipartUpload | — | UploadIds expire after 7 days, matching Azure's uncommitted-block GC window. Late UploadPart / Complete / Abort calls surface NoSuchUpload. |
 | s3 | DeleteBucket | ✅ | Azure container delete is asynchronous; subsequent CreateContainer on the same name may return ContainerBeingDeleted (mapped to OperationAborted). |
 | s3 | DeleteBucket | ✅ | S3 BucketNotEmpty is mapped from Azure ConditionNotMet/Conflict cases that surface only when the container retention policy intervenes. |
+| s3 | DeleteBucketEncryption | — | Deleting the intent does not disable or reconfigure Azure encryption. |
+| s3 | DeleteBucketEncryption | — | A subsequent GetBucketEncryption returns the synthetic default SSE-S3 AES256 configuration. |
+| s3 | DeleteBucketOwnershipControls | — | The operation clears persisted proxy intent only. |
+| s3 | DeleteBucketTagging | — | Azure replaces the full metadata bag; the proxy uses bounded ETag/If-Match retry and removes only its bucket-tagging key. |
 | s3 | DeleteObject | ✅ | Soft-delete behavior depends on the configured Azure storage account; the proxy does not toggle it per-request. |
 | s3 | DeleteObject | ✅ | Presigned DELETE is accepted (see PresignedUrl.yaml). |
 | s3 | DeleteObjectTagging | — | Returns 204 No Content matching the S3 spec. |
+| s3 | DeleteObjectTagging | — | Version selection requires account-level Blob versioning enabled out-of-band. |
+| s3 | DeleteObjectTagging | — | Azure BlobVersionNotFound maps to S3 NoSuchVersion. |
 | s3 | DeleteObjects | ✅ | Fanned out as parallel single-blob DELETEs (cap of 16 concurrent) — no transactional guarantee across keys. |
 | s3 | DeleteObjects | ✅ | Missing key is reported as Deleted (matching S3 idempotency); missing bucket short-circuits the fan-out with a top-level NoSuchBucket error. |
 | s3 | DeleteObjects | ✅ | Request body is capped at 2 MiB and Content-MD5 (or x-amz-sdk-checksum-algorithm) is required; mismatched digests surface as BadDigest. |
 | s3 | DeleteObjects | ✅ | Returns top-level MalformedXML when <VersionId> is present in the request body (no versioning support). |
-| s3 | GetBucketAccelerateConfiguration | — | GET returns 200 with an empty <AccelerateConfiguration/> document, matching the S3 'never configured' wire shape. |
+| s3 | DeletePublicAccessBlock | — | The operation clears persisted proxy intent only. |
+| s3 | GetBucketAccelerateConfiguration | — | GET returns an explicit Suspended state rather than a topology-dependent acceleration claim. |
 | s3 | GetBucketAcl | — | Azure Blob Storage's authorisation model (RBAC + Shared Key + SAS) does not map onto S3 canonical-user grants. The proxy reports the ownership-only shape that matches BucketOwnerEnforced ObjectOwnership. |
 | s3 | GetBucketCors | — | GET returns HTTP 404 with code NoSuchCORSConfiguration so clients receive the same shape as a never-configured S3 bucket instead of InternalError. |
-| s3 | GetBucketEncryption | — | GET returns HTTP 404 with code ServerSideEncryptionConfigurationNotFoundError so clients receive the same shape as a never-configured S3 bucket instead of InternalError. |
+| s3 | GetBucketEncryption | — | AES256 is compatibility intent only. Azure encrypts data at rest according to storage-account settings, not this metadata value. |
+| s3 | GetBucketEncryption | — | When no explicit intent is stored, the response reports the AWS default SSE-S3 AES256 configuration. |
 | s3 | GetBucketLifecycleConfiguration | — | GET returns HTTP 404 with code NoSuchLifecycleConfiguration so clients receive the same shape as a never-configured S3 bucket instead of InternalError. |
 | s3 | GetBucketLogging | — | GET returns 200 with an empty <BucketLoggingStatus/> document, matching the S3 'never configured' wire shape. |
 | s3 | GetBucketNotificationConfiguration | — | GET returns 200 with an empty <NotificationConfiguration/> document, matching the S3 'never configured' wire shape. |
-| s3 | GetBucketOwnershipControls | — | GET returns HTTP 404 with code OwnershipControlsNotFoundError so clients receive the same shape as a never-configured S3 bucket instead of InternalError. |
+| s3 | GetBucketOwnershipControls | — | A missing intent returns 404 OwnershipControlsNotFoundError. A present intent is not an Azure authorization control. |
 | s3 | GetBucketPolicy | — | GET returns HTTP 404 with code NoSuchBucketPolicy so clients receive the same shape as a never-configured S3 bucket instead of InternalError. |
 | s3 | GetBucketPolicyStatus | — | GET returns HTTP 404 with code NoSuchBucketPolicy so clients receive the same shape as a never-configured S3 bucket instead of InternalError. |
 | s3 | GetBucketReplication | — | GET returns HTTP 404 with code ReplicationConfigurationNotFoundError so clients receive the same shape as a never-configured S3 bucket instead of InternalError. |
-| s3 | GetBucketRequestPayment | — | GET returns 200 with <RequestPaymentConfiguration> with <Payer>BucketOwner</Payer> (S3 default). |
+| s3 | GetBucketRequestPayment | — | GET deterministically returns 200 with <Payer>BucketOwner</Payer>; Requester Pays is never activated. |
 | s3 | GetBucketTagging | — | Bucket tags survive process restarts because they live on the container metadata, but they are invisible to any Azure-native tooling that does not know about the aws2azurebuckettags key. |
 | s3 | GetBucketVersioning | ✅ | GET returns the per-bucket toggle persisted by PutBucketVersioning. Azure Blob versioning itself is account-scoped: actual version retention requires account-level versioning enabled out-of-band by the operator. |
 | s3 | GetBucketVersioning | ✅ | MFADelete is never reported (not supported). |
@@ -258,12 +266,16 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | GetObject | ✅ | NoSuchBucket envelopes omit the informational <BucketName> element real S3 includes. [conformance:nosuchbucket-get-object::missing-field:BucketName] |
 | s3 | GetObject | ✅ | NoSuchKey envelopes omit the informational <Key> element real S3 includes. [conformance:nosuchkey-get-object::missing-field:Key] |
 | s3 | GetObject | ✅ | PreconditionFailed envelopes omit the informational <Condition> element (e.g. <Condition>If-Match</Condition>) real S3 includes. [conformance:precondition-failed-get::missing-field:Condition] |
+| s3 | GetObjectAcl | — | The versionId selects the object existence check, but ACL grants remain synthetic owner-only state. |
+| s3 | GetObjectAcl | — | Azure BlobVersionNotFound maps to S3 NoSuchVersion. |
 | s3 | GetObjectLegalHold | ✅ | Verified against real Azure only - Azurite does not support legal hold. |
 | s3 | GetObjectLockConfiguration | — | GET returns HTTP 404 with code ObjectLockConfigurationNotFoundError so clients receive the same shape as a never-configured S3 bucket instead of InternalError. |
 | s3 | GetObjectRetention | ✅ | Mode mapping: GOVERNANCE<->unlocked, COMPLIANCE<->locked. Azure locked is irreversible and extend-only, like S3 COMPLIANCE. |
 | s3 | GetObjectRetention | ✅ | Verified against real Azure only - Azurite does not support immutability policies. |
 | s3 | GetObjectTagging | — | Returns an empty TagSet (200) when no tags are set, matching Azure's behaviour. Azure surfaces 'no tags' as an empty set rather than a NoSuchTagSet error. |
-| s3 | GetPublicAccessBlock | — | GET returns HTTP 404 with code NoSuchPublicAccessBlockConfiguration so clients receive the same shape as a never-configured S3 bucket instead of InternalError. |
+| s3 | GetObjectTagging | — | Version selection depends on Azure Blob versioning being enabled by the operator. |
+| s3 | GetObjectTagging | — | Azure BlobVersionNotFound maps to S3 NoSuchVersion. |
+| s3 | GetPublicAccessBlock | — | A missing intent returns 404 NoSuchPublicAccessBlockConfiguration; a present intent is not an Azure access-control boundary. |
 | s3 | HeadBucket | — | 404 responses include x-amz-error-code: NoSuchBucket so SDKs can map the error without a body (HEAD has none). |
 | s3 | HeadObject | ✅ | 404 responses include x-amz-error-code: NoSuchKey and an empty body (HEAD spec). |
 | s3 | HeadObject | ✅ | 412 PreconditionFailed (failed If-Match) responses include x-amz-error-code: PreconditionFailed and an empty body (HEAD spec). |
@@ -289,31 +301,35 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | PresignedUrl | — | Body content for presigned PUT is not signature-protected (UNSIGNED-PAYLOAD) — identical to AWS S3 semantics. |
 | s3 | PresignedUrl | — | Tampering with any signed query parameter (including X-Amz-Date, X-Amz-Expires, X-Amz-Credential, X-Amz-SignedHeaders, or the path/method) yields 403 SignatureDoesNotMatch. |
 | s3 | PresignedUrl | — | Expired URLs (now > X-Amz-Date + X-Amz-Expires) yield 403 AccessDenied (mirrors S3's 'Request has expired' error). |
-| s3 | PutBucketAccelerateConfiguration | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
+| s3 | PutBucketAccelerateConfiguration | — | Suspended is stable but not persisted because it is the only representable state. |
 | s3 | PutBucketCors | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
-| s3 | PutBucketEncryption | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
+| s3 | PutBucketEncryption | — | The AES256 document records application intent only and does not alter Azure Storage encryption configuration. |
 | s3 | PutBucketLifecycleConfiguration | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
 | s3 | PutBucketLogging | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
 | s3 | PutBucketNotificationConfiguration | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
-| s3 | PutBucketOwnershipControls | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
+| s3 | PutBucketOwnershipControls | — | This is an intent surface, not an enforcement surface. Azure account/container authorization remains operator-managed. |
 | s3 | PutBucketPolicy | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
 | s3 | PutBucketReplication | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
-| s3 | PutBucketRequestPayment | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
-| s3 | PutBucketTagging | — | The metadata write replaces all container metadata on each PUT — the proxy uses no other container-metadata keys today. |
+| s3 | PutBucketRequestPayment | — | BucketOwner is stable but not persisted because it is the only representable state. |
+| s3 | PutBucketTagging | — | Azure replaces the full metadata bag; the proxy uses bounded ETag/If-Match retry and re-merges every attempt so unrelated Azure metadata and other proxy intents are preserved. |
 | s3 | PutBucketVersioning | ✅ | Stores the S3 bucket-level intent only; does not toggle account-level Azure Blob versioning (no control-plane). Operators must enable account versioning out-of-band for versionId retention to function (opt-in, documented per topology). |
-| s3 | PutBucketVersioning | ✅ | Read-merge-write of container metadata is last-writer-wins (no If-Match), so concurrent PutBucketVersioning/PutBucketTagging may drop each other; rare control-plane op. |
+| s3 | PutBucketVersioning | ✅ | Container metadata updates use bounded ETag/If-Match retry and re-merge fresh metadata on conflict so concurrent tagging/versioning/compatibility-intent updates do not silently clobber unrelated entries. |
 | s3 | PutBucketWebsite | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
 | s3 | PutObject | ✅ | ETag value comes from Azure (hex of MD5 for single-part uploads); shape matches S3 but bytes differ from a re-uploaded object. |
 | s3 | PutObject | ✅ | PUT always overwrites an existing blob, matching S3 default semantics. |
 | s3 | PutObject | ✅ | Concrete-ETag preconditions (If-Match / If-None-Match with a value other than '*') return 501 NotImplemented: proxy-translated S3 ETags do not round-trip back to Azure's raw ETag space, and supporting optimistic concurrency would require a HEAD-then-PUT cycle that is not yet implemented. The '*' sentinel is honored (forwarded to Azure). |
 | s3 | PutObject | ✅ | Presigned PUT is accepted (see PresignedUrl.yaml). Body integrity is not signature-protected (UNSIGNED-PAYLOAD) — identical to AWS S3 semantics. |
+| s3 | PutObjectAcl | — | The versionId selects the object existence check only; Azure stores no S3 ACL document. |
+| s3 | PutObjectAcl | — | Azure BlobVersionNotFound maps to S3 NoSuchVersion. |
 | s3 | PutObjectLegalHold | ✅ | Verified against real Azure only - Azurite does not support legal hold. |
 | s3 | PutObjectLockConfiguration | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
 | s3 | PutObjectRetention | ✅ | Azure locked policies are irreversible and extend-only; bypassing/shortening COMPLIANCE is rejected by Azure as in S3. |
 | s3 | PutObjectRetention | ✅ | Requires the storage account to have version-level immutability + blob versioning enabled (operator-provisioned via ARM); opt-in per topology. |
 | s3 | PutObjectRetention | ✅ | Verified against real Azure only - Azurite does not support immutability policies. |
 | s3 | PutObjectTagging | — | AWS uses 200 OK with empty body; the proxy matches that. |
-| s3 | PutPublicAccessBlock | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
+| s3 | PutObjectTagging | — | Version selection depends on Azure Blob versioning being enabled by the operator. |
+| s3 | PutObjectTagging | — | Azure BlobVersionNotFound maps to S3 NoSuchVersion. |
+| s3 | PutPublicAccessBlock | — | The AWS document round-trips for compatibility but has no enforcement effect. |
 | s3 | UploadPart | — | Block IDs use the fixed-width layout b{nonce16hex}p{partNumber5d} (base64-encoded) so all parts of a blob share a constant length, satisfying Azure's per-blob block-ID uniformity rule. |
 | s3 | UploadPart | — | Part numbers must be in [1, 10000] (S3 limit). Azure supports up to 50,000 blocks per blob — surplus capacity is unused. |
 | s3 | UploadPartCopy | — | Per-part ETag is synthesised from the (uploadId, partNumber) pair (same algorithm ListParts uses), NOT the MD5 of the copied bytes. Azure's Put Block From URL response only includes Content-MD5 when the request supplied x-ms-source-content-md5; otherwise it returns x-ms-content-crc64, which has no S3 equivalent. The synthetic ETag is stable per (uploadId, partNumber) and is what the proxy expects to see echoed back in CompleteMultipartUpload — but it is NOT a content hash and must not be compared with the per-part ETag returned by a non-copy UploadPart. |
