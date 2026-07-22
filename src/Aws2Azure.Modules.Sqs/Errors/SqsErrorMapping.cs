@@ -127,6 +127,11 @@ public static class SqsErrorMapping
         new(StatusCodes.Status403Forbidden, "AWS.SimpleQueueService.PurgeQueueInProgress",
             $"Only one PurgeQueue operation on {queueName} is allowed every 60 seconds.");
 
+    public static Mapping PurgeStateCapacityExceeded() =>
+        new(StatusCodes.Status503ServiceUnavailable, "ServiceUnavailable",
+            "aws2azure: the bounded PurgeQueue cooldown tracker is full; retry after the 60-second cooldown window.",
+            SqsErrorResponse.FaultType.Receiver);
+
     public static Mapping InvalidIdFormat(string id) =>
         new(StatusCodes.Status400BadRequest, "InvalidIdFormat",
             $"The receipt handle '{id}' is not a valid format.");

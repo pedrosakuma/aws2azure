@@ -345,7 +345,7 @@ public sealed class AmqpReceiveMessageHandlersTests
         // the application-properties carry the reason / description SB
         // stamps on dead-letter.
         var payload = EncodeMessage("dlq-payload", groupId: null,
-            deadLetterSource: "orders",
+            deadLetterSource: "orders/$DeadLetterQueue",
             deadLetterReason: "MaxDeliveryCountExceeded",
             deadLetterErrorDescription: "Message could not be consumed after 10 attempts.");
         await using var harness = await TestHarness.OpenAsync(QueueName,

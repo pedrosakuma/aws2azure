@@ -21,6 +21,16 @@ internal static class ServiceBusSessionFilter
     public const string FilterSymbol = "com.microsoft:session-filter";
 
     /// <summary>
+    /// Service Bus AMQP described-type code for a session filter value.
+    /// The broker requires the map value to be
+    /// <c>described(0x000001370000000C, string|null)</c>; a bare string is
+    /// accepted by some emulators and older clients but real Service Bus can
+    /// leave AcceptNextSession waiting because it does not recognise that
+    /// filter shape.
+    /// </summary>
+    public const ulong FilterDescriptor = 0x0000_0137_0000_000CUL;
+
+    /// <summary>
     /// Maximum session-id length we will accept before refusing to
     /// encode. Service Bus enforces a 128-char limit on session-id; we
     /// reject anything larger to keep <see cref="AmqpSource.Write"/>'s
@@ -52,9 +62,10 @@ internal static class ServiceBusSessionFilter
                 nameof(sessionId));
         }
 
-        // Worst-case sizing: key symbol header(2) + symbol body + value
-        // string header(5) + UTF-8 bytes (up to 4 per UTF-16 char) + padding.
-        var valBytes = (sessionId?.Length ?? 0) * 4 + 5;
+        // Worst-case sizing: key symbol header(2) + symbol body + described
+        // marker/descriptor + value string header(5) + UTF-8 bytes (up to
+        // 4 per UTF-16 char) + padding.
+        var valBytes = 1 + 9 + (sessionId?.Length ?? 0) * 4 + 5;
         var elementsCap = 2 + FilterSymbol.Length      // key sym8
                         + valBytes;                    // value (string or null)
         Span<byte> elements = stackalloc byte[elementsCap];
@@ -62,6 +73,10 @@ internal static class ServiceBusSessionFilter
 
         AmqpVariableWriter.WriteSymbol(elements[o..], FilterSymbol, out var keyLen);
         o += keyLen;
+
+        elements[o++] = AmqpFormatCode.Described;
+        AmqpPrimitiveWriter.WriteULong(elements[o..], FilterDescriptor, out var descriptorLen);
+        o += descriptorLen;
 
         if (sessionId is null)
         {

@@ -57,7 +57,7 @@ internal static class AmqpMessageTranslator
         // DeadLetterErrorDescription). Surface them as system attributes
         // so AWS SDK clients can distinguish DLQ messages and read why
         // each was dead-lettered.
-        var deadLetterSource = annotations?.DeadLetterSource;
+        var deadLetterSource = NormalizeDeadLetterSource(annotations?.DeadLetterSource);
         string? deadLetterReason = null;
         string? deadLetterDescription = null;
         if (!string.IsNullOrEmpty(deadLetterSource))
@@ -208,6 +208,16 @@ internal static class AmqpMessageTranslator
                 Add("Aws2Azure-DeadLetterErrorDescription", deadLetterDescription!);
         }
         return dict.Count == 0 ? null : dict;
+    }
+
+    private static string? NormalizeDeadLetterSource(string? source)
+    {
+        if (string.IsNullOrWhiteSpace(source)) return null;
+        var normalized = source.Trim('/');
+        var slash = normalized.IndexOf('/');
+        if (slash >= 0)
+            normalized = normalized[..slash];
+        return normalized.Length == 0 ? null : Uri.UnescapeDataString(normalized);
     }
 
 }

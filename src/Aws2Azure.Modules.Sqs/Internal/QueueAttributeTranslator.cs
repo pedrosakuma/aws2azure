@@ -182,7 +182,8 @@ internal static class QueueAttributeTranslator
             // boto3 / AWSSDK expect, so clients that parse it round-trip
             // without surprises. maxReceiveCount falls back to SB's default
             // when not stored on the queue.
-            var arn = "arn:aws-azure:sqs:azure-sb::" + props.ForwardDeadLetteredMessagesTo;
+            var arn = "arn:aws:sqs:us-east-1:" + QueueUrlBuilder.PlaceholderAccountId +
+                      ":" + props.ForwardDeadLetteredMessagesTo;
             var max = (props.MaxDeliveryCount ?? 10).ToString(CultureInfo.InvariantCulture);
             d["RedrivePolicy"] = "{\"deadLetterTargetArn\":\"" + arn + "\",\"maxReceiveCount\":" + max + "}";
         }

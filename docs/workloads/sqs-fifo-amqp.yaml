@@ -1,0 +1,48 @@
+schema_version: 1
+id: sqs-fifo-amqp
+version: 1
+name: SQS FIFO messaging over AMQP
+minimum_proxy_version: 0.1.0
+real_azure_seal_max_age_days: 90
+operations:
+  - sqs:CreateQueue
+  - sqs:SendMessage
+  - sqs:SendMessageBatch
+  - sqs:ReceiveMessage
+  - sqs:DeleteMessage
+  - sqs:DeleteMessageBatch
+  - sqs:ChangeMessageVisibility
+  - sqs:DeleteQueue
+requirements:
+  - sqs_fifo_amqp
+accepted_partial_operations: []
+accepted_design_gaps:
+  - "sqs:FIFO ordering requires the AMQP transport"
+  - "sqs:Transport-dependent capability differences"
+required_sub_feature_seals:
+  - operation: sqs:SendMessage
+    sub_feature: MessageDeduplicationId (FIFO)
+  - operation: sqs:SendMessage
+    sub_feature: MessageGroupId (FIFO)
+  - operation: sqs:SendMessageBatch
+    sub_feature: Per-entry MessageDeduplicationId / MessageGroupId (FIFO)
+  - operation: sqs:ReceiveMessage
+    sub_feature: FIFO MessageGroupId session receive
+evidence:
+  qualification_artifact: ""
+  required_scenarios:
+    - fifo-ordering
+    - fifo-deduplication
+    - fifo-batch
+    - connection-affine-settlement
+    - concurrency
+    - restart
+    - bounded-session-state
+    - rollback
+  required_real_azure_scenarios:
+    - fifo-ordering
+    - fifo-deduplication
+    - fifo-batch
+    - connection-affine-settlement
+    - restart
+    - rollback

@@ -26,6 +26,11 @@ internal static class AmqpErrorMapper
         {
             AmqpLinkException link => SqsErrorMapping.FromAmqp(link.Kind, link.PeerCondition, operation),
             AmqpConnectionException conn => SqsErrorMapping.FromAmqp(conn.Kind, conn.PeerCondition, operation),
+            SessionReceiverLimitExceededException => new SqsErrorMapping.Mapping(
+                Microsoft.AspNetCore.Http.StatusCodes.Status503ServiceUnavailable,
+                "ServiceUnavailable",
+                "aws2azure: the bounded FIFO session receiver pool is full; settle or allow idle sessions to expire before retrying.",
+                SqsErrorResponse.FaultType.Receiver),
             _ => SqsErrorMapping.InternalError($"aws2azure: AMQP {operation} failed."),
         };
     }

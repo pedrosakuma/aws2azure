@@ -111,6 +111,50 @@ workload_patterns:
     guidance: >-
       Configure transport: Amqp and test the full receive/delete lifecycle under
       concurrency before production.
+  - id: sqs_fifo_amqp
+    name: FIFO queue messaging over AMQP
+    compatibility: conditional
+    summary: >-
+      FIFO ordering, explicit deduplication, ordered batches, and
+      connection-affine settlement are isolated from standard-queue GA.
+    operations:
+      - CreateQueue
+      - SendMessage
+      - SendMessageBatch
+      - ReceiveMessage
+      - DeleteMessage
+      - DeleteMessageBatch
+      - ChangeMessageVisibility
+      - DeleteQueue
+    design_gaps:
+      - FIFO ordering requires the AMQP transport
+      - Transport-dependent capability differences
+    guidance: >-
+      Configure transport: Amqp. Treat restart or session-link eviction as a
+      stale receipt-handle boundary and wait for lock expiry before receiving
+      the group again.
+  - id: sqs_dlq_redrive
+    name: Dead-letter and redrive
+    compatibility: conditional
+    summary: >-
+      RedrivePolicy, receive-to-DLQ flow, attribution, and restart-safe source
+      pagination require separate real-Azure qualification.
+    operations:
+      - CreateQueue
+      - SetQueueAttributes
+      - GetQueueAttributes
+      - ListDeadLetterSourceQueues
+      - SendMessage
+      - ReceiveMessage
+      - ChangeMessageVisibility
+      - DeleteMessage
+      - DeleteQueue
+    design_gaps:
+      - No AWS region / account namespace
+      - Transport-dependent capability differences
+    guidance: >-
+      Validate the complete source-to-target redrive path and synthetic ARN
+      handling in the deployment namespace.
   - id: sqs_hard_purge
     name: Hard queue purge
     compatibility: conditional

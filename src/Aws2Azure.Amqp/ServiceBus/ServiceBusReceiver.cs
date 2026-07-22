@@ -25,6 +25,8 @@ namespace Aws2Azure.Amqp.ServiceBus;
 /// </summary>
 internal sealed class ServiceBusReceiver : IAsyncDisposable
 {
+    internal const int MaxTrackedInFlight = 1024;
+
     /// <summary>
     /// AMQP error condition Service Bus expects on a <c>rejected</c>
     /// disposition that should route the message to the entity's DLQ.
@@ -32,7 +34,8 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     private const string DeadLetterCondition = "com.microsoft:dead-letter";
 
     private readonly AmqpLink _link;
-    private readonly ConcurrentDictionary<Guid, ServiceBusReceivedMessage> _inFlight = new();
+    private readonly ConcurrentDictionary<Guid, InFlightDelivery> _inFlight = new();
+    private int _trackedInFlight;
     private int _disposed;
 
     internal ServiceBusReceiver(AmqpLink link, string queueName)
@@ -81,11 +84,13 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     /// <see cref="CompleteAsync(Guid, CancellationToken)"/> /
     /// <see cref="AbandonAsync(Guid, CancellationToken)"/> /
     /// <see cref="DeadLetterAsync(Guid, string?, string?, CancellationToken)"/>.
-    /// Cap: callers must settle (or invalidate the receiver) within the
-    /// queue's lock duration; this slice does no time-based eviction.
+    /// Entries are opportunistically pruned after their broker lock expires
+    /// and the receiver reserves at most <see cref="MaxTrackedInFlight"/>
+    /// delivery slots, bounding state even when clients abandon receipt
+    /// handles without settlement.
     /// </para>
     /// </summary>
-    public int InFlightCount => _inFlight.Count;
+    public int InFlightCount => Volatile.Read(ref _trackedInFlight);
 
     /// <summary>
     /// Receives up to <paramref name="maxMessages"/> messages, blocking
@@ -117,9 +122,34 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        var deliveries = await _link.ReceiveBatchAsync(maxMessages, maxWait, tailWait, cancellationToken).ConfigureAwait(false);
-        if (deliveries.Count == 0) return Array.Empty<ServiceBusReceivedMessage>();
+        PruneExpired(DateTimeOffset.UtcNow);
+        var reserved = ReserveSlots(maxMessages);
+        if (reserved == 0) return Array.Empty<ServiceBusReceivedMessage>();
+
+        IReadOnlyList<AmqpIncomingDelivery> deliveries;
+        try
+        {
+            deliveries = await _link
+                .ReceiveBatchAsync(reserved, maxWait, tailWait, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            ReleaseSlots(reserved);
+            throw;
+        }
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            ReleaseSlots(reserved);
+            throw new ObjectDisposedException(nameof(ServiceBusReceiver));
+        }
+        if (deliveries.Count == 0)
+        {
+            ReleaseSlots(reserved);
+            return Array.Empty<ServiceBusReceivedMessage>();
+        }
         var result = new ServiceBusReceivedMessage[deliveries.Count];
+        var retained = 0;
         for (var i = 0; i < deliveries.Count; i++)
         {
             var msg = new ServiceBusReceivedMessage(deliveries[i]);
@@ -129,8 +159,13 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
             // deliveries or peers that use a non-GUID tag are still
             // returned to the caller but cannot be looked up later.
             if (msg.LockToken is { } token)
-                _inFlight[token] = msg;
+            {
+                var expiresAt = msg.Annotations?.LockedUntil ?? DateTimeOffset.UtcNow.AddMinutes(5);
+                if (_inFlight.TryAdd(token, new InFlightDelivery(msg, expiresAt)))
+                    retained++;
+            }
         }
+        ReleaseSlots(reserved - retained);
         return result;
     }
 
@@ -144,8 +179,9 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(message);
         ThrowIfDisposed();
-        if (message.LockToken is { } token && !_inFlight.TryRemove(token, out _))
-            return Task.CompletedTask;
+        if (message.LockToken is { } token)
+            return SettleAsync(token, message.Delivery, static (link, delivery, ct) =>
+                link.AcceptAsync(delivery, ct), cancellationToken);
         return _link.AcceptAsync(message.Delivery, cancellationToken);
     }
 
@@ -159,9 +195,10 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     public async Task<bool> CompleteAsync(Guid lockToken, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        if (!_inFlight.TryRemove(lockToken, out var message)) return false;
-        await _link.AcceptAsync(message.Delivery, cancellationToken).ConfigureAwait(false);
-        return true;
+        return await SettleAsync(
+            lockToken,
+            static (link, delivery, ct) => link.AcceptAsync(delivery, ct),
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -174,8 +211,9 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(message);
         ThrowIfDisposed();
-        if (message.LockToken is { } token && !_inFlight.TryRemove(token, out _))
-            return Task.CompletedTask;
+        if (message.LockToken is { } token)
+            return SettleAsync(token, message.Delivery, static (link, delivery, ct) =>
+                link.ModifyAsync(delivery, deliveryFailed: true, undeliverableHere: null, ct), cancellationToken);
         return _link.ModifyAsync(message.Delivery, deliveryFailed: true, undeliverableHere: null, cancellationToken);
     }
 
@@ -183,9 +221,11 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     public async Task<bool> AbandonAsync(Guid lockToken, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        if (!_inFlight.TryRemove(lockToken, out var message)) return false;
-        await _link.ModifyAsync(message.Delivery, deliveryFailed: true, undeliverableHere: null, cancellationToken).ConfigureAwait(false);
-        return true;
+        return await SettleAsync(
+            lockToken,
+            static (link, delivery, ct) =>
+                link.ModifyAsync(delivery, deliveryFailed: true, undeliverableHere: null, ct),
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -208,8 +248,8 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(message);
         ThrowIfDisposed();
-        if (message.LockToken is { } token && !_inFlight.TryRemove(token, out _))
-            return Task.CompletedTask;
+        if (message.LockToken is { } token)
+            return DeadLetterTrackedAsync(token, reason, description, cancellationToken);
         return RejectInternal(message.Delivery, reason, description, cancellationToken);
     }
 
@@ -221,9 +261,19 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        if (!_inFlight.TryRemove(lockToken, out var message)) return false;
-        await RejectInternal(message.Delivery, reason, description, cancellationToken).ConfigureAwait(false);
-        return true;
+        if (!_inFlight.TryGetValue(lockToken, out var tracked) || !tracked.TryClaim())
+            return false;
+        try
+        {
+            await RejectInternal(tracked.Message.Delivery, reason, description, cancellationToken).ConfigureAwait(false);
+            RemoveTracked(lockToken, tracked);
+            return true;
+        }
+        catch
+        {
+            tracked.ReleaseClaim();
+            throw;
+        }
     }
 
     private Task RejectInternal(
@@ -257,10 +307,124 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
         return _link.RejectAsync(delivery, error, cancellationToken);
     }
 
+    private async Task<bool> SettleAsync(
+        Guid lockToken,
+        Func<AmqpLink, AmqpIncomingDelivery, CancellationToken, Task> settle,
+        CancellationToken cancellationToken)
+    {
+        if (!_inFlight.TryGetValue(lockToken, out var tracked) || !tracked.TryClaim())
+            return false;
+        try
+        {
+            await settle(_link, tracked.Message.Delivery, cancellationToken).ConfigureAwait(false);
+            RemoveTracked(lockToken, tracked);
+            return true;
+        }
+        catch
+        {
+            tracked.ReleaseClaim();
+            throw;
+        }
+    }
+
+    private async Task DeadLetterTrackedAsync(
+        Guid lockToken,
+        string? reason,
+        string? description,
+        CancellationToken cancellationToken)
+    {
+        if (!_inFlight.TryGetValue(lockToken, out var tracked) || !tracked.TryClaim())
+            return;
+        try
+        {
+            await RejectInternal(tracked.Message.Delivery, reason, description, cancellationToken)
+                .ConfigureAwait(false);
+            RemoveTracked(lockToken, tracked);
+        }
+        catch
+        {
+            tracked.ReleaseClaim();
+            throw;
+        }
+    }
+
+    private Task SettleAsync(
+        Guid lockToken,
+        AmqpIncomingDelivery _,
+        Func<AmqpLink, AmqpIncomingDelivery, CancellationToken, Task> settle,
+        CancellationToken cancellationToken)
+    {
+        if (!_inFlight.TryGetValue(lockToken, out var tracked) || !tracked.TryClaim())
+            return Task.CompletedTask;
+        return SettleClaimedAsync(lockToken, tracked, settle, cancellationToken);
+    }
+
+    private async Task SettleClaimedAsync(
+        Guid lockToken,
+        InFlightDelivery tracked,
+        Func<AmqpLink, AmqpIncomingDelivery, CancellationToken, Task> settle,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await settle(_link, tracked.Message.Delivery, cancellationToken).ConfigureAwait(false);
+            RemoveTracked(lockToken, tracked);
+        }
+        catch
+        {
+            tracked.ReleaseClaim();
+            throw;
+        }
+    }
+
+    private int ReserveSlots(int requested)
+    {
+        while (true)
+        {
+            var current = Volatile.Read(ref _trackedInFlight);
+            var available = MaxTrackedInFlight - current;
+            if (available <= 0) return 0;
+            var reserved = Math.Min(requested, available);
+            if (Interlocked.CompareExchange(ref _trackedInFlight, current + reserved, current) == current)
+                return reserved;
+        }
+    }
+
+    private void ReleaseSlots(int count)
+    {
+        while (count > 0)
+        {
+            var current = Volatile.Read(ref _trackedInFlight);
+            if (current == 0) return;
+            var updated = Math.Max(0, current - count);
+            if (Interlocked.CompareExchange(ref _trackedInFlight, updated, current) == current)
+                return;
+        }
+    }
+
+    private void RemoveTracked(Guid lockToken, InFlightDelivery tracked)
+    {
+        if (_inFlight.TryRemove(KeyValuePair.Create(lockToken, tracked)))
+            ReleaseSlots(1);
+    }
+
+    private void PruneExpired(DateTimeOffset now)
+    {
+        foreach (var entry in _inFlight)
+        {
+            if (entry.Value.ExpiresAt > now || !entry.Value.TryClaim()) continue;
+            if (_inFlight.TryRemove(entry))
+                ReleaseSlots(1);
+            else
+                entry.Value.ReleaseClaim();
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _inFlight.Clear();
+        Volatile.Write(ref _trackedInFlight, 0);
         try { await _link.DetachAsync(closed: true).ConfigureAwait(false); }
         catch { /* best-effort cleanup */ }
     }
@@ -269,5 +433,16 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     {
         if (Volatile.Read(ref _disposed) != 0)
             throw new ObjectDisposedException(nameof(ServiceBusReceiver));
+    }
+
+    private sealed class InFlightDelivery(ServiceBusReceivedMessage message, DateTimeOffset expiresAt)
+    {
+        private int _claimed;
+
+        public ServiceBusReceivedMessage Message { get; } = message;
+        public DateTimeOffset ExpiresAt { get; } = expiresAt;
+
+        public bool TryClaim() => Interlocked.CompareExchange(ref _claimed, 1, 0) == 0;
+        public void ReleaseClaim() => Volatile.Write(ref _claimed, 0);
     }
 }

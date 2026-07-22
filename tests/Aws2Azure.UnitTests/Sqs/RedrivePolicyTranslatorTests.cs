@@ -24,7 +24,9 @@ public class RedrivePolicyTranslatorTests
         var sqsRound = QueueAttributeTranslator.ToSqsAttributes(props);
         Assert.True(sqsRound.TryGetValue("RedrivePolicy", out var json));
         Assert.Contains("\"maxReceiveCount\":5", json);
-        Assert.Contains(":my-dlq\"", json);
+        Assert.Contains(
+            "\"deadLetterTargetArn\":\"arn:aws:sqs:us-east-1:000000000000:my-dlq\"",
+            json);
     }
 
     [Fact]

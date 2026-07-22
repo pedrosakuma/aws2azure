@@ -60,7 +60,7 @@ public sealed class ServiceBusSessionFilterTests
     }
 
     [Fact]
-    public void Encode_uses_verbatim_string_value_expected_by_service_bus()
+    public void Encode_uses_described_session_filter_value_expected_by_service_bus()
     {
         var encoded = ServiceBusSessionFilter.Encode("s1").ToArray();
 
@@ -69,10 +69,15 @@ public sealed class ServiceBusSessionFilterTests
         Assert.Equal(0xA3, span[3]);
         var keyLen = span[4];
         var afterKey = 5 + keyLen;
-        Assert.Equal(0xA1, span[afterKey]); // str8
-        Assert.Equal(2, span[afterKey + 1]);
-        Assert.Equal((byte)'s', span[afterKey + 2]);
-        Assert.Equal((byte)'1', span[afterKey + 3]);
+        Assert.Equal(0x00, span[afterKey]); // described
+        var descriptor = Aws2Azure.Amqp.Codec.AmqpPrimitiveReader.ReadULong(
+            span[(afterKey + 1)..], out var descriptorLen);
+        Assert.Equal(ServiceBusSessionFilter.FilterDescriptor, descriptor);
+        var valueOffset = afterKey + 1 + descriptorLen;
+        Assert.Equal(0xA1, span[valueOffset]); // str8
+        Assert.Equal(2, span[valueOffset + 1]);
+        Assert.Equal((byte)'s', span[valueOffset + 2]);
+        Assert.Equal((byte)'1', span[valueOffset + 3]);
     }
 
     [Fact]

@@ -474,6 +474,46 @@ public sealed class ServiceBusAmqpPoolTests
     }
 
     [Fact]
+    public async Task Session_receiver_pool_enforces_hard_cap_and_releases_capacity_on_invalidation()
+    {
+        await using var factory = new FakeFactory(DefaultSettings());
+        await using var pool = new ServiceBusAmqpPool(
+            factory,
+            sessionReceiverIdleTimeout: null,
+            maxSessionReceiversPerConnection: 2);
+        var endpoint = ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net");
+
+        await pool.GetSessionReceiverAsync(endpoint, "Root", "k", "fifo-q", "session-1")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        await pool.GetSessionReceiverAsync(endpoint, "Root", "k", "fifo-q", "session-2")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        await Assert.ThrowsAsync<SessionReceiverLimitExceededException>(() =>
+            pool.GetSessionReceiverAsync(endpoint, "Root", "k", "fifo-q", "session-3"));
+        Assert.Equal(2, pool.SessionReceiverCount);
+
+        await pool.InvalidateSessionReceiverAsync(endpoint, "Root", "fifo-q", "session-1");
+        var replacement = await pool
+            .GetSessionReceiverAsync(endpoint, "Root", "k", "fifo-q", "session-3")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal("session-3", replacement.SessionId);
+        Assert.Equal(2, pool.SessionReceiverCount);
+    }
+
+    [Fact]
+    public async Task Idle_eviction_is_opportunistic_and_does_not_create_a_background_timer()
+    {
+        await using var factory = new FakeFactory(DefaultSettings());
+        await using var pool = new ServiceBusAmqpPool(
+            factory,
+            sessionReceiverIdleTimeout: TimeSpan.FromMinutes(5),
+            timeProvider: new TimerRejectingClock());
+
+        Assert.Equal(0, pool.SessionReceiverCount);
+    }
+
+    [Fact]
     public async Task SweepIdleSessionReceivers_evicts_links_idle_beyond_timeout_and_keeps_connection_warm()
     {
         var clock = new ManualClock(new DateTimeOffset(2026, 6, 10, 0, 0, 0, TimeSpan.Zero));
@@ -596,11 +636,7 @@ public sealed class ServiceBusAmqpPoolTests
     }
 
     /// <summary>
-    /// Deterministic <see cref="TimeProvider"/> for the idle-TTL sweeper
-    /// tests (#262): a settable clock whose <see cref="CreateTimer"/>
-    /// returns an inert timer, so the pool's background sweeper never
-    /// fires on wall-clock time — tests drive eviction explicitly via
-    /// <c>SweepIdleSessionReceiversAsync</c>.
+    /// Deterministic <see cref="TimeProvider"/> for idle-TTL tests.
     /// </summary>
     private sealed class ManualClock(DateTimeOffset now) : TimeProvider
     {
@@ -623,6 +659,17 @@ public sealed class ServiceBusAmqpPoolTests
             public void Dispose() { }
             public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         }
+
+    }
+
+    private sealed class TimerRejectingClock : TimeProvider
+    {
+        public override ITimer CreateTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period) =>
+            throw new InvalidOperationException("The AMQP pool must not create background timers.");
     }
 
     /// <summary>
