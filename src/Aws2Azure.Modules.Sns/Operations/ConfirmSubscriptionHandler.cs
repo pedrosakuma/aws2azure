@@ -70,6 +70,19 @@ internal static class ConfirmSubscriptionHandler
             return;
         }
 
+        var metadata = SnsSubscriptionSupport.ParseMetadata(subscription.UserMetadata);
+        var expectedSubscriptionId = SnsSubscriptionSupport.CreateSubscriptionId(
+            topicArn,
+            metadata.Protocol,
+            metadata.Endpoint);
+        if (!string.Equals(subscriptionId, expectedSubscriptionId, StringComparison.Ordinal))
+        {
+            await SnsTopicSupport.WriteInvalidParameterAsync(
+                context,
+                "Parameter 'Token' was not a valid auto-confirmed subscription token.").ConfigureAwait(false);
+            return;
+        }
+
         await SnsResponseWriter.WriteConfirmSubscriptionResponseAsync(context, subscriptionArn).ConfigureAwait(false);
     }
 }

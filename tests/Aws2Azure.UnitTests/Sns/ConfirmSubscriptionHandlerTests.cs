@@ -10,9 +10,14 @@ namespace Aws2Azure.UnitTests.Sns;
 
 public sealed class ConfirmSubscriptionHandlerTests
 {
+    private const string TopicArn = "arn:aws:sns:us-west-2:000000000000:orders";
+    private const string Protocol = "sqs";
+    private const string Endpoint = "queue";
+
     [Fact]
     public async Task HandleAsync_returns_subscription_arn_without_confirmation_flow()
     {
+        var subscriptionId = SnsSubscriptionSupport.CreateSubscriptionId(TopicArn, Protocol, Endpoint);
         var context = SnsManagementClientTestSupport.NewContext();
         await ConfirmSubscriptionHandler.HandleAsync(
             context,
@@ -20,8 +25,8 @@ public sealed class ConfirmSubscriptionHandlerTests
                 SnsOperation.ConfirmSubscription,
                 new Dictionary<string, string>
                 {
-                    ["TopicArn"] = "arn:aws:sns:us-west-2:000000000000:orders",
-                    ["Token"] = "0123456789abcdefabcd",
+                    ["TopicArn"] = TopicArn,
+                    ["Token"] = subscriptionId,
                 },
                 null),
             SnsManagementClientTestSupport.NewCredentials(),
@@ -30,13 +35,14 @@ public sealed class ConfirmSubscriptionHandlerTests
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
         Assert.Contains(
-            "arn:aws:sns:us-west-2:000000000000:orders:0123456789abcdefabcd",
+            $"{TopicArn}:{subscriptionId}",
             SnsManagementClientTestSupport.ReadBody(context));
     }
 
     [Fact]
     public async Task HandleAsync_rejects_subscription_arn_token_for_a_different_topic()
     {
+        var subscriptionId = SnsSubscriptionSupport.CreateSubscriptionId(TopicArn, Protocol, Endpoint);
         var context = SnsManagementClientTestSupport.NewContext();
         await ConfirmSubscriptionHandler.HandleAsync(
             context,
@@ -44,8 +50,8 @@ public sealed class ConfirmSubscriptionHandlerTests
                 SnsOperation.ConfirmSubscription,
                 new Dictionary<string, string>
                 {
-                    ["TopicArn"] = "arn:aws:sns:us-west-2:000000000000:orders",
-                    ["Token"] = "arn:aws:sns:us-west-2:000000000000:payments:0123456789abcdefabcd",
+                    ["TopicArn"] = TopicArn,
+                    ["Token"] = $"arn:aws:sns:us-west-2:000000000000:payments:{subscriptionId}",
                 },
                 null),
             SnsManagementClientTestSupport.NewCredentials(),
@@ -66,7 +72,7 @@ public sealed class ConfirmSubscriptionHandlerTests
                 SnsOperation.ConfirmSubscription,
                 new Dictionary<string, string>
                 {
-                    ["TopicArn"] = "arn:aws:sns:us-west-2:000000000000:orders",
+                    ["TopicArn"] = TopicArn,
                     ["Token"] = "not-a-subscription-token",
                 },
                 null),
@@ -88,7 +94,7 @@ public sealed class ConfirmSubscriptionHandlerTests
                 SnsOperation.ConfirmSubscription,
                 new Dictionary<string, string>
                 {
-                    ["TopicArn"] = "arn:aws:sns:us-west-2:000000000000:orders",
+                    ["TopicArn"] = TopicArn,
                     ["Token"] = "arn:aws:sns:us-west-2:000000000000:orders:not-a-real-subscription",
                 },
                 null),
@@ -103,6 +109,7 @@ public sealed class ConfirmSubscriptionHandlerTests
     [Fact]
     public async Task HandleAsync_returns_not_found_when_subscription_does_not_exist()
     {
+        var subscriptionId = SnsSubscriptionSupport.CreateSubscriptionId(TopicArn, Protocol, Endpoint);
         var context = SnsManagementClientTestSupport.NewContext();
         await ConfirmSubscriptionHandler.HandleAsync(
             context,
@@ -110,8 +117,8 @@ public sealed class ConfirmSubscriptionHandlerTests
                 SnsOperation.ConfirmSubscription,
                 new Dictionary<string, string>
                 {
-                    ["TopicArn"] = "arn:aws:sns:us-west-2:000000000000:orders",
-                    ["Token"] = "0123456789abcdefabcd",
+                    ["TopicArn"] = TopicArn,
+                    ["Token"] = subscriptionId,
                 },
                 null),
             SnsManagementClientTestSupport.NewCredentials(),
@@ -123,7 +130,35 @@ public sealed class ConfirmSubscriptionHandlerTests
         Assert.Contains("NotFound", SnsManagementClientTestSupport.ReadBody(context));
     }
 
+    [Fact]
+    public async Task HandleAsync_rejects_existing_hex_subscription_with_foreign_metadata()
+    {
+        const string foreignSubscriptionId = "0123456789abcdefabcd";
+        var context = SnsManagementClientTestSupport.NewContext();
+        await ConfirmSubscriptionHandler.HandleAsync(
+            context,
+            new SnsParseResult(
+                SnsOperation.ConfirmSubscription,
+                new Dictionary<string, string>
+                {
+                    ["TopicArn"] = TopicArn,
+                    ["Token"] = foreignSubscriptionId,
+                },
+                null),
+            SnsManagementClientTestSupport.NewCredentials(),
+            ExistingSubscriptionClient(foreignSubscriptionId),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("valid auto-confirmed subscription token", SnsManagementClientTestSupport.ReadBody(context));
+    }
+
     private static Aws2Azure.Modules.Sns.Management.IServiceBusTopicsManagementClient ExistingSubscriptionClient()
+        => ExistingSubscriptionClient(
+            SnsSubscriptionSupport.CreateSubscriptionId(TopicArn, Protocol, Endpoint));
+
+    private static Aws2Azure.Modules.Sns.Management.IServiceBusTopicsManagementClient ExistingSubscriptionClient(
+        string subscriptionId)
         => SnsManagementClientTestSupport.NewManagementClient((request, _) =>
         {
             Assert.Equal(HttpMethod.Get, request.Method);
@@ -131,8 +166,8 @@ public sealed class ConfirmSubscriptionHandlerTests
             {
                 Content = new StringContent(
                     SnsManagementClientTestSupport.BuildSubscriptionEntry(
-                        "0123456789abcdefabcd",
-                        SnsManagementClientTestSupport.SerializeMetadata("sqs", "queue")),
+                        subscriptionId,
+                        SnsManagementClientTestSupport.SerializeMetadata(Protocol, Endpoint)),
                     Encoding.UTF8,
                     "application/atom+xml"),
             });

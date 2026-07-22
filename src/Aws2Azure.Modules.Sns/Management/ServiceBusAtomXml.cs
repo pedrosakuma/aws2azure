@@ -254,7 +254,10 @@ internal static class ServiceBusAtomXml
                 {
                     var localName = reader.LocalName;
                     var rawXml = await reader.ReadOuterXmlAsync().ConfigureAwait(false);
-                    subscriptionProperties.Add(new ServiceBusSubscriptionProperty(localName, rawXml));
+                    if (!IsReadOnlySubscriptionProperty(localName))
+                    {
+                        subscriptionProperties.Add(new ServiceBusSubscriptionProperty(localName, rawXml));
+                    }
                     switch (localName)
                     {
                         case "UserMetadata":
@@ -311,6 +314,16 @@ internal static class ServiceBusAtomXml
             etag,
             subscriptionProperties);
     }
+
+    private static bool IsReadOnlySubscriptionProperty(string localName)
+        => localName is
+            "AccessedAt"
+            or "AvailabilityStatus"
+            or "CountDetails"
+            or "CreatedAt"
+            or "MessageCount"
+            or "SizeInBytes"
+            or "UpdatedAt";
 
     private static void WriteMergedSubscriptionProperties(XmlWriter writer, ServiceBusSubscriptionDescription description)
     {

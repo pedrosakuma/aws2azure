@@ -134,7 +134,13 @@ public sealed class SetSubscriptionAttributesHandlerTests
                             additionalPropertiesXml:
                                 "<RequiresSession>true</RequiresSession>"
                                 + "<DeadLetteringOnMessageExpiration>true</DeadLetteringOnMessageExpiration>"
-                                + "<ForwardTo>archive</ForwardTo>"),
+                                + "<ForwardTo>archive</ForwardTo>"
+                                + "<CreatedAt>2026-07-22T00:00:00Z</CreatedAt>"
+                                + "<UpdatedAt>2026-07-22T00:00:01Z</UpdatedAt>"
+                                + "<AccessedAt>2026-07-22T00:00:02Z</AccessedAt>"
+                                + "<MessageCount>42</MessageCount>"
+                                + "<SizeInBytes>1024</SizeInBytes>"
+                                + "<CountDetails><ActiveMessageCount>42</ActiveMessageCount></CountDetails>"),
                         Encoding.UTF8,
                         "application/atom+xml"),
                 };
@@ -163,6 +169,12 @@ public sealed class SetSubscriptionAttributesHandlerTests
         Assert.Contains("<DeadLetteringOnMessageExpiration", updateBody);
         Assert.Contains("<ForwardTo", updateBody);
         Assert.Contains(">archive</ForwardTo>", updateBody);
+        Assert.DoesNotContain("<CreatedAt", updateBody);
+        Assert.DoesNotContain("<UpdatedAt", updateBody);
+        Assert.DoesNotContain("<AccessedAt", updateBody);
+        Assert.DoesNotContain("<MessageCount", updateBody);
+        Assert.DoesNotContain("<SizeInBytes", updateBody);
+        Assert.DoesNotContain("<CountDetails", updateBody);
         Assert.True(JsonSerializer.Deserialize(
             SnsManagementClientTestSupport.ReadElementValue(updateBody, "UserMetadata"),
             SnsSubscriptionJsonContext.Default.SnsSubscriptionMetadata)!.RawDeliveryEnabled);
