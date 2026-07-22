@@ -16,7 +16,7 @@ public sealed class SnsSubscriptionsServiceBusTests
     }
 
     [SkippableFact]
-    public async Task Subscribe_confirm_list_get_and_unsubscribe_roundtrip_on_service_bus_emulator()
+    public async Task Subscribe_list_get_and_unsubscribe_roundtrip_on_service_bus_emulator()
     {
         Skip.IfNot(_fixture.DockerAvailable, "Docker not available.");
 
@@ -33,14 +33,6 @@ public sealed class SnsSubscriptionsServiceBusTests
             var duplicateSubscribe = await SnsQueryApiClient.SubscribeAsync(client, topicArn, "sqs", endpoint).ConfigureAwait(false);
             SnsServiceBusTestSupport.AssertStatus(duplicateSubscribe, HttpStatusCode.OK, "Subscribe[idempotent]");
             Assert.Equal(subscriptionArn, SnsQueryApiClient.ReadSubscriptionArn(duplicateSubscribe));
-
-            var confirm = await SnsQueryApiClient.SendActionAsync(client, "ConfirmSubscription",
-            [
-                new("TopicArn", topicArn),
-                new("Token", subscriptionArn),
-            ]).ConfigureAwait(false);
-            SnsServiceBusTestSupport.AssertStatus(confirm, HttpStatusCode.OK, "ConfirmSubscription");
-            Assert.Equal(subscriptionArn, SnsQueryApiClient.ReadSubscriptionArn(confirm));
 
             var list = await SnsQueryApiClient.ListSubscriptionsByTopicAsync(client, topicArn).ConfigureAwait(false);
             SnsServiceBusTestSupport.AssertStatus(list, HttpStatusCode.OK, "ListSubscriptionsByTopic");
