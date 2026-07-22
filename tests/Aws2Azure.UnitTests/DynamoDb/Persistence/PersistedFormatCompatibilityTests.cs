@@ -299,11 +299,41 @@ public sealed class PersistedFormatCompatibilityTests
     }
 
     [Fact]
-    public void Continuation_codec_preserves_non_object_sentinel_as_no_continuation()
+    public void Continuation_codec_rejects_present_malformed_keys()
     {
-        using var key = JsonDocument.Parse(
+        using var nonObjectSentinel = JsonDocument.Parse(
             "{\"__a2a_continuation\":\"not-a-typed-string\"}");
-        Assert.Null(DynamoDbContinuationTokenCodec.Extract(key.RootElement));
+        Assert.Throws<FormatException>(
+            () => DynamoDbContinuationTokenCodec.Extract(nonObjectSentinel.RootElement));
+
+        using var missingSentinel = JsonDocument.Parse("{\"pk\":{\"S\":\"value\"}}");
+        Assert.Throws<FormatException>(
+            () => DynamoDbContinuationTokenCodec.Extract(missingSentinel.RootElement));
+
+        using var emptyToken = JsonDocument.Parse(
+            "{\"__a2a_continuation\":{\"S\":\"\"}}");
+        Assert.Throws<FormatException>(
+            () => DynamoDbContinuationTokenCodec.Extract(emptyToken.RootElement));
+
+        using var nonObjectPayload = JsonDocument.Parse(
+            "{\"__a2a_continuation\":{\"S\":\"InN0YXJ0LW92ZXIi\"}}");
+        Assert.Throws<FormatException>(
+            () => CrossPartitionOrderByQuery.DecodeToken(nonObjectPayload.RootElement));
+
+        foreach (var payload in new[]
+        {
+            "not-json",
+            "{\"x\":1,\"v\":{\"N\":\"42\"}}",
+            "{\"x\":\"gsi-order-v1\",\"v\":{\"N\":\"42\"},\"f\":\"true\"}",
+            "{\"x\":\"gsi-order-v1\",\"v\":{\"N\":\"42\"},\"n\":-1}",
+            "{\"x\":\"gsi-order-v1\",\"v\":{\"N\":\"42\"},\"n\":1.5}",
+        })
+        {
+            var key = DynamoDbContinuationTokenCodec.BuildKey(payload);
+            using var document = JsonDocument.Parse(JsonSerializer.Serialize(key));
+            Assert.Throws<FormatException>(
+                () => CrossPartitionOrderByQuery.DecodeToken(document.RootElement));
+        }
     }
 
     [Fact]

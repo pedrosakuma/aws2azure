@@ -33,6 +33,10 @@ class PersistedFormatReleaseTests(unittest.TestCase):
         candidate_inventory = self.root / inventory_relative
         candidate_inventory.parent.mkdir(parents=True)
         shutil.copy2(INVENTORY, candidate_inventory)
+        self.baseline = self.root / "baseline"
+        baseline_inventory = self.baseline / inventory_relative
+        baseline_inventory.parent.mkdir(parents=True)
+        shutil.copy2(INVENTORY, baseline_inventory)
         inventory = json.loads(INVENTORY.read_text(encoding="utf-8"))
         for format_entry in inventory["formats"]:
             for key in ("v1_fixture", "current_fixture"):
@@ -67,6 +71,8 @@ class PersistedFormatReleaseTests(unittest.TestCase):
                 str(TOOL),
                 "--candidate-root",
                 str(self.root),
+                "--baseline-root",
+                str(self.baseline),
                 "--release-notes",
                 self.notes.relative_to(self.root).as_posix(),
             ],
@@ -99,6 +105,82 @@ class PersistedFormatReleaseTests(unittest.TestCase):
             .read_bytes()
         ).hexdigest()
         self.write_notes(digest, "None / describe every changed format,")
+        self.run_tool(expect_success=False)
+
+    def test_multiline_template_placeholder_fails(self) -> None:
+        digest = hashlib.sha256(
+            (self.root / "docs/compatibility/dynamodb-persisted-formats-v1.json")
+            .read_bytes()
+        ).hexdigest()
+        self.write_notes(digest)
+        text = self.notes.read_text(encoding="utf-8").replace(
+            "- Adjacent-runtime validation: evidence://candidate-prior.",
+            "- Adjacent-runtime validation: candidate-write/previous-read and\n"
+            "  previous-write/candidate-read evidence URL, or None with justification.",
+        )
+        self.notes.write_text(text, encoding="utf-8")
+        self.run_tool(expect_success=False)
+
+    def test_existing_stored_procedure_id_cannot_change_body(self) -> None:
+        inventory_path = (
+            self.root / "docs/compatibility/dynamodb-persisted-formats-v1.json"
+        )
+        inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+        inventory["stored_procedures"][0]["body_sha256"] = "0" * 64
+        inventory_path.write_text(
+            json.dumps(inventory, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        digest = hashlib.sha256(inventory_path.read_bytes()).hexdigest()
+        self.write_notes(digest, "atomicWrite body changed.")
+        self.run_tool(expect_success=False)
+
+    def test_baseline_without_inventory_derives_identities_from_source(self) -> None:
+        shutil.rmtree(self.baseline)
+        source_root = (
+            self.baseline / "src/Aws2Azure.Modules.DynamoDb/Internal"
+        )
+        source_root.mkdir(parents=True)
+        source_root.joinpath("SprocManager.cs").write_text(
+            'public const string SprocId = "atomicWrite_v2";\n'
+            'public const string TransactSprocId = "atomicTransactWrite_v2";\n',
+            encoding="utf-8",
+        )
+        source_root.joinpath("SprocManager.Sources.cs").write_text(
+            'internal static readonly string SprocBody = """\n'
+            '    one\n'
+            '    """;\n'
+            'internal static readonly string TransactSprocBody = """\n'
+            '    two\n'
+            '    """;\n',
+            encoding="utf-8",
+        )
+        inventory_path = (
+            self.root / "docs/compatibility/dynamodb-persisted-formats-v1.json"
+        )
+        inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+        inventory["stored_procedures"][0]["body_sha256"] = hashlib.sha256(
+            b"one"
+        ).hexdigest()
+        inventory["stored_procedures"][1]["body_sha256"] = hashlib.sha256(
+            b"two"
+        ).hexdigest()
+        inventory_path.write_text(
+            json.dumps(inventory, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        digest = hashlib.sha256(inventory_path.read_bytes()).hexdigest()
+        self.write_notes(digest)
+        self.run_tool(expect_success=True)
+
+    def test_baseline_without_inventory_or_sources_fails(self) -> None:
+        shutil.rmtree(self.baseline)
+        self.baseline.mkdir()
+        digest = hashlib.sha256(
+            (self.root / "docs/compatibility/dynamodb-persisted-formats-v1.json")
+            .read_bytes()
+        ).hexdigest()
+        self.write_notes(digest)
         self.run_tool(expect_success=False)
 
 

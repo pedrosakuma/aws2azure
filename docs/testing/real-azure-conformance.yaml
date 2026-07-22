@@ -172,6 +172,15 @@ services:
         operations: [DescribeTimeToLive, UpdateTimeToLive, PutItem, GetItem]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTimeToLiveTests.Ttl_control_plane_and_item_translation_against_real_cosmos_db
+      - id: persisted-format-historical-export-import
+        priority: p0
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: A frozen v1 /pk item envelope is exported from an isolated real-Cosmos source, decoded by the current reader, imported through the public API into a /_a2a_pk target, and the rollback source is proven unchanged.
+        operations: [CreateTable, UpdateTimeToLive, PutItem, GetItem, Query, Scan, DeleteTable]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbPersistedFormatMigrationTests.Frozen_v1_export_import_uses_isolated_container_and_preserves_rollback_source
       - id: cosmos-binary-response
         priority: p1
         category: read

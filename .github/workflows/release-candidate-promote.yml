@@ -69,6 +69,53 @@ jobs:
           echo "candidate_sha=$(jq -r .candidate.source_sha "$PLAN_PATH")" >> "$GITHUB_OUTPUT"
           echo "index_digest=$(jq -r .ghcr.index_digest "$PLAN_PATH")" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve previous stable source
+        id: previous_stable
+        run: |
+          set -euo pipefail
+          git fetch --quiet --force origin 'refs/tags/v*:refs/tags/v*'
+          previous_tag="$(
+            git tag --list 'v*' --sort=-version:refname |
+              grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' |
+              head -n 1 || true
+          )"
+          echo "tag=$previous_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact candidate source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ steps.plan.outputs.candidate_sha }}
+          path: candidate-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout previous stable source
+        if: steps.previous_stable.outputs.tag != ''
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ steps.previous_stable.outputs.tag }}
+          path: previous-stable-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate persisted-format release contract
+        env:
+          PLAN_PATH: ${{ inputs.plan_path }}
+          PREVIOUS_STABLE_TAG: ${{ steps.previous_stable.outputs.tag }}
+        run: |
+          set -euo pipefail
+          notes_source="$(jq -r .release_notes "$PLAN_PATH")"
+          install -d candidate-source/artifacts
+          cp "$notes_source" candidate-source/artifacts/promotion-release-notes.md
+          args=(
+            --candidate-root candidate-source
+            --release-notes artifacts/promotion-release-notes.md
+          )
+          if [ -n "$PREVIOUS_STABLE_TAG" ]; then
+            args+=(--baseline-root previous-stable-source)
+          fi
+          python3 candidate-source/eng/validate-persisted-format-release.py "${args[@]}"
+
       - name: Download exact immutable inputs
         env:
           GH_TOKEN: ${{ github.token }}

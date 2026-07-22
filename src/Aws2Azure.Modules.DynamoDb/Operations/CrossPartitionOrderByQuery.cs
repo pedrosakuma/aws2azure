@@ -728,16 +728,42 @@ internal static class CrossPartitionOrderByQuery
         var raw = QueryHandler.ExtractContinuation(exclusiveStartKey);
         if (string.IsNullOrEmpty(raw)) return null;
 
-        using var doc = JsonDocument.Parse(raw);
+        JsonDocument doc;
+        try
+        {
+            doc = JsonDocument.Parse(raw);
+        }
+        catch (JsonException ex)
+        {
+            throw new FormatException("continuation token payload is not valid JSON.", ex);
+        }
+        using (doc)
+        {
         var root = doc.RootElement;
-        if (root.ValueKind != JsonValueKind.Object) return null;
-        if (!root.TryGetProperty("x", out var disc) || disc.GetString() != TokenDiscriminator)
+        if (root.ValueKind != JsonValueKind.Object)
+            throw new FormatException("continuation token payload must be an object.");
+        if (!root.TryGetProperty("x", out var disc)
+            || disc.ValueKind != JsonValueKind.String
+            || disc.GetString() != TokenDiscriminator)
             throw new FormatException("continuation token is not a GSI ordered-query token.");
         if (!root.TryGetProperty("v", out var v) || v.ValueKind != JsonValueKind.Object)
             throw new FormatException("continuation token is missing its boundary value.");
-        bool fwd = !root.TryGetProperty("f", out var f) || f.ValueKind != JsonValueKind.False;
-        int skip = root.TryGetProperty("n", out var n) && n.TryGetInt32(out var ni) ? ni : 0;
+        var fwd = true;
+        if (root.TryGetProperty("f", out var f))
+        {
+            if (f.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                throw new FormatException("continuation token direction must be boolean.");
+            fwd = f.GetBoolean();
+        }
+        var skip = 0;
+        if (root.TryGetProperty("n", out var n))
+        {
+            if (!n.TryGetInt32(out skip) || skip < 0)
+                throw new FormatException(
+                    "continuation token duplicate count must be a nonnegative integer.");
+        }
         return new OrderByToken(v.Clone(), fwd, skip);
+        }
     }
 
     internal static Dictionary<string, JsonElement> BuildTokenKey(OrderByToken token)

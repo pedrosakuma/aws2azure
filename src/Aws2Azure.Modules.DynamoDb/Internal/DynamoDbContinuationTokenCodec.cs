@@ -14,19 +14,23 @@ internal static class DynamoDbContinuationTokenCodec
 {
     public static string? Extract(JsonElement? exclusiveStartKey)
     {
-        if (exclusiveStartKey is not { } key || key.ValueKind != JsonValueKind.Object)
+        if (exclusiveStartKey is not { } key)
         {
             return null;
+        }
+        if (key.ValueKind != JsonValueKind.Object)
+        {
+            throw new FormatException("ExclusiveStartKey must be an object.");
         }
         if (!key.TryGetProperty(
                 DynamoDbPersistedFormatContract.ContinuationSentinelAttribute,
                 out var sentinel))
         {
-            return null;
+            throw new FormatException("continuation attribute is missing.");
         }
         if (sentinel.ValueKind != JsonValueKind.Object)
         {
-            return null;
+            throw new FormatException("continuation attribute must be a typed string.");
         }
         if (!sentinel.TryGetProperty("S", out var value)
             || value.ValueKind != JsonValueKind.String)
@@ -37,7 +41,7 @@ internal static class DynamoDbContinuationTokenCodec
         var encoded = value.GetString();
         if (string.IsNullOrEmpty(encoded))
         {
-            return null;
+            throw new FormatException("continuation attribute must not be empty.");
         }
 
         try

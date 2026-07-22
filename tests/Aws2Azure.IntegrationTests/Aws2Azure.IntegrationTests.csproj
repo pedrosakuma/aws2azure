@@ -53,5 +53,9 @@
     <None Update="Kinesis\Emulator\Dockerfile">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Include="..\Aws2Azure.UnitTests\DynamoDb\Persistence\Fixtures\v1\item-envelope.json"
+          Link="DynamoDb\Persistence\Fixtures\v1\item-envelope.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 </Project>

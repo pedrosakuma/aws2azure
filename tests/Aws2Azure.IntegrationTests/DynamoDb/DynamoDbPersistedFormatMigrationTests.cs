@@ -1,7 +1,9 @@
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
 using Aws2Azure.IntegrationTests.Fixtures;
+using Aws2Azure.Modules.DynamoDb.Persistence;
 using Aws2Azure.TestSupport.OperationalQualification;
+using System.Text.Json;
 using Xunit;
 
 namespace Aws2Azure.IntegrationTests.DynamoDb;
@@ -17,6 +19,169 @@ namespace Aws2Azure.IntegrationTests.DynamoDb;
 public sealed class DynamoDbPersistedFormatMigrationTests(
     DynamoDbRealAzureProxyFixture fixture)
 {
+    [SkippableFact]
+    public async Task Frozen_v1_export_import_uses_isolated_container_and_preserves_rollback_source()
+    {
+        Skip.IfNot(fixture.CosmosConfigured,
+            "AZURE_COSMOS_ENDPOINT/KEY/DATABASE are not configured.");
+
+        var suffix = Guid.NewGuid().ToString("N")[..16];
+        var sourceContainer = "a2a-v1-source-" + suffix;
+        var targetTable = "a2a-v2-target-" + suffix;
+        var sourceCreated = false;
+        var targetCreated = false;
+        using var http = new HttpClient();
+        using var candidate = fixture.CreateDynamoDbClient(maxErrorRetry: 0);
+
+        try
+        {
+            await CosmosRestBootstrap.CreateContainerAsync(
+                http,
+                fixture.CosmosEndpoint,
+                fixture.CosmosKey,
+                fixture.CosmosDatabase,
+                sourceContainer,
+                "/pk").ConfigureAwait(false);
+            sourceCreated = true;
+
+            var fixturePath = Path.Combine(
+                AppContext.BaseDirectory,
+                "DynamoDb",
+                "Persistence",
+                "Fixtures",
+                "v1",
+                "item-envelope.json");
+            using var frozen = JsonDocument.Parse(
+                await File.ReadAllTextAsync(fixturePath).ConfigureAwait(false));
+            var futureExpiry = DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeSeconds()
+                .ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var legacyDocument = BuildLegacyDocument(frozen.RootElement, futureExpiry);
+            await CosmosRestBootstrap.CreateDocumentAsync(
+                http,
+                fixture.CosmosEndpoint,
+                fixture.CosmosKey,
+                fixture.CosmosDatabase,
+                sourceContainer,
+                "partition-1",
+                legacyDocument).ConfigureAwait(false);
+
+            var sourceBefore = await CosmosRestBootstrap.ReadDocumentAsync(
+                http,
+                fixture.CosmosEndpoint,
+                fixture.CosmosKey,
+                fixture.CosmosDatabase,
+                sourceContainer,
+                "sort-1",
+                "partition-1").ConfigureAwait(false);
+            using var sourceDocument = JsonDocument.Parse(sourceBefore);
+            var migrated = InferredAttributeStorage.ExtractItem(sourceDocument.RootElement);
+            Assert.NotNull(migrated);
+
+            await candidate.CreateTableAsync(new CreateTableRequest
+            {
+                TableName = targetTable,
+                AttributeDefinitions =
+                [
+                    new("pk", ScalarAttributeType.S),
+                    new("sk", ScalarAttributeType.S),
+                ],
+                KeySchema =
+                [
+                    new("pk", KeyType.HASH),
+                    new("sk", KeyType.RANGE),
+                ],
+                BillingMode = BillingMode.PAY_PER_REQUEST,
+            }).ConfigureAwait(false);
+            targetCreated = true;
+            await WaitForActiveAsync(candidate, targetTable).ConfigureAwait(false);
+            var targetContainer = await CosmosRestBootstrap.ReadContainerAsync(
+                http,
+                fixture.CosmosEndpoint,
+                fixture.CosmosKey,
+                fixture.CosmosDatabase,
+                targetTable).ConfigureAwait(false);
+            using (var targetDefinition = JsonDocument.Parse(targetContainer))
+            {
+                var paths = targetDefinition.RootElement
+                    .GetProperty("partitionKey")
+                    .GetProperty("paths");
+                Assert.Equal(1, paths.GetArrayLength());
+                Assert.Equal("/_a2a_pk", paths[0].GetString());
+            }
+            await candidate.UpdateTimeToLiveAsync(new UpdateTimeToLiveRequest
+            {
+                TableName = targetTable,
+                TimeToLiveSpecification = new TimeToLiveSpecification
+                {
+                    AttributeName = "ttl",
+                    Enabled = true,
+                },
+            }).ConfigureAwait(false);
+
+            await candidate.PutItemAsync(new PutItemRequest
+            {
+                TableName = targetTable,
+                Item = ToAttributeMap(migrated!),
+            }).ConfigureAwait(false);
+
+            var read = await candidate.GetItemAsync(new GetItemRequest
+            {
+                TableName = targetTable,
+                Key = new Dictionary<string, AttributeValue>
+                {
+                    ["pk"] = new() { S = "partition-1" },
+                    ["sk"] = new() { S = "sort-1" },
+                },
+                ConsistentRead = true,
+            }).ConfigureAwait(false);
+            Assert.Equal("Alice", read.Item["name"].S);
+            Assert.Equal("99999999999999999999999999999999999999", read.Item["big"].N);
+            Assert.Equal("hello", System.Text.Encoding.UTF8.GetString(read.Item["blob"].B.ToArray()));
+            Assert.Equal(futureExpiry, read.Item["ttl"].N);
+
+            var query = await candidate.QueryAsync(new QueryRequest
+            {
+                TableName = targetTable,
+                KeyConditionExpression = "pk = :pk",
+                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                {
+                    [":pk"] = new() { S = "partition-1" },
+                },
+            }).ConfigureAwait(false);
+            Assert.Single(query.Items);
+            var scan = await candidate.ScanAsync(
+                new ScanRequest { TableName = targetTable }).ConfigureAwait(false);
+            Assert.Single(scan.Items);
+
+            var sourceAfter = await CosmosRestBootstrap.ReadDocumentAsync(
+                http,
+                fixture.CosmosEndpoint,
+                fixture.CosmosKey,
+                fixture.CosmosDatabase,
+                sourceContainer,
+                "sort-1",
+                "partition-1").ConfigureAwait(false);
+            AssertLegacyPayloadEqual(sourceBefore, sourceAfter);
+        }
+        finally
+        {
+            if (targetCreated)
+            {
+                await candidate.DeleteTableAsync(
+                    new DeleteTableRequest { TableName = targetTable }).ConfigureAwait(false);
+            }
+            if (sourceCreated)
+            {
+                await CosmosRestBootstrap.DeleteContainerAsync(
+                    http,
+                    fixture.CosmosEndpoint,
+                    fixture.CosmosKey,
+                    fixture.CosmosDatabase,
+                    sourceContainer).ConfigureAwait(false);
+            }
+        }
+    }
+
     [SkippableFact]
     public async Task Adjacent_runtime_reads_rewrites_and_continuations_are_bidirectional()
     {
@@ -285,6 +450,91 @@ public sealed class DynamoDbPersistedFormatMigrationTests(
                 ["writer"] = new() { S = writer },
             },
         }).ConfigureAwait(false);
+    }
+
+    private static string BuildLegacyDocument(JsonElement frozen, string futureExpiry)
+    {
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartObject();
+            foreach (var property in frozen.EnumerateObject())
+            {
+                if (property.Name is "_rid" or "_etag")
+                {
+                    continue;
+                }
+                writer.WritePropertyName(property.Name);
+                if (property.Name == "item")
+                {
+                    writer.WriteStartObject();
+                    foreach (var attribute in property.Value.EnumerateObject())
+                    {
+                        writer.WritePropertyName(attribute.Name);
+                        if (attribute.Name == "ttl")
+                        {
+                            writer.WriteStartObject();
+                            writer.WriteString("N", futureExpiry);
+                            writer.WriteEndObject();
+                        }
+                        else
+                        {
+                            attribute.Value.WriteTo(writer);
+                        }
+                    }
+                    writer.WriteEndObject();
+                }
+                else
+                {
+                    property.Value.WriteTo(writer);
+                }
+            }
+            writer.WriteEndObject();
+        }
+        return System.Text.Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
+    private static Dictionary<string, AttributeValue> ToAttributeMap(
+        Dictionary<string, JsonElement> values)
+    {
+        var result = new Dictionary<string, AttributeValue>(StringComparer.Ordinal);
+        foreach (var pair in values)
+        {
+            var typed = pair.Value;
+            if (typed.TryGetProperty("S", out var text))
+            {
+                result[pair.Key] = new AttributeValue { S = text.GetString() };
+            }
+            else if (typed.TryGetProperty("N", out var number))
+            {
+                result[pair.Key] = new AttributeValue { N = number.GetString() };
+            }
+            else if (typed.TryGetProperty("B", out var binary))
+            {
+                result[pair.Key] = new AttributeValue
+                {
+                    B = new MemoryStream(Convert.FromBase64String(binary.GetString()!)),
+                };
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    $"Migration fixture attribute {pair.Key} has an unsupported type.");
+            }
+        }
+        return result;
+    }
+
+    private static void AssertLegacyPayloadEqual(string before, string after)
+    {
+        using var beforeDocument = JsonDocument.Parse(before);
+        using var afterDocument = JsonDocument.Parse(after);
+        Assert.Equal(
+            beforeDocument.RootElement.GetProperty("pk").GetString(),
+            afterDocument.RootElement.GetProperty("pk").GetString());
+        Assert.Equal(
+            beforeDocument.RootElement.GetProperty("item").GetRawText(),
+            afterDocument.RootElement.GetProperty("item").GetRawText());
     }
 
     private static async Task AssertFixtureItemAsync(
