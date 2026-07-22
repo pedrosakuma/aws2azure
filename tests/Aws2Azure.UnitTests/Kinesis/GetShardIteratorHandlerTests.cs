@@ -70,6 +70,34 @@ public sealed class GetShardIteratorHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_issues_distinct_iterator_identities_for_independent_progress()
+    {
+        var codecFactory = NewCodecFactory();
+        var firstContext = CreateContext();
+        var secondContext = CreateContext();
+        var request = NewParseResult(BuildRequestBody("TRIM_HORIZON", null, null));
+
+        await GetShardIteratorHandler.HandleAsync(
+            firstContext,
+            request,
+            NewCredentials(),
+            NewMetadataCache(),
+            codecFactory,
+            CancellationToken.None);
+        await GetShardIteratorHandler.HandleAsync(
+            secondContext,
+            request,
+            NewCredentials(),
+            NewMetadataCache(),
+            codecFactory,
+            CancellationToken.None);
+
+        var first = DecodeResponseToken(firstContext, codecFactory);
+        var second = DecodeResponseToken(secondContext, codecFactory);
+        Assert.NotEqual(first.IteratorId, second.IteratorId);
+    }
+
+    [Fact]
     public async Task HandleAsync_resolves_stream_arn_only_requests()
     {
         var context = CreateContext();

@@ -393,6 +393,15 @@ services:
         operations: [GetShardIterator, GetRecords]
         tests:
           - Aws2Azure.IntegrationTests.Kinesis.KinesisRealAzureConformanceTests.GetRecords_reads_from_real_event_hubs
+      - id: stream-topology
+        priority: p0
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: DescribeStream, DescribeStreamSummary, and ListShards reflect the real Event Hubs partition topology.
+        operations: [DescribeStream, DescribeStreamSummary, ListShards]
+        tests:
+          - Aws2Azure.IntegrationTests.Kinesis.KinesisRealAzureConformanceTests.Describe_operations_and_ListShards_reflect_real_event_hubs_topology
       - id: workload-identity-record-write
         priority: p0
         category: write

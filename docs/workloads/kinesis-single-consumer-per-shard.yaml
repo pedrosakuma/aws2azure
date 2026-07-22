@@ -1,0 +1,46 @@
+schema_version: 1
+id: kinesis-single-consumer-per-shard
+version: 1
+name: Kinesis single consumer per shard
+minimum_proxy_version: 0.1.0
+real_azure_seal_max_age_days: 90
+operations:
+  - kinesis:DescribeStream
+  - kinesis:DescribeStreamSummary
+  - kinesis:ListShards
+  - kinesis:GetShardIterator
+  - kinesis:GetRecords
+requirements:
+  - kinesis_single_consumer_per_shard
+accepted_partial_operations:
+  - kinesis:DescribeStream
+  - kinesis:DescribeStreamSummary
+  - kinesis:ListShards
+  - kinesis:GetShardIterator
+  - kinesis:GetRecords
+accepted_design_gaps:
+  - "kinesis:Synthetic sequence numbers and iterator positioning"
+  - "kinesis:Iterator link lifetime and durable replay"
+evidence:
+  qualification_artifact: ""
+  required_scenarios:
+    - representative-load
+    - topology
+    - pagination
+    - iterator-types
+    - empty-reads
+    - progression
+    - iterator-expiry
+    - cancellation
+    - restart
+    - retry-boundaries
+    - rollback
+  required_real_azure_scenarios:
+    - representative-load
+    - topology
+    - pagination
+    - iterator-types
+    - empty-reads
+    - progression
+    - restart
+    - rollback

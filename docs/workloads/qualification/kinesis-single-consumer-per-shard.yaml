@@ -1,0 +1,89 @@
+# Initial source policy for issue #629. The blocking capacity threshold remains
+# unresolved until a later GA promotion reviews comparable real-Azure runs.
+schema_version: 1
+profile_id: kinesis-single-consumer-per-shard
+profile_version: 1
+rules:
+  max_artifact_age_hours: 72
+  min_samples_per_scenario: 300
+  min_duration_seconds: 300
+  max_failure_rate: 0
+  zero_completions_disqualify: true
+  only_skipped_real_azure_disqualifies: true
+  min_distinct_runs: 3
+load_shape:
+  concurrency: 1
+  requested_duration_seconds: 300
+scenarios:
+  - id: representative-load
+    service: kinesis
+    operation: GetRecords
+    evidence_source: real_azure
+    signals:
+      - id: representative-load-throughput
+        source: backend_capacity
+        disposition: blocking
+        metric: throughput_per_sec
+        threshold_status: unresolved
+        threshold_reason: >-
+          No reviewed set of three comparable production-shaped real-Azure
+          single-consumer-per-shard runs exists yet. A later GA promotion must
+          collect the evidence and resolve this threshold explicitly.
+      - id: representative-load-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+  - id: topology
+    service: kinesis
+    operation: DescribeStreamSummary
+    evidence_source: real_azure
+    signals: []
+  - id: pagination
+    service: kinesis
+    operation: ListShards
+    evidence_source: real_azure
+    signals: []
+  - id: iterator-types
+    service: kinesis
+    operation: GetShardIterator
+    evidence_source: real_azure
+    signals: []
+  - id: empty-reads
+    service: kinesis
+    operation: GetRecords
+    evidence_source: real_azure
+    signals: []
+  - id: progression
+    service: kinesis
+    operation: GetRecords
+    evidence_source: real_azure
+    signals: []
+  - id: iterator-expiry
+    service: kinesis
+    operation: GetRecords
+    evidence_source: deterministic
+    signals: []
+  - id: cancellation
+    service: kinesis
+    operation: GetRecords
+    evidence_source: deterministic
+    signals: []
+  - id: restart
+    service: kinesis
+    operation: GetRecords
+    evidence_source: real_azure
+    signals: []
+  - id: retry-boundaries
+    service: kinesis
+    operation: GetRecords
+    evidence_source: deterministic
+    signals: []
+  - id: rollback
+    service: kinesis
+    operation: GetRecords
+    evidence_source: real_azure
+    signals: []

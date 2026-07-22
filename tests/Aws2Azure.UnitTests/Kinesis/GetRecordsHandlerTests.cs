@@ -122,6 +122,136 @@ public sealed class GetRecordsHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_maps_future_issued_iterators_to_expired_iterator_exception()
+    {
+        var codecFactory = NewCodecFactory();
+        var future = NewEncodedToken(
+            codecFactory,
+            new ShardIteratorToken(
+                "orders",
+                "shardId-000000000001",
+                ShardIteratorType.Latest,
+                null,
+                FixedNow.AddSeconds(1).ToUnixTimeSeconds()));
+        var context = CreateContext();
+
+        await GetRecordsHandler.HandleAsync(
+            context,
+            NewParseResult(BuildRequestBody(future)),
+            NewCredentials(),
+            NewMetadataCache(),
+            new FakeReceiver(),
+            codecFactory,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("ExpiredIteratorException", ReadBody(context));
+    }
+
+    [Fact]
+    public async Task HandleAsync_preserves_independent_progress_for_distinct_iterators()
+    {
+        var codecFactory = NewCodecFactory();
+        var receiver = new IndependentProgressReceiver(
+        [
+            NewMessage("alpha", "pk", offset: "100", sequenceNumber: 1, enqueuedTime: FixedNow.AddSeconds(-2)),
+            NewMessage("beta", "pk", offset: "101", sequenceNumber: 2, enqueuedTime: FixedNow.AddSeconds(-1)),
+        ]);
+        var first = NewEncodedToken(
+            codecFactory,
+            new ShardIteratorToken(
+                "orders",
+                "shardId-000000000001",
+                ShardIteratorType.TrimHorizon,
+                null,
+                FixedNow.ToUnixTimeSeconds(),
+                "iterator-a"));
+        var second = NewEncodedToken(
+            codecFactory,
+            new ShardIteratorToken(
+                "orders",
+                "shardId-000000000001",
+                ShardIteratorType.TrimHorizon,
+                null,
+                FixedNow.ToUnixTimeSeconds(),
+                "iterator-b"));
+
+        var firstRead = await InvokeAsync(first, receiver, codecFactory);
+        var firstNext = firstRead.RootElement.GetProperty("NextShardIterator").GetString()!;
+        Assert.Equal("alpha", DecodeBody(firstRead.RootElement.GetProperty("Records")[0]));
+
+        var firstSecondRead = await InvokeAsync(firstNext, receiver, codecFactory);
+        Assert.Equal("beta", DecodeBody(firstSecondRead.RootElement.GetProperty("Records")[0]));
+
+        var secondRead = await InvokeAsync(second, receiver, codecFactory);
+        Assert.Equal("alpha", DecodeBody(secondRead.RootElement.GetProperty("Records")[0]));
+    }
+
+    [Fact]
+    public async Task HandleAsync_propagates_request_cancellation_without_minting_a_continuation()
+    {
+        var codecFactory = NewCodecFactory();
+        var context = CreateContext();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            GetRecordsHandler.HandleAsync(
+                context,
+                NewParseResult(BuildRequestBody(NewEncodedToken(
+                    codecFactory,
+                    new ShardIteratorToken(
+                        "orders",
+                        "shardId-000000000001",
+                        ShardIteratorType.TrimHorizon,
+                        null,
+                        FixedNow.ToUnixTimeSeconds(),
+                        "cancelled-iterator")))),
+                NewCredentials(),
+                NewMetadataCache(),
+                new CancellingReceiver(),
+                codecFactory,
+                cancellation.Token));
+
+        Assert.Equal(0, context.Response.Body.Length);
+    }
+
+    [Theory]
+    [InlineData("Throttled", StatusCodes.Status400BadRequest, "ProvisionedThroughputExceededException")]
+    [InlineData("Transient", StatusCodes.Status500InternalServerError, "InternalFailureException")]
+    public async Task HandleAsync_maps_retry_boundaries_without_advancing_iterator(
+        string kindName,
+        int expectedStatus,
+        string expectedCode)
+    {
+        var kind = Enum.Parse<EventHubsAmqpFailureKind>(kindName);
+        var codecFactory = NewCodecFactory();
+        var context = CreateContext();
+        var receiver = new FailingReceiver(kind);
+
+        await GetRecordsHandler.HandleAsync(
+            context,
+            NewParseResult(BuildRequestBody(NewEncodedToken(
+                codecFactory,
+                new ShardIteratorToken(
+                    "orders",
+                    "shardId-000000000001",
+                    ShardIteratorType.TrimHorizon,
+                    null,
+                    FixedNow.ToUnixTimeSeconds(),
+                    "retry-iterator")))),
+            NewCredentials(),
+            NewMetadataCache(),
+            receiver,
+            codecFactory,
+            CancellationToken.None);
+
+        Assert.Equal(expectedStatus, context.Response.StatusCode);
+        Assert.Contains(expectedCode, ReadBody(context));
+        Assert.Equal(1, receiver.CallCount);
+    }
+
+    [Fact]
     public async Task HandleAsync_caps_requested_limit_to_ten_thousand()
     {
         var codecFactory = NewCodecFactory();
@@ -386,6 +516,26 @@ public sealed class GetRecordsHandlerTests
         return token;
     }
 
+    private static async Task<JsonDocument> InvokeAsync(
+        string shardIterator,
+        IEventHubsAmqpReceiver receiver,
+        ShardIteratorTokenCodecFactory codecFactory)
+    {
+        var context = CreateContext();
+        await GetRecordsHandler.HandleAsync(
+            context,
+            NewParseResult(BuildRequestBody(shardIterator, 1)),
+            NewCredentials(),
+            NewMetadataCache(),
+            receiver,
+            codecFactory,
+            CancellationToken.None);
+        return JsonDocument.Parse(ReadBody(context));
+    }
+
+    private static string DecodeBody(JsonElement record)
+        => Encoding.UTF8.GetString(Convert.FromBase64String(record.GetProperty("Data").GetString()!));
+
     private static KinesisParseResult NewParseResult(string body)
         => new(KinesisOperation.GetRecords, "Kinesis_20131202.GetRecords", Encoding.UTF8.GetBytes(body), null);
 
@@ -442,6 +592,72 @@ public sealed class GetRecordsHandlerTests
             };
 
             return Task.FromResult(new EventHubsReceiveResult(messages));
+        }
+    }
+
+    private sealed class IndependentProgressReceiver(
+        IReadOnlyList<EventHubsReceivedMessage> messages) : IEventHubsAmqpReceiver
+    {
+        private readonly Dictionary<string, int> _positions = new(StringComparer.Ordinal);
+
+        public Task<EventHubsReceiveResult> ReceiveAsync(
+            EventHubsCredentials credentials,
+            string namespaceFqdn,
+            string entityPath,
+            string consumerGroup,
+            int partitionId,
+            string iteratorId,
+            EventHubsReceivePosition position,
+            int maxMessages,
+            TimeSpan quiescentTimeout,
+            CancellationToken cancellationToken)
+        {
+            var index = _positions.TryGetValue(iteratorId, out var current) ? current : 0;
+            _positions[iteratorId] = index + 1;
+            IReadOnlyList<EventHubsReceivedMessage> result =
+                index < messages.Count ? [messages[index]] : [];
+            return Task.FromResult(new EventHubsReceiveResult(result));
+        }
+    }
+
+    private sealed class CancellingReceiver : IEventHubsAmqpReceiver
+    {
+        public Task<EventHubsReceiveResult> ReceiveAsync(
+            EventHubsCredentials credentials,
+            string namespaceFqdn,
+            string entityPath,
+            string consumerGroup,
+            int partitionId,
+            string iteratorId,
+            EventHubsReceivePosition position,
+            int maxMessages,
+            TimeSpan quiescentTimeout,
+            CancellationToken cancellationToken)
+            => Task.FromCanceled<EventHubsReceiveResult>(cancellationToken);
+    }
+
+    private sealed class FailingReceiver(EventHubsAmqpFailureKind kind) : IEventHubsAmqpReceiver
+    {
+        public int CallCount { get; private set; }
+
+        public Task<EventHubsReceiveResult> ReceiveAsync(
+            EventHubsCredentials credentials,
+            string namespaceFqdn,
+            string entityPath,
+            string consumerGroup,
+            int partitionId,
+            string iteratorId,
+            EventHubsReceivePosition position,
+            int maxMessages,
+            TimeSpan quiescentTimeout,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            return Task.FromException<EventHubsReceiveResult>(
+                new EventHubsAmqpException(
+                    "planned failure",
+                    new InvalidOperationException("planned"),
+                    kind));
         }
     }
 

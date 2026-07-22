@@ -18,21 +18,23 @@ design_gaps:
       positioning is not required.
     references:
       - https://learn.microsoft.com/rest/api/eventhub/
-  - area: Shared broker cursor per consumer group
+  - area: Iterator link lifetime and durable replay
     status: by_design
     summary: >-
-      Concurrent GetRecords callers on the same (connection, partition,
-      consumer-group) share a pooled AMQP link and a single broker cursor. The
-      proxy serialises the ReceiveBatch calls for internal consistency, but two
-      callers holding distinct AWS shard iterators cannot independently replay
-      or split records — whichever call drains the link first advances the
-      cursor for the other.
+      Each proxy-issued shard iterator has a distinct identity and therefore a
+      distinct pooled AMQP receiver link. Iterator chains advance independently
+      while their links are live. The embedded continuation position recreates
+      a link after failure, idle eviction, or restart, but the supported profile
+      deliberately stops at one consumer loop per partition and consumer group.
     impact: >-
-      This deviates from Kinesis, where each shard iterator is independent and
-      replayable.
+      Multiple iterator identities on one consumer group are not a certified
+      durable consumer-ownership or replay topology. Recreated links resume from
+      the best available Event Hubs offset/enqueue-time position and inherit the
+      synthetic-sequence and millisecond-boundary differences documented above.
     workaround: >-
-      Use the AWS-recommended single-consumer-per-shard pattern, or assign
-      distinct consumer groups to independent consumers.
+      Use one consumer loop per partition. Assign distinct Event Hubs consumer
+      groups when consumers require independently operated replay/checkpoint
+      lifecycles.
   - area: No resharding / enhanced fan-out / KCL lease model
     status: unsupported
     summary: >-
@@ -73,7 +75,7 @@ workload_patterns:
       - GetRecords
     design_gaps:
       - Synthetic sequence numbers and iterator positioning
-      - Shared broker cursor per consumer group
+      - Iterator link lifetime and durable replay
     guidance: >-
       Prefer TRIM_HORIZON, LATEST, or AT_TIMESTAMP and dedicate a consumer group
       to each independent consumer.
@@ -81,13 +83,14 @@ workload_patterns:
     name: Independent replaying consumers on one consumer group
     compatibility: blocked
     summary: >-
-      Distinct AWS shard iterators cannot maintain independent replay positions
-      when they share the pooled broker cursor.
+      Distinct iterator identities progress independently in a live proxy, but
+      multiple independently operated consumers sharing one Event Hubs consumer
+      group are outside the certified ownership, restart, and replay contract.
     operations:
       - GetShardIterator
       - GetRecords
     design_gaps:
-      - Shared broker cursor per consumer group
+      - Iterator link lifetime and durable replay
     guidance: >-
       Assign distinct Event Hubs consumer groups or redesign around one consumer
       per shard.

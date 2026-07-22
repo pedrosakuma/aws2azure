@@ -1047,6 +1047,8 @@ public static class RealAzureLoadQualificationGenerator
             "dynamodb" => "delete_table_verify_resource_not_found_exception",
             "sqs" =>
                 "amqp_link_scoped_lock_requires_redelivery_after_restart_delete_queue_verify_empty",
+            "kinesis" =>
+                "event_hubs_retention_no_immediate_record_delete",
             _ => string.Empty,
         };
         if (proof.CleanupSemantics != expectedCleanup

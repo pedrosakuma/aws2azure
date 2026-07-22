@@ -3,7 +3,7 @@ name: workload-load-real-azure
 # Produces immutable production-shaped workload evidence against ephemeral real
 # Azure resources. Only manual runs with an exact sealed producer are qualifying;
 # scheduled/PR runs remain explicit source validation. Manual runs can select S3,
-# Secrets Manager, SQS, DynamoDB, or all profiles. Emulator and A/B artifacts are never consumed.
+# Secrets Manager, SQS, DynamoDB, Kinesis, or all profiles. Emulator and A/B artifacts are never consumed.
 on:
   schedule:
     - cron: '15 6 * * *'
@@ -19,6 +19,7 @@ on:
           - s3-basic-object-crud
           - dynamodb-basic-crud
           - sqs-standard-messaging
+          - kinesis-single-consumer-per-shard
           - all
       candidate_run_id:
         description: Exact successful sealed-runtime producer run id
@@ -67,11 +68,11 @@ jobs:
               ;;
             workflow_dispatch)
               case "$REQUESTED_PROFILE" in
-                secretsmanager-basic-lifecycle|s3-basic-object-crud|dynamodb-basic-crud|sqs-standard-messaging)
+                secretsmanager-basic-lifecycle|s3-basic-object-crud|dynamodb-basic-crud|sqs-standard-messaging|kinesis-single-consumer-per-shard)
                   profiles="[\"$REQUESTED_PROFILE\"]"
                   ;;
                 all)
-                  profiles='["secretsmanager-basic-lifecycle","s3-basic-object-crud","dynamodb-basic-crud","sqs-standard-messaging"]'
+                  profiles='["secretsmanager-basic-lifecycle","s3-basic-object-crud","dynamodb-basic-crud","sqs-standard-messaging","kinesis-single-consumer-per-shard"]'
                   ;;
                 *)
                   echo "::error::Unsupported workload profile: $REQUESTED_PROFILE"
@@ -80,7 +81,7 @@ jobs:
               esac
               ;;
             pull_request)
-              profiles='["secretsmanager-basic-lifecycle","s3-basic-object-crud","dynamodb-basic-crud","sqs-standard-messaging"]'
+              profiles='["secretsmanager-basic-lifecycle","s3-basic-object-crud","dynamodb-basic-crud","sqs-standard-messaging","kinesis-single-consumer-per-shard"]'
               ;;
             *)
               echo "::error::Unsupported event: $EVENT_NAME"
@@ -111,6 +112,7 @@ jobs:
       RUNTIME_IDENTITY_B_NAME: a2a-kv-b-${{ github.run_id }}-${{ github.run_attempt }}
       LOAD_DURATION_SECONDS: '300'
       LOAD_CONCURRENCY: '8'
+      AZURE_EVENTHUBS_PARTITION_COUNT: '2'
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -193,6 +195,16 @@ jobs:
                 echo "RUNNER_PATH=tests/Aws2Azure.IntegrationTests/Sqs/SqsRealAzureLoadQualificationTests.cs"
                 echo "TEST_FILTER=Category=SqsLoadQualification"
                 echo "BACKEND_DESCRIPTION=Ephemeral Service Bus Standard namespace (AMQP default, REST lane override)"
+              } >> "$GITHUB_ENV"
+              ;;
+            kinesis-single-consumer-per-shard)
+              {
+                echo "DEPLOYMENT_NAME=aws2azure-load-kinesis"
+                echo "BICEP_PATH=deploy/realazure/kinesis-load.bicep"
+                echo "RUNNER_PATH=tests/Aws2Azure.IntegrationTests/Kinesis/KinesisRealAzureLoadQualificationTests.cs"
+                echo "TEST_FILTER=Category=KinesisLoadQualification"
+                echo "BACKEND_DESCRIPTION=Ephemeral Event Hubs Standard namespace with one two-partition hub"
+                echo "LOAD_CONCURRENCY=1"
               } >> "$GITHUB_ENV"
               ;;
             *)
@@ -368,6 +380,12 @@ jobs:
               "namespace_default_transport": "amqp",
               "rest_lane_queue_override": true
             }'
+          elif [ "$PROFILE" = kinesis-single-consumer-per-shard ]; then
+            topology='{
+              "backend": "Event Hubs Standard",
+              "partition_count": 2,
+              "consumer_concurrency": 1
+            }'
           else
             topology='{
               "backend": "Blob StorageV2",
@@ -378,14 +396,21 @@ jobs:
           fi
 
           producer_config_manifest="$QUALIFICATION_DIR/load-producer-config-manifest.json"
+          approved_runtime_ledger="docs/workloads/approved-runtimes/$PROFILE.yaml"
           if [ "${{ steps.mode.outputs.qualifying }}" = true ]; then
             qualification_mode=sealed
             candidate_identity_digest="sha256:$(sha256sum "$QUALIFICATION_DIR/sealed-runtimes/candidate-runtime.json" | cut -d' ' -f1)"
             prior_identity_digest="sha256:$(sha256sum "$QUALIFICATION_DIR/sealed-runtimes/prior-runtime.json" | cut -d' ' -f1)"
+            approved_runtime_ledger_digest="sha256:$(sha256sum "$approved_runtime_ledger" | cut -d' ' -f1)"
           else
             qualification_mode=source_validation
             candidate_identity_digest=
             prior_identity_digest=
+            if [ -f "$approved_runtime_ledger" ]; then
+              approved_runtime_ledger_digest="sha256:$(sha256sum "$approved_runtime_ledger" | cut -d' ' -f1)"
+            else
+              approved_runtime_ledger_digest=
+            fi
           fi
           jq -n \
             --arg schema_version "1" \
@@ -410,7 +435,7 @@ jobs:
             --arg sealed_launcher_sha256 "$(sha256sum tests/Aws2Azure.TestSupport/OperationalQualification/SealedRuntimeLauncher.cs | cut -d' ' -f1)" \
             --arg sealed_resolver_sha256 "$(sha256sum eng/resolve-sealed-runtime.sh | cut -d' ' -f1)" \
             --arg sealed_manifest_sha256 "$(sha256sum eng/sealed-runtime-manifest.sh | cut -d' ' -f1)" \
-            --arg approved_runtime_ledger_sha256 "$(sha256sum "docs/workloads/approved-runtimes/$PROFILE.yaml" | cut -d' ' -f1)" \
+            --arg approved_runtime_ledger_digest "$approved_runtime_ledger_digest" \
             --arg secretsmanager_fixture_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/Fixtures/SecretsManagerRealAzureProxyFixture.cs | cut -d' ' -f1)" \
             --arg realazure_fixture_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/Fixtures/RealAzureProxyFixture.cs | cut -d' ' -f1)" \
             --arg dynamodb_fixture_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/Fixtures/DynamoDbRealAzureProxyFixture.cs | cut -d' ' -f1)" \
@@ -449,7 +474,8 @@ jobs:
                 sealed_runtime_launcher: ("sha256:" + $sealed_launcher_sha256),
                 sealed_runtime_resolver: ("sha256:" + $sealed_resolver_sha256),
                 sealed_runtime_manifest_validator: ("sha256:" + $sealed_manifest_sha256),
-                approved_runtime_ledger: ("sha256:" + $approved_runtime_ledger_sha256),
+                approved_runtime_ledger:
+                  (if $approved_runtime_ledger_digest == "" then null else $approved_runtime_ledger_digest end),
                 secretsmanager_fixture: ("sha256:" + $secretsmanager_fixture_sha256),
                 realazure_fixture: ("sha256:" + $realazure_fixture_sha256),
                 dynamodb_fixture: ("sha256:" + $dynamodb_fixture_sha256),
@@ -567,6 +593,23 @@ jobs:
             fi
             echo "::add-mask::$conn"
             echo "AZURE_SB_CONNSTR=$conn" >> "$GITHUB_ENV"
+          elif [ "$PROFILE" = kinesis-single-consumer-per-shard ]; then
+            ns="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
+              --query properties.outputs.eventHubsNamespaceName.value -o tsv)"
+            stream="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
+              --query properties.outputs.eventHubName.value -o tsv)"
+            conn="$(az eventhubs namespace authorization-rule keys list -g "$RG_NAME" \
+              --namespace-name "$ns" --name RootManageSharedAccessKey \
+              --query primaryConnectionString -o tsv)"
+            if [ -z "$ns" ] || [ -z "$stream" ] || [ -z "$conn" ]; then
+              echo "::error::The deployment did not produce usable Event Hubs connection details."
+              exit 1
+            fi
+            echo "::add-mask::$conn"
+            {
+              echo "AZURE_EVENTHUBS_CONNSTR=$conn"
+              echo "AZURE_EVENTHUBS_STREAM=$stream"
+            } >> "$GITHUB_ENV"
           else
             account="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" \
               --query properties.outputs.storageAccountName.value -o tsv)"

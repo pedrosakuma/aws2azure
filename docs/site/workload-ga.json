@@ -87,6 +87,64 @@
   },
   {
     "schema_version": 1,
+    "profile_id": "kinesis-single-consumer-per-shard",
+    "profile_version": 1,
+    "name": "Kinesis single consumer per shard",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "candidate",
+    "findings": [
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "kinesis:DescribeStream",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "kinesis:DescribeStreamSummary",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "kinesis:GetRecords",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "kinesis:GetShardIterator",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "kinesis:ListShards",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "kinesis:Iterator link lifetime and durable replay",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027kinesis_single_consumer_per_shard\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "kinesis:Synthetic sequence numbers and iterator positioning",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027kinesis_single_consumer_per_shard\u0027."
+      },
+      {
+        "code": "qualification_evidence_missing",
+        "disposition": "blocking",
+        "subject": "kinesis-single-consumer-per-shard",
+        "message": "No reviewed real-Azure workload qualification artifact is referenced."
+      }
+    ]
+  },
+  {
+    "schema_version": 1,
     "profile_id": "s3-basic-object-crud",
     "profile_version": 1,
     "name": "S3 basic object CRUD",

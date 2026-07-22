@@ -2,6 +2,10 @@ service: kinesis
 operation: DescribeStreamSummary
 azure_equivalent: "Azure Event Hubs Service Bus management REST API"
 status: partial
+verified_real_azure:
+  date: "2026-07-22"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29929438303
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29929438303
 sub_features:
   - name: StreamName and synthetic StreamARN
     status: implemented
@@ -9,7 +13,7 @@ sub_features:
 behavior_differences:
   - "OpenShardCount is the Event Hub partition count; Event Hubs does not expose a separate open/closed shard lifecycle." 
   - "EnhancedMonitoring is always the empty [{ShardLevelMetrics: []}] shape and ConsumerCount is always 0 because Event Hubs does not expose Kinesis-compatible consumer metadata here."
-  - "Retention and creation metadata come from the Service Bus management REST API (or an emulator-focused static partition-count override when configured); verified against Event Hubs emulator only, not yet against a live Event Hubs namespace."
+  - "Retention, creation metadata, and OpenShardCount are verified against a live two-partition Event Hubs namespace; emulator-focused runs may instead use a configured static partition count."
   - "Stream lifecycle (CreateStream / DeleteStream / IncreaseStreamRetentionPeriod) is out of scope — Event Hubs entities are provisioned out-of-band via ARM."
 references:
   - https://docs.aws.amazon.com/kinesis/latest/APIReference/API_DescribeStreamSummary.html
