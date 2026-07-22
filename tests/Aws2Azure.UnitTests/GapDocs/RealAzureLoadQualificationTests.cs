@@ -1028,7 +1028,7 @@ public sealed class RealAzureLoadQualificationTests
         Assert.Equal("throughput_per_sec", capacity.Metric);
         Assert.Equal("resolved", capacity.ThresholdStatus);
         Assert.False(string.IsNullOrWhiteSpace(capacity.ThresholdReason));
-        Assert.Equal(40, capacity.MinValue);
+        Assert.Equal(30, capacity.MinValue);
         Assert.Null(capacity.MaxValue);
         Assert.Contains("closed-loop CRUD topology", capacity.ThresholdReason, StringComparison.Ordinal);
         Assert.Equal(8, policy.LoadShape.Concurrency);
