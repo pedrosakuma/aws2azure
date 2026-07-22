@@ -59,14 +59,18 @@ public sealed class S3PerfTests(S3PerfFixture fixture)
         for (var i = 0; i < seedCount; i++)
         {
             keys[i] = $"perf-get/{i:D4}-{Guid.NewGuid():N}";
-            using var ms = new MemoryStream(payload, writable: false);
-            await client.PutObjectAsync(new PutObjectRequest
-            {
-                BucketName = fixture.Bucket,
-                Key = keys[i],
-                InputStream = ms,
-                UseChunkEncoding = false,
-            }).ConfigureAwait(false);
+            await S3PerfSetup.ExecuteWithThrottleRetryAsync(
+                async ct =>
+                {
+                    using var ms = new MemoryStream(payload, writable: false);
+                    await client.PutObjectAsync(new PutObjectRequest
+                    {
+                        BucketName = fixture.Bucket,
+                        Key = keys[i],
+                        InputStream = ms,
+                        UseChunkEncoding = false,
+                    }, ct).ConfigureAwait(false);
+                }).ConfigureAwait(false);
         }
 
         using var memProbe = fixture.CreateMemoryProbe();
@@ -106,14 +110,18 @@ public sealed class S3PerfTests(S3PerfFixture fixture)
         var tinyPayload = new byte[16];
         for (var i = 0; i < seedCount; i++)
         {
-            using var ms = new MemoryStream(tinyPayload, writable: false);
-            await client.PutObjectAsync(new PutObjectRequest
-            {
-                BucketName = fixture.Bucket,
-                Key = $"{seedPrefix}{i:D5}-{Guid.NewGuid():N}",
-                InputStream = ms,
-                UseChunkEncoding = false,
-            }).ConfigureAwait(false);
+            await S3PerfSetup.ExecuteWithThrottleRetryAsync(
+                async ct =>
+                {
+                    using var ms = new MemoryStream(tinyPayload, writable: false);
+                    await client.PutObjectAsync(new PutObjectRequest
+                    {
+                        BucketName = fixture.Bucket,
+                        Key = $"{seedPrefix}{i:D5}-{Guid.NewGuid():N}",
+                        InputStream = ms,
+                        UseChunkEncoding = false,
+                    }, ct).ConfigureAwait(false);
+                }).ConfigureAwait(false);
         }
 
         var result = await PerfRunner.RunAsync(
@@ -193,14 +201,18 @@ public sealed class S3PerfTests(S3PerfFixture fixture)
         for (var i = 0; i < seedCount; i++)
         {
             srcKeys[i] = $"perf-copy-src/{i:D4}-{Guid.NewGuid():N}";
-            using var ms = new MemoryStream(payload, writable: false);
-            await client.PutObjectAsync(new PutObjectRequest
-            {
-                BucketName = fixture.Bucket,
-                Key = srcKeys[i],
-                InputStream = ms,
-                UseChunkEncoding = false,
-            }).ConfigureAwait(false);
+            await S3PerfSetup.ExecuteWithThrottleRetryAsync(
+                async ct =>
+                {
+                    using var ms = new MemoryStream(payload, writable: false);
+                    await client.PutObjectAsync(new PutObjectRequest
+                    {
+                        BucketName = fixture.Bucket,
+                        Key = srcKeys[i],
+                        InputStream = ms,
+                        UseChunkEncoding = false,
+                    }, ct).ConfigureAwait(false);
+                }).ConfigureAwait(false);
         }
 
         var result = await PerfRunner.RunAsync(

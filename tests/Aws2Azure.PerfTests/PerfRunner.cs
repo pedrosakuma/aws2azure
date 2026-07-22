@@ -70,8 +70,8 @@ internal static class PerfRunner
 
         var stopwatch = Stopwatch.StartNew();
 
-        using var runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        runCts.CancelAfter(duration);
+        var measurementTimeProvider = timeProvider ?? TimeProvider.System;
+        var measurementStarted = measurementTimeProvider.GetTimestamp();
 
         Task? sampler = null;
         using var samplerCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -100,8 +100,9 @@ internal static class PerfRunner
         var workers = Enumerable.Range(0, concurrency).Select(workerId => Task.Run(async () =>
         {
             var sw = new Stopwatch();
-            while (!runCts.IsCancellationRequested)
+            while (measurementTimeProvider.GetElapsedTime(measurementStarted) < duration)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (maxOps is { } cap && Interlocked.Read(ref completed) >= cap)
                 {
                     break;
@@ -109,14 +110,14 @@ internal static class PerfRunner
                 sw.Restart();
                 try
                 {
-                    await action(workerId, runCts.Token).ConfigureAwait(false);
+                    await action(workerId, cancellationToken).ConfigureAwait(false);
                     sw.Stop();
                     latenciesUs.Enqueue(sw.ElapsedTicks * 1_000_000L / Stopwatch.Frequency);
                     Interlocked.Increment(ref completed);
                 }
-                catch (OperationCanceledException) when (runCts.IsCancellationRequested)
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
-                    break;
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -136,10 +137,11 @@ internal static class PerfRunner
                     }
                 }
             }
-        }, runCts.Token)).ToArray();
+        }, cancellationToken)).ToArray();
 
         try { await Task.WhenAll(workers).ConfigureAwait(false); }
         catch (OperationCanceledException) { }
+        cancellationToken.ThrowIfCancellationRequested();
         stopwatch.Stop();
 
         // Stop sampling and take a final snapshot to diff cumulative counters.
