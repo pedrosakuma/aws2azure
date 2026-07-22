@@ -502,16 +502,25 @@ services:
         evidence_source: real_azure
         establishes_verification: true
         description: Topic creation, subscription, publish, unsubscribe, and delete lifecycle.
-        operations: [CreateTopic, Subscribe, Publish, Unsubscribe, DeleteTopic]
+        operations: [CreateTopic, Subscribe, Publish, ListSubscriptionsByTopic, Unsubscribe, DeleteTopic]
         tests:
           - Aws2Azure.IntegrationTests.Sns.SnsRealAzureConformanceTests.Topic_subscription_lifecycle_round_trips_against_real_service_bus
+      - id: subscription-metadata-restart
+        priority: p0
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Subscription attributes persist across restart while unrelated Service Bus metadata remains unchanged.
+        operations: [Subscribe, ConfirmSubscription, GetSubscriptionAttributes, SetSubscriptionAttributes, Unsubscribe]
+        tests:
+          - Aws2Azure.IntegrationTests.Sns.SnsRealAzureConformanceTests.Subscription_metadata_and_unrelated_azure_properties_survive_restart
       - id: topic-list-pagination
         priority: p1
         category: pagination
         evidence_source: real_azure
         establishes_verification: true
         description: Topic and subscription listing continues across real Service Bus pages.
-        operations: [ListTopics, ListSubscriptions]
+        operations: [ListTopics, ListSubscriptions, ListSubscriptionsByTopic]
         tests:
           - Aws2Azure.IntegrationTests.Sns.SnsRealAzureConformanceTests.Topic_and_subscription_lists_paginate
       - id: publish-batch

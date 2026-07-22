@@ -225,7 +225,13 @@ public sealed class SnsServiceModule : IServiceModule
                     .ConfigureAwait(false);
                 return;
             case SnsOperation.ConfirmSubscription:
-                await ConfirmSubscriptionHandler.HandleAsync(context, parsed).ConfigureAwait(false);
+                await ConfirmSubscriptionHandler.HandleAsync(
+                        context,
+                        parsed,
+                        serviceBusTopicsCredentials,
+                        _serviceBusTopicsManagementClient,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
                 return;
             case SnsOperation.GetTopicAttributes:
                 await GetTopicAttributesHandler.HandleAsync(

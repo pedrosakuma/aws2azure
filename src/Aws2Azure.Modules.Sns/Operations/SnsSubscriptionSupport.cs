@@ -301,7 +301,7 @@ internal static class SnsSubscriptionSupport
         out string subscriptionArn,
         out string? error)
     {
-        if (TryParseSubscriptionArn(token, out var tokenTopicName, out _, out _))
+        if (TryParseSubscriptionArn(token, out var tokenTopicName, out var tokenSubscriptionId, out _))
         {
             var tokenTopicArn = token[..token.LastIndexOf(':')];
             if (!string.Equals(tokenTopicName, topicName, StringComparison.Ordinal)
@@ -309,6 +309,13 @@ internal static class SnsSubscriptionSupport
             {
                 subscriptionArn = string.Empty;
                 error = "Parameter 'Token' does not belong to the supplied TopicArn.";
+                return false;
+            }
+
+            if (!TryDeriveSubscriptionIdFromToken(tokenSubscriptionId, out _))
+            {
+                subscriptionArn = string.Empty;
+                error = "Parameter 'Token' was not a valid auto-confirmed subscription token.";
                 return false;
             }
 

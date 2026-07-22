@@ -33,6 +33,7 @@ Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned
 | [sns](#sns) | FIFO topics are deferred | 🟡 partial |
 | [sns](#sns) | No AWS region / account namespace | 🔵 by design |
 | [sns](#sns) | No IAM-backed policy surface | ⛔ unsupported |
+| [sns](#sns) | Event Grid subscription management is excluded | ⛔ unsupported |
 | [sqs](#sqs) | FIFO ordering requires the AMQP transport | 🟡 partial |
 | [sqs](#sqs) | No AWS region / account namespace | 🔵 by design |
 | [sqs](#sqs) | PurgeQueue is best-effort emulation | 🔵 by design |
@@ -340,6 +341,22 @@ DeliveryPolicy, RedrivePolicy, and SubscriptionRoleArn are accepted as no-ops be
 **Impact.** Retry/redrive policy and role-based delivery configured via these attributes have no effect.
 
 **Workaround.** Configure delivery reliability at the Azure backend level; do not rely on SNS policy attributes being enforced.
+
+<a id="sns-event-grid-subscription-management-is-excluded"></a>
+
+### Event Grid subscription management is excluded
+
+- **Status:** ⛔ unsupported
+
+Subscribe, ConfirmSubscription, ListSubscriptions, ListSubscriptionsByTopic, GetSubscriptionAttributes, SetSubscriptionAttributes, and Unsubscribe translate only to Azure Service Bus topic subscriptions. They never create, enumerate, mutate, confirm, or delete Azure Event Grid event subscriptions.
+
+**Impact.** An SNS topic whose publish backend is Event Grid does not gain Event Grid delivery fan-out from the SNS subscription-management APIs, and its events are not delivered into Service Bus subscriptions created by those APIs.
+
+**Workaround.** Provision and operate Event Grid event subscriptions with Azure-native tooling, or select the Service Bus Topics publish backend when this profile is required.
+
+References:
+
+- <https://learn.microsoft.com/azure/event-grid/manage-event-delivery>
 
 ## sqs
 

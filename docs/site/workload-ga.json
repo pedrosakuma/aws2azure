@@ -287,6 +287,100 @@
   },
   {
     "schema_version": 1,
+    "profile_id": "sns-subscription-management-service-bus",
+    "profile_version": 1,
+    "name": "SNS subscription management (Service Bus Topics backend)",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "conditional",
+    "findings": [
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:ConfirmSubscription",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sns:ConfirmSubscription",
+        "message": "Required operation has no real-Azure verification seal."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:GetSubscriptionAttributes",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sns:GetSubscriptionAttributes",
+        "message": "Required operation has no real-Azure verification seal."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:ListSubscriptions",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:ListSubscriptionsByTopic",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sns:ListSubscriptionsByTopic",
+        "message": "Required operation has no real-Azure verification seal."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:SetSubscriptionAttributes",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sns:SetSubscriptionAttributes",
+        "message": "Required operation has no real-Azure verification seal."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:Subscribe",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:Unsubscribe",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sns:Event Grid subscription management is excluded",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_subscription_management\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sns:No AWS region / account namespace",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_subscription_management\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sns:Two backends with different fidelity",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_subscription_management\u0027."
+      }
+    ]
+  },
+  {
+    "schema_version": 1,
     "profile_id": "sqs-standard-messaging",
     "profile_version": 1,
     "name": "SQS standard messaging",
