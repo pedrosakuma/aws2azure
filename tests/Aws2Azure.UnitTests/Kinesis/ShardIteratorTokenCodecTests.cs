@@ -116,6 +116,23 @@ public sealed class ShardIteratorTokenCodecTests
     }
 
     [Fact]
+    public void Future_issued_token_returns_expired()
+    {
+        var codec = NewCodec();
+        var token = new ShardIteratorToken(
+            "orders",
+            "shardId-000000000000",
+            ShardIteratorType.Latest,
+            null,
+            FixedNow.AddSeconds(1).ToUnixTimeSeconds());
+
+        var encoded = codec.Encode(token);
+
+        Assert.False(codec.TryDecode(encoded, out _, out var error));
+        Assert.Equal(ShardIteratorVerifyError.Expired, error);
+    }
+
+    [Fact]
     public void Token_at_five_minute_boundary_is_valid()
     {
         var clock = new ManualTimeProvider(FixedNow);

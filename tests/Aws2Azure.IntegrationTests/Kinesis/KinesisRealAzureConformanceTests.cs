@@ -10,6 +10,35 @@ namespace Aws2Azure.IntegrationTests.Kinesis;
 public sealed class KinesisRealAzureConformanceTests(RealAzureProxyFixture fixture)
 {
     [SkippableFact]
+    public async Task Describe_operations_and_ListShards_reflect_real_event_hubs_topology()
+    {
+        Skip.IfNot(fixture.EventHubsConfigured,
+            "AZURE_EVENTHUBS_* / AZURE_EVENTHUBS_STREAM not set — skipping real-Azure Kinesis conformance.");
+
+        using var client = fixture.CreateKinesisClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+        var describe = await client.DescribeStreamAsync(new DescribeStreamRequest
+        {
+            StreamName = fixture.EventHubStream,
+        }, timeout.Token).ConfigureAwait(false);
+        var summary = await client.DescribeStreamSummaryAsync(new DescribeStreamSummaryRequest
+        {
+            StreamName = fixture.EventHubStream,
+        }, timeout.Token).ConfigureAwait(false);
+        var shards = await client.ListShardsAsync(new ListShardsRequest
+        {
+            StreamName = fixture.EventHubStream,
+            MaxResults = 100,
+        }, timeout.Token).ConfigureAwait(false);
+
+        Assert.NotEmpty(describe.StreamDescription.Shards);
+        Assert.Equal(describe.StreamDescription.Shards.Count, summary.StreamDescriptionSummary.OpenShardCount);
+        Assert.Equal(
+            describe.StreamDescription.Shards.Select(item => item.ShardId),
+            shards.Shards.Select(item => item.ShardId));
+    }
+
+    [SkippableFact]
     public async Task GetRecords_reads_from_real_event_hubs()
     {
         Skip.IfNot(fixture.EventHubsConfigured,
@@ -168,5 +197,112 @@ public sealed class KinesisRealAzureConformanceTests(RealAzureProxyFixture fixtu
 
         Assert.All(reads, records =>
             Assert.Contains(records, record => KinesisTestHelpers.Utf8(record) == payload));
+    }
+
+    [SkippableFact]
+    public async Task Iterator_types_empty_reads_and_continuation_progress_are_stable()
+    {
+        Skip.IfNot(fixture.EventHubsConfigured,
+            "AZURE_EVENTHUBS_* / AZURE_EVENTHUBS_STREAM not set — skipping real-Azure Kinesis conformance.");
+
+        using var client = fixture.CreateKinesisClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        var target = await KinesisTestHelpers.ResolvePartitionTargetAsync(
+            client, fixture.EventHubStream, timeout.Token).ConfigureAwait(false);
+
+        var trim = await client.GetShardIteratorAsync(new GetShardIteratorRequest
+        {
+            StreamName = fixture.EventHubStream,
+            ShardId = target.ShardId,
+            ShardIteratorType = "TRIM_HORIZON",
+        }, timeout.Token).ConfigureAwait(false);
+        Assert.False(string.IsNullOrWhiteSpace(trim.ShardIterator));
+
+        var latest = await client.GetShardIteratorAsync(new GetShardIteratorRequest
+        {
+            StreamName = fixture.EventHubStream,
+            ShardId = target.ShardId,
+            ShardIteratorType = "LATEST",
+        }, timeout.Token).ConfigureAwait(false);
+        var empty = await client.GetRecordsAsync(new GetRecordsRequest
+        {
+            ShardIterator = latest.ShardIterator,
+            Limit = 10,
+        }, timeout.Token).ConfigureAwait(false);
+        Assert.Empty(empty.Records);
+        Assert.False(string.IsNullOrWhiteSpace(empty.NextShardIterator));
+
+        var boundary = DateTimeOffset.UtcNow;
+        await Task.Delay(100, timeout.Token).ConfigureAwait(false);
+        var timestampPayload = "timestamp-" + Guid.NewGuid().ToString("N");
+        PutRecordResponse timestampPut;
+        using (var data = new MemoryStream(Encoding.UTF8.GetBytes(timestampPayload)))
+        {
+            timestampPut = await client.PutRecordAsync(new PutRecordRequest
+            {
+                StreamName = fixture.EventHubStream,
+                PartitionKey = target.PartitionKey,
+                Data = data,
+            }, timeout.Token).ConfigureAwait(false);
+        }
+
+        var atTimestamp = await client.GetShardIteratorAsync(new GetShardIteratorRequest
+        {
+            StreamName = fixture.EventHubStream,
+            ShardId = target.ShardId,
+            ShardIteratorType = "AT_TIMESTAMP",
+            Timestamp = KinesisTestHelpers.ToSdkTimestamp(boundary),
+        }, timeout.Token).ConfigureAwait(false);
+        var timestampRecords = await KinesisTestHelpers.ReadUntilAsync(
+            client,
+            atTimestamp.ShardIterator,
+            record => KinesisTestHelpers.Utf8(record) == timestampPayload,
+            TimeSpan.FromSeconds(45)).ConfigureAwait(false);
+        Assert.Single(
+            timestampRecords,
+            item => KinesisTestHelpers.Utf8(item) == timestampPayload);
+
+        var atSequence = await client.GetShardIteratorAsync(new GetShardIteratorRequest
+        {
+            StreamName = fixture.EventHubStream,
+            ShardId = target.ShardId,
+            ShardIteratorType = "AT_SEQUENCE_NUMBER",
+            StartingSequenceNumber = timestampPut.SequenceNumber,
+        }, timeout.Token).ConfigureAwait(false);
+        var atSequenceRecords = await KinesisTestHelpers.ReadUntilAsync(
+            client,
+            atSequence.ShardIterator,
+            item => KinesisTestHelpers.Utf8(item) == timestampPayload,
+            TimeSpan.FromSeconds(45)).ConfigureAwait(false);
+        Assert.Contains(
+            atSequenceRecords,
+            item => KinesisTestHelpers.Utf8(item) == timestampPayload);
+
+        var afterSequence = await client.GetShardIteratorAsync(new GetShardIteratorRequest
+        {
+            StreamName = fixture.EventHubStream,
+            ShardId = target.ShardId,
+            ShardIteratorType = "AFTER_SEQUENCE_NUMBER",
+            StartingSequenceNumber = timestampPut.SequenceNumber,
+        }, timeout.Token).ConfigureAwait(false);
+        await Task.Delay(20, timeout.Token).ConfigureAwait(false);
+        var afterPayload = "after-sequence-" + Guid.NewGuid().ToString("N");
+        using (var data = new MemoryStream(Encoding.UTF8.GetBytes(afterPayload)))
+        {
+            await client.PutRecordAsync(new PutRecordRequest
+            {
+                StreamName = fixture.EventHubStream,
+                PartitionKey = target.PartitionKey,
+                Data = data,
+            }, timeout.Token).ConfigureAwait(false);
+        }
+        var afterSequenceRecords = await KinesisTestHelpers.ReadUntilAsync(
+            client,
+            afterSequence.ShardIterator,
+            item => KinesisTestHelpers.Utf8(item) == afterPayload,
+            TimeSpan.FromSeconds(45)).ConfigureAwait(false);
+        Assert.Contains(
+            afterSequenceRecords,
+            item => KinesisTestHelpers.Utf8(item) == afterPayload);
     }
 }

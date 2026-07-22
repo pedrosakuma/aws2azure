@@ -68,7 +68,7 @@ public sealed class ShardIteratorTokenCodec
 
         var decoded = new ShardIteratorToken(fields[0], fields[1], type, position, issuedAtUnixSeconds, fields[5]);
         var ageSeconds = _timeProvider.GetUtcNow().ToUnixTimeSeconds() - decoded.IssuedAtUnixSeconds;
-        if (ageSeconds > MaxAgeSeconds)
+        if (ageSeconds < 0 || ageSeconds > MaxAgeSeconds)
         {
             error = ShardIteratorVerifyError.Expired;
             return false;

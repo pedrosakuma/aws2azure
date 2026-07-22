@@ -93,5 +93,6 @@ Profile-specific adoption guidance:
 
 - [SQS standard messaging](sqs-standard-messaging.md)
 - [Kinesis basic record ingestion](kinesis-basic-record-ingestion.md)
+- [Kinesis single consumer per shard](kinesis-single-consumer-per-shard.md)
 - [SNS standard publish (Service Bus Topics backend)](sns-standard-publish-service-bus.md)
 - [SNS standard publish (Event Grid backend)](sns-standard-publish-event-grid.md)

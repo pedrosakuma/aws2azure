@@ -5,6 +5,7 @@ using System.Text;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
 using DynamoDbResourceNotFoundException = Amazon.DynamoDBv2.Model.ResourceNotFoundException;
+using Amazon.Kinesis.Model;
 using Amazon.S3;
 using Amazon.S3.Model;
 using Amazon.SecretsManager;
@@ -12,6 +13,7 @@ using Amazon.SecretsManager.Model;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Aws2Azure.IntegrationTests.Fixtures;
+using Aws2Azure.IntegrationTests.Kinesis;
 using Aws2Azure.TestSupport.OperationalQualification;
 
 namespace Aws2Azure.IntegrationTests.OperationalQualification;
@@ -328,6 +330,119 @@ internal static class RealAzureRollbackQualification
                     {
                     }
                 }
+            }
+        }
+    }
+
+    public static async Task<RealAzureRollbackResult> VerifyKinesisAsync(
+        RealAzureProxyFixture fixture,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(fixture);
+        if (!fixture.SealedRollbackConfigured)
+        {
+            throw new InvalidOperationException(
+                "Real rollback requires verified candidate and prior sealed runtimes.");
+        }
+
+        var startedAt = DateTimeOffset.UtcNow;
+        var stopwatch = Stopwatch.StartNew();
+        var canary = "kinesis-rollback-" + Guid.NewGuid().ToString("N");
+        var canaryDigest = Digest(canary);
+        var boundary = DateTimeOffset.UtcNow.AddSeconds(-5);
+        var candidateRestored = false;
+        var candidateStoppedForRollback = false;
+        Amazon.Kinesis.AmazonKinesisClient? priorClient = null;
+
+        using var candidateClient = fixture.CreateKinesisClient();
+        try
+        {
+            var target = await KinesisTestHelpers.ResolvePartitionTargetAsync(
+                candidateClient,
+                fixture.EventHubStream,
+                cancellationToken).ConfigureAwait(false);
+            using (var data = new MemoryStream(Encoding.UTF8.GetBytes(canary)))
+            {
+                await candidateClient.PutRecordAsync(
+                    new PutRecordRequest
+                    {
+                        StreamName = fixture.EventHubStream,
+                        PartitionKey = target.PartitionKey,
+                        Data = data,
+                    },
+                    cancellationToken).ConfigureAwait(false);
+            }
+            var candidateCreateCompletedAt = DateTimeOffset.UtcNow;
+            await AssertKinesisValueAsync(
+                candidateClient,
+                fixture.EventHubStream,
+                target.ShardId,
+                boundary,
+                canary,
+                cancellationToken).ConfigureAwait(false);
+            var candidateReadCompletedAt = DateTimeOffset.UtcNow;
+
+            await fixture.StopForRuntimeSwitchAsync().ConfigureAwait(false);
+            candidateStoppedForRollback = true;
+            var candidateStoppedAt = DateTimeOffset.UtcNow;
+            await fixture.StartRuntimeAsync(SealedRuntimeRole.Prior).ConfigureAwait(false);
+            var priorStartedAt = DateTimeOffset.UtcNow;
+            priorClient = fixture.CreateKinesisClient();
+            await AssertKinesisValueAsync(
+                priorClient,
+                fixture.EventHubStream,
+                target.ShardId,
+                boundary,
+                canary,
+                cancellationToken).ConfigureAwait(false);
+            var priorReadCompletedAt = DateTimeOffset.UtcNow;
+
+            // Event Hubs records are retention-managed and cannot be deleted
+            // through the Kinesis data-plane profile. Record that boundary
+            // explicitly rather than claiming a cleanup operation exists.
+            var cleanupRequestedAt = TimestampAfter(priorReadCompletedAt);
+            var cleanupVerifiedAt = TimestampAfter(cleanupRequestedAt);
+
+            await fixture.StopForRuntimeSwitchAsync().ConfigureAwait(false);
+            priorClient.Dispose();
+            priorClient = null;
+            await fixture.StartRuntimeAsync(SealedRuntimeRole.Candidate).ConfigureAwait(false);
+            candidateRestored = true;
+            candidateStoppedForRollback = false;
+            var candidateRestoredAt = DateTimeOffset.UtcNow;
+            var completedAt = TimestampAfter(candidateRestoredAt);
+
+            return new RealAzureRollbackResult(
+                stopwatch.Elapsed.TotalSeconds,
+                completedAt,
+                Proof(
+                    "kinesis",
+                    "GetRecords",
+                    fixture,
+                    canaryDigest,
+                    "event_hubs_retention_no_immediate_record_delete",
+                    startedAt,
+                    candidateCreateCompletedAt,
+                    candidateReadCompletedAt,
+                    candidateStoppedAt,
+                    priorStartedAt,
+                    priorReadCompletedAt,
+                    cleanupRequestedAt,
+                    cleanupVerifiedAt,
+                    candidateRestoredAt,
+                    completedAt));
+        }
+        finally
+        {
+            priorClient?.Dispose();
+            if (candidateStoppedForRollback && !candidateRestored)
+            {
+                if (fixture.ProxyStarted)
+                {
+                    await fixture.StopForRuntimeSwitchAsync().ConfigureAwait(false);
+                }
+                await fixture.StartRuntimeAsync(SealedRuntimeRole.Candidate)
+                    .ConfigureAwait(false);
             }
         }
     }
@@ -772,6 +887,35 @@ internal static class RealAzureRollbackQualification
         {
             throw new InvalidDataException(
                 "Sealed runtime rollback returned the wrong DynamoDB canary.");
+        }
+    }
+
+    private static async Task AssertKinesisValueAsync(
+        Amazon.Kinesis.IAmazonKinesis client,
+        string streamName,
+        string shardId,
+        DateTimeOffset boundary,
+        string expected,
+        CancellationToken cancellationToken)
+    {
+        var iterator = await client.GetShardIteratorAsync(
+            new GetShardIteratorRequest
+            {
+                StreamName = streamName,
+                ShardId = shardId,
+                ShardIteratorType = "AT_TIMESTAMP",
+                Timestamp = KinesisTestHelpers.ToSdkTimestamp(boundary),
+            },
+            cancellationToken).ConfigureAwait(false);
+        var records = await KinesisTestHelpers.ReadUntilAsync(
+            (Amazon.Kinesis.AmazonKinesisClient)client,
+            iterator.ShardIterator,
+            record => KinesisTestHelpers.Utf8(record) == expected,
+            TimeSpan.FromSeconds(45)).ConfigureAwait(false);
+        if (!records.Any(record => KinesisTestHelpers.Utf8(record) == expected))
+        {
+            throw new InvalidDataException(
+                "Sealed runtime rollback did not return the Kinesis canary.");
         }
     }
 
