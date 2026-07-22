@@ -716,21 +716,6 @@ public static class WorkloadGaEvaluator
                && date >= currentDate.AddDays(-maxAgeDays);
     }
 
-    /// <summary>
-    /// Qualification errors are generated against the resolved absolute
-    /// evidence path (required for the symlink/traversal checks above), but
-    /// committed findings must never embed a machine-local absolute path —
-    /// replace any occurrence with the repository-relative path the manifest
-    /// actually references.
-    /// </summary>
-    private static string ToRepoRelativeMessage(
-        string message,
-        string absolutePath,
-        string relativePath)
-    {
-        return message.Replace(absolutePath, relativePath, StringComparison.Ordinal);
-    }
-
     private static bool ContainsSymbolicLink(string root, string path)
     {
         var relative = Path.GetRelativePath(root, path);

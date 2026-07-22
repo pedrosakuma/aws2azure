@@ -53,6 +53,40 @@
   },
   {
     "schema_version": 1,
+    "profile_id": "kinesis-basic-record-ingestion",
+    "profile_version": 1,
+    "name": "Kinesis basic record ingestion",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "candidate",
+    "findings": [
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "kinesis:PutRecord",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "kinesis:PutRecords",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "kinesis:Synthetic sequence numbers and iterator positioning",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027kinesis_record_ingestion\u0027."
+      },
+      {
+        "code": "qualification_evidence_missing",
+        "disposition": "blocking",
+        "subject": "kinesis-basic-record-ingestion",
+        "message": "No reviewed real-Azure workload qualification artifact is referenced."
+      }
+    ]
+  },
+  {
+    "schema_version": 1,
     "profile_id": "s3-basic-object-crud",
     "profile_version": 1,
     "name": "S3 basic object CRUD",
