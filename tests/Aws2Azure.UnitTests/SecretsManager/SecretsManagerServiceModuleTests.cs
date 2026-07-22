@@ -285,6 +285,7 @@ public sealed class SecretsManagerServiceModuleTests
         await module.HandleAsync(context);
 
         Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Equal("application/x-amz-json-1.1", context.Response.ContentType);
         var body = await ReadBodyAsync(context);
         Assert.Contains("InvalidRequestException", body);
     }
@@ -494,7 +495,7 @@ public sealed class SecretsManagerServiceModuleTests
 
         await module.HandleAsync(context);
 
-        Assert.Equal(StatusCodes.Status409Conflict, context.Response.StatusCode);
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
         var body = await ReadBodyAsync(context);
         using var document = JsonDocument.Parse(body);
         Assert.Equal("ResourceExistsException", document.RootElement.GetProperty("__type").GetString());
@@ -530,21 +531,11 @@ public sealed class SecretsManagerServiceModuleTests
     [Fact]
     public async Task HandleAsync_UpdateSecret_returns_aws_shape_for_rewritten_secret()
     {
-        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
-        {
-            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+        using var http = new AzureHttpClient(new InMemoryKeyVaultHandler(
+            new SecretVersionState("base", "old-secret", 1_710_000_000, new Dictionary<string, string>(StringComparer.Ordinal)
             {
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
-                });
-            }
-
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/def456\",\"attributes\":{\"created\":1710000000}}", Encoding.UTF8, "application/json"),
-            });
-        }), ownsHandler: false);
+                ["aws2azure-version-stages"] = "AWSCURRENT",
+            })), ownsHandler: false);
 
         var module = CreateModule(http);
         var context = CreateContext("SecretsManager.UpdateSecret", "{\"SecretId\":\"demo\",\"SecretString\":\"new-secret\"}");
@@ -554,7 +545,7 @@ public sealed class SecretsManagerServiceModuleTests
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
         var body = await ReadBodyAsync(context);
         using var document = JsonDocument.Parse(body);
-        Assert.Equal("def456", document.RootElement.GetProperty("VersionId").GetString());
+        Assert.Equal("new-version", document.RootElement.GetProperty("VersionId").GetString());
         Assert.Equal("demo", document.RootElement.GetProperty("Name").GetString());
     }
 
@@ -710,7 +701,7 @@ public sealed class SecretsManagerServiceModuleTests
 
     [Theory]
     [InlineData(HttpStatusCode.NotFound, StatusCodes.Status404NotFound, "ResourceNotFoundException")]
-    [InlineData(HttpStatusCode.Conflict, StatusCodes.Status409Conflict, "ResourceExistsException")]
+    [InlineData(HttpStatusCode.Conflict, StatusCodes.Status400BadRequest, "ResourceExistsException")]
     [InlineData(HttpStatusCode.BadRequest, StatusCodes.Status400BadRequest, "InvalidParameterException")]
     [InlineData(HttpStatusCode.Unauthorized, StatusCodes.Status403Forbidden, "AccessDeniedException")]
     [InlineData(HttpStatusCode.Forbidden, StatusCodes.Status403Forbidden, "AccessDeniedException")]
@@ -749,33 +740,12 @@ public sealed class SecretsManagerServiceModuleTests
     [Fact]
     public async Task HandleAsync_PutSecretValue_returns_aws_shape_for_new_version()
     {
-        string? requestedUri = null;
-        string? requestBody = null;
-        using var http = new AzureHttpClient(new ScriptedHandler(async (request, _) =>
-        {
-            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+        var backend = new InMemoryKeyVaultHandler(
+            new SecretVersionState("base", "old-secret", 1_710_000_000, new Dictionary<string, string>(StringComparer.Ordinal)
             {
-                return new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
-                };
-            }
-
-            if (request.Method == HttpMethod.Get)
-            {
-                return new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent("{\"id\":\"https://example.vault.azure.net/secrets/demo\",\"attributes\":{\"created\":1710000000}}", Encoding.UTF8, "application/json"),
-                };
-            }
-
-            requestedUri = request.RequestUri.ToString();
-            requestBody = await request.Content!.ReadAsStringAsync();
-            return new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/put789\",\"attributes\":{\"created\":1710000000}}", Encoding.UTF8, "application/json"),
-            };
-        }), ownsHandler: false);
+                ["aws2azure-version-stages"] = "AWSCURRENT",
+            }));
+        using var http = new AzureHttpClient(backend, ownsHandler: false);
 
         var module = CreateModule(http);
         var context = CreateContext("SecretsManager.PutSecretValue", "{\"SecretId\":\"demo\",\"SecretString\":\"new-secret\",\"ClientRequestToken\":\"token-1\",\"VersionStages\":[\"AWSCURRENT\",\"BLUE\"]}");
@@ -783,15 +753,16 @@ public sealed class SecretsManagerServiceModuleTests
         await module.HandleAsync(context);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
-        Assert.NotNull(requestedUri);
-        Assert.Contains("/secrets/demo?api-version=7.4", requestedUri);
-        Assert.NotNull(requestBody);
-        Assert.Contains("\"value\":\"new-secret\"", requestBody);
-        using (var requestDocument = JsonDocument.Parse(requestBody))
+        Assert.NotNull(backend.LastPutUri);
+        Assert.Contains("/secrets/demo?api-version=7.4", backend.LastPutUri);
+        Assert.NotNull(backend.LastPutBody);
+        Assert.Contains("\"value\":\"new-secret\"", backend.LastPutBody);
+        using (var requestDocument = JsonDocument.Parse(backend.LastPutBody))
         {
             var tags = requestDocument.RootElement.GetProperty("tags");
             Assert.Equal("token-1", tags.GetProperty("aws2azure-client-request-token").GetString());
-            Assert.Equal("AWSCURRENT\nBLUE", tags.GetProperty("aws2azure-version-stages").GetString());
+            Assert.Equal("\n", tags.GetProperty("aws2azure-version-stages").GetString());
+            Assert.Equal("AWSCURRENT\nBLUE", tags.GetProperty("aws2azure-intended-version-stages").GetString());
             Assert.False(requestDocument.RootElement.GetProperty("attributes").TryGetProperty("created", out _));
         }
 
@@ -896,13 +867,13 @@ public sealed class SecretsManagerServiceModuleTests
     }
 
     [Fact]
-    public void PutSecretValue_gap_doc_records_cross_instance_idempotency_limit()
+    public void PutSecretValue_gap_doc_records_key_vault_only_atomicity_limit()
     {
         var yamlPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../..", "docs/gaps/secretsmanager/PutSecretValue.yaml"));
         var yaml = File.ReadAllText(yamlPath);
 
-        Assert.Contains("not a durable cross-instance lock", yaml, StringComparison.Ordinal);
-        Assert.Contains("Concurrent same-token PutSecretValue calls through different proxy instances can both create versions", yaml, StringComparison.Ordinal);
+        Assert.Contains("strict cross-instance atomicity is structurally impossible", yaml, StringComparison.Ordinal);
+        Assert.Contains("intentionally adds no external coordinator", yaml, StringComparison.Ordinal);
         Assert.Contains("status: partial", yaml, StringComparison.Ordinal);
     }
 
@@ -985,7 +956,7 @@ public sealed class SecretsManagerServiceModuleTests
 
         await module.HandleAsync(context);
 
-        Assert.Equal(StatusCodes.Status409Conflict, context.Response.StatusCode);
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
         var body = await ReadBodyAsync(context);
         Assert.Contains("ResourceExistsException", body);
     }
@@ -996,45 +967,20 @@ public sealed class SecretsManagerServiceModuleTests
     public async Task HandleAsync_write_operations_preserve_key_vault_created_timestamp(string target, string requestJson)
     {
         const long originalCreated = 1_710_000_000;
-        long currentCreated = originalCreated;
-        string? putBody = null;
-        using var http = new AzureHttpClient(new ScriptedHandler(async (request, _) =>
-        {
-            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+        var backend = new InMemoryKeyVaultHandler(
+            new SecretVersionState("base", "old-secret", originalCreated, new Dictionary<string, string>(StringComparer.Ordinal)
             {
-                return new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
-                };
-            }
-
-            if (request.Method == HttpMethod.Put)
-            {
-                putBody = await request.Content!.ReadAsStringAsync();
-                if (putBody.Contains("\"created\"", StringComparison.Ordinal))
-                {
-                    currentCreated = 1_710_009_999;
-                }
-
-                return new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent($"{{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/def456\",\"attributes\":{{\"created\":{currentCreated},\"updated\":1710001000}}}}", Encoding.UTF8, "application/json"),
-                };
-            }
-
-            return new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent($"{{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/def456\",\"name\":\"demo\",\"attributes\":{{\"created\":{currentCreated},\"updated\":1710001000}}}}", Encoding.UTF8, "application/json"),
-            };
-        }), ownsHandler: false);
+                ["aws2azure-version-stages"] = "AWSCURRENT",
+            }));
+        using var http = new AzureHttpClient(backend, ownsHandler: false);
 
         var module = CreateModule(http);
         var writeContext = CreateContext(target, requestJson);
         await module.HandleAsync(writeContext);
 
         Assert.Equal(StatusCodes.Status200OK, writeContext.Response.StatusCode);
-        Assert.NotNull(putBody);
-        Assert.DoesNotContain("\"created\"", putBody);
+        Assert.NotNull(backend.LastPutBody);
+        Assert.DoesNotContain("\"created\"", backend.LastPutBody);
 
         var describeContext = CreateContext("SecretsManager.DescribeSecret", "{\"SecretId\":\"demo\"}");
         await module.HandleAsync(describeContext);
@@ -1152,6 +1098,8 @@ public sealed class SecretsManagerServiceModuleTests
     private sealed class InMemoryKeyVaultHandler(params SecretVersionState[] initialVersions) : HttpMessageHandler
     {
         private readonly List<SecretVersionState> _versions = [.. initialVersions];
+        public string? LastPutUri { get; private set; }
+        public string? LastPutBody { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -1187,6 +1135,8 @@ public sealed class SecretsManagerServiceModuleTests
             if (request.Method == HttpMethod.Put && string.Equals(path, "/secrets/demo", StringComparison.Ordinal))
             {
                 var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+                LastPutUri = request.RequestUri.ToString();
+                LastPutBody = body;
                 using var document = JsonDocument.Parse(body);
                 var value = document.RootElement.TryGetProperty("value", out var valueElement) && valueElement.ValueKind == JsonValueKind.String
                     ? valueElement.GetString() ?? string.Empty

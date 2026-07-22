@@ -14,6 +14,8 @@ internal sealed class KeyVaultSecretClient
     internal const string ClientRequestTokenTag = InternalTagPrefix + "client-request-token";
     internal const string PayloadSha256Tag = InternalTagPrefix + "payload-sha256";
     internal const string VersionStagesTag = InternalTagPrefix + "version-stages";
+    internal const string IntendedVersionStagesTag = InternalTagPrefix + "intended-version-stages";
+    internal const string DefaultStageTransitionTag = InternalTagPrefix + "default-stage-transition";
 
     private readonly AzureHttpClient _http;
     private readonly EntraIdTokenProvider _tokenProvider;
@@ -290,16 +292,6 @@ internal sealed class KeyVaultSecretClient
         return result;
     }
 
-    public static string[] GetVersionStages(JsonElement root)
-    {
-        if (TryGetRawTag(root, VersionStagesTag, out var value))
-        {
-            return DecodeVersionStages(value);
-        }
-
-        return ["AWSCURRENT"];
-    }
-
     public static string[] ReadVersionStages(JsonDocument document)
     {
         if (!document.RootElement.TryGetProperty("VersionStages", out var stagesElement))
@@ -342,12 +334,18 @@ internal sealed class KeyVaultSecretClient
         return stages.ToArray();
     }
 
-    public static IReadOnlyDictionary<string, string> BuildInternalTags(string? clientRequestToken, string payloadSha256, IReadOnlyList<string> versionStages)
+    public static IReadOnlyDictionary<string, string> BuildInternalTags(
+        string? clientRequestToken,
+        string payloadSha256,
+        IReadOnlyList<string> intendedVersionStages,
+        bool defaultStageTransition)
     {
         var tags = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             [PayloadSha256Tag] = payloadSha256,
-            [VersionStagesTag] = EncodeVersionStages(versionStages),
+            [VersionStagesTag] = "\n",
+            [IntendedVersionStagesTag] = EncodeVersionStages(intendedVersionStages),
+            [DefaultStageTransitionTag] = defaultStageTransition ? "true" : "false",
         };
 
         if (!string.IsNullOrWhiteSpace(clientRequestToken))
@@ -367,6 +365,9 @@ internal sealed class KeyVaultSecretClient
 
         return result;
     }
+
+    public static string[] DecodeStoredVersionStages(string value)
+        => DecodeVersionStages(value);
 
     public static bool TryGetRawTag(JsonElement root, string name, out string value)
     {

@@ -20,7 +20,7 @@ internal static class CreateSecretHandler
 
         if (exists.Value)
         {
-            await SecretsManagerOperationSupport.WriteAwsErrorAsync(context, StatusCodes.Status409Conflict, "ResourceExistsException", $"Secret '{name}' already exists.").ConfigureAwait(false);
+            await SecretsManagerOperationSupport.WriteAwsErrorAsync(context, StatusCodes.Status400BadRequest, "ResourceExistsException", $"Secret '{name}' already exists.").ConfigureAwait(false);
             return;
         }
 

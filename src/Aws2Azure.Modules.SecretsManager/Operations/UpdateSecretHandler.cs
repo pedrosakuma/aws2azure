@@ -25,14 +25,17 @@ internal static class UpdateSecretHandler
         var secretString = SecretsManagerOperationSupport.ReadString(document, "SecretString");
         var secretBinary = SecretsManagerOperationSupport.ReadString(document, "SecretBinary");
         var description = SecretsManagerOperationSupport.ReadString(document, "Description");
-        var payloadSha256 = KeyVaultSecretClient.GetPayloadSha256(secretString, string.IsNullOrWhiteSpace(secretBinary) ? null : "application/octet-stream");
+        var clientRequestToken = SecretsManagerOperationSupport.ReadString(document, "ClientRequestToken");
+        var contentType = string.IsNullOrWhiteSpace(secretBinary) ? null : "application/octet-stream";
+        var storedValue = string.IsNullOrWhiteSpace(secretBinary)
+            ? secretString
+            : KeyVaultSecretClient.EncodeSecretBinary(KeyVaultSecretClient.DecodeSecretBinary(secretBinary));
+        var payloadSha256 = KeyVaultSecretClient.GetPayloadSha256(storedValue, contentType);
 
-        // Write a new AWSCURRENT version and demote the prior current to AWSPREVIOUS
-        // through the shared PutSecretValue stage logic, so read-your-write
-        // semantics (and pagination/failure handling) are identical (#484).
+        await using var secretLock = await SecretVersionCoordinator.AcquireLockAsync(name, cancellationToken).ConfigureAwait(false);
         var written = await PutSecretValueHandler.CreateVersionAsync(
             context, client, token, name, secretString, secretBinary, description,
-            clientRequestToken: null, payloadSha256, ["AWSCURRENT"], versionStagesSpecified: false, cancellationToken).ConfigureAwait(false);
+            clientRequestToken, payloadSha256, ["AWSCURRENT"], versionStagesSpecified: false, cancellationToken).ConfigureAwait(false);
         if (written is null)
         {
             return;
@@ -41,8 +44,8 @@ internal static class UpdateSecretHandler
         var payload = new UpdateSecretResponse(
             Arn: KeyVaultSecretClient.BuildArn(name),
             Name: name,
-            VersionId: written.Value.VersionId,
-            VersionStages: ["AWSCURRENT"],
+            VersionId: string.IsNullOrWhiteSpace(clientRequestToken) ? written.Value.VersionId : clientRequestToken,
+            VersionStages: written.Value.VersionStages,
             CreatedDate: written.Value.CreatedDate);
 
         await SecretsManagerOperationSupport.WriteJsonAsync(context, payload, SecretsManagerJsonContext.Default.UpdateSecretResponse, cancellationToken).ConfigureAwait(false);

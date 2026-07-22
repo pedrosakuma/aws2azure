@@ -27,12 +27,26 @@ internal static class DescribeSecretHandler
         var lastChanged = KeyVaultSecretClient.GetLastChangedDate(secretDocument.RootElement);
         var description = KeyVaultSecretClient.GetDescription(secretDocument.RootElement);
         var tags = KeyVaultSecretClient.GetTags(secretDocument.RootElement);
-        var versionIdsToStages = string.IsNullOrWhiteSpace(id)
-            ? null
-            : new Dictionary<string, IReadOnlyList<string>>
+        var versions = await SecretVersionCoordinator.ListVersionsAsync(context, client, token, name, cancellationToken).ConfigureAwait(false);
+        if (versions is null)
+        {
+            return;
+        }
+
+        var versionIdsToStages = SecretVersionCoordinator.BuildVersionStageMap(versions, out var tokenConflict);
+        if (tokenConflict)
+        {
+            await SecretVersionCoordinator.WriteConflictAsync(context, "ClientRequestToken is associated with conflicting Key Vault versions.").ConfigureAwait(false);
+            return;
+        }
+
+        if (versionIdsToStages.Count == 0 && !string.IsNullOrWhiteSpace(id))
+        {
+            versionIdsToStages = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
             {
                 [KeyVaultSecretClient.GetVersionId(id)] = ["AWSCURRENT"],
             };
+        }
 
         var payload = new DescribeSecretResponse(
             Arn: KeyVaultSecretClient.BuildArn(nameValue),

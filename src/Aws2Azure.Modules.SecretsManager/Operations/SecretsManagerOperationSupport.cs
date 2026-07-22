@@ -88,7 +88,7 @@ internal static class SecretsManagerOperationSupport
         => statusCode switch
         {
             HttpStatusCode.NotFound => StatusCodes.Status404NotFound,
-            HttpStatusCode.Conflict => StatusCodes.Status409Conflict,
+            HttpStatusCode.Conflict => StatusCodes.Status400BadRequest,
             HttpStatusCode.BadRequest => StatusCodes.Status400BadRequest,
             HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => StatusCodes.Status403Forbidden,
             HttpStatusCode.TooManyRequests => StatusCodes.Status429TooManyRequests,

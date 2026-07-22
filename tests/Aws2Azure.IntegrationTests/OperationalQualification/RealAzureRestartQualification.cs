@@ -178,6 +178,7 @@ internal static class RealAzureRestartQualification
     {
         var secret = "aws2azure-restart-" + Guid.NewGuid().ToString("N");
         using var client = fixture.CreateSecretsManagerClient();
+        var replayToken = Guid.NewGuid().ToString();
         try
         {
             await client.CreateSecretAsync(new CreateSecretRequest
@@ -185,8 +186,22 @@ internal static class RealAzureRestartQualification
                 Name = secret,
                 SecretString = "survives-restart",
             }).ConfigureAwait(false);
+            await client.PutSecretValueAsync(new PutSecretValueRequest
+            {
+                SecretId = secret,
+                SecretString = "survives-restart",
+                ClientRequestToken = replayToken,
+            }).ConfigureAwait(false);
 
             await fixture.RestartAsync().ConfigureAwait(false);
+
+            var replay = await client.PutSecretValueAsync(new PutSecretValueRequest
+            {
+                SecretId = secret,
+                SecretString = "survives-restart",
+                ClientRequestToken = replayToken,
+            }).ConfigureAwait(false);
+            Assert.Equal(replayToken, replay.VersionId);
 
             var response = await client.GetSecretValueAsync(new GetSecretValueRequest
             {
