@@ -48,6 +48,7 @@
 - Advanced rotation, restore, and policy semantics are not yet modeled; the proxy uses Key Vault secret versions as the AWS version surface.
 - Responses use the AWS JSON 1.1 wire shape (Unix-epoch numeric timestamps, Content-Type application/x-amz-json-1.1); validated end-to-end against a real Azure Key Vault through the proxy with the AWS SDK.
 - Tags are returned as an AWS Key/Value array sourced from the Key Vault secret's tags map.
+- VersionIdsToStages is built from the complete paginated Key Vault version inventory. Deterministic same-token duplicates are collapsed to one logical AWS VersionId; conflicting token payload metadata returns ResourceExistsException.
 
 ### References
 
@@ -66,6 +67,7 @@
 - Advanced rotation, restore, and policy semantics are not yet modeled; the proxy uses Key Vault secret versions as the AWS version surface.
 - Responses use the AWS JSON 1.1 wire shape (Unix-epoch numeric timestamps, Content-Type application/x-amz-json-1.1); validated end-to-end against a real Azure Key Vault through the proxy with the AWS SDK.
 - VersionStage lookup scans proxy-owned Key Vault version tags written by PutSecretValue; untagged legacy versions are treated as AWSCURRENT fallback for default reads. VersionId accepts either a raw Key Vault version id or a PutSecretValue ClientRequestToken, and VersionId+VersionStage requests are rejected when they do not refer to the same version. Full AWS rotation workflows such as RotateSecret are not implemented.
+- Version and token resolution use the same complete paginated inventory and deterministic created-time/version-id ordering as the write reconciler. If multiple physical versions still hold the requested explicit label, GetSecretValue returns ResourceExistsException instead of silently choosing an ambiguous winner.
 
 ### References
 
@@ -102,17 +104,18 @@
 
 | Name | Status | Real-Azure | Notes | Gap | Workaround |
 |---|---|---|---|---|---|
-| ClientRequestToken idempotency | 🟡 partial | — | Implemented with proxy-owned Key Vault version tags plus an in-process same-secret lock. Validated against real Azure Key Vault (run 28332049014: replaying the same token + payload returns the same VersionId; same token + different payload returns ResourceExistsException). | The lock is per proxy instance, not a durable Key Vault conditional write/lease. Concurrent same-token PutSecretValue calls through different proxy instances can both create versions instead of one call returning ResourceExistsException; versions written directly in Key Vault without aws2azure metadata tags are also not detected. | Route same-secret writes through one proxy instance when strict ClientRequestToken idempotency is required, or add an external single-writer/lease before calling PutSecretValue. |
-| VersionStages request labels | 🟡 partial | — | Persisted as proxy-owned Key Vault version tags and returned by PutSecretValue/GetSecretValue; default PutSecretValue moves AWSCURRENT to the new version and AWSPREVIOUS to the prior current version; explicit VersionStages move only the requested labels. Validated against real Azure Key Vault (run 28332049014: AWSCURRENT/AWSPREVIOUS transitions and a custom stage label resolved via GetSecretValue(VersionStage=...)). | Label transitions are implemented as multiple Key Vault version tag updates, so they are as close to atomic as Key Vault allows but are not a single backend transaction. Custom stage labels are resolvable via GetSecretValue(VersionStage=...) but are NOT enumerated by DescribeSecret, whose VersionIdsToStages is a simplified current-version view ({current version: [AWSCURRENT]}). Full AWS rotation workflow support (RotateSecret) is unsupported (see RotateSecret gap doc). | Resolve custom stage labels with GetSecretValue(VersionStage=...) rather than DescribeSecret. Use AWSCURRENT-only flows when a single-transaction stage move is required. |
+| ClientRequestToken idempotency | 🟡 partial | — | Proxy-owned Key Vault version metadata now drives a paginated, bounded reconciliation loop. A new version is created without public stages, relisted, duplicate tokens are classified deterministically by created time plus version id, and only the deterministic winner is published. Same-payload replays converge on one AWS VersionId; different payload hashes return AWS ResourceExistsException with HTTP 400. Per-secret process locks are reference-counted and removed after the final waiter. | Key Vault does not provide a transaction spanning version creation, version inventory, and multiple version-tag patches. Two proxy instances can therefore create same-token duplicate physical versions during a race; bounded reconciliation removes labels from deterministic losers, but strict cross-instance atomicity is structurally impossible without an external coordinator. Versions written outside aws2azure without its token/hash metadata cannot participate in token replay detection. | Treat ResourceExistsException from a contended write as an explicit retry/read signal. Route a secret's writers through one instance only when the application requires stronger single-writer behavior than Key Vault can provide without another dependency. |
+| VersionStages request labels | 🟡 partial | — | A shared paginated inventory is used by PutSecretValue, UpdateSecret, GetSecretValue, and DescribeSecret. Writers create an empty-stage version, relist it, remove requested labels from every loser before publishing the winner, merge stage metadata into freshly fetched tags, and verify/repair the invariant within a bounded retry budget. DescribeSecret now enumerates the logical version-stage map. | Label changes remain separate Key Vault PATCH requests. Loser-first publication prevents multiple intended AWSCURRENT holders during normal proxy writes, but a crash or independent out-of-band writer can expose a temporary zero-holder or duplicate-holder state. If the unique-label invariant is not observed after bounded repair, the proxy returns ResourceExistsException rather than claiming success. RotateSecret remains unsupported. | Retry a conflicted write or read after Key Vault propagation settles, then inspect DescribeSecret. Applications needing an indivisible cross-instance stage transaction require a coordinator outside this Key Vault-only design. |
 
 ### Behaviour differences
 
 - Initial MVP uses Key Vault AAD auth and translates PutSecretValue to a Key Vault Set Secret request that creates a new Key Vault secret version.
 - The proxy first checks that the secret exists and returns ResourceNotFoundException when it does not, matching AWS PutSecretValue semantics instead of Key Vault's native upsert.
-- ClientRequestToken idempotency is modeled with proxy-owned Key Vault version tags and the token is exposed as the AWS VersionId: a repeated token with the same payload replays the existing VersionId, while a repeated token with different payload returns ResourceExistsException. The proxy serializes same-secret token checks within one process, but this is proxy-local metadata and is not a durable cross-instance lock; concurrent same-token writes through different proxy instances can both create versions, and versions written directly in Key Vault without these tags are not detected.
-- VersionStages supplied to PutSecretValue are persisted as proxy-owned Key Vault version tags and surfaced by PutSecretValue/GetSecretValue. When VersionStages is omitted, the proxy moves AWSCURRENT to the new Key Vault version, removes AWSCURRENT from the prior current version, assigns AWSPREVIOUS to that prior current version, and removes stale AWSPREVIOUS labels from older versions. When VersionStages is supplied explicitly, only the requested labels are moved off prior holders. These updates are separate Key Vault tag updates rather than one backend transaction, but replaying the same ClientRequestToken re-runs the transitions.
+- ClientRequestToken metadata, payload hashes, intended stages, and transition mode are stored on Key Vault versions. Physical duplicates with the same token and payload are resolved deterministically; conflicting payloads and an invariant that remains unobserved after bounded repair return ResourceExistsException with AWS's HTTP 400 JSON shape.
+- New versions are created with an explicit empty stage set. After the version is visible in the complete paginated inventory, requested labels are removed from losers before the winner is published. Every PATCH starts from a fresh version GET so unrelated Key Vault tags are retained, and a bounded verification pass repairs transient visibility or partial-patch failures.
+- Strict atomicity across proxy instances remains partial: Key Vault has no transaction covering create/list/multi-version tag updates, and this design intentionally adds no external coordinator or state store.
 - The Key Vault PUT payload deliberately omits attributes.created so Key Vault preserves the original secret creation timestamp reported by DescribeSecret/GetSecretValue.
-- Validated against a real Azure Key Vault by the RealAzure SecretsManager smoke (run 28332049014, ephemeral RBAC vault): PutSecretValue creates a new version and moves AWSCURRENT/AWSPREVIOUS; GetSecretValue resolves AWSPREVIOUS and custom stage labels from the version tags; ClientRequestToken idempotency replays the same VersionId for an identical payload and returns ResourceExistsException for a conflicting payload. The operation stays `partial` (not promoted to implemented) because of the durable, documented gaps above — proxy-local (non-cross-instance) idempotency, non-transactional multi-tag stage moves, and DescribeSecret's simplified VersionIdsToStages — not because of a missing validation.
+- Source real-Azure scenarios cover rapid cross-instance same-token writes, out-of-band Key Vault tag interference, proxy restart replay, and rollback replay. Evidence regeneration and workflow execution are owned separately; the operation remains partial because strict cross-instance atomicity is structurally unavailable in Key Vault alone.
 
 ### References
 
@@ -148,12 +151,20 @@
 - **Azure equivalent:** `PUT https://{vault}.vault.azure.net/secrets/{name}/versions`
 - **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
+### Sub-features
+
+| Name | Status | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|
+| Version durability and ClientRequestToken replay | 🟡 partial | — | UpdateSecret uses the same empty-stage creation, paginated inventory, deterministic token resolution, loser-first stage publication, fresh tag merge, and bounded verification path as PutSecretValue. | The Key Vault-only reconciliation cannot make version creation plus multi-version label patches atomic across proxy instances. A bounded conflict is returned when the invariant cannot be observed. | Retry ResourceExistsException after propagation settles, or use a single writer when stronger ordering is required. |
+
 ### Behaviour differences
 
 - Initial MVP uses Key Vault AAD auth and translates the core secret CRUD/read paths to AWS Secrets Manager JSON responses.
 - Advanced rotation, restore, and policy semantics are not yet modeled; the proxy uses Key Vault secret versions as the AWS version surface.
 - Responses use the AWS JSON 1.1 wire shape (Unix-epoch numeric timestamps, Content-Type application/x-amz-json-1.1); validated end-to-end against a real Azure Key Vault through the proxy with the AWS SDK.
 - Because Key Vault PUT is an upsert, UpdateSecret first checks existence and returns ResourceNotFoundException for a missing secret to match AWS semantics.
+- ClientRequestToken is persisted and replayed through the shared version coordinator. ResourceExistsException uses the AWS HTTP 400 JSON shape.
+- The operation remains partial because strict cross-instance version/stage atomicity is impossible without an external coordinator, which this Key Vault-only design intentionally avoids.
 
 ### References
 

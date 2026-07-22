@@ -242,11 +242,11 @@ Lifecycle, replication, website hosting, event notifications, request payment, a
 
 - **Status:** 🟡 partial
 
-Secrets Manager version stages (AWSCURRENT / AWSPREVIOUS / custom labels) are modelled with Key Vault secret versions plus per-version tags. Key Vault's created timestamp has one-second granularity, so stage resolution relies on tag bookkeeping rather than a native staging concept.
+Secrets Manager version stages (AWSCURRENT / AWSPREVIOUS / custom labels) are modelled with Key Vault secret versions plus per-version tags. Key Vault's created timestamp has one-second granularity, so deterministic resolution uses created time plus version id and relies on tag bookkeeping rather than a native staging concept.
 
-**Impact.** Two versions created within the same second could tie on created-time, so stage transitions must be applied carefully (e.g. UpdateSecret demotes the previous AWSCURRENT) to avoid resolving the wrong version.
+**Impact.** Version creation, inventory, and per-version tag patches cannot be one Key Vault transaction. The proxy uses empty-stage creation, loser-first publication, fresh tag merges, and bounded verification/repair, but strict cross-instance atomicity remains structurally impossible without an external coordinator. Key Vault secret PATCH does not expose a contractual ETag/If-Match primitive, so a tag edit that lands in the narrow interval between the proxy's fresh GET and PATCH can still be overwritten.
 
-**Workaround.** Rely on the proxy's stage-tag bookkeeping; avoid out-of-band edits to Key Vault version tags.
+**Workaround.** Retry an explicit ResourceExistsException after propagation settles and use a single writer when stronger ordering is required. Unrelated out-of-band tags are preserved by fresh merges, but out-of-band edits to proxy-owned aws2azure-* tags are unsupported. Before rollback, drain writes and let the candidate runtime finish or repair every pending publication; the previous runtime can read completed versions but cannot interpret the candidate-only pending-publication intent metadata.
 
 <a id="secretsmanager-rotation-has-no-lambda-equivalent"></a>
 

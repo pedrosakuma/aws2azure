@@ -463,7 +463,9 @@ internal static class RealAzureRollbackQualification
         var startedAt = DateTimeOffset.UtcNow;
         var stopwatch = Stopwatch.StartNew();
         var secretName = "a2a-rollback-" + Guid.NewGuid().ToString("N");
+        var initialCanary = "secrets-rollback-initial-" + Guid.NewGuid().ToString("N");
         var canary = "secrets-rollback-" + Guid.NewGuid().ToString("N");
+        var replayToken = Guid.NewGuid().ToString();
         var canaryDigest = Digest(canary);
         var secretCreated = false;
         var candidateRestored = false;
@@ -477,11 +479,19 @@ internal static class RealAzureRollbackQualification
                 new CreateSecretRequest
                 {
                     Name = secretName,
-                    SecretString = canary,
+                    SecretString = initialCanary,
                     Description = "aws2azure sealed runtime rollback canary",
                 },
                 cancellationToken).ConfigureAwait(false);
             secretCreated = true;
+            await candidateClient.PutSecretValueAsync(
+                new PutSecretValueRequest
+                {
+                    SecretId = secretName,
+                    SecretString = canary,
+                    ClientRequestToken = replayToken,
+                },
+                cancellationToken).ConfigureAwait(false);
             var candidateCreateCompletedAt = DateTimeOffset.UtcNow;
             await AssertSecretValueAsync(
                 candidateClient,
@@ -496,6 +506,18 @@ internal static class RealAzureRollbackQualification
             await fixture.StartRuntimeAsync(SealedRuntimeRole.Prior).ConfigureAwait(false);
             var priorStartedAt = DateTimeOffset.UtcNow;
             priorClient = fixture.CreateSecretsManagerClient(maxErrorRetry: 0);
+            var replay = await priorClient.PutSecretValueAsync(
+                new PutSecretValueRequest
+                {
+                    SecretId = secretName,
+                    SecretString = canary,
+                    ClientRequestToken = replayToken,
+                },
+                cancellationToken).ConfigureAwait(false);
+            if (!string.Equals(replay.VersionId, replayToken, StringComparison.Ordinal))
+            {
+                throw new InvalidDataException("Secrets Manager rollback replay returned a different ClientRequestToken.");
+            }
 
             await AssertSecretValueAsync(
                 priorClient,

@@ -5,15 +5,25 @@ design_gaps:
     summary: >-
       Secrets Manager version stages (AWSCURRENT / AWSPREVIOUS / custom labels)
       are modelled with Key Vault secret versions plus per-version tags. Key
-      Vault's created timestamp has one-second granularity, so stage resolution
-      relies on tag bookkeeping rather than a native staging concept.
+      Vault's created timestamp has one-second granularity, so deterministic
+      resolution uses created time plus version id and relies on tag bookkeeping
+      rather than a native staging concept.
     impact: >-
-      Two versions created within the same second could tie on created-time,
-      so stage transitions must be applied carefully (e.g. UpdateSecret demotes
-      the previous AWSCURRENT) to avoid resolving the wrong version.
+      Version creation, inventory, and per-version tag patches cannot be one Key
+      Vault transaction. The proxy uses empty-stage creation, loser-first
+      publication, fresh tag merges, and bounded verification/repair, but strict
+      cross-instance atomicity remains structurally impossible without an
+      external coordinator. Key Vault secret PATCH does not expose a contractual
+      ETag/If-Match primitive, so a tag edit that lands in the narrow interval
+      between the proxy's fresh GET and PATCH can still be overwritten.
     workaround: >-
-      Rely on the proxy's stage-tag bookkeeping; avoid out-of-band edits to Key
-      Vault version tags.
+      Retry an explicit ResourceExistsException after propagation settles and
+      use a single writer when stronger ordering is required. Unrelated
+      out-of-band tags are preserved by fresh merges, but out-of-band edits to
+      proxy-owned aws2azure-* tags are unsupported. Before rollback, drain writes
+      and let the candidate runtime finish or repair every pending publication;
+      the previous runtime can read completed versions but cannot interpret the
+      candidate-only pending-publication intent metadata.
   - area: Rotation has no Lambda equivalent
     status: partial
     summary: >-
@@ -82,8 +92,8 @@ workload_patterns:
     design_gaps:
       - Versioning and staging modelled on Key Vault version tags
     guidance: >-
-      Avoid out-of-band edits to version tags and test rapid successive version
-      creation.
+      Do not edit proxy-owned aws2azure-* tags; test rapid successive writes and
+      handle bounded ResourceExistsException conflicts.
   - id: secretsmanager_lambda_rotation
     name: Lambda-driven managed rotation
     compatibility: blocked
