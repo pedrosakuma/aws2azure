@@ -21,6 +21,7 @@ internal static class ServiceBusAtomXml
     private const string AtomNamespace = "http://www.w3.org/2005/Atom";
     private const string ServiceBusNamespace = "http://schemas.microsoft.com/netservices/2010/10/servicebus/connect";
     private const string XmlSchemaInstanceNamespace = "http://www.w3.org/2001/XMLSchema-instance";
+    private const string DataServicesMetadataNamespace = "http://schemas.microsoft.com/ado/2007/08/dataservices/metadata";
 
     private static readonly XmlReaderSettings ReaderSettings = new()
     {
@@ -83,13 +84,21 @@ internal static class ServiceBusAtomXml
         writer.WriteAttributeString("type", "application/xml");
         writer.WriteStartElement("SubscriptionDescription", ServiceBusNamespace);
         writer.WriteAttributeString("xmlns", "i", null, XmlSchemaInstanceNamespace);
-        writer.WriteElementString("LockDuration", ServiceBusNamespace, string.IsNullOrWhiteSpace(description.LockDuration) ? ServiceBusTopicsManagementClient.DefaultLockDurationIso8601 : description.LockDuration);
-        writer.WriteElementString("MaxDeliveryCount", ServiceBusNamespace, description.MaxDeliveryCount <= 0 ? ServiceBusTopicsManagementClient.DefaultMaxDeliveryCount.ToString(CultureInfo.InvariantCulture) : description.MaxDeliveryCount.ToString(CultureInfo.InvariantCulture));
-        // UserMetadata must appear BEFORE AutoDeleteOnIdle in the canonical SubscriptionDescription
-        // schema order. Real Service Bus rejects out-of-order PUTs with HTTP 400; the SB emulator
-        // accepts them but silently drops fields that appear out of position. Keep this order stable.
-        writer.WriteElementString("UserMetadata", ServiceBusNamespace, description.UserMetadata ?? string.Empty);
-        writer.WriteElementString("AutoDeleteOnIdle", ServiceBusNamespace, string.IsNullOrWhiteSpace(description.AutoDeleteOnIdle) ? ServiceBusTopicsManagementClient.LongIdleIso8601 : description.AutoDeleteOnIdle);
+        if (description.Properties is { Count: > 0 })
+        {
+            WriteMergedSubscriptionProperties(writer, description);
+        }
+        else
+        {
+            writer.WriteElementString("LockDuration", ServiceBusNamespace, string.IsNullOrWhiteSpace(description.LockDuration) ? ServiceBusTopicsManagementClient.DefaultLockDurationIso8601 : description.LockDuration);
+            writer.WriteElementString("MaxDeliveryCount", ServiceBusNamespace, description.MaxDeliveryCount <= 0 ? ServiceBusTopicsManagementClient.DefaultMaxDeliveryCount.ToString(CultureInfo.InvariantCulture) : description.MaxDeliveryCount.ToString(CultureInfo.InvariantCulture));
+            // UserMetadata must appear BEFORE AutoDeleteOnIdle in the canonical SubscriptionDescription
+            // schema order. Real Service Bus rejects out-of-order PUTs with HTTP 400; the SB emulator
+            // accepts them but silently drops fields that appear out of position. Keep this order stable.
+            writer.WriteElementString("UserMetadata", ServiceBusNamespace, description.UserMetadata ?? string.Empty);
+            writer.WriteElementString("AutoDeleteOnIdle", ServiceBusNamespace, string.IsNullOrWhiteSpace(description.AutoDeleteOnIdle) ? ServiceBusTopicsManagementClient.LongIdleIso8601 : description.AutoDeleteOnIdle);
+        }
+
         writer.WriteEndElement();
         writer.WriteEndElement();
         writer.WriteEndElement();
@@ -126,7 +135,9 @@ internal static class ServiceBusAtomXml
                     entries[i].UserMetadata,
                     entries[i].LockDuration ?? ServiceBusTopicsManagementClient.DefaultLockDurationIso8601,
                     entries[i].MaxDeliveryCount ?? ServiceBusTopicsManagementClient.DefaultMaxDeliveryCount,
-                    entries[i].AutoDeleteOnIdle ?? ServiceBusTopicsManagementClient.LongIdleIso8601));
+                    entries[i].AutoDeleteOnIdle ?? ServiceBusTopicsManagementClient.LongIdleIso8601,
+                    entries[i].ETag,
+                    entries[i].SubscriptionProperties));
             }
         }
 
@@ -192,6 +203,9 @@ internal static class ServiceBusAtomXml
         string? lockDuration = null;
         int? maxDeliveryCount = null;
         string? autoDeleteOnIdle = null;
+        string? etag = null;
+        var subscriptionDescriptionDepth = -1;
+        var subscriptionProperties = new List<ServiceBusSubscriptionProperty>();
 
         // ReadElementContentAsStringAsync consumes the element AND advances to the
         // next node, so after reading a value we must re-inspect the current node
@@ -214,6 +228,13 @@ internal static class ServiceBusAtomXml
                 continue;
             }
 
+            if (reader.LocalName == "entry" && reader.NamespaceURI == AtomNamespace)
+            {
+                etag = reader.GetAttribute("etag", DataServicesMetadataNamespace)
+                    ?? reader.GetAttribute("ETag")
+                    ?? reader.GetAttribute("etag");
+            }
+
             if (reader.LocalName == "title" && reader.NamespaceURI == AtomNamespace)
             {
                 title = await reader.ReadElementContentAsStringAsync().ConfigureAwait(false);
@@ -223,12 +244,45 @@ internal static class ServiceBusAtomXml
 
             if (reader.NamespaceURI == ServiceBusNamespace)
             {
+                if (reader.LocalName == "SubscriptionDescription")
+                {
+                    subscriptionDescriptionDepth = reader.Depth;
+                    continue;
+                }
+
+                if (subscriptionDescriptionDepth >= 0 && reader.Depth == subscriptionDescriptionDepth + 1)
+                {
+                    var localName = reader.LocalName;
+                    var rawXml = await reader.ReadOuterXmlAsync().ConfigureAwait(false);
+                    if (!IsReadOnlySubscriptionProperty(localName))
+                    {
+                        subscriptionProperties.Add(new ServiceBusSubscriptionProperty(localName, rawXml));
+                    }
+                    switch (localName)
+                    {
+                        case "UserMetadata":
+                            userMetadata = ReadElementValue(rawXml);
+                            break;
+                        case "LockDuration":
+                            lockDuration = ReadElementValue(rawXml);
+                            break;
+                        case "MaxDeliveryCount":
+                            if (int.TryParse(ReadElementValue(rawXml), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedMaxDeliveryCount))
+                            {
+                                maxDeliveryCount = parsedMaxDeliveryCount;
+                            }
+                            break;
+                        case "AutoDeleteOnIdle":
+                            autoDeleteOnIdle = ReadElementValue(rawXml);
+                            break;
+                    }
+
+                    reRead = true;
+                    continue;
+                }
+
                 switch (reader.LocalName)
                 {
-                    case "UserMetadata":
-                        userMetadata = await reader.ReadElementContentAsStringAsync().ConfigureAwait(false);
-                        reRead = true;
-                        continue;
                     case "SubscriptionCount":
                         if (int.TryParse(await reader.ReadElementContentAsStringAsync().ConfigureAwait(false), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedSubscriptionCount))
                         {
@@ -245,27 +299,72 @@ internal static class ServiceBusAtomXml
 
                         reRead = true;
                         continue;
-                    case "LockDuration":
-                        lockDuration = await reader.ReadElementContentAsStringAsync().ConfigureAwait(false);
-                        reRead = true;
-                        continue;
-                    case "MaxDeliveryCount":
-                        if (int.TryParse(await reader.ReadElementContentAsStringAsync().ConfigureAwait(false), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedMaxDeliveryCount))
-                        {
-                            maxDeliveryCount = parsedMaxDeliveryCount;
-                        }
-
-                        reRead = true;
-                        continue;
-                    case "AutoDeleteOnIdle":
-                        autoDeleteOnIdle = await reader.ReadElementContentAsStringAsync().ConfigureAwait(false);
-                        reRead = true;
-                        continue;
                 }
             }
         }
 
-        return new AtomEntryData(title, userMetadata, subscriptionCount, requiresDuplicateDetection, lockDuration, maxDeliveryCount, autoDeleteOnIdle);
+        return new AtomEntryData(
+            title,
+            userMetadata,
+            subscriptionCount,
+            requiresDuplicateDetection,
+            lockDuration,
+            maxDeliveryCount,
+            autoDeleteOnIdle,
+            etag,
+            subscriptionProperties);
+    }
+
+    private static bool IsReadOnlySubscriptionProperty(string localName)
+        => localName is
+            "AccessedAt"
+            or "AvailabilityStatus"
+            or "CountDetails"
+            or "CreatedAt"
+            or "DefaultRuleDescription"
+            or "EntityAvailabilityStatus"
+            or "MessageCount"
+            or "SizeInBytes"
+            or "SkippedUpdate"
+            or "UpdatedAt";
+
+    private static void WriteMergedSubscriptionProperties(XmlWriter writer, ServiceBusSubscriptionDescription description)
+    {
+        var wroteUserMetadata = false;
+        foreach (var property in description.Properties!)
+        {
+            if (string.Equals(property.LocalName, "UserMetadata", StringComparison.Ordinal))
+            {
+                writer.WriteElementString("UserMetadata", ServiceBusNamespace, description.UserMetadata ?? string.Empty);
+                wroteUserMetadata = true;
+                continue;
+            }
+
+            if (!wroteUserMetadata
+                && string.Equals(property.LocalName, "AutoDeleteOnIdle", StringComparison.Ordinal))
+            {
+                writer.WriteElementString("UserMetadata", ServiceBusNamespace, description.UserMetadata ?? string.Empty);
+                wroteUserMetadata = true;
+            }
+
+            writer.WriteRaw(property.Xml);
+        }
+
+        if (!wroteUserMetadata)
+        {
+            writer.WriteElementString("UserMetadata", ServiceBusNamespace, description.UserMetadata ?? string.Empty);
+        }
+    }
+
+    private static string ReadElementValue(string rawXml)
+    {
+        using var stringReader = new StringReader(rawXml);
+        using var reader = XmlReader.Create(stringReader, new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Prohibit,
+            IgnoreComments = true,
+        });
+        return reader.Read() ? reader.ReadElementContentAsString() : string.Empty;
     }
 
     internal sealed record AtomEntryData(
@@ -275,5 +374,7 @@ internal static class ServiceBusAtomXml
         bool? RequiresDuplicateDetection,
         string? LockDuration,
         int? MaxDeliveryCount,
-        string? AutoDeleteOnIdle);
+        string? AutoDeleteOnIdle,
+        string? ETag,
+        IReadOnlyList<ServiceBusSubscriptionProperty> SubscriptionProperties);
 }

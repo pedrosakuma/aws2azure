@@ -391,12 +391,15 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
             return null;
         }
 
+        var etag = TryGetEtag(response) ?? entry.ETag;
         return new ServiceBusSubscriptionDescription(
             entry.Title ?? subscriptionName,
             entry.UserMetadata,
             entry.LockDuration ?? DefaultLockDurationIso8601,
             entry.MaxDeliveryCount ?? DefaultMaxDeliveryCount,
-            entry.AutoDeleteOnIdle ?? LongIdleIso8601);
+            entry.AutoDeleteOnIdle ?? LongIdleIso8601,
+            etag,
+            entry.SubscriptionProperties);
     }
 
     public async ValueTask UpdateSubscriptionAsync(
@@ -417,6 +420,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
 
         using var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
+        request.Headers.TryAddWithoutValidation("If-Match", "*");
         request.Content = new StringContent(ServiceBusAtomXml.BuildSubscriptionDescriptionEntry(description), Encoding.UTF8, "application/atom+xml");
         request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
@@ -431,6 +435,27 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         SnsLog.TopicRequestFailed(_logger, nameof(UpdateSubscriptionAsync), namespaceFqdn, topicName + "/subscriptions/" + description.SubscriptionName, (int)response.StatusCode);
         throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
+    }
+
+    private static string? TryGetEtag(HttpResponseMessage response)
+    {
+        if (response.Headers.ETag is not null)
+        {
+            return response.Headers.ETag.ToString();
+        }
+
+        if (response.Headers.TryGetValues("ETag", out var values))
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+        }
+
+        return null;
     }
 
     private static Uri BuildTopicUri(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName)
@@ -485,7 +510,11 @@ public sealed record ServiceBusSubscriptionDescription(
     string? UserMetadata,
     string LockDuration,
     int MaxDeliveryCount,
-    string AutoDeleteOnIdle);
+    string AutoDeleteOnIdle,
+    string? ETag = null,
+    IReadOnlyList<ServiceBusSubscriptionProperty>? Properties = null);
+
+public sealed record ServiceBusSubscriptionProperty(string LocalName, string Xml);
 
 public sealed class ServiceBusTopicsManagementException : Exception
 {

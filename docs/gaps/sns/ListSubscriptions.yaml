@@ -11,8 +11,9 @@ sub_features:
     status: implemented
     notes: "Enumerates Service Bus topics first, then pages each topic's subscriptions and flattens the results into SNS member entries."
 behavior_differences:
-  - "NextToken is an opaque base64-encoded JSON cursor containing the current topic offset and subscription offset within that topic."
+  - "NextToken is a versioned, HMAC-SHA256-signed opaque cursor containing the current topic and subscription offsets. The AWS binding secret supplies the stable signing key, so tokens survive proxy restart while forged, tampered, and wrong-operation tokens are rejected."
   - "Listing all subscriptions requires cross-topic enumeration over the Service Bus management plane and can be more expensive than native SNS ListSubscriptions."
+  - "Only Azure Service Bus topic subscriptions are enumerated. Azure Event Grid event subscriptions are explicitly excluded."
 references:
   - https://docs.aws.amazon.com/sns/latest/api/API_ListSubscriptions.html
   - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest

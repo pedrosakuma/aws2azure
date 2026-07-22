@@ -155,8 +155,9 @@ internal static class SnsManagementClientTestSupport
         string? userMetadata,
         string lockDuration = ServiceBusTopicsManagementClient.DefaultLockDurationIso8601,
         int maxDeliveryCount = ServiceBusTopicsManagementClient.DefaultMaxDeliveryCount,
-        string autoDeleteOnIdle = ServiceBusTopicsManagementClient.LongIdleIso8601)
-        => BuildSubscriptionEntryCore(subscriptionName, userMetadata, lockDuration, maxDeliveryCount, autoDeleteOnIdle, includeDeclaration: true);
+        string autoDeleteOnIdle = ServiceBusTopicsManagementClient.LongIdleIso8601,
+        string? additionalPropertiesXml = null)
+        => BuildSubscriptionEntryCore(subscriptionName, userMetadata, lockDuration, maxDeliveryCount, autoDeleteOnIdle, includeDeclaration: true, additionalPropertiesXml);
 
     private static string BuildTopicEntryCore(string topicName, int subscriptionCount, bool requiresDuplicateDetection, bool includeDeclaration)
     {
@@ -181,7 +182,8 @@ internal static class SnsManagementClientTestSupport
         string lockDuration,
         int maxDeliveryCount,
         string autoDeleteOnIdle,
-        bool includeDeclaration)
+        bool includeDeclaration,
+        string? additionalPropertiesXml = null)
     {
         var builder = new StringBuilder();
         if (includeDeclaration)
@@ -194,11 +196,12 @@ internal static class SnsManagementClientTestSupport
         builder.Append("<content type=\"application/xml\"><SubscriptionDescription xmlns=\"http://schemas.microsoft.com/netservices/2010/10/servicebus/connect\">");
         builder.Append("<LockDuration>").Append(lockDuration).Append("</LockDuration>");
         builder.Append("<MaxDeliveryCount>").Append(maxDeliveryCount).Append("</MaxDeliveryCount>");
-        builder.Append("<AutoDeleteOnIdle>").Append(autoDeleteOnIdle).Append("</AutoDeleteOnIdle>");
+        builder.Append(additionalPropertiesXml);
         if (userMetadata is not null)
         {
             builder.Append("<UserMetadata>").Append(WebUtility.HtmlEncode(userMetadata)).Append("</UserMetadata>");
         }
+        builder.Append("<AutoDeleteOnIdle>").Append(autoDeleteOnIdle).Append("</AutoDeleteOnIdle>");
         builder.Append("</SubscriptionDescription></content></entry>");
         return builder.ToString();
     }

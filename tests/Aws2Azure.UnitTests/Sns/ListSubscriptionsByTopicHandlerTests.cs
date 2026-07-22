@@ -30,6 +30,7 @@ public sealed class ListSubscriptionsByTopicHandlerTests
             NewParseResult(null),
             SnsManagementClientTestSupport.NewCredentials(),
             managementClient,
+            SigningKey,
             CancellationToken.None);
 
         var body = SnsManagementClientTestSupport.ReadBody(context);
@@ -65,14 +66,19 @@ public sealed class ListSubscriptionsByTopicHandlerTests
         });
 
         var firstContext = SnsManagementClientTestSupport.NewContext();
-        await ListSubscriptionsByTopicHandler.HandleAsync(firstContext, NewParseResult(null), SnsManagementClientTestSupport.NewCredentials(), managementClient, CancellationToken.None);
+        await ListSubscriptionsByTopicHandler.HandleAsync(firstContext, NewParseResult(null), SnsManagementClientTestSupport.NewCredentials(), managementClient, SigningKey, CancellationToken.None);
         var firstBody = SnsManagementClientTestSupport.ReadBody(firstContext);
         var nextToken = SnsManagementClientTestSupport.ReadElementValue(firstBody, "NextToken");
-        Assert.True(SnsSubscriptionSupport.TryDecodeNextToken(nextToken, out var decoded));
+        Assert.True(SnsSubscriptionSupport.TryDecodeNextToken(
+            nextToken,
+            SigningKey,
+            SnsOperation.ListSubscriptionsByTopic,
+            "orders",
+            out var decoded));
         Assert.Equal(100, decoded.SubscriptionSkipWithinTopic);
 
         var secondContext = SnsManagementClientTestSupport.NewContext();
-        await ListSubscriptionsByTopicHandler.HandleAsync(secondContext, NewParseResult(nextToken), SnsManagementClientTestSupport.NewCredentials(), managementClient, CancellationToken.None);
+        await ListSubscriptionsByTopicHandler.HandleAsync(secondContext, NewParseResult(nextToken), SnsManagementClientTestSupport.NewCredentials(), managementClient, SigningKey, CancellationToken.None);
         var secondBody = SnsManagementClientTestSupport.ReadBody(secondContext);
         Assert.Contains("arn:aws:sns:us-west-2:000000000000:orders:sub-100", secondBody);
         Assert.DoesNotContain("<NextToken>", secondBody);
@@ -90,11 +96,58 @@ public sealed class ListSubscriptionsByTopicHandlerTests
             {
                 Content = new StringContent(SnsManagementClientTestSupport.BuildSubscriptionsFeed(), Encoding.UTF8, "application/atom+xml"),
             })),
+            SigningKey,
             CancellationToken.None);
 
         var body = SnsManagementClientTestSupport.ReadBody(context);
         Assert.Contains("<Subscriptions />", body);
         Assert.DoesNotContain("<NextToken>", body);
+    }
+
+    [Fact]
+    public async Task HandleAsync_rejects_token_from_list_subscriptions()
+    {
+        var token = SnsSubscriptionSupport.EncodeNextToken(
+            SigningKey,
+            SnsOperation.ListSubscriptions,
+            topicName: null,
+            topicSkip: 1,
+            subscriptionSkipWithinTopic: 0);
+        var context = SnsManagementClientTestSupport.NewContext();
+
+        await ListSubscriptionsByTopicHandler.HandleAsync(
+            context,
+            NewParseResult(token),
+            SnsManagementClientTestSupport.NewCredentials(),
+            SnsManagementClientTestSupport.NewManagementClient((_, _) => throw new InvalidOperationException("HTTP should not be called.")),
+            SigningKey,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("NextToken", SnsManagementClientTestSupport.ReadBody(context));
+    }
+
+    [Fact]
+    public async Task HandleAsync_rejects_token_bound_to_another_topic()
+    {
+        var token = SnsSubscriptionSupport.EncodeNextToken(
+            SigningKey,
+            SnsOperation.ListSubscriptionsByTopic,
+            "payments",
+            topicSkip: 0,
+            subscriptionSkipWithinTopic: 100);
+        var context = SnsManagementClientTestSupport.NewContext();
+
+        await ListSubscriptionsByTopicHandler.HandleAsync(
+            context,
+            NewParseResult(token),
+            SnsManagementClientTestSupport.NewCredentials(),
+            SnsManagementClientTestSupport.NewManagementClient((_, _) => throw new InvalidOperationException("HTTP should not be called.")),
+            SigningKey,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("NextToken", SnsManagementClientTestSupport.ReadBody(context));
     }
 
     private static SnsParseResult NewParseResult(string? nextToken)
@@ -111,4 +164,6 @@ public sealed class ListSubscriptionsByTopicHandlerTests
 
         return new SnsParseResult(SnsOperation.ListSubscriptionsByTopic, parameters, null);
     }
+
+    private const string SigningKey = "unit-test-pagination-signing-key";
 }

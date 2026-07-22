@@ -115,12 +115,114 @@ public sealed class SetSubscriptionAttributesHandlerTests
         Assert.Contains("Invalid attribute name: Nope", SnsManagementClientTestSupport.ReadBody(context));
     }
 
+    [Fact]
+    public async Task HandleAsync_preserves_unrelated_service_bus_properties_and_uses_etag()
+    {
+        var storedMetadata = SnsManagementClientTestSupport.SerializeMetadata("https", "https://example.com/hooks/orders");
+        string? updateBody = null;
+        var managementClient = SnsManagementClientTestSupport.NewManagementClient(async (request, _) =>
+        {
+            if (request.Method == HttpMethod.Get)
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        SnsManagementClientTestSupport.BuildSubscriptionEntry(
+                            "sub123",
+                            storedMetadata,
+                            additionalPropertiesXml:
+                                "<RequiresSession>true</RequiresSession>"
+                                + "<DeadLetteringOnMessageExpiration>true</DeadLetteringOnMessageExpiration>"
+                                + "<ForwardTo>archive</ForwardTo>"
+                                + "<CreatedAt>2026-07-22T00:00:00Z</CreatedAt>"
+                                + "<UpdatedAt>2026-07-22T00:00:01Z</UpdatedAt>"
+                                + "<AccessedAt>2026-07-22T00:00:02Z</AccessedAt>"
+                                + "<MessageCount>42</MessageCount>"
+                                + "<SizeInBytes>1024</SizeInBytes>"
+                                + "<CountDetails><ActiveMessageCount>42</ActiveMessageCount></CountDetails>"
+                                + "<EntityAvailabilityStatus>Available</EntityAvailabilityStatus>"
+                                + "<SkippedUpdate>1</SkippedUpdate>"
+                                + "<DefaultRuleDescription><Name>$Default</Name></DefaultRuleDescription>"),
+                        Encoding.UTF8,
+                        "application/atom+xml"),
+                };
+                return response;
+            }
+
+            Assert.Equal(HttpMethod.Put, request.Method);
+            Assert.Equal("*", Assert.Single(request.Headers.GetValues("If-Match")));
+            updateBody = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+
+        var context = SnsManagementClientTestSupport.NewContext();
+        await SetSubscriptionAttributesHandler.HandleAsync(
+            context,
+            NewParseResult("RawMessageDelivery", "true"),
+            SnsManagementClientTestSupport.NewCredentials(),
+            managementClient,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.NotNull(updateBody);
+        Assert.Contains("<RequiresSession", updateBody);
+        Assert.Contains(">true</RequiresSession>", updateBody);
+        Assert.Contains("<DeadLetteringOnMessageExpiration", updateBody);
+        Assert.Contains("<ForwardTo", updateBody);
+        Assert.Contains(">archive</ForwardTo>", updateBody);
+        Assert.DoesNotContain("<CreatedAt", updateBody);
+        Assert.DoesNotContain("<UpdatedAt", updateBody);
+        Assert.DoesNotContain("<AccessedAt", updateBody);
+        Assert.DoesNotContain("<MessageCount", updateBody);
+        Assert.DoesNotContain("<SizeInBytes", updateBody);
+        Assert.DoesNotContain("<CountDetails", updateBody);
+        Assert.DoesNotContain("<EntityAvailabilityStatus", updateBody);
+        Assert.DoesNotContain("<SkippedUpdate", updateBody);
+        Assert.DoesNotContain("<DefaultRuleDescription", updateBody);
+        Assert.True(JsonSerializer.Deserialize(
+            SnsManagementClientTestSupport.ReadElementValue(updateBody, "UserMetadata"),
+            SnsSubscriptionJsonContext.Default.SnsSubscriptionMetadata)!.RawDeliveryEnabled);
+    }
+
+    [Fact]
+    public async Task HandleAsync_maps_backend_precondition_failure_to_concurrent_access()
+    {
+        var storedMetadata = SnsManagementClientTestSupport.SerializeMetadata("https", "https://example.com/hooks/orders");
+        var managementClient = SnsManagementClientTestSupport.NewManagementClient((request, _) =>
+        {
+            if (request.Method == HttpMethod.Get)
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        SnsManagementClientTestSupport.BuildSubscriptionEntry("sub123", storedMetadata),
+                        Encoding.UTF8,
+                        "application/atom+xml"),
+                };
+                return Task.FromResult(response);
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.PreconditionFailed));
+        });
+
+        var context = SnsManagementClientTestSupport.NewContext();
+        await SetSubscriptionAttributesHandler.HandleAsync(
+            context,
+            NewParseResult("RawMessageDelivery", "true"),
+            SnsManagementClientTestSupport.NewCredentials(),
+            managementClient,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status409Conflict, context.Response.StatusCode);
+        Assert.Contains("<Code>ConcurrentAccess</Code>", SnsManagementClientTestSupport.ReadBody(context));
+    }
+
     private static ServiceBusTopicsManagementClient NewStatefulManagementClient(Func<string> getMetadata, Action<string> setMetadata)
         => SnsManagementClientTestSupport.NewManagementClient(async (request, _) =>
         {
             if (request.Method == HttpMethod.Get)
             {
-                return new HttpResponseMessage(HttpStatusCode.OK)
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(
                         SnsManagementClientTestSupport.BuildSubscriptionEntry(
@@ -132,9 +234,11 @@ public sealed class SetSubscriptionAttributesHandlerTests
                         Encoding.UTF8,
                         "application/atom+xml"),
                 };
+                return response;
             }
 
             Assert.Equal(HttpMethod.Put, request.Method);
+            Assert.Equal("*", Assert.Single(request.Headers.GetValues("If-Match")));
             var body = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
             setMetadata(SnsManagementClientTestSupport.ReadElementValue(body, "UserMetadata"));
             return new HttpResponseMessage(HttpStatusCode.OK);

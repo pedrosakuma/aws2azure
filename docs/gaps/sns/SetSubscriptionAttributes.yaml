@@ -2,10 +2,14 @@ service: sns
 operation: SetSubscriptionAttributes
 azure_equivalent: "Azure Service Bus subscription description"
 status: partial
+verified_real_azure:
+  date: "2026-07-22"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719
 sub_features:
   - name: UserMetadata attribute updates
     status: implemented
-    notes: "Performs a GET → modify → PUT cycle against the Service Bus subscription description and persists FilterPolicy, FilterPolicyScope, and RawMessageDelivery inside UserMetadata as compact JSON."
+    notes: "Performs a GET → merge → conditional PUT cycle against the Service Bus subscription description and persists FilterPolicy, FilterPolicyScope, and RawMessageDelivery inside UserMetadata as compact JSON."
   - name: Compatibility no-ops
     status: implemented
     notes: "Treats DeliveryPolicy, RedrivePolicy, and SubscriptionRoleArn as successful no-ops because this slice does not translate those SNS attributes onto Azure primitives."
@@ -13,9 +17,10 @@ behavior_differences:
   - "FilterPolicy is stored only in UserMetadata in this slice. Service Bus rule-based filtering is not programmed yet, so enforcement is deferred to a later forwarding slice."
   - "FilterPolicyScope accepts MessageAttributes and MessageBody, but MessageBody scope is only persisted; it is not enforced yet."
   - "DeliveryPolicy, RedrivePolicy, and SubscriptionRoleArn are accepted as no-ops because Service Bus does not expose a matching SNS attribute contract here."
-  - "UserMetadata updates use a simple GET → modify → PUT flow without ETag / If-Match protection, so concurrent writers can lose updates. Future work should use the Atom ETag returned by Service Bus management responses."
+  - "Updates preserve mutable SubscriptionDescription property XML, replace only UserMetadata, and send If-Match: * because Service Bus subscriptions do not expose usable per-entity ETags. Concurrent Azure-side writers are therefore last-write-wins; read-only runtime properties are never replayed."
   - "Updates that would push the serialized UserMetadata payload beyond Service Bus's 1024-character limit are rejected with InvalidParameter."
   - "Unknown AWS attribute names return InvalidParameter."
+  - "Only Azure Service Bus subscription descriptions are updated; Azure Event Grid event-subscription properties are explicitly outside this profile."
 references:
   - https://docs.aws.amazon.com/sns/latest/api/API_SetSubscriptionAttributes.html
   - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest

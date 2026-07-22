@@ -55,6 +55,24 @@ design_gaps:
     workaround: >-
       Configure delivery reliability at the Azure backend level; do not rely on
       SNS policy attributes being enforced.
+  - area: Event Grid subscription management is excluded
+    status: unsupported
+    summary: >-
+      Subscribe, ConfirmSubscription, ListSubscriptions,
+      ListSubscriptionsByTopic, GetSubscriptionAttributes,
+      SetSubscriptionAttributes, and Unsubscribe translate only to Azure Service
+      Bus topic subscriptions. They never create, enumerate, mutate, confirm, or
+      delete Azure Event Grid event subscriptions.
+    impact: >-
+      An SNS topic whose publish backend is Event Grid does not gain Event Grid
+      delivery fan-out from the SNS subscription-management APIs, and its events
+      are not delivered into Service Bus subscriptions created by those APIs.
+    workaround: >-
+      Provision and operate Event Grid event subscriptions with Azure-native
+      tooling, or select the Service Bus Topics publish backend when this profile
+      is required.
+    references:
+      - https://learn.microsoft.com/azure/event-grid/manage-event-delivery
 workload_patterns:
   - id: sns_standard_publish
     name: Standard topic publish
@@ -89,9 +107,11 @@ workload_patterns:
     design_gaps:
       - Two backends with different fidelity
       - No AWS region / account namespace
+      - Event Grid subscription management is excluded
     guidance: >-
-      Avoid parsing AWS account identity from returned ARNs and test the selected
-      backend's subscription behavior.
+      Use this profile only with the Service Bus Topics backend, avoid parsing AWS
+      account identity from returned ARNs, and provision Event Grid event
+      subscriptions separately when Event Grid is selected for publishing.
   - id: sns_fifo
     name: FIFO topic ordering and deduplication
     compatibility: blocked

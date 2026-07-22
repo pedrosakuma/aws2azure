@@ -96,6 +96,121 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
     }
 
     [SkippableFact]
+    public async Task Subscription_metadata_and_unrelated_azure_properties_survive_restart()
+    {
+        Skip.IfNot(fixture.SnsConfigured,
+            "AZURE_SB_CONNSTR not set — skipping real-Azure SNS conformance.");
+
+        using var client = fixture.CreateSnsClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        var admin = new ServiceBusAdministrationClient(fixture.CreateServiceBusConnectionString());
+        var topicName = SnsQueryApiClient.CreateTopicName("sns-real-submeta");
+        string? topicArn = null;
+        string? subscriptionArn = null;
+
+        try
+        {
+            var create = await SendAsync(client, "CreateTopic", [new("Name", topicName)]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(create, HttpStatusCode.OK, "CreateTopic");
+            topicArn = SnsQueryApiClient.ReadTopicArn(create);
+
+            var endpoint = SnsQueryApiClient.CreateSubscriptionEndpoint();
+            var subscribe = await SendAsync(client, "Subscribe",
+            [
+                new("TopicArn", topicArn),
+                new("Protocol", "sqs"),
+                new("Endpoint", endpoint),
+                new("ReturnSubscriptionArn", "true"),
+            ]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(subscribe, HttpStatusCode.OK, "Subscribe");
+            subscriptionArn = SnsQueryApiClient.ReadSubscriptionArn(subscribe);
+            var subscriptionName = SnsQueryApiClient.ExtractSubscriptionName(subscriptionArn);
+
+            var azure = (await admin.GetSubscriptionAsync(topicName, subscriptionName, timeout.Token)
+                .ConfigureAwait(false)).Value;
+            azure.LockDuration = TimeSpan.FromMinutes(1);
+            azure.MaxDeliveryCount = 17;
+            azure.EnableBatchedOperations = false;
+            azure.DeadLetteringOnMessageExpiration = true;
+            await admin.UpdateSubscriptionAsync(azure, timeout.Token).ConfigureAwait(false);
+
+            var setFilter = await SendAsync(client, "SetSubscriptionAttributes",
+            [
+                new("SubscriptionArn", subscriptionArn),
+                new("AttributeName", "FilterPolicy"),
+                new("AttributeValue", "{\"tenant\":[\"blue\"]}"),
+            ]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(setFilter, HttpStatusCode.OK, "SetSubscriptionAttributes[FilterPolicy]");
+            var setRaw = await SendAsync(client, "SetSubscriptionAttributes",
+            [
+                new("SubscriptionArn", subscriptionArn),
+                new("AttributeName", "RawMessageDelivery"),
+                new("AttributeValue", "true"),
+            ]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(setRaw, HttpStatusCode.OK, "SetSubscriptionAttributes[RawMessageDelivery]");
+
+            var afterUpdate = (await admin.GetSubscriptionAsync(topicName, subscriptionName, timeout.Token)
+                .ConfigureAwait(false)).Value;
+            Assert.Equal(TimeSpan.FromMinutes(1), afterUpdate.LockDuration);
+            Assert.Equal(17, afterUpdate.MaxDeliveryCount);
+            Assert.False(afterUpdate.EnableBatchedOperations);
+            Assert.True(afterUpdate.DeadLetteringOnMessageExpiration);
+
+            await fixture.RestartAsync().ConfigureAwait(false);
+
+            var get = await SendAsync(client, "GetSubscriptionAttributes",
+                [new("SubscriptionArn", subscriptionArn)]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(get, HttpStatusCode.OK, "GetSubscriptionAttributes[after restart]");
+            var attributes = SnsQueryApiClient.ReadAttributes(get);
+            Assert.Equal("sqs", attributes["Protocol"]);
+            Assert.Equal(endpoint, attributes["Endpoint"]);
+            Assert.Equal("{\"tenant\":[\"blue\"]}", attributes["FilterPolicy"]);
+            Assert.Equal("MessageAttributes", attributes["FilterPolicyScope"]);
+            Assert.Equal("true", attributes["RawMessageDelivery"]);
+
+            var confirm = await SendAsync(client, "ConfirmSubscription",
+            [
+                new("TopicArn", topicArn),
+                new("Token", subscriptionArn),
+            ]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(confirm, HttpStatusCode.OK, "ConfirmSubscription");
+            Assert.Equal(subscriptionArn, SnsQueryApiClient.ReadSubscriptionArn(confirm));
+
+            var unsubscribe = await SendAsync(client, "Unsubscribe",
+                [new("SubscriptionArn", subscriptionArn)]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(unsubscribe, HttpStatusCode.OK, "Unsubscribe");
+            subscriptionArn = null;
+            Assert.False((await admin.SubscriptionExistsAsync(topicName, subscriptionName, timeout.Token)
+                .ConfigureAwait(false)).Value);
+        }
+        finally
+        {
+            if (subscriptionArn is not null)
+            {
+                try
+                {
+                    await SendAsync(client, "Unsubscribe",
+                        [new("SubscriptionArn", subscriptionArn)]).ConfigureAwait(false);
+                }
+                catch
+                {
+                }
+            }
+
+            if (topicArn is not null)
+            {
+                try
+                {
+                    await SendAsync(client, "DeleteTopic", [new("TopicArn", topicArn)]).ConfigureAwait(false);
+                }
+                catch
+                {
+                }
+            }
+        }
+    }
+
+    [SkippableFact]
     public async Task Topic_and_subscription_lists_paginate()
     {
         Skip.IfNot(fixture.SnsConfigured,
@@ -127,6 +242,35 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
                 subscriptionNames,
                 name => admin.CreateSubscriptionAsync(topicNames[0], name, timeout.Token),
                 batchSize: 8).ConfigureAwait(false);
+
+            var pagedTopicArn = $"arn:aws:sns:us-east-1:000000000000:{topicNames[0]}";
+            var otherTopicArn = $"arn:aws:sns:us-east-1:000000000000:{topicNames[1]}";
+            var firstByTopic = await SendAsync(client, "ListSubscriptionsByTopic",
+                [new("TopicArn", pagedTopicArn)]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(firstByTopic, HttpStatusCode.OK, "ListSubscriptionsByTopic[first]");
+            Assert.Equal(100, SnsQueryApiClient.ReadListedSubscriptions(firstByTopic).Count);
+            var byTopicToken = Assert.IsType<string>(SnsQueryApiClient.ReadNextToken(firstByTopic));
+
+            var crossTopic = await SendAsync(client, "ListSubscriptionsByTopic",
+            [
+                new("TopicArn", otherTopicArn),
+                new("NextToken", byTopicToken),
+            ]).ConfigureAwait(false);
+            Assert.Equal(HttpStatusCode.BadRequest, crossTopic.StatusCode);
+
+            var crossOperation = await SendAsync(client, "ListSubscriptions",
+                [new("NextToken", byTopicToken)]).ConfigureAwait(false);
+            Assert.Equal(HttpStatusCode.BadRequest, crossOperation.StatusCode);
+
+            await fixture.RestartAsync().ConfigureAwait(false);
+            var secondByTopic = await SendAsync(client, "ListSubscriptionsByTopic",
+            [
+                new("TopicArn", pagedTopicArn),
+                new("NextToken", byTopicToken),
+            ]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(secondByTopic, HttpStatusCode.OK, "ListSubscriptionsByTopic[after restart]");
+            Assert.Single(SnsQueryApiClient.ReadListedSubscriptions(secondByTopic));
+            Assert.Null(SnsQueryApiClient.ReadNextToken(secondByTopic));
 
             var listedTopics = new HashSet<string>(StringComparer.Ordinal);
             string? topicToken = null;

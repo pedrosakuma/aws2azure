@@ -4,17 +4,19 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Service Bus topic subscriptions`
+- **Real-Azure verified:** ✅ 2026-07-22 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719)
 
 ### Sub-features
 
 | Name | Status | Real-Azure | Notes | Gap | Workaround |
 |---|---|---|---|---|---|
-| Auto-confirmed no-op | ✅ implemented | — | Subscriptions are treated as immediately confirmed when created. ConfirmSubscription returns success and a derived SubscriptionArn without mutating Azure resources. |  |  |
+| Auto-confirmed no-op | ✅ implemented | — | Subscriptions are treated as immediately confirmed when created. ConfirmSubscription accepts either the deterministic 20-hex subscription id or the matching synthetic SubscriptionArn, verifies the live Service Bus subscription and its persisted protocol/endpoint metadata, and returns success without mutating Azure resources. |  |  |
 
 ### Behaviour differences
 
 - SNS confirmation tokens are not validated against an out-of-band challenge flow.
-- If the token cannot be mapped back to a known subscription identifier, aws2azure returns a synthetic auto-confirmed subscription ARN for the topic.
+- Arbitrary, cross-topic, missing, and non-deterministic subscription tokens are rejected; the operation does not synthesize a fallback identifier.
+- ConfirmSubscription applies to the Service Bus subscription-management profile only and does not confirm Azure Event Grid event subscriptions.
 
 ### References
 
@@ -74,6 +76,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Service Bus subscription description`
+- **Real-Azure verified:** ✅ 2026-07-22 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719)
 
 ### Sub-features
 
@@ -87,6 +90,7 @@
 - ConfirmationWasAuthenticated is always true and PendingConfirmation is always false because this slice auto-confirms subscriptions.
 - FilterPolicy is returned from stored UserMetadata only. FilterPolicyScope defaults to MessageAttributes when a stored filter policy has no explicit scope.
 - DeliveryPolicy, EffectiveDeliveryPolicy, and RedrivePolicy are omitted because Service Bus delivery and dead-letter settings do not match the SNS attribute shapes exposed by this API.
+- Attributes are read from Azure Service Bus subscriptions only; Azure Event Grid event-subscription properties are explicitly outside this profile.
 
 ### References
 
@@ -132,8 +136,9 @@
 
 ### Behaviour differences
 
-- NextToken is an opaque base64-encoded JSON cursor containing the current topic offset and subscription offset within that topic.
+- NextToken is a versioned, HMAC-SHA256-signed opaque cursor containing the current topic and subscription offsets. The AWS binding secret supplies the stable signing key, so tokens survive proxy restart while forged, tampered, and wrong-operation tokens are rejected.
 - Listing all subscriptions requires cross-topic enumeration over the Service Bus management plane and can be more expensive than native SNS ListSubscriptions.
+- Only Azure Service Bus topic subscriptions are enumerated. Azure Event Grid event subscriptions are explicitly excluded.
 
 ### References
 
@@ -144,6 +149,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Service Bus topic subscriptions`
+- **Real-Azure verified:** ✅ 2026-07-22 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719)
 
 ### Sub-features
 
@@ -153,7 +159,8 @@
 
 ### Behaviour differences
 
-- NextToken is an opaque base64-encoded JSON cursor containing the subscription offset within the topic.
+- NextToken is a versioned, HMAC-SHA256-signed opaque cursor bound to ListSubscriptionsByTopic and the exact topic name. Tokens survive restart with the same AWS binding secret; tampering, cross-operation use, and reuse for another topic are rejected.
+- Only Azure Service Bus topic subscriptions are enumerated. Azure Event Grid event subscriptions are explicitly excluded.
 
 ### References
 
@@ -255,12 +262,13 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Service Bus subscription description`
+- **Real-Azure verified:** ✅ 2026-07-22 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719)
 
 ### Sub-features
 
 | Name | Status | Real-Azure | Notes | Gap | Workaround |
 |---|---|---|---|---|---|
-| UserMetadata attribute updates | ✅ implemented | — | Performs a GET → modify → PUT cycle against the Service Bus subscription description and persists FilterPolicy, FilterPolicyScope, and RawMessageDelivery inside UserMetadata as compact JSON. |  |  |
+| UserMetadata attribute updates | ✅ implemented | — | Performs a GET → merge → conditional PUT cycle against the Service Bus subscription description and persists FilterPolicy, FilterPolicyScope, and RawMessageDelivery inside UserMetadata as compact JSON. |  |  |
 | Compatibility no-ops | ✅ implemented | — | Treats DeliveryPolicy, RedrivePolicy, and SubscriptionRoleArn as successful no-ops because this slice does not translate those SNS attributes onto Azure primitives. |  |  |
 
 ### Behaviour differences
@@ -268,9 +276,10 @@
 - FilterPolicy is stored only in UserMetadata in this slice. Service Bus rule-based filtering is not programmed yet, so enforcement is deferred to a later forwarding slice.
 - FilterPolicyScope accepts MessageAttributes and MessageBody, but MessageBody scope is only persisted; it is not enforced yet.
 - DeliveryPolicy, RedrivePolicy, and SubscriptionRoleArn are accepted as no-ops because Service Bus does not expose a matching SNS attribute contract here.
-- UserMetadata updates use a simple GET → modify → PUT flow without ETag / If-Match protection, so concurrent writers can lose updates. Future work should use the Atom ETag returned by Service Bus management responses.
+- Updates preserve mutable SubscriptionDescription property XML, replace only UserMetadata, and send If-Match: * because Service Bus subscriptions do not expose usable per-entity ETags. Concurrent Azure-side writers are therefore last-write-wins; read-only runtime properties are never replayed.
 - Updates that would push the serialized UserMetadata payload beyond Service Bus's 1024-character limit are rejected with InvalidParameter.
 - Unknown AWS attribute names return InvalidParameter.
+- Only Azure Service Bus subscription descriptions are updated; Azure Event Grid event-subscription properties are explicitly outside this profile.
 
 ### References
 
@@ -310,7 +319,7 @@
 
 | Name | Status | Real-Azure | Notes | Gap | Workaround |
 |---|---|---|---|---|---|
-| Service Bus subscription provisioning | ✅ implemented | — | Creates an Azure Service Bus topic subscription with deterministic subscription IDs derived from TopicArn + Protocol + Endpoint so repeat Subscribe calls return the same ARN. Supported protocols in this slice: sqs, https, http. |  |  |
+| Service Bus subscription provisioning | ✅ implemented | — | Creates an Azure Service Bus topic subscription with deterministic 20-hex subscription IDs derived from TopicArn + Protocol + Endpoint so repeat Subscribe calls return the same ARN. Supported protocols in this slice: sqs, https, http. |  |  |
 | Subscription metadata projection | ✅ implemented | — | Stores protocol, endpoint, compact filter policy JSON, and RawMessageDelivery in SubscriptionDescription.UserMetadata. Requests that would exceed the 1024-character Service Bus UserMetadata limit are rejected with InvalidParameter. |  |  |
 | Subscriber delivery forwarder | ⛔ unsupported | — | WON'T IMPLEMENT (out of scope by design). aws2azure provides the SNS *publish* side: Subscribe records subscription metadata and published messages land in the backing Azure Service Bus topic subscription, where any Azure-native consumer can read them. It does NOT implement the SNS *delivery* side (pushing each message out to an HTTPS/HTTP endpoint or into an SQS-backed queue). Active push delivery requires a stateful, always-on dispatcher with retry/backoff, dead-letter, and signed delivery — i.e. a callback service (Azure Function / hosted worker) that lives entirely outside this stateless request/response proxy. Use a native Azure subscriber (Service Bus consumer, or an Event Grid event subscription with its own webhook/handler) instead. |  |  |
 
@@ -319,8 +328,8 @@
 - HTTPS / HTTP subscriptions are auto-confirmed immediately. SNS token-based confirmation is not implemented in this slice.
 - When a deterministic subscription already exists but its stored metadata differs from the new Subscribe request, aws2azure returns the existing ARN and logs a warning instead of replacing the subscription.
 - Only sqs, https, and http protocols are accepted. email, email-json, sms, lambda, application, and firehose are rejected with InvalidParameter.
-- Subscriptions always live on Azure Service Bus, even for SNS topics whose Publish / PublishBatch backend is Event Grid.
-- Subscribers do not receive actively-pushed deliveries: aws2azure is publish-only and never forwards messages out to HTTPS/HTTP endpoints or SQS-backed queues (see the 'Subscriber delivery forwarder' sub-feature — won't implement, out of scope). Messages are readable from the backing Service Bus subscription by a native Azure consumer. Event Grid-backed SNS topics likewise do not fan out to the Service Bus subscriptions created here.
+- Subscribe manages Azure Service Bus topic subscriptions only. It never creates or updates an Azure Event Grid event subscription; Event Grid subscription semantics are explicitly outside this profile.
+- Subscribers do not receive actively-pushed deliveries: aws2azure is publish-only and never forwards messages out to HTTPS/HTTP endpoints or SQS-backed queues (see the 'Subscriber delivery forwarder' sub-feature — won't implement, out of scope). Messages are readable from the backing Service Bus subscription by a native Azure consumer. Event Grid-backed SNS topics do not fan out to the Service Bus subscriptions created here.
 - The Microsoft Service Bus emulator does not persist or echo subscription UserMetadata, where this proxy stores Protocol/Endpoint/FilterPolicy/RawMessageDelivery. Emulator-backed integration tests therefore skip the subscription lifecycle assertions; correctness is validated against real Azure Service Bus.
 
 ### References
@@ -344,6 +353,7 @@
 ### Behaviour differences
 
 - Unsubscribe is idempotent: HTTP 200/204/404 from Service Bus all return SNS success.
+- Only the mapped Azure Service Bus topic subscription is deleted. Azure Event Grid event subscriptions are explicitly outside this profile.
 
 ### References
 
