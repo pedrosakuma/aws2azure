@@ -18,6 +18,39 @@ use deterministic evidence, but never emulator evidence.
 production-shaped real-Azure artifact is committed under
 `docs/workloads/evidence/` and referenced with its repository-relative path.
 
+## Backend-specific evidence (`required_sub_feature_seals`)
+
+Some operations accept more than one Azure backend behind the same AWS
+operation name — for example SNS `Publish`/`PublishBatch` can route to Service
+Bus Topics or Event Grid depending on configuration (issue #630). A single
+`verified_real_azure` seal on the operation itself cannot prove that a
+*specific* claimed backend was exercised: refreshing it by testing one backend
+would otherwise silently keep every other profile claiming that operation
+looking fresh. When a profile claims one specific backend, list the exact
+documented sub-feature (from the operation's gap-doc `sub_features`) whose own
+`verified_real_azure` seal must independently be fresh:
+
+```yaml
+required_sub_feature_seals:
+  - operation: sns:Publish
+    sub_feature: Event Grid publish path
+  - operation: sns:PublishBatch
+    sub_feature: Event Grid batch publish path
+```
+
+Each entry's `operation` must already be in the manifest's `operations` list,
+and its `sub_feature` must match a `sub_features[].name` documented under that
+operation. A missing or stale sub-feature seal yields the same `conditional`
+verdict as a missing or stale operation-level seal, but attributes the finding
+to the specific backend (`sns:Publish#Event Grid publish path`), not the
+operation as a whole — see
+[SNS standard publish (Service Bus Topics backend)](sns-standard-publish-service-bus.yaml)
+and
+[SNS standard publish (Event Grid backend)](sns-standard-publish-event-grid.yaml)
+for two profiles that share every operation and requirement but require
+different, independently-sealed sub-features.
+
+
 ## Approved-runtime ledger
 
 `approved-runtimes/<profile-id>.yaml` records the exact sealed runtime status
@@ -59,3 +92,5 @@ manifest independently and rejects stale generated output.
 Profile-specific adoption guidance:
 
 - [SQS standard messaging](sqs-standard-messaging.md)
+- [SNS standard publish (Service Bus Topics backend)](sns-standard-publish-service-bus.md)
+- [SNS standard publish (Event Grid backend)](sns-standard-publish-event-grid.md)

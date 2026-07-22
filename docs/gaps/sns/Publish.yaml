@@ -9,9 +9,17 @@ verified_real_azure:
 sub_features:
   - name: AMQP publish path
     status: implemented
+    verified_real_azure:
+      date: "2026-07-16"
+      evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
+      workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
     notes: Sends SNS Publish requests to Azure Service Bus Topics over AMQP 1.0 using SAS or Entra ID CBS authentication.
   - name: Event Grid publish path
     status: implemented
+    verified_real_azure:
+      date: "2026-07-21"
+      evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29789050325
+      workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29789050325
     notes: Sends SNS Publish requests to Azure Event Grid custom topics over the classic Event Grid schema using a per-topic backend switch.
 behavior_differences:
   - "MessageId is a proxy-generated GUID, not an AWS-generated SNS identifier."

@@ -13,6 +13,8 @@ using Amazon.Kinesis;
 using Amazon.S3;
 using Amazon.SQS;
 using Aws2Azure.TestSupport.OperationalQualification;
+using Azure.Storage;
+using Azure.Storage.Queues;
 using Xunit;
 
 namespace Aws2Azure.IntegrationTests.Fixtures;
@@ -57,6 +59,15 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     // requiring a second deployment or a second credential entry.
     public const string SqsRestLaneQueueName = "aws2azure-sqs-rest-lane";
 
+    /// <summary>
+    /// Every SNS topic name starting with this prefix routes Publish/PublishBatch
+    /// to the live Event Grid custom topic via a per-topic backend=EventGrid
+    /// override (issue #630); every other topic name keeps using Service Bus
+    /// Topics, so this scoping cannot affect the existing Service Bus lifecycle,
+    /// pagination, or batch real-Azure coverage.
+    /// </summary>
+    public const string EventGridTopicNamePrefix = "sns-eg-";
+
     private const string AuthRegion = "us-east-1";
     private const string InvalidAzureSharedKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
     private const string InvalidAzureSasKeyName = "aws2azure-invalid-sas-key";
@@ -87,6 +98,10 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     private string? _ehSasKeyName;
     private string? _ehSasKey;
 
+    private string? _eventGridTopicEndpoint;
+    private string? _eventGridTopicKey;
+    private string? _eventGridEvidenceQueueName;
+
     // Workload Identity (issue #307): the GitHub Actions OIDC token is minted to
     // a file and these env vars point the proxy's WorkloadIdentityTokenSource at
     // it. AAD-capable backends (Cosmos, Event Hubs) can then authenticate without
@@ -94,6 +109,7 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     private string? _federatedTokenFile;
     private string? _aadTenantId;
     private string? _aadClientId;
+
 
     /// <summary>True when at least one backend was configured and the proxy started.</summary>
     public bool ProxyStarted { get; private set; }
@@ -109,6 +125,16 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
 
     /// <summary>SNS → Service Bus Topics backend configured.</summary>
     public bool SnsConfigured => ServiceBusConfigured;
+
+    /// <summary>
+    /// SNS → Event Grid backend configured (issue #630). Layered on top of the
+    /// mandatory Service Bus Topics binding: topics beginning with
+    /// <see cref="EventGridTopicNamePrefix"/> route Publish/PublishBatch to this
+    /// live Event Grid custom topic via a per-topic backend=EventGrid override,
+    /// while topic administration (CreateTopic/DeleteTopic) still uses Service
+    /// Bus, matching the documented backend contract.
+    /// </summary>
+    public bool EventGridConfigured { get; private set; }
 
     /// <summary>Kinesis → Event Hubs backend configured.</summary>
     public bool EventHubsConfigured { get; private set; }
@@ -148,6 +174,20 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     /// <summary>Cosmos DB account master key (<c>AZURE_COSMOS_KEY</c>) for raw
     /// REST probes. Empty under Workload-Identity-only runs.</summary>
     public string CosmosMasterKey => _cosmosKey ?? string.Empty;
+
+    /// <summary>Live storage account name backing S3 and, for the Event Grid SNS
+    /// scenario (issue #630), the delivery-evidence Storage Queue.</summary>
+    public string StorageAccountName => _blobAccount ?? string.Empty;
+
+    /// <summary>Live storage account key, reused to read the Event Grid
+    /// delivery-evidence queue over the Azure.Storage.Queues SDK.</summary>
+    public string StorageAccountKey => _blobKey ?? string.Empty;
+
+    /// <summary>Storage Queue that the live Event Grid custom topic's event
+    /// subscription forwards accepted events to (issue #630). Lets the real-Azure
+    /// SNS suite assert genuine delivered content, not only HTTP-level publish
+    /// acceptance.</summary>
+    public string EventGridEvidenceQueueName => _eventGridEvidenceQueueName ?? string.Empty;
 
     /// <summary>Prometheus metrics scrape URL for the running proxy
     /// (<c>/_aws2azure/metrics</c>, path-routed, not host-routed). Lets tests
@@ -203,6 +243,10 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
             && !string.IsNullOrWhiteSpace(_sbSasKey);
         EventHubsConfigured = !string.IsNullOrWhiteSpace(_ehNamespace) && !string.IsNullOrWhiteSpace(_ehSasKeyName)
             && !string.IsNullOrWhiteSpace(_ehSasKey) && !string.IsNullOrWhiteSpace(EventHubStream);
+        EventGridConfigured = ServiceBusConfigured
+            && !string.IsNullOrWhiteSpace(_eventGridTopicEndpoint)
+            && !string.IsNullOrWhiteSpace(_eventGridTopicKey)
+            && !string.IsNullOrWhiteSpace(_eventGridEvidenceQueueName);
 
         WorkloadIdentityConfigured = !string.IsNullOrWhiteSpace(_federatedTokenFile)
             && !string.IsNullOrWhiteSpace(_aadTenantId) && !string.IsNullOrWhiteSpace(_aadClientId);
@@ -290,6 +334,15 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     public string GetServiceUrl(string service) => ServiceUrlFor(service);
 
     public string CreateServiceBusConnectionString() => _sbConnectionString ?? string.Empty;
+
+    /// <summary>
+    /// Storage Queue client for the queue the live Event Grid custom topic
+    /// forwards accepted events to (issue #630). Authenticates with the same
+    /// storage account key already fetched for the S3 smoke.
+    /// </summary>
+    public QueueClient CreateEventGridEvidenceQueueClient() => new(
+        new Uri($"https://{StorageAccountName}.queue.core.windows.net/{EventGridEvidenceQueueName}"),
+        new StorageSharedKeyCredential(StorageAccountName, StorageAccountKey));
 
     public AmazonKinesisClient CreateKinesisClient() => new(
         AwsAccessKey, AwsSecret,
@@ -507,6 +560,10 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
 
         EventHubStream = Env("AZURE_EVENTHUBS_STREAM") ?? string.Empty;
 
+        _eventGridTopicEndpoint = Env("AZURE_EVENTGRID_TOPIC_ENDPOINT");
+        _eventGridTopicKey = Env("AZURE_EVENTGRID_TOPIC_KEY");
+        _eventGridEvidenceQueueName = Env("AZURE_EVENTGRID_EVIDENCE_QUEUE_NAME");
+
         _federatedTokenFile = Env("AZURE_FEDERATED_TOKEN_FILE");
         _aadTenantId = Env("AZURE_TENANT_ID");
         _aadClientId = Env("AZURE_CLIENT_ID");
@@ -547,8 +604,11 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
             AppendAzure(azure, $$"""
                 "sqs": { "kind": "serviceBus", "target": { "namespace": "{{JsonEscape(_sbNamespace!)}}", "transport": "Amqp" }, "auth": { "mode": "sas", "keyName": "{{JsonEscape(_sbSasKeyName!)}}", "key": "{{JsonEscape(_sbSasKey!)}}" }, "queues": { "{{JsonEscape(SqsRestLaneQueueName)}}": { "transport": "Rest" } } }
                 """);
+            var eventGridTopics = EventGridConfigured
+                ? $$""", "topics": { "{{JsonEscape(EventGridTopicNamePrefix)}}*": { "backend": "EventGrid", "eventGridTopicEndpoint": "{{JsonEscape(_eventGridTopicEndpoint!)}}", "eventGridAccessKey": "{{JsonEscape(_eventGridTopicKey!)}}" } }"""
+                : string.Empty;
             AppendAzure(azure, $$"""
-                "sns": { "kind": "serviceBusTopics", "target": { "namespace": "{{JsonEscape(_sbNamespace!)}}" }, "auth": { "mode": "sas", "keyName": "{{JsonEscape(_sbSasKeyName!)}}", "key": "{{JsonEscape(_sbSasKey!)}}" } }
+                "sns": { "kind": "serviceBusTopics", "target": { "namespace": "{{JsonEscape(_sbNamespace!)}}" }, "auth": { "mode": "sas", "keyName": "{{JsonEscape(_sbSasKeyName!)}}", "key": "{{JsonEscape(_sbSasKey!)}}" }{{eventGridTopics}} }
                 """);
         }
 

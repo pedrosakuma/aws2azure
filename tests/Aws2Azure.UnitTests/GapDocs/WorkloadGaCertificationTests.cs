@@ -17,6 +17,8 @@ public sealed class WorkloadGaCertificationTests
     [InlineData("secretsmanager-basic-lifecycle.yaml", "ga")]
     [InlineData("sqs-standard-messaging.yaml", "candidate")]
     [InlineData("dynamodb-basic-crud.yaml", "candidate")]
+    [InlineData("sns-standard-publish-service-bus.yaml", "candidate")]
+    [InlineData("sns-standard-publish-event-grid.yaml", "candidate")]
     public void Repository_profiles_have_expected_mechanical_verdict(
         string fileName,
         string expectedVerdict)
@@ -151,6 +153,117 @@ public sealed class WorkloadGaCertificationTests
             error => error.Contains(
                 "requirement 'dynamodb_basic_crud' operation 'dynamodb:DeleteItem' is missing",
                 StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Validate_rejects_required_sub_feature_seal_for_unknown_sub_feature()
+    {
+        var manifest = MinimalManifest();
+        manifest.RequiredSubFeatureSeals = [new WorkloadGaSubFeatureSeal
+        {
+            Operation = "s3:PutObject",
+            SubFeature = "Does not exist",
+        }];
+
+        var errors = WorkloadGaManifestValidator.Validate(manifest, MinimalOperations(), Designs);
+
+        Assert.Contains(
+            errors,
+            error => error.Contains(
+                "required sub-feature seal 'Does not exist' does not exist under operation 's3:PutObject'",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Validate_rejects_required_sub_feature_seal_for_operation_outside_profile()
+    {
+        var manifest = MinimalManifest();
+        manifest.RequiredSubFeatureSeals = [new WorkloadGaSubFeatureSeal
+        {
+            Operation = "s3:GetObject",
+            SubFeature = "Any",
+        }];
+
+        var errors = WorkloadGaManifestValidator.Validate(manifest, MinimalOperations(), Designs);
+
+        Assert.Contains(
+            errors,
+            error => error.Contains(
+                "required sub-feature seal operation 's3:GetObject' is not required by the profile",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Missing_sub_feature_seal_yields_conditional_even_when_operation_seal_is_fresh()
+    {
+        var manifest = MinimalManifest();
+        manifest.RequiredSubFeatureSeals = [new WorkloadGaSubFeatureSeal
+        {
+            Operation = "s3:PutObject",
+            SubFeature = "Backend variant",
+        }];
+        var operations = new List<OperationDoc>
+        {
+            new()
+            {
+                Service = "s3",
+                Operation = "PutObject",
+                AzureEquivalent = "PUT blob",
+                Status = "implemented",
+                VerifiedRealAzure = new RealAzureVerification { Date = "2026-07-16", Evidence = "https://example.com/evidence" },
+                SubFeatures =
+                [
+                    new SubFeature { Name = "Backend variant", Status = "implemented" },
+                ],
+            },
+        };
+
+        var report = WorkloadGaEvaluator.Evaluate(
+            manifest, operations, Designs, RepoRoot, new DateOnly(2026, 7, 18));
+
+        Assert.Equal("conditional", report.Verdict);
+        Assert.Contains(
+            report.Findings,
+            finding => finding.Code == "sub_feature_real_azure_seal_missing"
+                       && finding.Subject == "s3:PutObject#Backend variant");
+    }
+
+    [Fact]
+    public void Fresh_sub_feature_seal_alongside_fresh_operation_seal_does_not_block()
+    {
+        var manifest = MinimalManifest();
+        manifest.RequiredSubFeatureSeals = [new WorkloadGaSubFeatureSeal
+        {
+            Operation = "s3:PutObject",
+            SubFeature = "Backend variant",
+        }];
+        var operations = new List<OperationDoc>
+        {
+            new()
+            {
+                Service = "s3",
+                Operation = "PutObject",
+                AzureEquivalent = "PUT blob",
+                Status = "implemented",
+                VerifiedRealAzure = new RealAzureVerification { Date = "2026-07-16", Evidence = "https://example.com/evidence" },
+                SubFeatures =
+                [
+                    new SubFeature
+                    {
+                        Name = "Backend variant",
+                        Status = "implemented",
+                        VerifiedRealAzure = new RealAzureVerification { Date = "2026-07-16", Evidence = "https://example.com/evidence" },
+                    },
+                ],
+            },
+        };
+
+        var report = WorkloadGaEvaluator.Evaluate(
+            manifest, operations, Designs, RepoRoot, new DateOnly(2026, 7, 18));
+
+        Assert.DoesNotContain(
+            report.Findings,
+            finding => finding.Code.StartsWith("sub_feature_real_azure_seal", StringComparison.Ordinal));
     }
 
     [Fact]

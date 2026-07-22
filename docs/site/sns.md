@@ -194,8 +194,8 @@
 
 | Name | Status | Real-Azure | Notes | Gap | Workaround |
 |---|---|---|---|---|---|
-| AMQP publish path | ✅ implemented | — | Sends SNS Publish requests to Azure Service Bus Topics over AMQP 1.0 using SAS or Entra ID CBS authentication. |  |  |
-| Event Grid publish path | ✅ implemented | — | Sends SNS Publish requests to Azure Event Grid custom topics over the classic Event Grid schema using a per-topic backend switch. |  |  |
+| AMQP publish path | ✅ implemented | ✅ | Sends SNS Publish requests to Azure Service Bus Topics over AMQP 1.0 using SAS or Entra ID CBS authentication. |  |  |
+| Event Grid publish path | ✅ implemented | ✅ | Sends SNS Publish requests to Azure Event Grid custom topics over the classic Event Grid schema using a per-topic backend switch. |  |  |
 
 ### Behaviour differences
 
@@ -228,8 +228,8 @@
 
 | Name | Status | Real-Azure | Notes | Gap | Workaround |
 |---|---|---|---|---|---|
-| AMQP batch publish path | ✅ implemented | — | Sends PublishBatch entries to Azure Service Bus Topics over AMQP 1.0 and reports per-entry success or failure. |  |  |
-| Event Grid batch publish path | ✅ implemented | — | Sends PublishBatch entries to Azure Event Grid custom topics in classic-schema JSON batches, splitting oversized batches when required. |  |  |
+| AMQP batch publish path | ✅ implemented | ✅ | Sends PublishBatch entries to Azure Service Bus Topics over AMQP 1.0 and reports per-entry success or failure. |  |  |
+| Event Grid batch publish path | ✅ implemented | ✅ | Sends PublishBatch entries to Azure Event Grid custom topics in classic-schema JSON batches, splitting oversized batches when required. |  |  |
 
 ### Behaviour differences
 

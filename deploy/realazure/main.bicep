@@ -9,6 +9,13 @@
 //   Kinesis  -> Event Hubs     (Standard namespace + a pre-created hub;
 //                               CreateStream is unimplemented so the hub must
 //                               already exist)
+//   SNS      -> Event Grid     (custom topic, classic schema, used by the
+//                               per-topic backend=EventGrid override; issue
+//                               #630. A companion Event Grid subscription
+//                               forwards to a Storage Queue on the same
+//                               storage account so the real-Azure SNS suite
+//                               can assert genuine end-to-end delivery, not
+//                               only HTTP-level publish acceptance.)
 //
 // Secrets (account keys / connection strings) are intentionally NOT emitted as
 // deployment outputs — the workflow fetches them with `az ... keys list` and
@@ -38,6 +45,8 @@ var serviceBusNamespaceName = '${baseName}-sb-${suffix}'
 var cosmosAccountName = toLower('${baseName}-cosmos-${suffix}')
 var eventHubsNamespaceName = '${baseName}-eh-${suffix}'
 var keyVaultName = '${baseName}-kv-${suffix}'
+var eventGridTopicName = '${baseName}-egt-${suffix}'
+var eventGridEvidenceQueueName = 'sns-eventgrid-evidence'
 
 // Built-in role definition ids for the AAD data-plane roles the proxy needs when a
 // backend block authenticates with Workload Identity (issue #307). Event Hubs /
@@ -81,6 +90,20 @@ resource blobServices 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01
     // immutability (A6) validated by the real-Azure smoke suite.
     isVersioningEnabled: true
   }
+}
+
+// Storage Queue destination for the SNS -> Event Grid real-Azure evidence
+// subscription below. Queue (not Blob) is used because it needs no SAS/
+// function trigger plumbing: the test suite polls it directly with the
+// storage account key it already fetches for the S3 smoke.
+resource queueServices 'Microsoft.Storage/storageAccounts/queueServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+}
+
+resource eventGridEvidenceQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = {
+  parent: queueServices
+  name: eventGridEvidenceQueueName
 }
 
 resource serviceBus 'Microsoft.ServiceBus/namespaces@2022-10-01-preview' = {
@@ -149,6 +172,39 @@ resource eventHub 'Microsoft.EventHub/namespaces/eventhubs@2024-01-01' = {
     // ListShards continuation (MaxResults=1) without standing resources.
     partitionCount: 2
     messageRetentionInDays: 1
+  }
+}
+
+// Event Grid custom topic backing the SNS EventGrid backend contract (issue
+// #630). The proxy's per-topic backend=EventGrid override publishes the
+// classic Event Grid schema directly to this topic's key-authenticated
+// publish endpoint; no management-plane access is required at runtime.
+resource eventGridTopic 'Microsoft.EventGrid/topics@2023-12-15-preview' = {
+  name: eventGridTopicName
+  location: location
+  properties: {
+    inputSchema: 'EventGridSchema'
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+// Forwards every event accepted by the topic to the evidence queue so the
+// real-Azure test suite can assert genuine delivered content (subject,
+// message attributes, body) rather than only the proxy's HTTP-level publish
+// acceptance.
+resource eventGridEvidenceSubscription 'Microsoft.EventGrid/topics/eventSubscriptions@2023-12-15-preview' = {
+  parent: eventGridTopic
+  name: eventGridEvidenceQueueName
+  properties: {
+    destination: {
+      endpointType: 'StorageQueue'
+      properties: {
+        resourceId: storage.id
+        queueName: eventGridEvidenceQueue.name
+        queueMessageTimeToLiveInSeconds: 3600
+      }
+    }
+    eventDeliverySchema: 'EventGridSchema'
   }
 }
 
@@ -228,3 +284,6 @@ output eventHubsNamespaceName string = eventHubs.name
 output eventHubName string = eventHubName
 output keyVaultName string = keyVault.name
 output keyVaultUri string = keyVault.properties.vaultUri
+output eventGridTopicName string = eventGridTopic.name
+output eventGridTopicEndpoint string = eventGridTopic.properties.endpoint
+output eventGridEvidenceQueueName string = eventGridEvidenceQueue.name

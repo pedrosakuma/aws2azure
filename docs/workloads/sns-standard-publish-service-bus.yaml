@@ -1,0 +1,43 @@
+schema_version: 1
+id: sns-standard-publish-service-bus
+version: 1
+name: SNS standard publish (Service Bus Topics backend)
+minimum_proxy_version: 0.1.0
+real_azure_seal_max_age_days: 90
+operations:
+  - sns:CreateTopic
+  - sns:Publish
+  - sns:PublishBatch
+  - sns:DeleteTopic
+requirements:
+  - sns_standard_publish
+accepted_partial_operations:
+  - sns:CreateTopic
+  - sns:Publish
+  - sns:PublishBatch
+  - sns:DeleteTopic
+accepted_design_gaps:
+  - "sns:Two backends with different fidelity"
+required_sub_feature_seals:
+  - operation: sns:Publish
+    sub_feature: AMQP publish path
+  - operation: sns:PublishBatch
+    sub_feature: AMQP batch publish path
+evidence:
+  qualification_artifact: ""
+  required_scenarios:
+    - representative-load
+    - batch-partial-failure
+    - retry
+    - timeout
+    - service-unavailable
+    - concurrency
+    - restart
+    - retry-exhaustion
+    - rollback
+  required_real_azure_scenarios:
+    - representative-load
+    - batch-partial-failure
+    - concurrency
+    - restart
+    - rollback

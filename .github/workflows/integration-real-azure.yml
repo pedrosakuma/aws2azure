@@ -27,6 +27,9 @@ name: integration-real-azure
 #   SQS       -> Service Bus    (lifecycle + list/batch + FIFO concurrency)
 #   Kinesis   -> Event Hubs     (write/read/list/batch + consumer concurrency)
 #   SNS       -> Service Bus    (topic/subscription lifecycle + lists + publish batch)
+#                  + Event Grid (per-topic backend=EventGrid Publish/PublishBatch,
+#                                verified end to end via a Storage Queue event
+#                                subscription; issue #630)
 #   Secrets   -> Key Vault      (lifecycle + version write + list pagination against
 #                                an ephemeral, per-run
 #                                RBAC vault provisioned by the Bicep; the proxy
@@ -471,6 +474,9 @@ jobs:
           COSMOS_ENDPOINT="$(out cosmosEndpoint)"
           EH_NS="$(out eventHubsNamespaceName)"
           KV_URI="$(out keyVaultUri)"
+          EG_TOPIC="$(out eventGridTopicName)"
+          EG_ENDPOINT="$(out eventGridTopicEndpoint)"
+          EG_QUEUE="$(out eventGridEvidenceQueueName)"
 
           BLOB_KEY="$(az storage account keys list -n "$STORAGE" -g "$RG_NAME" --query '[0].value' -o tsv)"
           SB_CONN="$(az servicebus namespace authorization-rule keys list -g "$RG_NAME" \
@@ -480,9 +486,10 @@ jobs:
           EH_CONN="$(az eventhubs namespace authorization-rule keys list -g "$RG_NAME" \
             --namespace-name "$EH_NS" --name RootManageSharedAccessKey \
             --query primaryConnectionString -o tsv)"
+          EG_KEY="$(az eventgrid topic key list -n "$EG_TOPIC" -g "$RG_NAME" --query key1 -o tsv)"
 
           # Mask every secret before it lands in $GITHUB_ENV / logs.
-          for v in "$BLOB_KEY" "$SB_CONN" "$COSMOS_KEY" "$EH_CONN"; do
+          for v in "$BLOB_KEY" "$SB_CONN" "$COSMOS_KEY" "$EH_CONN" "$EG_KEY"; do
             echo "::add-mask::$v"
           done
 
@@ -496,6 +503,9 @@ jobs:
             echo "AZURE_EVENTHUBS_CONNSTR=$EH_CONN"
             echo "AZURE_EVENTHUBS_STREAM=$AZURE_EVENTHUBS_STREAM"
             echo "AZURE_KEYVAULT_URL=$KV_URI"
+            echo "AZURE_EVENTGRID_TOPIC_ENDPOINT=$EG_ENDPOINT"
+            echo "AZURE_EVENTGRID_TOPIC_KEY=$EG_KEY"
+            echo "AZURE_EVENTGRID_EVIDENCE_QUEUE_NAME=$EG_QUEUE"
           } >> "$GITHUB_ENV"
 
       - name: Mint federated token for workload identity scenarios

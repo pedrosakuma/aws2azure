@@ -9,9 +9,17 @@ verified_real_azure:
 sub_features:
   - name: AMQP batch publish path
     status: implemented
+    verified_real_azure:
+      date: "2026-07-16"
+      evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
+      workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
     notes: Sends PublishBatch entries to Azure Service Bus Topics over AMQP 1.0 and reports per-entry success or failure.
   - name: Event Grid batch publish path
     status: implemented
+    verified_real_azure:
+      date: "2026-07-21"
+      evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29789050325
+      workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29789050325
     notes: Sends PublishBatch entries to Azure Event Grid custom topics in classic-schema JSON batches, splitting oversized batches when required.
 behavior_differences:
   - "MessageId values are proxy-generated GUIDs, not AWS-generated SNS identifiers."
