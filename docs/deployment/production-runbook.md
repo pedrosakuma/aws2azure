@@ -482,6 +482,62 @@ Rollback restores proxy code/configuration; it does not automatically undo data
 writes, Azure resource changes, queued messages, or external credential
 revocation. Use workload-specific compensation where required.
 
+### DynamoDB persisted-format rollback
+
+For adjacent supported minors, do not approve rollback from unit fixtures alone.
+Against the exact candidate, previous artifact, configuration, and Cosmos
+container:
+
+1. let the candidate create table metadata (including indexes and TTL), write
+   representative inferred/enveloped attributes, and mint Query/Scan
+   continuations;
+2. stop candidate writes, drain in-flight requests, then start the previous
+   runtime against the same container;
+3. prove the previous runtime can describe the table, read candidate items,
+   consume candidate continuations, and safely update an item/metadata record;
+4. restore the candidate and prove it can read the previous runtime's writes and
+   metadata rewrite; and
+5. retain the exact scenario result with both runtime identities and the
+   persisted-format inventory digest.
+
+Do not run old and new writers concurrently when the release notes classify any
+format as migration-required.
+
+### Historical incompatible DynamoDB export/import
+
+Use this only for a build outside the supported dual-reader span or when release
+notes explicitly require a reversible migration.
+
+1. **Freeze writes.** Reject or queue application writes, stop every proxy
+   writer, drain requests/stored procedures, and record the freeze timestamp.
+   A read-only export without a write freeze is not rollback-safe.
+2. **Snapshot the source.** Export every user item, the
+   `__aws2azure_table_meta__` sidecar, container partition/indexing/TTL settings,
+   and stored-procedure IDs/bodies. Record counts, hashes, source account,
+   database/container RIDs, and the source inventory/runtime identity.
+3. **Import in isolation.** Import into new containers or a new database; never
+   transform the only copy in place. Historical v1 item containers used `/pk`
+   plus a nested `item` map and cannot be reused by the v2 writer. Create the
+   target with partition path `/_a2a_pk`, decode each v1 envelope through the
+   frozen v1 reader, and re-encode it with the current v2 writer while preserving
+   the logical item ID/partition key. Preserve unknown table-metadata extension
+   fields. Install only the stored-procedure identities declared by the target
+   inventory.
+4. **Validate before cutover.** Compare counts/hashes, run representative
+   Get/Query/Scan/TTL/index/conditional-write checks, and run the source scenario
+   in [`dynamodb-persisted-format-scenarios.yaml`](../testing/dynamodb-persisted-format-scenarios.yaml).
+5. **Cut over or roll back.** Keep writes frozen through the binding switch. To
+   roll back, point the previous runtime at the untouched source snapshot. If
+   writes were allowed after cutover, rollback is forbidden until a verified
+   reverse synchronization has copied every post-cutover mutation back in the
+   previous format.
+6. **Retain evidence.** Keep export/import manifests, hashes, validation output,
+   write-freeze interval, runtime/config identities, and the recovery decision.
+
+Never point a historical reader at newly migrated state merely because smoke
+reads passed; use the frozen compatibility inventory or the isolated
+export/import proof.
+
 ## 10. Post-deploy closeout
 
 - Confirm the full promoted cohort remains within SLO and capacity gates for the

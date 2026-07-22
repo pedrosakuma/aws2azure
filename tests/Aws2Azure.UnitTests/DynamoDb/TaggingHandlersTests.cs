@@ -93,9 +93,12 @@ public class TaggingHandlersTests
         var handler = new MetadataHandler(tableExists: true,
             "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
             + "\"tableName\":\"orders\",\"creationDateTime\":123,\"billingMode\":\"PAY_PER_REQUEST\","
-            + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"sk\",\"type\":\"N\"}],"
+            + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"sk\",\"type\":\"N\",\"futureScalarRule\":\"lossless\"}],"
             + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
-            + "\"tags\":[{\"key\":\"owner\",\"value\":\"team-a\"}]}");
+            + "\"globalSecondaryIndexes\":[{\"indexName\":\"bySort\",\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],\"projectionType\":\"ALL\",\"futureProjection\":{\"revision\":7}}],"
+            + "\"timeToLive\":{\"enabled\":true,\"attributeName\":\"ttl\",\"futureTtlMode\":\"absolute-epoch\"},"
+            + "\"tags\":[{\"key\":\"owner\",\"value\":\"team-a\",\"futureTagSource\":\"import\"}],"
+            + "\"futurePolicy\":{\"writer\":\"adjacent-runtime\"},\"_etag\":\"stale-system-field\"}");
         var cosmos = BuildClient(handler);
 
         await InvokeTagAsync(cosmos,
@@ -112,6 +115,18 @@ public class TaggingHandlersTests
         Assert.Equal(2, root.GetProperty("attributeDefinitions").GetArrayLength());
         Assert.Equal("sk", root.GetProperty("keySchema")[1].GetProperty("name").GetString());
         Assert.Equal(2, root.GetProperty("tags").GetArrayLength());
+        Assert.Equal("lossless",
+            root.GetProperty("attributeDefinitions")[1].GetProperty("futureScalarRule").GetString());
+        Assert.Equal(7,
+            root.GetProperty("globalSecondaryIndexes")[0]
+                .GetProperty("futureProjection").GetProperty("revision").GetInt32());
+        Assert.Equal("absolute-epoch",
+            root.GetProperty("timeToLive").GetProperty("futureTtlMode").GetString());
+        Assert.Equal("import",
+            root.GetProperty("tags")[0].GetProperty("futureTagSource").GetString());
+        Assert.Equal("adjacent-runtime",
+            root.GetProperty("futurePolicy").GetProperty("writer").GetString());
+        Assert.False(root.TryGetProperty("_etag", out _));
     }
 
     [Fact]

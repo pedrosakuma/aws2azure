@@ -60,7 +60,8 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 /// </summary>
 internal static class ScanHandler
 {
-    private const string ContinuationSentinelAttr = "__a2a_continuation";
+    private const string ContinuationSentinelAttr =
+        DynamoDbPersistedFormatContract.ContinuationSentinelAttribute;
     private const int MaxBatchSize = 1000;
 
     public static async Task HandleScanAsync(
@@ -668,35 +669,10 @@ internal static class ScanHandler
         => topLevelNames is null ? null : Projection.FromTopLevelNames(topLevelNames);
 
     private static string? ExtractContinuation(JsonElement? exclusiveStartKey)
-    {
-        if (exclusiveStartKey is not { } esk) return null;
-        if (esk.ValueKind != JsonValueKind.Object) return null;
-        if (!esk.TryGetProperty(ContinuationSentinelAttr, out var sentinel)) return null;
-        if (sentinel.ValueKind != JsonValueKind.Object) return null;
-        if (!sentinel.TryGetProperty("S", out var sEl) || sEl.ValueKind != JsonValueKind.String)
-            throw new FormatException("continuation attribute must be a typed string.");
-        var b64 = sEl.GetString();
-        if (string.IsNullOrEmpty(b64)) return null;
-        try
-        {
-            return Encoding.UTF8.GetString(Convert.FromBase64String(b64));
-        }
-        catch (FormatException)
-        {
-            throw new FormatException("continuation attribute is not valid base64.");
-        }
-    }
+        => DynamoDbContinuationTokenCodec.Extract(exclusiveStartKey);
 
     private static Dictionary<string, JsonElement> BuildContinuationKey(string cosmosContinuation)
-    {
-        var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(cosmosContinuation));
-        var json = $"{{\"S\":\"{b64}\"}}";
-        using var doc = JsonDocument.Parse(json);
-        return new Dictionary<string, JsonElement>(StringComparer.Ordinal)
-        {
-            [ContinuationSentinelAttr] = doc.RootElement.Clone(),
-        };
-    }
+        => DynamoDbContinuationTokenCodec.BuildKey(cosmosContinuation);
 
     private static bool IsAllowedSelect(string? select, bool isLsi, out string error)
     {

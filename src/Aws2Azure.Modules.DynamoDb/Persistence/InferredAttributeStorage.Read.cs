@@ -60,6 +60,13 @@ internal static partial class InferredAttributeStorage
         if (docRoot.ValueKind == JsonValueKind.Object)
         {
             writer.WritePropertyName(ItemPropEncoded);
+            if (TryGetLegacyItemEnvelope(docRoot, out var legacyItem))
+            {
+                legacyItem.WriteTo(writer);
+                writer.WriteEndObject();
+                return;
+            }
+
             writer.WriteStartObject();
             foreach (var prop in docRoot.EnumerateObject())
             {
@@ -115,6 +122,9 @@ internal static partial class InferredAttributeStorage
     private static ReadOnlySpan<byte> ShadowEncodedIdNameU8 => "_a2a$id"u8;
     private static ReadOnlySpan<byte> ShadowEncodedTtlNameU8 => "_a2a$ttl"u8;
     private static ReadOnlySpan<byte> IdNameU8 => "id"u8;
+    private static ReadOnlySpan<byte> LegacyPkNameU8 => "pk"u8;
+    private static ReadOnlySpan<byte> LegacyItemNameU8 => "item"u8;
+    private static ReadOnlySpan<byte> CurrentPkNameU8 => "_a2a_pk"u8;
     private static ReadOnlySpan<byte> TtlNameU8 => "ttl"u8;
     private static ReadOnlySpan<byte> DiscriminatorPrefixU8 => "_a2a"u8;
     private static ReadOnlySpan<byte> EnvelopeTagPrefixU8 => "_a2a:"u8;
@@ -239,9 +249,55 @@ internal static partial class InferredAttributeStorage
         }
 
         writer.WriteStartObject();
+        bool currentFormat = false;
+        bool legacyRoutingKey = false;
+        bool legacyPayloadWritten = false;
+        ArrayBufferWriter<byte>? pendingPk = null;
+        ArrayBufferWriter<byte>? pendingItem = null;
+        bool pendingItemIsObject = false;
         while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
         {
-            if (reader.ValueTextEquals(ShadowEncodedIdNameU8))
+            if (legacyPayloadWritten)
+            {
+                reader.Read();
+                reader.Skip();
+            }
+            else if (!currentFormat && reader.ValueTextEquals(CurrentPkNameU8))
+            {
+                currentFormat = true;
+                reader.Read();
+                reader.Skip();
+                WritePendingPk(writer, pendingPk);
+                pendingPk = null;
+                if (pendingItem is not null)
+                {
+                    if (MatchesProjectedName(LegacyItemNameU8, rootNames))
+                    {
+                        WritePendingCurrentAttribute(writer, LegacyItemNameU8, pendingItem);
+                    }
+                    pendingItem = null;
+                }
+            }
+            else if (!currentFormat && reader.ValueTextEquals(LegacyPkNameU8))
+            {
+                reader.Read();
+                legacyRoutingKey = reader.TokenType == JsonTokenType.String;
+                if (MatchesProjectedName(LegacyPkNameU8, rootNames))
+                {
+                    pendingPk = CaptureAttributeValue(ref reader);
+                }
+                else
+                {
+                    reader.Skip();
+                }
+            }
+            else if (!currentFormat && reader.ValueTextEquals(LegacyItemNameU8))
+            {
+                reader.Read();
+                pendingItemIsObject = reader.TokenType == JsonTokenType.StartObject;
+                pendingItem = CaptureRawJsonValue(ref reader);
+            }
+            else if (reader.ValueTextEquals(ShadowEncodedIdNameU8))
             {
                 reader.Read();
                 if (keepId)
@@ -284,6 +340,23 @@ internal static partial class InferredAttributeStorage
                 reader.Skip();
             }
         }
+        if (pendingItem is not null)
+        {
+            if (!currentFormat && legacyRoutingKey && pendingItemIsObject)
+            {
+                pendingPk = null;
+                WritePendingLegacyItem(writer, pendingItem, rootNames);
+                legacyPayloadWritten = true;
+            }
+            else if (MatchesProjectedName(LegacyItemNameU8, rootNames))
+            {
+                WritePendingCurrentAttribute(writer, LegacyItemNameU8, pendingItem);
+            }
+        }
+        if (!legacyPayloadWritten)
+        {
+            WritePendingPk(writer, pendingPk);
+        }
         writer.WriteEndObject();
     }
 
@@ -300,6 +373,18 @@ internal static partial class InferredAttributeStorage
             }
         }
 
+        return false;
+    }
+
+    private static bool MatchesProjectedName(ReadOnlySpan<byte> candidate, byte[][] rootNames)
+    {
+        foreach (byte[] name in rootNames)
+        {
+            if (candidate.SequenceEqual(name))
+            {
+                return true;
+            }
+        }
         return false;
     }
 
@@ -322,9 +407,45 @@ internal static partial class InferredAttributeStorage
         where TReader : ITokenReader, allows ref struct
     {
         writer.WriteStartObject();
+        bool currentFormat = false;
+        bool legacyRoutingKey = false;
+        bool legacyPayloadWritten = false;
+        ArrayBufferWriter<byte>? pendingPk = null;
+        ArrayBufferWriter<byte>? pendingItem = null;
+        bool pendingItemIsObject = false;
         while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
         {
-            if (reader.ValueTextEquals(ShadowEncodedIdNameU8))
+            if (legacyPayloadWritten)
+            {
+                reader.Read();
+                reader.Skip();
+            }
+            else if (!currentFormat && reader.ValueTextEquals(CurrentPkNameU8))
+            {
+                currentFormat = true;
+                reader.Read();
+                reader.Skip();
+                WritePendingPk(writer, pendingPk);
+                pendingPk = null;
+                if (pendingItem is not null)
+                {
+                    WritePendingCurrentAttribute(writer, LegacyItemNameU8, pendingItem);
+                    pendingItem = null;
+                }
+            }
+            else if (!currentFormat && reader.ValueTextEquals(LegacyPkNameU8))
+            {
+                reader.Read();
+                legacyRoutingKey = reader.TokenType == JsonTokenType.String;
+                pendingPk = CaptureAttributeValue(ref reader);
+            }
+            else if (!currentFormat && reader.ValueTextEquals(LegacyItemNameU8))
+            {
+                reader.Read();
+                pendingItemIsObject = reader.TokenType == JsonTokenType.StartObject;
+                pendingItem = CaptureRawJsonValue(ref reader);
+            }
+            else if (reader.ValueTextEquals(ShadowEncodedIdNameU8))
             {
                 // Unmangle the shadow-encoded "id" attribute.
                 writer.WritePropertyName(IdPropEncoded);
@@ -352,6 +473,23 @@ internal static partial class InferredAttributeStorage
                 reader.Read();
                 WriteAttributeValue(writer, ref reader);
             }
+        }
+        if (pendingItem is not null)
+        {
+            if (!currentFormat && legacyRoutingKey && pendingItemIsObject)
+            {
+                pendingPk = null;
+                WritePendingLegacyItem(writer, pendingItem, rootNames: null);
+                legacyPayloadWritten = true;
+            }
+            else
+            {
+                WritePendingCurrentAttribute(writer, LegacyItemNameU8, pendingItem);
+            }
+        }
+        if (!legacyPayloadWritten)
+        {
+            WritePendingPk(writer, pendingPk);
         }
         writer.WriteEndObject();
     }
@@ -619,9 +757,45 @@ internal static partial class InferredAttributeStorage
     {
         id = null;
         writer.WriteStartObject();
+        bool currentFormat = false;
+        bool legacyRoutingKey = false;
+        bool legacyPayloadWritten = false;
+        ArrayBufferWriter<byte>? pendingPk = null;
+        ArrayBufferWriter<byte>? pendingItem = null;
+        bool pendingItemIsObject = false;
         while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
         {
-            if (reader.ValueTextEquals(ShadowEncodedIdNameU8))
+            if (legacyPayloadWritten)
+            {
+                reader.Read();
+                reader.Skip();
+            }
+            else if (!currentFormat && reader.ValueTextEquals(CurrentPkNameU8))
+            {
+                currentFormat = true;
+                reader.Read();
+                reader.Skip();
+                WritePendingPk(writer, pendingPk);
+                pendingPk = null;
+                if (pendingItem is not null)
+                {
+                    WritePendingCurrentAttribute(writer, LegacyItemNameU8, pendingItem);
+                    pendingItem = null;
+                }
+            }
+            else if (!currentFormat && reader.ValueTextEquals(LegacyPkNameU8))
+            {
+                reader.Read();
+                legacyRoutingKey = reader.TokenType == JsonTokenType.String;
+                pendingPk = CaptureAttributeValue(ref reader);
+            }
+            else if (!currentFormat && reader.ValueTextEquals(LegacyItemNameU8))
+            {
+                reader.Read();
+                pendingItemIsObject = reader.TokenType == JsonTokenType.StartObject;
+                pendingItem = CaptureRawJsonValue(ref reader);
+            }
+            else if (reader.ValueTextEquals(ShadowEncodedIdNameU8))
             {
                 // Unmangle the shadow-encoded "id" attribute.
                 writer.WritePropertyName(IdPropEncoded);
@@ -656,7 +830,196 @@ internal static partial class InferredAttributeStorage
                 WriteAttributeValue(writer, ref reader);
             }
         }
+        if (pendingItem is not null)
+        {
+            if (!currentFormat && legacyRoutingKey && pendingItemIsObject)
+            {
+                pendingPk = null;
+                WritePendingLegacyItem(writer, pendingItem, rootNames: null);
+                legacyPayloadWritten = true;
+            }
+            else
+            {
+                WritePendingCurrentAttribute(writer, LegacyItemNameU8, pendingItem);
+            }
+        }
+        if (!legacyPayloadWritten)
+        {
+            WritePendingPk(writer, pendingPk);
+        }
         writer.WriteEndObject();
+    }
+
+    private static ArrayBufferWriter<byte> CaptureAttributeValue<TReader>(
+        scoped ref TReader reader)
+        where TReader : ITokenReader, allows ref struct
+    {
+        var buffer = new ArrayBufferWriter<byte>(64);
+        using var writer = new Utf8JsonWriter(buffer);
+        WriteAttributeValue(writer, ref reader);
+        writer.Flush();
+        return buffer;
+    }
+
+    private static ArrayBufferWriter<byte> CaptureRawJsonValue<TReader>(
+        scoped ref TReader reader)
+        where TReader : ITokenReader, allows ref struct
+    {
+        var buffer = new ArrayBufferWriter<byte>(256);
+        using var writer = new Utf8JsonWriter(buffer);
+        WriteRawJsonValue(writer, ref reader);
+        writer.Flush();
+        return buffer;
+    }
+
+    private static void WritePendingPk(
+        Utf8JsonWriter writer,
+        ArrayBufferWriter<byte>? pendingPk)
+    {
+        if (pendingPk is null)
+        {
+            return;
+        }
+
+        writer.WritePropertyName(LegacyPkNameU8);
+        writer.WriteRawValue(pendingPk.WrittenSpan, skipInputValidation: true);
+    }
+
+    private static void WritePendingCurrentAttribute(
+        Utf8JsonWriter writer,
+        ReadOnlySpan<byte> propertyName,
+        ArrayBufferWriter<byte> pendingValue)
+    {
+        var reader = new Utf8JsonTokenReader(pendingValue.WrittenSpan);
+        if (!reader.Read())
+        {
+            throw new InvalidOperationException("Pending item attribute is empty.");
+        }
+
+        writer.WritePropertyName(propertyName);
+        WriteAttributeValue(writer, ref reader);
+    }
+
+    private static void WritePendingLegacyItem(
+        Utf8JsonWriter writer,
+        ArrayBufferWriter<byte> pendingItem,
+        byte[][]? rootNames)
+    {
+        var reader = new Utf8JsonTokenReader(pendingItem.WrittenSpan);
+        if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+        {
+            throw new InvalidOperationException("Legacy item envelope payload is not an object.");
+        }
+
+        WriteLegacyMapContents(writer, ref reader, rootNames);
+    }
+
+    /// <summary>
+    /// Copies the already-DynamoDB-typed attribute map held by the legacy v1
+    /// <c>item</c> envelope. The reader is on StartObject and returns on its
+    /// matching EndObject. A non-null projection keeps only matching root names.
+    /// </summary>
+    private static void WriteLegacyMapContents<TReader>(
+        Utf8JsonWriter writer,
+        scoped ref TReader reader,
+        byte[][]? rootNames)
+        where TReader : ITokenReader, allows ref struct
+    {
+        while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+        {
+            bool keep = rootNames is null || MatchesProjectedRoot(ref reader, rootNames);
+            if (keep)
+            {
+                WriteCurrentPropertyName(writer, ref reader);
+            }
+
+            reader.Read();
+            if (keep)
+            {
+                WriteRawJsonValue(writer, ref reader);
+            }
+            else
+            {
+                reader.Skip();
+            }
+        }
+    }
+
+    private static void WriteRawJsonValue<TReader>(
+        Utf8JsonWriter writer,
+        scoped ref TReader reader)
+        where TReader : ITokenReader, allows ref struct
+    {
+        switch (reader.TokenType)
+        {
+            case JsonTokenType.StartObject:
+                writer.WriteStartObject();
+                while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+                {
+                    WriteCurrentPropertyName(writer, ref reader);
+                    reader.Read();
+                    WriteRawJsonValue(writer, ref reader);
+                }
+                writer.WriteEndObject();
+                break;
+
+            case JsonTokenType.StartArray:
+                writer.WriteStartArray();
+                while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+                {
+                    WriteRawJsonValue(writer, ref reader);
+                }
+                writer.WriteEndArray();
+                break;
+
+            case JsonTokenType.String:
+                WriteStringTokenValue(writer, ref reader);
+                break;
+
+            case JsonTokenType.Number:
+                WriteRawNumberToken(writer, ref reader);
+                break;
+
+            case JsonTokenType.True:
+                writer.WriteBooleanValue(true);
+                break;
+
+            case JsonTokenType.False:
+                writer.WriteBooleanValue(false);
+                break;
+
+            case JsonTokenType.Null:
+                writer.WriteNullValue();
+                break;
+
+            default:
+                throw new InvalidOperationException(
+                    $"Cannot copy legacy Cosmos token {reader.TokenType}.");
+        }
+    }
+
+    private static void WriteRawNumberToken<TReader>(
+        Utf8JsonWriter writer,
+        scoped ref TReader reader)
+        where TReader : ITokenReader, allows ref struct
+    {
+        if (!reader.HasValueSequence)
+        {
+            writer.WriteRawValue(reader.ValueSpan, skipInputValidation: true);
+            return;
+        }
+
+        int length = checked((int)reader.ValueSequence.Length);
+        byte[] rented = ArrayPool<byte>.Shared.Rent(length);
+        try
+        {
+            reader.ValueSequence.CopyTo(rented);
+            writer.WriteRawValue(rented.AsSpan(0, length), skipInputValidation: true);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
+        }
     }
 
     /// <summary>
@@ -979,6 +1342,15 @@ internal static partial class InferredAttributeStorage
     public static Dictionary<string, JsonElement>? ExtractItem(JsonElement docRoot)
     {
         if (docRoot.ValueKind != JsonValueKind.Object) return null;
+        if (TryGetLegacyItemEnvelope(docRoot, out var legacyItem))
+        {
+            var legacyResult = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            foreach (var property in legacyItem.EnumerateObject())
+            {
+                legacyResult[property.Name] = property.Value.Clone();
+            }
+            return legacyResult;
+        }
 
         // Batch decode: encode every attribute into a single buffer
         // wrapped as one JSON object, parse once, then clone children.
@@ -1027,6 +1399,28 @@ internal static partial class InferredAttributeStorage
             result[prop.Name] = prop.Value.Clone();
         }
         return result;
+    }
+
+    private static bool TryGetLegacyItemEnvelope(JsonElement docRoot, out JsonElement item)
+    {
+        item = default;
+        if (docRoot.TryGetProperty(PkProperty, out _)
+            || !docRoot.TryGetProperty("pk", out var partitionKey)
+            || partitionKey.ValueKind != JsonValueKind.String
+            || !docRoot.TryGetProperty(DiscriminatorProperty, out var discriminator)
+            || discriminator.ValueKind != JsonValueKind.String
+            || !string.Equals(
+                discriminator.GetString(),
+                DiscriminatorValueItem,
+                StringComparison.Ordinal)
+            || !docRoot.TryGetProperty("item", out item)
+            || item.ValueKind != JsonValueKind.Object)
+        {
+            item = default;
+            return false;
+        }
+
+        return true;
     }
 
     /// <summary>

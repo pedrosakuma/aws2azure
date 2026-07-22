@@ -106,6 +106,7 @@ internal static partial class CosmosOpsShared
                 TableMetadataJsonContext.Default.TableMetadata);
             resp.Dispose();
             if (meta is null) return new TableMetadataReadResult { Status = TableMetadataReadStatus.NotFound };
+            meta.RemoveCosmosSystemExtensionData();
 
             MetadataCache.Set(cosmos.AccountEndpoint, cosmos.DatabaseName, tableName, meta, generation);
 
@@ -181,6 +182,7 @@ internal static partial class CosmosOpsShared
                         return false;
                     }
                     meta = parsed;
+                    meta.RemoveCosmosSystemExtensionData();
                     etag = ExtractETag(getResp);
                 }
             }

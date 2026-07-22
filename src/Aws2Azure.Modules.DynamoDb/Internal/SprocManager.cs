@@ -25,12 +25,13 @@ internal sealed partial class SprocManager
     // Versioned so a body change provisions a fresh sproc instead of silently
     // running stale server-side JS (EnsureSproc treats 409 as success and never
     // replaces the body). v2 fixes the invalid mixed-link readDocument bug (#202).
-    public const string SprocId = "atomicWrite_v2";
+    public const string SprocId = DynamoDbPersistedFormatContract.AtomicWriteStoredProcedureId;
 
     // Versioned so a future body change provisions a fresh sproc instead of
     // silently running stale server-side JS (EnsureSproc treats 409 as success
     // and never replaces the body).
-    public const string TransactSprocId = "atomicTransactWrite_v2";
+    public const string TransactSprocId =
+        DynamoDbPersistedFormatContract.AtomicTransactWriteStoredProcedureId;
 
     public SprocManager(ILogger<SprocManager> logger)
     {

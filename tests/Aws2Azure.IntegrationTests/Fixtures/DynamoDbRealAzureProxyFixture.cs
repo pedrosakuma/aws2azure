@@ -54,6 +54,8 @@ public sealed class DynamoDbRealAzureProxyFixture : IAsyncLifetime
     public string ProxyServiceUrl => $"http://{ProxyHostName}:{_proxyPort}";
     public string ProxyOutput => _proxyOutput.ToString();
     public string CosmosEndpoint => _cosmosEndpoint ?? string.Empty;
+    internal string CosmosKey => _cosmosKey ?? string.Empty;
+    internal string CosmosDatabase => _cosmosDatabase ?? string.Empty;
     public string ProxyConfigDigest { get; private set; } = string.Empty;
     public string BackendIdentityDigest { get; private set; } = string.Empty;
     public string AwsBindingDigest { get; private set; } = string.Empty;
@@ -216,7 +218,7 @@ public sealed class DynamoDbRealAzureProxyFixture : IAsyncLifetime
         return $$"""
             {
               "services": {
-                "dynamodb": { "enabled": true, "cosmosBinaryResponses": true, "cosmosBinaryRequests": true }
+                "dynamodb": { "enabled": true, "cosmosBinaryResponses": true, "cosmosBinaryRequests": true, "enableGlobalSecondaryIndexQueries": true }
               },
               "bindings": [
                 {

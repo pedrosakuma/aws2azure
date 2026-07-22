@@ -1,0 +1,15 @@
+{
+  "id": "sort-1",
+  "pk": "partition-1",
+  "_a2a": "item",
+  "item": {
+    "pk": { "S": "partition-1" },
+    "sk": { "S": "sort-1" },
+    "name": { "S": "Alice" },
+    "big": { "N": "99999999999999999999999999999999999999" },
+    "blob": { "B": "aGVsbG8=" },
+    "ttl": { "N": "1700003600" }
+  },
+  "_rid": "legacy-rid",
+  "_etag": "\"legacy-etag\""
+}

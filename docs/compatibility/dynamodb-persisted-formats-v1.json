@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "inventory_version": 1,
+  "write_policy": "v2-adjacent-dual-read-single-write; v1-isolated-export-import",
+  "formats": [
+    {
+      "id": "item-envelope",
+      "class": "durable",
+      "current_write_version": 2,
+      "read_versions": [1, 2],
+      "in_place_compatibility": "v2 only; v1 used /pk and nested item.* so it requires isolated export/import into a /_a2a_pk container",
+      "v1_fixture": "tests/Aws2Azure.UnitTests/DynamoDb/Persistence/Fixtures/v1/item-envelope.json",
+      "v1_fixture_sha256": "4b8c83489de0201c4e7d01d5437e637bc1ebcd1ea925b043e2e123f8219bd053",
+      "current_fixture": "tests/Aws2Azure.UnitTests/DynamoDb/Persistence/Fixtures/current/item-document.json",
+      "current_fixture_sha256": "3dd5f7de9bfb6138062ecfbf543b1126d62b739e2ede61a6dc6355ea40a8a45d"
+    },
+    {
+      "id": "table-metadata",
+      "class": "durable",
+      "current_write_version": 1,
+      "read_versions": [1],
+      "v1_fixture": "tests/Aws2Azure.UnitTests/DynamoDb/Persistence/Fixtures/v1/table-metadata.json",
+      "v1_fixture_sha256": "b63fa2835541b0d9564581f4e5d3dd12e0c2fe83814ba7389b46bfac6aa5bf5e",
+      "current_fixture": "tests/Aws2Azure.UnitTests/DynamoDb/Persistence/Fixtures/current/table-metadata.json",
+      "current_fixture_sha256": "866d96fe7846b6a2592ffe1302147644e81b9a343fe09528d54e73e3b0935ebe"
+    },
+    {
+      "id": "ttl-index-derived-fields",
+      "class": "durable",
+      "current_write_version": 1,
+      "read_versions": [1],
+      "current_fixture": "tests/Aws2Azure.UnitTests/DynamoDb/Persistence/Fixtures/current/item-derived-fields.json",
+      "current_fixture_sha256": "b7ab18a423a5f0c6dbcd04fde21d6a50c4a571b2bf733a4d0b55c8d16f07aca6"
+    },
+    {
+      "id": "query-scan-continuation",
+      "class": "rolling-upgrade",
+      "current_write_version": 1,
+      "read_versions": [1],
+      "v1_fixture": "tests/Aws2Azure.UnitTests/DynamoDb/Persistence/Fixtures/v1/continuation-basic.json",
+      "v1_fixture_sha256": "38710c148b75e42a566818e81c3054e8a70fbf49ba001a62f2beed5843bfa968"
+    },
+    {
+      "id": "ordered-query-continuation",
+      "class": "rolling-upgrade",
+      "current_write_version": 1,
+      "read_versions": [1],
+      "v1_fixture": "tests/Aws2Azure.UnitTests/DynamoDb/Persistence/Fixtures/v1/continuation-ordered.json",
+      "v1_fixture_sha256": "3ac045661c7fb26aaaeaaeb1767bb10a2f713cd0f94ffbd4a2bd5d8564221456"
+    },
+    {
+      "id": "stored-procedure-identities",
+      "class": "durable",
+      "current_write_version": 1,
+      "read_versions": [1],
+      "current_fixture": "tests/Aws2Azure.UnitTests/DynamoDb/Persistence/Fixtures/current/stored-procedures.json",
+      "current_fixture_sha256": "22f14da61ee2fc6ec38d2cd0446708c0cc427894aad52dbde67f3d95d7f30512"
+    }
+  ],
+  "stored_procedures": [
+    {
+      "id": "atomicWrite_v2",
+      "body_sha256": "68bb5745f1725ed43b2b06bf195cc34ffeb37c4b30fb56b446faf5444747b06a"
+    },
+    {
+      "id": "atomicTransactWrite_v2",
+      "body_sha256": "592335a445a63d7722f859955e1124ebff0f5c02a2ba038273e2f3d19c4cc5f1"
+    }
+  ]
+}

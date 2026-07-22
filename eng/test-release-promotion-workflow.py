@@ -35,6 +35,9 @@ class ReleasePromotionWorkflowTests(unittest.TestCase):
         self.assertIn("--data-binary @/tmp/rc-index.json", workflow)
         self.assertIn("--draft=false", workflow)
         self.assertIn("--latest", workflow)
+        self.assertIn("validate-persisted-format-release.py", workflow)
+        self.assertIn("--baseline-root previous-stable-source", workflow)
+        self.assertIn("--release-notes artifacts/promotion-release-notes.md", workflow)
 
     def test_read_only_gate_is_separate_from_write_scoped_promotion(self) -> None:
         workflow = PROMOTION.read_text(encoding="utf-8")

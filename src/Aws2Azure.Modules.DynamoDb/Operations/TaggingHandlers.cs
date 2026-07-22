@@ -428,6 +428,7 @@ internal static class TaggingHandlers
                     $"Cannot do operations on a non-existent table: {tableName}").ConfigureAwait(false);
                 return null;
             }
+            meta.RemoveCosmosSystemExtensionData();
             string? etag = null;
             if (resp.Headers.ETag is not null)
             {
@@ -449,42 +450,9 @@ internal static class TaggingHandlers
 
     private static TableMetadata CloneMetadata(TableMetadata source)
     {
-        var clone = new TableMetadata
-        {
-            Id = source.Id,
-            PartitionKey = source.PartitionKey,
-            Meta = source.Meta,
-            TableName = source.TableName,
-            CreationDateTime = source.CreationDateTime,
-            BillingMode = source.BillingMode,
-            AttributeDefinitions = new List<TableAttributeDefinition>(source.AttributeDefinitions.Count),
-            KeySchema = new List<TableKeySchemaElement>(source.KeySchema.Count),
-        };
-        foreach (var attribute in source.AttributeDefinitions)
-        {
-            clone.AttributeDefinitions.Add(new TableAttributeDefinition
-            {
-                Name = attribute.Name,
-                Type = attribute.Type,
-            });
-        }
-        foreach (var key in source.KeySchema)
-        {
-            clone.KeySchema.Add(new TableKeySchemaElement
-            {
-                Name = key.Name,
-                KeyType = key.KeyType,
-            });
-        }
-        if (source.Tags is not null)
-        {
-            clone.Tags = new List<TableTag>(source.Tags.Count);
-            foreach (var tag in source.Tags)
-            {
-                clone.Tags.Add(new TableTag { Key = tag.Key, Value = tag.Value });
-            }
-        }
-        return clone;
+        var json = JsonSerializer.Serialize(source, TableMetadataJsonContext.Default.TableMetadata);
+        return JsonSerializer.Deserialize(json, TableMetadataJsonContext.Default.TableMetadata)
+            ?? throw new InvalidOperationException("Could not clone table metadata.");
     }
 
     private static async Task<MetadataWriteStatus> WriteMetadataAsync(

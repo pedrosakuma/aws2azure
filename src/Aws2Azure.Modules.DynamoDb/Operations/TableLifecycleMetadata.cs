@@ -89,6 +89,7 @@ internal static partial class TableLifecycleHandlers
             if (existing is null) return false;
 
             meta.Tags = CloneTags(existing.Metadata.Tags);
+            meta.ExtensionData = CloneExtensionData(existing.Metadata.ExtensionData);
             var replaceStatus = await ReplaceMetadataAsync(cosmos, tableName, meta, existing.ETag, ct).ConfigureAwait(false);
             if (replaceStatus.StatusCode == HttpStatusCode.PreconditionFailed)
             {
@@ -177,6 +178,7 @@ internal static partial class TableLifecycleHandlers
                     "Cosmos metadata document was empty.").ConfigureAwait(false);
                 return null;
             }
+            existing.RemoveCosmosSystemExtensionData();
             return new LoadedMetadataForReplace(existing, etag);
         }
         catch (JsonException ex)
@@ -210,7 +212,24 @@ internal static partial class TableLifecycleHandlers
         var clone = new List<TableTag>(source.Count);
         foreach (var tag in source)
         {
-            clone.Add(new TableTag { Key = tag.Key, Value = tag.Value });
+            clone.Add(new TableTag
+            {
+                Key = tag.Key,
+                Value = tag.Value,
+                ExtensionData = CloneExtensionData(tag.ExtensionData),
+            });
+        }
+        return clone;
+    }
+
+    private static Dictionary<string, JsonElement>? CloneExtensionData(
+        Dictionary<string, JsonElement>? source)
+    {
+        if (source is null) return null;
+        var clone = new Dictionary<string, JsonElement>(source.Count, StringComparer.Ordinal);
+        foreach (var pair in source)
+        {
+            clone[pair.Key] = pair.Value.Clone();
         }
         return clone;
     }

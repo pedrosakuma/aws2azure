@@ -1,0 +1,15 @@
+{
+  "id": "sort-1",
+  "_a2a_pk": "partition-1",
+  "_a2a": "item",
+  "pk": "partition-1",
+  "sk": "sort-1",
+  "name": "Alice",
+  "big": {
+    "_a2a:N": "99999999999999999999999999999999999999"
+  },
+  "blob": {
+    "_a2a:B": "aGVsbG8="
+  },
+  "_a2a$ttl": 1700003600
+}

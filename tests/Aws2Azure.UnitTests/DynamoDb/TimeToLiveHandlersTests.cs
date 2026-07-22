@@ -83,6 +83,32 @@ public class TimeToLiveHandlersTests
     }
 
     [Fact]
+    public async Task UpdateTimeToLive_preserves_unknown_ttl_extension_fields()
+    {
+        var metadata = MetadataJson(ttl: ("expiresAt", true))
+            .Replace(
+                "\"attributeName\":\"expiresAt\"}",
+                "\"attributeName\":\"expiresAt\",\"futureTtlMode\":\"absolute-epoch\"}",
+                StringComparison.Ordinal);
+        var handler = new TtlCosmosHandler(metadata);
+        var cosmos = BuildClient(handler);
+        var (ctx, _) = NewCtx();
+
+        await TimeToLiveHandlers.HandleUpdateTimeToLiveAsync(
+            ctx,
+            Bytes("{\"TableName\":\"orders\",\"TimeToLiveSpecification\":{\"Enabled\":false,\"AttributeName\":\"expiresAt\"}}"),
+            cosmos,
+            default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var persisted = JsonDocument.Parse(handler.MetadataJson!);
+        Assert.Equal(
+            "absolute-epoch",
+            persisted.RootElement.GetProperty("timeToLive")
+                .GetProperty("futureTtlMode").GetString());
+    }
+
+    [Fact]
     public async Task DescribeTimeToLive_reports_enabled_state()
     {
         var handler = new TtlCosmosHandler(MetadataJson(ttl: ("expiresAt", true)));
