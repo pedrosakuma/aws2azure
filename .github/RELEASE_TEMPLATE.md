@@ -41,6 +41,16 @@ parity**.
 | Durable persisted formats | inventory rows | same backend | Compatible / Migration required | Details |
 | Rolling-upgrade formats | inventory rows | active lifetime | Compatible / Drain required | Details |
 
+## Persisted-format compatibility
+
+- DynamoDB persisted-format contract: inventory `v1`, `sha256:<64 lowercase hex>`.
+- Changes from previous supported release: None / describe every changed format,
+  writer version, reader span, stored-procedure identity, and operator action.
+- Adjacent-runtime validation: candidate-write/previous-read and
+  previous-write/candidate-read evidence URL, or `None` with justification.
+- Historical incompatible-state export/import: Not required / required, with the
+  runbook record and write-freeze or reverse-synchronization evidence.
+
 ## Changes
 
 ### Added

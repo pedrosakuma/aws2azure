@@ -1,0 +1,40 @@
+{
+  "id": "__aws2azure_table_meta__",
+  "_a2a_pk": "__aws2azure_table_meta__",
+  "_meta": "table",
+  "tableName": "orders",
+  "creationDateTime": 1700000000,
+  "attributeDefinitions": [
+    { "name": "pk", "type": "S" },
+    { "name": "sk", "type": "S" },
+    { "name": "gsk", "type": "N", "futureScalarRule": "lossless" }
+  ],
+  "keySchema": [
+    { "name": "pk", "keyType": "HASH" },
+    { "name": "sk", "keyType": "RANGE" }
+  ],
+  "billingMode": "PAY_PER_REQUEST",
+  "globalSecondaryIndexes": [
+    {
+      "indexName": "byAmount",
+      "keySchema": [
+        { "name": "pk", "keyType": "HASH" },
+        { "name": "gsk", "keyType": "RANGE" }
+      ],
+      "projectionType": "ALL",
+      "futureProjection": { "revision": 7 }
+    }
+  ],
+  "timeToLive": {
+    "enabled": true,
+    "attributeName": "ttl",
+    "futureTtlMode": "absolute-epoch"
+  },
+  "futurePolicy": {
+    "writer": "adjacent-runtime",
+    "revision": 3
+  },
+  "_rid": "metadata-rid",
+  "_etag": "\"metadata-etag\"",
+  "_ts": 1700000010
+}

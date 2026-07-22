@@ -1,0 +1,47 @@
+schema_version: 1
+inventory: docs/compatibility/dynamodb-persisted-formats-v1.json
+scenarios:
+  - id: adjacent-runtime-rollback
+    topology: same-cosmos-container
+    write_policy: serialized-runtime-switch
+    steps:
+      - candidate-create-table-with-index-and-ttl
+      - candidate-write-v2-items-and-mint-v1-continuations
+      - freeze-writes-and-drain
+      - previous-describe-read-page-and-rewrite
+      - restore-candidate
+      - candidate-read-previous-writes-and-rewrites
+      - candidate-cleanup
+    required_assertions:
+      - item-key-and-inferred-attribute-parity
+      - ttl-and-index-derived-fields-readable
+      - previous-runtime-metadata-rewrite-preserves-index-ttl-and-tags
+      - unknown-table-metadata-extensions-covered-by-frozen-mutation-fixtures
+      - candidate-continuation-consumed-by-previous
+      - previous-continuation-consumed-by-candidate
+      - base-query-scan-and-ordered-gsi-continuations-covered
+      - stored-procedure-id-and-body-hash-match-frozen-source-inventory
+    evidence_owner: issue-657
+
+  - id: historical-export-import
+    topology: isolated-target-database
+    write_policy: full-write-freeze-or-verified-reverse-sync
+    steps:
+      - record-source-runtime-config-and-inventory
+      - freeze-writes-and-drain
+      - export-items-sidecars-container-settings-and-sprocs
+      - hash-and-count-export
+      - create-target-with-a2a-partition-path
+      - decode-v1-item-envelope-and-reencode-v2-flat-document
+      - import-into-isolated-target
+      - validate-current-reader-and-writer
+      - cut-over-bindings
+      - prove-source-snapshot-rollback-or-reverse-sync
+    required_assertions:
+      - source-remains-untouched
+      - item-and-sidecar-counts-match
+      - unknown-extension-data-preserved
+      - ttl-index-and-continuation-contracts-pass
+      - target-sproc-identities-match-inventory
+      - rollback-has-no-unreplicated-post-cutover-writes
+    evidence_owner: issue-657

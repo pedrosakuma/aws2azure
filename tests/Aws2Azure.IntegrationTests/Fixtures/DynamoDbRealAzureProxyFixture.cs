@@ -216,7 +216,7 @@ public sealed class DynamoDbRealAzureProxyFixture : IAsyncLifetime
         return $$"""
             {
               "services": {
-                "dynamodb": { "enabled": true, "cosmosBinaryResponses": true, "cosmosBinaryRequests": true }
+                "dynamodb": { "enabled": true, "cosmosBinaryResponses": true, "cosmosBinaryRequests": true, "enableGlobalSecondaryIndexQueries": true }
               },
               "bindings": [
                 {

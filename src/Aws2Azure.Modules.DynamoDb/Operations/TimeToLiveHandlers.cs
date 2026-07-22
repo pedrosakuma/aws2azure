@@ -147,7 +147,12 @@ internal static class TimeToLiveHandlers
         //    sidecar so write paths and DescribeTimeToLive can see it.
         bool persisted = await CosmosOpsShared.MutateTableMetadataAsync(
             ctx, cosmos, req.TableName!,
-            meta => meta.TimeToLive = new TableTimeToLive { Enabled = enabling, AttributeName = attributeName },
+            meta =>
+            {
+                meta.TimeToLive ??= new TableTimeToLive();
+                meta.TimeToLive.Enabled = enabling;
+                meta.TimeToLive.AttributeName = attributeName;
+            },
             ct).ConfigureAwait(false);
         if (!persisted)
         {

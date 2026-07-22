@@ -99,7 +99,8 @@ internal static class CrossPartitionOrderByQuery
     /// </summary>
     internal const int PerPartitionPageSize = 100;
 
-    private const string TokenDiscriminator = "a2acpob1";
+    private const string TokenDiscriminator =
+        DynamoDbPersistedFormatContract.OrderedContinuationDiscriminator;
 
     /// <summary>One physical partition key range.</summary>
     internal readonly record struct PkRange(string Id, string MinInclusive, string MaxExclusive);

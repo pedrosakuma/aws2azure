@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Aws2Azure.Modules.DynamoDb.Internal;
@@ -20,6 +21,10 @@ namespace Aws2Azure.Modules.DynamoDb.Internal;
 internal sealed class TableMetadata
 {
     public const string DocId = "__aws2azure_table_meta__";
+
+    [JsonPropertyName("formatVersion")]
+    public int FormatVersion { get; set; } =
+        DynamoDbPersistedFormatContract.TableMetadataVersion;
 
     [JsonPropertyName("id")]
     public string Id { get; set; } = DocId;
@@ -74,6 +79,15 @@ internal sealed class TableMetadata
     /// </summary>
     [JsonPropertyName("timeToLive")]
     public TableTimeToLive? TimeToLive { get; set; }
+
+    /// <summary>
+    /// Fields introduced by a newer adjacent runtime. Read-merge-write metadata
+    /// mutations must preserve them so rollback never silently erases state.
+    /// Cosmos-generated document fields are removed after reads and are never
+    /// written back.
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 
     private IReadOnlyList<NumericIndexSortKey>? _numericIndexSortKeys;
 
@@ -159,6 +173,22 @@ internal sealed class TableMetadata
 
         return false;
     }
+
+    public void RemoveCosmosSystemExtensionData()
+    {
+        if (ExtensionData is null)
+        {
+            return;
+        }
+
+        ExtensionData.Remove("_rid");
+        ExtensionData.Remove("_self");
+        ExtensionData.Remove("_etag");
+        ExtensionData.Remove("_ts");
+        ExtensionData.Remove("_attachments");
+        ExtensionData.Remove("_lsn");
+        ExtensionData.Remove("_metadata");
+    }
 }
 
 /// <summary>
@@ -203,6 +233,9 @@ internal sealed class TableTimeToLive
     /// because DynamoDB requires the name to flip a table back on.
     /// </summary>
     [JsonPropertyName("attributeName")] public string? AttributeName { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 /// <summary>
@@ -222,6 +255,9 @@ internal sealed class TableIndexDefinition
 
     /// <summary>Extra attributes returned when <see cref="ProjectionType"/> is <c>INCLUDE</c>.</summary>
     [JsonPropertyName("nonKeyAttributes")] public List<string>? NonKeyAttributes { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 internal sealed class TableTag
@@ -231,6 +267,9 @@ internal sealed class TableTag
 
     [JsonPropertyName("value")]
     public string Value { get; set; } = string.Empty;
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 internal sealed class TableAttributeDefinition
@@ -239,6 +278,9 @@ internal sealed class TableAttributeDefinition
 
     /// <summary>DynamoDB scalar type: <c>S</c>, <c>N</c>, or <c>B</c>.</summary>
     [JsonPropertyName("type")] public string Type { get; set; } = string.Empty;
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 internal sealed class TableKeySchemaElement
@@ -247,6 +289,9 @@ internal sealed class TableKeySchemaElement
 
     /// <summary>Key role: <c>HASH</c> or <c>RANGE</c>.</summary>
     [JsonPropertyName("keyType")] public string KeyType { get; set; } = string.Empty;
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 [JsonSerializable(typeof(TableMetadata))]
