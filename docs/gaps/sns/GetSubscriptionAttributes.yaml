@@ -2,6 +2,10 @@ service: sns
 operation: GetSubscriptionAttributes
 azure_equivalent: "Azure Service Bus subscription description"
 status: partial
+verified_real_azure:
+  date: "2026-07-22"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719
 sub_features:
   - name: Subscription metadata projection
     status: implemented

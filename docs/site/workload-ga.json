@@ -291,7 +291,7 @@
     "profile_version": 1,
     "name": "SNS subscription management (Service Bus Topics backend)",
     "minimum_proxy_version": "0.1.0",
-    "verdict": "conditional",
+    "verdict": "candidate",
     "findings": [
       {
         "code": "partial_operation_accepted",
@@ -300,22 +300,10 @@
         "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
       },
       {
-        "code": "real_azure_seal_missing",
-        "disposition": "blocking",
-        "subject": "sns:ConfirmSubscription",
-        "message": "Required operation has no real-Azure verification seal."
-      },
-      {
         "code": "partial_operation_accepted",
         "disposition": "advisory",
         "subject": "sns:GetSubscriptionAttributes",
         "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-      },
-      {
-        "code": "real_azure_seal_missing",
-        "disposition": "blocking",
-        "subject": "sns:GetSubscriptionAttributes",
-        "message": "Required operation has no real-Azure verification seal."
       },
       {
         "code": "partial_operation_accepted",
@@ -330,22 +318,10 @@
         "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
       },
       {
-        "code": "real_azure_seal_missing",
-        "disposition": "blocking",
-        "subject": "sns:ListSubscriptionsByTopic",
-        "message": "Required operation has no real-Azure verification seal."
-      },
-      {
         "code": "partial_operation_accepted",
         "disposition": "advisory",
         "subject": "sns:SetSubscriptionAttributes",
         "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-      },
-      {
-        "code": "real_azure_seal_missing",
-        "disposition": "blocking",
-        "subject": "sns:SetSubscriptionAttributes",
-        "message": "Required operation has no real-Azure verification seal."
       },
       {
         "code": "partial_operation_accepted",
@@ -376,6 +352,12 @@
         "disposition": "advisory",
         "subject": "sns:Two backends with different fidelity",
         "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_subscription_management\u0027."
+      },
+      {
+        "code": "qualification_evidence_missing",
+        "disposition": "blocking",
+        "subject": "sns-subscription-management-service-bus",
+        "message": "No reviewed real-Azure workload qualification artifact is referenced."
       }
     ]
   },

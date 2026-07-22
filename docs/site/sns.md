@@ -4,17 +4,18 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Service Bus topic subscriptions`
+- **Real-Azure verified:** ✅ 2026-07-22 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719)
 
 ### Sub-features
 
 | Name | Status | Real-Azure | Notes | Gap | Workaround |
 |---|---|---|---|---|---|
-| Auto-confirmed no-op | ✅ implemented | — | Subscriptions are treated as immediately confirmed when created. ConfirmSubscription accepts either the deterministic 20-hex subscription id or the matching synthetic SubscriptionArn and returns success without mutating Azure resources. |  |  |
+| Auto-confirmed no-op | ✅ implemented | — | Subscriptions are treated as immediately confirmed when created. ConfirmSubscription accepts either the deterministic 20-hex subscription id or the matching synthetic SubscriptionArn, verifies the live Service Bus subscription and its persisted protocol/endpoint metadata, and returns success without mutating Azure resources. |  |  |
 
 ### Behaviour differences
 
 - SNS confirmation tokens are not validated against an out-of-band challenge flow.
-- Arbitrary tokens and a SubscriptionArn token bound to a different TopicArn are rejected with InvalidParameter; the operation does not synthesize a fallback identifier.
+- Arbitrary, cross-topic, missing, and non-deterministic subscription tokens are rejected; the operation does not synthesize a fallback identifier.
 - ConfirmSubscription applies to the Service Bus subscription-management profile only and does not confirm Azure Event Grid event subscriptions.
 
 ### References
@@ -75,6 +76,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Service Bus subscription description`
+- **Real-Azure verified:** ✅ 2026-07-22 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719)
 
 ### Sub-features
 
@@ -147,6 +149,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Service Bus topic subscriptions`
+- **Real-Azure verified:** ✅ 2026-07-22 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719)
 
 ### Sub-features
 
@@ -259,6 +262,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Service Bus subscription description`
+- **Real-Azure verified:** ✅ 2026-07-22 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719)
 
 ### Sub-features
 

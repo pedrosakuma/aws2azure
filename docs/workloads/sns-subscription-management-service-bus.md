@@ -42,9 +42,9 @@ Adoption requires live lifecycle, metadata persistence across proxy restart,
 signed pagination and cross-use rejection, concurrent management load, and
 idempotent cleanup evidence. The repository contains deterministic unit and
 Service Bus emulator coverage plus opt-in real-Azure lifecycle/load scenarios;
-the profile remains `conditional` until fresh operation seals are committed.
-It then becomes `candidate`; GA still requires reviewed load and rollback
-qualification from the evidence owner.
+the profile is `candidate` with fresh operation seals. GA still requires
+reviewed load thresholds and sealed rollback qualification from the evidence
+owner.
 
 Cross-account/IAM delivery policy, strict SNS FIFO semantics, active
 HTTP/S/SQS push delivery, and every Azure Event Grid event-subscription

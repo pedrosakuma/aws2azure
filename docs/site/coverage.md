@@ -112,17 +112,17 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | secretsmanager | [PutSecretValue](secretsmanager.md#putsecretvalue) | 🟡 partial | ✅ | `PUT https://{vault}.vault.azure.net/secrets/{name}` |
 | secretsmanager | [RotateSecret](secretsmanager.md#rotatesecret) | ⛔ unsupported | — | `None — Azure Key Vault has no equivalent managed-rotation trigger the proxy can drive` |
 | secretsmanager | [UpdateSecret](secretsmanager.md#updatesecret) | ✅ implemented | ✅ | `PUT https://{vault}.vault.azure.net/secrets/{name}/versions` |
-| sns | [ConfirmSubscription](sns.md#confirmsubscription) | 🟡 partial | — | `Azure Service Bus topic subscriptions` |
+| sns | [ConfirmSubscription](sns.md#confirmsubscription) | 🟡 partial | ✅ | `Azure Service Bus topic subscriptions` |
 | sns | [CreateTopic](sns.md#createtopic) | 🟡 partial | ✅ | `Azure Service Bus Topics management REST API` |
 | sns | [DeleteTopic](sns.md#deletetopic) | 🟡 partial | ✅ | `Azure Service Bus Topics management REST API` |
-| sns | [GetSubscriptionAttributes](sns.md#getsubscriptionattributes) | 🟡 partial | — | `Azure Service Bus subscription description` |
+| sns | [GetSubscriptionAttributes](sns.md#getsubscriptionattributes) | 🟡 partial | ✅ | `Azure Service Bus subscription description` |
 | sns | [GetTopicAttributes](sns.md#gettopicattributes) | 🟡 partial | — | `Azure Service Bus topic description` |
 | sns | [ListSubscriptions](sns.md#listsubscriptions) | 🟡 partial | ✅ | `Azure Service Bus topic subscriptions` |
-| sns | [ListSubscriptionsByTopic](sns.md#listsubscriptionsbytopic) | 🟡 partial | — | `Azure Service Bus topic subscriptions` |
+| sns | [ListSubscriptionsByTopic](sns.md#listsubscriptionsbytopic) | 🟡 partial | ✅ | `Azure Service Bus topic subscriptions` |
 | sns | [ListTopics](sns.md#listtopics) | 🟡 partial | ✅ | `Azure Service Bus Topics management REST API` |
 | sns | [Publish](sns.md#publish) | 🟡 partial | ✅ | `Azure Service Bus Topics / Azure Event Grid` |
 | sns | [PublishBatch](sns.md#publishbatch) | 🟡 partial | ✅ | `Azure Service Bus Topics / Azure Event Grid` |
-| sns | [SetSubscriptionAttributes](sns.md#setsubscriptionattributes) | 🟡 partial | — | `Azure Service Bus subscription description` |
+| sns | [SetSubscriptionAttributes](sns.md#setsubscriptionattributes) | 🟡 partial | ✅ | `Azure Service Bus subscription description` |
 | sns | [SetTopicAttributes](sns.md#settopicattributes) | 🟡 partial | — | `Azure Service Bus topic description` |
 | sns | [Subscribe](sns.md#subscribe) | 🟡 partial | ✅ | `Azure Service Bus topic subscriptions` |
 | sns | [Unsubscribe](sns.md#unsubscribe) | 🟡 partial | ✅ | `Azure Service Bus topic subscriptions` |

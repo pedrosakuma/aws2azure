@@ -4,7 +4,7 @@ Emulators are a necessary, not sufficient, signal: nothing is trusted as
 `implemented` without ≥1 recorded real-Azure validation. This report aggregates
 the documented behaviour differences and the real-Azure seal state.
 
-- Operations: **142** — real-Azure verified: **56**, implemented-but-unsealed: **20**
+- Operations: **142** — real-Azure verified: **60**, implemented-but-unsealed: **20**
 
 ## Implemented without a real-Azure seal
 
@@ -352,9 +352,9 @@ the documented behaviour differences and the real-Azure seal state.
 | secretsmanager | UpdateSecret | ✅ | Advanced rotation, restore, and policy semantics are not yet modeled; the proxy uses Key Vault secret versions as the AWS version surface. |
 | secretsmanager | UpdateSecret | ✅ | Responses use the AWS JSON 1.1 wire shape (Unix-epoch numeric timestamps, Content-Type application/x-amz-json-1.1); validated end-to-end against a real Azure Key Vault through the proxy with the AWS SDK. |
 | secretsmanager | UpdateSecret | ✅ | Because Key Vault PUT is an upsert, UpdateSecret first checks existence and returns ResourceNotFoundException for a missing secret to match AWS semantics. |
-| sns | ConfirmSubscription | — | SNS confirmation tokens are not validated against an out-of-band challenge flow. |
-| sns | ConfirmSubscription | — | Arbitrary tokens and a SubscriptionArn token bound to a different TopicArn are rejected with InvalidParameter; the operation does not synthesize a fallback identifier. |
-| sns | ConfirmSubscription | — | ConfirmSubscription applies to the Service Bus subscription-management profile only and does not confirm Azure Event Grid event subscriptions. |
+| sns | ConfirmSubscription | ✅ | SNS confirmation tokens are not validated against an out-of-band challenge flow. |
+| sns | ConfirmSubscription | ✅ | Arbitrary, cross-topic, missing, and non-deterministic subscription tokens are rejected; the operation does not synthesize a fallback identifier. |
+| sns | ConfirmSubscription | ✅ | ConfirmSubscription applies to the Service Bus subscription-management profile only and does not confirm Azure Event Grid event subscriptions. |
 | sns | CreateTopic | ✅ | TopicArn is proxy-synthesised as arn:aws:sns:{sigv4-region}:000000000000:{topicName}. The account id is a stable placeholder because the proxy is not backed by an AWS account namespace. |
 | sns | CreateTopic | ✅ | Only the basic topic name is honoured on create. Topic attributes supplied in the CreateTopic request are ignored for now; Azure Service Bus topic properties stay at service defaults until a later slice implements attribute mapping. |
 | sns | CreateTopic | ✅ | When an SNS topic is configured with backend=EventGrid, aws2azure still creates the backing Azure Service Bus topic in this slice because subscription metadata continues to live on Service Bus. Event Grid only handles Publish / PublishBatch. |
@@ -363,11 +363,11 @@ the documented behaviour differences and the real-Azure seal state.
 | sns | DeleteTopic | ✅ | DeleteTopic accepts only proxy-shaped ARNs of the form arn:aws:sns:{region}:{accountId}:{topicName}. The proxy currently synthesises accountId as 000000000000, but delete only uses the topic-name suffix when translating to Azure. |
 | sns | DeleteTopic | ✅ | The same FIFO gap as CreateTopic applies: .fifo ARNs are rejected because FIFO semantics are deferred to a later slice. |
 | sns | DeleteTopic | ✅ | Azure deletes are asynchronous underneath Service Bus. A successful DeleteTopic response means the topic was accepted for deletion, not necessarily that every broker-side artifact is already gone. |
-| sns | GetSubscriptionAttributes | — | Protocol and Endpoint come from aws2azure's UserMetadata blob rather than native Service Bus subscription fields. Missing or invalid UserMetadata falls back to empty strings and RawMessageDelivery=false. |
-| sns | GetSubscriptionAttributes | — | ConfirmationWasAuthenticated is always true and PendingConfirmation is always false because this slice auto-confirms subscriptions. |
-| sns | GetSubscriptionAttributes | — | FilterPolicy is returned from stored UserMetadata only. FilterPolicyScope defaults to MessageAttributes when a stored filter policy has no explicit scope. |
-| sns | GetSubscriptionAttributes | — | DeliveryPolicy, EffectiveDeliveryPolicy, and RedrivePolicy are omitted because Service Bus delivery and dead-letter settings do not match the SNS attribute shapes exposed by this API. |
-| sns | GetSubscriptionAttributes | — | Attributes are read from Azure Service Bus subscriptions only; Azure Event Grid event-subscription properties are explicitly outside this profile. |
+| sns | GetSubscriptionAttributes | ✅ | Protocol and Endpoint come from aws2azure's UserMetadata blob rather than native Service Bus subscription fields. Missing or invalid UserMetadata falls back to empty strings and RawMessageDelivery=false. |
+| sns | GetSubscriptionAttributes | ✅ | ConfirmationWasAuthenticated is always true and PendingConfirmation is always false because this slice auto-confirms subscriptions. |
+| sns | GetSubscriptionAttributes | ✅ | FilterPolicy is returned from stored UserMetadata only. FilterPolicyScope defaults to MessageAttributes when a stored filter policy has no explicit scope. |
+| sns | GetSubscriptionAttributes | ✅ | DeliveryPolicy, EffectiveDeliveryPolicy, and RedrivePolicy are omitted because Service Bus delivery and dead-letter settings do not match the SNS attribute shapes exposed by this API. |
+| sns | GetSubscriptionAttributes | ✅ | Attributes are read from Azure Service Bus subscriptions only; Azure Event Grid event-subscription properties are explicitly outside this profile. |
 | sns | GetTopicAttributes | — | DisplayName is always returned as an empty string because Service Bus topics do not expose an SNS-style display name. |
 | sns | GetTopicAttributes | — | Policy is returned as '{}' and DeliveryPolicy / EffectiveDeliveryPolicy are omitted because this slice does not translate SNS policies onto Azure authorization or delivery settings. |
 | sns | GetTopicAttributes | — | SubscriptionsConfirmed is populated from Service Bus SubscriptionCount. Pending and deleted counts are always reported as 0 because aws2azure auto-confirms subscriptions and Service Bus does not expose the SNS lifecycle split. |
@@ -377,8 +377,8 @@ the documented behaviour differences and the real-Azure seal state.
 | sns | ListSubscriptions | ✅ | NextToken is a versioned, HMAC-SHA256-signed opaque cursor containing the current topic and subscription offsets. The AWS binding secret supplies the stable signing key, so tokens survive proxy restart while forged, tampered, and wrong-operation tokens are rejected. |
 | sns | ListSubscriptions | ✅ | Listing all subscriptions requires cross-topic enumeration over the Service Bus management plane and can be more expensive than native SNS ListSubscriptions. |
 | sns | ListSubscriptions | ✅ | Only Azure Service Bus topic subscriptions are enumerated. Azure Event Grid event subscriptions are explicitly excluded. |
-| sns | ListSubscriptionsByTopic | — | NextToken is a versioned, HMAC-SHA256-signed opaque cursor bound to ListSubscriptionsByTopic and the exact topic name. Tokens survive restart with the same AWS binding secret; tampering, cross-operation use, and reuse for another topic are rejected. |
-| sns | ListSubscriptionsByTopic | — | Only Azure Service Bus topic subscriptions are enumerated. Azure Event Grid event subscriptions are explicitly excluded. |
+| sns | ListSubscriptionsByTopic | ✅ | NextToken is a versioned, HMAC-SHA256-signed opaque cursor bound to ListSubscriptionsByTopic and the exact topic name. Tokens survive restart with the same AWS binding secret; tampering, cross-operation use, and reuse for another topic are rejected. |
+| sns | ListSubscriptionsByTopic | ✅ | Only Azure Service Bus topic subscriptions are enumerated. Azure Event Grid event subscriptions are explicitly excluded. |
 | sns | ListTopics | ✅ | TopicArn values are proxy-synthesised as arn:aws:sns:{sigv4-region}:000000000000:{topicName}. The account id is a stable placeholder, not an AWS account namespace. |
 | sns | ListTopics | ✅ | NextToken is an opaque base64-encoded Service Bus skip counter, not an AWS-compatible cursor. Tokens only preserve the next $skip offset and do not encode any other AWS pagination semantics. |
 | sns | ListTopics | ✅ | Pagination is fixed to Azure's $top=100 management page size for this slice. When Azure returns exactly 100 topics the proxy emits NextToken=base64(skip+100); otherwise NextToken is omitted. |
@@ -406,13 +406,13 @@ the documented behaviour differences and the real-Azure seal state.
 | sns | PublishBatch | ✅ | On the Event Grid backend, MessageGroupId / MessageDeduplicationId FIFO semantics are not honoured; the proxy drops them, logs a warning, and continues. |
 | sns | PublishBatch | ✅ | PublishBatch uses best-effort per-entry outcomes over AMQP and proxied per-entry outcomes over Event Grid; partial-failure behavior can differ from AWS SNS semantics. |
 | sns | PublishBatch | ✅ | Azure Service Bus and Event Grid message size limits differ from SNS; Event Grid classic schema also enforces 1 MB per event, 1 MB per HTTP batch, and 5000 events per POST. |
-| sns | SetSubscriptionAttributes | — | FilterPolicy is stored only in UserMetadata in this slice. Service Bus rule-based filtering is not programmed yet, so enforcement is deferred to a later forwarding slice. |
-| sns | SetSubscriptionAttributes | — | FilterPolicyScope accepts MessageAttributes and MessageBody, but MessageBody scope is only persisted; it is not enforced yet. |
-| sns | SetSubscriptionAttributes | — | DeliveryPolicy, RedrivePolicy, and SubscriptionRoleArn are accepted as no-ops because Service Bus does not expose a matching SNS attribute contract here. |
-| sns | SetSubscriptionAttributes | — | Updates preserve mutable SubscriptionDescription property XML, replace only UserMetadata, and send If-Match: * because Service Bus subscriptions do not expose usable per-entity ETags. Concurrent Azure-side writers are therefore last-write-wins; read-only runtime properties are never replayed. |
-| sns | SetSubscriptionAttributes | — | Updates that would push the serialized UserMetadata payload beyond Service Bus's 1024-character limit are rejected with InvalidParameter. |
-| sns | SetSubscriptionAttributes | — | Unknown AWS attribute names return InvalidParameter. |
-| sns | SetSubscriptionAttributes | — | Only Azure Service Bus subscription descriptions are updated; Azure Event Grid event-subscription properties are explicitly outside this profile. |
+| sns | SetSubscriptionAttributes | ✅ | FilterPolicy is stored only in UserMetadata in this slice. Service Bus rule-based filtering is not programmed yet, so enforcement is deferred to a later forwarding slice. |
+| sns | SetSubscriptionAttributes | ✅ | FilterPolicyScope accepts MessageAttributes and MessageBody, but MessageBody scope is only persisted; it is not enforced yet. |
+| sns | SetSubscriptionAttributes | ✅ | DeliveryPolicy, RedrivePolicy, and SubscriptionRoleArn are accepted as no-ops because Service Bus does not expose a matching SNS attribute contract here. |
+| sns | SetSubscriptionAttributes | ✅ | Updates preserve mutable SubscriptionDescription property XML, replace only UserMetadata, and send If-Match: * because Service Bus subscriptions do not expose usable per-entity ETags. Concurrent Azure-side writers are therefore last-write-wins; read-only runtime properties are never replayed. |
+| sns | SetSubscriptionAttributes | ✅ | Updates that would push the serialized UserMetadata payload beyond Service Bus's 1024-character limit are rejected with InvalidParameter. |
+| sns | SetSubscriptionAttributes | ✅ | Unknown AWS attribute names return InvalidParameter. |
+| sns | SetSubscriptionAttributes | ✅ | Only Azure Service Bus subscription descriptions are updated; Azure Event Grid event-subscription properties are explicitly outside this profile. |
 | sns | SetTopicAttributes | — | DisplayName, Policy, DeliveryPolicy, EffectiveDeliveryPolicy, KmsMasterKeyId, SignatureVersion, and TracingConfig do not have a direct Service Bus topic equivalent in this slice and are treated as no-ops. |
 | sns | SetTopicAttributes | — | ContentBasedDeduplication is backed by RequiresDuplicateDetection, but Service Bus does not allow changing that property after topic creation. aws2azure returns InvalidParameter instead of attempting an in-place update. |
 | sns | SetTopicAttributes | — | Unknown AWS attribute names return InvalidParameter. |
