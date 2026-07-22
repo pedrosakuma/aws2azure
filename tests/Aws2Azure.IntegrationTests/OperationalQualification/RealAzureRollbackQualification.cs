@@ -463,6 +463,7 @@ internal static class RealAzureRollbackQualification
         var startedAt = DateTimeOffset.UtcNow;
         var stopwatch = Stopwatch.StartNew();
         var secretName = "a2a-rollback-" + Guid.NewGuid().ToString("N");
+        var initialCanary = "secrets-rollback-initial-" + Guid.NewGuid().ToString("N");
         var canary = "secrets-rollback-" + Guid.NewGuid().ToString("N");
         var replayToken = Guid.NewGuid().ToString();
         var canaryDigest = Digest(canary);
@@ -478,7 +479,7 @@ internal static class RealAzureRollbackQualification
                 new CreateSecretRequest
                 {
                     Name = secretName,
-                    SecretString = canary,
+                    SecretString = initialCanary,
                     Description = "aws2azure sealed runtime rollback canary",
                 },
                 cancellationToken).ConfigureAwait(false);

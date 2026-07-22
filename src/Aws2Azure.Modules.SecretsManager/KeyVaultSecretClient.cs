@@ -16,6 +16,7 @@ internal sealed class KeyVaultSecretClient
     internal const string VersionStagesTag = InternalTagPrefix + "version-stages";
     internal const string IntendedVersionStagesTag = InternalTagPrefix + "intended-version-stages";
     internal const string DefaultStageTransitionTag = InternalTagPrefix + "default-stage-transition";
+    internal const string PublicationStateTag = InternalTagPrefix + "publication-state";
 
     private readonly AzureHttpClient _http;
     private readonly EntraIdTokenProvider _tokenProvider;
@@ -346,6 +347,7 @@ internal sealed class KeyVaultSecretClient
             [VersionStagesTag] = "\n",
             [IntendedVersionStagesTag] = EncodeVersionStages(intendedVersionStages),
             [DefaultStageTransitionTag] = defaultStageTransition ? "true" : "false",
+            [PublicationStateTag] = "pending",
         };
 
         if (!string.IsNullOrWhiteSpace(clientRequestToken))
@@ -363,6 +365,19 @@ internal sealed class KeyVaultSecretClient
             : new Dictionary<string, string>(tags, StringComparer.Ordinal);
         result[VersionStagesTag] = versionStages.Count == 0 ? "\n" : EncodeVersionStages(versionStages);
 
+        return result;
+    }
+
+    public static IReadOnlyDictionary<string, string> WithPublishedVersionStages(
+        IReadOnlyDictionary<string, string>? tags,
+        IReadOnlyList<string> versionStages)
+    {
+        var result = new Dictionary<string, string>(
+            WithVersionStages(tags, versionStages),
+            StringComparer.Ordinal);
+        result.Remove(IntendedVersionStagesTag);
+        result.Remove(DefaultStageTransitionTag);
+        result[PublicationStateTag] = "published";
         return result;
     }
 

@@ -194,17 +194,83 @@ public sealed class SecretsManagerDurabilityTests
         var module = CreateModule(http);
         const string tokenRequest = "{\"SecretId\":\"demo\",\"SecretString\":\"v2\",\"ClientRequestToken\":\"historical-token\"}";
         var first = CreateContext("SecretsManager.PutSecretValue", tokenRequest);
-        var later = CreateContext("SecretsManager.PutSecretValue", "{\"SecretId\":\"demo\",\"SecretString\":\"v3\"}");
+        var laterOne = CreateContext("SecretsManager.PutSecretValue", "{\"SecretId\":\"demo\",\"SecretString\":\"v3\"}");
+        var laterTwo = CreateContext("SecretsManager.PutSecretValue", "{\"SecretId\":\"demo\",\"SecretString\":\"v4\"}");
         var replay = CreateContext("SecretsManager.PutSecretValue", tokenRequest);
 
         await module.HandleAsync(first);
-        await module.HandleAsync(later);
+        await module.HandleAsync(laterOne);
+        await module.HandleAsync(laterTwo);
         await module.HandleAsync(replay);
 
         Assert.Equal(StatusCodes.Status200OK, replay.Response.StatusCode);
         var current = Assert.Single(Holders(backend.Snapshot(), "AWSCURRENT"));
-        Assert.Equal("v0002", current.VersionId);
-        Assert.Equal("v3", current.Value);
+        Assert.Equal("v0003", current.VersionId);
+        Assert.Equal("v4", current.Value);
+    }
+
+    [Fact]
+    public async Task Client_token_matching_existing_physical_id_cannot_create_duplicate_logical_version()
+    {
+        using var backend = new DeterministicKeyVaultHandler(
+            new FakeVersion(
+                "physical-id",
+                "original",
+                100,
+                Tags(
+                    hash: KeyVaultSecretClient.GetPayloadSha256("original", null),
+                    stages: "AWSCURRENT")));
+        using var http = new AzureHttpClient(backend, ownsHandler: false);
+        var context = CreateContext(
+            "SecretsManager.PutSecretValue",
+            "{\"SecretId\":\"demo\",\"SecretString\":\"different\",\"ClientRequestToken\":\"physical-id\"}");
+
+        await CreateModule(http).HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Equal(0, backend.PutCount);
+        Assert.Single(backend.Snapshot());
+    }
+
+    [Fact]
+    public async Task Persistent_backend_outage_remains_retryable_service_error()
+    {
+        using var backend = new DeterministicKeyVaultHandler(
+            new FakeVersion("base", "v1", 100, Tags(stages: "AWSCURRENT")))
+        {
+            AlwaysPatchStatus = HttpStatusCode.ServiceUnavailable,
+        };
+        using var http = new AzureHttpClient(backend, ownsHandler: false);
+        var context = CreateContext(
+            "SecretsManager.PutSecretValue",
+            "{\"SecretId\":\"demo\",\"SecretString\":\"v2\"}");
+
+        await CreateModule(http).HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, context.Response.StatusCode);
+        using var response = JsonDocument.Parse(await ReadBodyAsync(context));
+        Assert.Equal("InternalServiceError", response.RootElement.GetProperty("__type").GetString());
+    }
+
+    [Fact]
+    public async Task Published_winner_continues_repair_when_concurrent_writer_reintroduces_current()
+    {
+        using var backend = new DeterministicKeyVaultHandler(
+            new FakeVersion("base", "v1", 100, Tags(stages: "AWSCURRENT")))
+        {
+            InjectDuplicateCurrentAfterFirstPublication = "base",
+        };
+        using var http = new AzureHttpClient(backend, ownsHandler: false);
+        var context = CreateContext(
+            "SecretsManager.PutSecretValue",
+            "{\"SecretId\":\"demo\",\"SecretString\":\"v2\"}");
+
+        await CreateModule(http).HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        var current = Assert.Single(Holders(backend.Snapshot(), "AWSCURRENT"));
+        Assert.Equal("v0001", current.VersionId);
+        Assert.Equal("base", Assert.Single(Holders(backend.Snapshot(), "AWSPREVIOUS")).VersionId);
     }
 
     [Fact]
@@ -336,12 +402,15 @@ public sealed class SecretsManagerDurabilityTests
         private int _listRequestCount;
         private bool _patchFailureConsumed;
         private bool _interferenceConsumed;
+        private bool _duplicateCurrentInjected;
 
         public int PageSize { get; init; } = int.MaxValue;
         public int NewVersionVisibilityDelay { get; init; }
         public string? FailNextPatchVersionId { get; init; }
         public (string VersionId, string Key, string Value)? InterfereOnNextVersionGet { get; init; }
         public bool IgnorePatches { get; init; }
+        public HttpStatusCode? AlwaysPatchStatus { get; init; }
+        public string? InjectDuplicateCurrentAfterFirstPublication { get; init; }
         public int PutCount { get; private set; }
         public int ListRequestCount => Volatile.Read(ref _listRequestCount);
 
@@ -425,10 +494,13 @@ public sealed class SecretsManagerDurabilityTests
                             && string.Equals(interference.VersionId, versionId, StringComparison.Ordinal))
                         {
                             version.Tags[interference.Key] = interference.Value;
+                            version.Revision++;
                             _interferenceConsumed = true;
                         }
 
-                        return Json(SerializeVersion(version, includeValue: true));
+                        return Json(
+                            SerializeVersion(version, includeValue: true),
+                            etag: version.ETag);
                     }
                 }
 
@@ -442,6 +514,11 @@ public sealed class SecretsManagerDurabilityTests
                         if (version is null)
                         {
                             return Json("{}", HttpStatusCode.NotFound);
+                        }
+
+                        if (AlwaysPatchStatus is { } patchStatus)
+                        {
+                            return Json("{}", patchStatus);
                         }
 
                         if (!_patchFailureConsumed
@@ -461,8 +538,31 @@ public sealed class SecretsManagerDurabilityTests
                         {
                             version.Tags[tag.Key] = tag.Value;
                         }
+                        version.Revision++;
 
-                        return Json(SerializeVersion(version, includeValue: false));
+                        if (!_duplicateCurrentInjected
+                            && InjectDuplicateCurrentAfterFirstPublication is { } duplicateVersionId
+                            && version.Tags.TryGetValue(
+                                KeyVaultSecretClient.PublicationStateTag,
+                                out var publicationState)
+                            && string.Equals(
+                                publicationState,
+                                "published",
+                                StringComparison.Ordinal))
+                        {
+                            var duplicate = Find(duplicateVersionId);
+                            if (duplicate is not null)
+                            {
+                                duplicate.Tags[KeyVaultSecretClient.VersionStagesTag] =
+                                    "AWSCURRENT";
+                                duplicate.Revision++;
+                                _duplicateCurrentInjected = true;
+                            }
+                        }
+
+                        return Json(
+                            SerializeVersion(version, includeValue: false),
+                            etag: version.ETag);
                     }
                 }
             }
@@ -549,8 +649,21 @@ public sealed class SecretsManagerDurabilityTests
             return result;
         }
 
-        private static HttpResponseMessage Json(string body, HttpStatusCode statusCode = HttpStatusCode.OK)
-            => new(statusCode) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+        private static HttpResponseMessage Json(
+            string body,
+            HttpStatusCode statusCode = HttpStatusCode.OK,
+            string? etag = null)
+        {
+            var response = new HttpResponseMessage(statusCode)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            };
+            if (etag is not null)
+            {
+                response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue(etag);
+            }
+            return response;
+        }
     }
 
     private sealed record FakeVersion(
@@ -560,7 +673,18 @@ public sealed class SecretsManagerDurabilityTests
         Dictionary<string, string> Tags,
         int VisibleAfterListCall = 0)
     {
+        public int Revision { get; set; } = 1;
+        public string ETag => $"\"{Revision}\"";
+
         public FakeVersion Copy()
-            => new(VersionId, Value, Created, new Dictionary<string, string>(Tags, StringComparer.Ordinal), VisibleAfterListCall);
+            => new(
+                VersionId,
+                Value,
+                Created,
+                new Dictionary<string, string>(Tags, StringComparer.Ordinal),
+                VisibleAfterListCall)
+            {
+                Revision = Revision,
+            };
     }
 }

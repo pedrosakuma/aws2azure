@@ -763,6 +763,7 @@ public sealed class SecretsManagerServiceModuleTests
             Assert.Equal("token-1", tags.GetProperty("aws2azure-client-request-token").GetString());
             Assert.Equal("\n", tags.GetProperty("aws2azure-version-stages").GetString());
             Assert.Equal("AWSCURRENT\nBLUE", tags.GetProperty("aws2azure-intended-version-stages").GetString());
+            Assert.Equal("pending", tags.GetProperty("aws2azure-publication-state").GetString());
             Assert.False(requestDocument.RootElement.GetProperty("attributes").TryGetProperty("created", out _));
         }
 
@@ -1164,7 +1165,9 @@ public sealed class SecretsManagerServiceModuleTests
                     version.Tags[tag.Key] = tag.Value;
                 }
 
-                return JsonResponse(BuildVersionJson(version, includeValue: false));
+                return JsonResponse(
+                    BuildVersionJson(version, includeValue: false),
+                    etag: "\"test-etag\"");
             }
 
             if (request.Method == HttpMethod.Get && path.StartsWith("/secrets/demo/", StringComparison.Ordinal))
@@ -1176,7 +1179,9 @@ public sealed class SecretsManagerServiceModuleTests
                     return JsonResponse("{\"error\":{\"code\":\"SecretNotFound\"}}", HttpStatusCode.NotFound);
                 }
 
-                return JsonResponse(BuildVersionJson(version, includeValue: true));
+                return JsonResponse(
+                    BuildVersionJson(version, includeValue: true),
+                    etag: "\"test-etag\"");
             }
 
             return JsonResponse("{\"error\":{\"code\":\"Unhandled\"}}", HttpStatusCode.NotFound);
@@ -1226,11 +1231,22 @@ public sealed class SecretsManagerServiceModuleTests
             builder.Append('}');
         }
 
-        private static HttpResponseMessage JsonResponse(string json, HttpStatusCode statusCode = HttpStatusCode.OK)
-            => new(statusCode)
+        private static HttpResponseMessage JsonResponse(
+            string json,
+            HttpStatusCode statusCode = HttpStatusCode.OK,
+            string? etag = null)
+        {
+            var response = new HttpResponseMessage(statusCode)
             {
                 Content = new StringContent(json, Encoding.UTF8, "application/json"),
             };
+            if (etag is not null)
+            {
+                response.Headers.ETag =
+                    new System.Net.Http.Headers.EntityTagHeaderValue(etag);
+            }
+            return response;
+        }
     }
 
     private sealed record SecretVersionState(string VersionId, string Value, long Created, Dictionary<string, string> Tags);

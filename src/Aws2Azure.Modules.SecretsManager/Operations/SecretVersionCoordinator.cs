@@ -92,7 +92,7 @@ internal static class SecretVersionCoordinator
         var explicitMatches = 0;
         foreach (var version in versions)
         {
-            if (!version.HasStoredStages)
+            if (!version.HasStoredStages || version.IsPendingPublication)
             {
                 continue;
             }
@@ -124,7 +124,9 @@ internal static class SecretVersionCoordinator
 
         foreach (var version in versions)
         {
-            if (!version.HasStoredStages && (match is null || CompareNewest(version, match) < 0))
+            if (!version.HasStoredStages
+                && !version.IsPendingPublication
+                && (match is null || CompareNewest(version, match) < 0))
             {
                 match = version;
             }
@@ -138,12 +140,18 @@ internal static class SecretVersionCoordinator
         string clientRequestToken,
         string? expectedPayloadSha256)
     {
+        SecretVersionMetadata? physicalCollision = null;
         SecretVersionMetadata? winner = null;
         string? observedPayloadSha256 = null;
         var candidateCount = 0;
         var missingPayloadSha256 = false;
         foreach (var version in versions)
         {
+            if (string.Equals(version.VersionId, clientRequestToken, StringComparison.Ordinal))
+            {
+                physicalCollision = version;
+            }
+
             if (!version.Tags.TryGetValue(KeyVaultSecretClient.ClientRequestTokenTag, out var candidateToken)
                 || !string.Equals(candidateToken, clientRequestToken, StringComparison.Ordinal))
             {
@@ -179,6 +187,40 @@ internal static class SecretVersionCoordinator
             return new TokenResolution(null, true);
         }
 
+        if (physicalCollision is not null)
+        {
+            if (physicalCollision.Tags.TryGetValue(
+                    KeyVaultSecretClient.ClientRequestTokenTag,
+                    out var physicalToken)
+                && !string.Equals(
+                    physicalToken,
+                    clientRequestToken,
+                    StringComparison.Ordinal))
+            {
+                return new TokenResolution(null, true);
+            }
+
+            if (winner is not null
+                && !string.Equals(winner.VersionId, physicalCollision.VersionId, StringComparison.Ordinal))
+            {
+                return new TokenResolution(null, true);
+            }
+
+            if (!physicalCollision.Tags.TryGetValue(
+                    KeyVaultSecretClient.PayloadSha256Tag,
+                    out var physicalPayloadSha256)
+                || (expectedPayloadSha256 is not null
+                    && !string.Equals(
+                        expectedPayloadSha256,
+                        physicalPayloadSha256,
+                        StringComparison.Ordinal)))
+            {
+                return new TokenResolution(null, true);
+            }
+
+            winner = physicalCollision;
+        }
+
         return new TokenResolution(winner, false);
     }
 
@@ -195,6 +237,9 @@ internal static class SecretVersionCoordinator
         CancellationToken cancellationToken)
     {
         HttpStatusCode? lastFailure = null;
+        string? reconciliationWinnerId = null;
+        IReadOnlyList<string>? reconciliationStages = null;
+        var reconciliationDefaultTransition = false;
         for (var attempt = 0; attempt < MaxConvergenceAttempts; attempt++)
         {
             var versions = await ListVersionsAsync(context, client, token, name, cancellationToken).ConfigureAwait(false);
@@ -226,16 +271,36 @@ internal static class SecretVersionCoordinator
                 continue;
             }
 
-            var pendingPublication = winner.VersionStages.Length == 0;
-            var effectiveStages = pendingPublication
-                ? winner.IntendedVersionStages.Length > 0
+            var pendingPublication = winner.IsPendingPublication;
+            if (!pendingPublication)
+            {
+                if (reconciliationWinnerId is null)
+                {
+                    return new PublishedVersionResult(winner.VersionId, winner.VersionStages);
+                }
+
+                if (!string.Equals(
+                        reconciliationWinnerId,
+                        winner.VersionId,
+                        StringComparison.Ordinal))
+                {
+                    await DelayForRetryAsync(attempt, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+            }
+
+            var effectiveStages = reconciliationStages
+                ?? (winner.IntendedVersionStages.Length > 0
                     ? winner.IntendedVersionStages
-                    : requestedStages
-                : winner.VersionStages;
-            var effectiveDefaultTransition = pendingPublication
-                && (winner.HasDefaultStageTransition
+                    : requestedStages);
+            var effectiveDefaultTransition = reconciliationStages is not null
+                ? reconciliationDefaultTransition
+                : winner.HasDefaultStageTransition
                     ? winner.DefaultStageTransition
-                    : defaultStageTransition);
+                    : defaultStageTransition;
+            reconciliationWinnerId ??= winner.VersionId;
+            reconciliationStages ??= effectiveStages;
+            reconciliationDefaultTransition = effectiveDefaultTransition;
             if (effectiveStages.Count == 0)
             {
                 await WriteConflictAsync(context, "The deterministic winner has no observable or intended staging labels.").ConfigureAwait(false);
@@ -269,7 +334,14 @@ internal static class SecretVersionCoordinator
                 }
 
                 var update = await UpdateStagesFreshAsync(
-                    context, client, token, name, version.VersionId, desiredStages, cancellationToken).ConfigureAwait(false);
+                    context,
+                    client,
+                    token,
+                    name,
+                    version.VersionId,
+                    desiredStages,
+                    finalizePublication: false,
+                    cancellationToken).ConfigureAwait(false);
                 if (update.Fatal)
                 {
                     return null;
@@ -285,7 +357,14 @@ internal static class SecretVersionCoordinator
             if (losersUpdated)
             {
                 var publication = await UpdateStagesFreshAsync(
-                    context, client, token, name, winner.VersionId, effectiveStages, cancellationToken).ConfigureAwait(false);
+                    context,
+                    client,
+                    token,
+                    name,
+                    winner.VersionId,
+                    effectiveStages,
+                    finalizePublication: pendingPublication,
+                    cancellationToken).ConfigureAwait(false);
                 if (publication.Fatal)
                 {
                     return null;
@@ -328,8 +407,25 @@ internal static class SecretVersionCoordinator
             await DelayForRetryAsync(attempt, cancellationToken).ConfigureAwait(false);
         }
 
-        var detail = lastFailure is null ? string.Empty : $" Last Key Vault status: {(int)lastFailure.Value}.";
-        await WriteConflictAsync(context, "Unable to observe a unique staging-label assignment after bounded reconciliation." + detail).ConfigureAwait(false);
+        if (lastFailure is not null)
+        {
+            if (lastFailure is HttpStatusCode.Conflict or HttpStatusCode.PreconditionFailed)
+            {
+                await WriteConflictAsync(
+                    context,
+                    "Unable to observe a unique staging-label assignment after bounded reconciliation.")
+                    .ConfigureAwait(false);
+                return null;
+            }
+
+            await WriteBackendErrorAsync(context, lastFailure.Value).ConfigureAwait(false);
+            return null;
+        }
+
+        await WriteConflictAsync(
+            context,
+            "Unable to observe a unique staging-label assignment after bounded reconciliation.")
+            .ConfigureAwait(false);
         return null;
     }
 
@@ -363,6 +459,11 @@ internal static class SecretVersionCoordinator
         var currentFallback = ResolveStage(versions, "AWSCURRENT").Version;
         foreach (var version in versions)
         {
+            if (version.IsPendingPublication)
+            {
+                continue;
+            }
+
             string responseVersionId;
             if (version.Tags.TryGetValue(KeyVaultSecretClient.ClientRequestTokenTag, out var clientRequestToken))
             {
@@ -400,6 +501,7 @@ internal static class SecretVersionCoordinator
         string name,
         string versionId,
         IReadOnlyList<string> stages,
+        bool finalizePublication,
         CancellationToken cancellationToken)
     {
         using var getRequest = new HttpRequestMessage(HttpMethod.Get, client.BuildVaultUri(KeyVaultSecretClient.BuildSecretVersionPath(name, versionId)));
@@ -415,15 +517,24 @@ internal static class SecretVersionCoordinator
         var currentStages = KeyVaultSecretClient.TryGetRawTag(document.RootElement, KeyVaultSecretClient.VersionStagesTag, out var encodedStages)
             ? KeyVaultSecretClient.DecodeStoredVersionStages(encodedStages)
             : ["AWSCURRENT"];
-        if (StagesEqual(currentStages, stages))
+        var alreadyPublished = KeyVaultSecretClient.TryGetRawTag(
+                document.RootElement,
+                KeyVaultSecretClient.PublicationStateTag,
+                out var publicationState)
+            && string.Equals(publicationState, "published", StringComparison.Ordinal);
+        if (StagesEqual(currentStages, stages)
+            && (!finalizePublication || alreadyPublished))
         {
             return StageUpdateResult.Succeeded;
         }
 
         using var patchRequest = new HttpRequestMessage(HttpMethod.Patch, client.BuildVaultUri(KeyVaultSecretClient.BuildSecretVersionPath(name, versionId)));
         patchRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var updatedTags = finalizePublication
+            ? KeyVaultSecretClient.WithPublishedVersionStages(freshTags, stages)
+            : KeyVaultSecretClient.WithVersionStages(freshTags, stages);
         patchRequest.Content = new StringContent(
-            KeyVaultSecretClient.BuildTagsJsonBody(KeyVaultSecretClient.WithVersionStages(freshTags, stages)),
+            KeyVaultSecretClient.BuildTagsJsonBody(updatedTags),
             Encoding.UTF8,
             "application/json");
         using var patchResponse = await client.SendAsync(patchRequest, cancellationToken).ConfigureAwait(false);
@@ -681,6 +792,11 @@ internal static class SecretVersionCoordinator
 
         public bool DefaultStageTransition => Tags.TryGetValue(KeyVaultSecretClient.DefaultStageTransitionTag, out var value)
             && string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+
+        public bool IsPendingPublication =>
+            Tags.TryGetValue(KeyVaultSecretClient.PublicationStateTag, out var state)
+                ? string.Equals(state, "pending", StringComparison.Ordinal)
+                : Tags.ContainsKey(KeyVaultSecretClient.IntendedVersionStagesTag);
     }
 
     internal readonly record struct StageResolution(SecretVersionMetadata? Version, bool Conflict);
