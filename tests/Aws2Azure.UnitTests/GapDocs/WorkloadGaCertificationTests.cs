@@ -15,8 +15,8 @@ public sealed class WorkloadGaCertificationTests
     [Theory]
     [InlineData("s3-basic-object-crud.yaml", "ga")]
     [InlineData("secretsmanager-basic-lifecycle.yaml", "ga")]
-    [InlineData("sqs-standard-messaging.yaml", "candidate")]
-    [InlineData("dynamodb-basic-crud.yaml", "candidate")]
+    [InlineData("sqs-standard-messaging.yaml", "ga")]
+    [InlineData("dynamodb-basic-crud.yaml", "ga")]
     [InlineData("sns-standard-publish-service-bus.yaml", "candidate")]
     [InlineData("sns-standard-publish-event-grid.yaml", "candidate")]
     [InlineData("kinesis-basic-record-ingestion.yaml", "candidate")]
@@ -32,7 +32,7 @@ public sealed class WorkloadGaCertificationTests
             Operations,
             Designs,
             RepoRoot,
-            new DateOnly(2026, 7, 18));
+            new DateOnly(2026, 7, 22));
 
         Assert.Equal(expectedVerdict, report.Verdict);
     }
