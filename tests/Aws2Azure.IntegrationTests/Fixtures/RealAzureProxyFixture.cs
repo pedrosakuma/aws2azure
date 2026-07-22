@@ -210,11 +210,14 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     /// targets this stream name.
     /// </summary>
     public string EventHubStream { get; private set; } = string.Empty;
+    public int EventHubPartitionCount { get; private set; }
 
     public string ProxyOutput => _proxyOutput.ToString();
     public string S3ServiceUrl => ServiceUrlFor("s3");
     public string ProxyConfigDigest { get; private set; } = string.Empty;
     public string BackendIdentityDigest { get; private set; } = string.Empty;
+    public string ServiceBusBackendIdentityDigest { get; private set; } = string.Empty;
+    public string EventHubsBackendIdentityDigest { get; private set; } = string.Empty;
     public string AwsBindingDigest { get; private set; } = string.Empty;
     public bool SealedCandidateConfigured => _runtimeSelection.IsSealed;
     public bool SealedRollbackConfigured => _runtimeSelection.RequiresRollback;
@@ -283,6 +286,9 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         ProxyConfigDigest = Digest(configBytes);
         BackendIdentityDigest = Digest(
             (_blobAccount ?? string.Empty) + "\n" + (_blobEndpoint ?? string.Empty));
+        ServiceBusBackendIdentityDigest = Digest(_sbNamespace ?? string.Empty);
+        EventHubsBackendIdentityDigest = Digest(
+            (_ehNamespace ?? string.Empty) + "\n" + EventHubStream);
         AwsBindingDigest = Digest(AwsAccessKey + "\n" + AwsSecret);
 
         try
@@ -569,6 +575,10 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         }
 
         EventHubStream = Env("AZURE_EVENTHUBS_STREAM") ?? string.Empty;
+        _ = int.TryParse(
+            Env("AZURE_EVENTHUBS_PARTITION_COUNT"),
+            out var eventHubPartitionCount);
+        EventHubPartitionCount = eventHubPartitionCount;
 
         _eventGridTopicEndpoint = Env("AZURE_EVENTGRID_TOPIC_ENDPOINT");
         _eventGridTopicKey = Env("AZURE_EVENTGRID_TOPIC_KEY");

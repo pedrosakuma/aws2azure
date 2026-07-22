@@ -112,6 +112,7 @@ jobs:
       RUNTIME_IDENTITY_B_NAME: a2a-kv-b-${{ github.run_id }}-${{ github.run_attempt }}
       LOAD_DURATION_SECONDS: '300'
       LOAD_CONCURRENCY: '8'
+      AZURE_EVENTHUBS_PARTITION_COUNT: '2'
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

@@ -126,6 +126,7 @@ jobs:
       # and the fixture targets these names.
       AZURE_COSMOS_DATABASE: dynamodb
       AZURE_EVENTHUBS_STREAM: kinesis-smoke
+      AZURE_EVENTHUBS_PARTITION_COUNT: '2'
       TEST_RESULTS_DIR: TestResults/real-azure
       EVIDENCE_DIR: TestResults/real-azure-conformance
       CONFORMANCE_PLAN: TestResults/real-azure-conformance-plan.json

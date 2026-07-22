@@ -31,11 +31,18 @@ public sealed class KinesisRealAzureConformanceTests(RealAzureProxyFixture fixtu
             MaxResults = 100,
         }, timeout.Token).ConfigureAwait(false);
 
-        Assert.NotEmpty(describe.StreamDescription.Shards);
-        Assert.Equal(describe.StreamDescription.Shards.Count, summary.StreamDescriptionSummary.OpenShardCount);
+        Assert.True(fixture.EventHubPartitionCount > 0,
+            "AZURE_EVENTHUBS_PARTITION_COUNT must describe the provisioned Event Hub.");
+        var expectedShardIds = Enumerable.Range(0, fixture.EventHubPartitionCount)
+            .Select(partition => $"shardId-{partition:D12}")
+            .ToArray();
         Assert.Equal(
-            describe.StreamDescription.Shards.Select(item => item.ShardId),
-            shards.Shards.Select(item => item.ShardId));
+            expectedShardIds,
+            describe.StreamDescription.Shards.Select(item => item.ShardId).Order(StringComparer.Ordinal));
+        Assert.Equal(fixture.EventHubPartitionCount, summary.StreamDescriptionSummary.OpenShardCount);
+        Assert.Equal(
+            expectedShardIds,
+            shards.Shards.Select(item => item.ShardId).Order(StringComparer.Ordinal));
     }
 
     [SkippableFact]
