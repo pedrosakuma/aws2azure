@@ -301,7 +301,6 @@ public class S3LongTailTests
     [InlineData("cors", HttpStatusCode.NotFound, "NoSuchCORSConfiguration")]
     [InlineData("website", HttpStatusCode.NotFound, "NoSuchWebsiteConfiguration")]
     [InlineData("replication", HttpStatusCode.NotFound, "ReplicationConfigurationNotFoundError")]
-    [InlineData("encryption", HttpStatusCode.NotFound, "ServerSideEncryptionConfigurationNotFoundError")]
     [InlineData("publicAccessBlock", HttpStatusCode.NotFound, "NoSuchPublicAccessBlockConfiguration")]
     [InlineData("policy", HttpStatusCode.NotFound, "NoSuchBucketPolicy")]
     [InlineData("object-lock", HttpStatusCode.NotFound, "ObjectLockConfigurationNotFoundError")]
@@ -316,6 +315,23 @@ public class S3LongTailTests
         using var resp = await SendAsync(HttpMethod.Get, $"/{bucket}?{sub}", Array.Empty<byte>());
         Assert.Equal(expected, resp.StatusCode);
         Assert.Contains(code, await resp.Content.ReadAsStringAsync());
+    }
+
+    [SkippableFact]
+    public async Task GetBucketEncryption_without_explicit_intent_returns_sse_s3_default()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
+
+        var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
+        await PutBucket(bucket);
+
+        using var resp = await SendAsync(
+            HttpMethod.Get,
+            $"/{bucket}?encryption",
+            Array.Empty<byte>());
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Contains("<SSEAlgorithm>AES256</SSEAlgorithm>",
+            await resp.Content.ReadAsStringAsync());
     }
 
     [SkippableTheory]

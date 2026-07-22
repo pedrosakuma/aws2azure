@@ -274,6 +274,16 @@ public sealed class SubresourceHandlersTests
             backend, S3Operation.GetBucketEncryption, HttpMethods.Get, "?encryption");
         Assert.Equal("AES256", ParseS3Element(
             TestHttpContext.ReadBody(encryption), "Rule", "ApplyServerSideEncryptionByDefault", "SSEAlgorithm"));
+
+        var deleteEncryption = await InvokeAsync(
+            backend, S3Operation.DeleteBucketEncryption, HttpMethods.Delete, "?encryption");
+        Assert.Equal(StatusCodes.Status204NoContent, deleteEncryption.Response.StatusCode);
+        var defaultEncryption = await InvokeAsync(
+            backend, S3Operation.GetBucketEncryption, HttpMethods.Get, "?encryption");
+        Assert.Equal(StatusCodes.Status200OK, defaultEncryption.Response.StatusCode);
+        Assert.Equal("AES256", ParseS3Element(
+            TestHttpContext.ReadBody(defaultEncryption), "Rule",
+            "ApplyServerSideEncryptionByDefault", "SSEAlgorithm"));
     }
 
     [Fact]

@@ -21,7 +21,7 @@ Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned
 | [kinesis](#kinesis) | Iterator link lifetime and durable replay | 🔵 by design |
 | [kinesis](#kinesis) | No resharding / enhanced fan-out / KCL lease model | ⛔ unsupported |
 | [s3](#s3) | No IAM / ACL / bucket-policy authorization model | 🔵 by design |
-| [s3](#s3) | No server-side-encryption configuration surface | 🔵 by design |
+| [s3](#s3) | No enforceable server-side-encryption configuration surface | 🔵 by design |
 | [s3](#s3) | Region derived from the signed scope only | 🔵 by design |
 | [s3](#s3) | Stateless multipart upload without per-part ETag validation | 🔵 by design |
 | [s3](#s3) | Bucket sub-resource configs are not translated | ⛔ unsupported |
@@ -168,7 +168,7 @@ Kinesis shards map to Event Hubs partitions, which are fixed at the hub level. D
 
 - **Status:** 🔵 by design
 
-Authorization is the static AWS-key-to-Azure-credential mapping validated by SigV4; there is no server-side IAM. ACLs are synthesised as owner-only (non-'private' canned ACLs and x-amz-grant-* headers are rejected or ignored), GetBucketPolicy / GetBucketPolicyStatus return 404 NoSuchBucketPolicy, and public-access-block is a no-op.
+Authorization is the static AWS-key-to-Azure-credential mapping validated by SigV4; there is no server-side IAM. ACLs are synthesised as owner-only (non-'private' canned ACLs and x-amz-grant-* headers are rejected or ignored), GetBucketPolicy / GetBucketPolicyStatus return 404 NoSuchBucketPolicy, and ownership-controls/public-access-block documents are persisted as compatibility intent without enforcement.
 
 **Impact.** Fine-grained S3 access control (ACL grants, bucket policies, block-public-access enforcement) is not translated. Access is entirely governed by the mapped Azure Storage credential.
 
@@ -178,13 +178,13 @@ References:
 
 - <https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketPolicy.html>
 
-<a id="s3-no-server-side-encryption-configuration-surface"></a>
+<a id="s3-no-enforceable-server-side-encryption-configuration-surface"></a>
 
-### No server-side-encryption configuration surface
+### No enforceable server-side-encryption configuration surface
 
 - **Status:** 🔵 by design
 
-Azure Blob Storage encrypts at rest transparently, so there is no SSE-S3 / SSE-KMS / SSE-C configuration to expose. GetBucketEncryption returns 404 ServerSideEncryptionConfigurationNotFoundError and SSE request headers are not honoured as distinct key material.
+Azure Blob Storage encrypts at rest transparently. The proxy can persist and round-trip SSE-S3/AES256 bucket intent, but that metadata does not configure Azure encryption. SSE-KMS and SSE-C key semantics remain unsupported and SSE request headers are not honoured as distinct key material.
 
 **Impact.** Applications that assert a specific SSE mode, customer-provided keys (SSE-C), or per-bucket KMS configuration cannot drive those semantics.
 
@@ -228,7 +228,7 @@ UploadId is a stateless HMAC-bound token (no Azure call on initiate) and blocks 
 
 - **Status:** ⛔ unsupported
 
-Lifecycle, replication, website hosting, event notifications, request payment, and logging bucket configurations have no Blob-storage equivalent in the wire-protocol path; the corresponding Get operations return the S3 'not configured' shape and Put/Delete are no-ops or unsupported.
+Lifecycle, replication, website hosting, event notifications, Requester Pays, acceleration Enabled, and logging bucket configurations have no Blob-storage equivalent in the wire-protocol path; the corresponding Get operations return a documented not-configured/stable-disabled shape and Put/Delete are no-ops or unsupported.
 
 **Impact.** Automated tiering/expiry, cross-region replication, static-website hosting, and S3 event notifications configured via these APIs have no effect.
 

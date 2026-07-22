@@ -110,7 +110,8 @@ internal static partial class SubresourceHandlers
             context, blob, bucket, S3Operation.GetBucketEncryption, BucketEncryptionMetadataKey, ct)
             .ConfigureAwait(false);
         if (!ok) return;
-        if (!string.Equals(value, "AES256", StringComparison.Ordinal))
+        if (!string.IsNullOrEmpty(value)
+            && !string.Equals(value, "AES256", StringComparison.Ordinal))
         {
             await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchConfiguration(
                 "ServerSideEncryptionConfigurationNotFoundError",

@@ -438,9 +438,8 @@ internal sealed partial class BlobClient
     /// <summary>
     /// Extracts the <c>x-ms-meta-*</c> headers from a container properties
     /// or metadata response into a case-sensitive dictionary keyed by the
-    /// bare metadata name (no prefix). The header names returned by Azure
-    /// are lower-cased to match the keys accepted by
-    /// <see cref="SetContainerMetadataAsync"/>.
+    /// bare metadata name (no prefix). Header names are normalized because HTTP
+    /// field names and Azure metadata lookup are case-insensitive.
     /// </summary>
     public static IDictionary<string, string> ReadContainerMetadata(HttpResponseMessage response)
     {

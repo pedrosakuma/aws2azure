@@ -5,11 +5,12 @@ status: partial
 sub_features:
   - name: "idempotent AES256-intent clear"
     status: implemented
-    notes: "Removes only the proxy-owned encryption-intent key and returns 204."
+    notes: "Removes only the proxy-owned encryption-intent key, resets the compatibility response to default SSE-S3 AES256, and returns 204."
   - name: "Azure encryption change"
     status: unsupported
     notes: "Azure Storage encryption remains enabled and account-managed."
 behavior_differences:
   - "Deleting the intent does not disable or reconfigure Azure encryption."
+  - "A subsequent GetBucketEncryption returns the synthetic default SSE-S3 AES256 configuration."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketEncryption.html
