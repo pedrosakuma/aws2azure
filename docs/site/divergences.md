@@ -409,7 +409,7 @@ the documented behaviour differences and the real-Azure seal state.
 | sns | SetSubscriptionAttributes | — | FilterPolicy is stored only in UserMetadata in this slice. Service Bus rule-based filtering is not programmed yet, so enforcement is deferred to a later forwarding slice. |
 | sns | SetSubscriptionAttributes | — | FilterPolicyScope accepts MessageAttributes and MessageBody, but MessageBody scope is only persisted; it is not enforced yet. |
 | sns | SetSubscriptionAttributes | — | DeliveryPolicy, RedrivePolicy, and SubscriptionRoleArn are accepted as no-ops because Service Bus does not expose a matching SNS attribute contract here. |
-| sns | SetSubscriptionAttributes | — | Updates preserve the original ordered SubscriptionDescription property XML, replace only UserMetadata, and send the ETag returned by GET in If-Match. A concurrent Azure-side update returns ConcurrentAccess instead of silently losing unrelated properties. |
+| sns | SetSubscriptionAttributes | — | Updates preserve mutable SubscriptionDescription property XML, replace only UserMetadata, and send If-Match: * because Service Bus subscriptions do not expose usable per-entity ETags. Concurrent Azure-side writers are therefore last-write-wins; read-only runtime properties are never replayed. |
 | sns | SetSubscriptionAttributes | — | Updates that would push the serialized UserMetadata payload beyond Service Bus's 1024-character limit are rejected with InvalidParameter. |
 | sns | SetSubscriptionAttributes | — | Unknown AWS attribute names return InvalidParameter. |
 | sns | SetSubscriptionAttributes | — | Only Azure Service Bus subscription descriptions are updated; Azure Event Grid event-subscription properties are explicitly outside this profile. |

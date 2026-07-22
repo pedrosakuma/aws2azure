@@ -321,8 +321,11 @@ internal static class ServiceBusAtomXml
             or "AvailabilityStatus"
             or "CountDetails"
             or "CreatedAt"
+            or "DefaultRuleDescription"
+            or "EntityAvailabilityStatus"
             or "MessageCount"
             or "SizeInBytes"
+            or "SkippedUpdate"
             or "UpdatedAt";
 
     private static void WriteMergedSubscriptionProperties(XmlWriter writer, ServiceBusSubscriptionDescription description)

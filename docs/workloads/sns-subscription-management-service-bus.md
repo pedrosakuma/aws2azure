@@ -30,11 +30,11 @@ out-of-band challenge. Filter policy/scope and raw-delivery values persist in
 `SubscriptionDescription.UserMetadata`; filter policy is not programmed into a
 Service Bus rule and raw delivery does not change a delivery envelope.
 
-`SetSubscriptionAttributes` reads the current Atom entry, merges only the
-aws2azure UserMetadata value into the original ordered Service Bus property
-set, and conditionally writes it with the returned ETag in `If-Match`.
-Concurrent mutation is surfaced as `ConcurrentAccess`, so unrelated Service Bus
-properties are neither defaulted nor silently overwritten.
+`SetSubscriptionAttributes` reads the current Atom entry, preserves its ordered
+mutable Service Bus properties, removes runtime/read-only fields, and replaces
+only the aws2azure UserMetadata value. It writes with `If-Match: *` because
+Service Bus subscriptions do not expose usable per-entity ETags; unrelated
+properties are preserved, but concurrent writers remain last-write-wins.
 
 ## Qualification boundary
 

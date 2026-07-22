@@ -418,16 +418,9 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         var requestUri = BuildSubscriptionUri(credentials, namespaceFqdn, topicName, description.SubscriptionName);
         SnsLog.UpdatingSubscription(_logger, namespaceFqdn, topicName, description.SubscriptionName);
 
-        if (string.IsNullOrWhiteSpace(description.ETag))
-        {
-            throw new ServiceBusTopicsManagementException(
-                HttpStatusCode.PreconditionFailed,
-                "The Service Bus subscription response did not include an ETag.");
-        }
-
         using var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
-        request.Headers.TryAddWithoutValidation("If-Match", description.ETag);
+        request.Headers.TryAddWithoutValidation("If-Match", "*");
         request.Content = new StringContent(ServiceBusAtomXml.BuildSubscriptionDescriptionEntry(description), Encoding.UTF8, "application/atom+xml");
         request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);

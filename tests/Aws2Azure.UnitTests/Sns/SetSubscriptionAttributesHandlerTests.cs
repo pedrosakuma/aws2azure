@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -140,16 +139,18 @@ public sealed class SetSubscriptionAttributesHandlerTests
                                 + "<AccessedAt>2026-07-22T00:00:02Z</AccessedAt>"
                                 + "<MessageCount>42</MessageCount>"
                                 + "<SizeInBytes>1024</SizeInBytes>"
-                                + "<CountDetails><ActiveMessageCount>42</ActiveMessageCount></CountDetails>"),
+                                + "<CountDetails><ActiveMessageCount>42</ActiveMessageCount></CountDetails>"
+                                + "<EntityAvailabilityStatus>Available</EntityAvailabilityStatus>"
+                                + "<SkippedUpdate>1</SkippedUpdate>"
+                                + "<DefaultRuleDescription><Name>$Default</Name></DefaultRuleDescription>"),
                         Encoding.UTF8,
                         "application/atom+xml"),
                 };
-                response.Headers.ETag = new EntityTagHeaderValue("\"etag-42\"");
                 return response;
             }
 
             Assert.Equal(HttpMethod.Put, request.Method);
-            Assert.Equal("\"etag-42\"", Assert.Single(request.Headers.GetValues("If-Match")));
+            Assert.Equal("*", Assert.Single(request.Headers.GetValues("If-Match")));
             updateBody = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
             return new HttpResponseMessage(HttpStatusCode.OK);
         });
@@ -175,13 +176,16 @@ public sealed class SetSubscriptionAttributesHandlerTests
         Assert.DoesNotContain("<MessageCount", updateBody);
         Assert.DoesNotContain("<SizeInBytes", updateBody);
         Assert.DoesNotContain("<CountDetails", updateBody);
+        Assert.DoesNotContain("<EntityAvailabilityStatus", updateBody);
+        Assert.DoesNotContain("<SkippedUpdate", updateBody);
+        Assert.DoesNotContain("<DefaultRuleDescription", updateBody);
         Assert.True(JsonSerializer.Deserialize(
             SnsManagementClientTestSupport.ReadElementValue(updateBody, "UserMetadata"),
             SnsSubscriptionJsonContext.Default.SnsSubscriptionMetadata)!.RawDeliveryEnabled);
     }
 
     [Fact]
-    public async Task HandleAsync_maps_etag_conflict_to_concurrent_access()
+    public async Task HandleAsync_maps_backend_precondition_failure_to_concurrent_access()
     {
         var storedMetadata = SnsManagementClientTestSupport.SerializeMetadata("https", "https://example.com/hooks/orders");
         var managementClient = SnsManagementClientTestSupport.NewManagementClient((request, _) =>
@@ -195,7 +199,6 @@ public sealed class SetSubscriptionAttributesHandlerTests
                         Encoding.UTF8,
                         "application/atom+xml"),
                 };
-                response.Headers.ETag = new EntityTagHeaderValue("\"etag-stale\"");
                 return Task.FromResult(response);
             }
 
@@ -231,11 +234,11 @@ public sealed class SetSubscriptionAttributesHandlerTests
                         Encoding.UTF8,
                         "application/atom+xml"),
                 };
-                response.Headers.ETag = new EntityTagHeaderValue("\"etag-stateful\"");
                 return response;
             }
 
             Assert.Equal(HttpMethod.Put, request.Method);
+            Assert.Equal("*", Assert.Single(request.Headers.GetValues("If-Match")));
             var body = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
             setMetadata(SnsManagementClientTestSupport.ReadElementValue(body, "UserMetadata"));
             return new HttpResponseMessage(HttpStatusCode.OK);
