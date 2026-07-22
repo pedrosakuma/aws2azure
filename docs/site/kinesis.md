@@ -4,6 +4,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Event Hubs Service Bus management REST API`
+- **Real-Azure verified:** ✅ 2026-07-22 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29929438303) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29929438303)
 
 ### Sub-features
 
@@ -17,7 +18,7 @@
 - Kinesis shards map 1:1 to Event Hubs partitions; shard ids are synthesised as shardId-<partitionId.PadLeft(12,'0')>.
 - HashKeyRange values are a uniform even split of the 128-bit Kinesis hash space; Event Hubs does not expose AWS-compatible hash-key assignments.
 - SequenceNumberRange.StartingSequenceNumber is always '0' and open shards omit EndingSequenceNumber because Event Hubs partitions do not surface native Kinesis sequence numbers.
-- Retention and creation metadata come from the Service Bus management REST API (or an emulator-focused static partition-count override when configured); verified against Event Hubs emulator only, not yet against a live Event Hubs namespace.
+- Retention, creation metadata, and the two-partition topology are verified against a live Event Hubs namespace; emulator-focused runs may instead use a configured static partition count.
 - Stream lifecycle (CreateStream / DeleteStream / IncreaseStreamRetentionPeriod) is out of scope — Event Hubs entities are provisioned out-of-band via ARM.
 
 ### References
@@ -29,6 +30,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Event Hubs Service Bus management REST API`
+- **Real-Azure verified:** ✅ 2026-07-22 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29929438303) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29929438303)
 
 ### Sub-features
 
@@ -40,7 +42,7 @@
 
 - OpenShardCount is the Event Hub partition count; Event Hubs does not expose a separate open/closed shard lifecycle.
 - EnhancedMonitoring is always the empty [{ShardLevelMetrics: []}] shape and ConsumerCount is always 0 because Event Hubs does not expose Kinesis-compatible consumer metadata here.
-- Retention and creation metadata come from the Service Bus management REST API (or an emulator-focused static partition-count override when configured); verified against Event Hubs emulator only, not yet against a live Event Hubs namespace.
+- Retention, creation metadata, and OpenShardCount are verified against a live two-partition Event Hubs namespace; emulator-focused runs may instead use a configured static partition count.
 - Stream lifecycle (CreateStream / DeleteStream / IncreaseStreamRetentionPeriod) is out of scope — Event Hubs entities are provisioned out-of-band via ARM.
 
 ### References

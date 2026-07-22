@@ -4,7 +4,7 @@ Emulators are a necessary, not sufficient, signal: nothing is trusted as
 `implemented` without ≥1 recorded real-Azure validation. This report aggregates
 the documented behaviour differences and the real-Azure seal state.
 
-- Operations: **142** — real-Azure verified: **54**, implemented-but-unsealed: **20**
+- Operations: **142** — real-Azure verified: **56**, implemented-but-unsealed: **20**
 
 ## Implemented without a real-Azure seal
 
@@ -166,15 +166,15 @@ the documented behaviour differences and the real-Azure seal state.
 | dynamodb | UpdateTimeToLive | — | A DynamoDB attribute literally named `ttl` (the most common TTL attribute name) is supported: the proxy stores it shadow-encoded (`_a2a$ttl`) so the user value round-trips while Cosmos' reserved native `ttl` field carries the computed relative duration. The proxy's injected native `ttl` is stripped from read responses. This is an on-disk-format change: an item written by an earlier build that stored a literal `ttl` attribute (unshadowed) is no longer surfaced for that attribute. |
 | dynamodb | UpdateTimeToLive | — | Concurrency: arming the Cosmos container `defaultTtl` and persisting the TTL metadata are two steps, not one atomic unit. Racing concurrent enable/disable calls for the SAME table can interleave and leave the container/metadata states inconsistent (e.g. metadata disabled while the container stays armed). Accepted limitation — TTL is a rare control-plane op and a single DynamoDB client serialises UpdateTimeToLive per table (real DynamoDB uses transient ENABLING/DISABLING states); cross-sidecar coordination is out of scope. |
 | dynamodb | UpdateTimeToLive | — | Validated against real Azure Cosmos DB (container `defaultTtl` armed, per-item `ttl` written and read back); background expiry timing is not asserted in tests. |
-| kinesis | DescribeStream | — | Kinesis shards map 1:1 to Event Hubs partitions; shard ids are synthesised as shardId-<partitionId.PadLeft(12,'0')>. |
-| kinesis | DescribeStream | — | HashKeyRange values are a uniform even split of the 128-bit Kinesis hash space; Event Hubs does not expose AWS-compatible hash-key assignments. |
-| kinesis | DescribeStream | — | SequenceNumberRange.StartingSequenceNumber is always '0' and open shards omit EndingSequenceNumber because Event Hubs partitions do not surface native Kinesis sequence numbers. |
-| kinesis | DescribeStream | — | Retention and creation metadata come from the Service Bus management REST API (or an emulator-focused static partition-count override when configured); verified against Event Hubs emulator only, not yet against a live Event Hubs namespace. |
-| kinesis | DescribeStream | — | Stream lifecycle (CreateStream / DeleteStream / IncreaseStreamRetentionPeriod) is out of scope — Event Hubs entities are provisioned out-of-band via ARM. |
-| kinesis | DescribeStreamSummary | — | OpenShardCount is the Event Hub partition count; Event Hubs does not expose a separate open/closed shard lifecycle. |
-| kinesis | DescribeStreamSummary | — | EnhancedMonitoring is always the empty [{ShardLevelMetrics: []}] shape and ConsumerCount is always 0 because Event Hubs does not expose Kinesis-compatible consumer metadata here. |
-| kinesis | DescribeStreamSummary | — | Retention and creation metadata come from the Service Bus management REST API (or an emulator-focused static partition-count override when configured); verified against Event Hubs emulator only, not yet against a live Event Hubs namespace. |
-| kinesis | DescribeStreamSummary | — | Stream lifecycle (CreateStream / DeleteStream / IncreaseStreamRetentionPeriod) is out of scope — Event Hubs entities are provisioned out-of-band via ARM. |
+| kinesis | DescribeStream | ✅ | Kinesis shards map 1:1 to Event Hubs partitions; shard ids are synthesised as shardId-<partitionId.PadLeft(12,'0')>. |
+| kinesis | DescribeStream | ✅ | HashKeyRange values are a uniform even split of the 128-bit Kinesis hash space; Event Hubs does not expose AWS-compatible hash-key assignments. |
+| kinesis | DescribeStream | ✅ | SequenceNumberRange.StartingSequenceNumber is always '0' and open shards omit EndingSequenceNumber because Event Hubs partitions do not surface native Kinesis sequence numbers. |
+| kinesis | DescribeStream | ✅ | Retention, creation metadata, and the two-partition topology are verified against a live Event Hubs namespace; emulator-focused runs may instead use a configured static partition count. |
+| kinesis | DescribeStream | ✅ | Stream lifecycle (CreateStream / DeleteStream / IncreaseStreamRetentionPeriod) is out of scope — Event Hubs entities are provisioned out-of-band via ARM. |
+| kinesis | DescribeStreamSummary | ✅ | OpenShardCount is the Event Hub partition count; Event Hubs does not expose a separate open/closed shard lifecycle. |
+| kinesis | DescribeStreamSummary | ✅ | EnhancedMonitoring is always the empty [{ShardLevelMetrics: []}] shape and ConsumerCount is always 0 because Event Hubs does not expose Kinesis-compatible consumer metadata here. |
+| kinesis | DescribeStreamSummary | ✅ | Retention, creation metadata, and OpenShardCount are verified against a live two-partition Event Hubs namespace; emulator-focused runs may instead use a configured static partition count. |
+| kinesis | DescribeStreamSummary | ✅ | Stream lifecycle (CreateStream / DeleteStream / IncreaseStreamRetentionPeriod) is out of scope — Event Hubs entities are provisioned out-of-band via ARM. |
 | kinesis | GetRecords | ✅ | Returned SequenceNumber values are Event Hubs-assigned x-opt-sequence-number annotations, which differ from the synthetic sequence numbers returned by PutRecord/PutRecords. |
 | kinesis | GetRecords | ✅ | NextShardIterator uses the proxy's opaque token and internally prefers Event Hubs offsets (offset:<value>) to resume reads; callers must treat the token as opaque. |
 | kinesis | GetRecords | ✅ | MillisBehindLatest is best-effort only and is derived from the last returned record's enqueue timestamp versus the proxy clock. |

@@ -23,8 +23,8 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | dynamodb | [UntagResource](dynamodb.md#untagresource) | ✅ implemented | — | `Azure Cosmos DB account/resource tags (control plane)` |
 | dynamodb | [UpdateItem](dynamodb.md#updateitem) | 🟡 partial | ✅ | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [UpdateTimeToLive](dynamodb.md#updatetimetolive) | 🟡 partial | — | `Azure Cosmos DB container `defaultTtl` / per-item `ttl`` |
-| kinesis | [DescribeStream](kinesis.md#describestream) | 🟡 partial | — | `Azure Event Hubs Service Bus management REST API` |
-| kinesis | [DescribeStreamSummary](kinesis.md#describestreamsummary) | 🟡 partial | — | `Azure Event Hubs Service Bus management REST API` |
+| kinesis | [DescribeStream](kinesis.md#describestream) | 🟡 partial | ✅ | `Azure Event Hubs Service Bus management REST API` |
+| kinesis | [DescribeStreamSummary](kinesis.md#describestreamsummary) | 🟡 partial | ✅ | `Azure Event Hubs Service Bus management REST API` |
 | kinesis | [GetRecords](kinesis.md#getrecords) | 🟡 partial | ✅ | `Azure Event Hubs (AMQP 1.0 data plane)` |
 | kinesis | [GetShardIterator](kinesis.md#getsharditerator) | 🟡 partial | ✅ | `Azure Event Hubs (AMQP 1.0 data plane)` |
 | kinesis | [ListShards](kinesis.md#listshards) | 🟡 partial | ✅ | `Azure Event Hubs Service Bus management REST API` |
