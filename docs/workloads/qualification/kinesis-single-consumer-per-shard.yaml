@@ -1,5 +1,5 @@
 # Initial source policy for issue #629. The blocking capacity threshold remains
-# unresolved until issue #657 collects and reviews comparable real-Azure runs.
+# unresolved until a later GA promotion reviews comparable real-Azure runs.
 schema_version: 1
 profile_id: kinesis-single-consumer-per-shard
 profile_version: 1
@@ -27,8 +27,8 @@ scenarios:
         threshold_status: unresolved
         threshold_reason: >-
           No reviewed set of three comparable production-shaped real-Azure
-          single-consumer-per-shard runs exists yet. Issue #657 owns evidence
-          collection and threshold resolution.
+          single-consumer-per-shard runs exists yet. A later GA promotion must
+          collect the evidence and resolve this threshold explicitly.
       - id: representative-load-p95
         source: backend_capacity
         disposition: report_only

@@ -18,7 +18,7 @@ Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned
 | [dynamodb](#dynamodb) | Key encoding and on-disk storage format | 🔵 by design |
 | [dynamodb](#dynamodb) | Absent DynamoDB features | ⛔ unsupported |
 | [kinesis](#kinesis) | Synthetic sequence numbers and iterator positioning | 🔵 by design |
-| [kinesis](#kinesis) | Shared broker cursor per consumer group | 🔵 by design |
+| [kinesis](#kinesis) | Iterator link lifetime and durable replay | 🔵 by design |
 | [kinesis](#kinesis) | No resharding / enhanced fan-out / KCL lease model | ⛔ unsupported |
 | [s3](#s3) | No IAM / ACL / bucket-policy authorization model | 🔵 by design |
 | [s3](#s3) | No server-side-encryption configuration surface | 🔵 by design |
@@ -135,17 +135,17 @@ References:
 
 - <https://learn.microsoft.com/rest/api/eventhub/>
 
-<a id="kinesis-shared-broker-cursor-per-consumer-group"></a>
+<a id="kinesis-iterator-link-lifetime-and-durable-replay"></a>
 
-### Shared broker cursor per consumer group
+### Iterator link lifetime and durable replay
 
 - **Status:** 🔵 by design
 
-Concurrent GetRecords callers on the same (connection, partition, consumer-group) share a pooled AMQP link and a single broker cursor. The proxy serialises the ReceiveBatch calls for internal consistency, but two callers holding distinct AWS shard iterators cannot independently replay or split records — whichever call drains the link first advances the cursor for the other.
+Each proxy-issued shard iterator has a distinct identity and therefore a distinct pooled AMQP receiver link. Iterator chains advance independently while their links are live. The embedded continuation position recreates a link after failure, idle eviction, or restart, but the supported profile deliberately stops at one consumer loop per partition and consumer group.
 
-**Impact.** This deviates from Kinesis, where each shard iterator is independent and replayable.
+**Impact.** Multiple iterator identities on one consumer group are not a certified durable consumer-ownership or replay topology. Recreated links resume from the best available Event Hubs offset/enqueue-time position and inherit the synthetic-sequence and millisecond-boundary differences documented above.
 
-**Workaround.** Use the AWS-recommended single-consumer-per-shard pattern, or assign distinct consumer groups to independent consumers.
+**Workaround.** Use one consumer loop per partition. Assign distinct Event Hubs consumer groups when consumers require independently operated replay/checkpoint lifecycles.
 
 <a id="kinesis-no-resharding---enhanced-fan-out---kcl-lease-model"></a>
 
