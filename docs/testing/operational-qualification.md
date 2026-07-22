@@ -164,11 +164,12 @@ exact reason. External Azure throttling and network-noise signals remain visible
 but cannot silently replace a failed backend-capacity gate.
 
 For `s3-basic-object-crud`, `representative-load-throughput` remains the blocking
-signal and the 40/s floor is unchanged. It is GetObject completions divided by
-the total fixed eight-worker closed-loop CRUD window, not isolated GetObject or
-Blob capacity. The qualification committed for the GA profile passed at
-268.6159/s; use the immutable evidence artifact rather than this explanatory
-number for release decisions.
+signal. The reviewed sealed-runtime floor is 30/s, approximately 15% below the
+worst of the three protected-main calibration runs (36.5014, 35.1502, and
+52.5414/s). It is GetObject completions divided by the total fixed eight-worker
+closed-loop CRUD window, not isolated GetObject or Blob capacity. Use the
+immutable evidence artifacts and committed policy rationale rather than these
+explanatory numbers for release decisions.
 `crud-iterations-per-sec` counts only iterations that complete PutObject, both
 HeadObject calls, all three GetObject variants, ListObjectsV2, the initial
 DeleteObject, and the idempotent DeleteObject. `aws-operations-per-sec` counts

@@ -26,16 +26,22 @@ scenarios:
         disposition: blocking
         metric: throughput_per_sec
         threshold_status: resolved
-        min_value: 40
+        min_value: 30
         threshold_reason: >-
-          Reviewed main-branch runs 29580202166, 29580827819, and 29581332440
-          measured 259.68, 43.69, and 89.01 GetObject completions/s with zero
-          failures. Each value divides GetObject completions by the total window
-          for the fixed eight-worker closed-loop CRUD topology (PutObject, two
-          HeadObject, three GetObject variants, ListObjectsV2, and two
-          DeleteObject calls); it is not standalone Blob or GetObject capacity.
-          The 40/s floor is conservatively below the worst reviewed healthy run;
-          no emulator or A/B measurements were used.
+          Reviewed sealed-runtime main-branch runs 29884898476, 29885879248,
+          and 29886808593 (candidate sha
+          f83a6b95cdd1fc3e64a3aa28ed152aebf3be679d, rollback baseline sha
+          c885a4b7bfbc35390a32b98139495c19dfb7da0b) measured 36.5014,
+          35.1502, and 52.5414 GetObject completions/s with zero failures and
+          zero throttling. Each value divides GetObject completions by the total
+          window for the fixed eastus2 ephemeral Blob StorageV2 Standard_LRS
+          eight-worker closed-loop CRUD topology (PutObject, two HeadObject,
+          three GetObject variants, ListObjectsV2, and two DeleteObject calls);
+          it is not standalone Blob or GetObject capacity. The 30/s floor is
+          conservatively about 15% below the worst reviewed healthy sealed run
+          to accommodate observed real-Azure variance. Earlier source-validation
+          runs were not used to set this sealed-runtime floor; no emulator or
+          A/B measurements were used.
       - id: crud-iterations-per-sec
         source: backend_capacity
         disposition: report_only

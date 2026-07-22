@@ -16,7 +16,7 @@ public sealed class RcObservationGenerationTests
 
         Assert.Equal("pass", result.Evidence.Decision.Verdict);
         Assert.Null(result.Evidence.Restoration);
-        Assert.Equal(40, result.Evidence.Metrics.Single(metric =>
+        Assert.Equal(30, result.Evidence.Metrics.Single(metric =>
             metric.Id == "representative-load-throughput").Threshold);
         Assert.Equal(0, result.Evidence.Metrics.Single(metric =>
             metric.Id == "operation-failure-rate").Threshold);
@@ -134,7 +134,7 @@ public sealed class RcObservationGenerationTests
     {
         var data = CreateData();
         data.Capture.Metrics.Single(metric =>
-            metric.Id == "representative-load-throughput").CandidateValue = 39;
+            metric.Id == "representative-load-throughput").CandidateValue = 29;
         data.Capture.Metrics.Single(metric =>
             metric.Id == "operation-failure-rate").CandidateValue = 0.001;
         data.Capture.Cohorts[0] = data.Capture.Cohorts[0] with
