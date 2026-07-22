@@ -13,10 +13,12 @@ sub_features:
     status: implemented
     notes: "Enforced before the Azure call."
   - name: "versionId qualifier"
-    status: unsupported
-    notes: "No versioning model in the proxy."
+    status: implemented
+    notes: "Maps the opaque S3 versionId to Azure versionid. Unqualified requests HEAD and pin the current Azure version before Set Blob Tags so x-amz-version-id identifies the updated version."
 behavior_differences:
   - "AWS uses 200 OK with empty body; the proxy matches that."
+  - "Version selection depends on Azure Blob versioning being enabled by the operator."
+  - "Azure BlobVersionNotFound maps to S3 NoSuchVersion."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectTagging.html
   - https://learn.microsoft.com/rest/api/storageservices/set-blob-tags

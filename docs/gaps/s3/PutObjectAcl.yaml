@@ -9,5 +9,11 @@ sub_features:
   - name: "other canned ACLs / x-amz-grant-* headers / non-owner grants"
     status: unsupported
     notes: "Rejected with AccessControlListNotSupported."
+  - name: "versionId existence check"
+    status: implemented
+    notes: "The no-op owner-only ACL update verifies the selected Azure blob version exists and returns x-amz-version-id before replying."
+behavior_differences:
+  - "The versionId selects the object existence check only; Azure stores no S3 ACL document."
+  - "Azure BlobVersionNotFound maps to S3 NoSuchVersion."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectAcl.html

@@ -1,12 +1,15 @@
 service: s3
 operation: GetBucketAccelerateConfiguration
-azure_equivalent: "(no equivalent — proxy returns an empty <AccelerateConfiguration/> document)"
-status: stub
+azure_equivalent: "(no equivalent — proxy returns stable Suspended)"
+status: partial
 sub_features:
-  - name: "configuration storage"
+  - name: "Suspended contract"
+    status: implemented
+    notes: "Always returns <Status>Suspended</Status>, including after an accepted Suspended PUT."
+  - name: "Enabled acceleration"
     status: unsupported
-    notes: "No Azure equivalent of S3 Transfer Acceleration."
+    notes: "No Azure equivalent of S3 Transfer Acceleration is configured by the data-plane proxy."
 behavior_differences:
-  - "GET returns 200 with an empty <AccelerateConfiguration/> document, matching the S3 'never configured' wire shape."
+  - "GET returns an explicit Suspended state rather than a topology-dependent acceleration claim."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketAccelerateConfiguration.html

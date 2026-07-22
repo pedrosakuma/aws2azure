@@ -1,5 +1,8 @@
 using System;
 using System.IO;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Text;
 using System.Threading.Tasks;
 using Amazon.S3;
 using Amazon.S3.Model;
@@ -259,5 +262,188 @@ public sealed class S3RealAzureSmokeTests
                 try { await client.DeleteBucketAsync(new DeleteBucketRequest { BucketName = bucket }).ConfigureAwait(false); } catch { }
             }
         }
+    }
+
+    [SkippableFact]
+    public async Task Bucket_compatibility_intents_survive_real_proxy_restart()
+        {
+            Skip.IfNot(_fx.BlobConfigured,
+                "AZURE_BLOB_ACCOUNT/AZURE_BLOB_KEY not set — skipping real-Azure S3 metadata restart smoke.");
+
+            var bucket = "aws2azure-it-" + Guid.NewGuid().ToString("N")[..12];
+            using var client = _fx.CreateS3Client();
+            using var http = new HttpClient();
+            var bucketCreated = false;
+            try
+            {
+                await client.PutBucketAsync(new PutBucketRequest { BucketName = bucket }).ConfigureAwait(false);
+                bucketCreated = true;
+
+                await AssertSignedSuccessAsync(http, HttpMethod.Put, $"{bucket}?ownershipControls",
+                    "<OwnershipControls><Rule><ObjectOwnership>BucketOwnerEnforced</ObjectOwnership></Rule></OwnershipControls>");
+                await AssertSignedSuccessAsync(http, HttpMethod.Put, $"{bucket}?publicAccessBlock",
+                    "<PublicAccessBlockConfiguration>"
+                    + "<BlockPublicAcls>true</BlockPublicAcls>"
+                    + "<IgnorePublicAcls>true</IgnorePublicAcls>"
+                    + "<BlockPublicPolicy>true</BlockPublicPolicy>"
+                    + "<RestrictPublicBuckets>true</RestrictPublicBuckets>"
+                    + "</PublicAccessBlockConfiguration>");
+                await AssertSignedSuccessAsync(http, HttpMethod.Put, $"{bucket}?encryption",
+                    "<ServerSideEncryptionConfiguration><Rule><ApplyServerSideEncryptionByDefault>"
+                    + "<SSEAlgorithm>AES256</SSEAlgorithm>"
+                    + "</ApplyServerSideEncryptionByDefault></Rule></ServerSideEncryptionConfiguration>");
+
+                await _fx.RestartAsync().ConfigureAwait(false);
+
+                Assert.Contains("BucketOwnerEnforced",
+                    await GetSignedBodyAsync(http, $"{bucket}?ownershipControls").ConfigureAwait(false));
+                Assert.Contains("<RestrictPublicBuckets>true</RestrictPublicBuckets>",
+                    await GetSignedBodyAsync(http, $"{bucket}?publicAccessBlock").ConfigureAwait(false));
+                Assert.Contains("<SSEAlgorithm>AES256</SSEAlgorithm>",
+                    await GetSignedBodyAsync(http, $"{bucket}?encryption").ConfigureAwait(false));
+            }
+            finally
+            {
+                if (bucketCreated)
+                {
+                    try { await client.DeleteBucketAsync(new DeleteBucketRequest { BucketName = bucket }).ConfigureAwait(false); } catch { }
+                }
+            }
+        }
+
+        [SkippableFact]
+        public async Task Version_specific_tagging_and_acl_target_blob_versions()
+        {
+            Skip.IfNot(_fx.BlobConfigured,
+                "AZURE_BLOB_ACCOUNT/AZURE_BLOB_KEY not set — skipping real-Azure S3 version-tagging smoke.");
+
+            var bucket = "aws2azure-it-" + Guid.NewGuid().ToString("N")[..12];
+            const string key = "versioned/tagged.txt";
+            using var client = _fx.CreateS3Client();
+            using var http = new HttpClient();
+            var bucketCreated = false;
+            try
+            {
+                await client.PutBucketAsync(new PutBucketRequest { BucketName = bucket }).ConfigureAwait(false);
+                bucketCreated = true;
+                await client.PutBucketVersioningAsync(new PutBucketVersioningRequest
+                {
+                    BucketName = bucket,
+                    VersioningConfig = new S3BucketVersioningConfig { Status = VersionStatus.Enabled },
+                }).ConfigureAwait(false);
+
+                var first = await client.PutObjectAsync(new PutObjectRequest
+                {
+                    BucketName = bucket,
+                    Key = key,
+                    ContentBody = "v1",
+                }).ConfigureAwait(false);
+                var second = await client.PutObjectAsync(new PutObjectRequest
+                {
+                    BucketName = bucket,
+                    Key = key,
+                    ContentBody = "v2",
+                }).ConfigureAwait(false);
+                Assert.False(string.IsNullOrWhiteSpace(first.VersionId));
+                Assert.False(string.IsNullOrWhiteSpace(second.VersionId));
+
+                await AssertSignedSuccessAsync(http, HttpMethod.Put,
+                    $"{bucket}/{key}?tagging&versionId={Uri.EscapeDataString(first.VersionId!)}",
+                    "<Tagging><TagSet><Tag><Key>version</Key><Value>one</Value></Tag></TagSet></Tagging>");
+                await AssertSignedSuccessAsync(http, HttpMethod.Put,
+                    $"{bucket}/{key}?tagging&versionId={Uri.EscapeDataString(second.VersionId!)}",
+                    "<Tagging><TagSet><Tag><Key>version</Key><Value>two</Value></Tag></TagSet></Tagging>");
+
+                Assert.Contains("<Value>one</Value>", await GetSignedBodyAsync(
+                    http, $"{bucket}/{key}?tagging&versionId={Uri.EscapeDataString(first.VersionId!)}").ConfigureAwait(false));
+                Assert.Contains("<Value>two</Value>", await GetSignedBodyAsync(
+                    http, $"{bucket}/{key}?tagging&versionId={Uri.EscapeDataString(second.VersionId!)}").ConfigureAwait(false));
+
+                var acl = await SendSignedAsync(
+                    http,
+                    HttpMethod.Get,
+                    $"{bucket}/{key}?acl&versionId={Uri.EscapeDataString(first.VersionId!)}",
+                    Array.Empty<byte>()).ConfigureAwait(false);
+                using (acl)
+                {
+                    Assert.Equal(HttpStatusCode.OK, acl.StatusCode);
+                    Assert.Equal(first.VersionId, acl.Headers.GetValues("x-amz-version-id").Single());
+                    Assert.Contains("FULL_CONTROL", await acl.Content.ReadAsStringAsync().ConfigureAwait(false));
+                }
+            }
+            finally
+            {
+                if (bucketCreated)
+                {
+                    try
+                    {
+                        var remaining = await client.ListVersionsAsync(
+                            new ListVersionsRequest { BucketName = bucket, Prefix = key }).ConfigureAwait(false);
+                        foreach (var version in remaining.Versions)
+                        {
+                            try
+                            {
+                                await client.DeleteObjectAsync(new DeleteObjectRequest
+                                {
+                                    BucketName = bucket,
+                                    Key = version.Key,
+                                    VersionId = version.VersionId,
+                                }).ConfigureAwait(false);
+                            }
+                            catch
+                            {
+                            }
+                    }
+                    }
+                    catch
+                    {
+                    }
+                    try { await client.DeleteBucketAsync(new DeleteBucketRequest { BucketName = bucket }).ConfigureAwait(false); } catch { }
+                }
+            }
+        }
+
+    private async Task AssertSignedSuccessAsync(
+        HttpClient http, HttpMethod method, string pathAndQuery, string xml)
+    {
+        using var response = await SendSignedAsync(
+            http, method, pathAndQuery, Encoding.UTF8.GetBytes(xml), "application/xml").ConfigureAwait(false);
+        Assert.True(response.IsSuccessStatusCode,
+            $"{pathAndQuery} → {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync().ConfigureAwait(false)}");
+    }
+
+    private async Task<string> GetSignedBodyAsync(HttpClient http, string pathAndQuery)
+    {
+        using var response = await SendSignedAsync(
+            http, HttpMethod.Get, pathAndQuery, Array.Empty<byte>()).ConfigureAwait(false);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+    }
+
+    private async Task<HttpResponseMessage> SendSignedAsync(
+        HttpClient http,
+        HttpMethod method,
+        string pathAndQuery,
+        byte[] body,
+        string? contentType = null)
+    {
+        var request = new HttpRequestMessage(
+            method,
+            new Uri(new Uri(_fx.S3ServiceUrl.TrimEnd('/') + "/"), pathAndQuery));
+        if (body.Length > 0 || method == HttpMethod.Put)
+        {
+            request.Content = new ByteArrayContent(body);
+            request.Content.Headers.ContentLength = body.Length;
+            if (contentType is not null)
+            {
+                request.Content.Headers.ContentType = MediaTypeHeaderValue.Parse(contentType);
+            }
+        }
+        TestSigV4Signer.SignHeader(
+            request,
+            body,
+            RealAzureProxyFixture.AwsAccessKey,
+            RealAzureProxyFixture.AwsSecret);
+        return await http.SendAsync(request).ConfigureAwait(false);
     }
 }

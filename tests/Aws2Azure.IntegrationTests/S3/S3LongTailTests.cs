@@ -177,6 +177,49 @@ public class S3LongTailTests
         Assert.Contains("MalformedXML", await resp.Content.ReadAsStringAsync());
     }
 
+    [SkippableFact]
+    public async Task Bucket_compatibility_intents_survive_proxy_restart()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
+
+        var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
+        await PutBucket(bucket);
+
+        await AssertSuccessAsync(HttpMethod.Put, $"/{bucket}?ownershipControls",
+            "<OwnershipControls><Rule><ObjectOwnership>BucketOwnerPreferred</ObjectOwnership></Rule></OwnershipControls>");
+        await AssertSuccessAsync(HttpMethod.Put, $"/{bucket}?publicAccessBlock",
+            "<PublicAccessBlockConfiguration>"
+            + "<BlockPublicAcls>true</BlockPublicAcls>"
+            + "<IgnorePublicAcls>false</IgnorePublicAcls>"
+            + "<BlockPublicPolicy>true</BlockPublicPolicy>"
+            + "<RestrictPublicBuckets>false</RestrictPublicBuckets>"
+            + "</PublicAccessBlockConfiguration>");
+        await AssertSuccessAsync(HttpMethod.Put, $"/{bucket}?encryption",
+            "<ServerSideEncryptionConfiguration><Rule><ApplyServerSideEncryptionByDefault>"
+            + "<SSEAlgorithm>AES256</SSEAlgorithm>"
+            + "</ApplyServerSideEncryptionByDefault></Rule></ServerSideEncryptionConfiguration>");
+
+        await _fx.RestartProxyAsync();
+
+        using (var ownership = await SendAsync(HttpMethod.Get, $"/{bucket}?ownershipControls", Array.Empty<byte>()))
+        {
+            Assert.Equal(HttpStatusCode.OK, ownership.StatusCode);
+            Assert.Contains("BucketOwnerPreferred", await ownership.Content.ReadAsStringAsync());
+        }
+        using (var publicAccess = await SendAsync(HttpMethod.Get, $"/{bucket}?publicAccessBlock", Array.Empty<byte>()))
+        {
+            Assert.Equal(HttpStatusCode.OK, publicAccess.StatusCode);
+            var body = await publicAccess.Content.ReadAsStringAsync();
+            Assert.Contains("<BlockPublicAcls>true</BlockPublicAcls>", body);
+            Assert.Contains("<IgnorePublicAcls>false</IgnorePublicAcls>", body);
+        }
+        using (var encryption = await SendAsync(HttpMethod.Get, $"/{bucket}?encryption", Array.Empty<byte>()))
+        {
+            Assert.Equal(HttpStatusCode.OK, encryption.StatusCode);
+            Assert.Contains("<SSEAlgorithm>AES256</SSEAlgorithm>", await encryption.Content.ReadAsStringAsync());
+        }
+    }
+
     // ── ACL ───────────────────────────────────────────────────────────
 
     [SkippableFact]
@@ -499,6 +542,17 @@ public class S3LongTailTests
         using var resp = await SendAsync(HttpMethod.Put, $"/{bucket}/{key}", body,
             contentType: "application/octet-stream");
         Assert.True(resp.IsSuccessStatusCode, $"PutObject → {(int)resp.StatusCode}");
+    }
+
+    private async Task AssertSuccessAsync(HttpMethod method, string pathAndQuery, string xml)
+    {
+        using var response = await SendAsync(
+            method,
+            pathAndQuery,
+            Encoding.UTF8.GetBytes(xml),
+            contentType: "application/xml");
+        Assert.True(response.IsSuccessStatusCode,
+            $"{pathAndQuery} → {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
     }
 
     private async Task<HttpResponseMessage> SendAsync(

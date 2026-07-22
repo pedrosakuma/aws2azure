@@ -324,9 +324,10 @@ internal sealed partial class BlobClient
     /// for an object. The returned XML uses Azure's <c>&lt;Tags&gt;</c> root
     /// (no namespace); the S3 module rewraps it as <c>&lt;Tagging&gt;</c>.
     /// </summary>
-    public Task<HttpResponseMessage> GetBlobTagsAsync(string container, string key, CancellationToken cancellationToken)
+    public Task<HttpResponseMessage> GetBlobTagsAsync(
+        string container, string key, string? versionId, CancellationToken cancellationToken)
     {
-        var uri = BuildBlobUri(container, key, "?comp=tags");
+        var uri = BuildBlobUri(container, key, VersionQuery("comp=tags", versionId));
         return SendAsync(HttpMethod.Get, uri, cancellationToken);
     }
 
@@ -336,9 +337,9 @@ internal sealed partial class BlobClient
     /// in Azure's wire format (<c>&lt;Tags&gt;&lt;TagSet&gt;…</c>).
     /// </summary>
     public Task<HttpResponseMessage> PutBlobTagsAsync(
-        string container, string key, byte[] azureTagsXml, CancellationToken cancellationToken)
+        string container, string key, byte[] azureTagsXml, string? versionId, CancellationToken cancellationToken)
     {
-        var uri = BuildBlobUri(container, key, "?comp=tags");
+        var uri = BuildBlobUri(container, key, VersionQuery("comp=tags", versionId));
         var request = new HttpRequestMessage(HttpMethod.Put, uri)
         {
             Content = new ByteArrayContent(azureTagsXml),
@@ -406,10 +407,14 @@ internal sealed partial class BlobClient
     /// (Azure has no native bucket-tagging endpoint).
     /// </summary>
     public Task<HttpResponseMessage> SetContainerMetadataAsync(
-        string container, IReadOnlyDictionary<string, string> metadata, CancellationToken cancellationToken)
+        string container,
+        IReadOnlyDictionary<string, string> metadata,
+        string ifMatch,
+        CancellationToken cancellationToken)
     {
         var uri = new Uri(_serviceEndpoint, $"{container}?restype=container&comp=metadata");
         var request = new HttpRequestMessage(HttpMethod.Put, uri);
+        request.Headers.TryAddWithoutValidation("If-Match", ifMatch);
         foreach (var kv in metadata)
         {
             request.Headers.TryAddWithoutValidation("x-ms-meta-" + kv.Key, kv.Value);

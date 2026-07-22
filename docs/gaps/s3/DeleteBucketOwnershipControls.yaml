@@ -1,10 +1,15 @@
 service: s3
 operation: DeleteBucketOwnershipControls
-azure_equivalent: "(no equivalent — proxy treats it as a no-op)"
-status: stub
+azure_equivalent: "Conditional container-metadata update"
+status: partial
 sub_features:
-  - name: "idempotent clear"
+  - name: "idempotent intent clear"
     status: implemented
-    notes: "Returns 204 No Content because the underlying configuration is never set in the first place."
+    notes: "Removes only the proxy-owned ownership-intent key with bounded ETag/If-Match retry and returns 204."
+  - name: "authorization change"
+    status: unsupported
+    notes: "Deleting the compatibility intent does not alter Azure authorization."
+behavior_differences:
+  - "The operation clears persisted proxy intent only."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketOwnershipControls.html

@@ -1,12 +1,15 @@
 service: s3
 operation: GetPublicAccessBlock
-azure_equivalent: "(no equivalent — proxy returns 404 NoSuchPublicAccessBlockConfiguration)"
-status: unsupported
+azure_equivalent: "Container metadata (persisted compatibility intent only)"
+status: partial
 sub_features:
-  - name: "configuration storage"
+  - name: "four-flag configuration round-trip"
+    status: implemented
+    notes: "Returns the stored BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy, and RestrictPublicBuckets values."
+  - name: "public-access enforcement"
     status: unsupported
-    notes: "Azure controls public access via container access level and 'allow blob public access' on the account; not bridged."
+    notes: "Azure container/account public-access controls are not changed or evaluated."
 behavior_differences:
-  - "GET returns HTTP 404 with code NoSuchPublicAccessBlockConfiguration so clients receive the same shape as a never-configured S3 bucket instead of InternalError."
+  - "A missing intent returns 404 NoSuchPublicAccessBlockConfiguration; a present intent is not an Azure access-control boundary."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetPublicAccessBlock.html

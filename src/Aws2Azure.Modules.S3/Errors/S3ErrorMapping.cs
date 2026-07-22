@@ -32,6 +32,9 @@ internal static class S3ErrorMapping
             (404, "BlobNotFound") =>
                 new Mapping(404, "NoSuchKey", "The specified key does not exist."),
 
+            (404, "BlobVersionNotFound") =>
+                new Mapping(404, "NoSuchVersion", "The specified version does not exist."),
+
             // Azure surfaces "source not reachable" during a Copy Blob /
             // Put Block From URL with CannotVerifyCopySource; from S3's
             // perspective that's a source bucket/key the caller doesn't
@@ -162,6 +165,10 @@ internal static class S3ErrorMapping
 
     public static Mapping MalformedXml(string message) =>
         new(400, "MalformedXML", message);
+
+    public static Mapping MetadataUpdateConflict() =>
+        new(409, "OperationAborted",
+            "A conflicting conditional operation is currently in progress against this resource.");
 
     public static Mapping VirtualHostedNotSupported() =>
         new(400, "InvalidRequest",

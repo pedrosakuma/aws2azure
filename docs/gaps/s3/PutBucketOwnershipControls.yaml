@@ -1,12 +1,15 @@
 service: s3
 operation: PutBucketOwnershipControls
-azure_equivalent: "(no equivalent — proxy returns 501 NotImplemented)"
-status: unsupported
+azure_equivalent: "Conditional container-metadata update (persisted compatibility intent only)"
+status: partial
 sub_features:
   - name: "configuration storage"
+    status: implemented
+    notes: "Persists one valid ObjectOwnership rule with bounded ETag/If-Match retry while preserving unrelated container metadata."
+  - name: "ACL ownership enforcement"
     status: unsupported
-    notes: "See the matching Get* gap doc for the Azure-side reason."
+    notes: "BucketOwnerPreferred/ObjectWriter are recorded but do not enable non-owner ACL grants; BucketOwnerEnforced does not alter Azure authorization."
 behavior_differences:
-  - "PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape."
+  - "This is an intent surface, not an enforcement surface. Azure account/container authorization remains operator-managed."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketOwnershipControls.html

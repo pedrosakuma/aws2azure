@@ -9,5 +9,11 @@ sub_features:
   - name: "per-object grants"
     status: unsupported
     notes: "Reports owner FULL_CONTROL only."
+  - name: "versionId existence check"
+    status: implemented
+    notes: "The synthetic ACL is returned only after HEAD verifies the selected Azure blob version exists; x-ms-version-id is returned as x-amz-version-id."
+behavior_differences:
+  - "The versionId selects the object existence check, but ACL grants remain synthetic owner-only state."
+  - "Azure BlobVersionNotFound maps to S3 NoSuchVersion."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectAcl.html

@@ -13,6 +13,6 @@ sub_features:
     status: implemented
     notes: "Enforced before the Azure call."
 behavior_differences:
-  - "The metadata write replaces all container metadata on each PUT — the proxy uses no other container-metadata keys today."
+  - "Azure replaces the full metadata bag; the proxy uses bounded ETag/If-Match retry and re-merges every attempt so unrelated Azure metadata and other proxy intents are preserved."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketTagging.html

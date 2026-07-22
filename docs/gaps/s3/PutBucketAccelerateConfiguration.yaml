@@ -1,12 +1,15 @@
 service: s3
 operation: PutBucketAccelerateConfiguration
-azure_equivalent: "(no equivalent — proxy returns 501 NotImplemented)"
-status: unsupported
+azure_equivalent: "(no equivalent — Suspended is an accepted stable no-op)"
+status: partial
 sub_features:
-  - name: "configuration storage"
+  - name: "Suspended"
+    status: implemented
+    notes: "Accepted as a 200 no-op; the matching GET remains Suspended."
+  - name: "Enabled"
     status: unsupported
-    notes: "See the matching Get* gap doc for the Azure-side reason."
+    notes: "Returns 501 NotImplemented; no Azure acceleration topology is assumed or provisioned."
 behavior_differences:
-  - "PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape."
+  - "Suspended is stable but not persisted because it is the only representable state."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketAccelerateConfiguration.html

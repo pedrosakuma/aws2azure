@@ -6,7 +6,12 @@ sub_features:
   - name: "idempotent clear"
     status: implemented
     notes: "Azure has no DELETE for blob index tags; clearing is modelled as a PUT of an empty tag set."
+  - name: "versionId qualifier"
+    status: implemented
+    notes: "Maps the opaque S3 versionId to Azure versionid. Unqualified requests HEAD and pin the current version before clearing tags and returning x-amz-version-id."
 behavior_differences:
   - "Returns 204 No Content matching the S3 spec."
+  - "Version selection requires account-level Blob versioning enabled out-of-band."
+  - "Azure BlobVersionNotFound maps to S3 NoSuchVersion."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjectTagging.html
