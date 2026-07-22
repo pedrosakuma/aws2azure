@@ -5,10 +5,11 @@ status: partial
 sub_features:
   - name: Auto-confirmed no-op
     status: implemented
-    notes: "Subscriptions are treated as immediately confirmed when created. ConfirmSubscription returns success and a derived SubscriptionArn without mutating Azure resources."
+    notes: "Subscriptions are treated as immediately confirmed when created. ConfirmSubscription accepts either the deterministic 20-hex subscription id or the matching synthetic SubscriptionArn and returns success without mutating Azure resources."
 behavior_differences:
   - "SNS confirmation tokens are not validated against an out-of-band challenge flow."
-  - "If the token cannot be mapped back to a known subscription identifier, aws2azure returns a synthetic auto-confirmed subscription ARN for the topic."
+  - "Arbitrary tokens and a SubscriptionArn token bound to a different TopicArn are rejected with InvalidParameter; the operation does not synthesize a fallback identifier."
+  - "ConfirmSubscription applies to the Service Bus subscription-management profile only and does not confirm Azure Event Grid event subscriptions."
 references:
   - https://docs.aws.amazon.com/sns/latest/api/API_ConfirmSubscription.html
   - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest

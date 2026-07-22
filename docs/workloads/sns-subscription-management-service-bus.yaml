@@ -1,0 +1,49 @@
+schema_version: 1
+id: sns-subscription-management-service-bus
+version: 1
+name: SNS subscription management (Service Bus Topics backend)
+minimum_proxy_version: 0.1.0
+real_azure_seal_max_age_days: 90
+operations:
+  - sns:Subscribe
+  - sns:ConfirmSubscription
+  - sns:ListSubscriptions
+  - sns:ListSubscriptionsByTopic
+  - sns:GetSubscriptionAttributes
+  - sns:SetSubscriptionAttributes
+  - sns:Unsubscribe
+requirements:
+  - sns_subscription_management
+accepted_partial_operations:
+  - sns:Subscribe
+  - sns:ConfirmSubscription
+  - sns:ListSubscriptions
+  - sns:ListSubscriptionsByTopic
+  - sns:GetSubscriptionAttributes
+  - sns:SetSubscriptionAttributes
+  - sns:Unsubscribe
+accepted_design_gaps:
+  - "sns:Two backends with different fidelity"
+  - "sns:No AWS region / account namespace"
+  - "sns:No IAM-backed policy surface"
+  - "sns:Event Grid subscription management is excluded"
+evidence:
+  qualification_artifact: ""
+  required_scenarios:
+    - representative-load
+    - lifecycle
+    - metadata-persistence
+    - pagination
+    - concurrency
+    - restart
+    - cleanup
+    - rollback
+  required_real_azure_scenarios:
+    - representative-load
+    - lifecycle
+    - metadata-persistence
+    - pagination
+    - concurrency
+    - restart
+    - cleanup
+    - rollback

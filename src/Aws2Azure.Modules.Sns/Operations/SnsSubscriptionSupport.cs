@@ -12,7 +12,10 @@ internal static class SnsSubscriptionSupport
 {
     internal const int ListSubscriptionsPageSize = 100;
     internal const int UserMetadataMaxLength = 1024;
-    private const string DummyConfirmedSubscriptionId = "autoconfirmed";
+    private const string PaginationTokenPrefix = "sns-sub.";
+    private const int PaginationTokenVersion = 1;
+    private const int PaginationSignatureLength = 32;
+    private static readonly Encoding StrictUtf8 = new UTF8Encoding(false, true);
 
     public static bool TryParseSubscribeRequest(
         IReadOnlyDictionary<string, string> parameters,
@@ -144,34 +147,82 @@ internal static class SnsSubscriptionSupport
         return true;
     }
 
-    public static string EncodeNextToken(int topicSkip, int subscriptionSkipWithinTopic)
+    public static string EncodeNextToken(
+        string signingKey,
+        SnsOperation operation,
+        string? topicName,
+        int topicSkip,
+        int subscriptionSkipWithinTopic)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(signingKey);
         ArgumentOutOfRangeException.ThrowIfNegative(topicSkip);
         ArgumentOutOfRangeException.ThrowIfNegative(subscriptionSkipWithinTopic);
+        if (operation is not (SnsOperation.ListSubscriptions or SnsOperation.ListSubscriptionsByTopic))
+        {
+            throw new ArgumentOutOfRangeException(nameof(operation));
+        }
 
         var token = new SnsListSubscriptionsNextToken
         {
+            Version = PaginationTokenVersion,
+            Operation = operation.ToString(),
+            TopicName = topicName,
             TopicSkip = topicSkip,
             SubscriptionSkipWithinTopic = subscriptionSkipWithinTopic,
         };
 
         var json = JsonSerializer.Serialize(token, SnsSubscriptionJsonContext.Default.SnsListSubscriptionsNextToken);
-        return Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
+        var payload = StrictUtf8.GetBytes(json);
+        Span<byte> signature = stackalloc byte[PaginationSignatureLength];
+        HMACSHA256.HashData(StrictUtf8.GetBytes(signingKey), payload, signature);
+        return PaginationTokenPrefix + Base64UrlEncode(payload) + "." + Base64UrlEncode(signature);
     }
 
-    public static bool TryDecodeNextToken(string nextToken, out SnsListSubscriptionsNextToken token)
+    public static bool TryDecodeNextToken(
+        string nextToken,
+        string signingKey,
+        SnsOperation expectedOperation,
+        string? expectedTopicName,
+        out SnsListSubscriptionsNextToken token)
     {
         token = new SnsListSubscriptionsNextToken();
-        if (string.IsNullOrWhiteSpace(nextToken))
+        if (string.IsNullOrWhiteSpace(nextToken)
+            || string.IsNullOrWhiteSpace(signingKey)
+            || expectedOperation is not (SnsOperation.ListSubscriptions or SnsOperation.ListSubscriptionsByTopic)
+            || !nextToken.StartsWith(PaginationTokenPrefix, StringComparison.Ordinal))
         {
             return false;
         }
 
         try
         {
-            var json = Encoding.UTF8.GetString(Convert.FromBase64String(nextToken));
+            var wire = nextToken.AsSpan(PaginationTokenPrefix.Length);
+            var separator = wire.IndexOf('.');
+            if (separator <= 0
+                || separator == wire.Length - 1
+                || wire[(separator + 1)..].IndexOf('.') >= 0
+                || !TryBase64UrlDecode(wire[..separator], out var payload)
+                || !TryBase64UrlDecode(wire[(separator + 1)..], out var providedSignature))
+            {
+                return false;
+            }
+
+            Span<byte> expectedSignature = stackalloc byte[PaginationSignatureLength];
+            HMACSHA256.HashData(StrictUtf8.GetBytes(signingKey), payload, expectedSignature);
+            if (providedSignature.Length != PaginationSignatureLength
+                || !CryptographicOperations.FixedTimeEquals(providedSignature, expectedSignature))
+            {
+                return false;
+            }
+
+            var json = StrictUtf8.GetString(payload);
             var parsed = JsonSerializer.Deserialize(json, SnsSubscriptionJsonContext.Default.SnsListSubscriptionsNextToken);
-            if (parsed is null || parsed.TopicSkip < 0 || parsed.SubscriptionSkipWithinTopic < 0)
+            if (parsed is null
+                || parsed.Version != PaginationTokenVersion
+                || !string.Equals(parsed.Operation, expectedOperation.ToString(), StringComparison.Ordinal)
+                || !string.Equals(parsed.TopicName, expectedTopicName, StringComparison.Ordinal)
+                || parsed.TopicSkip < 0
+                || parsed.SubscriptionSkipWithinTopic < 0)
             {
                 return false;
             }
@@ -184,6 +235,10 @@ internal static class SnsSubscriptionSupport
             return false;
         }
         catch (JsonException)
+        {
+            return false;
+        }
+        catch (DecoderFallbackException)
         {
             return false;
         }
@@ -238,19 +293,88 @@ internal static class SnsSubscriptionSupport
     public static bool TryParseBooleanAttribute(string value, out bool result)
         => TryParseBoolean(value, out result);
 
-    public static string ResolveConfirmSubscriptionArn(HttpContext context, string topicName, string token)
+    public static bool TryResolveConfirmSubscriptionArn(
+        HttpContext context,
+        string topicArn,
+        string topicName,
+        string token,
+        out string subscriptionArn,
+        out string? error)
     {
-        if (TryParseSubscriptionArn(token, out _, out _, out _))
+        if (TryParseSubscriptionArn(token, out var tokenTopicName, out _, out _))
         {
-            return token;
+            var tokenTopicArn = token[..token.LastIndexOf(':')];
+            if (!string.Equals(tokenTopicName, topicName, StringComparison.Ordinal)
+                || !string.Equals(tokenTopicArn, topicArn, StringComparison.Ordinal))
+            {
+                subscriptionArn = string.Empty;
+                error = "Parameter 'Token' does not belong to the supplied TopicArn.";
+                return false;
+            }
+
+            subscriptionArn = token;
+            error = null;
+            return true;
         }
 
         if (TryDeriveSubscriptionIdFromToken(token, out var subscriptionId))
         {
-            return BuildSubscriptionArn(context, topicName, subscriptionId);
+            subscriptionArn = BuildSubscriptionArn(context, topicName, subscriptionId);
+            error = null;
+            return true;
         }
 
-        return BuildSubscriptionArn(context, topicName, DummyConfirmedSubscriptionId);
+        subscriptionArn = string.Empty;
+        error = "Parameter 'Token' was not a valid auto-confirmed subscription token.";
+        return false;
+    }
+
+    private static string Base64UrlEncode(ReadOnlySpan<byte> data)
+        => Convert.ToBase64String(data).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+    private static bool TryBase64UrlDecode(ReadOnlySpan<char> encoded, out byte[] data)
+    {
+        data = [];
+        if (encoded.IsEmpty)
+        {
+            return false;
+        }
+
+        var padding = encoded.Length % 4;
+        if (padding == 1)
+        {
+            return false;
+        }
+
+        var builder = new StringBuilder(encoded.Length + (padding == 0 ? 0 : 4 - padding));
+        for (var i = 0; i < encoded.Length; i++)
+        {
+            builder.Append(encoded[i] switch
+            {
+                '-' => '+',
+                '_' => '/',
+                _ => encoded[i],
+            });
+        }
+
+        if (padding == 2)
+        {
+            builder.Append("==");
+        }
+        else if (padding == 3)
+        {
+            builder.Append('=');
+        }
+
+        try
+        {
+            data = Convert.FromBase64String(builder.ToString());
+            return string.Equals(Base64UrlEncode(data), encoded.ToString(), StringComparison.Ordinal);
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
     }
 
     private static bool IsSupportedProtocol(string protocol)
@@ -440,6 +564,9 @@ internal sealed class SnsSubscriptionMetadata
 
 internal sealed class SnsListSubscriptionsNextToken
 {
+    public int Version { get; set; }
+    public string Operation { get; set; } = string.Empty;
+    public string? TopicName { get; set; }
     public int TopicSkip { get; set; }
     public int SubscriptionSkipWithinTopic { get; set; }
 }

@@ -60,6 +60,7 @@ public sealed class ListSubscriptionsHandlerTests
             new SnsParseResult(SnsOperation.ListSubscriptions, new Dictionary<string, string>(), null),
             SnsManagementClientTestSupport.NewCredentials(),
             managementClient,
+            SigningKey,
             CancellationToken.None);
 
         var firstBody = SnsManagementClientTestSupport.ReadBody(firstContext);
@@ -76,6 +77,7 @@ public sealed class ListSubscriptionsHandlerTests
             new SnsParseResult(SnsOperation.ListSubscriptions, new Dictionary<string, string> { ["NextToken"] = nextToken }, null),
             SnsManagementClientTestSupport.NewCredentials(),
             managementClient,
+            SigningKey,
             CancellationToken.None);
 
         var secondBody = SnsManagementClientTestSupport.ReadBody(secondContext);
@@ -85,7 +87,14 @@ public sealed class ListSubscriptionsHandlerTests
 
     private static SnsListSubscriptionsNextToken DecodeNextToken(string nextToken)
     {
-        Assert.True(SnsSubscriptionSupport.TryDecodeNextToken(nextToken, out var decoded));
+        Assert.True(SnsSubscriptionSupport.TryDecodeNextToken(
+            nextToken,
+            SigningKey,
+            SnsOperation.ListSubscriptions,
+            expectedTopicName: null,
+            out var decoded));
         return decoded;
     }
+
+    private const string SigningKey = "unit-test-pagination-signing-key";
 }

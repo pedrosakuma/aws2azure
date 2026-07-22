@@ -11,6 +11,7 @@ behavior_differences:
   - "ConfirmationWasAuthenticated is always true and PendingConfirmation is always false because this slice auto-confirms subscriptions."
   - "FilterPolicy is returned from stored UserMetadata only. FilterPolicyScope defaults to MessageAttributes when a stored filter policy has no explicit scope."
   - "DeliveryPolicy, EffectiveDeliveryPolicy, and RedrivePolicy are omitted because Service Bus delivery and dead-letter settings do not match the SNS attribute shapes exposed by this API."
+  - "Attributes are read from Azure Service Bus subscriptions only; Azure Event Grid event-subscription properties are explicitly outside this profile."
 references:
   - https://docs.aws.amazon.com/sns/latest/api/API_GetSubscriptionAttributes.html
   - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest

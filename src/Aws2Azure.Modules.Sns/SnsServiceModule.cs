@@ -110,6 +110,20 @@ public sealed class SnsServiceModule : IServiceModule
             return;
         }
 
+        string? paginationSigningKey = null;
+        if ((parsed.Operation is SnsOperation.ListSubscriptions or SnsOperation.ListSubscriptionsByTopic)
+            && (!_credentials.TryGetAwsSecret(accessKey, out paginationSigningKey)
+                || string.IsNullOrWhiteSpace(paginationSigningKey)))
+        {
+            await SnsErrorResponse.WriteErrorAsync(
+                context,
+                StatusCodes.Status403Forbidden,
+                errorType: "Sender",
+                errorCode: "MissingAuthenticationToken",
+                message: "Request is missing AWS credentials.").ConfigureAwait(false);
+            return;
+        }
+
         var serviceBusTopicsCredentials = _credentials.GetAzureCredentialsFor(accessKey, AzureService.ServiceBusTopics) as ServiceBusTopicsCredentials;
         var eventGridCredentials = _credentials.GetAzureCredentialsFor(accessKey, AzureService.EventGrid) as EventGridCredentials;
         if (serviceBusTopicsCredentials is null)
@@ -196,6 +210,7 @@ public sealed class SnsServiceModule : IServiceModule
                         parsed,
                         serviceBusTopicsCredentials,
                         _serviceBusTopicsManagementClient,
+                        paginationSigningKey!,
                         context.RequestAborted)
                     .ConfigureAwait(false);
                 return;
@@ -205,6 +220,7 @@ public sealed class SnsServiceModule : IServiceModule
                         parsed,
                         serviceBusTopicsCredentials,
                         _serviceBusTopicsManagementClient,
+                        paginationSigningKey!,
                         context.RequestAborted)
                     .ConfigureAwait(false);
                 return;

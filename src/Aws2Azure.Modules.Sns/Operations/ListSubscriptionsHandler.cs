@@ -13,6 +13,7 @@ internal static class ListSubscriptionsHandler
         SnsParseResult parseResult,
         ServiceBusTopicsCredentials credentials,
         IServiceBusTopicsManagementClient managementClient,
+        string paginationSigningKey,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -25,7 +26,12 @@ internal static class ListSubscriptionsHandler
         if (parseResult.Parameters.TryGetValue("NextToken", out var nextToken)
             && !string.IsNullOrWhiteSpace(nextToken))
         {
-            if (!SnsSubscriptionSupport.TryDecodeNextToken(nextToken, out var token))
+            if (!SnsSubscriptionSupport.TryDecodeNextToken(
+                    nextToken,
+                    paginationSigningKey,
+                    SnsOperation.ListSubscriptions,
+                    expectedTopicName: null,
+                    out var token))
             {
                 await SnsTopicSupport.WriteInvalidParameterAsync(context, "Parameter 'NextToken' was not valid.").ConfigureAwait(false);
                 return;
@@ -104,7 +110,12 @@ internal static class ListSubscriptionsHandler
 
             if (subscriptions.Count == SnsSubscriptionSupport.ListSubscriptionsPageSize)
             {
-                var responseNextToken = SnsSubscriptionSupport.EncodeNextToken(topicSkip + i, skip + subscriptionPage.Subscriptions.Count);
+                var responseNextToken = SnsSubscriptionSupport.EncodeNextToken(
+                    paginationSigningKey,
+                    SnsOperation.ListSubscriptions,
+                    topicName: null,
+                    topicSkip + i,
+                    skip + subscriptionPage.Subscriptions.Count);
                 await SnsResponseWriter.WriteListSubscriptionsResponseAsync(context, subscriptions, responseNextToken, byTopic: false).ConfigureAwait(false);
                 return;
             }
@@ -115,7 +126,12 @@ internal static class ListSubscriptionsHandler
         string? responseToken = null;
         if (topicPage.TopicNames.Count == SnsTopicSupport.ListTopicsPageSize)
         {
-            responseToken = SnsSubscriptionSupport.EncodeNextToken(topicSkip + consumedTopics, 0);
+            responseToken = SnsSubscriptionSupport.EncodeNextToken(
+                paginationSigningKey,
+                SnsOperation.ListSubscriptions,
+                topicName: null,
+                topicSkip + consumedTopics,
+                subscriptionSkipWithinTopic: 0);
         }
 
         await SnsResponseWriter.WriteListSubscriptionsResponseAsync(context, subscriptions, responseToken, byTopic: false).ConfigureAwait(false);

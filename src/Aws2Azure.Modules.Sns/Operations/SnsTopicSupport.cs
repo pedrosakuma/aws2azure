@@ -265,6 +265,12 @@ internal static class SnsTopicSupport
                 errorType: "Sender",
                 errorCode: "Throttled",
                 message: "Azure Service Bus throttled the management request; retry with back-off."),
+            System.Net.HttpStatusCode.PreconditionFailed => SnsErrorResponse.WriteErrorAsync(
+                context,
+                StatusCodes.Status409Conflict,
+                errorType: "Sender",
+                errorCode: "ConcurrentAccess",
+                message: "The Azure Service Bus subscription changed while its attributes were being updated; retry the request."),
             _ => SnsErrorResponse.WriteErrorAsync(
                 context,
                 StatusCodes.Status502BadGateway,

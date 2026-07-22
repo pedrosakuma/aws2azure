@@ -19,7 +19,18 @@ internal static class ConfirmSubscriptionHandler
             return;
         }
 
-        var subscriptionArn = SnsSubscriptionSupport.ResolveConfirmSubscriptionArn(context, topicName, token);
+        if (!SnsSubscriptionSupport.TryResolveConfirmSubscriptionArn(
+                context,
+                topicArn,
+                topicName,
+                token,
+                out var subscriptionArn,
+                out error))
+        {
+            await SnsTopicSupport.WriteInvalidParameterAsync(context, error!).ConfigureAwait(false);
+            return;
+        }
+
         await SnsResponseWriter.WriteConfirmSubscriptionResponseAsync(context, subscriptionArn).ConfigureAwait(false);
     }
 }
