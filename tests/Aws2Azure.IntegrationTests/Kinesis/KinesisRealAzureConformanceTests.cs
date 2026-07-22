@@ -17,14 +17,14 @@ public sealed class KinesisRealAzureConformanceTests(RealAzureProxyFixture fixtu
 
         using var client = fixture.CreateKinesisClient();
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
-        var target = await ResolvePartitionTargetAsync(client, fixture.EventHubStream, timeout.Token).ConfigureAwait(false);
+        var target = await KinesisTestHelpers.ResolvePartitionTargetAsync(client, fixture.EventHubStream, timeout.Token).ConfigureAwait(false);
         var iterator = await client.GetShardIteratorAsync(new GetShardIteratorRequest
         {
             StreamName = fixture.EventHubStream,
             ShardId = target.ShardId,
             ShardIteratorType = "LATEST",
         }, timeout.Token).ConfigureAwait(false);
-        var primedIterator = await PrimeIteratorAsync(client, iterator.ShardIterator, timeout.Token).ConfigureAwait(false);
+        var primedIterator = await KinesisTestHelpers.PrimeIteratorAsync(client, iterator.ShardIterator, timeout.Token).ConfigureAwait(false);
 
         var payload = "read-" + Guid.NewGuid().ToString("N");
         using var data = new MemoryStream(Encoding.UTF8.GetBytes(payload));
@@ -131,7 +131,7 @@ public sealed class KinesisRealAzureConformanceTests(RealAzureProxyFixture fixtu
 
         using var client = fixture.CreateKinesisClient();
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
-        var target = await ResolvePartitionTargetAsync(client, fixture.EventHubStream, timeout.Token).ConfigureAwait(false);
+        var target = await KinesisTestHelpers.ResolvePartitionTargetAsync(client, fixture.EventHubStream, timeout.Token).ConfigureAwait(false);
         async Task<string> CreateIteratorAsync()
         {
             var response = await client.GetShardIteratorAsync(new GetShardIteratorRequest
@@ -147,8 +147,8 @@ public sealed class KinesisRealAzureConformanceTests(RealAzureProxyFixture fixtu
         var secondIterator = await CreateIteratorAsync().ConfigureAwait(false);
         Assert.NotEqual(firstIterator, secondIterator);
         var primedIterators = await Task.WhenAll(
-            PrimeIteratorAsync(client, firstIterator, timeout.Token),
-            PrimeIteratorAsync(client, secondIterator, timeout.Token)).ConfigureAwait(false);
+            KinesisTestHelpers.PrimeIteratorAsync(client, firstIterator, timeout.Token),
+            KinesisTestHelpers.PrimeIteratorAsync(client, secondIterator, timeout.Token)).ConfigureAwait(false);
 
         var payload = "concurrent-" + Guid.NewGuid().ToString("N");
         using var data = new MemoryStream(Encoding.UTF8.GetBytes(payload));
@@ -168,37 +168,5 @@ public sealed class KinesisRealAzureConformanceTests(RealAzureProxyFixture fixtu
 
         Assert.All(reads, records =>
             Assert.Contains(records, record => KinesisTestHelpers.Utf8(record) == payload));
-    }
-
-    private static async Task<(string ShardId, string PartitionKey)> ResolvePartitionTargetAsync(
-        IAmazonKinesis client,
-        string streamName,
-        CancellationToken cancellationToken)
-    {
-        var response = await client.ListShardsAsync(new ListShardsRequest
-        {
-            StreamName = streamName,
-            MaxResults = 100,
-        }, cancellationToken).ConfigureAwait(false);
-        Assert.NotEmpty(response.Shards);
-
-        var selected = Assert.Single(KinesisTestHelpers.PickPartitionKeys(
-            response.Shards.Count,
-            totalRecords: 1,
-            requiredPartitions: 1));
-        return ($"shardId-{selected.Key:D12}", Assert.Single(selected.Value));
-    }
-
-    private static async Task<string> PrimeIteratorAsync(
-        IAmazonKinesis client,
-        string shardIterator,
-        CancellationToken cancellationToken)
-    {
-        var response = await client.GetRecordsAsync(new GetRecordsRequest
-        {
-            ShardIterator = shardIterator,
-            Limit = 1,
-        }, cancellationToken).ConfigureAwait(false);
-        return response.NextShardIterator;
     }
 }

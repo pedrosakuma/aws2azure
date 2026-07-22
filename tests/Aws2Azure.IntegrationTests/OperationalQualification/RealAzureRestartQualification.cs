@@ -1,10 +1,13 @@
+using System.Text;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
+using Amazon.Kinesis.Model;
 using DynamoDbResourceNotFoundException = Amazon.DynamoDBv2.Model.ResourceNotFoundException;
 using Amazon.S3.Model;
 using Amazon.SecretsManager.Model;
 using Amazon.SQS.Model;
 using Aws2Azure.IntegrationTests.Fixtures;
+using Aws2Azure.IntegrationTests.Kinesis;
 using Xunit;
 
 namespace Aws2Azure.IntegrationTests.OperationalQualification;
@@ -115,6 +118,56 @@ internal static class RealAzureRestartQualification
             try { await client.DeleteObjectAsync(bucket, key).ConfigureAwait(false); } catch { }
             try { await client.DeleteBucketAsync(bucket).ConfigureAwait(false); } catch { }
         }
+    }
+
+    /// <summary>
+    /// Writes a record before restart, then confirms it is still readable
+    /// after the proxy is terminated and restarted with the same immutable
+    /// configuration, using a *durable* AT_TIMESTAMP iterator obtained after
+    /// the restart. A LATEST-type iterator deliberately is not carried across
+    /// the restart here: per the documented "shared broker cursor per
+    /// consumer group" design gap, an unread LATEST token is resolved
+    /// relative to the pooled AMQP link's live position, which is proxy-
+    /// process-local and is not expected to durably resume across a process
+    /// restart. AT_TIMESTAMP instead encodes a concrete Event-Hubs
+    /// enqueued-time position, so it round-trips correctly regardless of
+    /// which process resolves it, proving the write survived the restart
+    /// without asserting a stronger cross-process cursor guarantee this
+    /// module does not make.
+    /// </summary>
+    public static async Task VerifyKinesisAsync(RealAzureProxyFixture fixture)
+    {
+        using var client = fixture.CreateKinesisClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var target = await KinesisTestHelpers.ResolvePartitionTargetAsync(
+            client, fixture.EventHubStream, timeout.Token).ConfigureAwait(false);
+
+        var boundary = DateTimeOffset.UtcNow;
+        var payload = "restart-" + Guid.NewGuid().ToString("N");
+        using var data = new MemoryStream(Encoding.UTF8.GetBytes(payload));
+        await client.PutRecordAsync(new PutRecordRequest
+        {
+            StreamName = fixture.EventHubStream,
+            PartitionKey = target.PartitionKey,
+            Data = data,
+        }, timeout.Token).ConfigureAwait(false);
+
+        await fixture.RestartAsync().ConfigureAwait(false);
+
+        var iterator = await client.GetShardIteratorAsync(new GetShardIteratorRequest
+        {
+            StreamName = fixture.EventHubStream,
+            ShardId = target.ShardId,
+            ShardIteratorType = "AT_TIMESTAMP",
+            Timestamp = KinesisTestHelpers.ToSdkTimestamp(boundary),
+        }, timeout.Token).ConfigureAwait(false);
+
+        var records = await KinesisTestHelpers.ReadUntilAsync(
+            client,
+            iterator.ShardIterator,
+            record => KinesisTestHelpers.Utf8(record) == payload,
+            TimeSpan.FromSeconds(45)).ConfigureAwait(false);
+        Assert.Contains(records, record => KinesisTestHelpers.Utf8(record) == payload);
     }
 
     public static async Task VerifySecretsManagerAsync(

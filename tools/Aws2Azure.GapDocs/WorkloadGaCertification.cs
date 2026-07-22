@@ -499,26 +499,26 @@ public static class WorkloadGaEvaluator
         catch (Exception exception) when (exception is InvalidDataException or IOException or YamlException)
         {
             report.Verdict = "candidate";
-            Add(
-                report,
-                "qualification_evidence_invalid",
-                "blocking",
-                qualificationPath,
-                ToRepoRelativeMessage(exception.Message, resolvedPath, qualificationPath));
+            Add(report, "qualification_evidence_invalid", "blocking", qualificationPath,
+                ToRepoRelativeMessage(exception.Message, resolvedPath, repoRoot));
             return report;
         }
+        // Reports feed a committed, cross-machine artifact (docs/site/workload-ga.*);
+        // an absolute filesystem path here would make regeneration non-reproducible
+        // across checkouts (e.g. a contributor's sandbox vs. the CI runner), so every
+        // embedded path is normalized to repo-relative immediately after load. Passing
+        // qualificationPath as SloQualificationValidator's displayPath means its own
+        // messages are already relative; qualification.SourceFile is mutated too so
+        // any *other* direct reader (e.g. QualificationMatches below) sees the same
+        // relative identifier without needing its own displayPath parameter.
+        qualification.SourceFile = ToRepoRelativePath(resolvedPath, repoRoot);
         var qualificationErrors = SloQualificationValidator.Validate(
             qualification,
             currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc),
             qualificationPath);
         foreach (var error in qualificationErrors)
         {
-            Add(
-                report,
-                "qualification_evidence_invalid",
-                "blocking",
-                qualificationPath,
-                ToRepoRelativeMessage(error, resolvedPath, qualificationPath));
+            Add(report, "qualification_evidence_invalid", "blocking", qualificationPath, error);
         }
         if (qualificationErrors.Count > 0
             || !QualificationMatches(
@@ -600,14 +600,19 @@ public static class WorkloadGaEvaluator
         }
         if (manifest.Evidence.RequiredScenarios.Contains("rollback", StringComparer.Ordinal))
         {
+            var ledgerPath = Path.Combine(
+                repoRoot,
+                "docs",
+                "workloads",
+                "approved-runtimes",
+                manifest.Id + ".yaml");
             try
             {
-                var ledger = ApprovedRuntimeLedgerLoader.Load(Path.Combine(
-                    repoRoot,
-                    "docs",
-                    "workloads",
-                    "approved-runtimes",
-                    manifest.Id + ".yaml"));
+                var ledger = ApprovedRuntimeLedgerLoader.Load(ledgerPath);
+                // Same reproducibility concern as the qualification artifact above:
+                // relativize before any validator can turn this into a reported
+                // finding.
+                ledger.SourceFile = ToRepoRelativePath(ledgerPath, repoRoot);
                 var ledgerErrors = ApprovedRuntimeLedgerValidator.Validate(
                     [ledger],
                     [manifest],
@@ -634,7 +639,7 @@ public static class WorkloadGaEvaluator
                         qualification.Candidate.Runtime,
                         ledger,
                         currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
-                    ValidateApprovedQualification(manifest, qualification, ledger);
+                    ValidateApprovedQualification(manifest, qualification, ledger, repoRoot);
                     var rollbackTarget = ledger.Qualification!.RollbackTarget!;
                     foreach (var proof in qualification.RollbackProofs)
                     {
@@ -666,7 +671,7 @@ public static class WorkloadGaEvaluator
                     "rollback_ledger_mismatch",
                     "blocking",
                     qualification.SourceFile,
-                    exception.Message);
+                    ToRepoRelativeMessage(exception.Message, ledgerPath, repoRoot));
             }
         }
         return matches;
@@ -675,13 +680,14 @@ public static class WorkloadGaEvaluator
     private static void ValidateApprovedQualification(
         WorkloadGaManifest manifest,
         SloQualificationDocument qualification,
-        ApprovedRuntimeRecord ledger)
+        ApprovedRuntimeRecord ledger,
+        string repoRoot)
     {
         var decision = ledger.Qualification
             ?? throw new InvalidDataException(
                 "Approved profile ledger lacks qualification metadata.");
         var artifactDigest = "sha256:" + Convert.ToHexStringLower(
-            SHA256.HashData(File.ReadAllBytes(qualification.SourceFile)));
+            SHA256.HashData(File.ReadAllBytes(Path.GetFullPath(qualification.SourceFile, repoRoot))));
         if (decision.Artifact != manifest.Evidence.QualificationArtifact
             || decision.Digest != artifactDigest
             || decision.Verdict != qualification.Verdict
@@ -710,21 +716,6 @@ public static class WorkloadGaEvaluator
                && date >= currentDate.AddDays(-maxAgeDays);
     }
 
-    /// <summary>
-    /// Qualification errors are generated against the resolved absolute
-    /// evidence path (required for the symlink/traversal checks above), but
-    /// committed findings must never embed a machine-local absolute path —
-    /// replace any occurrence with the repository-relative path the manifest
-    /// actually references.
-    /// </summary>
-    private static string ToRepoRelativeMessage(
-        string message,
-        string absolutePath,
-        string relativePath)
-    {
-        return message.Replace(absolutePath, relativePath, StringComparison.Ordinal);
-    }
-
     private static bool ContainsSymbolicLink(string root, string path)
     {
         var relative = Path.GetRelativePath(root, path);
@@ -741,6 +732,16 @@ public static class WorkloadGaEvaluator
         }
         return false;
     }
+
+    // Findings feed a committed, cross-machine artifact (docs/site/workload-ga.*).
+    // An absolute path baked into a finding would make "regenerate and ensure no
+    // diff" non-reproducible across checkouts (e.g. a contributor's sandbox path
+    // differs from the CI runner's), so every reported path is repo-relative.
+    private static string ToRepoRelativePath(string absolutePath, string repoRoot) =>
+        Path.GetRelativePath(repoRoot, absolutePath).Replace(Path.DirectorySeparatorChar, '/');
+
+    private static string ToRepoRelativeMessage(string message, string absolutePath, string repoRoot) =>
+        message.Replace(absolutePath, ToRepoRelativePath(absolutePath, repoRoot), StringComparison.Ordinal);
 
     private static void Add(
         WorkloadGaReport report,

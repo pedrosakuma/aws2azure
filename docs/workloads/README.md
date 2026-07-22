@@ -92,5 +92,6 @@ manifest independently and rejects stale generated output.
 Profile-specific adoption guidance:
 
 - [SQS standard messaging](sqs-standard-messaging.md)
+- [Kinesis basic record ingestion](kinesis-basic-record-ingestion.md)
 - [SNS standard publish (Service Bus Topics backend)](sns-standard-publish-service-bus.md)
 - [SNS standard publish (Event Grid backend)](sns-standard-publish-event-grid.md)
