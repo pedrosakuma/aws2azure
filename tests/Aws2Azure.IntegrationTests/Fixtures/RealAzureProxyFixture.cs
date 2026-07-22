@@ -72,12 +72,13 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     private const string InvalidAzureSharedKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
     private const string InvalidAzureSasKeyName = "aws2azure-invalid-sas-key";
 
-    // Fixed HMAC key (32 decoded bytes) for Kinesis shard-iterator tokens, so a
-    // shard iterator minted before RestartAsync() still verifies after the
-    // out-of-process proxy respawns. Without an explicit key, each process
-    // falls back to its own ephemeral, randomly generated signing key
-    // (ShardIteratorTokenCodecFactory), which would make every pre-restart
-    // iterator fail signature verification against the new process.
+    // Fixed HMAC key (39 decoded bytes, >= the codec's 32-byte minimum) for
+    // Kinesis shard-iterator tokens, so a shard iterator minted before
+    // RestartAsync() still verifies after the out-of-process proxy respawns.
+    // Without an explicit key, each process falls back to its own ephemeral,
+    // randomly generated signing key (ShardIteratorTokenCodecFactory), which
+    // would make every pre-restart iterator fail signature verification
+    // against the new process.
     private const string KinesisShardIteratorSigningKey =
         "cmVhbC1henVyZS1yZXN0YXJ0LXNoYXJkLWl0ZXJhdG9yLWtleS0h";
 
