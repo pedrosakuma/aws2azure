@@ -142,7 +142,10 @@ internal static class RealAzureRestartQualification
         var target = await KinesisTestHelpers.ResolvePartitionTargetAsync(
             client, fixture.EventHubStream, timeout.Token).ConfigureAwait(false);
 
-        var boundary = DateTimeOffset.UtcNow;
+        // Event Hubs applies AT_TIMESTAMP exclusively at millisecond precision.
+        // Leave a margin so the immediately following write cannot share and be
+        // excluded by the encoded boundary.
+        var boundary = DateTimeOffset.UtcNow.AddSeconds(-5);
         var payload = "restart-" + Guid.NewGuid().ToString("N");
         using var data = new MemoryStream(Encoding.UTF8.GetBytes(payload));
         await client.PutRecordAsync(new PutRecordRequest
