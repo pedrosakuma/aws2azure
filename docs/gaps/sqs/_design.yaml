@@ -140,8 +140,9 @@ workload_patterns:
       RedrivePolicy, receive-to-DLQ flow, attribution, and restart-safe source
       pagination require separate real-Azure qualification. The AMQP receive
       path enforces maxReceiveCount before exposing Service Bus's first
-      over-limit delivery and explicitly dead-letters it for forwarding; the
-      legacy REST receive transport retains the native Service Bus boundary.
+      over-limit delivery by forwarding an attributed copy and then completing
+      the source; the legacy REST receive transport retains the native Service
+      Bus boundary.
     operations:
       - CreateQueue
       - SetQueueAttributes

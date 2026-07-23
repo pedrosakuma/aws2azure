@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Aws2Azure.Amqp.Connection;
 using Aws2Azure.Amqp.ServiceBus;
 using Aws2Azure.Core.Configuration;
 
@@ -69,6 +70,20 @@ internal sealed class ServiceBusAmqpReceiverProvider : IAmqpReceiverProvider
 
     public Task<ServiceBusManagementClient> GetManagementClientAsync(string queueName, CancellationToken cancellationToken) =>
         _pool.GetManagementClientAsync(_endpoint, _sasKeyName, _sasKey, queueName, cancellationToken);
+
+    public async Task ForwardAsync(
+        string queueName,
+        AmqpMessage message,
+        CancellationToken cancellationToken)
+    {
+        var sender = await _pool
+            .GetSenderAsync(_endpoint, _sasKeyName, _sasKey, queueName, cancellationToken)
+            .ConfigureAwait(false);
+        await sender.SendAsync(message, settled: false, cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task InvalidateForwardSenderAsync(string queueName) =>
+        _pool.InvalidateSenderAsync(_endpoint, _sasKeyName, queueName, closeConnection: false);
 
     public Task InvalidateAsync(string queueName, bool closeConnection) =>
         _pool.InvalidateReceiverAsync(_endpoint, _sasKeyName, queueName, closeConnection);

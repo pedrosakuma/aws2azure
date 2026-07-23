@@ -216,6 +216,7 @@ internal static partial class AmqpReceiveMessageHandlers
             await receivers.InvalidateSessionReceiverAsync(queueName, emptySessionId).ConfigureAwait(false);
 
         int? maxReceiveCount = null;
+        string? redriveTarget = null;
         if (management is not null && HasRedelivery(batch))
         {
             RedrivePolicyLookup lookup;
@@ -251,6 +252,7 @@ internal static partial class AmqpReceiveMessageHandlers
                 return;
             }
             maxReceiveCount = lookup.MaxReceiveCount;
+            redriveTarget = lookup.TargetQueueName;
         }
 
         AmqpReceiveParameters.ParseAttributeNameSets(parsed, out var systemAttrFilter, out var messageAttrFilter);
@@ -258,15 +260,16 @@ internal static partial class AmqpReceiveMessageHandlers
         foreach (var msg in batch)
         {
             if (maxReceiveCount is { } max &&
+                redriveTarget is not null &&
                 (ulong)msg.DeliveryCount.GetValueOrDefault() + 1UL > (ulong)max)
             {
                 try
                 {
-                    await receiver.DeadLetterAsync(
-                        msg,
-                        reason: "MaxReceiveCountExceeded",
-                        description: "The SQS RedrivePolicy maxReceiveCount was exceeded.",
+                    await receivers.ForwardAsync(
+                        redriveTarget,
+                        BuildRedriveMessage(queueName, msg),
                         ct).ConfigureAwait(false);
+                    await receiver.CompleteAsync(msg, ct).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -276,7 +279,8 @@ internal static partial class AmqpReceiveMessageHandlers
                 }
                 catch (Exception ex)
                 {
-                    LogReceiveFailure(context, queueName, "redrive dead-letter", ex);
+                    LogReceiveFailure(context, queueName, "redrive forwarding", ex);
+                    await receivers.InvalidateForwardSenderAsync(redriveTarget).ConfigureAwait(false);
                     await CleanupFailedReceiveAsync(
                         context, queueName, receiver, batch, receivers).ConfigureAwait(false);
                     await AmqpReceiveParameters.WriteErrorAsync(
@@ -316,6 +320,27 @@ internal static partial class AmqpReceiveMessageHandlers
         await SqsResponseWriter.WriteReceiveMessageAsync(context, parsed.Protocol, collected).ConfigureAwait(false);
     }
 
+    private static AmqpMessage BuildRedriveMessage(
+        string sourceQueueName,
+        ServiceBusReceivedMessage source)
+    {
+        var applicationProperties = source.Message.ApplicationProperties is { } existing
+            ? new Dictionary<string, object?>(existing, StringComparer.Ordinal)
+            : new Dictionary<string, object?>(StringComparer.Ordinal);
+        applicationProperties[AmqpMessageTranslator.DeadLetterSourceProperty] = sourceQueueName;
+        applicationProperties[AmqpMessageTranslator.DeadLetterReasonProperty] =
+            "MaxReceiveCountExceeded";
+        applicationProperties[AmqpMessageTranslator.DeadLetterDescriptionProperty] =
+            "The SQS RedrivePolicy maxReceiveCount was exceeded.";
+
+        return new AmqpMessage
+        {
+            Properties = source.Message.Properties,
+            ApplicationProperties = applicationProperties,
+            Body = source.Body.ToArray(),
+        };
+    }
+
     private static bool HasRedelivery(IReadOnlyList<ServiceBusReceivedMessage> batch)
     {
         for (var i = 0; i < batch.Count; i++)
@@ -333,15 +358,16 @@ internal static partial class AmqpReceiveMessageHandlers
     {
         using var response = await management.GetQueueAsync(queueName, ct).ConfigureAwait(false);
         if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-            return new(null, SqsErrorMapping.QueueDoesNotExist());
+            return new(null, null, SqsErrorMapping.QueueDoesNotExist());
         if (!response.IsSuccessStatusCode)
-            return new(null, SqsErrorMapping.FromServiceBus(response));
+            return new(null, null, SqsErrorMapping.FromServiceBus(response));
 
         var xml = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         var entry = AtomQueueXmlReader.ParseQueueEntry(xml);
         if (entry is null)
         {
             return new(
+                null,
                 null,
                 SqsErrorMapping.InternalError(
                     "aws2azure: Azure Service Bus returned an invalid queue description."));
@@ -350,8 +376,8 @@ internal static partial class AmqpReceiveMessageHandlers
         var properties = entry.Properties;
         return !string.IsNullOrEmpty(properties.ForwardDeadLetteredMessagesTo) &&
                properties.MaxDeliveryCount is { } max
-            ? new(max, null)
-            : new(null, null);
+            ? new(max, properties.ForwardDeadLetteredMessagesTo, null)
+            : new(null, null, null);
     }
 
     private static async Task CleanupFailedReceiveAsync(
@@ -399,6 +425,7 @@ internal static partial class AmqpReceiveMessageHandlers
 
     private readonly record struct RedrivePolicyLookup(
         int? MaxReceiveCount,
+        string? TargetQueueName,
         SqsErrorMapping.Mapping? Error);
 
     private static void LogBestEffortAbandonFailed(HttpContext context, string queueName, Exception exception)

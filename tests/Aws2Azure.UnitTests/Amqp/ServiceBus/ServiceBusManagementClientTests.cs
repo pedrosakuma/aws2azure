@@ -120,6 +120,8 @@ public sealed class ServiceBusManagementClientTests
 
         string? receivedOperation = null;
         string? associatedLinkName = null;
+        object? serverTimeout = null;
+        string? trackingId = null;
         var serverTask = Task.Run(async () => await ManagementBrokerSimulator.RunFullAsync(
             server,
             renewExpiry: brokerExpiry,
@@ -128,7 +130,11 @@ public sealed class ServiceBusManagementClientTests
             errorCondition: null,
             captureOperation: op => receivedOperation = op,
             captureRequest: request =>
-                associatedLinkName = request.ApplicationProperties?["associated-link-name"] as string));
+            {
+                associatedLinkName = request.ApplicationProperties?["associated-link-name"] as string;
+                serverTimeout = request.ApplicationProperties?["com.microsoft:server-timeout"];
+                trackingId = request.ApplicationProperties?["com.microsoft:tracking-id"] as string;
+            }));
 
         await conn.OpenAsync();
         var session = await conn.BeginSessionAsync();
@@ -147,6 +153,8 @@ public sealed class ServiceBusManagementClientTests
 
         Assert.Equal("com.microsoft:renew-session-lock", receivedOperation);
         Assert.Equal("receiver-link-42", associatedLinkName);
+        Assert.IsType<uint>(serverTimeout);
+        Assert.False(string.IsNullOrWhiteSpace(trackingId));
     }
 
     [Fact]

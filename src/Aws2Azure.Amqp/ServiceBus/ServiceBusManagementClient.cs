@@ -115,7 +115,8 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
             ApplicationProperties = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["operation"] = RenewLockOperation,
-                ["com.microsoft:server-timeout"] = (int)DefaultServerTimeout.TotalMilliseconds,
+                ["com.microsoft:server-timeout"] = (uint)DefaultServerTimeout.TotalMilliseconds,
+                ["com.microsoft:tracking-id"] = Guid.NewGuid().ToString(),
             },
             BodyValueBytes = body.Memory,
         };
@@ -158,7 +159,8 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
             ApplicationProperties = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["operation"] = RenewSessionLockOperation,
-                ["com.microsoft:server-timeout"] = (int)DefaultServerTimeout.TotalMilliseconds,
+                ["com.microsoft:server-timeout"] = (uint)DefaultServerTimeout.TotalMilliseconds,
+                ["com.microsoft:tracking-id"] = Guid.NewGuid().ToString(),
                 ["associated-link-name"] = associatedLinkName,
             },
             BodyValueBytes = body.Memory,

@@ -103,7 +103,13 @@ public sealed class AmqpReceiveMessageHandlersTests
         var tag = Guid.Parse("20202020-3030-4040-5050-606060606060").ToByteArray();
         await using var harness = await TestHarness.OpenAsync(
             QueueName,
-            (tag, EncodeMessage("over-limit", groupId: null, deliveryCount: 1)));
+            (tag, EncodeMessage(
+                "over-limit",
+                groupId: null,
+                deadLetterSource: null,
+                deadLetterReason: "user-reason",
+                deadLetterErrorDescription: "user-description",
+                deliveryCount: 1)));
 
         const string QueueXml =
             "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
@@ -136,9 +142,20 @@ public sealed class AmqpReceiveMessageHandlersTests
         Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
         Assert.DoesNotContain("<Message>", ReadBody(ctx));
         Assert.Equal(1, handler.CallCount);
+        var forwarded = Assert.Single(harness.Provider.ForwardedMessages);
+        Assert.Equal("target-dlq", forwarded.QueueName);
+        Assert.Equal("over-limit", Encoding.UTF8.GetString(forwarded.Message.Body.Span));
+        Assert.Equal(
+            QueueName,
+            forwarded.Message.ApplicationProperties![AmqpMessageTranslator.DeadLetterSourceProperty]);
+        Assert.Equal("user-reason", forwarded.Message.ApplicationProperties["DeadLetterReason"]);
+        Assert.Equal("user-description", forwarded.Message.ApplicationProperties["DeadLetterErrorDescription"]);
+        Assert.Equal(
+            "MaxReceiveCountExceeded",
+            forwarded.Message.ApplicationProperties[AmqpMessageTranslator.DeadLetterReasonProperty]);
         await WaitForDispositionAsync(harness.Broker, deliveryId: 0);
         Assert.Equal(
-            AmqpDispositionOutcome.Rejected,
+            AmqpDispositionOutcome.Accepted,
             harness.Broker.Dispositions[0].Outcome);
         Assert.Equal(0, harness.Receiver.InFlightCount);
     }
@@ -1089,6 +1106,7 @@ public sealed class AmqpReceiveMessageHandlersTests
         public int AcquireSessionCount { get; private set; }
         public int TryGetExistingSessionCount { get; private set; }
         public bool BlockBrokerAssignedAcquire { get; set; }
+        public List<(string QueueName, AmqpMessage Message)> ForwardedMessages { get; } = new();
 
         public FakeAmqpReceiverProvider(string queueName, ServiceBusReceiver receiver,
             ServiceBusManagementClient? management = null,
@@ -1131,6 +1149,17 @@ public sealed class AmqpReceiveMessageHandlersTests
             InvalidateManagementCount++;
             return Task.CompletedTask;
         }
+
+        public Task ForwardAsync(
+            string queueName,
+            AmqpMessage message,
+            CancellationToken cancellationToken)
+        {
+            ForwardedMessages.Add((queueName, message));
+            return Task.CompletedTask;
+        }
+
+        public Task InvalidateForwardSenderAsync(string queueName) => Task.CompletedTask;
 
         public Task<ServiceBusReceiver> GetSessionReceiverAsync(
             string queueName, string sessionId, CancellationToken cancellationToken)

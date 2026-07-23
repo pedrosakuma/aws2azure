@@ -6,7 +6,8 @@ namespace Aws2Azure.Amqp.Framing;
 /// AMQP 1.0 <c>application-properties</c> message section (§3.2.5,
 /// descriptor 0x74). A described map whose keys are strings and whose
 /// values are AMQP primitive types. Slice 5c models the subset CBS
-/// uses: <see cref="string"/> and 32-bit <see cref="int"/> values.
+/// uses: <see cref="string"/>, 32-bit <see cref="int"/>, and 32-bit
+/// <see cref="uint"/> values.
 /// Other value types are surfaced as <c>null</c> on read so a peer
 /// extension won't crash the decoder.
 /// </summary>
@@ -16,8 +17,9 @@ internal static class AmqpApplicationProperties
 
     /// <summary>
     /// Writes a described map. <paramref name="pairs"/> values must be
-    /// <see cref="string"/> or boxed <see cref="int"/>. Unsupported types
-    /// throw <see cref="ArgumentException"/>.
+    /// <see cref="string"/>, boxed <see cref="int"/>, or boxed
+    /// <see cref="uint"/>. Unsupported types throw
+    /// <see cref="ArgumentException"/>.
     /// </summary>
     public static void Write(
         Span<byte> destination,
@@ -88,6 +90,9 @@ internal static class AmqpApplicationProperties
             case int i:
                 AmqpPrimitiveWriter.WriteInt(destination, i, out written);
                 return;
+            case uint u:
+                AmqpPrimitiveWriter.WriteUInt(destination, u, out written);
+                return;
             default:
                 throw new ArgumentException(
                     $"Unsupported application-property value type {value.GetType()}.");
@@ -125,6 +130,14 @@ internal static class AmqpApplicationProperties
                 var n = AmqpPrimitiveReader.ReadUShort(els[o..], out var len);
                 o += len;
                 return (int)n;
+            }
+            case AmqpFormatCode.UInt:
+            case AmqpFormatCode.UIntSmall:
+            case AmqpFormatCode.UInt0:
+            {
+                var n = AmqpPrimitiveReader.ReadUInt(els[o..], out var len);
+                o += len;
+                return n;
             }
             default:
             {

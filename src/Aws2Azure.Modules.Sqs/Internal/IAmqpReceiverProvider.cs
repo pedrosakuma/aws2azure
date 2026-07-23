@@ -1,5 +1,6 @@
 using System.Threading;
 using System.Threading.Tasks;
+using Aws2Azure.Amqp.Connection;
 using Aws2Azure.Amqp.ServiceBus;
 
 namespace Aws2Azure.Modules.Sqs.Internal;
@@ -91,6 +92,14 @@ internal interface IAmqpReceiverProvider
     /// <c>com.microsoft:renew-lock</c>.
     /// </summary>
     Task<ServiceBusManagementClient> GetManagementClientAsync(string queueName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Sends a message to a redrive target using the same pooled AMQP
+    /// connection and credentials as the source receiver.
+    /// </summary>
+    Task ForwardAsync(string queueName, AmqpMessage message, CancellationToken cancellationToken);
+
+    Task InvalidateForwardSenderAsync(string queueName);
 
     /// <summary>
     /// Evicts the receiver for <paramref name="queueName"/> after a

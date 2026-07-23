@@ -103,8 +103,18 @@ public sealed class SqsAdvancedBoundariesRealAzureTests(RealAzureProxyFixture fi
                 if (i == 0)
                 {
                     await Task.Delay(TimeSpan.FromSeconds(4), timeout.Token).ConfigureAwait(false);
-                    await client.ChangeMessageVisibilityAsync(
-                        queueUrl, message.ReceiptHandle, 10, timeout.Token).ConfigureAwait(false);
+                    try
+                    {
+                        await client.ChangeMessageVisibilityAsync(
+                            queueUrl, message.ReceiptHandle, 10, timeout.Token).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new InvalidOperationException(
+                            "FIFO ChangeMessageVisibility failed. Proxy output tail:\n" +
+                            OutputTail(fixture.ProxyOutput, 8_000),
+                            ex);
+                    }
                     var blockedSameGroup = await client.ReceiveMessageAsync(new ReceiveMessageRequest
                     {
                         QueueUrl = queueUrl,
