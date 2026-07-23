@@ -404,10 +404,19 @@ internal abstract class AmqpLink
 
         var first = disposition.First;
         var last = disposition.Last ?? first;
-        for (var deliveryId = first; deliveryId <= last; deliveryId++)
+        if (last < first)
         {
-            if (_pendingReceiverSettlements.TryRemove(deliveryId, out var completion))
+            return;
+        }
+
+        foreach (var pending in _pendingReceiverSettlements)
+        {
+            if (pending.Key >= first &&
+                pending.Key <= last &&
+                _pendingReceiverSettlements.TryRemove(pending.Key, out var completion))
+            {
                 completion.TrySetResult();
+            }
         }
     }
 

@@ -212,7 +212,16 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     public string EventHubStream { get; private set; } = string.Empty;
     public int EventHubPartitionCount { get; private set; }
 
-    public string ProxyOutput => _proxyOutput.ToString();
+    public string ProxyOutput
+    {
+        get
+        {
+            lock (_proxyOutput)
+            {
+                return _proxyOutput.ToString();
+            }
+        }
+    }
     public string S3ServiceUrl => ServiceUrlFor("s3");
     public string ProxyConfigDigest { get; private set; } = string.Empty;
     public string BackendIdentityDigest { get; private set; } = string.Empty;
