@@ -139,13 +139,24 @@ public sealed class SqsAdvancedBoundariesRealAzureTests(RealAzureProxyFixture fi
                     .ConfigureAwait(false);
             }
 
-            var duplicateProbe = await client.ReceiveMessageAsync(new ReceiveMessageRequest
+            ReceiveMessageResponse duplicateProbe;
+            try
             {
-                QueueUrl = queueUrl,
-                MaxNumberOfMessages = 10,
-                WaitTimeSeconds = 2,
-                MessageSystemAttributeNames = new List<string> { "All" },
-            }, timeout.Token).ConfigureAwait(false);
+                duplicateProbe = await client.ReceiveMessageAsync(new ReceiveMessageRequest
+                {
+                    QueueUrl = queueUrl,
+                    MaxNumberOfMessages = 10,
+                    WaitTimeSeconds = 2,
+                    MessageSystemAttributeNames = new List<string> { "All" },
+                }, timeout.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    "FIFO duplicate probe failed. Proxy output tail:\n" +
+                    OutputTail(fixture.ProxyOutput, 8_000),
+                    ex);
+            }
             Assert.Empty(duplicateProbe.Messages);
 
             var batchSent = await client.SendMessageBatchAsync(new SendMessageBatchRequest
