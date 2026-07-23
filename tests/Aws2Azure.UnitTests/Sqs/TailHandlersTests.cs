@@ -411,13 +411,13 @@ public sealed class TailHandlersTests
                     System.Text.Encoding.UTF8, "application/atom+xml"),
             };
         });
-        // 3) Probe-next page ($skip=1, $top=1) → at least one more queue exists.
+        // 3) Probe-next page ($skip=1) → the next queue is another matching source.
         handler.Enqueue(req =>
         {
             Assert.Contains("$skip=1", req.RequestUri!.Query);
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent(BuildFeed(("anything", null)),
+                Content = new StringContent(BuildFeed(("src-b", "my-dlq")),
                     System.Text.Encoding.UTF8, "application/atom+xml"),
             };
         });
@@ -436,6 +436,33 @@ public sealed class TailHandlersTests
         Assert.Contains("src-a", body);
         Assert.DoesNotContain("src-b", body);
         Assert.Contains("<NextToken>1</NextToken>", body);
+    }
+
+    [Fact]
+    public async Task ListDeadLetterSourceQueues_propagates_lookahead_failure()
+    {
+        var handler = new ScriptedHandler();
+        handler.Enqueue(_ => Atom200("my-dlq", dlqTarget: null));
+        handler.Enqueue(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                BuildFeed(("src-a", "my-dlq"), ("src-b", "my-dlq")),
+                System.Text.Encoding.UTF8,
+                "application/atom+xml"),
+        });
+        handler.Enqueue(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        var ctx = NewCtx();
+        var parsed = QueryParsed(
+            SqsOperation.ListDeadLetterSourceQueues,
+            ("QueueUrl", "https://sqs.us-east-1.amazonaws.com/000000000000/my-dlq"),
+            ("MaxResults", "1"));
+
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var sb = new ServiceBusClient(http, Creds);
+        await TailHandlers.HandleAsync(ctx, parsed, sb, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status502BadGateway, ctx.Response.StatusCode);
+        Assert.Contains("ServiceUnavailable", ReadBody(ctx));
     }
 
     [Fact]
@@ -467,6 +494,45 @@ public sealed class TailHandlersTests
         Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
         var body = ReadBody(ctx);
         Assert.Contains("src-c", body);
+        Assert.DoesNotContain("<NextToken>", body);
+    }
+
+    [Fact]
+    public async Task ListDeadLetterSourceQueues_omits_NextToken_when_only_unrelated_queues_remain()
+    {
+        var handler = new ScriptedHandler();
+        handler.Enqueue(_ => Atom200("my-dlq", dlqTarget: null));
+        handler.Enqueue(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                BuildFeed(("src-a", "my-dlq"), ("unrelated", null)),
+                System.Text.Encoding.UTF8,
+                "application/atom+xml"),
+        });
+        handler.Enqueue(req =>
+        {
+            Assert.Contains("$skip=1", req.RequestUri!.Query);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    BuildFeed(("unrelated", null)),
+                    System.Text.Encoding.UTF8,
+                    "application/atom+xml"),
+            };
+        });
+
+        var ctx = NewCtx();
+        var parsed = QueryParsed(SqsOperation.ListDeadLetterSourceQueues,
+            ("QueueUrl", "https://sqs.us-east-1.amazonaws.com/000000000000/my-dlq"),
+            ("MaxResults", "1"));
+
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var sb = new ServiceBusClient(http, Creds);
+        await TailHandlers.HandleAsync(ctx, parsed, sb, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        var body = ReadBody(ctx);
+        Assert.Contains("src-a", body);
         Assert.DoesNotContain("<NextToken>", body);
     }
 

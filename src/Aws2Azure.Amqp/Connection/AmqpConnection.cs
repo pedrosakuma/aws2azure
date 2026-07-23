@@ -30,6 +30,8 @@ internal sealed class AmqpConnection : IAsyncDisposable
     private readonly CancellationTokenSource _shutdownCts = new();
     private readonly TaskCompletionSource<AmqpClose> _peerCloseReceived =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _terminalCleanupCompleted =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private readonly object _sessionLock = new();
     private readonly Dictionary<ushort, AmqpSession> _sessionsByOutgoingChannel = new();
@@ -137,9 +139,12 @@ internal sealed class AmqpConnection : IAsyncDisposable
             if (sendHeartbeats || detectPeerSilence)
                 _heartbeatTask = Task.Run(() => HeartbeatLoopAsync(_shutdownCts.Token));
         }
-        catch
+        catch (Exception ex)
         {
-            Interlocked.Exchange(ref _state, StateFinal);
+            await AbortAsync(ex as AmqpConnectionException ?? new AmqpConnectionException(
+                "Connection open failed.",
+                ex,
+                AmqpErrorKind.ClientFatal)).ConfigureAwait(false);
             throw;
         }
     }
@@ -261,10 +266,14 @@ internal sealed class AmqpConnection : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        await ShutdownAsync().ConfigureAwait(false);
-        await _transport.DisposeAsync().ConfigureAwait(false);
-        _shutdownCts.Dispose();
-        _writeLock.Dispose();
+        try
+        {
+            await ShutdownAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            await AwaitBackgroundLoopsAsync().ConfigureAwait(false);
+        }
     }
 
     // ---- internal helpers -------------------------------------------------
@@ -303,7 +312,11 @@ internal sealed class AmqpConnection : IAsyncDisposable
     }
 
     private async ValueTask WriteFrameLockedAsync(
-        AmqpFrameType type, ushort channel, ReadOnlyMemory<byte> body, CancellationToken ct)
+        AmqpFrameType type,
+        ushort channel,
+        ReadOnlyMemory<byte> body,
+        CancellationToken ct,
+        Action? onWriteStarted = null)
     {
         await _writeLock.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -313,14 +326,19 @@ internal sealed class AmqpConnection : IAsyncDisposable
             var maxFrame = Volatile.Read(ref _state) == StateOpened
                 ? (int)Math.Min(EffectiveOutgoingMaxFrameSize, int.MaxValue)
                 : AmqpFrameIO.InitialMaxFrameSize;
+            onWriteStarted?.Invoke();
             await AmqpFrameIO.WriteFrameAsync(_transport, type, channel, body, ct, maxFrame).ConfigureAwait(false);
         }
         finally { _writeLock.Release(); }
     }
 
     /// <summary>Internal hook used by <see cref="AmqpSession"/> to emit frames on its own channel.</summary>
-    internal ValueTask WriteSessionFrameAsync(ushort channel, ReadOnlyMemory<byte> body, CancellationToken ct)
-        => WriteFrameLockedAsync(AmqpFrameType.Amqp, channel, body, ct);
+    internal ValueTask WriteSessionFrameAsync(
+        ushort channel,
+        ReadOnlyMemory<byte> body,
+        CancellationToken ct,
+        Action? onWriteStarted = null)
+        => WriteFrameLockedAsync(AmqpFrameType.Amqp, channel, body, ct, onWriteStarted);
 
     /// <summary>
     /// Effective post-open max-frame-size for outbound writes. Returns
@@ -366,6 +384,27 @@ internal sealed class AmqpConnection : IAsyncDisposable
         }
     }
 
+    internal async Task AbortAsync(AmqpConnectionException exception)
+    {
+        if (Interlocked.Exchange(ref _state, StateFinal) == StateFinal)
+        {
+            await _terminalCleanupCompleted.Task.ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            _peerCloseReceived.TrySetException(exception);
+            AbortAllSessions(exception);
+            try { _shutdownCts.Cancel(); } catch { }
+            try { await _transport.DisposeAsync().ConfigureAwait(false); } catch { }
+        }
+        finally
+        {
+            _terminalCleanupCompleted.TrySetResult();
+        }
+    }
+
     private async Task ReadLoopAsync(CancellationToken ct)
     {
         try
@@ -377,10 +416,12 @@ internal sealed class AmqpConnection : IAsyncDisposable
                 {
                     frame = await AmqpFrameIO.ReadFrameAsync(_transport, (int)_settings.MaxFrameSize, ct).ConfigureAwait(false);
                 }
-                catch (EndOfStreamException)
+                catch (EndOfStreamException ex)
                 {
-                    _peerCloseReceived.TrySetException(
-                        new AmqpConnectionException("Transport closed before peer sent close.", AmqpErrorKind.ServerFatal));
+                    await AbortAsync(new AmqpConnectionException(
+                        "Transport closed before peer sent close.",
+                        ex,
+                        AmqpErrorKind.ServerFatal)).ConfigureAwait(false);
                     return;
                 }
 
@@ -422,8 +463,8 @@ internal sealed class AmqpConnection : IAsyncDisposable
         catch (OperationCanceledException) { /* normal shutdown */ }
         catch (Exception ex)
         {
-            _peerCloseReceived.TrySetException(
-                new AmqpConnectionException("Read loop failed.", ex, AmqpErrorKind.ClientFatal));
+            await AbortAsync(new AmqpConnectionException(
+                "Read loop failed.", ex, AmqpErrorKind.ClientFatal)).ConfigureAwait(false);
         }
     }
 
@@ -460,7 +501,7 @@ internal sealed class AmqpConnection : IAsyncDisposable
         session?.DispatchIncomingFrame(kind, body);
     }
 
-    private void AbortAllSessions()
+    private void AbortAllSessions(Exception? exception = null)
     {
         AmqpSession[] all;
         lock (_sessionLock)
@@ -469,7 +510,7 @@ internal sealed class AmqpConnection : IAsyncDisposable
             _sessionsByOutgoingChannel.Clear();
             _sessionsByIncomingChannel.Clear();
         }
-        foreach (var s in all) s.Abort();
+        foreach (var s in all) s.Abort(exception);
     }
 
     private async Task HeartbeatLoopAsync(CancellationToken ct)
@@ -527,17 +568,7 @@ internal sealed class AmqpConnection : IAsyncDisposable
                         var ex = new AmqpConnectionException(
                             $"Peer idle for {sinceLastReceived} ms (>= 2 * idle-time-out of {_settings.IdleTimeout.TotalMilliseconds} ms).",
                             AmqpErrorKind.Transient);
-                        // Mark the connection terminal and tear down sessions
-                        // synchronously so any link/session waiter (Receive,
-                        // Settle, RenewLock, ...) fails fast with the same
-                        // transient error instead of blocking on a TCS that
-                        // will never complete. We MUST set state to Final
-                        // before aborting sessions so the pool's health-check
-                        // path (which reads _state) sees a dead connection.
-                        Interlocked.Exchange(ref _state, StateFinal);
-                        _peerCloseReceived.TrySetException(ex);
-                        AbortAllSessions();
-                        try { _shutdownCts.Cancel(); } catch { }
+                        await AbortAsync(ex).ConfigureAwait(false);
                         return;
                     }
                 }
@@ -561,9 +592,25 @@ internal sealed class AmqpConnection : IAsyncDisposable
     private async Task ShutdownAsync()
     {
         if (Interlocked.Exchange(ref _state, StateFinal) == StateFinal)
+        {
+            await _terminalCleanupCompleted.Task.ConfigureAwait(false);
             return;
-        try { _shutdownCts.Cancel(); } catch { }
+        }
 
+        try
+        {
+            try { _shutdownCts.Cancel(); } catch { }
+            AbortAllSessions();
+            await _transport.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _terminalCleanupCompleted.TrySetResult();
+        }
+    }
+
+    private async Task AwaitBackgroundLoopsAsync()
+    {
         if (_heartbeatTask is { } hb)
         {
             try { await hb.ConfigureAwait(false); } catch { }
@@ -572,7 +619,6 @@ internal sealed class AmqpConnection : IAsyncDisposable
         {
             try { await rl.ConfigureAwait(false); } catch { }
         }
-        AbortAllSessions();
     }
 
     private async Task WaitForFinalAsync(CancellationToken ct)

@@ -217,11 +217,11 @@ var amqpConnectionSettings = new AmqpConnectionSettings
     ContainerId = $"aws2azure-{Environment.MachineName}-{Environment.ProcessId}",
 };
 var amqpFactory = new ServiceBusAmqpConnectionFactory(amqpConnectionSettings);
-// Idle-TTL eviction of FIFO session-receiver links (#262): a background
-// sweeper closes session receivers with no receive/settle activity in
-// the idle window, returning the broker session for another consumer
-// (scale-up rebalance) and freeing the AMQP link. Overridable via
-// AWS2AZURE_SB_SESSION_IDLE_SECONDS (<=0 disables the sweeper).
+// Idle-TTL eviction of FIFO session-receiver links: FIFO requests trigger
+// an opportunistic sweep (no timer/background thread), returning idle broker
+// sessions for another consumer and freeing AMQP links. The pool also has a
+// hard per-connection session-link cap. AWS2AZURE_SB_SESSION_IDLE_SECONDS <= 0
+// disables idle eviction while retaining the hard cap.
 var sessionIdleTimeout = ResolveSessionReceiverIdleTimeout();
 var amqpPool = new ServiceBusAmqpPool(amqpFactory, sessionIdleTimeout);
 builder.Services.AddSingleton(amqpPool);

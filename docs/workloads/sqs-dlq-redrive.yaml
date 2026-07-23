@@ -1,0 +1,47 @@
+schema_version: 1
+id: sqs-dlq-redrive
+version: 1
+name: SQS dead-letter and redrive
+minimum_proxy_version: 0.1.0
+real_azure_seal_max_age_days: 90
+operations:
+  - sqs:CreateQueue
+  - sqs:SetQueueAttributes
+  - sqs:GetQueueAttributes
+  - sqs:ListDeadLetterSourceQueues
+  - sqs:SendMessage
+  - sqs:ReceiveMessage
+  - sqs:ChangeMessageVisibility
+  - sqs:DeleteMessage
+  - sqs:DeleteQueue
+requirements:
+  - sqs_dlq_redrive
+accepted_partial_operations:
+  - sqs:SetQueueAttributes
+  - sqs:GetQueueAttributes
+accepted_design_gaps:
+  - "sqs:No AWS region / account namespace"
+  - "sqs:Transport-dependent capability differences"
+required_sub_feature_seals:
+  - operation: sqs:SetQueueAttributes
+    sub_feature: RedrivePolicy → ForwardDeadLetteredMessagesTo
+  - operation: sqs:GetQueueAttributes
+    sub_feature: Attribute.RedrivePolicy
+  - operation: sqs:ListDeadLetterSourceQueues
+    sub_feature: MaxResults / NextToken pagination
+evidence:
+  qualification_artifact: ""
+  required_scenarios:
+    - redrive-policy-round-trip
+    - receive-to-dlq
+    - dead-letter-attribution
+    - source-pagination
+    - restart
+    - rollback
+  required_real_azure_scenarios:
+    - redrive-policy-round-trip
+    - receive-to-dlq
+    - dead-letter-attribution
+    - source-pagination
+    - restart
+    - rollback

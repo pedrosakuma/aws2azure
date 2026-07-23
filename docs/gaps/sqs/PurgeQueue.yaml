@@ -4,12 +4,13 @@ azure_equivalent: "Azure Service Bus queue runtime REST API — emulated via dra
 status: partial
 sub_features:
   - {name: "Drain-loop receive+delete", status: implemented, notes: "Peek-locks messages in bursts and DELETEs them; bounded by a 60s wall-clock budget per call."}
-  - {name: "60s cool-down (PurgeQueueInProgress)", status: partial, notes: "Enforced via an in-process ConcurrentDictionary keyed by namespace+queue — see behavior_differences."}
+  - {name: "60s cool-down (PurgeQueueInProgress)", status: partial, notes: "Enforced by a bounded in-process tracker keyed by namespace+queue. Expired and failed attempts are removed opportunistically; cross-replica coordination remains unsupported."}
   - {name: "Idempotency on empty queue", status: implemented, notes: "Returns 200 with empty body, like SQS."}
 behavior_differences:
   - "SB has no native purge. The proxy emulates it by draining peek-locked messages and deleting them. With a long LockDuration the drain may not be able to keep up if producers are sending faster than the proxy can delete — the 60s budget bounds wall-clock cost; the queue is therefore best-effort empty rather than guaranteed empty at the end of the call. The SQS contract guarantees a 60-second 'all messages enqueued at the time of the call will be deleted' window, which we approximate."
   - "The 60-second cool-down (PurgeQueueInProgress) is in-process only. Other replicas of the proxy will not observe the cool-down — a horizontally scaled deployment could allow multiple concurrent drains. Tracked for the NFR phase (shared coordination cache)."
-  - "Verified against in-process fakes; emulator-backed end-to-end validation lands with the SbEmulatorFixture build-out (tracked in p2-sb-emulator-fixture)."
+  - "Cooldown state is hard-capped and failed/nonexistent-queue attempts release their reservation. When the cap is occupied by active purges, new queue keys receive a retryable ServiceUnavailable response rather than growing process state."
+  - "Hard purge remains conditional: pause producers, verify the queue is quiescent, and accept that the bounded REST drain cannot guarantee the native SQS purge contract."
 references:
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_PurgeQueue.html
   - https://learn.microsoft.com/rest/api/servicebus/peek-lock-message-non-destructive-read

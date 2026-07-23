@@ -20,6 +20,8 @@ public sealed class ConformancePlanSelection
 {
     public string? Service { get; set; }
     public string? Scenario { get; set; }
+    public string? Profile { get; set; }
+    public bool IsFiltered { get; set; }
 }
 
 public sealed class PlannedConformanceScenario
@@ -158,13 +160,18 @@ public static class ConformancePlanGenerator
     public static ConformanceExecutionPlan Generate(
         RealAzureConformanceMatrix matrix,
         string? service = null,
-        string? scenario = null)
+        string? scenario = null,
+        IReadOnlySet<string>? excludedScenarioIds = null)
     {
         var selection = ConformanceMatrixSelector.Select(matrix, service, scenario);
+        var exclusions = excludedScenarioIds is null
+            ? null
+            : new HashSet<string>(excludedScenarioIds, StringComparer.OrdinalIgnoreCase);
         var orderedScenarios = selection.Matrix.Services
             .SelectMany(
                 matrixService => matrixService.Scenarios.Select(
                     matrixScenario => (Service: matrixService.Service, Scenario: matrixScenario)))
+            .Where(entry => exclusions is null || !exclusions.Contains(entry.Scenario.Id))
             .OrderBy(entry => entry.Service, StringComparer.Ordinal)
             .ThenBy(entry => entry.Scenario.Id, StringComparer.Ordinal)
             .ToList();
@@ -241,6 +248,35 @@ public static class ConformancePlanGenerator
         return plan;
     }
 
+    public static RealAzureConformanceMatrix SelectPlannedMatrix(
+        RealAzureConformanceMatrix matrix,
+        ConformanceExecutionPlan plan)
+    {
+        var planned = plan.Scenarios
+            .Select(scenario => $"{scenario.Service}\0{scenario.Id}")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selected = new RealAzureConformanceMatrix
+        {
+            SchemaVersion = matrix.SchemaVersion,
+            SourceFile = matrix.SourceFile
+        };
+        foreach (var service in matrix.Services)
+        {
+            var scenarios = service.Scenarios
+                .Where(scenario => planned.Contains($"{service.Service}\0{scenario.Id}"))
+                .ToList();
+            if (scenarios.Count == 0) continue;
+            selected.Services.Add(new RealAzureService
+            {
+                Service = service.Service,
+                Scenarios = scenarios
+            });
+        }
+        if (selected.Services.Sum(service => service.Scenarios.Count) != plan.Scenarios.Count)
+            throw new InvalidDataException("Conformance plan references scenarios not present in the matrix.");
+        return selected;
+    }
+
     private static void AddProjectPlan(
         ConformanceExecutionPlan plan,
         IReadOnlyList<string> tests,
@@ -268,6 +304,12 @@ public static class ConformancePlanRenderer
 {
     public static string RenderJson(ConformanceExecutionPlan plan) =>
         JsonSerializer.Serialize(plan, ConformancePlanJsonContext.Default.ConformanceExecutionPlan);
+
+    public static ConformanceExecutionPlan ParseJson(string path) =>
+        JsonSerializer.Deserialize(
+            File.ReadAllText(path),
+            ConformancePlanJsonContext.Default.ConformanceExecutionPlan)
+        ?? throw new InvalidDataException($"{path}: empty conformance plan");
 }
 
 [JsonSourceGenerationOptions(

@@ -64,6 +64,8 @@ namespace Aws2Azure.Modules.Sqs.Operations;
 /// </summary>
 internal static partial class AmqpReceiveMessageHandlers
 {
+    private static readonly TimeSpan ReceiveBurstTailWait = TimeSpan.FromMilliseconds(50);
+
     public const int MaxMessages = 10;
     public const int MaxVisibilityTimeoutSeconds = 43_200;
     public const int MaxWaitTimeSeconds = 20;
@@ -76,9 +78,25 @@ internal static partial class AmqpReceiveMessageHandlers
         SqsParseResult parsed,
         IAmqpReceiverProvider receivers,
         CancellationToken ct) =>
+        HandleCoreAsync(context, parsed, receivers, management: null, ct);
+
+    public static Task HandleAsync(
+        HttpContext context,
+        SqsParseResult parsed,
+        IAmqpReceiverProvider receivers,
+        ServiceBusClient management,
+        CancellationToken ct) =>
+        HandleCoreAsync(context, parsed, receivers, management, ct);
+
+    private static Task HandleCoreAsync(
+        HttpContext context,
+        SqsParseResult parsed,
+        IAmqpReceiverProvider receivers,
+        ServiceBusClient? management,
+        CancellationToken ct) =>
         parsed.Operation switch
         {
-            SqsOperation.ReceiveMessage              => ReceiveMessageAsync(context, parsed, receivers, ct),
+            SqsOperation.ReceiveMessage              => ReceiveMessageAsync(context, parsed, receivers, management, ct),
             SqsOperation.DeleteMessage               => AmqpSettleDispatcher.DeleteMessageAsync(context, parsed, receivers, ct),
             SqsOperation.ChangeMessageVisibility     => AmqpSettleDispatcher.ChangeMessageVisibilityAsync(context, parsed, receivers, ct),
             SqsOperation.DeleteMessageBatch          => AmqpSettleDispatcher.DeleteMessageBatchAsync(context, parsed, receivers, ct),
@@ -90,7 +108,11 @@ internal static partial class AmqpReceiveMessageHandlers
     // --- ReceiveMessage ------------------------------------------------
 
     private static async Task ReceiveMessageAsync(
-        HttpContext context, SqsParseResult parsed, IAmqpReceiverProvider receivers, CancellationToken ct)
+        HttpContext context,
+        SqsParseResult parsed,
+        IAmqpReceiverProvider receivers,
+        ServiceBusClient? management,
+        CancellationToken ct)
     {
         var queueName = AmqpReceiveParameters.ExtractQueueName(parsed);
         if (queueName is null)
@@ -120,7 +142,10 @@ internal static partial class AmqpReceiveMessageHandlers
             return;
         }
 
+        var timeout = waitSeconds > 0 ? TimeSpan.FromSeconds(waitSeconds) : DefaultReceiveTimeout;
+
         ServiceBusReceiver receiver;
+        var remaining = timeout;
         var isFifo = QueueName.IsFifo(queueName);
         try
         {
@@ -130,34 +155,54 @@ internal static partial class AmqpReceiveMessageHandlers
             // receiver into the pool keyed by the resolved session-id
             // (slice 7c.3a). Subsequent settle requests with a v3
             // receipt handle route back via GetSessionReceiverAsync.
-            receiver = isFifo
-                ? await receivers.AcquireBrokerAssignedSessionReceiverAsync(queueName, ct).ConfigureAwait(false)
-                : await receivers.GetReceiverAsync(queueName, ct).ConfigureAwait(false);
+            if (isFifo)
+            {
+                var acquisition = await receivers
+                    .AcquireBrokerAssignedSessionReceiverAsync(queueName, timeout, ct)
+                    .ConfigureAwait(false);
+                if (acquisition.Receiver is null)
+                {
+                    await SqsResponseWriter.WriteReceiveMessageAsync(
+                        context, parsed.Protocol, Array.Empty<ReceivedSqsMessage>()).ConfigureAwait(false);
+                    return;
+                }
+                receiver = acquisition.Receiver;
+                remaining = timeout - acquisition.BrokerWaitElapsed;
+            }
+            else
+            {
+                receiver = await receivers.GetReceiverAsync(queueName, ct).ConfigureAwait(false);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            LogReceiveFailure(context, queueName, "session acquisition", ex);
             await AmqpReceiveParameters.WriteErrorAsync(context, parsed.Protocol,
                 AmqpErrorMapper.MapAmqpException(ex, "ReceiveMessage")).ConfigureAwait(false);
+            return;
+        }
+
+        if (remaining <= TimeSpan.Zero)
+        {
+            if (isFifo && receiver.SessionId is { } expiredSessionId && receiver.InFlightCount == 0)
+                await receivers.InvalidateSessionReceiverAsync(queueName, expiredSessionId).ConfigureAwait(false);
+            await SqsResponseWriter.WriteReceiveMessageAsync(
+                context, parsed.Protocol, Array.Empty<ReceivedSqsMessage>()).ConfigureAwait(false);
             return;
         }
 
         IReadOnlyList<ServiceBusReceivedMessage> batch;
         try
         {
-            var timeout = waitSeconds > 0 ? TimeSpan.FromSeconds(waitSeconds) : DefaultReceiveTimeout;
-            batch = await receiver.ReceiveBatchAsync(maxMessages, timeout, cancellationToken: ct).ConfigureAwait(false);
+            batch = await receiver.ReceiveBatchAsync(
+                maxMessages,
+                remaining,
+                tailWait: ReceiveBurstTailWait,
+                cancellationToken: ct).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            // Link- or connection-level failure: drop the receiver so the
-            // next call rebuilds. Don't tear down the connection — a stale
-            // link can be detached without affecting peers under the same
-            // SAS key. For FIFO the cached entry is keyed by session-id
-            // so we evict the session-receiver slot specifically.
+            LogReceiveFailure(context, queueName, "message receive", ex);
             if (isFifo && receiver.SessionId is { } sessionId)
                 await receivers.InvalidateSessionReceiverAsync(queueName, sessionId).ConfigureAwait(false);
             else
@@ -167,10 +212,87 @@ internal static partial class AmqpReceiveMessageHandlers
             return;
         }
 
+        if (isFifo && batch.Count == 0 && receiver.SessionId is { } emptySessionId && receiver.InFlightCount == 0)
+            await receivers.InvalidateSessionReceiverAsync(queueName, emptySessionId).ConfigureAwait(false);
+
+        int? maxReceiveCount = null;
+        string? redriveTarget = null;
+        if (management is not null && HasRedelivery(batch))
+        {
+            RedrivePolicyLookup lookup;
+            try
+            {
+                lookup = await GetRedrivePolicyAsync(management, queueName, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                await CleanupFailedReceiveAsync(
+                    context, queueName, receiver, batch, receivers).ConfigureAwait(false);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                LogReceiveFailure(context, queueName, "redrive policy lookup", ex);
+                await CleanupFailedReceiveAsync(
+                    context, queueName, receiver, batch, receivers).ConfigureAwait(false);
+                await AmqpReceiveParameters.WriteErrorAsync(
+                    context,
+                    parsed.Protocol,
+                    SqsErrorMapping.InternalError(
+                        "aws2azure: unable to read the Azure Service Bus redrive policy."))
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            if (lookup.Error is { } error)
+            {
+                await CleanupFailedReceiveAsync(
+                    context, queueName, receiver, batch, receivers).ConfigureAwait(false);
+                await AmqpReceiveParameters.WriteErrorAsync(context, parsed.Protocol, error).ConfigureAwait(false);
+                return;
+            }
+            maxReceiveCount = lookup.MaxReceiveCount;
+            redriveTarget = lookup.TargetQueueName;
+        }
+
         AmqpReceiveParameters.ParseAttributeNameSets(parsed, out var systemAttrFilter, out var messageAttrFilter);
         var collected = new List<ReceivedSqsMessage>(batch.Count);
         foreach (var msg in batch)
         {
+            if (maxReceiveCount is { } max &&
+                redriveTarget is not null &&
+                (ulong)msg.DeliveryCount.GetValueOrDefault() + 1UL > (ulong)max)
+            {
+                try
+                {
+                    await receivers.ForwardAsync(
+                        redriveTarget,
+                        BuildRedriveMessage(queueName, msg),
+                        ct).ConfigureAwait(false);
+                    await receiver.CompleteAsync(msg, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    await CleanupFailedReceiveAsync(
+                        context, queueName, receiver, batch, receivers).ConfigureAwait(false);
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    LogReceiveFailure(context, queueName, "redrive forwarding", ex);
+                    await receivers.InvalidateForwardSenderAsync(redriveTarget).ConfigureAwait(false);
+                    await CleanupFailedReceiveAsync(
+                        context, queueName, receiver, batch, receivers).ConfigureAwait(false);
+                    await AmqpReceiveParameters.WriteErrorAsync(
+                        context,
+                        parsed.Protocol,
+                        AmqpErrorMapper.MapAmqpException(ex, "ReceiveMessage"))
+                        .ConfigureAwait(false);
+                    return;
+                }
+                continue;
+            }
+
             var built = AmqpMessageTranslator.BuildReceivedMessage(queueName, msg, receiver.SessionId, systemAttrFilter, messageAttrFilter);
             if (built is null)
             {
@@ -192,8 +314,119 @@ internal static partial class AmqpReceiveMessageHandlers
             collected.Add(built);
         }
 
+        if (isFifo && collected.Count == 0 && receiver.SessionId is { } drainedSessionId && receiver.InFlightCount == 0)
+            await receivers.InvalidateSessionReceiverAsync(queueName, drainedSessionId).ConfigureAwait(false);
+
         await SqsResponseWriter.WriteReceiveMessageAsync(context, parsed.Protocol, collected).ConfigureAwait(false);
     }
+
+    private static AmqpMessage BuildRedriveMessage(
+        string sourceQueueName,
+        ServiceBusReceivedMessage source)
+    {
+        var applicationProperties = source.Message.ApplicationProperties is { } existing
+            ? new Dictionary<string, object?>(existing, StringComparer.Ordinal)
+            : new Dictionary<string, object?>(StringComparer.Ordinal);
+        applicationProperties[AmqpMessageTranslator.DeadLetterSourceProperty] = sourceQueueName;
+        applicationProperties[AmqpMessageTranslator.DeadLetterReasonProperty] =
+            "MaxReceiveCountExceeded";
+        applicationProperties[AmqpMessageTranslator.DeadLetterDescriptionProperty] =
+            "The SQS RedrivePolicy maxReceiveCount was exceeded.";
+
+        return new AmqpMessage
+        {
+            Properties = source.Message.Properties,
+            ApplicationProperties = applicationProperties,
+            Body = source.Body.ToArray(),
+        };
+    }
+
+    private static bool HasRedelivery(IReadOnlyList<ServiceBusReceivedMessage> batch)
+    {
+        for (var i = 0; i < batch.Count; i++)
+        {
+            if (batch[i].DeliveryCount.GetValueOrDefault() > 0)
+                return true;
+        }
+        return false;
+    }
+
+    private static async Task<RedrivePolicyLookup> GetRedrivePolicyAsync(
+        ServiceBusClient management,
+        string queueName,
+        CancellationToken ct)
+    {
+        using var response = await management.GetQueueAsync(queueName, ct).ConfigureAwait(false);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            return new(null, null, SqsErrorMapping.QueueDoesNotExist());
+        if (!response.IsSuccessStatusCode)
+            return new(null, null, SqsErrorMapping.FromServiceBus(response));
+
+        var xml = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        var entry = AtomQueueXmlReader.ParseQueueEntry(xml);
+        if (entry is null)
+        {
+            return new(
+                null,
+                null,
+                SqsErrorMapping.InternalError(
+                    "aws2azure: Azure Service Bus returned an invalid queue description."));
+        }
+
+        var properties = entry.Properties;
+        return !string.IsNullOrEmpty(properties.ForwardDeadLetteredMessagesTo) &&
+               properties.MaxDeliveryCount is { } max
+            ? new(max, properties.ForwardDeadLetteredMessagesTo, null)
+            : new(null, null, null);
+    }
+
+    private static async Task CleanupFailedReceiveAsync(
+        HttpContext context,
+        string queueName,
+        ServiceBusReceiver receiver,
+        IReadOnlyList<ServiceBusReceivedMessage> batch,
+        IAmqpReceiverProvider receivers)
+    {
+        var released = await ReleaseBatchBestEffortAsync(
+            context, queueName, receiver, batch).ConfigureAwait(false);
+        if (!released || (receiver.SessionId is not null && receiver.InFlightCount == 0))
+            await InvalidateReceiverAsync(receivers, queueName, receiver).ConfigureAwait(false);
+    }
+
+    private static async Task<bool> ReleaseBatchBestEffortAsync(
+        HttpContext context,
+        string queueName,
+        ServiceBusReceiver receiver,
+        IReadOnlyList<ServiceBusReceivedMessage> batch)
+    {
+        var released = true;
+        for (var i = 0; i < batch.Count; i++)
+        {
+            try
+            {
+                await receiver.ReleaseAsync(batch[i], CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                released = false;
+                LogBestEffortReleaseFailed(context, queueName, ex);
+            }
+        }
+        return released;
+    }
+
+    private static Task InvalidateReceiverAsync(
+        IAmqpReceiverProvider receivers,
+        string queueName,
+        ServiceBusReceiver receiver) =>
+        receiver.SessionId is { } sessionId
+            ? receivers.InvalidateSessionReceiverAsync(queueName, sessionId)
+            : receivers.InvalidateAsync(queueName, closeConnection: false);
+
+    private readonly record struct RedrivePolicyLookup(
+        int? MaxReceiveCount,
+        string? TargetQueueName,
+        SqsErrorMapping.Mapping? Error);
 
     private static void LogBestEffortAbandonFailed(HttpContext context, string queueName, Exception exception)
     {
@@ -209,9 +442,58 @@ internal static partial class AmqpReceiveMessageHandlers
             exception);
     }
 
+    private static void LogBestEffortReleaseFailed(HttpContext context, string queueName, Exception exception)
+    {
+        var loggerFactory = context.RequestServices.GetService<ILoggerFactory>();
+        if (loggerFactory is null)
+        {
+            return;
+        }
+
+        BestEffortReleaseFailed(
+            loggerFactory.CreateLogger("Aws2Azure.Modules.Sqs.Operations.AmqpReceiveMessageHandlers"),
+            queueName,
+            exception);
+    }
+
+    private static void LogReceiveFailure(
+        HttpContext context,
+        string queueName,
+        string stage,
+        Exception exception)
+    {
+        var loggerFactory = context.RequestServices.GetService<ILoggerFactory>();
+        if (loggerFactory is null)
+        {
+            return;
+        }
+
+        ReceiveFailed(
+            loggerFactory.CreateLogger(typeof(AmqpReceiveMessageHandlers).FullName!),
+            queueName,
+            stage,
+            exception);
+    }
+
     [LoggerMessage(
         EventId = 1,
         Level = LogLevel.Trace,
         Message = "Best-effort AMQP abandon failed for an SQS message without a lock token on queue '{QueueName}'.")]
     private static partial void BestEffortAbandonFailed(ILogger logger, string queueName, Exception exception);
+
+    [LoggerMessage(
+        EventId = 3,
+        Level = LogLevel.Warning,
+        Message = "Best-effort AMQP release failed while unwinding SQS receive on queue '{QueueName}'.")]
+    private static partial void BestEffortReleaseFailed(ILogger logger, string queueName, Exception exception);
+
+    [LoggerMessage(
+        EventId = 2,
+        Level = LogLevel.Warning,
+        Message = "AMQP SQS receive failed during {Stage} for queue '{QueueName}'.")]
+    private static partial void ReceiveFailed(
+        ILogger logger,
+        string queueName,
+        string stage,
+        Exception exception);
 }

@@ -363,6 +363,146 @@
   },
   {
     "schema_version": 1,
+    "profile_id": "sqs-dlq-redrive",
+    "profile_version": 1,
+    "name": "SQS dead-letter and redrive",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "blocked",
+    "findings": [
+      {
+        "code": "partial_operation_not_accepted",
+        "disposition": "blocking",
+        "subject": "sqs:ChangeMessageVisibility",
+        "message": "Required operation is partial and is not explicitly accepted by the profile."
+      },
+      {
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:ChangeMessageVisibility",
+        "message": "Required operation has no real-Azure verification seal."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sqs:GetQueueAttributes",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:GetQueueAttributes",
+        "message": "Required operation has no real-Azure verification seal."
+      },
+      {
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:ListDeadLetterSourceQueues",
+        "message": "Required operation has no real-Azure verification seal."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sqs:SetQueueAttributes",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:SetQueueAttributes",
+        "message": "Required operation has no real-Azure verification seal."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sqs:No AWS region / account namespace",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_dlq_redrive\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sqs:Transport-dependent capability differences",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_dlq_redrive\u0027."
+      },
+      {
+        "code": "sub_feature_real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:GetQueueAttributes#Attribute.RedrivePolicy",
+        "message": "Required backend-specific sub-feature has no real-Azure verification seal."
+      },
+      {
+        "code": "sub_feature_real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:ListDeadLetterSourceQueues#MaxResults / NextToken pagination",
+        "message": "Required backend-specific sub-feature has no real-Azure verification seal."
+      },
+      {
+        "code": "sub_feature_real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:SetQueueAttributes#RedrivePolicy \u2192 ForwardDeadLetteredMessagesTo",
+        "message": "Required backend-specific sub-feature has no real-Azure verification seal."
+      }
+    ]
+  },
+  {
+    "schema_version": 1,
+    "profile_id": "sqs-fifo-amqp",
+    "profile_version": 1,
+    "name": "SQS FIFO messaging over AMQP",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "blocked",
+    "findings": [
+      {
+        "code": "partial_operation_not_accepted",
+        "disposition": "blocking",
+        "subject": "sqs:ChangeMessageVisibility",
+        "message": "Required operation is partial and is not explicitly accepted by the profile."
+      },
+      {
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:ChangeMessageVisibility",
+        "message": "Required operation has no real-Azure verification seal."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sqs:FIFO ordering requires the AMQP transport",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_fifo_amqp\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sqs:Transport-dependent capability differences",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_fifo_amqp\u0027."
+      },
+      {
+        "code": "sub_feature_real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:ReceiveMessage#FIFO MessageGroupId session receive",
+        "message": "Required backend-specific sub-feature has no real-Azure verification seal."
+      },
+      {
+        "code": "sub_feature_real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:SendMessage#MessageDeduplicationId (FIFO)",
+        "message": "Required backend-specific sub-feature has no real-Azure verification seal."
+      },
+      {
+        "code": "sub_feature_real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:SendMessage#MessageGroupId (FIFO)",
+        "message": "Required backend-specific sub-feature has no real-Azure verification seal."
+      },
+      {
+        "code": "sub_feature_real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:SendMessageBatch#Per-entry MessageDeduplicationId / MessageGroupId (FIFO)",
+        "message": "Required backend-specific sub-feature has no real-Azure verification seal."
+      }
+    ]
+  },
+  {
+    "schema_version": 1,
     "profile_id": "sqs-standard-messaging",
     "profile_version": 1,
     "name": "SQS standard messaging",

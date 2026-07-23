@@ -32,6 +32,9 @@ internal sealed record AmqpLinkSettings
     /// <summary>Address of the target terminus.</summary>
     public string? TargetAddress { get; init; }
 
+    /// <summary>Opaque AMQP-encoded fields map for attach properties.</summary>
+    public ReadOnlyMemory<byte> Properties { get; init; }
+
     /// <summary>Sender settle mode (§2.6.6). Defaults to <c>Mixed</c>.</summary>
     public AmqpSenderSettleMode SenderSettleMode { get; init; } = AmqpSenderSettleMode.Mixed;
 

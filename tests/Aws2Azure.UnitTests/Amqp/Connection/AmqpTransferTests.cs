@@ -34,6 +34,7 @@ public sealed class AmqpTransferTests
             {
                 ["operation"] = "put-token",
                 ["status-code"] = 202,
+                ["server-timeout"] = 60_000u,
             },
             Body = new byte[] { 1, 2, 3, 4, 5 },
         };
@@ -48,6 +49,7 @@ public sealed class AmqpTransferTests
         Assert.NotNull(parsed.ApplicationProperties);
         Assert.Equal("put-token", parsed.ApplicationProperties!["operation"]);
         Assert.Equal(202, parsed.ApplicationProperties["status-code"]);
+        Assert.Equal(60_000u, parsed.ApplicationProperties["server-timeout"]);
         Assert.Equal(new byte[] { 1, 2, 3, 4, 5 }, parsed.Body.ToArray());
     }
 

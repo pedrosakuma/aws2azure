@@ -139,19 +139,39 @@ internal static class AmqpSendMessageBatchHandlers
             return;
         }
 
-        // Dispatch each entry over the same sender link; the sender's
-        // internal gate serialises wire writes but per-message
-        // dispositions still surface individually. We launch the sends
-        // concurrently so the broker can pipeline ack handling — when
-        // there's nothing to gate on, this collapses to a fast
-        // sequential send.
+        // Standard queues pipeline entries over the shared sender link.
+        // FIFO batches are intentionally dispatched in request order:
+        // SemaphoreSlim waiter ordering is not a wire-order guarantee, so
+        // launching same-group transfers concurrently could reorder them
+        // before Service Bus applies its session ordering.
         var sendTasks = new Task<bool>[entries.Count];
         var entryErrors = new SqsErrorMapping.Mapping?[entries.Count];
-        for (var i = 0; i < entries.Count; i++)
+        var transportFailures = new bool[entries.Count];
+        if (batchIsFifoQueue)
         {
-            sendTasks[i] = SendOneAsync(sender, entries[i], idempotencyKeys[i], entryErrors, i, ct);
+            for (var i = 0; i < entries.Count; i++)
+            {
+                sendTasks[i] = SendOneAsync(
+                    sender, entries[i], idempotencyKeys[i], entryErrors, transportFailures, i, ct);
+                await sendTasks[i].ConfigureAwait(false);
+            }
         }
-        await Task.WhenAll(sendTasks).ConfigureAwait(false);
+        else
+        {
+            for (var i = 0; i < entries.Count; i++)
+            {
+                sendTasks[i] = SendOneAsync(
+                    sender, entries[i], idempotencyKeys[i], entryErrors, transportFailures, i, ct);
+            }
+            await Task.WhenAll(sendTasks).ConfigureAwait(false);
+        }
+
+        for (var i = 0; i < transportFailures.Length; i++)
+        {
+            if (!transportFailures[i]) continue;
+            await senders.InvalidateSenderAsync(queueName, closeConnection: false).ConfigureAwait(false);
+            break;
+        }
 
         var successful = new List<SendMessageBatchEntryResult>(entries.Count);
         var failed = new List<SendMessageBatchEntryError>();
@@ -183,6 +203,7 @@ internal static class AmqpSendMessageBatchHandlers
         SendMessageHandlers.BatchEntry entry,
         string idempotencyKey,
         SqsErrorMapping.Mapping?[] errors,
+        bool[] transportFailures,
         int index,
         CancellationToken ct)
     {
@@ -205,6 +226,7 @@ internal static class AmqpSendMessageBatchHandlers
         }
         catch (Exception ex)
         {
+            transportFailures[index] = true;
             errors[index] = SqsErrorMapping.InternalError($"AMQP send failed: {ex.GetType().Name}");
             return false;
         }

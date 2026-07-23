@@ -33,7 +33,8 @@ internal static class ManagementBrokerSimulator
         int statusCode,
         string? statusDescription,
         string? errorCondition,
-        Action<string?> captureOperation)
+        Action<string?> captureOperation,
+        Action<AmqpMessage>? captureRequest = null)
     {
         // Client opens a sender on $management → broker mirrors as receiver
         // (peer handle 100), then grants credit.
@@ -77,6 +78,7 @@ internal static class ManagementBrokerSimulator
             AmqpTransfer.Read(f.Body, out var transfer, out var perfLen);
             var payload = f.Body.Slice(perfLen).ToArray();
             var requestMsg = AmqpMessage.Parse(payload);
+            captureRequest?.Invoke(requestMsg);
 
             var operation = requestMsg.ApplicationProperties?["operation"] as string;
             captureOperation(operation);
@@ -166,12 +168,13 @@ internal static class ManagementBrokerSimulator
         string? statusDescription,
         string? errorCondition,
         Action<string?> captureOperation,
-        ushort sessionChannel = 3)
+        ushort sessionChannel = 3,
+        Action<AmqpMessage>? captureRequest = null)
     {
         await ConsumeOpenAsync(server);
         await ConsumeBeginAndReply(server, peerChannel: sessionChannel);
         return await RunAttachedAsync(server, sessionChannel, renewExpiry,
-            statusCode, statusDescription, errorCondition, captureOperation);
+            statusCode, statusDescription, errorCondition, captureOperation, captureRequest);
     }
 
     public static Guid[]? ExtractLockTokens(AmqpMessage msg)

@@ -204,7 +204,7 @@ public sealed class SqsServiceModule : IServiceModule
             if (_amqpPool is not null && TryRouteToAmqp(parsed, sbCreds, out var receivers))
             {
                 await Operations.AmqpReceiveMessageHandlers
-                    .HandleAsync(context, parsed, receivers, context.RequestAborted)
+                    .HandleAsync(context, parsed, receivers, sbClient, context.RequestAborted)
                     .ConfigureAwait(false);
                 return;
             }

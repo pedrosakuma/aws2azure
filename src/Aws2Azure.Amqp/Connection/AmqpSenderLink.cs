@@ -193,6 +193,7 @@ internal sealed class AmqpSenderLink : AmqpLink
     /// </summary>
     internal override void DispatchDisposition(AmqpDisposition disposition)
     {
+        base.DispatchDisposition(disposition);
         if (disposition.Role != AmqpRole.Receiver) return; // we only track sender-side here
         var first = disposition.First;
         var last = disposition.Last ?? first;
@@ -211,7 +212,10 @@ internal sealed class AmqpSenderLink : AmqpLink
         }
     }
 
-    protected override void CompleteRoleWaitersTerminal(bool cancelled, AmqpError? peerError)
+    protected override void CompleteRoleWaitersTerminal(
+        bool cancelled,
+        AmqpError? peerError,
+        Exception? terminalException)
     {
         TaskCompletionSource<AmqpSendOutcome>[] snapshot;
         lock (_deliveryLock)
@@ -221,10 +225,14 @@ internal sealed class AmqpSenderLink : AmqpLink
         }
         foreach (var tcs in snapshot)
         {
-            if (cancelled) tcs.TrySetCanceled();
-            else tcs.TrySetException(BuildPeerDetachException(
-                "Link detached before disposition was received.",
-                peerError));
+            if (cancelled)
+                tcs.TrySetCanceled();
+            else if (terminalException is not null)
+                tcs.TrySetException(terminalException);
+            else
+                tcs.TrySetException(BuildPeerDetachException(
+                    "Link detached before disposition was received.",
+                    peerError));
         }
         // Wake any sender parked on credit so it observes the terminal
         // state (the StateAttached check at the top of AcquireCreditAsync

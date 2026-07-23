@@ -22,12 +22,27 @@ namespace Aws2Azure.UnitTests.Amqp.ServiceBus;
 /// </summary>
 public sealed class ServiceBusManagementClientTests
 {
+    private const string ManagementAddress = "queue1/$management";
+
     private static AmqpConnectionSettings DefaultConnSettings() => new()
     {
         ContainerId = "test-client",
         Hostname = "ns.servicebus.windows.net",
         IdleTimeout = TimeSpan.Zero,
     };
+
+    [Fact]
+    public void Management_endpoint_is_entity_scoped()
+    {
+        Assert.Equal(
+            ManagementAddress,
+            ServiceBusEndpoint.BuildManagementAddress(" queue1 "));
+        Assert.Equal(
+            "amqps://ns.servicebus.windows.net/queue1/$management",
+            ServiceBusEndpoint.BuildManagementAudience(
+                " NS.ServiceBus.Windows.Net ",
+                " queue1 "));
+    }
 
     [Theory]
     [InlineData(1)]
@@ -57,7 +72,7 @@ public sealed class ServiceBusManagementClientTests
 
         await conn.OpenAsync();
         var session = await conn.BeginSessionAsync();
-        await using var mgmt = await ServiceBusManagementClient.OpenAsync(session);
+        await using var mgmt = await ServiceBusManagementClient.OpenAsync(session, ManagementAddress);
 
         var expirations = await mgmt.RenewLocksAsync(expectedTokens).WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -92,7 +107,7 @@ public sealed class ServiceBusManagementClientTests
 
         await conn.OpenAsync();
         var session = await conn.BeginSessionAsync();
-        await using var mgmt = await ServiceBusManagementClient.OpenAsync(session);
+        await using var mgmt = await ServiceBusManagementClient.OpenAsync(session, ManagementAddress);
 
         var ex = await Assert.ThrowsAsync<ServiceBusManagementException>(
             async () => await mgmt.RenewLockAsync(Guid.NewGuid()).WaitAsync(TimeSpan.FromSeconds(5)));
@@ -119,19 +134,33 @@ public sealed class ServiceBusManagementClientTests
         brokerExpiry = DateTimeOffset.FromUnixTimeMilliseconds(brokerExpiry.ToUnixTimeMilliseconds());
 
         string? receivedOperation = null;
+        string? associatedLinkName = null;
+        object? serverTimeout = null;
+        string? trackingId = null;
+        byte? sessionIdKeyFormat = null;
         var serverTask = Task.Run(async () => await ManagementBrokerSimulator.RunFullAsync(
             server,
             renewExpiry: brokerExpiry,
             statusCode: 200,
             statusDescription: "OK",
             errorCondition: null,
-            captureOperation: op => receivedOperation = op));
+            captureOperation: op => receivedOperation = op,
+            captureRequest: request =>
+            {
+                associatedLinkName = request.ApplicationProperties?["associated-link-name"] as string;
+                serverTimeout = request.ApplicationProperties?["com.microsoft:server-timeout"];
+                trackingId = request.ApplicationProperties?["com.microsoft:tracking-id"] as string;
+                var bodyMap = AmqpCompoundReader.ReadMap(request.BodyValueBytes!.Value.Span, out _);
+                sessionIdKeyFormat = bodyMap.Elements[0];
+            }));
 
         await conn.OpenAsync();
         var session = await conn.BeginSessionAsync();
-        await using var mgmt = await ServiceBusManagementClient.OpenAsync(session);
+        await using var mgmt = await ServiceBusManagementClient.OpenAsync(session, ManagementAddress);
 
-        var expiration = await mgmt.RenewSessionLockAsync(SessionId).WaitAsync(TimeSpan.FromSeconds(5));
+        var expiration = await mgmt
+            .RenewSessionLockAsync(SessionId, "receiver-link-42")
+            .WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal(brokerExpiry, expiration);
 
@@ -141,6 +170,11 @@ public sealed class ServiceBusManagementClientTests
         await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal("com.microsoft:renew-session-lock", receivedOperation);
+        Assert.Equal("receiver-link-42", associatedLinkName);
+        Assert.IsType<uint>(serverTimeout);
+        Assert.False(string.IsNullOrWhiteSpace(trackingId));
+        Assert.True(
+            sessionIdKeyFormat is AmqpFormatCode.String8Utf8 or AmqpFormatCode.String32Utf8);
     }
 
     [Fact]
@@ -160,10 +194,12 @@ public sealed class ServiceBusManagementClientTests
 
         await conn.OpenAsync();
         var session = await conn.BeginSessionAsync();
-        await using var mgmt = await ServiceBusManagementClient.OpenAsync(session);
+        await using var mgmt = await ServiceBusManagementClient.OpenAsync(session, ManagementAddress);
 
         var ex = await Assert.ThrowsAsync<ServiceBusManagementException>(
-            async () => await mgmt.RenewSessionLockAsync("group-X").WaitAsync(TimeSpan.FromSeconds(5)));
+            async () => await mgmt
+                .RenewSessionLockAsync("group-X", "receiver-link-X")
+                .WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal(410, ex.StatusCode);
         Assert.Equal("SessionLockLost", ex.Description);
         Assert.Equal("com.microsoft:session-lock-lost", ex.ErrorCondition);

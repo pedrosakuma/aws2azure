@@ -353,16 +353,24 @@ services:
         operations: [ListQueues]
         tests:
           - Aws2Azure.IntegrationTests.FailureConformance.RealAzureInvalidCredentialConformanceTests.Sqs_invalid_sas_key_returns_native_non_retryable_error
-      - id: fifo-session-receive
+      - id: fifo-amqp-boundaries
         priority: p0
         category: core
         evidence_source: real_azure
-        establishes_verification: false
-        optional_coverage: true
-        description: FIFO receive through broker-assigned Service Bus sessions remains explicitly skipped after AcceptNextSession timed out for both one ready group and concurrent groups; FIFO is outside the standard messaging profile and does not block its operation seals.
-        operations: [SendMessage, ReceiveMessage]
+        establishes_verification: true
+        description: FIFO batch send, deduplication, ordered one-at-a-time receive/delete, connection-affine settlement, and restart redelivery are verified against real Service Bus sessions.
+        operations: [CreateQueue, SendMessage, SendMessageBatch, ReceiveMessage, DeleteMessage, DeleteMessageBatch, ChangeMessageVisibility, DeleteQueue]
         tests:
-          - Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.Fifo_session_receive_is_not_yet_conformant_on_real_azure
+          - Aws2Azure.IntegrationTests.Sqs.SqsAdvancedBoundariesRealAzureTests.Fifo_batch_dedup_order_settlement_and_restart_are_connection_affine
+      - id: dlq-redrive-boundaries
+        priority: p0
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Redrive policy round-trip, source pagination, receive-to-DLQ flow, dead-letter attribution, and restart continuation are verified against real Service Bus.
+        operations: [CreateQueue, SetQueueAttributes, GetQueueAttributes, ListDeadLetterSourceQueues, SendMessage, ReceiveMessage, ChangeMessageVisibility, DeleteMessage, DeleteQueue]
+        tests:
+          - Aws2Azure.IntegrationTests.Sqs.SqsAdvancedBoundariesRealAzureTests.Redrive_policy_attribution_and_source_pagination_survive_restart
       - id: retry-exhaustion
         priority: p1
         category: retry_exhaustion

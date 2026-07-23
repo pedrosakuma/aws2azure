@@ -17,12 +17,10 @@ namespace Aws2Azure.Amqp.ServiceBus;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Service Bus's <c>$management</c> node is per-entity in name only:
-/// the address is literally the string <c>$management</c>; the broker
-/// scopes the operation to whatever the CBS-authorised audience
-/// covers. This client implements the renew-lock / renew-session-lock
-/// operations; further ops (peek, scheduled-message cancel, session
-/// state, …) plug in the same way.
+/// Service Bus exposes an entity-scoped management node at
+/// <c>{entity-path}/$management</c>. This client implements the renew-lock /
+/// renew-session-lock operations; further ops (peek, scheduled-message
+/// cancel, session state, …) plug in the same way.
 /// </para>
 /// <para>
 /// This client is single-use per (connection, audience) pair —
@@ -32,7 +30,6 @@ namespace Aws2Azure.Amqp.ServiceBus;
 /// </remarks>
 internal sealed class ServiceBusManagementClient : IAsyncDisposable
 {
-    internal const string ManagementAddress = "$management";
     internal const string RenewLockOperation = "com.microsoft:renew-lock";
     internal const string RenewSessionLockOperation = "com.microsoft:renew-session-lock";
 
@@ -60,12 +57,15 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
     /// rejects management requests on unauthorised links).
     /// </summary>
     public static async Task<ServiceBusManagementClient> OpenAsync(
-        AmqpSession session, CancellationToken cancellationToken = default)
+        AmqpSession session,
+        string managementAddress,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(managementAddress);
         var link = new AmqpRequestResponseLink(session, new AmqpRequestResponseLinkSettings
         {
-            Address = ManagementAddress,
+            Address = managementAddress,
             ReplyToAddress = $"aws2azure-mgmt-reply-{Guid.NewGuid():N}",
         });
         try
@@ -115,7 +115,8 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
             ApplicationProperties = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["operation"] = RenewLockOperation,
-                ["com.microsoft:server-timeout"] = (int)DefaultServerTimeout.TotalMilliseconds,
+                ["com.microsoft:server-timeout"] = (uint)DefaultServerTimeout.TotalMilliseconds,
+                ["com.microsoft:tracking-id"] = Guid.NewGuid().ToString(),
             },
             BodyValueBytes = body.Memory,
         };
@@ -145,9 +146,12 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
     /// Thrown when the broker reports a non-2xx status code.
     /// </exception>
     public async Task<DateTimeOffset> RenewSessionLockAsync(
-        string sessionId, CancellationToken cancellationToken = default)
+        string sessionId,
+        string associatedLinkName,
+        CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(sessionId);
+        ArgumentException.ThrowIfNullOrEmpty(associatedLinkName);
 
         using var body = EncodeRenewSessionLockRequest(sessionId);
         var request = new AmqpMessage
@@ -155,7 +159,9 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
             ApplicationProperties = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["operation"] = RenewSessionLockOperation,
-                ["com.microsoft:server-timeout"] = (int)DefaultServerTimeout.TotalMilliseconds,
+                ["com.microsoft:server-timeout"] = (uint)DefaultServerTimeout.TotalMilliseconds,
+                ["com.microsoft:tracking-id"] = Guid.NewGuid().ToString(),
+                ["associated-link-name"] = associatedLinkName,
             },
             BodyValueBytes = body.Memory,
         };
@@ -201,9 +207,9 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
                 count: lockTokens.Count,
                 out var arrayLen);
 
-            // Build the map pair: key "lock-tokens" (symbol) → array<Uuid>.
-            // Service Bus accepts either string or symbol keys; symbol is
-            // marginally cheaper and matches the official SDK.
+            // Build the map pair: key "lock-tokens" (string) → array<Uuid>.
+            // The official SDK's MapKey wraps a string, so the key must stay
+            // string-typed on the wire.
             // pairBytes must hold the full key+array — size from the
             // measured arrayLen rather than a fixed cap to avoid an
             // overflow at large batch sizes.
@@ -211,7 +217,7 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
             try
             {
                 Span<byte> pairBytes = pairBuf;
-                AmqpVariableWriter.WriteSymbol(pairBytes, "lock-tokens", out var keyLen);
+                AmqpVariableWriter.WriteString(pairBytes, "lock-tokens", out var keyLen);
                 arrayBytes[..arrayLen].CopyTo(pairBytes[keyLen..]);
                 var pairLen = keyLen + arrayLen;
 
@@ -231,8 +237,8 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
     private static PooledPayload EncodeRenewSessionLockRequest(string sessionId)
     {
         // body = AmqpValue map { "session-id" → string }.
-        // Per the broker spec the key is the symbol "session-id" and
-        // the value is a UTF-8 string. The wire size is modest
+        // The official SDK's MapKey wraps the string "session-id", so both
+        // key and value are UTF-8 strings. The wire size is modest
         // (16 + sessionId length × 4 worst case) so a single rented
         // page is plenty.
         var byteLen = System.Text.Encoding.UTF8.GetMaxByteCount(sessionId.Length);
@@ -249,7 +255,7 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
             }
             try
             {
-                AmqpVariableWriter.WriteSymbol(pair, "session-id", out var keyLen);
+                AmqpVariableWriter.WriteString(pair, "session-id", out var keyLen);
                 AmqpVariableWriter.WriteString(pair[keyLen..], sessionId, out var valLen);
                 var pairLen = keyLen + valLen;
 

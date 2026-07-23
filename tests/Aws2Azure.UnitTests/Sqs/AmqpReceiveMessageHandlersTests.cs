@@ -1,12 +1,17 @@
 using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
+using System.Net;
+using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Aws2Azure.Amqp.Connection;
 using Aws2Azure.Amqp.ServiceBus;
+using Aws2Azure.Core.Azure;
+using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.Sqs;
 using Aws2Azure.Modules.Sqs.Internal;
 using Aws2Azure.Modules.Sqs.Operations;
@@ -52,6 +57,29 @@ public sealed class AmqpReceiveMessageHandlersTests
     }
 
     [Fact]
+    public async Task ReceiveMessage_returns_partial_batch_without_waiting_for_long_poll_deadline()
+    {
+        await using var harness = await TestHarness.OpenAsync(
+            QueueName,
+            (Guid.Parse("11111111-2222-3333-4444-555555555555").ToByteArray(),
+                EncodeMessage("available")));
+        var ctx = NewCtx();
+        var parsed = QueryParsed(
+            SqsOperation.ReceiveMessage,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"),
+            ("MaxNumberOfMessages", "10"),
+            ("WaitTimeSeconds", "2"));
+
+        var started = Stopwatch.GetTimestamp();
+        await AmqpReceiveMessageHandlers.HandleAsync(
+            ctx, parsed, harness.Provider, CancellationToken.None);
+        var elapsed = Stopwatch.GetElapsedTime(started);
+
+        Assert.Contains("available", ReadBody(ctx));
+        Assert.True(elapsed < TimeSpan.FromSeconds(1), $"Partial batch took {elapsed}.");
+    }
+
+    [Fact]
     public async Task ReceiveMessage_returns_empty_list_when_queue_is_empty()
     {
         await using var harness = await TestHarness.OpenAsync(QueueName);
@@ -67,6 +95,69 @@ public sealed class AmqpReceiveMessageHandlersTests
         // ReceiveMessageResponse with no <Message> children.
         Assert.Contains("<ReceiveMessageResponse", body);
         Assert.DoesNotContain("<Message>", body);
+    }
+
+    [Fact]
+    public async Task ReceiveMessage_dead_letters_redelivery_beyond_redrive_limit_before_exposing_it()
+    {
+        var tag = Guid.Parse("20202020-3030-4040-5050-606060606060").ToByteArray();
+        await using var harness = await TestHarness.OpenAsync(
+            QueueName,
+            (tag, EncodeMessage(
+                "over-limit",
+                groupId: null,
+                deadLetterSource: null,
+                deadLetterReason: "user-reason",
+                deadLetterErrorDescription: "user-description",
+                deliveryCount: 1)));
+
+        const string QueueXml =
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+            "<entry xmlns=\"http://www.w3.org/2005/Atom\">" +
+              "<title>amqp-q</title>" +
+              "<content type=\"application/xml\">" +
+                "<QueueDescription xmlns=\"http://schemas.microsoft.com/netservices/2010/10/servicebus/connect\">" +
+                  "<MaxDeliveryCount>1</MaxDeliveryCount>" +
+                  "<ForwardDeadLetteredMessagesTo>target-dlq</ForwardDeadLetteredMessagesTo>" +
+                "</QueueDescription>" +
+              "</content>" +
+            "</entry>";
+        var handler = new QueueDescriptionHandler(QueueXml);
+        using var http = new AzureHttpClient(handler, ownsHandler: true);
+        var management = new ServiceBusClient(http, new ServiceBusCredentials
+        {
+            Namespace = "http://127.0.0.1:5672",
+            SasKeyName = "RootManageSharedAccessKey",
+            SasKey = Convert.ToBase64String([1, 2, 3]),
+        });
+
+        var ctx = NewCtx();
+        var parsed = QueryParsed(
+            SqsOperation.ReceiveMessage,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"));
+
+        await AmqpReceiveMessageHandlers.HandleAsync(
+            ctx, parsed, harness.Provider, management, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.DoesNotContain("<Message>", ReadBody(ctx));
+        Assert.Equal(1, handler.CallCount);
+        var forwarded = Assert.Single(harness.Provider.ForwardedMessages);
+        Assert.Equal("target-dlq", forwarded.QueueName);
+        Assert.Equal("over-limit", Encoding.UTF8.GetString(forwarded.Message.Body.Span));
+        Assert.Equal(
+            QueueName,
+            forwarded.Message.ApplicationProperties![AmqpMessageTranslator.DeadLetterSourceProperty]);
+        Assert.Equal("user-reason", forwarded.Message.ApplicationProperties["DeadLetterReason"]);
+        Assert.Equal("user-description", forwarded.Message.ApplicationProperties["DeadLetterErrorDescription"]);
+        Assert.Equal(
+            "MaxReceiveCountExceeded",
+            forwarded.Message.ApplicationProperties[AmqpMessageTranslator.DeadLetterReasonProperty]);
+        await WaitForDispositionAsync(harness.Broker, deliveryId: 0);
+        Assert.Equal(
+            AmqpDispositionOutcome.Accepted,
+            harness.Broker.Dispositions[0].Outcome);
+        Assert.Equal(0, harness.Receiver.InFlightCount);
     }
 
     [Fact]
@@ -171,12 +262,19 @@ public sealed class AmqpReceiveMessageHandlersTests
     {
         // Broker grants a ~30s expiry; client requests 300 → divergence
         // surfaces via the Aws2Azure-VisibilityClamped header.
+        var lockToken = Guid.Parse("abababab-cdcd-efef-1212-343434343434");
         var grantedExpiry = DateTimeOffset.UtcNow.AddSeconds(30);
         grantedExpiry = DateTimeOffset.FromUnixTimeMilliseconds(grantedExpiry.ToUnixTimeMilliseconds());
         await using var harness = await TestHarness.OpenWithManagementAsync(
-            QueueName, renewExpiry: grantedExpiry);
+            QueueName, renewExpiry: grantedExpiry,
+            messages: [(lockToken.ToByteArray(), EncodeMessage("renew-standard"))]);
 
-        var handle = AmqpReceiptHandle.Encode(QueueName, Guid.NewGuid(), DateTimeOffset.UtcNow);
+        var receiveCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(receiveCtx,
+            QueryParsed(SqsOperation.ReceiveMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}")),
+            harness.Provider, CancellationToken.None);
+        var handle = ExtractReceiptHandle(ReadBody(receiveCtx));
         var ctx = NewCtx();
         await AmqpReceiveMessageHandlers.HandleAsync(ctx,
             QueryParsed(SqsOperation.ChangeMessageVisibility,
@@ -334,6 +432,25 @@ public sealed class AmqpReceiveMessageHandlersTests
         Assert.DoesNotContain("Mzo", body);
     }
 
+    [Fact]
+    public async Task ReceiveMessage_on_empty_fifo_queue_bounds_session_acquisition_by_WaitTimeSeconds()
+    {
+        await using var harness = await TestHarness.OpenAsync(FifoQueueName);
+        harness.Provider.BlockBrokerAssignedAcquire = true;
+        var ctx = NewCtx();
+        var parsed = QueryParsed(SqsOperation.ReceiveMessage,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+            ("WaitTimeSeconds", "1"));
+        var started = Stopwatch.GetTimestamp();
+
+        await AmqpReceiveMessageHandlers.HandleAsync(
+            ctx, parsed, harness.Provider, CancellationToken.None);
+
+        Assert.InRange(Stopwatch.GetElapsedTime(started), TimeSpan.FromMilliseconds(500), TimeSpan.FromSeconds(2));
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.DoesNotContain("<Message>", ReadBody(ctx));
+    }
+
     // --- Dead-letter surfacing ----------------------------------------
 
     [Fact]
@@ -345,7 +462,7 @@ public sealed class AmqpReceiveMessageHandlersTests
         // the application-properties carry the reason / description SB
         // stamps on dead-letter.
         var payload = EncodeMessage("dlq-payload", groupId: null,
-            deadLetterSource: "orders",
+            deadLetterSource: "orders/$DeadLetterQueue",
             deadLetterReason: "MaxDeliveryCountExceeded",
             deadLetterErrorDescription: "Message could not be consumed after 10 attempts.");
         await using var harness = await TestHarness.OpenAsync(QueueName,
@@ -442,6 +559,7 @@ public sealed class AmqpReceiveMessageHandlersTests
         Assert.Equal(StatusCodes.Status200OK, deleteCtx.Response.StatusCode);
         Assert.Contains("DeleteMessageResponse", ReadBody(deleteCtx));
         Assert.Equal(0, harness.Receiver.InFlightCount);
+        Assert.Equal(1, harness.Provider.InvalidateSessionCount);
     }
 
     [Fact]
@@ -472,6 +590,7 @@ public sealed class AmqpReceiveMessageHandlersTests
 
         Assert.Equal(StatusCodes.Status200OK, cmvCtx.Response.StatusCode);
         Assert.Equal(0, harness.Receiver.InFlightCount);
+        Assert.Equal(1, harness.Provider.InvalidateSessionCount);
     }
 
     [Fact]
@@ -570,12 +689,19 @@ public sealed class AmqpReceiveMessageHandlersTests
     public async Task ChangeMessageVisibility_positive_on_fifo_queue_renews_session_lock_and_emits_clamp_header()
     {
         const string SessionId = "group-A";
+        var lockToken = Guid.Parse("10101010-2020-3030-4040-505050505050");
         var grantedExpiry = DateTimeOffset.UtcNow.AddSeconds(30);
         grantedExpiry = DateTimeOffset.FromUnixTimeMilliseconds(grantedExpiry.ToUnixTimeMilliseconds());
         await using var harness = await TestHarness.OpenWithManagementAsync(
-            FifoQueueName, renewExpiry: grantedExpiry, sessionId: SessionId);
+            FifoQueueName, renewExpiry: grantedExpiry, sessionId: SessionId,
+            messages: [(lockToken.ToByteArray(), EncodeMessage("renew-me", groupId: SessionId))]);
 
-        var v3 = AmqpReceiptHandle.Encode(FifoQueueName, Guid.NewGuid(), DateTimeOffset.UtcNow, SessionId);
+        var receiveCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(receiveCtx,
+            QueryParsed(SqsOperation.ReceiveMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}")),
+            harness.Provider, CancellationToken.None);
+        var v3 = ExtractReceiptHandle(ReadBody(receiveCtx));
         var ctx = NewCtx();
         await AmqpReceiveMessageHandlers.HandleAsync(ctx,
             QueryParsed(SqsOperation.ChangeMessageVisibility,
@@ -599,12 +725,19 @@ public sealed class AmqpReceiveMessageHandlersTests
         // (TryGetExistingSessionReceiver) so the idle-TTL sweeper does not
         // dispose the very session the client just renewed.
         const string SessionId = "group-A";
+        var lockToken = Guid.Parse("60606060-7070-8080-9090-a0a0a0a0a0a0");
         var grantedExpiry = DateTimeOffset.UtcNow.AddSeconds(30);
         grantedExpiry = DateTimeOffset.FromUnixTimeMilliseconds(grantedExpiry.ToUnixTimeMilliseconds());
         await using var harness = await TestHarness.OpenWithManagementAsync(
-            FifoQueueName, renewExpiry: grantedExpiry, sessionId: SessionId);
+            FifoQueueName, renewExpiry: grantedExpiry, sessionId: SessionId,
+            messages: [(lockToken.ToByteArray(), EncodeMessage("renew-activity", groupId: SessionId))]);
 
-        var v3 = AmqpReceiptHandle.Encode(FifoQueueName, Guid.NewGuid(), DateTimeOffset.UtcNow, SessionId);
+        var receiveCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(receiveCtx,
+            QueryParsed(SqsOperation.ReceiveMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}")),
+            harness.Provider, CancellationToken.None);
+        var v3 = ExtractReceiptHandle(ReadBody(receiveCtx));
         var ctx = NewCtx();
         await AmqpReceiveMessageHandlers.HandleAsync(ctx,
             QueryParsed(SqsOperation.ChangeMessageVisibility,
@@ -622,20 +755,47 @@ public sealed class AmqpReceiveMessageHandlersTests
     public async Task ChangeMessageVisibility_positive_on_fifo_queue_maps_session_lock_lost_to_MessageNotInflight()
     {
         const string SessionId = "group-B";
+        var lockToken = Guid.Parse("b0b0b0b0-c0c0-d0d0-e0e0-f0f0f0f0f0f0");
         await using var harness = await TestHarness.OpenWithManagementAsync(
             FifoQueueName,
             renewExpiry: DateTimeOffset.UtcNow,
             statusCode: 410,
             statusDescription: "SessionLockLost",
             errorCondition: "com.microsoft:session-lock-lost",
-            sessionId: SessionId);
+            sessionId: SessionId,
+            messages: [(lockToken.ToByteArray(), EncodeMessage("lost-session", groupId: SessionId))]);
 
-        var v3 = AmqpReceiptHandle.Encode(FifoQueueName, Guid.NewGuid(), DateTimeOffset.UtcNow, SessionId);
+        var receiveCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(receiveCtx,
+            QueryParsed(SqsOperation.ReceiveMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}")),
+            harness.Provider, CancellationToken.None);
+        var v3 = ExtractReceiptHandle(ReadBody(receiveCtx));
         var ctx = NewCtx();
         await AmqpReceiveMessageHandlers.HandleAsync(ctx,
             QueryParsed(SqsOperation.ChangeMessageVisibility,
                 ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
                 ("ReceiptHandle", v3),
+                ("VisibilityTimeout", "30")),
+            harness.Provider, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        Assert.Contains("MessageNotInflight", ReadBody(ctx));
+    }
+
+    [Fact]
+    public async Task ChangeMessageVisibility_positive_on_fifo_queue_rejects_untracked_lock_token()
+    {
+        const string SessionId = "group-stale";
+        await using var harness = await TestHarness.OpenSessionAsync(FifoQueueName, SessionId);
+        var staleHandle = AmqpReceiptHandle.Encode(
+            FifoQueueName, Guid.NewGuid(), DateTimeOffset.UtcNow, SessionId);
+        var ctx = NewCtx();
+
+        await AmqpReceiveMessageHandlers.HandleAsync(ctx,
+            QueryParsed(SqsOperation.ChangeMessageVisibility,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+                ("ReceiptHandle", staleHandle),
                 ("VisibilityTimeout", "30")),
             harness.Provider, CancellationToken.None);
 
@@ -902,7 +1062,9 @@ public sealed class AmqpReceiveMessageHandlersTests
                 });
             await mgmtConn.OpenAsync();
             var mgmtSession = await mgmtConn.BeginSessionAsync();
-            var mgmt = await ServiceBusManagementClient.OpenAsync(mgmtSession);
+            var mgmt = await ServiceBusManagementClient.OpenAsync(
+                mgmtSession,
+                ServiceBusEndpoint.BuildManagementAddress(QueueName));
 
             return new TestHarness
             {
@@ -945,6 +1107,8 @@ public sealed class AmqpReceiveMessageHandlersTests
         public int InvalidateSessionCount { get; private set; }
         public int AcquireSessionCount { get; private set; }
         public int TryGetExistingSessionCount { get; private set; }
+        public bool BlockBrokerAssignedAcquire { get; set; }
+        public List<(string QueueName, AmqpMessage Message)> ForwardedMessages { get; } = new();
 
         public FakeAmqpReceiverProvider(string queueName, ServiceBusReceiver receiver,
             ServiceBusManagementClient? management = null,
@@ -960,6 +1124,12 @@ public sealed class AmqpReceiveMessageHandlersTests
         {
             Assert.Equal(_expectedQueue, queueName);
             return Task.FromResult(_receiver);
+        }
+
+        public ServiceBusReceiver? TryGetExistingReceiver(string queueName)
+        {
+            Assert.Equal(_expectedQueue, queueName);
+            return _receiver;
         }
 
         public Task<ServiceBusManagementClient> GetManagementClientAsync(string queueName, CancellationToken cancellationToken)
@@ -981,6 +1151,17 @@ public sealed class AmqpReceiveMessageHandlersTests
             InvalidateManagementCount++;
             return Task.CompletedTask;
         }
+
+        public Task ForwardAsync(
+            string queueName,
+            AmqpMessage message,
+            CancellationToken cancellationToken)
+        {
+            ForwardedMessages.Add((queueName, message));
+            return Task.CompletedTask;
+        }
+
+        public Task InvalidateForwardSenderAsync(string queueName) => Task.CompletedTask;
 
         public Task<ServiceBusReceiver> GetSessionReceiverAsync(
             string queueName, string sessionId, CancellationToken cancellationToken)
@@ -1006,14 +1187,28 @@ public sealed class AmqpReceiveMessageHandlersTests
             return _brokerAssignedSessionReceiver;
         }
 
-        public Task<ServiceBusReceiver> AcquireBrokerAssignedSessionReceiverAsync(
-            string queueName, CancellationToken cancellationToken)
+        public AmqpReceiverLease? TryAcquireExistingSessionReceiver(
+            string queueName,
+            string sessionId)
+        {
+            var receiver = TryGetExistingSessionReceiver(queueName, sessionId);
+            return receiver is null ? null : new AmqpReceiverLease(receiver);
+        }
+
+        public async Task<BrokerAssignedSessionReceiverResult> AcquireBrokerAssignedSessionReceiverAsync(
+            string queueName, TimeSpan maxBrokerWait, CancellationToken cancellationToken)
         {
             Assert.Equal(_expectedQueue, queueName);
+            if (BlockBrokerAssignedAcquire)
+            {
+                await Task.Delay(maxBrokerWait, cancellationToken);
+                return new BrokerAssignedSessionReceiverResult(null, maxBrokerWait);
+            }
             if (_brokerAssignedSessionReceiver is null)
                 throw new NotSupportedException("Test harness did not wire a broker-assigned session receiver.");
             AcquireSessionCount++;
-            return Task.FromResult(_brokerAssignedSessionReceiver);
+            return new BrokerAssignedSessionReceiverResult(
+                _brokerAssignedSessionReceiver, TimeSpan.Zero);
         }
 
         public Task InvalidateSessionReceiverAsync(string queueName, string sessionId)
@@ -1028,12 +1223,15 @@ public sealed class AmqpReceiveMessageHandlersTests
     private static byte[] EncodeMessage(string body)
         => EncodeMessage(body, groupId: null);
 
-    private static byte[] EncodeMessage(string body, string? groupId)
+    private static byte[] EncodeMessage(string body, string? groupId, uint? deliveryCount = null)
         => EncodeMessage(body, groupId: groupId, deadLetterSource: null,
-            deadLetterReason: null, deadLetterErrorDescription: null);
+            deadLetterReason: null, deadLetterErrorDescription: null, deliveryCount);
 
     private static byte[] EncodeMessage(string body, string? groupId,
-        string? deadLetterSource, string? deadLetterReason, string? deadLetterErrorDescription)
+        string? deadLetterSource,
+        string? deadLetterReason,
+        string? deadLetterErrorDescription,
+        uint? deliveryCount = null)
     {
         // Build the optional message-annotations + application-properties
         // sections by hand (AmqpMessage.Write does not author annotations
@@ -1043,6 +1241,17 @@ public sealed class AmqpReceiveMessageHandlersTests
         // → body is what real Service Bus produces; the proxy's parser is
         // tolerant to any subset.
         var prefix = new Aws2Azure.UnitTests.Amqp.Framing.SectionWriter();
+        if (deliveryCount is { } count)
+        {
+            prefix.WriteDescribed(Aws2Azure.Amqp.Framing.MessageSectionDescriptor.Header);
+            prefix.BeginList8(count: 5);
+            prefix.WriteNull();
+            prefix.WriteNull();
+            prefix.WriteNull();
+            prefix.WriteNull();
+            prefix.WriteUInt(count);
+            prefix.EndList8();
+        }
         if (!string.IsNullOrEmpty(deadLetterSource))
         {
             prefix.WriteDescribed(Aws2Azure.Amqp.Framing.MessageSectionDescriptor.MessageAnnotations);
@@ -1075,6 +1284,36 @@ public sealed class AmqpReceiveMessageHandlersTests
             return result;
         }
         finally { ArrayPool<byte>.Shared.Return(rented); }
+    }
+
+    private static async Task WaitForDispositionAsync(
+        ServiceBusBrokerSimulator broker,
+        uint deliveryId)
+    {
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (broker.Dispositions.ContainsKey(deliveryId))
+                return;
+            await Task.Delay(20);
+        }
+        throw new TimeoutException($"Disposition for delivery-id {deliveryId} did not arrive in time.");
+    }
+
+    private sealed class QueueDescriptionHandler(string xml) : HttpMessageHandler
+    {
+        public int CallCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(xml, Encoding.UTF8, "application/atom+xml"),
+            });
+        }
     }
 
     private static HttpContext NewCtx()

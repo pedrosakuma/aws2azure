@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -36,7 +35,7 @@ namespace Aws2Azure.Modules.Sqs.Operations;
 /// <para><c>PurgeQueue</c> has no native SB equivalent — it is emulated by
 /// a peek-lock + complete drain loop bounded by
 /// <see cref="PurgeBudget"/>. A per-(namespace, queue) cool-down keyed by
-/// <see cref="_purgeStarted"/> reproduces the SQS
+/// the bounded cooldown tracker reproduces the SQS
 /// <c>PurgeQueueInProgress</c> guard (one purge per minute per queue).</para>
 /// </summary>
 internal static class BatchAdminHandlers
@@ -46,13 +45,9 @@ internal static class BatchAdminHandlers
     public static readonly TimeSpan PurgeCoolDown = TimeSpan.FromSeconds(60);
     public static readonly TimeSpan PurgeBudget = TimeSpan.FromSeconds(60);
 
-    // Per-(namespace, queue) timestamp of the last accepted PurgeQueue call.
-    // The cool-down is purely advisory (SQS enforces it server-side); we
-    // emulate it locally so callers see PurgeQueueInProgress instead of
-    // hammering the SB drain loop. Bounded growth: an entry per queue ever
-    // purged through this proxy — acceptable for the scope.
-    private static readonly ConcurrentDictionary<string, DateTimeOffset> _purgeStarted =
-        new(StringComparer.Ordinal);
+    private static readonly PurgeCooldownTracker _purgeCooldowns = new(
+        PurgeCoolDown,
+        maxEntries: 1024);
 
     public static Task HandleAsync(
         HttpContext context,
@@ -312,27 +307,22 @@ internal static class BatchAdminHandlers
             return;
         }
 
-        // SQS rule: at most one PurgeQueue per queue per 60 seconds.
-        // Atomic compare-and-set: only one caller may transition the
-        // timestamp into the active window even under concurrent purges.
+        // SQS rule: at most one accepted PurgeQueue per queue per 60 seconds.
+        // The tracker removes expired keys opportunistically and has a hard
+        // entry cap, so high-cardinality queue names cannot grow static
+        // process state without bound.
         var key = sb.Namespace + "|" + queueName;
         var now = DateTimeOffset.UtcNow;
-        while (true)
+        var start = _purgeCooldowns.TryStart(key, now);
+        if (start == PurgeStartResult.InProgress)
         {
-            if (_purgeStarted.TryGetValue(key, out var last))
-            {
-                if (now - last < PurgeCoolDown)
-                {
-                    await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.PurgeQueueInProgress(queueName)).ConfigureAwait(false);
-                    return;
-                }
-                if (_purgeStarted.TryUpdate(key, now, last)) break;
-            }
-            else
-            {
-                if (_purgeStarted.TryAdd(key, now)) break;
-            }
-            // Lost the race; re-read and re-check.
+            await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.PurgeQueueInProgress(queueName)).ConfigureAwait(false);
+            return;
+        }
+        if (start == PurgeStartResult.CapacityExceeded)
+        {
+            await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.PurgeStateCapacityExceeded()).ConfigureAwait(false);
+            return;
         }
 
         // Drain: peek-lock + DELETE in a loop bounded by PurgeBudget.
@@ -344,6 +334,7 @@ internal static class BatchAdminHandlers
         using var budgetCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         budgetCts.CancelAfter(PurgeBudget);
         var purgeCt = budgetCts.Token;
+        var accepted = false;
         try
         {
             while (!purgeCt.IsCancellationRequested)
@@ -351,15 +342,18 @@ internal static class BatchAdminHandlers
                 using var resp = await sb.PeekLockMessageAsync(queueName, TimeSpan.Zero, purgeCt).ConfigureAwait(false);
                 if (resp.StatusCode == HttpStatusCode.NoContent || resp.StatusCode == (HttpStatusCode)204)
                 {
+                    accepted = true;
                     break;
                 }
                 if (resp.StatusCode == HttpStatusCode.NotFound)
                 {
+                    _purgeCooldowns.Release(key, now);
                     await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.QueueDoesNotExist()).ConfigureAwait(false);
                     return;
                 }
                 if (!resp.IsSuccessStatusCode)
                 {
+                    _purgeCooldowns.Release(key, now);
                     await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.FromServiceBus(resp)).ConfigureAwait(false);
                     return;
                 }
@@ -372,19 +366,107 @@ internal static class BatchAdminHandlers
                 if (!del.IsSuccessStatusCode && del.StatusCode != HttpStatusCode.NotFound
                     && del.StatusCode != HttpStatusCode.Gone)
                 {
+                    _purgeCooldowns.Release(key, now);
                     await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.FromServiceBus(del)).ConfigureAwait(false);
                     return;
                 }
             }
+            ct.ThrowIfCancellationRequested();
+            accepted = true;
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             // Budget expired mid-drain: SQS contract allows partial purge;
             // return success and let the cool-down protect against immediate
             // retry.
+            accepted = true;
+        }
+        catch
+        {
+            _purgeCooldowns.Release(key, now);
+            throw;
+        }
+        finally
+        {
+            if (!accepted && ct.IsCancellationRequested)
+                _purgeCooldowns.Release(key, now);
         }
 
         await SqsResponseWriter.WritePurgeQueueAsync(context, parsed.Protocol).ConfigureAwait(false);
+    }
+
+    internal enum PurgeStartResult
+    {
+        Started,
+        InProgress,
+        CapacityExceeded,
+    }
+
+    internal sealed class PurgeCooldownTracker
+    {
+        private readonly object _gate = new();
+        private readonly Dictionary<string, DateTimeOffset> _started = new(StringComparer.Ordinal);
+        private readonly TimeSpan _coolDown;
+        private readonly int _maxEntries;
+
+        public PurgeCooldownTracker(TimeSpan coolDown, int maxEntries)
+        {
+            if (coolDown <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(coolDown));
+            if (maxEntries <= 0) throw new ArgumentOutOfRangeException(nameof(maxEntries));
+            _coolDown = coolDown;
+            _maxEntries = maxEntries;
+        }
+
+        public int Count
+        {
+            get
+            {
+                lock (_gate) return _started.Count;
+            }
+        }
+
+        public PurgeStartResult TryStart(string key, DateTimeOffset now)
+        {
+            lock (_gate)
+            {
+                RemoveExpired(now);
+                if (_started.ContainsKey(key))
+                    return PurgeStartResult.InProgress;
+                if (_started.Count >= _maxEntries)
+                    return PurgeStartResult.CapacityExceeded;
+                _started.Add(key, now);
+                return PurgeStartResult.Started;
+            }
+        }
+
+        public void Release(string key, DateTimeOffset startedAt)
+        {
+            lock (_gate)
+            {
+                if (_started.TryGetValue(key, out var current) && current == startedAt)
+                    _started.Remove(key);
+            }
+        }
+
+        public void Clear()
+        {
+            lock (_gate) _started.Clear();
+        }
+
+        private void RemoveExpired(DateTimeOffset now)
+        {
+            if (_started.Count == 0) return;
+            List<string>? expired = null;
+            foreach (var entry in _started)
+            {
+                if (now - entry.Value < _coolDown) continue;
+                expired ??= new List<string>();
+                expired.Add(entry.Key);
+            }
+            if (expired is null) return;
+            foreach (var key in expired)
+                _started.Remove(key);
+        }
     }
 
     private static bool TryReadIdsForDelete(HttpResponseMessage resp, out string messageId, out string lockToken)
@@ -622,5 +704,5 @@ internal static class BatchAdminHandlers
         SqsParameterHelpers.WriteErrorAsync(context, protocol, mapping);
 
     // Test-only hook so unit tests can reset cool-down state between runs.
-    internal static void ResetPurgeCoolDownForTesting() => _purgeStarted.Clear();
+    internal static void ResetPurgeCoolDownForTesting() => _purgeCooldowns.Clear();
 }

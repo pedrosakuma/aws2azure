@@ -127,8 +127,7 @@ public sealed class AmqpSendMessageBatchHandlersTests
 
         var received = await harness.WaitForMessagesAsync(2);
         var messageIds = received.ConvertAll(m => m.Properties.MessageId?.ToString());
-        Assert.Contains("dedup-1", messageIds);
-        Assert.Contains("dedup-2", messageIds);
+        Assert.Equal(new[] { "dedup-1", "dedup-2" }, messageIds);
         Assert.All(received, m => Assert.Equal("g", m.Properties.GroupId));
     }
 

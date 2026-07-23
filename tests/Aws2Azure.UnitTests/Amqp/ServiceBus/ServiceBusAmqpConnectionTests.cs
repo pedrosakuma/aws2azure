@@ -1,4 +1,5 @@
 using Aws2Azure.Amqp.Connection;
+using Aws2Azure.Amqp.Framing;
 using Aws2Azure.Amqp.ServiceBus;
 using Aws2Azure.UnitTests.Amqp.Transport;
 
@@ -123,6 +124,17 @@ public sealed class ServiceBusAmqpConnectionTests
         // with the requested session-id.
         var observed = Assert.Single(broker.SessionFiltersByLink);
         Assert.Equal("order-42", observed.Value);
+
+        broker.Inbox[receiver.Link.Name] = new Queue<ServiceBusBrokerSimulator.DeliveryToSend>(
+        [
+            new(Guid.NewGuid().ToByteArray(), Array.Empty<byte>()),
+        ]);
+        var message = Assert.Single(
+            await receiver.ReceiveBatchAsync(1, TimeSpan.FromSeconds(2))
+                .WaitAsync(TimeSpan.FromSeconds(5)));
+        await receiver.CompleteAsync(message).WaitAsync(TimeSpan.FromSeconds(5));
+        var disposition = Assert.Single(broker.Dispositions).Value;
+        Assert.False(disposition.Settled);
     }
 
     [Fact]
@@ -149,10 +161,161 @@ public sealed class ServiceBusAmqpConnectionTests
         Assert.Equal("broker-assigned-session", receiver.SessionId);
         var observed = Assert.Single(broker.SessionFiltersByLink);
         Assert.Null(observed.Value);
+        var attach = Assert.Single(broker.SessionAttachesByLink).Value;
+        Assert.Equal(AmqpReceiverSettleMode.Second, attach.ReceiverSettleMode);
+        Assert.StartsWith("aws2azure-recv-fifo-queue-session-", attach.TargetAddress);
+        Assert.Null(attach.TimeoutMilliseconds);
     }
 
     [Fact]
-    public async Task OpenSessionReceiverAsync_throws_when_broker_does_not_bind_a_session()
+    public async Task OpenSessionReceiverAsync_accept_next_sends_server_timeout()
+    {
+        var (client, server) = PipePairTransport.CreatePair();
+        await using var _ = server;
+
+        var broker = new ServiceBusBrokerSimulator(server);
+        broker.Start();
+
+        await using var conn = await ServiceBusAmqpConnection
+            .OpenAsync(client, new FakeTokenProvider(), DefaultSettings())
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        var audience = ServiceBusEndpoint.BuildQueueAudience("ns.servicebus.windows.net", "fifo-queue");
+        await using var receiver = await conn
+            .OpenSessionReceiverAsync(
+                "fifo-queue",
+                audience,
+                sessionId: null,
+                prefetchCredit: 0,
+                acceptNextTimeout: TimeSpan.FromSeconds(7))
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        var attach = Assert.Single(broker.SessionAttachesByLink).Value;
+        Assert.Equal(7_000u, attach.TimeoutMilliseconds);
+    }
+
+    [Fact]
+    public async Task Session_settlement_finishes_confirmation_after_caller_cancels()
+    {
+        var (client, server) = PipePairTransport.CreatePair();
+        await using var _ = server;
+
+        var confirmationGate = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var broker = new ServiceBusBrokerSimulator(server)
+        {
+            SettlementConfirmationGate = confirmationGate,
+        };
+        broker.Start();
+
+        await using var conn = await ServiceBusAmqpConnection
+            .OpenAsync(client, new FakeTokenProvider(), DefaultSettings())
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        var audience = ServiceBusEndpoint.BuildQueueAudience(
+            "ns.servicebus.windows.net", "fifo-queue");
+        await using var receiver = await conn
+            .OpenSessionReceiverAsync(
+                "fifo-queue",
+                audience,
+                sessionId: "order-42",
+                prefetchCredit: 0)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        var lockToken = Guid.NewGuid();
+        broker.Inbox[receiver.Link.Name] = new Queue<ServiceBusBrokerSimulator.DeliveryToSend>(
+        [
+            new(lockToken.ToByteArray(), Array.Empty<byte>()),
+        ]);
+        var message = Assert.Single(
+            await receiver.ReceiveBatchAsync(1, TimeSpan.FromSeconds(2))
+                .WaitAsync(TimeSpan.FromSeconds(5)));
+
+        using var cancellation = new CancellationTokenSource();
+        var settlement = receiver.CompleteAsync(message, cancellation.Token);
+        await WaitForDispositionAsync(broker, message.DeliveryId);
+        cancellation.Cancel();
+        await Task.Delay(50);
+        Assert.False(settlement.IsCompleted);
+
+        confirmationGate.TrySetResult();
+        await settlement.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(0, receiver.InFlightCount);
+    }
+
+    [Fact]
+    public async Task Session_settlement_timeout_aborts_connection_and_faults_siblings()
+    {
+        var originalTimeout = AmqpLink.ReceiverSettlementConfirmationTimeout;
+        AmqpLink.ReceiverSettlementConfirmationTimeout = TimeSpan.FromMilliseconds(100);
+        var confirmationGate = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            var (client, server) = PipePairTransport.CreatePair();
+            await using var _ = server;
+            var broker = new ServiceBusBrokerSimulator(server)
+            {
+                SettlementConfirmationGate = confirmationGate,
+            };
+            broker.Start();
+
+            await using var conn = await ServiceBusAmqpConnection
+                .OpenAsync(client, new FakeTokenProvider(), DefaultSettings())
+                .WaitAsync(TimeSpan.FromSeconds(10));
+            var audience = ServiceBusEndpoint.BuildQueueAudience(
+                "ns.servicebus.windows.net", "fifo-queue");
+            await using var receiver = await conn
+                .OpenSessionReceiverAsync(
+                    "fifo-queue",
+                    audience,
+                    sessionId: "order-42",
+                    prefetchCredit: 0)
+                .WaitAsync(TimeSpan.FromSeconds(10));
+
+            broker.Inbox[receiver.Link.Name] = new Queue<ServiceBusBrokerSimulator.DeliveryToSend>(
+            [
+                new(Guid.NewGuid().ToByteArray(), Array.Empty<byte>()),
+                new(Guid.NewGuid().ToByteArray(), Array.Empty<byte>()),
+            ]);
+            var messages = await receiver.ReceiveBatchAsync(2, TimeSpan.FromSeconds(2))
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(2, messages.Count);
+
+            var settlements = messages
+                .Select(message => CaptureExceptionAsync(receiver.CompleteAsync(message)))
+                .ToArray();
+            var failures = await Task.WhenAll(settlements).WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.True(conn.IsClosed);
+            Assert.All(failures, failure =>
+            {
+                Assert.NotNull(failure);
+                Assert.IsNotType<OperationCanceledException>(failure);
+                Assert.True(
+                    failure is AmqpLinkException or AmqpConnectionException,
+                    $"Unexpected failure type: {failure.GetType().FullName}");
+            });
+        }
+        finally
+        {
+            confirmationGate.TrySetResult();
+            AmqpLink.ReceiverSettlementConfirmationTimeout = originalTimeout;
+        }
+    }
+
+    [Fact]
+    public void Broker_accept_next_timeout_is_classified_as_empty_acquisition()
+    {
+        var exception = new AmqpLinkException("server wait elapsed")
+        {
+            PeerCondition = AmqpErrorCondition.Timeout,
+        };
+
+        Assert.True(ServiceBusAmqpPool.IsBrokerAcceptNextTimeout(exception));
+    }
+
+    [Fact]
+    public async Task OpenSessionReceiverAsync_signals_when_broker_does_not_bind_a_session()
     {
         var (client, server) = PipePairTransport.CreatePair();
         await using var _ = server;
@@ -165,8 +328,90 @@ public sealed class ServiceBusAmqpConnectionTests
             .WaitAsync(TimeSpan.FromSeconds(10));
 
         var audience = ServiceBusEndpoint.BuildQueueAudience("ns.servicebus.windows.net", "fifo-queue");
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<ServiceBusAmqpConnection.BrokerAssignedSessionUnavailableException>(() =>
             conn.OpenSessionReceiverAsync("fifo-queue", audience, sessionId: null, prefetchCredit: 0));
+    }
+
+    [Fact]
+    public async Task OpenSessionReceiverAsync_signals_when_broker_echoes_null_session()
+    {
+        var (client, server) = PipePairTransport.CreatePair();
+        await using var _ = server;
+
+        var broker = new ServiceBusBrokerSimulator(server)
+        {
+            EchoNullSessionFilterOnAttach = true,
+        };
+        broker.Start();
+
+        await using var conn = await ServiceBusAmqpConnection
+            .OpenAsync(client, new FakeTokenProvider(), DefaultSettings())
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        var audience = ServiceBusEndpoint.BuildQueueAudience(
+            "ns.servicebus.windows.net",
+            "fifo-queue");
+        await Assert.ThrowsAsync<ServiceBusAmqpConnection.BrokerAssignedSessionUnavailableException>(() =>
+            conn.OpenSessionReceiverAsync(
+                "fifo-queue",
+                audience,
+                sessionId: null,
+                prefetchCredit: 0));
+    }
+
+    [Fact]
+    public async Task OpenSessionReceiverAsync_rejects_malformed_broker_session_filter()
+    {
+        var (client, server) = PipePairTransport.CreatePair();
+        await using var _ = server;
+
+        var broker = new ServiceBusBrokerSimulator(server)
+        {
+            MalformedSessionFilterOnAttach = true,
+        };
+        broker.Start();
+
+        await using var conn = await ServiceBusAmqpConnection
+            .OpenAsync(client, new FakeTokenProvider(), DefaultSettings())
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        var audience = ServiceBusEndpoint.BuildQueueAudience(
+            "ns.servicebus.windows.net",
+            "fifo-queue");
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            conn.OpenSessionReceiverAsync(
+                "fifo-queue",
+                audience,
+                sessionId: null,
+                prefetchCredit: 0));
+    }
+
+    [Fact]
+    public async Task OpenSessionReceiverAsync_wraps_invalid_utf8_session_filter()
+    {
+        var (client, server) = PipePairTransport.CreatePair();
+        await using var _ = server;
+
+        var broker = new ServiceBusBrokerSimulator(server)
+        {
+            MalformedSessionFilterOnAttach = true,
+            InvalidUtf8SessionFilterOnAttach = true,
+        };
+        broker.Start();
+
+        await using var conn = await ServiceBusAmqpConnection
+            .OpenAsync(client, new FakeTokenProvider(), DefaultSettings())
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        var audience = ServiceBusEndpoint.BuildQueueAudience(
+            "ns.servicebus.windows.net",
+            "fifo-queue");
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            conn.OpenSessionReceiverAsync(
+                "fifo-queue",
+                audience,
+                sessionId: null,
+                prefetchCredit: 0));
     }
 
     [Fact]
@@ -229,5 +474,37 @@ public sealed class ServiceBusAmqpConnectionTests
         var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
         Assert.False(ServiceBusAmqpConnection.ShouldRefreshAuthorization(
             cachedExpiry: null, now, TimeSpan.FromMinutes(5)));
+    }
+
+    private static async Task WaitForDispositionAsync(
+        ServiceBusBrokerSimulator broker,
+        uint deliveryId)
+    {
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (broker.Dispositions.ContainsKey(deliveryId))
+            {
+                return;
+            }
+
+            await Task.Delay(20);
+        }
+
+        throw new TimeoutException(
+            $"Disposition for delivery-id {deliveryId} did not arrive in time.");
+    }
+
+    private static async Task<Exception?> CaptureExceptionAsync(Task task)
+    {
+        try
+        {
+            await task;
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return ex;
+        }
     }
 }

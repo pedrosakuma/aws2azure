@@ -78,6 +78,8 @@ on:
           - secretsmanager-basic-lifecycle
           - dynamodb-basic-crud
           - sqs-standard-messaging
+          - sqs-dlq-redrive
+          - sqs-fifo-amqp
           - kinesis-single-consumer-per-shard
       candidate_run_id:
         description: Exact successful sealed-runtime producer run id
@@ -158,7 +160,7 @@ jobs:
           if [ "$EVENT_NAME" = workflow_dispatch ] &&
              [ "$QUALIFICATION_PROFILE" != source-validation ]; then
             case "$QUALIFICATION_PROFILE:$SELECTED_SERVICE" in
-              s3-basic-object-crud:s3|secretsmanager-basic-lifecycle:secretsmanager|dynamodb-basic-crud:dynamodb|sqs-standard-messaging:sqs|kinesis-single-consumer-per-shard:kinesis)
+              s3-basic-object-crud:s3|secretsmanager-basic-lifecycle:secretsmanager|dynamodb-basic-crud:dynamodb|sqs-standard-messaging:sqs|sqs-dlq-redrive:sqs|sqs-fifo-amqp:sqs|kinesis-single-consumer-per-shard:kinesis)
                 profile="$QUALIFICATION_PROFILE"
                 ;;
               *)
@@ -267,6 +269,7 @@ jobs:
           SELECTED_SERVICE: ${{ inputs.service || 'all' }}
           SELECTED_SCENARIO: ${{ inputs.scenario || '' }}
           REQUESTED_REQUIRE_REAL_AZURE: ${{ inputs.require_real_azure || false }}
+          QUALIFICATION_PROFILE: ${{ inputs.qualification_profile || 'source-validation' }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
           args=()
@@ -275,6 +278,21 @@ jobs:
           fi
           if [ -n "$SELECTED_SCENARIO" ]; then
             args+=(--scenario "$SELECTED_SCENARIO")
+          fi
+          case "$QUALIFICATION_PROFILE" in
+            sqs-standard-messaging)
+              args+=(--exclude-scenario fifo-amqp-boundaries)
+              args+=(--exclude-scenario dlq-redrive-boundaries)
+              ;;
+            sqs-fifo-amqp)
+              args+=(--scenario fifo-amqp-boundaries)
+              ;;
+            sqs-dlq-redrive)
+              args+=(--scenario dlq-redrive-boundaries)
+              ;;
+          esac
+          if [ "$QUALIFICATION_PROFILE" != source-validation ]; then
+            args+=(--profile "$QUALIFICATION_PROFILE")
           fi
 
           mkdir -p "$(dirname "$CONFORMANCE_PLAN")"
@@ -572,15 +590,7 @@ jobs:
         if: always()
         run: |
           status=0
-          evidence_args=()
-          selected_service="$(jq -r '.selection.service // empty' "$CONFORMANCE_PLAN")"
-          selected_scenario="$(jq -r '.selection.scenario // empty' "$CONFORMANCE_PLAN")"
-          if [ -n "$selected_service" ]; then
-            evidence_args+=(--service "$selected_service")
-          fi
-          if [ -n "$selected_scenario" ]; then
-            evidence_args+=(--scenario "$selected_scenario")
-          fi
+          evidence_args=(--plan "$CONFORMANCE_PLAN")
           if [ "${{ steps.plan.outputs.require_real_azure }}" = "true" ]; then
             evidence_args+=(--require-real-azure)
           fi

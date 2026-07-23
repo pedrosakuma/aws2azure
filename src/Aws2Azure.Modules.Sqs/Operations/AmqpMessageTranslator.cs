@@ -10,6 +10,10 @@ namespace Aws2Azure.Modules.Sqs.Operations;
 
 internal static class AmqpMessageTranslator
 {
+    internal const string DeadLetterSourceProperty = "AWS.Aws2Azure.DeadLetterSource";
+    internal const string DeadLetterReasonProperty = "AWS.Aws2Azure.DeadLetterReason";
+    internal const string DeadLetterDescriptionProperty = "AWS.Aws2Azure.DeadLetterDescription";
+
     // --- SB AMQP message → SQS message translation ---------------------
 
     internal static ReceivedSqsMessage? BuildReceivedMessage(
@@ -57,7 +61,9 @@ internal static class AmqpMessageTranslator
         // DeadLetterErrorDescription). Surface them as system attributes
         // so AWS SDK clients can distinguish DLQ messages and read why
         // each was dead-lettered.
-        var deadLetterSource = annotations?.DeadLetterSource;
+        var deadLetterSource = NormalizeDeadLetterSource(
+            annotations?.DeadLetterSource ??
+            ReadStringProperty(msg.Message.ApplicationProperties, DeadLetterSourceProperty));
         string? deadLetterReason = null;
         string? deadLetterDescription = null;
         if (!string.IsNullOrEmpty(deadLetterSource))
@@ -65,10 +71,12 @@ internal static class AmqpMessageTranslator
             var appProps = msg.Message.ApplicationProperties;
             if (appProps is not null)
             {
-                if (appProps.TryGetValue("DeadLetterReason", out var rv) && rv is string rs)
-                    deadLetterReason = rs;
-                if (appProps.TryGetValue("DeadLetterErrorDescription", out var dv) && dv is string ds)
-                    deadLetterDescription = ds;
+                deadLetterReason =
+                    ReadStringProperty(appProps, DeadLetterReasonProperty) ??
+                    ReadStringProperty(appProps, "DeadLetterReason");
+                deadLetterDescription =
+                    ReadStringProperty(appProps, DeadLetterDescriptionProperty) ??
+                    ReadStringProperty(appProps, "DeadLetterErrorDescription");
             }
         }
 
@@ -209,5 +217,24 @@ internal static class AmqpMessageTranslator
         }
         return dict.Count == 0 ? null : dict;
     }
+
+    private static string? NormalizeDeadLetterSource(string? source)
+    {
+        if (string.IsNullOrWhiteSpace(source)) return null;
+        var normalized = source.Trim('/');
+        var slash = normalized.IndexOf('/');
+        if (slash >= 0)
+            normalized = normalized[..slash];
+        return normalized.Length == 0 ? null : Uri.UnescapeDataString(normalized);
+    }
+
+    private static string? ReadStringProperty(
+        IReadOnlyDictionary<string, object?>? properties,
+        string name) =>
+        properties is not null &&
+        properties.TryGetValue(name, out var value) &&
+        value is string text
+            ? text
+            : null;
 
 }

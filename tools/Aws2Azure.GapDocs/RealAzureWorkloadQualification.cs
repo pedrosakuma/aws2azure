@@ -123,7 +123,15 @@ public static class RealAzureWorkloadQualificationGenerator
         };
 
         var blocked = false;
-        var inconclusive = !string.IsNullOrWhiteSpace(evidence.Selection.Scenario);
+        var filteredProfileMatches = evidence.Selection.IsFiltered
+            && !string.IsNullOrWhiteSpace(evidence.Selection.Profile)
+            && string.Equals(
+                evidence.Selection.Profile,
+                metadata.ProfileId,
+                StringComparison.OrdinalIgnoreCase);
+        var inconclusive = (evidence.Selection.IsFiltered
+                            || !string.IsNullOrWhiteSpace(evidence.Selection.Scenario))
+            && !filteredProfileMatches;
         var emittedSourceScenarios = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var scenariosById =
             new Dictionary<string, SloQualificationScenario>(StringComparer.OrdinalIgnoreCase);
@@ -134,8 +142,11 @@ public static class RealAzureWorkloadQualificationGenerator
                 Code = "scenario_filtered_evidence",
                 Disposition = "blocking",
                 Message =
-                    $"Conformance evidence was filtered to scenario " +
-                    $"'{evidence.Selection.Scenario}' and cannot establish complete workload coverage."
+                    evidence.Selection.IsFiltered
+                        ? $"Conformance evidence was filtered for profile " +
+                          $"'{evidence.Selection.Profile ?? "(missing)"}', not '{metadata.ProfileId}'."
+                        : $"Conformance evidence was filtered to scenario " +
+                          $"'{evidence.Selection.Scenario}' and cannot establish complete workload coverage."
             });
         }
         foreach (var requested in operations)

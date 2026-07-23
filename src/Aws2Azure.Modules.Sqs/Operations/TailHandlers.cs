@@ -114,25 +114,63 @@ internal static class TailHandlers
             if (entries.Count < SbPageSize) break;
         }
 
-        // Only emit NextToken when there is at least one more SB queue past
-        // the cursor — otherwise clients would see a never-empty cursor.
+        // Only emit NextToken when there is at least one more matching source
+        // queue past the cursor. A token that merely points at unrelated
+        // queues can make the resumed page empty even though the prior page
+        // claimed more DLQ sources existed.
         string? nextToken = null;
         if (hitCap)
         {
-            using var probe = await sb.ListQueuesAsync(queriedSkip, 1, ct).ConfigureAwait(false);
-            if (probe.IsSuccessStatusCode)
+            var next = await FindNextMatchingCursorAsync(
+                sb, targetName, queriedSkip, ct).ConfigureAwait(false);
+            if (next.Error is { } error)
             {
-                var probeXml = await probe.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                if (AtomQueueXmlReader.ParseQueueFeed(probeXml).Count > 0)
-                {
-                    nextToken = queriedSkip.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                }
+                await WriteErrorAsync(context, parsed.Protocol, error).ConfigureAwait(false);
+                return;
             }
+            if (next.Cursor is { } cursor)
+                nextToken = cursor.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
         await SqsResponseWriter.WriteListDeadLetterSourceQueuesAsync(
             context, parsed.Protocol, sources, nextToken).ConfigureAwait(false);
     }
+
+    private static async Task<NextMatchingCursorResult> FindNextMatchingCursorAsync(
+        ServiceBusClient sb,
+        string targetName,
+        int start,
+        CancellationToken ct)
+    {
+        var cursor = start;
+        while (true)
+        {
+            using var response = await sb.ListQueuesAsync(cursor, SbPageSize, ct).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                return new NextMatchingCursorResult(null, SqsErrorMapping.FromServiceBus(response));
+            var xml = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            var entries = AtomQueueXmlReader.ParseQueueFeed(xml);
+            if (entries.Count == 0) return default;
+
+            for (var i = 0; i < entries.Count; i++)
+            {
+                if (string.Equals(
+                        entries[i].Properties.ForwardDeadLetteredMessagesTo,
+                        targetName,
+                        StringComparison.Ordinal))
+                {
+                    return new NextMatchingCursorResult(cursor + i, null);
+                }
+            }
+
+            cursor += entries.Count;
+            if (entries.Count < SbPageSize) return default;
+        }
+    }
+
+    private readonly record struct NextMatchingCursorResult(
+        int? Cursor,
+        SqsErrorMapping.Mapping? Error);
 
     private static int ParseMaxResults(SqsParseResult parsed)
     {

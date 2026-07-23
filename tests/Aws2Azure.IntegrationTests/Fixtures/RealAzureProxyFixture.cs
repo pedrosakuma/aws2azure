@@ -212,7 +212,16 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     public string EventHubStream { get; private set; } = string.Empty;
     public int EventHubPartitionCount { get; private set; }
 
-    public string ProxyOutput => _proxyOutput.ToString();
+    public string ProxyOutput
+    {
+        get
+        {
+            lock (_proxyOutput)
+            {
+                return _proxyOutput.ToString();
+            }
+        }
+    }
     public string S3ServiceUrl => ServiceUrlFor("s3");
     public string ProxyConfigDigest { get; private set; } = string.Empty;
     public string BackendIdentityDigest { get; private set; } = string.Empty;
@@ -886,7 +895,7 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
             if (process.HasExited)
             {
                 throw new InvalidOperationException(
-                    "Proxy process exited before becoming ready:" + Environment.NewLine + _proxyOutput);
+                    "Proxy process exited before becoming ready:" + Environment.NewLine + ProxyOutput);
             }
 
             try
@@ -904,7 +913,7 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
             await Task.Delay(500).ConfigureAwait(false);
         }
 
-        throw new TimeoutException($"Timed out waiting for proxy on port {port}.{Environment.NewLine}{_proxyOutput}");
+        throw new TimeoutException($"Timed out waiting for proxy on port {port}.{Environment.NewLine}{ProxyOutput}");
     }
 
     private static int GetFreePort()

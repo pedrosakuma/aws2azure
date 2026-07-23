@@ -46,10 +46,11 @@ internal static class AmqpSettleDispatcher
             return;
         }
 
-        ServiceBusReceiver? receiver;
+        AmqpReceiverLease? settleLease;
         try
         {
-            receiver = await TryAcquireSettleReceiverAsync(receivers, queueName, decoded.SessionId, ct).ConfigureAwait(false);
+            settleLease = await TryAcquireSettleReceiverAsync(
+                receivers, queueName, decoded.SessionId, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -57,6 +58,8 @@ internal static class AmqpSettleDispatcher
                 AmqpErrorMapper.MapAmqpException(ex, "DeleteMessage")).ConfigureAwait(false);
             return;
         }
+        using var settleLeaseScope = settleLease;
+        var receiver = settleLease?.Receiver;
         if (receiver is null)
         {
             // FIFO + no cached session receiver for this session-id =
@@ -76,6 +79,7 @@ internal static class AmqpSettleDispatcher
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
+            settleLeaseScope?.Dispose();
             await InvalidateSettleReceiverAsync(receivers, queueName, decoded.SessionId).ConfigureAwait(false);
             await AmqpReceiveParameters.WriteErrorAsync(context, parsed.Protocol,
                 AmqpErrorMapper.MapSettleException(ex, "DeleteMessage")).ConfigureAwait(false);
@@ -88,6 +92,11 @@ internal static class AmqpSettleDispatcher
             // instance. SQS surfaces this as an invalid receipt handle.
             await AmqpReceiveParameters.WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.ReceiptHandleInvalid()).ConfigureAwait(false);
             return;
+        }
+        if (!string.IsNullOrEmpty(decoded.SessionId) && receiver.InFlightCount == 0)
+        {
+            settleLeaseScope?.Dispose();
+            await receivers.InvalidateSessionReceiverAsync(queueName, decoded.SessionId).ConfigureAwait(false);
         }
 
         await SqsResponseWriter.WriteDeleteMessageAsync(context, parsed.Protocol).ConfigureAwait(false);
@@ -134,10 +143,11 @@ internal static class AmqpSettleDispatcher
         // honours the SB redelivery counter).
         if (visibility == 0)
         {
-            ServiceBusReceiver? receiver;
+            AmqpReceiverLease? settleLease;
             try
             {
-                receiver = await TryAcquireSettleReceiverAsync(receivers, queueName, decoded.SessionId, ct).ConfigureAwait(false);
+                settleLease = await TryAcquireSettleReceiverAsync(
+                    receivers, queueName, decoded.SessionId, ct).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -145,6 +155,8 @@ internal static class AmqpSettleDispatcher
                     AmqpErrorMapper.MapAmqpException(ex, "ChangeMessageVisibility")).ConfigureAwait(false);
                 return;
             }
+            using var settleLeaseScope = settleLease;
+            var receiver = settleLease?.Receiver;
             if (receiver is null)
             {
                 // Same stale-handle semantics as DeleteMessage above:
@@ -161,6 +173,7 @@ internal static class AmqpSettleDispatcher
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
+                settleLeaseScope?.Dispose();
                 await InvalidateSettleReceiverAsync(receivers, queueName, decoded.SessionId).ConfigureAwait(false);
                 await AmqpReceiveParameters.WriteErrorAsync(context, parsed.Protocol,
                     AmqpErrorMapper.MapSettleException(ex, "ChangeMessageVisibility")).ConfigureAwait(false);
@@ -170,6 +183,11 @@ internal static class AmqpSettleDispatcher
             {
                 await AmqpReceiveParameters.WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.MessageNotInflight()).ConfigureAwait(false);
                 return;
+            }
+            if (!string.IsNullOrEmpty(decoded.SessionId) && receiver.InFlightCount == 0)
+            {
+                settleLeaseScope?.Dispose();
+                await receivers.InvalidateSessionReceiverAsync(queueName, decoded.SessionId).ConfigureAwait(false);
             }
             await SqsResponseWriter.WriteChangeMessageVisibilityAsync(context, parsed.Protocol).ConfigureAwait(false);
             return;
@@ -189,6 +207,27 @@ internal static class AmqpSettleDispatcher
         // From the SQS-client perspective the effect is the same (the
         // group's in-flight messages stay locked) and the granted
         // duration / clamping semantics are identical.
+        using var sessionLease = string.IsNullOrEmpty(decoded.SessionId)
+            ? null
+            : receivers.TryAcquireExistingSessionReceiver(queueName, decoded.SessionId);
+        ServiceBusReceiver? trackedReceiver = sessionLease?.Receiver
+            ?? (string.IsNullOrEmpty(decoded.SessionId)
+                ? receivers.TryGetExistingReceiver(queueName)
+                : null);
+        if (trackedReceiver is null)
+        {
+            await AmqpReceiveParameters.WriteErrorAsync(
+                context, parsed.Protocol, SqsErrorMapping.MessageNotInflight()).ConfigureAwait(false);
+            return;
+        }
+        using var renewal = trackedReceiver.TryBeginLockRenewal(decoded.LockToken);
+        if (renewal is null)
+        {
+            await AmqpReceiveParameters.WriteErrorAsync(
+                context, parsed.Protocol, SqsErrorMapping.MessageNotInflight()).ConfigureAwait(false);
+            return;
+        }
+
         ServiceBusManagementClient mgmt;
         try
         {
@@ -207,15 +246,13 @@ internal static class AmqpSettleDispatcher
         // network round-trip; a slot already near the idle edge could
         // otherwise be swept mid-renew, defeating the renewal). No-op when no
         // receiver is cached.
-        if (!string.IsNullOrEmpty(decoded.SessionId))
-            _ = receivers.TryGetExistingSessionReceiver(queueName, decoded.SessionId);
-
         DateTimeOffset lockedUntil;
         try
         {
             lockedUntil = string.IsNullOrEmpty(decoded.SessionId)
                 ? await mgmt.RenewLockAsync(decoded.LockToken, ct).ConfigureAwait(false)
-                : await mgmt.RenewSessionLockAsync(decoded.SessionId, ct).ConfigureAwait(false);
+                : await mgmt.RenewSessionLockAsync(
+                    decoded.SessionId, trackedReceiver.LinkName, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
         catch (ServiceBusManagementException ex)
@@ -233,11 +270,25 @@ internal static class AmqpSettleDispatcher
         }
 
         var grantedSeconds = Math.Max(0, (int)Math.Round((lockedUntil - DateTimeOffset.UtcNow).TotalSeconds));
-        if (!string.IsNullOrEmpty(decoded.SessionId))
+        if (string.IsNullOrEmpty(decoded.SessionId))
         {
-            // Extend the idle window from renewal completion (the pre-renew
-            // touch above protected the slot during the in-flight call).
-            _ = receivers.TryGetExistingSessionReceiver(queueName, decoded.SessionId);
+            if (!renewal.Complete(lockedUntil, updateSession: false))
+            {
+                await AmqpReceiveParameters.WriteErrorAsync(
+                    context, parsed.Protocol, SqsErrorMapping.MessageNotInflight()).ConfigureAwait(false);
+                return;
+            }
+        }
+        else
+        {
+            var currentReceiver = receivers.TryGetExistingSessionReceiver(queueName, decoded.SessionId);
+            if (!ReferenceEquals(currentReceiver, trackedReceiver)
+                || !renewal.Complete(lockedUntil, updateSession: true))
+            {
+                await AmqpReceiveParameters.WriteErrorAsync(
+                    context, parsed.Protocol, SqsErrorMapping.MessageNotInflight()).ConfigureAwait(false);
+                return;
+            }
         }
         if (grantedSeconds != visibility)
         {
@@ -423,12 +474,15 @@ internal static class AmqpSettleDispatcher
     /// as before (the non-session receiver is allowed to open on
     /// demand).
     /// </summary>
-    internal static async Task<ServiceBusReceiver?> TryAcquireSettleReceiverAsync(
+    internal static async Task<AmqpReceiverLease?> TryAcquireSettleReceiverAsync(
         IAmqpReceiverProvider receivers, string queueName, string? sessionId, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(sessionId))
-            return await receivers.GetReceiverAsync(queueName, ct).ConfigureAwait(false);
-        return receivers.TryGetExistingSessionReceiver(queueName, sessionId);
+        {
+            var receiver = await receivers.GetReceiverAsync(queueName, ct).ConfigureAwait(false);
+            return new AmqpReceiverLease(receiver);
+        }
+        return receivers.TryAcquireExistingSessionReceiver(queueName, sessionId);
     }
 
     /// <summary>

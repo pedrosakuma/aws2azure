@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using Aws2Azure.Amqp.Framing;
 
 namespace Aws2Azure.Amqp.Connection;
@@ -32,6 +33,7 @@ internal abstract class AmqpLink
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     internal static TimeSpan PeerDetachFinalizationTimeout { get; set; } = TimeSpan.FromSeconds(30);
+    internal static TimeSpan ReceiverSettlementConfirmationTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
     // Captured peer error when the peer detached with one. Reads of
     // receiver-side queues and sender-side pending outcomes surface this
@@ -40,8 +42,11 @@ internal abstract class AmqpLink
     // publish the struct safely across threads.
     private sealed class FaultBox { public AmqpError Error; }
     private FaultBox? _pendingFault;
+    private readonly ConcurrentDictionary<uint, TaskCompletionSource> _pendingReceiverSettlements = new();
 
     private int _state = StateClosed;
+    private int _attachWriteAttempted;
+    private int _attachFrameSent;
 
     protected AmqpLink(AmqpSession session, uint outgoingHandle, AmqpLinkSettings settings)
     {
@@ -59,6 +64,8 @@ internal abstract class AmqpLink
     /// <summary>Peer's attach performative, available after <see cref="AttachAsync"/> returns.</summary>
     public AmqpAttach RemoteAttach { get; private set; }
     public bool IsClosed => Volatile.Read(ref _state) >= StateDetachingLocal;
+    internal bool AttachWriteAttempted => Volatile.Read(ref _attachWriteAttempted) != 0;
+    internal bool AttachFrameSent => Volatile.Read(ref _attachFrameSent) != 0;
 
     protected AmqpSession Session => _session;
     protected AmqpLinkSettings Settings => _settings;
@@ -237,6 +244,7 @@ internal abstract class AmqpLink
                     ? (_settings.InitialDeliveryCount ?? 0u)
                     : null,
                 MaxMessageSize = _settings.MaxMessageSize == 0 ? null : _settings.MaxMessageSize,
+                Properties = _settings.Properties,
             };
 
             var rentedAtt = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
@@ -246,7 +254,9 @@ internal abstract class AmqpLink
                 await _session.Connection.WriteSessionFrameAsync(
                     _session.OutgoingChannel,
                     rentedAtt.AsMemory(0, attLen),
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken,
+                    () => Volatile.Write(ref _attachWriteAttempted, 1)).ConfigureAwait(false);
+                Volatile.Write(ref _attachFrameSent, 1);
             }
             finally { ArrayPool<byte>.Shared.Return(rentedAtt); }
         }
@@ -334,12 +344,21 @@ internal abstract class AmqpLink
         }
     }
 
-    internal void Abort()
+    internal void Abort(Exception? exception = null)
     {
         TransitionToFinal();
-        _peerAttachReceived.TrySetCanceled();
-        _peerDetachReceived.TrySetCanceled();
-        CompleteWaitersTerminal(cancelled: true);
+        if (exception is null)
+        {
+            _peerAttachReceived.TrySetCanceled();
+            _peerDetachReceived.TrySetCanceled();
+            CompleteWaitersTerminal(cancelled: true);
+        }
+        else
+        {
+            _peerAttachReceived.TrySetException(exception);
+            _peerDetachReceived.TrySetException(exception);
+            CompleteWaitersTerminal(cancelled: false, exception);
+        }
     }
 
     // ---- dispatch (invoked by AmqpSession) -------------------------------
@@ -388,7 +407,28 @@ internal abstract class AmqpLink
 
     internal virtual void DispatchTransfer(AmqpTransfer transfer, ReadOnlyMemory<byte> frameBody) { }
 
-    internal virtual void DispatchDisposition(AmqpDisposition disposition) { }
+    internal virtual void DispatchDisposition(AmqpDisposition disposition)
+    {
+        if (disposition.Role != AmqpRole.Sender || disposition.Settled != true)
+            return;
+
+        var first = disposition.First;
+        var last = disposition.Last ?? first;
+        if (last < first)
+        {
+            return;
+        }
+
+        foreach (var pending in _pendingReceiverSettlements)
+        {
+            if (pending.Key >= first &&
+                pending.Key <= last &&
+                _pendingReceiverSettlements.TryRemove(pending.Key, out var completion))
+            {
+                completion.TrySetResult();
+            }
+        }
+    }
 
     internal void OnRemoteHandleLearned(uint remoteHandle) => RemoteHandle = remoteHandle;
 
@@ -410,7 +450,10 @@ internal abstract class AmqpLink
         return new AmqpLinkException(baseMessage);
     }
 
-    protected abstract void CompleteRoleWaitersTerminal(bool cancelled, AmqpError? peerError);
+    protected abstract void CompleteRoleWaitersTerminal(
+        bool cancelled,
+        AmqpError? peerError,
+        Exception? terminalException);
 
     private static ReadOnlyMemory<byte> CopyOpaque(ReadOnlyMemory<byte> source)
     {
@@ -426,6 +469,24 @@ internal abstract class AmqpLink
         bool settled,
         CancellationToken cancellationToken)
     {
+        var awaitConfirmation = Role == AmqpRole.Receiver
+            && Settings.ReceiverSettleMode == AmqpReceiverSettleMode.Second;
+        TaskCompletionSource? confirmation = null;
+        if (awaitConfirmation)
+        {
+            confirmation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (!_pendingReceiverSettlements.TryAdd(deliveryId, confirmation))
+                throw new InvalidOperationException($"Settlement is already pending for delivery-id {deliveryId}.");
+            if (CurrentState != StateAttached)
+            {
+                _pendingReceiverSettlements.TryRemove(deliveryId, out _);
+                throw BuildPeerDetachException(
+                    "Receiver link closed before settlement could be sent.",
+                    PendingPeerError);
+            }
+            settled = false;
+        }
+
         var disposition = new AmqpDisposition
         {
             Role = AmqpRole.Receiver,
@@ -434,13 +495,65 @@ internal abstract class AmqpLink
             State = state,
         };
         var rented = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
+        var writeStarted = false;
         try
         {
             AmqpDisposition.Write(rented, in disposition, out var dl);
             await _session.Connection.WriteSessionFrameAsync(
-                _session.OutgoingChannel, rented.AsMemory(0, dl), cancellationToken).ConfigureAwait(false);
+                _session.OutgoingChannel,
+                rented.AsMemory(0, dl),
+                cancellationToken,
+                () => writeStarted = true).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            if (confirmation is not null)
+                _pendingReceiverSettlements.TryRemove(deliveryId, out _);
+            if (writeStarted)
+            {
+                var connectionException = new AmqpConnectionException(
+                    "Disposition write failed after transport emission began.",
+                    ex,
+                    AmqpErrorKind.Transient);
+                await _session.Connection.AbortAsync(connectionException).ConfigureAwait(false);
+                throw new AmqpLinkException(
+                    $"Settlement outcome is indeterminate for delivery-id {deliveryId}.",
+                    ex,
+                    AmqpErrorKind.Transient);
+            }
+            throw;
         }
         finally { ArrayPool<byte>.Shared.Return(rented); }
+
+        if (confirmation is not null)
+        {
+            try
+            {
+                // Once the disposition frame is on the wire, caller
+                // cancellation cannot tell us whether the broker settled the
+                // delivery. Finish the second-mode handshake so retries never
+                // target an already-settled delivery.
+                await confirmation.Task
+                    .WaitAsync(ReceiverSettlementConfirmationTimeout)
+                    .ConfigureAwait(false);
+            }
+            catch (TimeoutException ex)
+            {
+                var linkException = new AmqpLinkException(
+                    $"Broker did not confirm receiver settlement for delivery-id {deliveryId}.",
+                    ex,
+                    AmqpErrorKind.Transient);
+                await _session.Connection.AbortAsync(new AmqpConnectionException(
+                    linkException.Message,
+                    linkException,
+                    AmqpErrorKind.Transient)).ConfigureAwait(false);
+                throw linkException;
+            }
+            finally
+            {
+                _pendingReceiverSettlements.TryRemove(deliveryId, out _);
+            }
+        }
     }
 
     private void HandlePeerDetach(AmqpDetach detach)
@@ -508,8 +621,24 @@ internal abstract class AmqpLink
     /// Releases all link-level waiters. Called from every terminal path:
     /// local detach, peer-initiated detach, abort. Idempotent.
     /// </summary>
-    private void CompleteWaitersTerminal(bool cancelled)
-        => CompleteRoleWaitersTerminal(cancelled, Volatile.Read(ref _pendingFault)?.Error);
+    private void CompleteWaitersTerminal(bool cancelled, Exception? terminalException = null)
+    {
+        var peerError = Volatile.Read(ref _pendingFault)?.Error;
+        CompleteRoleWaitersTerminal(cancelled, peerError, terminalException);
+        foreach (var pending in _pendingReceiverSettlements)
+        {
+            if (!_pendingReceiverSettlements.TryRemove(pending.Key, out var completion))
+                continue;
+            if (cancelled)
+                completion.TrySetCanceled();
+            else if (terminalException is not null)
+                completion.TrySetException(terminalException);
+            else
+                completion.TrySetException(BuildPeerDetachException(
+                    "Receiver link closed before settlement was confirmed.",
+                    peerError));
+        }
+    }
 
     private async ValueTask SendDetachAsync(bool closed, AmqpError? error, CancellationToken ct)
     {

@@ -122,6 +122,30 @@ internal sealed class AmqpSession
         }
         catch
         {
+            if (!link.AttachWriteAttempted)
+            {
+                link.Abort();
+            }
+            else if (!link.AttachFrameSent)
+            {
+                await _connection.AbortAsync(new AmqpConnectionException(
+                    "AMQP attach write had an indeterminate outcome; the connection was aborted.",
+                    AmqpErrorKind.Transient)).ConfigureAwait(false);
+            }
+            else
+            {
+                try
+                {
+                    using var cleanup = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
+                    await link.DetachAsync(closed: true, cancellationToken: cleanup.Token).ConfigureAwait(false);
+                }
+                catch
+                {
+                    await _connection.AbortAsync(new AmqpConnectionException(
+                        "AMQP attach cancellation cleanup failed; the connection was aborted to release remote session state.",
+                        AmqpErrorKind.Transient)).ConfigureAwait(false);
+                }
+            }
             UnregisterLink(link);
             throw;
         }
@@ -307,11 +331,19 @@ internal sealed class AmqpSession
     internal void OnRemoteChannelLearned(ushort remoteChannel) => RemoteChannel = remoteChannel;
 
     /// <summary>Forces the session to its final state when the parent connection is closing.</summary>
-    internal void Abort()
+    internal void Abort(Exception? exception = null)
     {
         Interlocked.Exchange(ref _state, StateFinal);
-        _peerBeginReceived.TrySetCanceled();
-        _peerEndReceived.TrySetCanceled();
+        if (exception is null)
+        {
+            _peerBeginReceived.TrySetCanceled();
+            _peerEndReceived.TrySetCanceled();
+        }
+        else
+        {
+            _peerBeginReceived.TrySetException(exception);
+            _peerEndReceived.TrySetException(exception);
+        }
 
         AmqpLink[] links;
         lock (_linkLock)
@@ -321,7 +353,8 @@ internal sealed class AmqpSession
             _linksByIncomingHandle.Clear();
             _linksByName.Clear();
         }
-        foreach (var l in links) l.Abort();
+        foreach (var l in links) l.Abort(exception);
+        _connection.UnregisterSession(this);
     }
 
     // ---- internals --------------------------------------------------------

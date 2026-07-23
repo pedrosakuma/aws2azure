@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Aws2Azure.Modules.Sqs.Errors;
 using Aws2Azure.Modules.Sqs.Operations;
@@ -81,5 +82,38 @@ public sealed class BatchAdminShapeTests
         var ok = BatchAdminHandlers.ValidateBatchShape(ids, out var err);
         Assert.True(ok);
         Assert.Null(err);
+    }
+
+    [Fact]
+    public void Purge_cooldown_rejects_overlap_and_reuses_expired_state()
+    {
+        var tracker = new BatchAdminHandlers.PurgeCooldownTracker(
+            TimeSpan.FromSeconds(60),
+            maxEntries: 2);
+        var now = new DateTimeOffset(2026, 7, 22, 0, 0, 0, TimeSpan.Zero);
+
+        Assert.Equal(BatchAdminHandlers.PurgeStartResult.Started, tracker.TryStart("ns|q", now));
+        Assert.Equal(BatchAdminHandlers.PurgeStartResult.InProgress, tracker.TryStart("ns|q", now.AddSeconds(59)));
+        Assert.Equal(1, tracker.Count);
+
+        Assert.Equal(BatchAdminHandlers.PurgeStartResult.Started, tracker.TryStart("ns|q", now.AddSeconds(60)));
+        Assert.Equal(1, tracker.Count);
+    }
+
+    [Fact]
+    public void Purge_cooldown_releases_failed_attempt_and_bounds_cardinality()
+    {
+        var tracker = new BatchAdminHandlers.PurgeCooldownTracker(
+            TimeSpan.FromSeconds(60),
+            maxEntries: 2);
+        var now = new DateTimeOffset(2026, 7, 22, 0, 0, 0, TimeSpan.Zero);
+
+        Assert.Equal(BatchAdminHandlers.PurgeStartResult.Started, tracker.TryStart("ns|a", now));
+        Assert.Equal(BatchAdminHandlers.PurgeStartResult.Started, tracker.TryStart("ns|b", now));
+        Assert.Equal(BatchAdminHandlers.PurgeStartResult.CapacityExceeded, tracker.TryStart("ns|c", now));
+
+        tracker.Release("ns|a", now);
+        Assert.Equal(BatchAdminHandlers.PurgeStartResult.Started, tracker.TryStart("ns|c", now));
+        Assert.Equal(2, tracker.Count);
     }
 }

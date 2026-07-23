@@ -990,6 +990,86 @@ public sealed class AmqpReviewFixTests
         await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    [Fact]
+    public async Task Attach_cancelled_while_waiting_for_connection_write_lock_keeps_connection_usable()
+    {
+        var (clientTransport, serverTransport) = CreateBackpressuredPair();
+        await using var server = serverTransport;
+        await using var conn = new AmqpConnection(clientTransport, DefaultConnSettings());
+        var blockerObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseBlocker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var serverTask = Task.Run(async () =>
+        {
+            await ConsumeOpenAsync(server);
+            await ConsumeBeginAndReply(server, peerChannel: 4);
+
+            var read = await server.Input.ReadAsync();
+            blockerObserved.TrySetResult();
+            await releaseBlocker.Task;
+            server.Input.AdvanceTo(read.Buffer.End);
+
+            using (var frame = await AmqpFrameIO.ReadFrameAsync(server))
+            {
+                Assert.Equal(PerformativeKind.Attach, PerformativeCodec.PeekKind(frame.Body.Span, out _));
+                AmqpAttach.Read(frame.Body, out var attach, out _);
+                await SendPerfAsync(server, channel: 4, new AmqpAttach
+                {
+                    Name = attach.Name,
+                    Handle = 7,
+                    Role = AmqpRole.Receiver,
+                    InitialDeliveryCount = 0
+                }, AmqpAttach.Write);
+            }
+            await DrainUntilCloseAsync(server);
+        });
+
+        await conn.OpenAsync();
+        var session = await conn.BeginSessionAsync();
+        var blocker = new byte[64];
+        var flow = new AmqpFlow
+        {
+            NextIncomingId = 0,
+            IncomingWindow = uint.MaxValue,
+            NextOutgoingId = 0,
+            OutgoingWindow = uint.MaxValue
+        };
+        AmqpFlow.Write(blocker, in flow, out var blockerLength);
+        var blockerWrite = conn.WriteSessionFrameAsync(
+            session.OutgoingChannel,
+            blocker.AsMemory(0, blockerLength),
+            CancellationToken.None).AsTask();
+        await blockerObserved.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        using var cancellation = new CancellationTokenSource();
+        var cancelledAttach = session.AttachLinkAsync(
+            new AmqpLinkSettings
+            {
+                Name = "cancelled",
+                Role = AmqpRole.Sender,
+                TargetAddress = "q",
+                InitialDeliveryCount = 0
+            },
+            cancellation.Token);
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cancelledAttach);
+
+        releaseBlocker.TrySetResult();
+        await blockerWrite.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var attached = await session.AttachLinkAsync(new AmqpLinkSettings
+        {
+            Name = "usable",
+            Role = AmqpRole.Sender,
+            TargetAddress = "q",
+            InitialDeliveryCount = 0
+        }).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(attached.IsClosed);
+
+        await conn.CloseAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     // ---- helpers ----------------------------------------------------------
     // (Shared helpers live in AmqpTestBroker.cs; imported via `using static`.)
 

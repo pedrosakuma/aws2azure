@@ -29,6 +29,27 @@ internal static class ServiceBusEndpoint
     }
 
     /// <summary>
+    /// Returns the entity-scoped management node address used by Service Bus
+    /// management request/response links.
+    /// </summary>
+    public static string BuildManagementAddress(string queueName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
+        return queueName.Trim() + "/$management";
+    }
+
+    /// <summary>
+    /// Returns the CBS audience for an entity-scoped management link.
+    /// Service Bus authorizes this resource separately from the queue data
+    /// address.
+    /// </summary>
+    public static string BuildManagementAudience(string namespaceFqdn, string queueName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
+        return BuildQueueAudience(namespaceFqdn, queueName) + "/$management";
+    }
+
+    /// <summary>
     /// Returns the AMQP address used as the source terminus of a receiver
     /// link consuming from the given queue. Service Bus is permissive here
     /// and accepts the bare queue name on a session opened against the

@@ -123,6 +123,29 @@ public class AmqpMessageAnnotationsTests
         Assert.Equal(2, ann.MessageState);
     }
 
+    [Theory]
+    [InlineData(253402300800000L, true)]
+    [InlineData(long.MaxValue, true)]
+    [InlineData(-62135596800001L, false)]
+    [InlineData(long.MinValue, false)]
+    public void Timestamp_outside_DateTimeOffset_range_is_clamped(
+        long milliseconds,
+        bool maximum)
+    {
+        var w = new SectionWriter();
+        w.WriteDescribed(MessageSectionDescriptor.MessageAnnotations);
+        w.BeginMap8(pairCount: 1);
+        w.WriteSymbol(AmqpMessageAnnotations.KeyLockedUntil);
+        w.WriteTimestamp(milliseconds);
+        w.EndMap8();
+
+        var ann = AmqpMessageAnnotations.Read(w.ToMemory(), out _);
+
+        Assert.Equal(
+            maximum ? DateTimeOffset.MaxValue : DateTimeOffset.MinValue,
+            ann.LockedUntil);
+    }
+
     [Fact]
     public void Value_with_wrong_type_for_known_key_yields_null()
     {

@@ -136,19 +136,41 @@ static int RunGapDocs(
 
         if (options.GenerateEvidence)
         {
-            var selection = ConformanceMatrixSelector.Select(
-                matrix,
-                options.Service,
-                options.Scenario);
+            RealAzureConformanceMatrix evidenceMatrix;
+            string? selectedService;
+            string? selectedScenario;
+            ConformanceExecutionPlan? executionPlan = null;
+            if (options.PlanPath is not null)
+            {
+                executionPlan = ConformancePlanRenderer.ParseJson(Path.GetFullPath(options.PlanPath));
+                evidenceMatrix = ConformancePlanGenerator.SelectPlannedMatrix(matrix, executionPlan);
+                selectedService = executionPlan.Selection.Service;
+                selectedScenario = null;
+            }
+            else
+            {
+                var selection = ConformanceMatrixSelector.Select(
+                    matrix,
+                    options.Service,
+                    options.Scenario);
+                evidenceMatrix = selection.Matrix;
+                selectedService = selection.Service;
+                selectedScenario = selection.Scenario;
+            }
             var trxFiles = ExpandTrxPaths(options.TrxPaths);
             var trxResults = TrxParser.ParseFiles(trxFiles);
             var evidence = ConformanceEvidenceGenerator.Generate(
-                selection.Matrix,
+                evidenceMatrix,
                 trxResults,
                 options.RunId!,
                 options.RunUrl!,
-                selectedService: selection.Service,
-                selectedScenario: selection.Scenario);
+                selectedService: selectedService,
+                selectedScenario: selectedScenario);
+            if (executionPlan is not null)
+            {
+                evidence.Selection.Profile = executionPlan.Selection.Profile;
+                evidence.Selection.IsFiltered = executionPlan.Selection.IsFiltered;
+            }
             evidence.TrxFiles = trxFiles
                 .Select(path => Path.GetFileName(path)!)
                 .OrderBy(path => path, StringComparer.Ordinal)
@@ -411,7 +433,9 @@ static int PlanConformance(string[] args, string gapsRoot, string defaultMatrixP
     string? matrixPath = null;
     string? service = null;
     string? scenario = null;
+    string? profile = null;
     string? outputPath = null;
+    var excludedScenarios = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     for (var i = 0; i < args.Length; i++)
     {
         switch (args[i])
@@ -427,6 +451,14 @@ static int PlanConformance(string[] args, string gapsRoot, string defaultMatrixP
             case "--scenario" when i + 1 < args.Length
                                    && !args[i + 1].StartsWith("--", StringComparison.Ordinal):
                 scenario = args[++i];
+                break;
+            case "--exclude-scenario" when i + 1 < args.Length
+                                           && !args[i + 1].StartsWith("--", StringComparison.Ordinal):
+                excludedScenarios.Add(args[++i]);
+                break;
+            case "--profile" when i + 1 < args.Length
+                                  && !args[i + 1].StartsWith("--", StringComparison.Ordinal):
+                profile = args[++i];
                 break;
             case "--output" when i + 1 < args.Length
                                  && !args[i + 1].StartsWith("--", StringComparison.Ordinal):
@@ -450,7 +482,9 @@ static int PlanConformance(string[] args, string gapsRoot, string defaultMatrixP
             return 1;
         }
 
-        var plan = ConformancePlanGenerator.Generate(matrix, service, scenario);
+        var plan = ConformancePlanGenerator.Generate(matrix, service, scenario, excludedScenarios);
+        plan.Selection.Profile = profile;
+        plan.Selection.IsFiltered = scenario is not null || excludedScenarios.Count > 0;
         var content = ConformancePlanRenderer.RenderJson(plan) + Environment.NewLine;
         if (outputPath is null)
         {
@@ -1442,6 +1476,7 @@ file sealed class CommandLineOptions
     public string? EvidenceOutput { get; private set; }
     public string? Service { get; private set; }
     public string? Scenario { get; private set; }
+    public string? PlanPath { get; private set; }
     public bool RequireRealAzure { get; private set; }
 
     public static CommandLineOptions Parse(string[] args)
@@ -1478,6 +1513,9 @@ file sealed class CommandLineOptions
                 case "--scenario":
                     options.Scenario = ReadValue(args, ref index, "--scenario");
                     break;
+                case "--plan":
+                    options.PlanPath = ReadValue(args, ref index, "--plan");
+                    break;
                 case "--require-real-azure":
                     options.RequireRealAzure = true;
                     break;
@@ -1504,6 +1542,11 @@ file sealed class CommandLineOptions
             {
                 throw new ArgumentException("--generate-evidence requires --run-url <url>.");
             }
+            if (options.PlanPath is not null
+                && (options.Service is not null || options.Scenario is not null))
+            {
+                throw new ArgumentException("--plan cannot be combined with --service or --scenario.");
+            }
         }
         else if (options.TrxPaths.Count > 0
                  || options.RunId is not null
@@ -1511,10 +1554,11 @@ file sealed class CommandLineOptions
                  || options.EvidenceOutput is not null
                  || options.Service is not null
                  || options.Scenario is not null
+                 || options.PlanPath is not null
                  || options.RequireRealAzure)
         {
             throw new ArgumentException(
-                "--trx, --run-id, --run-url, --evidence-output, --service, --scenario, and " +
+                "--trx, --run-id, --run-url, --evidence-output, --service, --scenario, --plan, and " +
                 "--require-real-azure require --generate-evidence.");
         }
 

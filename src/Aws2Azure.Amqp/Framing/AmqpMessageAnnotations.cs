@@ -279,6 +279,9 @@ internal sealed class AmqpMessageAnnotations
 
     private static DateTimeOffset? ReadTimestampOrSkip(ReadOnlySpan<byte> els, ref int o)
     {
+        const long MinDateTimeOffsetUnixMilliseconds = -62_135_596_800_000L;
+        const long MaxDateTimeOffsetUnixMilliseconds = 253_402_300_799_999L;
+
         if (PerformativeCodec.TryConsumeNull(els, ref o)) return null;
         var fc = els[o];
         if (fc == AmqpFormatCode.TimestampMs)
@@ -286,8 +289,14 @@ internal sealed class AmqpMessageAnnotations
             var ms = AmqpPrimitiveReader.ReadTimestamp(els[o..], out var len);
             o += len;
             // AMQP timestamp is signed Int64 milliseconds since the
-            // Unix epoch; DateTimeOffset.FromUnixTimeMilliseconds handles
-            // the full negative range.
+            // Unix epoch. Service Bus uses 253402300800000 (one
+            // millisecond beyond DateTimeOffset.MaxValue) as an unbounded
+            // lock sentinel for session deliveries, so clamp values outside
+            // the .NET range rather than failing the whole message parse.
+            if (ms > MaxDateTimeOffsetUnixMilliseconds)
+                return DateTimeOffset.MaxValue;
+            if (ms < MinDateTimeOffsetUnixMilliseconds)
+                return DateTimeOffset.MinValue;
             return DateTimeOffset.FromUnixTimeMilliseconds(ms);
         }
         o += AmqpValueScanner.Measure(els[o..]);

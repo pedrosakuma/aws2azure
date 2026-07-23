@@ -211,7 +211,8 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
         string audience,
         string? sessionId,
         uint prefetchCredit,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        TimeSpan? acceptNextTimeout = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
         ArgumentException.ThrowIfNullOrWhiteSpace(audience);
@@ -221,16 +222,20 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
         var dataSession = await EnsureDataSessionAsync(cancellationToken).ConfigureAwait(false);
 
         var filter = ServiceBusSessionFilter.Encode(sessionId);
+        var linkName = $"aws2azure-recv-{queueName}-session-{Guid.NewGuid():N}";
         var settings = new AmqpLinkSettings
         {
-            Name = $"aws2azure-recv-{queueName}-session-{Guid.NewGuid():N}",
+            Name = linkName,
             Role = AmqpRole.Receiver,
             SourceAddress = ServiceBusEndpoint.BuildReceiverSourceAddress(queueName),
             SourceFilter = filter,
-            TargetAddress = null,
+            TargetAddress = linkName,
             SenderSettleMode = AmqpSenderSettleMode.Unsettled,
-            ReceiverSettleMode = AmqpReceiverSettleMode.First,
+            ReceiverSettleMode = AmqpReceiverSettleMode.Second,
             InitialDeliveryCount = null,
+            Properties = sessionId is null && acceptNextTimeout is { } timeout
+                ? ServiceBusSessionFilter.EncodeAcceptNextProperties(timeout)
+                : ReadOnlyMemory<byte>.Empty,
         };
 
         var link = await dataSession.AttachLinkAsync(settings, cancellationToken).ConfigureAwait(false);
@@ -242,41 +247,101 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
             // for "any" (null) it'll carry the assigned session.
             string? boundSessionId = sessionId;
             var remoteSource = link.RemoteAttach.Source;
-            if (!remoteSource.IsEmpty)
+            if (sessionId is null)
             {
-                AmqpSource.Read(remoteSource, out var src, out _);
+                if (remoteSource.IsEmpty)
+                    throw CreateBrokerAssignedSessionUnavailable(settings.Name);
+
+                var src = DecodeRemoteSource(remoteSource, settings.Name);
+                if (src.Filter.IsEmpty)
+                    throw CreateBrokerAssignedSessionUnavailable(settings.Name);
+                boundSessionId = DecodeAssignedSessionFilter(src.Filter, settings.Name);
+            }
+            else if (!remoteSource.IsEmpty)
+            {
+                var src = DecodeRemoteSource(remoteSource, settings.Name);
                 if (!src.Filter.IsEmpty &&
                     ServiceBusSessionFilter.TryDecode(src.Filter, out var assigned) &&
                     assigned is not null)
-                {
                     boundSessionId = assigned;
-                }
-            }
-
-            // A null sessionId means the caller asked the broker to
-            // assign any available session. If we get back here without
-            // a concrete bound id, the broker either didn't echo a
-            // session-filter or echoed a null value — both of which
-            // mean no session was actually bound. Detach and surface
-            // a clear protocol error rather than handing back a
-            // misleading "session receiver".
-            if (boundSessionId is null)
-            {
-                throw new InvalidOperationException(
-                    $"Service Bus did not bind a session to receiver link '{settings.Name}': " +
-                    "the attach response carried no com.microsoft:session-filter " +
-                    "with an assigned session-id.");
             }
 
             if (prefetchCredit > 0)
                 await link.GrantCreditAsync(prefetchCredit, cancellationToken).ConfigureAwait(false);
             return new ServiceBusReceiver(link, queueName, boundSessionId);
         }
+
         catch
         {
             await TryDetachAsync(link).ConfigureAwait(false);
             throw;
         }
+    }
+
+    private static BrokerAssignedSessionUnavailableException CreateBrokerAssignedSessionUnavailable(
+        string linkName) =>
+        new(
+            $"Service Bus did not bind a session to receiver link '{linkName}': " +
+            "the attach response carried no com.microsoft:session-filter.");
+
+    private static AmqpSource DecodeRemoteSource(
+        ReadOnlyMemory<byte> source,
+        string linkName)
+    {
+        try
+        {
+            AmqpSource.Read(source, out var decoded, out _);
+            return decoded;
+        }
+        catch (Exception ex) when (
+            ex is InvalidDataException
+                or System.Text.DecoderFallbackException
+                or ArgumentException
+                or IndexOutOfRangeException
+                or OverflowException)
+        {
+            throw new InvalidDataException(
+                $"Service Bus returned a malformed source for receiver link '{linkName}'.",
+                ex);
+        }
+    }
+
+    private static string DecodeAssignedSessionFilter(
+        ReadOnlyMemory<byte> filter,
+        string linkName)
+    {
+        try
+        {
+            if (ServiceBusSessionFilter.TryDecode(filter, out var assigned))
+            {
+                if (assigned is null)
+                    throw CreateBrokerAssignedSessionUnavailable(linkName);
+                return assigned;
+            }
+        }
+        catch (BrokerAssignedSessionUnavailableException) { throw; }
+        catch (Exception ex) when (
+            ex is System.Text.DecoderFallbackException
+                or ArgumentException
+                or IndexOutOfRangeException
+                or OverflowException)
+        {
+            throw new InvalidDataException(
+                $"Service Bus returned a malformed session filter for receiver link '{linkName}'.",
+                ex);
+        }
+
+        throw new InvalidDataException(
+            $"Service Bus returned an invalid session filter for receiver link '{linkName}'.");
+    }
+
+    /// <summary>
+    /// Signals that an accept-next session attach completed without a bound
+    /// session because no active unlocked session was available.
+    /// </summary>
+    internal sealed class BrokerAssignedSessionUnavailableException : InvalidOperationException
+    {
+        public BrokerAssignedSessionUnavailableException(string message) : base(message) { }
     }
 
     /// <summary>
@@ -343,28 +408,27 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
     }
 
     /// <summary>
-    /// Opens a Service Bus <c>$management</c> request-response client
-    /// scoped to <paramref name="audience"/>. CBS-authorises the
-    /// audience if needed, then attaches the paired sender/receiver on
-    /// the shared data session. Caller owns the returned client and
-    /// must dispose it when done.
+    /// Opens a Service Bus entity-scoped <c>$management</c>
+    /// request-response client. CBS-authorises
+    /// <paramref name="managementAudience"/> if needed, then attaches the
+    /// paired sender/receiver at <paramref name="managementAddress"/> on the
+    /// shared data session. Caller owns the returned client and must dispose
+    /// it when done.
     /// </summary>
-    /// <remarks>
-    /// Note the <c>$management</c> node is per-connection on Service
-    /// Bus — the address is literally <c>$management</c> regardless of
-    /// queue. The CBS-authorised audience scopes which operations the
-    /// broker accepts. For renew-lock the audience must match the
-    /// entity whose lock-token is being renewed.
-    /// </remarks>
     public async Task<ServiceBusManagementClient> OpenManagementClientAsync(
-        string audience, CancellationToken cancellationToken = default)
+        string managementAddress,
+        string managementAudience,
+        CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(audience);
+        ArgumentException.ThrowIfNullOrWhiteSpace(managementAddress);
+        ArgumentException.ThrowIfNullOrWhiteSpace(managementAudience);
         ThrowIfDisposed();
 
-        await EnsureAuthorizedAsync(audience, cancellationToken).ConfigureAwait(false);
+        await EnsureAuthorizedAsync(managementAudience, cancellationToken).ConfigureAwait(false);
         var dataSession = await EnsureDataSessionAsync(cancellationToken).ConfigureAwait(false);
-        return await ServiceBusManagementClient.OpenAsync(dataSession, cancellationToken).ConfigureAwait(false);
+        return await ServiceBusManagementClient
+            .OpenAsync(dataSession, managementAddress, cancellationToken)
+            .ConfigureAwait(false);
     }
 
 
@@ -416,12 +480,12 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
     private async Task<AmqpSession> EnsureDataSessionAsync(CancellationToken cancellationToken)
     {
         var existing = Volatile.Read(ref _dataSession);
-        if (existing is not null) return existing;
+        if (existing is { IsClosed: false }) return existing;
         await _dataSessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             existing = _dataSession;
-            if (existing is not null) return existing;
+            if (existing is { IsClosed: false }) return existing;
             var created = await _connection
                 .BeginSessionAsync(new AmqpSessionSettings(), cancellationToken)
                 .ConfigureAwait(false);

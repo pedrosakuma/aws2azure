@@ -1,4 +1,5 @@
 using System.Buffers;
+using Aws2Azure.Amqp.Codec;
 using Aws2Azure.Amqp.Connection;
 using Aws2Azure.Amqp.Framing;
 using Aws2Azure.Amqp.Security;
@@ -76,6 +77,7 @@ internal sealed class ServiceBusBrokerSimulator
     /// session receiver.
     /// </summary>
     public Dictionary<string, string?> SessionFiltersByLink { get; } = new(StringComparer.Ordinal);
+    public Dictionary<string, SessionAttachRecord> SessionAttachesByLink { get; } = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Session-id the simulator binds to a given link name (slice 7b).
@@ -94,6 +96,19 @@ internal sealed class ServiceBusBrokerSimulator
     /// surfaces when the caller asked for "any available session".
     /// </summary>
     public bool EchoSessionFilterOnAttach { get; set; } = true;
+
+    /// <summary>When true, the echoed session filter has an AMQP null value.</summary>
+    public bool EchoNullSessionFilterOnAttach { get; set; }
+
+    /// <summary>
+    /// When true, the response attach carries a present but invalid session
+    /// filter so protocol-error handling can be tested independently from the
+    /// no-session timeout signal.
+    /// </summary>
+    public bool MalformedSessionFilterOnAttach { get; set; }
+
+    /// <summary>When true, the response session-filter key contains invalid UTF-8.</summary>
+    public bool InvalidUtf8SessionFilterOnAttach { get; set; }
 
 
     /// <summary>Flow frames received per link name (recorded as the granted credit value).</summary>
@@ -127,6 +142,7 @@ internal sealed class ServiceBusBrokerSimulator
     private readonly Dictionary<uint, string> _senderLinkByClientHandle = new();
 
     public Task BrokerLoopTask { get; private set; } = Task.CompletedTask;
+    public TaskCompletionSource? SettlementConfirmationGate { get; set; }
 
     public void Start(CancellationToken cancellationToken = default)
     {
@@ -164,7 +180,7 @@ internal sealed class ServiceBusBrokerSimulator
                         await HandleTransferAsync(f);
                         break;
                     case PerformativeKind.Disposition:
-                        HandleDisposition(f);
+                        await HandleDispositionAsync(f);
                         break;
                     case PerformativeKind.Detach:
                         await HandleDetachAsync(f);
@@ -269,13 +285,36 @@ internal sealed class ServiceBusBrokerSimulator
                 ServiceBusSessionFilter.TryDecode(clientSource.Filter, out var requestedSession))
             {
                 SessionFiltersByLink[a.Name] = requestedSession;
+                string? targetAddress = null;
+                if (!a.Target.IsEmpty)
+                {
+                    AmqpTarget.Read(a.Target, out var target, out _);
+                    targetAddress = target.Address;
+                }
+                SessionAttachesByLink[a.Name] = new SessionAttachRecord(
+                    a.ReceiverSettleMode,
+                    targetAddress,
+                    ReadTimeoutMilliseconds(a.Properties));
                 if (EchoSessionFilterOnAttach)
                 {
                     var assigned = requestedSession
                         ?? (AssignedSessionByLink.TryGetValue(a.Name, out var fromTable)
                             ? fromTable
                             : "broker-assigned-session");
-                    var responseFilter = ServiceBusSessionFilter.Encode(assigned);
+                    var responseFilter = ServiceBusSessionFilter.Encode(
+                        EchoNullSessionFilterOnAttach ? null : assigned);
+                    if (MalformedSessionFilterOnAttach)
+                    {
+                        var malformed = responseFilter.ToArray();
+                        var markerIndex = malformed.AsSpan()
+                            .IndexOf("com.microsoft:session-filter"u8);
+                        if (markerIndex < 0)
+                            throw new InvalidOperationException("Session filter marker was not encoded.");
+                        malformed[markerIndex] = InvalidUtf8SessionFilterOnAttach
+                            ? (byte)0xFF
+                            : (byte)'x';
+                        responseFilter = malformed;
+                    }
                     var responseSrc = new AmqpSource
                     {
                         Address = clientSource.Address,
@@ -448,7 +487,7 @@ internal sealed class ServiceBusBrokerSimulator
 
     private readonly Dictionary<uint, List<byte>> _pendingTransferPayloads = new();
 
-    private void HandleDisposition(RentedFrame f)
+    private async Task HandleDispositionAsync(RentedFrame f)
     {
         AmqpDisposition.Read(f.Body, out var d, out _);
         // Only record dispositions from the data session — CBS put-token
@@ -460,6 +499,14 @@ internal sealed class ServiceBusBrokerSimulator
         var last = d.Last ?? first;
         var outcome = AmqpDispositionOutcomeExtractor.From(d.State);
         AmqpError? rejectedError = null;
+        bool? deliveryFailed = null;
+        bool? undeliverableHere = null;
+        if (outcome == AmqpDispositionOutcome.Modified && !d.State.IsEmpty)
+        {
+            Modified.Read(d.State, out var modified, out _);
+            deliveryFailed = modified.DeliveryFailed;
+            undeliverableHere = modified.UndeliverableHere;
+        }
         if (outcome == AmqpDispositionOutcome.Rejected && !d.State.IsEmpty)
         {
             Rejected.Read(d.State, out var rejected, out _);
@@ -469,11 +516,54 @@ internal sealed class ServiceBusBrokerSimulator
                 rejectedError = err;
             }
         }
-        for (var id = first; id <= last; id++)
+        if (last >= first)
         {
-            Dispositions[id] = new DispositionRecord(outcome, d.Settled ?? false);
-            if (rejectedError is { } re) RejectedErrors[id] = re;
+            for (var id = first; ; id++)
+            {
+                Dispositions[id] = new DispositionRecord(
+                    outcome,
+                    d.Settled ?? false,
+                    deliveryFailed,
+                    undeliverableHere);
+                if (rejectedError is { } re) RejectedErrors[id] = re;
+                if (id == last) break;
+            }
         }
+
+        if (d.Role == AmqpRole.Receiver && d.Settled != true)
+        {
+            if (SettlementConfirmationGate is { } gate)
+            {
+                await gate.Task.ConfigureAwait(false);
+            }
+
+            var state = d.State.IsEmpty ? ReadOnlyMemory<byte>.Empty : d.State.ToArray();
+            await AmqpTestBroker.SendPerfAsync(_server, DataSessionChannel, new AmqpDisposition
+            {
+                Role = AmqpRole.Sender,
+                First = first,
+                Last = last,
+                Settled = true,
+                State = state,
+            }, AmqpDisposition.Write);
+        }
+    }
+
+    private static uint? ReadTimeoutMilliseconds(ReadOnlyMemory<byte> properties)
+    {
+        if (properties.IsEmpty) return null;
+        var map = AmqpCompoundReader.ReadMap(properties.Span, out _);
+        var elements = map.Elements;
+        var offset = 0;
+        for (var i = 0; i < map.Count / 2; i++)
+        {
+            var key = AmqpVariableReader.ReadSymbol(elements[offset..], out var keyLen);
+            offset += keyLen;
+            if (key == "com.microsoft:timeout")
+                return AmqpPrimitiveReader.ReadUInt(elements[offset..], out _);
+            offset += AmqpValueScanner.Measure(elements[offset..]);
+        }
+        return null;
     }
 
     private async Task HandleDetachAsync(RentedFrame f)
@@ -495,7 +585,16 @@ internal sealed class ServiceBusBrokerSimulator
         }, AmqpDetach.Write);
     }
 
-    public readonly record struct DispositionRecord(AmqpDispositionOutcome Outcome, bool Settled);
+    public readonly record struct DispositionRecord(
+        AmqpDispositionOutcome Outcome,
+        bool Settled,
+        bool? DeliveryFailed,
+        bool? UndeliverableHere);
+
+    public readonly record struct SessionAttachRecord(
+        AmqpReceiverSettleMode? ReceiverSettleMode,
+        string? TargetAddress,
+        uint? TimeoutMilliseconds);
 
     public sealed record DeliveryToSend(byte[] DeliveryTag, byte[] Payload);
 }
