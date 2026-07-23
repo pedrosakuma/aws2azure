@@ -441,8 +441,8 @@ internal sealed class AmqpConnection : IAsyncDisposable
         catch (OperationCanceledException) { /* normal shutdown */ }
         catch (Exception ex)
         {
-            _peerCloseReceived.TrySetException(
-                new AmqpConnectionException("Read loop failed.", ex, AmqpErrorKind.ClientFatal));
+            await AbortAsync(new AmqpConnectionException(
+                "Read loop failed.", ex, AmqpErrorKind.ClientFatal)).ConfigureAwait(false);
         }
     }
 
@@ -555,7 +555,7 @@ internal sealed class AmqpConnection : IAsyncDisposable
                         // path (which reads _state) sees a dead connection.
                         Interlocked.Exchange(ref _state, StateFinal);
                         _peerCloseReceived.TrySetException(ex);
-                        AbortAllSessions();
+                        AbortAllSessions(ex);
                         try { _shutdownCts.Cancel(); } catch { }
                         return;
                     }
