@@ -97,6 +97,19 @@ internal sealed class ServiceBusBrokerSimulator
     /// </summary>
     public bool EchoSessionFilterOnAttach { get; set; } = true;
 
+    /// <summary>When true, the echoed session filter has an AMQP null value.</summary>
+    public bool EchoNullSessionFilterOnAttach { get; set; }
+
+    /// <summary>
+    /// When true, the response attach carries a present but invalid session
+    /// filter so protocol-error handling can be tested independently from the
+    /// no-session timeout signal.
+    /// </summary>
+    public bool MalformedSessionFilterOnAttach { get; set; }
+
+    /// <summary>When true, the response session-filter key contains invalid UTF-8.</summary>
+    public bool InvalidUtf8SessionFilterOnAttach { get; set; }
+
 
     /// <summary>Flow frames received per link name (recorded as the granted credit value).</summary>
     public Dictionary<string, List<uint>> FlowCreditsByLink { get; } = new(StringComparer.Ordinal);
@@ -288,7 +301,20 @@ internal sealed class ServiceBusBrokerSimulator
                         ?? (AssignedSessionByLink.TryGetValue(a.Name, out var fromTable)
                             ? fromTable
                             : "broker-assigned-session");
-                    var responseFilter = ServiceBusSessionFilter.Encode(assigned);
+                    var responseFilter = ServiceBusSessionFilter.Encode(
+                        EchoNullSessionFilterOnAttach ? null : assigned);
+                    if (MalformedSessionFilterOnAttach)
+                    {
+                        var malformed = responseFilter.ToArray();
+                        var markerIndex = malformed.AsSpan()
+                            .IndexOf("com.microsoft:session-filter"u8);
+                        if (markerIndex < 0)
+                            throw new InvalidOperationException("Session filter marker was not encoded.");
+                        malformed[markerIndex] = InvalidUtf8SessionFilterOnAttach
+                            ? (byte)0xFF
+                            : (byte)'x';
+                        responseFilter = malformed;
+                    }
                     var responseSrc = new AmqpSource
                     {
                         Address = clientSource.Address,

@@ -315,7 +315,7 @@ public sealed class ServiceBusAmqpConnectionTests
     }
 
     [Fact]
-    public async Task OpenSessionReceiverAsync_throws_when_broker_does_not_bind_a_session()
+    public async Task OpenSessionReceiverAsync_signals_when_broker_does_not_bind_a_session()
     {
         var (client, server) = PipePairTransport.CreatePair();
         await using var _ = server;
@@ -328,8 +328,90 @@ public sealed class ServiceBusAmqpConnectionTests
             .WaitAsync(TimeSpan.FromSeconds(10));
 
         var audience = ServiceBusEndpoint.BuildQueueAudience("ns.servicebus.windows.net", "fifo-queue");
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<ServiceBusAmqpConnection.BrokerAssignedSessionUnavailableException>(() =>
             conn.OpenSessionReceiverAsync("fifo-queue", audience, sessionId: null, prefetchCredit: 0));
+    }
+
+    [Fact]
+    public async Task OpenSessionReceiverAsync_signals_when_broker_echoes_null_session()
+    {
+        var (client, server) = PipePairTransport.CreatePair();
+        await using var _ = server;
+
+        var broker = new ServiceBusBrokerSimulator(server)
+        {
+            EchoNullSessionFilterOnAttach = true,
+        };
+        broker.Start();
+
+        await using var conn = await ServiceBusAmqpConnection
+            .OpenAsync(client, new FakeTokenProvider(), DefaultSettings())
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        var audience = ServiceBusEndpoint.BuildQueueAudience(
+            "ns.servicebus.windows.net",
+            "fifo-queue");
+        await Assert.ThrowsAsync<ServiceBusAmqpConnection.BrokerAssignedSessionUnavailableException>(() =>
+            conn.OpenSessionReceiverAsync(
+                "fifo-queue",
+                audience,
+                sessionId: null,
+                prefetchCredit: 0));
+    }
+
+    [Fact]
+    public async Task OpenSessionReceiverAsync_rejects_malformed_broker_session_filter()
+    {
+        var (client, server) = PipePairTransport.CreatePair();
+        await using var _ = server;
+
+        var broker = new ServiceBusBrokerSimulator(server)
+        {
+            MalformedSessionFilterOnAttach = true,
+        };
+        broker.Start();
+
+        await using var conn = await ServiceBusAmqpConnection
+            .OpenAsync(client, new FakeTokenProvider(), DefaultSettings())
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        var audience = ServiceBusEndpoint.BuildQueueAudience(
+            "ns.servicebus.windows.net",
+            "fifo-queue");
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            conn.OpenSessionReceiverAsync(
+                "fifo-queue",
+                audience,
+                sessionId: null,
+                prefetchCredit: 0));
+    }
+
+    [Fact]
+    public async Task OpenSessionReceiverAsync_wraps_invalid_utf8_session_filter()
+    {
+        var (client, server) = PipePairTransport.CreatePair();
+        await using var _ = server;
+
+        var broker = new ServiceBusBrokerSimulator(server)
+        {
+            MalformedSessionFilterOnAttach = true,
+            InvalidUtf8SessionFilterOnAttach = true,
+        };
+        broker.Start();
+
+        await using var conn = await ServiceBusAmqpConnection
+            .OpenAsync(client, new FakeTokenProvider(), DefaultSettings())
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        var audience = ServiceBusEndpoint.BuildQueueAudience(
+            "ns.servicebus.windows.net",
+            "fifo-queue");
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            conn.OpenSessionReceiverAsync(
+                "fifo-queue",
+                audience,
+                sessionId: null,
+                prefetchCredit: 0));
     }
 
     [Fact]

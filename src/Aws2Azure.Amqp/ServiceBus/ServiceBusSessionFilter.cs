@@ -20,6 +20,8 @@ internal static class ServiceBusSessionFilter
     /// <summary>Symbol the source.filter map key uses.</summary>
     public const string FilterSymbol = "com.microsoft:session-filter";
 
+    private const ulong LegacyFilterDescriptor = 0x0000_0013_7000_000CUL;
+
     /// <summary>
     /// Maximum session-id length we will accept before refusing to
     /// encode. Service Bus enforces a 128-char limit on session-id; we
@@ -116,16 +118,33 @@ internal static class ServiceBusSessionFilter
         sessionId = null;
         if (filter.IsEmpty) return false;
 
-        AmqpCompoundView map;
         try
         {
-            map = AmqpCompoundReader.ReadMap(filter.Span, out _);
+            return TryDecodeCore(filter, out sessionId);
         }
-        catch (InvalidDataException) { return false; }
+        catch (Exception ex) when (
+            ex is InvalidDataException
+                or System.Text.DecoderFallbackException
+                or ArgumentException
+                or IndexOutOfRangeException
+                or OverflowException)
+        {
+            sessionId = null;
+            return false;
+        }
+    }
+
+    private static bool TryDecodeCore(ReadOnlyMemory<byte> filter, out string? sessionId)
+    {
+        sessionId = null;
+        var map = AmqpCompoundReader.ReadMap(filter.Span, out var mapLength);
+        if (mapLength != filter.Length) return false;
 
         var els = map.Elements;
         var pairs = map.Count / 2;
         int o = 0;
+        var found = false;
+        string? decodedSessionId = null;
         for (int i = 0; i < pairs; i++)
         {
             if (o >= els.Length) return false;
@@ -147,6 +166,7 @@ internal static class ServiceBusSessionFilter
                 o += AmqpValueScanner.Measure(els[o..]);
                 continue;
             }
+            if (found) return false;
 
             if (o >= els.Length) return false;
             var vCode = els[o];
@@ -154,11 +174,19 @@ internal static class ServiceBusSessionFilter
             {
                 // Tolerant path: some peers send the value verbatim
                 // (string or null) without the described wrapper.
-                if (vCode == AmqpFormatCode.Null) { sessionId = null; return true; }
+                if (vCode == AmqpFormatCode.Null)
+                {
+                    decodedSessionId = null;
+                    o++;
+                    found = true;
+                    continue;
+                }
                 if (vCode == AmqpFormatCode.String8Utf8 || vCode == AmqpFormatCode.String32Utf8)
                 {
-                    sessionId = AmqpVariableReader.ReadString(els[o..], out _);
-                    return true;
+                    decodedSessionId = AmqpVariableReader.ReadString(els[o..], out var valueLength);
+                    o += valueLength;
+                    found = true;
+                    continue;
                 }
                 return false;
             }
@@ -166,24 +194,48 @@ internal static class ServiceBusSessionFilter
             // Described: 0x00 + descriptor + body.
             o++;
             if (o >= els.Length) return false;
-            // Skip descriptor (symbol or ulong code).
-            o += AmqpValueScanner.Measure(els[o..]);
-            if (o >= els.Length) return false;
-            var bCode = els[o];
-            if (bCode == AmqpFormatCode.Null)
+            var descriptorCode = els[o];
+            if (descriptorCode == AmqpFormatCode.Symbol8 ||
+                descriptorCode == AmqpFormatCode.Symbol32)
             {
-                sessionId = null;
+                var descriptor = AmqpVariableReader.ReadSymbol(els[o..], out var descriptorLength);
+                if (!string.Equals(descriptor, FilterSymbol, StringComparison.Ordinal))
+                    return false;
+                o += descriptorLength;
             }
-            else if (bCode == AmqpFormatCode.String8Utf8 || bCode == AmqpFormatCode.String32Utf8)
+            else if (descriptorCode == AmqpFormatCode.ULong0 ||
+                     descriptorCode == AmqpFormatCode.ULongSmall ||
+                     descriptorCode == AmqpFormatCode.ULong)
             {
-                sessionId = AmqpVariableReader.ReadString(els[o..], out _);
+                var descriptor = AmqpPrimitiveReader.ReadULong(els[o..], out var descriptorLength);
+                if (descriptor != LegacyFilterDescriptor)
+                    return false;
+                o += descriptorLength;
             }
             else
             {
                 return false;
             }
-            return true;
+            if (o >= els.Length) return false;
+            var bCode = els[o];
+            if (bCode == AmqpFormatCode.Null)
+            {
+                decodedSessionId = null;
+                o++;
+            }
+            else if (bCode == AmqpFormatCode.String8Utf8 || bCode == AmqpFormatCode.String32Utf8)
+            {
+                decodedSessionId = AmqpVariableReader.ReadString(els[o..], out var valueLength);
+                o += valueLength;
+            }
+            else
+            {
+                return false;
+            }
+            found = true;
         }
-        return false;
+        if (!found || o != els.Length) return false;
+        sessionId = decodedSessionId;
+        return true;
     }
 }

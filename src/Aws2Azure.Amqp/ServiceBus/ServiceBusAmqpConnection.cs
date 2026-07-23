@@ -247,41 +247,101 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
             // for "any" (null) it'll carry the assigned session.
             string? boundSessionId = sessionId;
             var remoteSource = link.RemoteAttach.Source;
-            if (!remoteSource.IsEmpty)
+            if (sessionId is null)
             {
-                AmqpSource.Read(remoteSource, out var src, out _);
+                if (remoteSource.IsEmpty)
+                    throw CreateBrokerAssignedSessionUnavailable(settings.Name);
+
+                var src = DecodeRemoteSource(remoteSource, settings.Name);
+                if (src.Filter.IsEmpty)
+                    throw CreateBrokerAssignedSessionUnavailable(settings.Name);
+                boundSessionId = DecodeAssignedSessionFilter(src.Filter, settings.Name);
+            }
+            else if (!remoteSource.IsEmpty)
+            {
+                var src = DecodeRemoteSource(remoteSource, settings.Name);
                 if (!src.Filter.IsEmpty &&
                     ServiceBusSessionFilter.TryDecode(src.Filter, out var assigned) &&
                     assigned is not null)
-                {
                     boundSessionId = assigned;
-                }
-            }
-
-            // A null sessionId means the caller asked the broker to
-            // assign any available session. If we get back here without
-            // a concrete bound id, the broker either didn't echo a
-            // session-filter or echoed a null value — both of which
-            // mean no session was actually bound. Detach and surface
-            // a clear protocol error rather than handing back a
-            // misleading "session receiver".
-            if (boundSessionId is null)
-            {
-                throw new InvalidOperationException(
-                    $"Service Bus did not bind a session to receiver link '{settings.Name}': " +
-                    "the attach response carried no com.microsoft:session-filter " +
-                    "with an assigned session-id.");
             }
 
             if (prefetchCredit > 0)
                 await link.GrantCreditAsync(prefetchCredit, cancellationToken).ConfigureAwait(false);
             return new ServiceBusReceiver(link, queueName, boundSessionId);
         }
+
         catch
         {
             await TryDetachAsync(link).ConfigureAwait(false);
             throw;
         }
+    }
+
+    private static BrokerAssignedSessionUnavailableException CreateBrokerAssignedSessionUnavailable(
+        string linkName) =>
+        new(
+            $"Service Bus did not bind a session to receiver link '{linkName}': " +
+            "the attach response carried no com.microsoft:session-filter.");
+
+    private static AmqpSource DecodeRemoteSource(
+        ReadOnlyMemory<byte> source,
+        string linkName)
+    {
+        try
+        {
+            AmqpSource.Read(source, out var decoded, out _);
+            return decoded;
+        }
+        catch (Exception ex) when (
+            ex is InvalidDataException
+                or System.Text.DecoderFallbackException
+                or ArgumentException
+                or IndexOutOfRangeException
+                or OverflowException)
+        {
+            throw new InvalidDataException(
+                $"Service Bus returned a malformed source for receiver link '{linkName}'.",
+                ex);
+        }
+    }
+
+    private static string DecodeAssignedSessionFilter(
+        ReadOnlyMemory<byte> filter,
+        string linkName)
+    {
+        try
+        {
+            if (ServiceBusSessionFilter.TryDecode(filter, out var assigned))
+            {
+                if (assigned is null)
+                    throw CreateBrokerAssignedSessionUnavailable(linkName);
+                return assigned;
+            }
+        }
+        catch (BrokerAssignedSessionUnavailableException) { throw; }
+        catch (Exception ex) when (
+            ex is System.Text.DecoderFallbackException
+                or ArgumentException
+                or IndexOutOfRangeException
+                or OverflowException)
+        {
+            throw new InvalidDataException(
+                $"Service Bus returned a malformed session filter for receiver link '{linkName}'.",
+                ex);
+        }
+
+        throw new InvalidDataException(
+            $"Service Bus returned an invalid session filter for receiver link '{linkName}'.");
+    }
+
+    /// <summary>
+    /// Signals that an accept-next session attach completed without a bound
+    /// session because no active unlocked session was available.
+    /// </summary>
+    internal sealed class BrokerAssignedSessionUnavailableException : InvalidOperationException
+    {
+        public BrokerAssignedSessionUnavailableException(string message) : base(message) { }
     }
 
     /// <summary>

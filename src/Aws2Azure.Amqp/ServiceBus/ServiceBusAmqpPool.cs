@@ -316,6 +316,11 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                     return new BrokerAssignedSessionReceiverResult(
                         null, Stopwatch.GetElapsedTime(brokerWaitStarted.Value));
                 }
+                catch (ServiceBusAmqpConnection.BrokerAssignedSessionUnavailableException)
+                {
+                    return new BrokerAssignedSessionReceiverResult(
+                        null, Stopwatch.GetElapsedTime(brokerWaitStarted.Value));
+                }
                 catch (OperationCanceledException) when (
                     !cancellationToken.IsCancellationRequested && brokerWait.IsCancellationRequested)
                 {

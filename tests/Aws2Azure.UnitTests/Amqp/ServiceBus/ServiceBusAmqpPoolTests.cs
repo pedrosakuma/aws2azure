@@ -441,6 +441,40 @@ public sealed class ServiceBusAmqpPoolTests
     }
 
     [Fact]
+    public async Task AcquireBrokerAssignedSessionReceiverAsync_returns_empty_when_attach_binds_no_session()
+    {
+        await using var factory = new FakeFactory(
+            DefaultSettings(),
+            echoSessionFilterOnAttach: false);
+        await using var pool = new ServiceBusAmqpPool(factory);
+
+        var acquisition = await pool.AcquireBrokerAssignedSessionReceiverAsync(
+                ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"),
+                "Root", "k", "fifo-q", TimeSpan.FromSeconds(5))
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Null(acquisition.Receiver);
+        Assert.Equal(0, pool.SessionReceiverCount);
+    }
+
+    [Fact]
+    public async Task AcquireBrokerAssignedSessionReceiverAsync_returns_empty_for_null_assignment()
+    {
+        await using var factory = new FakeFactory(
+            DefaultSettings(),
+            echoNullSessionFilterOnAttach: true);
+        await using var pool = new ServiceBusAmqpPool(factory);
+
+        var acquisition = await pool.AcquireBrokerAssignedSessionReceiverAsync(
+                ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"),
+                "Root", "k", "fifo-q", TimeSpan.FromSeconds(5))
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Null(acquisition.Receiver);
+        Assert.Equal(0, pool.SessionReceiverCount);
+    }
+
+    [Fact]
     public async Task AcquireBrokerAssignedSessionReceiverAsync_rejects_blank_arguments()
     {
         await using var factory = new FakeFactory(DefaultSettings());
@@ -800,10 +834,20 @@ public sealed class ServiceBusAmqpPoolTests
     private sealed class FakeFactory : IServiceBusAmqpConnectionFactory, IAsyncDisposable
     {
         private readonly AmqpConnectionSettings _settings;
+        private readonly bool _echoSessionFilterOnAttach;
+        private readonly bool _echoNullSessionFilterOnAttach;
         private readonly List<IAsyncDisposable> _peers = new();
         private int _createCallCount;
 
-        public FakeFactory(AmqpConnectionSettings settings) => _settings = settings;
+        public FakeFactory(
+            AmqpConnectionSettings settings,
+            bool echoSessionFilterOnAttach = true,
+            bool echoNullSessionFilterOnAttach = false)
+        {
+            _settings = settings;
+            _echoSessionFilterOnAttach = echoSessionFilterOnAttach;
+            _echoNullSessionFilterOnAttach = echoNullSessionFilterOnAttach;
+        }
 
         public int CreateCallCount => Volatile.Read(ref _createCallCount);
 
@@ -816,7 +860,11 @@ public sealed class ServiceBusAmqpPoolTests
             Interlocked.Increment(ref _createCallCount);
             var (client, server) = PipePairTransport.CreatePair();
             lock (_peers) _peers.Add(server);
-            var broker = new ServiceBusBrokerSimulator(server);
+            var broker = new ServiceBusBrokerSimulator(server)
+            {
+                EchoSessionFilterOnAttach = _echoSessionFilterOnAttach,
+                EchoNullSessionFilterOnAttach = _echoNullSessionFilterOnAttach,
+            };
             broker.Start();
             return await ServiceBusAmqpConnection
                 .OpenAsync(client, new FakeTokenProvider(), _settings, cancellationToken)
