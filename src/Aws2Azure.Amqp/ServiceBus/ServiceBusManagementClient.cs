@@ -207,9 +207,9 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
                 count: lockTokens.Count,
                 out var arrayLen);
 
-            // Build the map pair: key "lock-tokens" (symbol) → array<Uuid>.
-            // Service Bus accepts either string or symbol keys; symbol is
-            // marginally cheaper and matches the official SDK.
+            // Build the map pair: key "lock-tokens" (string) → array<Uuid>.
+            // The official SDK's MapKey wraps a string, so the key must stay
+            // string-typed on the wire.
             // pairBytes must hold the full key+array — size from the
             // measured arrayLen rather than a fixed cap to avoid an
             // overflow at large batch sizes.
@@ -217,7 +217,7 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
             try
             {
                 Span<byte> pairBytes = pairBuf;
-                AmqpVariableWriter.WriteSymbol(pairBytes, "lock-tokens", out var keyLen);
+                AmqpVariableWriter.WriteString(pairBytes, "lock-tokens", out var keyLen);
                 arrayBytes[..arrayLen].CopyTo(pairBytes[keyLen..]);
                 var pairLen = keyLen + arrayLen;
 
@@ -237,8 +237,8 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
     private static PooledPayload EncodeRenewSessionLockRequest(string sessionId)
     {
         // body = AmqpValue map { "session-id" → string }.
-        // Per the broker spec the key is the symbol "session-id" and
-        // the value is a UTF-8 string. The wire size is modest
+        // The official SDK's MapKey wraps the string "session-id", so both
+        // key and value are UTF-8 strings. The wire size is modest
         // (16 + sessionId length × 4 worst case) so a single rented
         // page is plenty.
         var byteLen = System.Text.Encoding.UTF8.GetMaxByteCount(sessionId.Length);
@@ -255,7 +255,7 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
             }
             try
             {
-                AmqpVariableWriter.WriteSymbol(pair, "session-id", out var keyLen);
+                AmqpVariableWriter.WriteString(pair, "session-id", out var keyLen);
                 AmqpVariableWriter.WriteString(pair[keyLen..], sessionId, out var valLen);
                 var pairLen = keyLen + valLen;
 

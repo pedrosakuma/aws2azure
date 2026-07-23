@@ -122,6 +122,7 @@ public sealed class ServiceBusManagementClientTests
         string? associatedLinkName = null;
         object? serverTimeout = null;
         string? trackingId = null;
+        byte? sessionIdKeyFormat = null;
         var serverTask = Task.Run(async () => await ManagementBrokerSimulator.RunFullAsync(
             server,
             renewExpiry: brokerExpiry,
@@ -134,6 +135,8 @@ public sealed class ServiceBusManagementClientTests
                 associatedLinkName = request.ApplicationProperties?["associated-link-name"] as string;
                 serverTimeout = request.ApplicationProperties?["com.microsoft:server-timeout"];
                 trackingId = request.ApplicationProperties?["com.microsoft:tracking-id"] as string;
+                var bodyMap = AmqpCompoundReader.ReadMap(request.BodyValueBytes!.Value.Span, out _);
+                sessionIdKeyFormat = bodyMap.Elements[0];
             }));
 
         await conn.OpenAsync();
@@ -155,6 +158,8 @@ public sealed class ServiceBusManagementClientTests
         Assert.Equal("receiver-link-42", associatedLinkName);
         Assert.IsType<uint>(serverTimeout);
         Assert.False(string.IsNullOrWhiteSpace(trackingId));
+        Assert.True(
+            sessionIdKeyFormat is AmqpFormatCode.String8Utf8 or AmqpFormatCode.String32Utf8);
     }
 
     [Fact]
