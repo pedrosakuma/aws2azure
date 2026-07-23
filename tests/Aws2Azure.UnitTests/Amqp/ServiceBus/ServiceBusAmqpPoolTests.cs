@@ -396,8 +396,11 @@ public sealed class ServiceBusAmqpPoolTests
         // when the client asks for sessionId: null (no AssignedSessionByLink
         // override is set). Acquire path resolves that and adopts the
         // receiver into the pool keyed by the resolved id.
-        var r1 = await pool.AcquireBrokerAssignedSessionReceiverAsync(ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"), "Root", "k", "fifo-q")
+        var acquisition = await pool.AcquireBrokerAssignedSessionReceiverAsync(
+                ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"),
+                "Root", "k", "fifo-q", TimeSpan.FromSeconds(5))
             .WaitAsync(TimeSpan.FromSeconds(10));
+        var r1 = Assert.IsType<ServiceBusReceiver>(acquisition.Receiver);
 
         Assert.Equal("broker-assigned-session", r1.SessionId);
 
@@ -421,10 +424,16 @@ public sealed class ServiceBusAmqpPoolTests
         await using var factory = new FakeFactory(DefaultSettings());
         await using var pool = new ServiceBusAmqpPool(factory);
 
-        var r1 = await pool.AcquireBrokerAssignedSessionReceiverAsync(ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"), "Root", "k", "fifo-q")
+        var first = await pool.AcquireBrokerAssignedSessionReceiverAsync(
+                ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"),
+                "Root", "k", "fifo-q", TimeSpan.FromSeconds(5))
             .WaitAsync(TimeSpan.FromSeconds(10));
-        var r2 = await pool.AcquireBrokerAssignedSessionReceiverAsync(ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"), "Root", "k", "fifo-q")
+        var second = await pool.AcquireBrokerAssignedSessionReceiverAsync(
+                ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"),
+                "Root", "k", "fifo-q", TimeSpan.FromSeconds(5))
             .WaitAsync(TimeSpan.FromSeconds(10));
+        var r1 = Assert.IsType<ServiceBusReceiver>(first.Receiver);
+        var r2 = Assert.IsType<ServiceBusReceiver>(second.Receiver);
 
         Assert.Same(r1, r2);
         Assert.Equal("broker-assigned-session", r1.SessionId);
@@ -438,9 +447,13 @@ public sealed class ServiceBusAmqpPoolTests
         await using var pool = new ServiceBusAmqpPool(factory);
 
         await Assert.ThrowsAnyAsync<ArgumentException>(() =>
-            pool.AcquireBrokerAssignedSessionReceiverAsync(ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"), "Root", "k", queueName: null!));
+            pool.AcquireBrokerAssignedSessionReceiverAsync(
+                ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"),
+                "Root", "k", queueName: null!, TimeSpan.FromSeconds(5)));
         await Assert.ThrowsAnyAsync<ArgumentException>(() =>
-            pool.AcquireBrokerAssignedSessionReceiverAsync(ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"), "Root", "k", queueName: ""));
+            pool.AcquireBrokerAssignedSessionReceiverAsync(
+                ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net"),
+                "Root", "k", queueName: "", TimeSpan.FromSeconds(5)));
     }
 
     [Fact]
@@ -502,6 +515,30 @@ public sealed class ServiceBusAmqpPoolTests
     }
 
     [Fact]
+    public async Task Session_receiver_pool_reclaims_closed_slot_at_capacity_without_idle_timeout()
+    {
+        await using var factory = new FakeFactory(DefaultSettings());
+        await using var pool = new ServiceBusAmqpPool(
+            factory,
+            sessionReceiverIdleTimeout: null,
+            maxSessionReceiversPerConnection: 1);
+        var endpoint = ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net");
+
+        var closed = await pool.GetSessionReceiverAsync(
+                endpoint, "Root", "k", "fifo-q", "session-1")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        await closed.DisposeAsync();
+
+        var replacement = await pool.GetSessionReceiverAsync(
+                endpoint, "Root", "k", "fifo-q", "session-2")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal("session-2", replacement.SessionId);
+        Assert.Equal(1, pool.SessionReceiverCount);
+        Assert.Equal(1, factory.CreateCallCount);
+    }
+
+    [Fact]
     public async Task Idle_eviction_is_opportunistic_and_does_not_create_a_background_timer()
     {
         await using var factory = new FakeFactory(DefaultSettings());
@@ -560,6 +597,55 @@ public sealed class ServiceBusAmqpPoolTests
         clock.Advance(TimeSpan.FromMinutes(3));
         Assert.Equal(0, await pool.SweepIdleSessionReceiversAsync());
         Assert.Equal(1, pool.SessionReceiverCount);
+    }
+
+    [Fact]
+    public async Task Session_receiver_lease_blocks_idle_eviction_until_operation_completes()
+    {
+        var clock = new ManualClock(new DateTimeOffset(2026, 6, 10, 0, 0, 0, TimeSpan.Zero));
+        await using var factory = new FakeFactory(DefaultSettings());
+        await using var pool = new ServiceBusAmqpPool(
+            factory,
+            sessionReceiverIdleTimeout: TimeSpan.FromMilliseconds(1),
+            timeProvider: clock);
+        var endpoint = ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net");
+
+        await pool.GetSessionReceiverAsync(endpoint, "Root", "k", "fifo-q", "session-1")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        using (var lease = Assert.IsType<ServiceBusAmqpPool.SessionReceiverLease>(
+                   pool.TryAcquireExistingSessionReceiver(
+                       endpoint, "Root", "fifo-q", "session-1")))
+        {
+            clock.Advance(TimeSpan.FromSeconds(1));
+            Assert.Equal(0, await pool.SweepIdleSessionReceiversAsync());
+            Assert.False(lease.Receiver.IsClosed);
+        }
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(1, await pool.SweepIdleSessionReceiversAsync());
+        Assert.Equal(0, pool.SessionReceiverCount);
+    }
+
+    [Fact]
+    public async Task Session_receiver_invalidation_defers_disposal_until_active_lease_drains()
+    {
+        await using var factory = new FakeFactory(DefaultSettings());
+        await using var pool = new ServiceBusAmqpPool(factory);
+        var endpoint = ServiceBusAmqpEndpoint.Tls("ns.servicebus.windows.net");
+        await pool.GetSessionReceiverAsync(endpoint, "Root", "k", "fifo-q", "session-1")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        var lease = Assert.IsType<ServiceBusAmqpPool.SessionReceiverLease>(
+            pool.TryAcquireExistingSessionReceiver(endpoint, "Root", "fifo-q", "session-1"));
+
+        var invalidation = pool.InvalidateSessionReceiverAsync(
+            endpoint, "Root", "fifo-q", "session-1");
+        Assert.False(invalidation.IsCompleted);
+        Assert.False(lease.Receiver.IsClosed);
+
+        lease.Dispose();
+        await invalidation.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(lease.Receiver.IsClosed);
+        Assert.Equal(0, pool.SessionReceiverCount);
     }
 
     [Fact]

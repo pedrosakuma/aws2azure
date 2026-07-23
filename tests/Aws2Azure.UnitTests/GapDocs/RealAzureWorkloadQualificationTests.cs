@@ -181,6 +181,37 @@ public sealed class RealAzureWorkloadQualificationTests
     }
 
     [Fact]
+    public void Generate_accepts_filtered_evidence_for_matching_profile()
+    {
+        var evidence = Evidence("passed", eligible: true);
+        evidence.Selection.IsFiltered = true;
+        evidence.Selection.Profile = "s3-basic-write";
+        evidence.Selection.Scenario = "object-lifecycle";
+
+        var document = Generate(evidence);
+
+        Assert.Equal("candidate", document.Verdict);
+        Assert.DoesNotContain(
+            document.Findings,
+            finding => finding.Code == "scenario_filtered_evidence");
+    }
+
+    [Fact]
+    public void Generate_marks_filtered_evidence_for_different_profile_inconclusive()
+    {
+        var evidence = Evidence("passed", eligible: true);
+        evidence.Selection.IsFiltered = true;
+        evidence.Selection.Profile = "s3-different-profile";
+
+        var document = Generate(evidence);
+
+        Assert.Equal("inconclusive", document.Verdict);
+        Assert.Contains(
+            document.Findings,
+            finding => finding.Code == "scenario_filtered_evidence");
+    }
+
+    [Fact]
     public void Generate_rejects_null_nested_operation_lists()
     {
         var evidence = Evidence("passed", eligible: true);

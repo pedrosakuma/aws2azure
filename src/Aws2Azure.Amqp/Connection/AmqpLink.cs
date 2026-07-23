@@ -42,6 +42,8 @@ internal abstract class AmqpLink
     private FaultBox? _pendingFault;
 
     private int _state = StateClosed;
+    private int _attachWriteAttempted;
+    private int _attachFrameSent;
 
     protected AmqpLink(AmqpSession session, uint outgoingHandle, AmqpLinkSettings settings)
     {
@@ -59,6 +61,8 @@ internal abstract class AmqpLink
     /// <summary>Peer's attach performative, available after <see cref="AttachAsync"/> returns.</summary>
     public AmqpAttach RemoteAttach { get; private set; }
     public bool IsClosed => Volatile.Read(ref _state) >= StateDetachingLocal;
+    internal bool AttachWriteAttempted => Volatile.Read(ref _attachWriteAttempted) != 0;
+    internal bool AttachFrameSent => Volatile.Read(ref _attachFrameSent) != 0;
 
     protected AmqpSession Session => _session;
     protected AmqpLinkSettings Settings => _settings;
@@ -246,7 +250,9 @@ internal abstract class AmqpLink
                 await _session.Connection.WriteSessionFrameAsync(
                     _session.OutgoingChannel,
                     rentedAtt.AsMemory(0, attLen),
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken,
+                    () => Volatile.Write(ref _attachWriteAttempted, 1)).ConfigureAwait(false);
+                Volatile.Write(ref _attachFrameSent, 1);
             }
             finally { ArrayPool<byte>.Shared.Return(rentedAtt); }
         }

@@ -25,16 +25,19 @@ internal static class AmqpBatchSettleEntries
             return;
         }
 
-        ServiceBusReceiver? receiver;
+        AmqpReceiverLease? settleLease;
         try
         {
-            receiver = await AmqpSettleDispatcher.TryAcquireSettleReceiverAsync(receivers, queueName, decoded.SessionId, ct).ConfigureAwait(false);
+            settleLease = await AmqpSettleDispatcher.TryAcquireSettleReceiverAsync(
+                receivers, queueName, decoded.SessionId, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             AddFailure(failed, entry.Id, AmqpErrorMapper.MapAmqpException(ex, "DeleteMessageBatch"));
             return;
         }
+        using var settleLeaseScope = settleLease;
+        var receiver = settleLease?.Receiver;
         if (receiver is null)
         {
             AddFailure(failed, entry.Id, SqsErrorMapping.ReceiptHandleInvalid());
@@ -60,6 +63,8 @@ internal static class AmqpBatchSettleEntries
             AddFailure(failed, entry.Id, SqsErrorMapping.ReceiptHandleInvalid());
             return;
         }
+        if (!string.IsNullOrEmpty(decoded.SessionId) && receiver.InFlightCount == 0)
+            AddReceiverInvalidation(receiversToInvalidate, decoded.SessionId);
         AddSuccess(ok, entry.Id);
     }
 
@@ -104,16 +109,19 @@ internal static class AmqpBatchSettleEntries
         HashSet<string> receiversToInvalidate,
         CancellationToken ct)
     {
-        ServiceBusReceiver? receiver;
+        AmqpReceiverLease? settleLease;
         try
         {
-            receiver = await AmqpSettleDispatcher.TryAcquireSettleReceiverAsync(receivers, queueName, decoded.SessionId, ct).ConfigureAwait(false);
+            settleLease = await AmqpSettleDispatcher.TryAcquireSettleReceiverAsync(
+                receivers, queueName, decoded.SessionId, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             AddFailure(failed, entryId, AmqpErrorMapper.MapAmqpException(ex, "ChangeMessageVisibilityBatch"));
             return;
         }
+        using var settleLeaseScope = settleLease;
+        var receiver = settleLease?.Receiver;
         if (receiver is null)
         {
             AddFailure(failed, entryId, SqsErrorMapping.ReceiptHandleInvalid());
@@ -137,6 +145,8 @@ internal static class AmqpBatchSettleEntries
             AddFailure(failed, entryId, SqsErrorMapping.MessageNotInflight());
             return;
         }
+        if (!string.IsNullOrEmpty(decoded.SessionId) && receiver.InFlightCount == 0)
+            AddReceiverInvalidation(receiversToInvalidate, decoded.SessionId);
         AddSuccess(ok, entryId);
     }
 
@@ -150,6 +160,20 @@ internal static class AmqpBatchSettleEntries
         Action markManagementFailed,
         CancellationToken ct)
     {
+        using var sessionLease = string.IsNullOrEmpty(decoded.SessionId)
+            ? null
+            : receivers.TryAcquireExistingSessionReceiver(queueName, decoded.SessionId);
+        ServiceBusReceiver? trackedReceiver = sessionLease?.Receiver
+            ?? (string.IsNullOrEmpty(decoded.SessionId)
+                ? receivers.TryGetExistingReceiver(queueName)
+                : null);
+        using var renewal = trackedReceiver?.TryBeginLockRenewal(decoded.LockToken);
+        if (renewal is null)
+        {
+            AddFailure(failed, entryId, SqsErrorMapping.MessageNotInflight());
+            return;
+        }
+
         ServiceBusManagementClient mgmt;
         try
         {
@@ -161,12 +185,10 @@ internal static class AmqpBatchSettleEntries
             return;
         }
 
-        if (!string.IsNullOrEmpty(decoded.SessionId))
-            _ = receivers.TryGetExistingSessionReceiver(queueName, decoded.SessionId);
-
+        DateTimeOffset lockedUntil;
         try
         {
-            _ = string.IsNullOrEmpty(decoded.SessionId)
+            lockedUntil = string.IsNullOrEmpty(decoded.SessionId)
                 ? await mgmt.RenewLockAsync(decoded.LockToken, ct).ConfigureAwait(false)
                 : await mgmt.RenewSessionLockAsync(decoded.SessionId, ct).ConfigureAwait(false);
         }
@@ -182,9 +204,23 @@ internal static class AmqpBatchSettleEntries
             AddFailure(failed, entryId, AmqpErrorMapper.MapAmqpException(ex, "ChangeMessageVisibilityBatch"));
             return;
         }
-        if (!string.IsNullOrEmpty(decoded.SessionId))
+        if (string.IsNullOrEmpty(decoded.SessionId))
         {
-            _ = receivers.TryGetExistingSessionReceiver(queueName, decoded.SessionId);
+            if (!renewal.Complete(lockedUntil, updateSession: false))
+            {
+                AddFailure(failed, entryId, SqsErrorMapping.MessageNotInflight());
+                return;
+            }
+        }
+        else
+        {
+            var currentReceiver = receivers.TryGetExistingSessionReceiver(queueName, decoded.SessionId);
+            if (!ReferenceEquals(currentReceiver, trackedReceiver)
+                || !renewal.Complete(lockedUntil, updateSession: true))
+            {
+                AddFailure(failed, entryId, SqsErrorMapping.MessageNotInflight());
+                return;
+            }
         }
         AddSuccess(ok, entryId);
     }

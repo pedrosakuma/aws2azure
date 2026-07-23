@@ -439,6 +439,33 @@ public sealed class TailHandlersTests
     }
 
     [Fact]
+    public async Task ListDeadLetterSourceQueues_propagates_lookahead_failure()
+    {
+        var handler = new ScriptedHandler();
+        handler.Enqueue(_ => Atom200("my-dlq", dlqTarget: null));
+        handler.Enqueue(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                BuildFeed(("src-a", "my-dlq"), ("src-b", "my-dlq")),
+                System.Text.Encoding.UTF8,
+                "application/atom+xml"),
+        });
+        handler.Enqueue(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        var ctx = NewCtx();
+        var parsed = QueryParsed(
+            SqsOperation.ListDeadLetterSourceQueues,
+            ("QueueUrl", "https://sqs.us-east-1.amazonaws.com/000000000000/my-dlq"),
+            ("MaxResults", "1"));
+
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var sb = new ServiceBusClient(http, Creds);
+        await TailHandlers.HandleAsync(ctx, parsed, sb, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status502BadGateway, ctx.Response.StatusCode);
+        Assert.Contains("ServiceUnavailable", ReadBody(ctx));
+    }
+
+    [Fact]
     public async Task ListDeadLetterSourceQueues_resumes_from_NextToken()
     {
         var handler = new ScriptedHandler();

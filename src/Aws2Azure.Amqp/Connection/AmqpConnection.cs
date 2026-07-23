@@ -303,7 +303,11 @@ internal sealed class AmqpConnection : IAsyncDisposable
     }
 
     private async ValueTask WriteFrameLockedAsync(
-        AmqpFrameType type, ushort channel, ReadOnlyMemory<byte> body, CancellationToken ct)
+        AmqpFrameType type,
+        ushort channel,
+        ReadOnlyMemory<byte> body,
+        CancellationToken ct,
+        Action? onWriteStarted = null)
     {
         await _writeLock.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -313,14 +317,19 @@ internal sealed class AmqpConnection : IAsyncDisposable
             var maxFrame = Volatile.Read(ref _state) == StateOpened
                 ? (int)Math.Min(EffectiveOutgoingMaxFrameSize, int.MaxValue)
                 : AmqpFrameIO.InitialMaxFrameSize;
+            onWriteStarted?.Invoke();
             await AmqpFrameIO.WriteFrameAsync(_transport, type, channel, body, ct, maxFrame).ConfigureAwait(false);
         }
         finally { _writeLock.Release(); }
     }
 
     /// <summary>Internal hook used by <see cref="AmqpSession"/> to emit frames on its own channel.</summary>
-    internal ValueTask WriteSessionFrameAsync(ushort channel, ReadOnlyMemory<byte> body, CancellationToken ct)
-        => WriteFrameLockedAsync(AmqpFrameType.Amqp, channel, body, ct);
+    internal ValueTask WriteSessionFrameAsync(
+        ushort channel,
+        ReadOnlyMemory<byte> body,
+        CancellationToken ct,
+        Action? onWriteStarted = null)
+        => WriteFrameLockedAsync(AmqpFrameType.Amqp, channel, body, ct, onWriteStarted);
 
     /// <summary>
     /// Effective post-open max-frame-size for outbound writes. Returns
@@ -364,6 +373,16 @@ internal sealed class AmqpConnection : IAsyncDisposable
             if (_sessionsByIncomingChannel.TryGetValue(session.RemoteChannel, out var existing) && existing == session)
                 _sessionsByIncomingChannel.Remove(session.RemoteChannel);
         }
+    }
+
+    internal async Task AbortAsync(AmqpConnectionException exception)
+    {
+        if (Interlocked.Exchange(ref _state, StateFinal) == StateFinal)
+            return;
+        _peerCloseReceived.TrySetException(exception);
+        AbortAllSessions();
+        try { _shutdownCts.Cancel(); } catch { }
+        try { await _transport.DisposeAsync().ConfigureAwait(false); } catch { }
     }
 
     private async Task ReadLoopAsync(CancellationToken ct)

@@ -200,6 +200,104 @@ public sealed class ServiceBusReceiverTests
     }
 
     [Fact]
+    public async Task Updated_lock_expiry_prevents_pruning_at_the_original_deadline()
+    {
+        var token = Guid.Parse("12345678-90ab-cdef-1234-567890abcdef");
+        var (conn, _, receiver) = await SetupReceiverWithTagsAsync(
+            "q", (token.ToByteArray(), EncodeMessage("m1")));
+        await using var _c = conn;
+        await using var _r = receiver;
+        await receiver.ReceiveBatchAsync(1, TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(15));
+
+        Assert.True(receiver.UpdateLockExpiry(token, DateTimeOffset.UtcNow.AddSeconds(-1)));
+        Assert.True(receiver.UpdateLockExpiry(token, DateTimeOffset.UtcNow.AddMinutes(1)));
+        await receiver.ReceiveBatchAsync(1, TimeSpan.Zero).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(1, receiver.InFlightCount);
+    }
+
+    [Fact]
+    public async Task Lock_renewal_lease_pins_delivery_until_renewed_expiry_is_recorded()
+    {
+        var token = Guid.Parse("12345678-90ab-cdef-1234-567890abcdef");
+        var (conn, _, receiver) = await SetupReceiverWithTagsAsync(
+            "q", (token.ToByteArray(), EncodeMessage("m1")));
+        await using var _c = conn;
+        await using var _r = receiver;
+        await receiver.ReceiveBatchAsync(1, TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(15));
+
+        Assert.True(receiver.UpdateLockExpiry(token, DateTimeOffset.UtcNow.AddMilliseconds(25)));
+        using (var renewal = Assert.IsType<ServiceBusReceiver.LockRenewalLease>(
+                   receiver.TryBeginLockRenewal(token)))
+        {
+            await Task.Delay(50);
+            await receiver.ReceiveBatchAsync(1, TimeSpan.Zero).WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(1, receiver.InFlightCount);
+            Assert.True(renewal.Complete(DateTimeOffset.UtcNow.AddMinutes(1), updateSession: false));
+        }
+
+        await receiver.ReceiveBatchAsync(1, TimeSpan.Zero).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, receiver.InFlightCount);
+    }
+
+    [Fact]
+    public async Task Concurrent_session_renewal_responses_never_regress_tracked_expiry()
+    {
+        var first = Guid.Parse("11111111-2222-3333-4444-555555555555");
+        var second = Guid.Parse("66666666-7777-8888-9999-aaaaaaaaaaaa");
+        var (conn, _, receiver) = await SetupReceiverWithTagsAsync(
+            "q",
+            (first.ToByteArray(), EncodeMessage("m1")),
+            (second.ToByteArray(), EncodeMessage("m2")));
+        await using var _c = conn;
+        await using var _r = receiver;
+        await receiver.ReceiveBatchAsync(2, TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(15));
+
+        using var newer = Assert.IsType<ServiceBusReceiver.LockRenewalLease>(
+            receiver.TryBeginLockRenewal(first));
+        using var older = Assert.IsType<ServiceBusReceiver.LockRenewalLease>(
+            receiver.TryBeginLockRenewal(second));
+        Assert.True(newer.Complete(DateTimeOffset.UtcNow.AddMinutes(1), updateSession: true));
+        newer.Dispose();
+        Assert.True(older.Complete(DateTimeOffset.UtcNow.AddSeconds(-1), updateSession: true));
+        older.Dispose();
+
+        await receiver.ReceiveBatchAsync(1, TimeSpan.Zero).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(2, receiver.InFlightCount);
+    }
+
+    [Fact]
+    public async Task Failed_concurrent_session_renewal_observes_successful_sibling_expiry()
+    {
+        var successfulToken = Guid.Parse("11111111-2222-3333-4444-555555555555");
+        var failedToken = Guid.Parse("66666666-7777-8888-9999-aaaaaaaaaaaa");
+        var (conn, _, receiver) = await SetupReceiverWithTagsAsync(
+            "q",
+            (successfulToken.ToByteArray(), EncodeMessage("m1")),
+            (failedToken.ToByteArray(), EncodeMessage("m2")));
+        await using var _c = conn;
+        await using var _r = receiver;
+        await receiver.ReceiveBatchAsync(2, TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.True(receiver.UpdateLockExpiry(
+            failedToken, DateTimeOffset.UtcNow.AddMilliseconds(25)));
+
+        using var successful = Assert.IsType<ServiceBusReceiver.LockRenewalLease>(
+            receiver.TryBeginLockRenewal(successfulToken));
+        using var failed = Assert.IsType<ServiceBusReceiver.LockRenewalLease>(
+            receiver.TryBeginLockRenewal(failedToken));
+        Assert.True(successful.Complete(
+            DateTimeOffset.UtcNow.AddMinutes(1), updateSession: true));
+        successful.Dispose();
+        await Task.Delay(50);
+        failed.Dispose();
+
+        await receiver.ReceiveBatchAsync(1, TimeSpan.Zero).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(2, receiver.InFlightCount);
+        Assert.True(receiver.ContainsLockToken(failedToken));
+    }
+
+    [Fact]
     public async Task AbandonAsync_and_DeadLetterAsync_by_lock_token_emit_correct_dispositions()
     {
         var tag1 = Guid.Parse("11111111-1111-1111-1111-111111111111").ToByteArray();

@@ -122,6 +122,30 @@ internal sealed class AmqpSession
         }
         catch
         {
+            if (!link.AttachWriteAttempted)
+            {
+                link.Abort();
+            }
+            else if (!link.AttachFrameSent)
+            {
+                await _connection.AbortAsync(new AmqpConnectionException(
+                    "AMQP attach write had an indeterminate outcome; the connection was aborted.",
+                    AmqpErrorKind.Transient)).ConfigureAwait(false);
+            }
+            else
+            {
+                try
+                {
+                    using var cleanup = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
+                    await link.DetachAsync(closed: true, cancellationToken: cleanup.Token).ConfigureAwait(false);
+                }
+                catch
+                {
+                    await _connection.AbortAsync(new AmqpConnectionException(
+                        "AMQP attach cancellation cleanup failed; the connection was aborted to release remote session state.",
+                        AmqpErrorKind.Transient)).ConfigureAwait(false);
+                }
+            }
             UnregisterLink(link);
             throw;
         }
@@ -322,6 +346,7 @@ internal sealed class AmqpSession
             _linksByName.Clear();
         }
         foreach (var l in links) l.Abort();
+        _connection.UnregisterSession(this);
     }
 
     // ---- internals --------------------------------------------------------

@@ -60,21 +60,63 @@ public sealed class SqsAdvancedBoundariesRealAzureTests(RealAzureProxyFixture fi
             Assert.Equal(3, duplicate.Successful.Count);
             Assert.Empty(duplicate.Failed);
 
-            var received = await ReceiveAtLeastAsync(client, queueUrl, 3, timeout.Token).ConfigureAwait(false);
-            Assert.Equal(bodies, received.Take(3).Select(message => message.Body).ToArray());
-            Assert.All(received.Take(3), message =>
-                Assert.Equal("group-" + run, message.Attributes["MessageGroupId"]));
+            for (var i = 0; i < bodies.Length; i++)
+            {
+                var message = Assert.Single(
+                    await ReceiveAtLeastAsync(client, queueUrl, 1, timeout.Token).ConfigureAwait(false));
+                Assert.Equal(bodies[i], message.Body);
+                Assert.Equal("group-" + run, message.Attributes["MessageGroupId"]);
+                if (i == 0)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(4), timeout.Token).ConfigureAwait(false);
+                    await client.ChangeMessageVisibilityAsync(
+                        queueUrl, message.ReceiptHandle, 10, timeout.Token).ConfigureAwait(false);
+                    var blockedSameGroup = await client.ReceiveMessageAsync(new ReceiveMessageRequest
+                    {
+                        QueueUrl = queueUrl,
+                        MaxNumberOfMessages = 1,
+                        WaitTimeSeconds = 2,
+                        MessageSystemAttributeNames = new List<string> { "All" },
+                    }, timeout.Token).ConfigureAwait(false);
+                    Assert.Empty(blockedSameGroup.Messages);
+                }
+                await client.DeleteMessageAsync(queueUrl, message.ReceiptHandle, timeout.Token)
+                    .ConfigureAwait(false);
+            }
 
+            var duplicateProbe = await client.ReceiveMessageAsync(new ReceiveMessageRequest
+            {
+                QueueUrl = queueUrl,
+                MaxNumberOfMessages = 10,
+                WaitTimeSeconds = 2,
+                MessageSystemAttributeNames = new List<string> { "All" },
+            }, timeout.Token).ConfigureAwait(false);
+            Assert.Empty(duplicateProbe.Messages);
+
+            var batchSent = await client.SendMessageBatchAsync(new SendMessageBatchRequest
+            {
+                QueueUrl = queueUrl,
+                Entries = Enumerable.Range(0, 2).Select(i => new SendMessageBatchRequestEntry
+                {
+                    Id = $"batch-delete-{i}",
+                    MessageBody = $"batch-delete-{run}-{i}",
+                    MessageGroupId = "batch-delete-group-" + run,
+                    MessageDeduplicationId = $"batch-delete-dedup-{run}-{i}",
+                }).ToList(),
+            }, timeout.Token).ConfigureAwait(false);
+            Assert.Equal(2, batchSent.Successful.Count);
+            Assert.Empty(batchSent.Failed);
+            var batchReceived = await ReceiveAtLeastAsync(client, queueUrl, 2, timeout.Token).ConfigureAwait(false);
             var deleted = await client.DeleteMessageBatchAsync(new DeleteMessageBatchRequest
             {
                 QueueUrl = queueUrl,
-                Entries = received.Take(3).Select((message, i) => new DeleteMessageBatchRequestEntry
+                Entries = batchReceived.Select((message, i) => new DeleteMessageBatchRequestEntry
                 {
                     Id = $"delete-{i}",
                     ReceiptHandle = message.ReceiptHandle,
                 }).ToList(),
             }, timeout.Token).ConfigureAwait(false);
-            Assert.Equal(3, deleted.Successful.Count);
+            Assert.Equal(2, deleted.Successful.Count);
             Assert.Empty(deleted.Failed);
 
             await client.SendMessageAsync(new SendMessageRequest
@@ -97,6 +139,10 @@ public sealed class SqsAdvancedBoundariesRealAzureTests(RealAzureProxyFixture fi
             Assert.Equal(beforeRestart.Body, redelivered.Body);
             await restartedClient.DeleteMessageAsync(queueUrl, redelivered.ReceiptHandle, timeout.Token)
                 .ConfigureAwait(false);
+            var deleteQueue = await restartedClient.DeleteQueueAsync(queueUrl, timeout.Token)
+                .ConfigureAwait(false);
+            Assert.Equal(System.Net.HttpStatusCode.OK, deleteQueue.HttpStatusCode);
+            queueUrl = null;
         }
         finally
         {
@@ -141,11 +187,18 @@ public sealed class SqsAdvancedBoundariesRealAzureTests(RealAzureProxyFixture fi
                     QueueName = sourceName,
                     Attributes = new Dictionary<string, string>
                     {
-                        ["RedrivePolicy"] = redrivePolicy,
                         ["VisibilityTimeout"] = "5",
                     },
                 }, timeout.Token).ConfigureAwait(false);
                 sourceUrls.Add(created.QueueUrl);
+                await client.SetQueueAttributesAsync(new SetQueueAttributesRequest
+                {
+                    QueueUrl = created.QueueUrl,
+                    Attributes = new Dictionary<string, string>
+                    {
+                        ["RedrivePolicy"] = redrivePolicy,
+                    },
+                }, timeout.Token).ConfigureAwait(false);
             }
 
             var attrs = await client.GetQueueAttributesAsync(new GetQueueAttributesRequest
@@ -204,6 +257,18 @@ public sealed class SqsAdvancedBoundariesRealAzureTests(RealAzureProxyFixture fi
                 forwarded.Attributes["DeadLetterQueueSourceArn"]);
             await restartedClient.DeleteMessageAsync(targetUrl, forwarded.ReceiptHandle, timeout.Token)
                 .ConfigureAwait(false);
+
+            foreach (var sourceUrl in sourceUrls)
+            {
+                var deleteSource = await restartedClient.DeleteQueueAsync(sourceUrl, timeout.Token)
+                    .ConfigureAwait(false);
+                Assert.Equal(System.Net.HttpStatusCode.OK, deleteSource.HttpStatusCode);
+            }
+            sourceUrls.Clear();
+            var deleteTarget = await restartedClient.DeleteQueueAsync(targetUrl, timeout.Token)
+                .ConfigureAwait(false);
+            Assert.Equal(System.Net.HttpStatusCode.OK, deleteTarget.HttpStatusCode);
+            targetUrl = null;
         }
         finally
         {

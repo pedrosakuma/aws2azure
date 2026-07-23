@@ -51,6 +51,42 @@ public sealed class ConformancePlanTests
     }
 
     [Fact]
+    public void Generate_excludes_profile_specific_scenarios()
+    {
+        var plan = ConformancePlanGenerator.Generate(
+            Matrix(),
+            service: "sqs",
+            excludedScenarioIds: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "message-lifecycle"
+            });
+
+        Assert.DoesNotContain(plan.Scenarios, scenario => scenario.Id == "message-lifecycle");
+        Assert.DoesNotContain(
+            plan.TestProjects.SelectMany(project => project.Tests),
+            test => test.Contains("Message_lifecycle", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void SelectPlannedMatrix_preserves_exact_scenario_set()
+    {
+        var matrix = Matrix();
+        var plan = ConformancePlanGenerator.Generate(
+            matrix,
+            service: "sqs",
+            excludedScenarioIds: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "message-lifecycle"
+            });
+
+        var selected = ConformancePlanGenerator.SelectPlannedMatrix(matrix, plan);
+
+        var service = Assert.Single(selected.Services);
+        Assert.Equal("sqs", service.Service);
+        Assert.DoesNotContain(service.Scenarios, scenario => scenario.Id == "message-lifecycle");
+    }
+
+    [Fact]
     public void Generate_rejects_ambiguous_or_unknown_selectors()
     {
         var matrix = Matrix();

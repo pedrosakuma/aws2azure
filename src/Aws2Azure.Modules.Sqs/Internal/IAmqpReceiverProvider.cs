@@ -27,6 +27,8 @@ internal interface IAmqpReceiverProvider
     /// </summary>
     Task<ServiceBusReceiver> GetReceiverAsync(string queueName, CancellationToken cancellationToken);
 
+    ServiceBusReceiver? TryGetExistingReceiver(string queueName);
+
     /// <summary>
     /// Returns the shared session-bound receiver for the
     /// (<paramref name="queueName"/>, <paramref name="sessionId"/>)
@@ -55,6 +57,10 @@ internal interface IAmqpReceiverProvider
     /// </summary>
     ServiceBusReceiver? TryGetExistingSessionReceiver(string queueName, string sessionId);
 
+    AmqpReceiverLease? TryAcquireExistingSessionReceiver(
+        string queueName,
+        string sessionId);
+
     /// <summary>
     /// Acquires a broker-assigned session receiver for
     /// <paramref name="queueName"/> — the SQS FIFO receive path's
@@ -64,8 +70,9 @@ internal interface IAmqpReceiverProvider
     /// receipt handle so settle requests route back to the same
     /// session (see slice 7c.3d / 7c.4).
     /// </summary>
-    Task<ServiceBusReceiver> AcquireBrokerAssignedSessionReceiverAsync(
+    Task<BrokerAssignedSessionReceiverResult> AcquireBrokerAssignedSessionReceiverAsync(
         string queueName,
+        TimeSpan maxBrokerWait,
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -100,4 +107,23 @@ internal interface IAmqpReceiverProvider
     /// connection (and any cached receiver) stays warm.
     /// </summary>
     Task InvalidateManagementClientAsync(string queueName);
+}
+
+internal sealed class AmqpReceiverLease : IDisposable
+{
+    private IDisposable? _inner;
+
+    public AmqpReceiverLease(ServiceBusReceiver receiver, IDisposable? inner = null)
+    {
+        Receiver = receiver;
+        _inner = inner;
+    }
+
+    public ServiceBusReceiver Receiver { get; }
+
+    public void Dispose()
+    {
+        var inner = Interlocked.Exchange(ref _inner, null);
+        inner?.Dispose();
+    }
 }

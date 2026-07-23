@@ -416,12 +416,12 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
     private async Task<AmqpSession> EnsureDataSessionAsync(CancellationToken cancellationToken)
     {
         var existing = Volatile.Read(ref _dataSession);
-        if (existing is not null) return existing;
+        if (existing is { IsClosed: false }) return existing;
         await _dataSessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             existing = _dataSession;
-            if (existing is not null) return existing;
+            if (existing is { IsClosed: false }) return existing;
             var created = await _connection
                 .BeginSessionAsync(new AmqpSessionSettings(), cancellationToken)
                 .ConfigureAwait(false);

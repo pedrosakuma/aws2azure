@@ -121,9 +121,14 @@ internal static class TailHandlers
         string? nextToken = null;
         if (hitCap)
         {
-            var nextCursor = await FindNextMatchingCursorAsync(
+            var next = await FindNextMatchingCursorAsync(
                 sb, targetName, queriedSkip, ct).ConfigureAwait(false);
-            if (nextCursor is { } cursor)
+            if (next.Error is { } error)
+            {
+                await WriteErrorAsync(context, parsed.Protocol, error).ConfigureAwait(false);
+                return;
+            }
+            if (next.Cursor is { } cursor)
                 nextToken = cursor.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
@@ -131,7 +136,7 @@ internal static class TailHandlers
             context, parsed.Protocol, sources, nextToken).ConfigureAwait(false);
     }
 
-    private static async Task<int?> FindNextMatchingCursorAsync(
+    private static async Task<NextMatchingCursorResult> FindNextMatchingCursorAsync(
         ServiceBusClient sb,
         string targetName,
         int start,
@@ -141,10 +146,11 @@ internal static class TailHandlers
         while (true)
         {
             using var response = await sb.ListQueuesAsync(cursor, SbPageSize, ct).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode) return null;
+            if (!response.IsSuccessStatusCode)
+                return new NextMatchingCursorResult(null, SqsErrorMapping.FromServiceBus(response));
             var xml = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             var entries = AtomQueueXmlReader.ParseQueueFeed(xml);
-            if (entries.Count == 0) return null;
+            if (entries.Count == 0) return default;
 
             for (var i = 0; i < entries.Count; i++)
             {
@@ -153,14 +159,18 @@ internal static class TailHandlers
                         targetName,
                         StringComparison.Ordinal))
                 {
-                    return cursor + i;
+                    return new NextMatchingCursorResult(cursor + i, null);
                 }
             }
 
             cursor += entries.Count;
-            if (entries.Count < SbPageSize) return null;
+            if (entries.Count < SbPageSize) return default;
         }
     }
+
+    private readonly record struct NextMatchingCursorResult(
+        int? Cursor,
+        SqsErrorMapping.Mapping? Error);
 
     private static int ParseMaxResults(SqsParseResult parsed)
     {

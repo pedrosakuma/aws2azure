@@ -36,6 +36,7 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     private readonly AmqpLink _link;
     private readonly ConcurrentDictionary<Guid, InFlightDelivery> _inFlight = new();
     private int _trackedInFlight;
+    private long _sessionLockExpiryUtcTicks;
     private int _disposed;
 
     internal ServiceBusReceiver(AmqpLink link, string queueName)
@@ -91,6 +92,41 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     /// </para>
     /// </summary>
     public int InFlightCount => Volatile.Read(ref _trackedInFlight);
+
+    public bool UpdateLockExpiry(Guid lockToken, DateTimeOffset expiresAt)
+    {
+        if (!_inFlight.TryGetValue(lockToken, out var tracked))
+            return false;
+        return tracked.TryUpdateExpiry(_inFlight, lockToken, expiresAt);
+    }
+
+    public bool ContainsLockToken(Guid lockToken)
+    {
+        PruneExpired(DateTimeOffset.UtcNow);
+        return _inFlight.ContainsKey(lockToken);
+    }
+
+    internal LockRenewalLease? TryBeginLockRenewal(Guid lockToken)
+    {
+        PruneExpired(DateTimeOffset.UtcNow);
+        if (!_inFlight.TryGetValue(lockToken, out var tracked) || !tracked.TryClaim())
+            return null;
+        if (!_inFlight.TryGetValue(lockToken, out var current) || !ReferenceEquals(current, tracked))
+        {
+            tracked.ReleaseClaim();
+            return null;
+        }
+        return new LockRenewalLease(this, lockToken, tracked);
+    }
+
+    public bool UpdateSessionLockExpiry(Guid requiredLockToken, DateTimeOffset expiresAt)
+    {
+        if (!UpdateLockExpiry(requiredLockToken, expiresAt))
+            return false;
+        foreach (var tracked in _inFlight.Values)
+            tracked.TryUpdateExpiry(expiresAt);
+        return true;
+    }
 
     /// <summary>
     /// Receives up to <paramref name="maxMessages"/> messages, blocking
@@ -412,12 +448,26 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     {
         foreach (var entry in _inFlight)
         {
-            if (entry.Value.ExpiresAt > now || !entry.Value.TryClaim()) continue;
+            if (!IsExpired(entry.Value, now) || !entry.Value.TryClaim()) continue;
+            if (!IsExpired(entry.Value, now))
+            {
+                entry.Value.ReleaseClaim();
+                continue;
+            }
             if (_inFlight.TryRemove(entry))
                 ReleaseSlots(1);
             else
                 entry.Value.ReleaseClaim();
         }
+    }
+
+    private bool IsExpired(InFlightDelivery delivery, DateTimeOffset now)
+    {
+        var expiresAtTicks = delivery.ExpiresAt.UtcTicks;
+        expiresAtTicks = Math.Max(
+            expiresAtTicks,
+            Volatile.Read(ref _sessionLockExpiryUtcTicks));
+        return expiresAtTicks <= now.UtcTicks;
     }
 
     public async ValueTask DisposeAsync()
@@ -435,14 +485,119 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
             throw new ObjectDisposedException(nameof(ServiceBusReceiver));
     }
 
-    private sealed class InFlightDelivery(ServiceBusReceivedMessage message, DateTimeOffset expiresAt)
+    internal sealed class InFlightDelivery(ServiceBusReceivedMessage message, DateTimeOffset expiresAt)
     {
         private int _claimed;
+        private long _expiresAtUtcTicks = expiresAt.UtcTicks;
 
         public ServiceBusReceivedMessage Message { get; } = message;
-        public DateTimeOffset ExpiresAt { get; } = expiresAt;
+        public DateTimeOffset ExpiresAt =>
+            new(Volatile.Read(ref _expiresAtUtcTicks), TimeSpan.Zero);
 
         public bool TryClaim() => Interlocked.CompareExchange(ref _claimed, 1, 0) == 0;
         public void ReleaseClaim() => Volatile.Write(ref _claimed, 0);
+        public void UpdateClaimedExpiry(DateTimeOffset value) =>
+            Volatile.Write(ref _expiresAtUtcTicks, value.UtcTicks);
+        public bool TryUpdateExpiry(DateTimeOffset value)
+        {
+            if (!TryClaim()) return false;
+            Volatile.Write(ref _expiresAtUtcTicks, value.UtcTicks);
+            ReleaseClaim();
+            return true;
+        }
+
+        public bool TryExtendExpiry(DateTimeOffset value)
+        {
+            if (!TryClaim()) return false;
+            if (ExpiresAt < value)
+                Volatile.Write(ref _expiresAtUtcTicks, value.UtcTicks);
+            ReleaseClaim();
+            return true;
+        }
+
+        public bool TryUpdateExpiry(
+            ConcurrentDictionary<Guid, InFlightDelivery> owner,
+            Guid lockToken,
+            DateTimeOffset value)
+        {
+            if (!TryClaim()) return false;
+            try
+            {
+                if (!owner.TryGetValue(lockToken, out var current) || !ReferenceEquals(current, this))
+                    return false;
+                Volatile.Write(ref _expiresAtUtcTicks, value.UtcTicks);
+                return true;
+            }
+            finally
+            {
+                ReleaseClaim();
+            }
+        }
+
+    }
+
+    internal sealed class LockRenewalLease : IDisposable
+    {
+        private readonly ServiceBusReceiver _owner;
+        private readonly Guid _lockToken;
+        private InFlightDelivery? _tracked;
+
+        internal LockRenewalLease(
+            ServiceBusReceiver owner,
+            Guid lockToken,
+            InFlightDelivery tracked)
+        {
+            _owner = owner;
+            _lockToken = lockToken;
+            _tracked = tracked;
+        }
+
+        public bool Complete(DateTimeOffset expiresAt, bool updateSession)
+        {
+            var tracked = _tracked;
+            if (tracked is null
+                || !_owner._inFlight.TryGetValue(_lockToken, out var current)
+                || !ReferenceEquals(current, tracked))
+            {
+                return false;
+            }
+
+            if (updateSession)
+            {
+                var requestedTicks = expiresAt.UtcTicks;
+                long effectiveTicks;
+                while (true)
+                {
+                    var currentTicks = Volatile.Read(ref _owner._sessionLockExpiryUtcTicks);
+                    effectiveTicks = Math.Max(currentTicks, requestedTicks);
+                    if (effectiveTicks == currentTicks
+                        || Interlocked.CompareExchange(
+                            ref _owner._sessionLockExpiryUtcTicks,
+                            effectiveTicks,
+                            currentTicks) == currentTicks)
+                    {
+                        break;
+                    }
+                }
+                expiresAt = new DateTimeOffset(effectiveTicks, TimeSpan.Zero);
+                tracked.UpdateClaimedExpiry(expiresAt);
+                foreach (var other in _owner._inFlight.Values)
+                {
+                    if (!ReferenceEquals(other, tracked))
+                        other.TryExtendExpiry(expiresAt);
+                }
+            }
+            else
+            {
+                tracked.UpdateClaimedExpiry(expiresAt);
+            }
+            return true;
+        }
+
+        public void Dispose()
+        {
+            var tracked = Interlocked.Exchange(ref _tracked, null);
+            tracked?.ReleaseClaim();
+        }
     }
 }

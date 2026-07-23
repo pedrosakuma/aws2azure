@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -49,6 +50,29 @@ public sealed class AmqpReceiveMessageHandlersTests
         Assert.Contains("hello-2", body);
         Assert.Contains("<ReceiptHandle>Mjo", body); // v2 AMQP handle prefix
         Assert.Equal(2, harness.Receiver.InFlightCount);
+    }
+
+    [Fact]
+    public async Task ReceiveMessage_returns_partial_batch_without_waiting_for_long_poll_deadline()
+    {
+        await using var harness = await TestHarness.OpenAsync(
+            QueueName,
+            (Guid.Parse("11111111-2222-3333-4444-555555555555").ToByteArray(),
+                EncodeMessage("available")));
+        var ctx = NewCtx();
+        var parsed = QueryParsed(
+            SqsOperation.ReceiveMessage,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"),
+            ("MaxNumberOfMessages", "10"),
+            ("WaitTimeSeconds", "2"));
+
+        var started = Stopwatch.GetTimestamp();
+        await AmqpReceiveMessageHandlers.HandleAsync(
+            ctx, parsed, harness.Provider, CancellationToken.None);
+        var elapsed = Stopwatch.GetElapsedTime(started);
+
+        Assert.Contains("available", ReadBody(ctx));
+        Assert.True(elapsed < TimeSpan.FromSeconds(1), $"Partial batch took {elapsed}.");
     }
 
     [Fact]
@@ -171,12 +195,19 @@ public sealed class AmqpReceiveMessageHandlersTests
     {
         // Broker grants a ~30s expiry; client requests 300 → divergence
         // surfaces via the Aws2Azure-VisibilityClamped header.
+        var lockToken = Guid.Parse("abababab-cdcd-efef-1212-343434343434");
         var grantedExpiry = DateTimeOffset.UtcNow.AddSeconds(30);
         grantedExpiry = DateTimeOffset.FromUnixTimeMilliseconds(grantedExpiry.ToUnixTimeMilliseconds());
         await using var harness = await TestHarness.OpenWithManagementAsync(
-            QueueName, renewExpiry: grantedExpiry);
+            QueueName, renewExpiry: grantedExpiry,
+            messages: [(lockToken.ToByteArray(), EncodeMessage("renew-standard"))]);
 
-        var handle = AmqpReceiptHandle.Encode(QueueName, Guid.NewGuid(), DateTimeOffset.UtcNow);
+        var receiveCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(receiveCtx,
+            QueryParsed(SqsOperation.ReceiveMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}")),
+            harness.Provider, CancellationToken.None);
+        var handle = ExtractReceiptHandle(ReadBody(receiveCtx));
         var ctx = NewCtx();
         await AmqpReceiveMessageHandlers.HandleAsync(ctx,
             QueryParsed(SqsOperation.ChangeMessageVisibility,
@@ -334,6 +365,25 @@ public sealed class AmqpReceiveMessageHandlersTests
         Assert.DoesNotContain("Mzo", body);
     }
 
+    [Fact]
+    public async Task ReceiveMessage_on_empty_fifo_queue_bounds_session_acquisition_by_WaitTimeSeconds()
+    {
+        await using var harness = await TestHarness.OpenAsync(FifoQueueName);
+        harness.Provider.BlockBrokerAssignedAcquire = true;
+        var ctx = NewCtx();
+        var parsed = QueryParsed(SqsOperation.ReceiveMessage,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+            ("WaitTimeSeconds", "1"));
+        var started = Stopwatch.GetTimestamp();
+
+        await AmqpReceiveMessageHandlers.HandleAsync(
+            ctx, parsed, harness.Provider, CancellationToken.None);
+
+        Assert.InRange(Stopwatch.GetElapsedTime(started), TimeSpan.FromMilliseconds(500), TimeSpan.FromSeconds(2));
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.DoesNotContain("<Message>", ReadBody(ctx));
+    }
+
     // --- Dead-letter surfacing ----------------------------------------
 
     [Fact]
@@ -442,6 +492,7 @@ public sealed class AmqpReceiveMessageHandlersTests
         Assert.Equal(StatusCodes.Status200OK, deleteCtx.Response.StatusCode);
         Assert.Contains("DeleteMessageResponse", ReadBody(deleteCtx));
         Assert.Equal(0, harness.Receiver.InFlightCount);
+        Assert.Equal(1, harness.Provider.InvalidateSessionCount);
     }
 
     [Fact]
@@ -472,6 +523,7 @@ public sealed class AmqpReceiveMessageHandlersTests
 
         Assert.Equal(StatusCodes.Status200OK, cmvCtx.Response.StatusCode);
         Assert.Equal(0, harness.Receiver.InFlightCount);
+        Assert.Equal(1, harness.Provider.InvalidateSessionCount);
     }
 
     [Fact]
@@ -570,12 +622,19 @@ public sealed class AmqpReceiveMessageHandlersTests
     public async Task ChangeMessageVisibility_positive_on_fifo_queue_renews_session_lock_and_emits_clamp_header()
     {
         const string SessionId = "group-A";
+        var lockToken = Guid.Parse("10101010-2020-3030-4040-505050505050");
         var grantedExpiry = DateTimeOffset.UtcNow.AddSeconds(30);
         grantedExpiry = DateTimeOffset.FromUnixTimeMilliseconds(grantedExpiry.ToUnixTimeMilliseconds());
         await using var harness = await TestHarness.OpenWithManagementAsync(
-            FifoQueueName, renewExpiry: grantedExpiry, sessionId: SessionId);
+            FifoQueueName, renewExpiry: grantedExpiry, sessionId: SessionId,
+            messages: [(lockToken.ToByteArray(), EncodeMessage("renew-me", groupId: SessionId))]);
 
-        var v3 = AmqpReceiptHandle.Encode(FifoQueueName, Guid.NewGuid(), DateTimeOffset.UtcNow, SessionId);
+        var receiveCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(receiveCtx,
+            QueryParsed(SqsOperation.ReceiveMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}")),
+            harness.Provider, CancellationToken.None);
+        var v3 = ExtractReceiptHandle(ReadBody(receiveCtx));
         var ctx = NewCtx();
         await AmqpReceiveMessageHandlers.HandleAsync(ctx,
             QueryParsed(SqsOperation.ChangeMessageVisibility,
@@ -599,12 +658,19 @@ public sealed class AmqpReceiveMessageHandlersTests
         // (TryGetExistingSessionReceiver) so the idle-TTL sweeper does not
         // dispose the very session the client just renewed.
         const string SessionId = "group-A";
+        var lockToken = Guid.Parse("60606060-7070-8080-9090-a0a0a0a0a0a0");
         var grantedExpiry = DateTimeOffset.UtcNow.AddSeconds(30);
         grantedExpiry = DateTimeOffset.FromUnixTimeMilliseconds(grantedExpiry.ToUnixTimeMilliseconds());
         await using var harness = await TestHarness.OpenWithManagementAsync(
-            FifoQueueName, renewExpiry: grantedExpiry, sessionId: SessionId);
+            FifoQueueName, renewExpiry: grantedExpiry, sessionId: SessionId,
+            messages: [(lockToken.ToByteArray(), EncodeMessage("renew-activity", groupId: SessionId))]);
 
-        var v3 = AmqpReceiptHandle.Encode(FifoQueueName, Guid.NewGuid(), DateTimeOffset.UtcNow, SessionId);
+        var receiveCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(receiveCtx,
+            QueryParsed(SqsOperation.ReceiveMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}")),
+            harness.Provider, CancellationToken.None);
+        var v3 = ExtractReceiptHandle(ReadBody(receiveCtx));
         var ctx = NewCtx();
         await AmqpReceiveMessageHandlers.HandleAsync(ctx,
             QueryParsed(SqsOperation.ChangeMessageVisibility,
@@ -622,20 +688,47 @@ public sealed class AmqpReceiveMessageHandlersTests
     public async Task ChangeMessageVisibility_positive_on_fifo_queue_maps_session_lock_lost_to_MessageNotInflight()
     {
         const string SessionId = "group-B";
+        var lockToken = Guid.Parse("b0b0b0b0-c0c0-d0d0-e0e0-f0f0f0f0f0f0");
         await using var harness = await TestHarness.OpenWithManagementAsync(
             FifoQueueName,
             renewExpiry: DateTimeOffset.UtcNow,
             statusCode: 410,
             statusDescription: "SessionLockLost",
             errorCondition: "com.microsoft:session-lock-lost",
-            sessionId: SessionId);
+            sessionId: SessionId,
+            messages: [(lockToken.ToByteArray(), EncodeMessage("lost-session", groupId: SessionId))]);
 
-        var v3 = AmqpReceiptHandle.Encode(FifoQueueName, Guid.NewGuid(), DateTimeOffset.UtcNow, SessionId);
+        var receiveCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(receiveCtx,
+            QueryParsed(SqsOperation.ReceiveMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}")),
+            harness.Provider, CancellationToken.None);
+        var v3 = ExtractReceiptHandle(ReadBody(receiveCtx));
         var ctx = NewCtx();
         await AmqpReceiveMessageHandlers.HandleAsync(ctx,
             QueryParsed(SqsOperation.ChangeMessageVisibility,
                 ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
                 ("ReceiptHandle", v3),
+                ("VisibilityTimeout", "30")),
+            harness.Provider, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        Assert.Contains("MessageNotInflight", ReadBody(ctx));
+    }
+
+    [Fact]
+    public async Task ChangeMessageVisibility_positive_on_fifo_queue_rejects_untracked_lock_token()
+    {
+        const string SessionId = "group-stale";
+        await using var harness = await TestHarness.OpenSessionAsync(FifoQueueName, SessionId);
+        var staleHandle = AmqpReceiptHandle.Encode(
+            FifoQueueName, Guid.NewGuid(), DateTimeOffset.UtcNow, SessionId);
+        var ctx = NewCtx();
+
+        await AmqpReceiveMessageHandlers.HandleAsync(ctx,
+            QueryParsed(SqsOperation.ChangeMessageVisibility,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+                ("ReceiptHandle", staleHandle),
                 ("VisibilityTimeout", "30")),
             harness.Provider, CancellationToken.None);
 
@@ -945,6 +1038,7 @@ public sealed class AmqpReceiveMessageHandlersTests
         public int InvalidateSessionCount { get; private set; }
         public int AcquireSessionCount { get; private set; }
         public int TryGetExistingSessionCount { get; private set; }
+        public bool BlockBrokerAssignedAcquire { get; set; }
 
         public FakeAmqpReceiverProvider(string queueName, ServiceBusReceiver receiver,
             ServiceBusManagementClient? management = null,
@@ -960,6 +1054,12 @@ public sealed class AmqpReceiveMessageHandlersTests
         {
             Assert.Equal(_expectedQueue, queueName);
             return Task.FromResult(_receiver);
+        }
+
+        public ServiceBusReceiver? TryGetExistingReceiver(string queueName)
+        {
+            Assert.Equal(_expectedQueue, queueName);
+            return _receiver;
         }
 
         public Task<ServiceBusManagementClient> GetManagementClientAsync(string queueName, CancellationToken cancellationToken)
@@ -1006,14 +1106,28 @@ public sealed class AmqpReceiveMessageHandlersTests
             return _brokerAssignedSessionReceiver;
         }
 
-        public Task<ServiceBusReceiver> AcquireBrokerAssignedSessionReceiverAsync(
-            string queueName, CancellationToken cancellationToken)
+        public AmqpReceiverLease? TryAcquireExistingSessionReceiver(
+            string queueName,
+            string sessionId)
+        {
+            var receiver = TryGetExistingSessionReceiver(queueName, sessionId);
+            return receiver is null ? null : new AmqpReceiverLease(receiver);
+        }
+
+        public async Task<BrokerAssignedSessionReceiverResult> AcquireBrokerAssignedSessionReceiverAsync(
+            string queueName, TimeSpan maxBrokerWait, CancellationToken cancellationToken)
         {
             Assert.Equal(_expectedQueue, queueName);
+            if (BlockBrokerAssignedAcquire)
+            {
+                await Task.Delay(maxBrokerWait, cancellationToken);
+                return new BrokerAssignedSessionReceiverResult(null, maxBrokerWait);
+            }
             if (_brokerAssignedSessionReceiver is null)
                 throw new NotSupportedException("Test harness did not wire a broker-assigned session receiver.");
             AcquireSessionCount++;
-            return Task.FromResult(_brokerAssignedSessionReceiver);
+            return new BrokerAssignedSessionReceiverResult(
+                _brokerAssignedSessionReceiver, TimeSpan.Zero);
         }
 
         public Task InvalidateSessionReceiverAsync(string queueName, string sessionId)

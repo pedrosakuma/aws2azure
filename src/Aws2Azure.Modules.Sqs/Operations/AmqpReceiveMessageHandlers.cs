@@ -64,6 +64,8 @@ namespace Aws2Azure.Modules.Sqs.Operations;
 /// </summary>
 internal static partial class AmqpReceiveMessageHandlers
 {
+    private static readonly TimeSpan ReceiveBurstTailWait = TimeSpan.FromMilliseconds(50);
+
     public const int MaxMessages = 10;
     public const int MaxVisibilityTimeoutSeconds = 43_200;
     public const int MaxWaitTimeSeconds = 20;
@@ -120,7 +122,10 @@ internal static partial class AmqpReceiveMessageHandlers
             return;
         }
 
+        var timeout = waitSeconds > 0 ? TimeSpan.FromSeconds(waitSeconds) : DefaultReceiveTimeout;
+
         ServiceBusReceiver receiver;
+        var remaining = timeout;
         var isFifo = QueueName.IsFifo(queueName);
         try
         {
@@ -130,9 +135,24 @@ internal static partial class AmqpReceiveMessageHandlers
             // receiver into the pool keyed by the resolved session-id
             // (slice 7c.3a). Subsequent settle requests with a v3
             // receipt handle route back via GetSessionReceiverAsync.
-            receiver = isFifo
-                ? await receivers.AcquireBrokerAssignedSessionReceiverAsync(queueName, ct).ConfigureAwait(false)
-                : await receivers.GetReceiverAsync(queueName, ct).ConfigureAwait(false);
+            if (isFifo)
+            {
+                var acquisition = await receivers
+                    .AcquireBrokerAssignedSessionReceiverAsync(queueName, timeout, ct)
+                    .ConfigureAwait(false);
+                if (acquisition.Receiver is null)
+                {
+                    await SqsResponseWriter.WriteReceiveMessageAsync(
+                        context, parsed.Protocol, Array.Empty<ReceivedSqsMessage>()).ConfigureAwait(false);
+                    return;
+                }
+                receiver = acquisition.Receiver;
+                remaining = timeout - acquisition.BrokerWaitElapsed;
+            }
+            else
+            {
+                receiver = await receivers.GetReceiverAsync(queueName, ct).ConfigureAwait(false);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -141,23 +161,26 @@ internal static partial class AmqpReceiveMessageHandlers
             return;
         }
 
+        if (remaining <= TimeSpan.Zero)
+        {
+            if (isFifo && receiver.SessionId is { } expiredSessionId && receiver.InFlightCount == 0)
+                await receivers.InvalidateSessionReceiverAsync(queueName, expiredSessionId).ConfigureAwait(false);
+            await SqsResponseWriter.WriteReceiveMessageAsync(
+                context, parsed.Protocol, Array.Empty<ReceivedSqsMessage>()).ConfigureAwait(false);
+            return;
+        }
+
         IReadOnlyList<ServiceBusReceivedMessage> batch;
         try
         {
-            var timeout = waitSeconds > 0 ? TimeSpan.FromSeconds(waitSeconds) : DefaultReceiveTimeout;
-            batch = await receiver.ReceiveBatchAsync(maxMessages, timeout, cancellationToken: ct).ConfigureAwait(false);
+            batch = await receiver.ReceiveBatchAsync(
+                maxMessages,
+                remaining,
+                tailWait: ReceiveBurstTailWait,
+                cancellationToken: ct).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            // Link- or connection-level failure: drop the receiver so the
-            // next call rebuilds. Don't tear down the connection — a stale
-            // link can be detached without affecting peers under the same
-            // SAS key. For FIFO the cached entry is keyed by session-id
-            // so we evict the session-receiver slot specifically.
             if (isFifo && receiver.SessionId is { } sessionId)
                 await receivers.InvalidateSessionReceiverAsync(queueName, sessionId).ConfigureAwait(false);
             else
@@ -166,6 +189,9 @@ internal static partial class AmqpReceiveMessageHandlers
                 AmqpErrorMapper.MapAmqpException(ex, "ReceiveMessage")).ConfigureAwait(false);
             return;
         }
+
+        if (isFifo && batch.Count == 0 && receiver.SessionId is { } emptySessionId && receiver.InFlightCount == 0)
+            await receivers.InvalidateSessionReceiverAsync(queueName, emptySessionId).ConfigureAwait(false);
 
         AmqpReceiveParameters.ParseAttributeNameSets(parsed, out var systemAttrFilter, out var messageAttrFilter);
         var collected = new List<ReceivedSqsMessage>(batch.Count);
