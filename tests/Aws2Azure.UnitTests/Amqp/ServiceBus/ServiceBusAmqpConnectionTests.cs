@@ -243,6 +243,67 @@ public sealed class ServiceBusAmqpConnectionTests
     }
 
     [Fact]
+    public async Task Session_settlement_timeout_aborts_connection_and_faults_siblings()
+    {
+        var originalTimeout = AmqpLink.ReceiverSettlementConfirmationTimeout;
+        AmqpLink.ReceiverSettlementConfirmationTimeout = TimeSpan.FromMilliseconds(100);
+        var confirmationGate = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            var (client, server) = PipePairTransport.CreatePair();
+            await using var _ = server;
+            var broker = new ServiceBusBrokerSimulator(server)
+            {
+                SettlementConfirmationGate = confirmationGate,
+            };
+            broker.Start();
+
+            await using var conn = await ServiceBusAmqpConnection
+                .OpenAsync(client, new FakeTokenProvider(), DefaultSettings())
+                .WaitAsync(TimeSpan.FromSeconds(10));
+            var audience = ServiceBusEndpoint.BuildQueueAudience(
+                "ns.servicebus.windows.net", "fifo-queue");
+            await using var receiver = await conn
+                .OpenSessionReceiverAsync(
+                    "fifo-queue",
+                    audience,
+                    sessionId: "order-42",
+                    prefetchCredit: 0)
+                .WaitAsync(TimeSpan.FromSeconds(10));
+
+            broker.Inbox[receiver.Link.Name] = new Queue<ServiceBusBrokerSimulator.DeliveryToSend>(
+            [
+                new(Guid.NewGuid().ToByteArray(), Array.Empty<byte>()),
+                new(Guid.NewGuid().ToByteArray(), Array.Empty<byte>()),
+            ]);
+            var messages = await receiver.ReceiveBatchAsync(2, TimeSpan.FromSeconds(2))
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(2, messages.Count);
+
+            var settlements = messages
+                .Select(message => CaptureExceptionAsync(receiver.CompleteAsync(message)))
+                .ToArray();
+            var failures = await Task.WhenAll(settlements).WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.True(conn.IsClosed);
+            Assert.All(failures, failure =>
+            {
+                Assert.NotNull(failure);
+                Assert.IsNotType<OperationCanceledException>(failure);
+                Assert.True(
+                    failure is AmqpLinkException or AmqpConnectionException,
+                    $"Unexpected failure type: {failure.GetType().FullName}");
+            });
+        }
+        finally
+        {
+            confirmationGate.TrySetResult();
+            AmqpLink.ReceiverSettlementConfirmationTimeout = originalTimeout;
+        }
+    }
+
+    [Fact]
     public void Broker_accept_next_timeout_is_classified_as_empty_acquisition()
     {
         var exception = new AmqpLinkException("server wait elapsed")
@@ -350,5 +411,18 @@ public sealed class ServiceBusAmqpConnectionTests
 
         throw new TimeoutException(
             $"Disposition for delivery-id {deliveryId} did not arrive in time.");
+    }
+
+    private static async Task<Exception?> CaptureExceptionAsync(Task task)
+    {
+        try
+        {
+            await task;
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return ex;
+        }
     }
 }

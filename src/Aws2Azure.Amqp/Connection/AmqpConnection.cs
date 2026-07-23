@@ -380,7 +380,7 @@ internal sealed class AmqpConnection : IAsyncDisposable
         if (Interlocked.Exchange(ref _state, StateFinal) == StateFinal)
             return;
         _peerCloseReceived.TrySetException(exception);
-        AbortAllSessions();
+        AbortAllSessions(exception);
         try { _shutdownCts.Cancel(); } catch { }
         try { await _transport.DisposeAsync().ConfigureAwait(false); } catch { }
     }
@@ -479,7 +479,7 @@ internal sealed class AmqpConnection : IAsyncDisposable
         session?.DispatchIncomingFrame(kind, body);
     }
 
-    private void AbortAllSessions()
+    private void AbortAllSessions(Exception? exception = null)
     {
         AmqpSession[] all;
         lock (_sessionLock)
@@ -488,7 +488,7 @@ internal sealed class AmqpConnection : IAsyncDisposable
             _sessionsByOutgoingChannel.Clear();
             _sessionsByIncomingChannel.Clear();
         }
-        foreach (var s in all) s.Abort();
+        foreach (var s in all) s.Abort(exception);
     }
 
     private async Task HeartbeatLoopAsync(CancellationToken ct)

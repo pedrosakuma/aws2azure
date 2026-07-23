@@ -313,8 +313,22 @@ internal sealed class AmqpReceiverLink : AmqpLink
         }
     }
 
-    protected override void CompleteRoleWaitersTerminal(bool cancelled, AmqpError? peerError)
-        => _incoming.Writer.TryComplete();
+    protected override void CompleteRoleWaitersTerminal(
+        bool cancelled,
+        AmqpError? peerError,
+        Exception? terminalException)
+    {
+        if (cancelled)
+        {
+            _incoming.Writer.TryComplete(new OperationCanceledException());
+        }
+        else
+        {
+            _incoming.Writer.TryComplete(terminalException ?? BuildPeerDetachException(
+                "Receiver link closed; no further deliveries will arrive.",
+                peerError));
+        }
+    }
 
     private async ValueTask SendFlowAsync(CancellationToken ct)
     {

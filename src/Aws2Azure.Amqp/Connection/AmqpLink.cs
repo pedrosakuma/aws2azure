@@ -344,12 +344,21 @@ internal abstract class AmqpLink
         }
     }
 
-    internal void Abort()
+    internal void Abort(Exception? exception = null)
     {
         TransitionToFinal();
-        _peerAttachReceived.TrySetCanceled();
-        _peerDetachReceived.TrySetCanceled();
-        CompleteWaitersTerminal(cancelled: true);
+        if (exception is null)
+        {
+            _peerAttachReceived.TrySetCanceled();
+            _peerDetachReceived.TrySetCanceled();
+            CompleteWaitersTerminal(cancelled: true);
+        }
+        else
+        {
+            _peerAttachReceived.TrySetException(exception);
+            _peerDetachReceived.TrySetException(exception);
+            CompleteWaitersTerminal(cancelled: false, exception);
+        }
     }
 
     // ---- dispatch (invoked by AmqpSession) -------------------------------
@@ -441,7 +450,10 @@ internal abstract class AmqpLink
         return new AmqpLinkException(baseMessage);
     }
 
-    protected abstract void CompleteRoleWaitersTerminal(bool cancelled, AmqpError? peerError);
+    protected abstract void CompleteRoleWaitersTerminal(
+        bool cancelled,
+        AmqpError? peerError,
+        Exception? terminalException);
 
     private static ReadOnlyMemory<byte> CopyOpaque(ReadOnlyMemory<byte> source)
     {
@@ -483,16 +495,32 @@ internal abstract class AmqpLink
             State = state,
         };
         var rented = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
+        var writeStarted = false;
         try
         {
             AmqpDisposition.Write(rented, in disposition, out var dl);
             await _session.Connection.WriteSessionFrameAsync(
-                _session.OutgoingChannel, rented.AsMemory(0, dl), cancellationToken).ConfigureAwait(false);
+                _session.OutgoingChannel,
+                rented.AsMemory(0, dl),
+                cancellationToken,
+                () => writeStarted = true).ConfigureAwait(false);
         }
-        catch
+        catch (Exception ex)
         {
             if (confirmation is not null)
                 _pendingReceiverSettlements.TryRemove(deliveryId, out _);
+            if (writeStarted)
+            {
+                var connectionException = new AmqpConnectionException(
+                    "Disposition write failed after transport emission began.",
+                    ex,
+                    AmqpErrorKind.Transient);
+                await _session.Connection.AbortAsync(connectionException).ConfigureAwait(false);
+                throw new AmqpLinkException(
+                    $"Settlement outcome is indeterminate for delivery-id {deliveryId}.",
+                    ex,
+                    AmqpErrorKind.Transient);
+            }
             throw;
         }
         finally { ArrayPool<byte>.Shared.Return(rented); }
@@ -511,11 +539,15 @@ internal abstract class AmqpLink
             }
             catch (TimeoutException ex)
             {
-                Abort();
-                throw new AmqpLinkException(
+                var linkException = new AmqpLinkException(
                     $"Broker did not confirm receiver settlement for delivery-id {deliveryId}.",
                     ex,
                     AmqpErrorKind.Transient);
+                await _session.Connection.AbortAsync(new AmqpConnectionException(
+                    linkException.Message,
+                    linkException,
+                    AmqpErrorKind.Transient)).ConfigureAwait(false);
+                throw linkException;
             }
             finally
             {
@@ -589,16 +621,18 @@ internal abstract class AmqpLink
     /// Releases all link-level waiters. Called from every terminal path:
     /// local detach, peer-initiated detach, abort. Idempotent.
     /// </summary>
-    private void CompleteWaitersTerminal(bool cancelled)
+    private void CompleteWaitersTerminal(bool cancelled, Exception? terminalException = null)
     {
         var peerError = Volatile.Read(ref _pendingFault)?.Error;
-        CompleteRoleWaitersTerminal(cancelled, peerError);
+        CompleteRoleWaitersTerminal(cancelled, peerError, terminalException);
         foreach (var pending in _pendingReceiverSettlements)
         {
             if (!_pendingReceiverSettlements.TryRemove(pending.Key, out var completion))
                 continue;
             if (cancelled)
                 completion.TrySetCanceled();
+            else if (terminalException is not null)
+                completion.TrySetException(terminalException);
             else
                 completion.TrySetException(BuildPeerDetachException(
                     "Receiver link closed before settlement was confirmed.",
