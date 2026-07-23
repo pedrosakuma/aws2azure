@@ -138,7 +138,9 @@ workload_patterns:
     compatibility: conditional
     summary: >-
       RedrivePolicy, receive-to-DLQ flow, attribution, and restart-safe source
-      pagination require separate real-Azure qualification.
+      pagination require separate real-Azure qualification. Native Service Bus
+      redrive exposes one additional source delivery compared with the SQS
+      maxReceiveCount boundary.
     operations:
       - CreateQueue
       - SetQueueAttributes

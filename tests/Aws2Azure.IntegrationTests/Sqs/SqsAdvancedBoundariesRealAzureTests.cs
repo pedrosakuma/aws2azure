@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Amazon.SQS;
 using Amazon.SQS.Model;
+using Azure.Messaging.ServiceBus;
+using Azure.Messaging.ServiceBus.Administration;
 using Xunit;
 
 namespace Aws2Azure.IntegrationTests.Sqs;
@@ -35,6 +37,27 @@ public sealed class SqsAdvancedBoundariesRealAzureTests(RealAzureProxyFixture fi
             }, timeout.Token).ConfigureAwait(false)).QueueUrl;
 
             var run = Guid.NewGuid().ToString("N");
+            var probeBody = "sdk-session-probe-" + run;
+            await client.SendMessageAsync(new SendMessageRequest
+            {
+                QueueUrl = queueUrl,
+                MessageBody = probeBody,
+                MessageGroupId = "sdk-probe-group-" + run,
+                MessageDeduplicationId = "sdk-probe-" + run,
+            }, timeout.Token).ConfigureAwait(false);
+            await using (var azureClient = new ServiceBusClient(fixture.CreateServiceBusConnectionString()))
+            await using (var sessionReceiver = await azureClient.AcceptNextSessionAsync(
+                queueName,
+                new ServiceBusSessionReceiverOptions { ReceiveMode = ServiceBusReceiveMode.PeekLock },
+                timeout.Token).ConfigureAwait(false))
+            {
+                var probe = await sessionReceiver.ReceiveMessageAsync(
+                    TimeSpan.FromSeconds(5), timeout.Token).ConfigureAwait(false);
+                Assert.NotNull(probe);
+                Assert.Equal(probeBody, probe.Body.ToString());
+                await sessionReceiver.CompleteMessageAsync(probe, timeout.Token).ConfigureAwait(false);
+            }
+
             var bodies = Enumerable.Range(0, 3).Select(i => $"fifo-{run}-{i}").ToArray();
             var entries = bodies.Select((body, i) => new SendMessageBatchRequestEntry
             {
@@ -62,8 +85,19 @@ public sealed class SqsAdvancedBoundariesRealAzureTests(RealAzureProxyFixture fi
 
             for (var i = 0; i < bodies.Length; i++)
             {
-                var message = Assert.Single(
-                    await ReceiveAtLeastAsync(client, queueUrl, 1, timeout.Token).ConfigureAwait(false));
+                Message message;
+                try
+                {
+                    message = Assert.Single(
+                        await ReceiveAtLeastAsync(client, queueUrl, 1, timeout.Token).ConfigureAwait(false));
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException(
+                        "FIFO proxy receive failed after the official Azure SDK session probe succeeded. " +
+                        "Proxy output tail:\n" + OutputTail(fixture.ProxyOutput, 8_000),
+                        ex);
+                }
                 Assert.Equal(bodies[i], message.Body);
                 Assert.Equal("group-" + run, message.Attributes["MessageGroupId"]);
                 if (i == 0)
@@ -214,6 +248,11 @@ public sealed class SqsAdvancedBoundariesRealAzureTests(RealAzureProxyFixture fi
                     policy.RootElement.GetProperty("maxReceiveCount").GetInt32());
             }
 
+            var admin = new ServiceBusAdministrationClient(fixture.CreateServiceBusConnectionString());
+            var persistedSource = await admin.GetQueueAsync(sourceNames[0], timeout.Token).ConfigureAwait(false);
+            Assert.Equal(1, persistedSource.Value.MaxDeliveryCount);
+            Assert.Equal(targetName, persistedSource.Value.ForwardDeadLetteredMessagesTo);
+
             var first = await client.ListDeadLetterSourceQueuesAsync(
                 new ListDeadLetterSourceQueuesRequest
                 {
@@ -248,8 +287,10 @@ public sealed class SqsAdvancedBoundariesRealAzureTests(RealAzureProxyFixture fi
             await restartedClient.ChangeMessageVisibilityAsync(
                 sourceUrls[0], sourceMessage.ReceiptHandle, 0, timeout.Token).ConfigureAwait(false);
 
-            // The canonical Service Bus Abandon outcome applies
-            // MaxDeliveryCount before another source delivery is exposed.
+            // Service Bus exposes one additional delivery before its
+            // MaxDeliveryCount dead-letter transition. Settle that broker
+            // delivery and verify forwarding; the gap doc records the
+            // unavoidable native off-by-one from SQS maxReceiveCount.
             var sourceAfterLimit = await restartedClient.ReceiveMessageAsync(
                 new ReceiveMessageRequest
                 {
@@ -259,7 +300,10 @@ public sealed class SqsAdvancedBoundariesRealAzureTests(RealAzureProxyFixture fi
                     MessageSystemAttributeNames = new List<string> { "All" },
                 },
                 timeout.Token).ConfigureAwait(false);
-            Assert.Empty(sourceAfterLimit.Messages);
+            var overLimit = Assert.Single(sourceAfterLimit.Messages);
+            Assert.Equal("2", overLimit.Attributes["ApproximateReceiveCount"]);
+            await restartedClient.ChangeMessageVisibilityAsync(
+                sourceUrls[0], overLimit.ReceiptHandle, 0, timeout.Token).ConfigureAwait(false);
 
             var forwarded = Assert.Single(
                 await ReceiveAtLeastAsync(restartedClient, targetUrl, 1, timeout.Token)
@@ -316,4 +360,7 @@ public sealed class SqsAdvancedBoundariesRealAzureTests(RealAzureProxyFixture fi
         }
         return messages;
     }
+
+    private static string OutputTail(string output, int maxChars) =>
+        output.Length <= maxChars ? output : output[^maxChars..];
 }

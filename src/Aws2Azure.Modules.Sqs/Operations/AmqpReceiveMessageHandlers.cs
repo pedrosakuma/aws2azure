@@ -156,6 +156,7 @@ internal static partial class AmqpReceiveMessageHandlers
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            LogReceiveFailure(context, queueName, "session acquisition", ex);
             await AmqpReceiveParameters.WriteErrorAsync(context, parsed.Protocol,
                 AmqpErrorMapper.MapAmqpException(ex, "ReceiveMessage")).ConfigureAwait(false);
             return;
@@ -181,6 +182,7 @@ internal static partial class AmqpReceiveMessageHandlers
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            LogReceiveFailure(context, queueName, "message receive", ex);
             if (isFifo && receiver.SessionId is { } sessionId)
                 await receivers.InvalidateSessionReceiverAsync(queueName, sessionId).ConfigureAwait(false);
             else
@@ -235,9 +237,38 @@ internal static partial class AmqpReceiveMessageHandlers
             exception);
     }
 
+    private static void LogReceiveFailure(
+        HttpContext context,
+        string queueName,
+        string stage,
+        Exception exception)
+    {
+        var loggerFactory = context.RequestServices.GetService<ILoggerFactory>();
+        if (loggerFactory is null)
+        {
+            return;
+        }
+
+        ReceiveFailed(
+            loggerFactory.CreateLogger(typeof(AmqpReceiveMessageHandlers).FullName!),
+            queueName,
+            stage,
+            exception);
+    }
+
     [LoggerMessage(
         EventId = 1,
         Level = LogLevel.Trace,
         Message = "Best-effort AMQP abandon failed for an SQS message without a lock token on queue '{QueueName}'.")]
     private static partial void BestEffortAbandonFailed(ILogger logger, string queueName, Exception exception);
+
+    [LoggerMessage(
+        EventId = 2,
+        Level = LogLevel.Warning,
+        Message = "AMQP SQS receive failed during {Stage} for queue '{QueueName}'.")]
+    private static partial void ReceiveFailed(
+        ILogger logger,
+        string queueName,
+        string stage,
+        Exception exception);
 }
