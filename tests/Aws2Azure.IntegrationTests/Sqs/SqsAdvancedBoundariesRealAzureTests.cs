@@ -305,6 +305,19 @@ public sealed class SqsAdvancedBoundariesRealAzureTests(RealAzureProxyFixture fi
             await restartedClient.ChangeMessageVisibilityAsync(
                 sourceUrls[0], overLimit.ReceiptHandle, 0, timeout.Token).ConfigureAwait(false);
 
+            // Service Bus evaluates the over-limit dead-letter transition
+            // when the source is polled again after the final abandon.
+            var sourceTransition = await restartedClient.ReceiveMessageAsync(
+                new ReceiveMessageRequest
+                {
+                    QueueUrl = sourceUrls[0],
+                    MaxNumberOfMessages = 1,
+                    WaitTimeSeconds = 2,
+                    MessageSystemAttributeNames = new List<string> { "All" },
+                },
+                timeout.Token).ConfigureAwait(false);
+            Assert.Empty(sourceTransition.Messages);
+
             var forwarded = Assert.Single(
                 await ReceiveAtLeastAsync(restartedClient, targetUrl, 1, timeout.Token)
                     .ConfigureAwait(false));
