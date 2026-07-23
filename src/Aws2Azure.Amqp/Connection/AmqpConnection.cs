@@ -30,6 +30,8 @@ internal sealed class AmqpConnection : IAsyncDisposable
     private readonly CancellationTokenSource _shutdownCts = new();
     private readonly TaskCompletionSource<AmqpClose> _peerCloseReceived =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _terminalCleanupCompleted =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private readonly object _sessionLock = new();
     private readonly Dictionary<ushort, AmqpSession> _sessionsByOutgoingChannel = new();
@@ -137,9 +139,12 @@ internal sealed class AmqpConnection : IAsyncDisposable
             if (sendHeartbeats || detectPeerSilence)
                 _heartbeatTask = Task.Run(() => HeartbeatLoopAsync(_shutdownCts.Token));
         }
-        catch
+        catch (Exception ex)
         {
-            Interlocked.Exchange(ref _state, StateFinal);
+            await AbortAsync(ex as AmqpConnectionException ?? new AmqpConnectionException(
+                "Connection open failed.",
+                ex,
+                AmqpErrorKind.ClientFatal)).ConfigureAwait(false);
             throw;
         }
     }
@@ -262,9 +267,6 @@ internal sealed class AmqpConnection : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await ShutdownAsync().ConfigureAwait(false);
-        await _transport.DisposeAsync().ConfigureAwait(false);
-        _shutdownCts.Dispose();
-        _writeLock.Dispose();
     }
 
     // ---- internal helpers -------------------------------------------------
@@ -378,11 +380,22 @@ internal sealed class AmqpConnection : IAsyncDisposable
     internal async Task AbortAsync(AmqpConnectionException exception)
     {
         if (Interlocked.Exchange(ref _state, StateFinal) == StateFinal)
+        {
+            await _terminalCleanupCompleted.Task.ConfigureAwait(false);
             return;
-        _peerCloseReceived.TrySetException(exception);
-        AbortAllSessions(exception);
-        try { _shutdownCts.Cancel(); } catch { }
-        try { await _transport.DisposeAsync().ConfigureAwait(false); } catch { }
+        }
+
+        try
+        {
+            _peerCloseReceived.TrySetException(exception);
+            AbortAllSessions(exception);
+            try { _shutdownCts.Cancel(); } catch { }
+            try { await _transport.DisposeAsync().ConfigureAwait(false); } catch { }
+        }
+        finally
+        {
+            _terminalCleanupCompleted.TrySetResult();
+        }
     }
 
     private async Task ReadLoopAsync(CancellationToken ct)
@@ -548,17 +561,7 @@ internal sealed class AmqpConnection : IAsyncDisposable
                         var ex = new AmqpConnectionException(
                             $"Peer idle for {sinceLastReceived} ms (>= 2 * idle-time-out of {_settings.IdleTimeout.TotalMilliseconds} ms).",
                             AmqpErrorKind.Transient);
-                        // Mark the connection terminal and tear down sessions
-                        // synchronously so any link/session waiter (Receive,
-                        // Settle, RenewLock, ...) fails fast with the same
-                        // transient error instead of blocking on a TCS that
-                        // will never complete. We MUST set state to Final
-                        // before aborting sessions so the pool's health-check
-                        // path (which reads _state) sees a dead connection.
-                        Interlocked.Exchange(ref _state, StateFinal);
-                        _peerCloseReceived.TrySetException(ex);
-                        AbortAllSessions(ex);
-                        try { _shutdownCts.Cancel(); } catch { }
+                        await AbortAsync(ex).ConfigureAwait(false);
                         return;
                     }
                 }
@@ -582,18 +585,30 @@ internal sealed class AmqpConnection : IAsyncDisposable
     private async Task ShutdownAsync()
     {
         if (Interlocked.Exchange(ref _state, StateFinal) == StateFinal)
+        {
+            await _terminalCleanupCompleted.Task.ConfigureAwait(false);
             return;
-        try { _shutdownCts.Cancel(); } catch { }
+        }
 
-        if (_heartbeatTask is { } hb)
+        try
         {
-            try { await hb.ConfigureAwait(false); } catch { }
+            try { _shutdownCts.Cancel(); } catch { }
+
+            if (_heartbeatTask is { } hb)
+            {
+                try { await hb.ConfigureAwait(false); } catch { }
+            }
+            if (_readLoopTask is { } rl)
+            {
+                try { await rl.ConfigureAwait(false); } catch { }
+            }
+            AbortAllSessions();
+            await _transport.DisposeAsync().ConfigureAwait(false);
         }
-        if (_readLoopTask is { } rl)
+        finally
         {
-            try { await rl.ConfigureAwait(false); } catch { }
+            _terminalCleanupCompleted.TrySetResult();
         }
-        AbortAllSessions();
     }
 
     private async Task WaitForFinalAsync(CancellationToken ct)
