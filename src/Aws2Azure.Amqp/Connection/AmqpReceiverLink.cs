@@ -175,6 +175,16 @@ internal sealed class AmqpReceiverLink : AmqpLink
         {
             // Deadline reached: return whatever we have.
         }
+        catch (Exception ex) when (
+            ex is not OperationCanceledException &&
+            (batch.Count > 0 || _incoming.Reader.Count > 0))
+        {
+            // A terminal link failure may race with already-buffered
+            // deliveries. Preserve the partial-batch contract now and let
+            // the next receive surface the typed terminal failure.
+            while (batch.Count < maxMessages && _incoming.Reader.TryRead(out var item))
+                batch.Add(item);
+        }
 
         return batch;
     }

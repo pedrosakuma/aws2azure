@@ -396,10 +396,12 @@ internal sealed class AmqpConnection : IAsyncDisposable
                 {
                     frame = await AmqpFrameIO.ReadFrameAsync(_transport, (int)_settings.MaxFrameSize, ct).ConfigureAwait(false);
                 }
-                catch (EndOfStreamException)
+                catch (EndOfStreamException ex)
                 {
-                    _peerCloseReceived.TrySetException(
-                        new AmqpConnectionException("Transport closed before peer sent close.", AmqpErrorKind.ServerFatal));
+                    await AbortAsync(new AmqpConnectionException(
+                        "Transport closed before peer sent close.",
+                        ex,
+                        AmqpErrorKind.ServerFatal)).ConfigureAwait(false);
                     return;
                 }
 
