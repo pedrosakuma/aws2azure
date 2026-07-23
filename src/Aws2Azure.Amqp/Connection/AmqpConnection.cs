@@ -266,7 +266,14 @@ internal sealed class AmqpConnection : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        await ShutdownAsync().ConfigureAwait(false);
+        try
+        {
+            await ShutdownAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            await AwaitBackgroundLoopsAsync().ConfigureAwait(false);
+        }
     }
 
     // ---- internal helpers -------------------------------------------------
@@ -593,21 +600,24 @@ internal sealed class AmqpConnection : IAsyncDisposable
         try
         {
             try { _shutdownCts.Cancel(); } catch { }
-
-            if (_heartbeatTask is { } hb)
-            {
-                try { await hb.ConfigureAwait(false); } catch { }
-            }
-            if (_readLoopTask is { } rl)
-            {
-                try { await rl.ConfigureAwait(false); } catch { }
-            }
             AbortAllSessions();
             await _transport.DisposeAsync().ConfigureAwait(false);
         }
         finally
         {
             _terminalCleanupCompleted.TrySetResult();
+        }
+    }
+
+    private async Task AwaitBackgroundLoopsAsync()
+    {
+        if (_heartbeatTask is { } hb)
+        {
+            try { await hb.ConfigureAwait(false); } catch { }
+        }
+        if (_readLoopTask is { } rl)
+        {
+            try { await rl.ConfigureAwait(false); } catch { }
         }
     }
 
