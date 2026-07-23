@@ -72,6 +72,7 @@ public sealed class ServiceBusSessionFilterTests
         Assert.Equal(0x00, span[afterKey]); // described
         var descriptor = Aws2Azure.Amqp.Codec.AmqpPrimitiveReader.ReadULong(
             span[(afterKey + 1)..], out var descriptorLen);
+        Assert.Equal(0x0000_0013_7000_000CUL, descriptor);
         Assert.Equal(ServiceBusSessionFilter.FilterDescriptor, descriptor);
         var valueOffset = afterKey + 1 + descriptorLen;
         Assert.Equal(0xA1, span[valueOffset]); // str8

@@ -21,14 +21,12 @@ internal static class ServiceBusSessionFilter
     public const string FilterSymbol = "com.microsoft:session-filter";
 
     /// <summary>
-    /// Service Bus AMQP described-type code for a session filter value.
-    /// The broker requires the map value to be
-    /// <c>described(0x000001370000000C, string|null)</c>; a bare string is
-    /// accepted by some emulators and older clients but real Service Bus can
-    /// leave AcceptNextSession waiting because it does not recognise that
-    /// filter shape.
+    /// Service Bus AMQP described-type code used by the official Azure Go SDK
+    /// for a session filter value. The service-compatible legacy code is
+    /// <c>0x000000137000000C</c>; it differs from the arithmetically intended
+    /// <c>(0x137 &lt;&lt; 32) | 0x0C</c> value and must not be normalized.
     /// </summary>
-    public const ulong FilterDescriptor = 0x0000_0137_0000_000CUL;
+    public const ulong FilterDescriptor = 0x0000_0013_7000_000CUL;
 
     /// <summary>
     /// Maximum session-id length we will accept before refusing to
