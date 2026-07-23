@@ -109,6 +109,22 @@ public sealed class ServiceBusReceiverTests
     }
 
     [Fact]
+    public async Task ReleaseAsync_emits_released_disposition_without_incrementing_delivery_count()
+    {
+        var (conn, broker, receiver, _) = await SetupReceiverAsync("q", EncodeMessage("m1"));
+        await using var _c = conn;
+        await using var _r = receiver;
+
+        var batch = await receiver.ReceiveBatchAsync(1, TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(15));
+        var msg = Assert.Single(batch);
+        await receiver.ReleaseAsync(msg).WaitAsync(TimeSpan.FromSeconds(5));
+
+        await WaitForDispositionAsync(broker, msg.DeliveryId);
+        Assert.Equal(AmqpDispositionOutcome.Released, broker.Dispositions[msg.DeliveryId].Outcome);
+        Assert.Equal(0, receiver.InFlightCount);
+    }
+
+    [Fact]
     public async Task DeadLetterAsync_emits_rejected_disposition()
     {
         var (conn, broker, receiver, _) = await SetupReceiverAsync("q", EncodeMessage("m1"));

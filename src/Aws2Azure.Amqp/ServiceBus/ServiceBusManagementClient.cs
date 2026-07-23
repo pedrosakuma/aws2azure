@@ -145,9 +145,12 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
     /// Thrown when the broker reports a non-2xx status code.
     /// </exception>
     public async Task<DateTimeOffset> RenewSessionLockAsync(
-        string sessionId, CancellationToken cancellationToken = default)
+        string sessionId,
+        string associatedLinkName,
+        CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(sessionId);
+        ArgumentException.ThrowIfNullOrEmpty(associatedLinkName);
 
         using var body = EncodeRenewSessionLockRequest(sessionId);
         var request = new AmqpMessage
@@ -156,6 +159,7 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
             {
                 ["operation"] = RenewSessionLockOperation,
                 ["com.microsoft:server-timeout"] = (int)DefaultServerTimeout.TotalMilliseconds,
+                ["associated-link-name"] = associatedLinkName,
             },
             BodyValueBytes = body.Memory,
         };

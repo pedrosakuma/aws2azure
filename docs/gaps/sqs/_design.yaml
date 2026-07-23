@@ -138,9 +138,10 @@ workload_patterns:
     compatibility: conditional
     summary: >-
       RedrivePolicy, receive-to-DLQ flow, attribution, and restart-safe source
-      pagination require separate real-Azure qualification. Native Service Bus
-      redrive exposes one additional source delivery compared with the SQS
-      maxReceiveCount boundary.
+      pagination require separate real-Azure qualification. The AMQP receive
+      path enforces maxReceiveCount before exposing Service Bus's first
+      over-limit delivery and explicitly dead-letters it for forwarding; the
+      legacy REST receive transport retains the native Service Bus boundary.
     operations:
       - CreateQueue
       - SetQueueAttributes

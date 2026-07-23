@@ -287,10 +287,9 @@ public sealed class SqsAdvancedBoundariesRealAzureTests(RealAzureProxyFixture fi
             await restartedClient.ChangeMessageVisibilityAsync(
                 sourceUrls[0], sourceMessage.ReceiptHandle, 0, timeout.Token).ConfigureAwait(false);
 
-            // Service Bus exposes one additional delivery before its
-            // MaxDeliveryCount dead-letter transition. Settle that broker
-            // delivery and verify forwarding; the gap doc records the
-            // unavoidable native off-by-one from SQS maxReceiveCount.
+            // The proxy enforces the SQS boundary on receive: a broker
+            // delivery whose count exceeds maxReceiveCount is dead-lettered
+            // before it can be exposed to the AWS client.
             var sourceAfterLimit = await restartedClient.ReceiveMessageAsync(
                 new ReceiveMessageRequest
                 {
@@ -300,23 +299,7 @@ public sealed class SqsAdvancedBoundariesRealAzureTests(RealAzureProxyFixture fi
                     MessageSystemAttributeNames = new List<string> { "All" },
                 },
                 timeout.Token).ConfigureAwait(false);
-            var overLimit = Assert.Single(sourceAfterLimit.Messages);
-            Assert.Equal("2", overLimit.Attributes["ApproximateReceiveCount"]);
-            await restartedClient.ChangeMessageVisibilityAsync(
-                sourceUrls[0], overLimit.ReceiptHandle, 0, timeout.Token).ConfigureAwait(false);
-
-            // Service Bus evaluates the over-limit dead-letter transition
-            // when the source is polled again after the final abandon.
-            var sourceTransition = await restartedClient.ReceiveMessageAsync(
-                new ReceiveMessageRequest
-                {
-                    QueueUrl = sourceUrls[0],
-                    MaxNumberOfMessages = 1,
-                    WaitTimeSeconds = 2,
-                    MessageSystemAttributeNames = new List<string> { "All" },
-                },
-                timeout.Token).ConfigureAwait(false);
-            Assert.Empty(sourceTransition.Messages);
+            Assert.Empty(sourceAfterLimit.Messages);
 
             var forwarded = Assert.Single(
                 await ReceiveAtLeastAsync(restartedClient, targetUrl, 1, timeout.Token)

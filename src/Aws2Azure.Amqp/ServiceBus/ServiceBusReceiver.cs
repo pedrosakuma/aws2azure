@@ -62,6 +62,8 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     /// </summary>
     public string? SessionId { get; }
 
+    public string LinkName => _link.Name;
+
     /// <summary>The underlying receiver link. Exposed for diagnostics / advanced flow control.</summary>
     internal AmqpLink Link => _link;
 
@@ -262,6 +264,27 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
             static (link, delivery, ct) =>
                 link.ModifyAsync(delivery, deliveryFailed: null, undeliverableHere: null, ct),
             cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Releases the delivery without incrementing its delivery count. Used
+    /// when the proxy must unwind a receive that could not be evaluated.
+    /// </summary>
+    public Task ReleaseAsync(
+        ServiceBusReceivedMessage message,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        ThrowIfDisposed();
+        if (message.LockToken is { } token)
+        {
+            return SettleAsync(
+                token,
+                message.Delivery,
+                static (link, delivery, ct) => link.ReleaseAsync(delivery, ct),
+                cancellationToken);
+        }
+        return _link.ReleaseAsync(message.Delivery, cancellationToken);
     }
 
     /// <summary>

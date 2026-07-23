@@ -3,11 +3,15 @@ using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Net;
+using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Aws2Azure.Amqp.Connection;
 using Aws2Azure.Amqp.ServiceBus;
+using Aws2Azure.Core.Azure;
+using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.Sqs;
 using Aws2Azure.Modules.Sqs.Internal;
 using Aws2Azure.Modules.Sqs.Operations;
@@ -91,6 +95,52 @@ public sealed class AmqpReceiveMessageHandlersTests
         // ReceiveMessageResponse with no <Message> children.
         Assert.Contains("<ReceiveMessageResponse", body);
         Assert.DoesNotContain("<Message>", body);
+    }
+
+    [Fact]
+    public async Task ReceiveMessage_dead_letters_redelivery_beyond_redrive_limit_before_exposing_it()
+    {
+        var tag = Guid.Parse("20202020-3030-4040-5050-606060606060").ToByteArray();
+        await using var harness = await TestHarness.OpenAsync(
+            QueueName,
+            (tag, EncodeMessage("over-limit", groupId: null, deliveryCount: 1)));
+
+        const string QueueXml =
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+            "<entry xmlns=\"http://www.w3.org/2005/Atom\">" +
+              "<title>amqp-q</title>" +
+              "<content type=\"application/xml\">" +
+                "<QueueDescription xmlns=\"http://schemas.microsoft.com/netservices/2010/10/servicebus/connect\">" +
+                  "<MaxDeliveryCount>1</MaxDeliveryCount>" +
+                  "<ForwardDeadLetteredMessagesTo>target-dlq</ForwardDeadLetteredMessagesTo>" +
+                "</QueueDescription>" +
+              "</content>" +
+            "</entry>";
+        var handler = new QueueDescriptionHandler(QueueXml);
+        using var http = new AzureHttpClient(handler, ownsHandler: true);
+        var management = new ServiceBusClient(http, new ServiceBusCredentials
+        {
+            Namespace = "http://127.0.0.1:5672",
+            SasKeyName = "RootManageSharedAccessKey",
+            SasKey = Convert.ToBase64String([1, 2, 3]),
+        });
+
+        var ctx = NewCtx();
+        var parsed = QueryParsed(
+            SqsOperation.ReceiveMessage,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"));
+
+        await AmqpReceiveMessageHandlers.HandleAsync(
+            ctx, parsed, harness.Provider, management, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.DoesNotContain("<Message>", ReadBody(ctx));
+        Assert.Equal(1, handler.CallCount);
+        await WaitForDispositionAsync(harness.Broker, deliveryId: 0);
+        Assert.Equal(
+            AmqpDispositionOutcome.Rejected,
+            harness.Broker.Dispositions[0].Outcome);
+        Assert.Equal(0, harness.Receiver.InFlightCount);
     }
 
     [Fact]
@@ -1142,12 +1192,15 @@ public sealed class AmqpReceiveMessageHandlersTests
     private static byte[] EncodeMessage(string body)
         => EncodeMessage(body, groupId: null);
 
-    private static byte[] EncodeMessage(string body, string? groupId)
+    private static byte[] EncodeMessage(string body, string? groupId, uint? deliveryCount = null)
         => EncodeMessage(body, groupId: groupId, deadLetterSource: null,
-            deadLetterReason: null, deadLetterErrorDescription: null);
+            deadLetterReason: null, deadLetterErrorDescription: null, deliveryCount);
 
     private static byte[] EncodeMessage(string body, string? groupId,
-        string? deadLetterSource, string? deadLetterReason, string? deadLetterErrorDescription)
+        string? deadLetterSource,
+        string? deadLetterReason,
+        string? deadLetterErrorDescription,
+        uint? deliveryCount = null)
     {
         // Build the optional message-annotations + application-properties
         // sections by hand (AmqpMessage.Write does not author annotations
@@ -1157,6 +1210,17 @@ public sealed class AmqpReceiveMessageHandlersTests
         // → body is what real Service Bus produces; the proxy's parser is
         // tolerant to any subset.
         var prefix = new Aws2Azure.UnitTests.Amqp.Framing.SectionWriter();
+        if (deliveryCount is { } count)
+        {
+            prefix.WriteDescribed(Aws2Azure.Amqp.Framing.MessageSectionDescriptor.Header);
+            prefix.BeginList8(count: 5);
+            prefix.WriteNull();
+            prefix.WriteNull();
+            prefix.WriteNull();
+            prefix.WriteNull();
+            prefix.WriteUInt(count);
+            prefix.EndList8();
+        }
         if (!string.IsNullOrEmpty(deadLetterSource))
         {
             prefix.WriteDescribed(Aws2Azure.Amqp.Framing.MessageSectionDescriptor.MessageAnnotations);
@@ -1189,6 +1253,36 @@ public sealed class AmqpReceiveMessageHandlersTests
             return result;
         }
         finally { ArrayPool<byte>.Shared.Return(rented); }
+    }
+
+    private static async Task WaitForDispositionAsync(
+        ServiceBusBrokerSimulator broker,
+        uint deliveryId)
+    {
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (broker.Dispositions.ContainsKey(deliveryId))
+                return;
+            await Task.Delay(20);
+        }
+        throw new TimeoutException($"Disposition for delivery-id {deliveryId} did not arrive in time.");
+    }
+
+    private sealed class QueueDescriptionHandler(string xml) : HttpMessageHandler
+    {
+        public int CallCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(xml, Encoding.UTF8, "application/atom+xml"),
+            });
+        }
     }
 
     private static HttpContext NewCtx()

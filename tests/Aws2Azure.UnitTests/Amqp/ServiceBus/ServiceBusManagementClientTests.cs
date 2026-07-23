@@ -119,19 +119,24 @@ public sealed class ServiceBusManagementClientTests
         brokerExpiry = DateTimeOffset.FromUnixTimeMilliseconds(brokerExpiry.ToUnixTimeMilliseconds());
 
         string? receivedOperation = null;
+        string? associatedLinkName = null;
         var serverTask = Task.Run(async () => await ManagementBrokerSimulator.RunFullAsync(
             server,
             renewExpiry: brokerExpiry,
             statusCode: 200,
             statusDescription: "OK",
             errorCondition: null,
-            captureOperation: op => receivedOperation = op));
+            captureOperation: op => receivedOperation = op,
+            captureRequest: request =>
+                associatedLinkName = request.ApplicationProperties?["associated-link-name"] as string));
 
         await conn.OpenAsync();
         var session = await conn.BeginSessionAsync();
         await using var mgmt = await ServiceBusManagementClient.OpenAsync(session);
 
-        var expiration = await mgmt.RenewSessionLockAsync(SessionId).WaitAsync(TimeSpan.FromSeconds(5));
+        var expiration = await mgmt
+            .RenewSessionLockAsync(SessionId, "receiver-link-42")
+            .WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal(brokerExpiry, expiration);
 
@@ -141,6 +146,7 @@ public sealed class ServiceBusManagementClientTests
         await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal("com.microsoft:renew-session-lock", receivedOperation);
+        Assert.Equal("receiver-link-42", associatedLinkName);
     }
 
     [Fact]
@@ -163,7 +169,9 @@ public sealed class ServiceBusManagementClientTests
         await using var mgmt = await ServiceBusManagementClient.OpenAsync(session);
 
         var ex = await Assert.ThrowsAsync<ServiceBusManagementException>(
-            async () => await mgmt.RenewSessionLockAsync("group-X").WaitAsync(TimeSpan.FromSeconds(5)));
+            async () => await mgmt
+                .RenewSessionLockAsync("group-X", "receiver-link-X")
+                .WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal(410, ex.StatusCode);
         Assert.Equal("SessionLockLost", ex.Description);
         Assert.Equal("com.microsoft:session-lock-lost", ex.ErrorCondition);

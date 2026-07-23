@@ -214,7 +214,13 @@ internal static class AmqpSettleDispatcher
             ?? (string.IsNullOrEmpty(decoded.SessionId)
                 ? receivers.TryGetExistingReceiver(queueName)
                 : null);
-        using var renewal = trackedReceiver?.TryBeginLockRenewal(decoded.LockToken);
+        if (trackedReceiver is null)
+        {
+            await AmqpReceiveParameters.WriteErrorAsync(
+                context, parsed.Protocol, SqsErrorMapping.MessageNotInflight()).ConfigureAwait(false);
+            return;
+        }
+        using var renewal = trackedReceiver.TryBeginLockRenewal(decoded.LockToken);
         if (renewal is null)
         {
             await AmqpReceiveParameters.WriteErrorAsync(
@@ -245,7 +251,8 @@ internal static class AmqpSettleDispatcher
         {
             lockedUntil = string.IsNullOrEmpty(decoded.SessionId)
                 ? await mgmt.RenewLockAsync(decoded.LockToken, ct).ConfigureAwait(false)
-                : await mgmt.RenewSessionLockAsync(decoded.SessionId, ct).ConfigureAwait(false);
+                : await mgmt.RenewSessionLockAsync(
+                    decoded.SessionId, trackedReceiver.LinkName, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
         catch (ServiceBusManagementException ex)
