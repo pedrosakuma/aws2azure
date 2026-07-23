@@ -17,12 +17,10 @@ namespace Aws2Azure.Amqp.ServiceBus;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Service Bus's <c>$management</c> node is per-entity in name only:
-/// the address is literally the string <c>$management</c>; the broker
-/// scopes the operation to whatever the CBS-authorised audience
-/// covers. This client implements the renew-lock / renew-session-lock
-/// operations; further ops (peek, scheduled-message cancel, session
-/// state, …) plug in the same way.
+/// Service Bus exposes an entity-scoped management node at
+/// <c>{entity-path}/$management</c>. This client implements the renew-lock /
+/// renew-session-lock operations; further ops (peek, scheduled-message
+/// cancel, session state, …) plug in the same way.
 /// </para>
 /// <para>
 /// This client is single-use per (connection, audience) pair —
@@ -32,7 +30,6 @@ namespace Aws2Azure.Amqp.ServiceBus;
 /// </remarks>
 internal sealed class ServiceBusManagementClient : IAsyncDisposable
 {
-    internal const string ManagementAddress = "$management";
     internal const string RenewLockOperation = "com.microsoft:renew-lock";
     internal const string RenewSessionLockOperation = "com.microsoft:renew-session-lock";
 
@@ -60,12 +57,15 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
     /// rejects management requests on unauthorised links).
     /// </summary>
     public static async Task<ServiceBusManagementClient> OpenAsync(
-        AmqpSession session, CancellationToken cancellationToken = default)
+        AmqpSession session,
+        string managementAddress,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(managementAddress);
         var link = new AmqpRequestResponseLink(session, new AmqpRequestResponseLinkSettings
         {
-            Address = ManagementAddress,
+            Address = managementAddress,
             ReplyToAddress = $"aws2azure-mgmt-reply-{Guid.NewGuid():N}",
         });
         try

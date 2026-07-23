@@ -348,28 +348,27 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
     }
 
     /// <summary>
-    /// Opens a Service Bus <c>$management</c> request-response client
-    /// scoped to <paramref name="audience"/>. CBS-authorises the
-    /// audience if needed, then attaches the paired sender/receiver on
-    /// the shared data session. Caller owns the returned client and
-    /// must dispose it when done.
+    /// Opens a Service Bus entity-scoped <c>$management</c>
+    /// request-response client. CBS-authorises
+    /// <paramref name="managementAudience"/> if needed, then attaches the
+    /// paired sender/receiver at <paramref name="managementAddress"/> on the
+    /// shared data session. Caller owns the returned client and must dispose
+    /// it when done.
     /// </summary>
-    /// <remarks>
-    /// Note the <c>$management</c> node is per-connection on Service
-    /// Bus — the address is literally <c>$management</c> regardless of
-    /// queue. The CBS-authorised audience scopes which operations the
-    /// broker accepts. For renew-lock the audience must match the
-    /// entity whose lock-token is being renewed.
-    /// </remarks>
     public async Task<ServiceBusManagementClient> OpenManagementClientAsync(
-        string audience, CancellationToken cancellationToken = default)
+        string managementAddress,
+        string managementAudience,
+        CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(audience);
+        ArgumentException.ThrowIfNullOrWhiteSpace(managementAddress);
+        ArgumentException.ThrowIfNullOrWhiteSpace(managementAudience);
         ThrowIfDisposed();
 
-        await EnsureAuthorizedAsync(audience, cancellationToken).ConfigureAwait(false);
+        await EnsureAuthorizedAsync(managementAudience, cancellationToken).ConfigureAwait(false);
         var dataSession = await EnsureDataSessionAsync(cancellationToken).ConfigureAwait(false);
-        return await ServiceBusManagementClient.OpenAsync(dataSession, cancellationToken).ConfigureAwait(false);
+        return await ServiceBusManagementClient
+            .OpenAsync(dataSession, managementAddress, cancellationToken)
+            .ConfigureAwait(false);
     }
 
 

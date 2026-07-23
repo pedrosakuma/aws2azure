@@ -1274,8 +1274,11 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             ManagementOpenRequest request,
             CancellationToken cancellationToken)
         {
-            var audience = ServiceBusEndpoint.BuildQueueAudience(request.Endpoint.LogicalNamespace, request.QueueName);
-            return request.Connection.OpenManagementClientAsync(audience, cancellationToken);
+            var address = ServiceBusEndpoint.BuildManagementAddress(request.QueueName);
+            var audience = ServiceBusEndpoint.BuildManagementAudience(
+                request.Endpoint.LogicalNamespace,
+                request.QueueName);
+            return request.Connection.OpenManagementClientAsync(address, audience, cancellationToken);
         }
 
         private readonly record struct ReceiverOpenRequest(

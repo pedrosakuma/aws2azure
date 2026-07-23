@@ -22,12 +22,27 @@ namespace Aws2Azure.UnitTests.Amqp.ServiceBus;
 /// </summary>
 public sealed class ServiceBusManagementClientTests
 {
+    private const string ManagementAddress = "queue1/$management";
+
     private static AmqpConnectionSettings DefaultConnSettings() => new()
     {
         ContainerId = "test-client",
         Hostname = "ns.servicebus.windows.net",
         IdleTimeout = TimeSpan.Zero,
     };
+
+    [Fact]
+    public void Management_endpoint_is_entity_scoped()
+    {
+        Assert.Equal(
+            ManagementAddress,
+            ServiceBusEndpoint.BuildManagementAddress(" queue1 "));
+        Assert.Equal(
+            "amqps://ns.servicebus.windows.net/queue1/$management",
+            ServiceBusEndpoint.BuildManagementAudience(
+                " NS.ServiceBus.Windows.Net ",
+                " queue1 "));
+    }
 
     [Theory]
     [InlineData(1)]
@@ -57,7 +72,7 @@ public sealed class ServiceBusManagementClientTests
 
         await conn.OpenAsync();
         var session = await conn.BeginSessionAsync();
-        await using var mgmt = await ServiceBusManagementClient.OpenAsync(session);
+        await using var mgmt = await ServiceBusManagementClient.OpenAsync(session, ManagementAddress);
 
         var expirations = await mgmt.RenewLocksAsync(expectedTokens).WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -92,7 +107,7 @@ public sealed class ServiceBusManagementClientTests
 
         await conn.OpenAsync();
         var session = await conn.BeginSessionAsync();
-        await using var mgmt = await ServiceBusManagementClient.OpenAsync(session);
+        await using var mgmt = await ServiceBusManagementClient.OpenAsync(session, ManagementAddress);
 
         var ex = await Assert.ThrowsAsync<ServiceBusManagementException>(
             async () => await mgmt.RenewLockAsync(Guid.NewGuid()).WaitAsync(TimeSpan.FromSeconds(5)));
@@ -141,7 +156,7 @@ public sealed class ServiceBusManagementClientTests
 
         await conn.OpenAsync();
         var session = await conn.BeginSessionAsync();
-        await using var mgmt = await ServiceBusManagementClient.OpenAsync(session);
+        await using var mgmt = await ServiceBusManagementClient.OpenAsync(session, ManagementAddress);
 
         var expiration = await mgmt
             .RenewSessionLockAsync(SessionId, "receiver-link-42")
@@ -179,7 +194,7 @@ public sealed class ServiceBusManagementClientTests
 
         await conn.OpenAsync();
         var session = await conn.BeginSessionAsync();
-        await using var mgmt = await ServiceBusManagementClient.OpenAsync(session);
+        await using var mgmt = await ServiceBusManagementClient.OpenAsync(session, ManagementAddress);
 
         var ex = await Assert.ThrowsAsync<ServiceBusManagementException>(
             async () => await mgmt

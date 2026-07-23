@@ -1062,7 +1062,9 @@ public sealed class AmqpReceiveMessageHandlersTests
                 });
             await mgmtConn.OpenAsync();
             var mgmtSession = await mgmtConn.BeginSessionAsync();
-            var mgmt = await ServiceBusManagementClient.OpenAsync(mgmtSession);
+            var mgmt = await ServiceBusManagementClient.OpenAsync(
+                mgmtSession,
+                ServiceBusEndpoint.BuildManagementAddress(QueueName));
 
             return new TestHarness
             {
