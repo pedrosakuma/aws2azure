@@ -197,7 +197,7 @@ public sealed class SqsAdvancedBoundariesRealAzureTests(RealAzureProxyFixture fi
 
             await fixture.RestartAsync().ConfigureAwait(false);
             using var restartedClient = fixture.CreateSqsClient(maxErrorRetry: 0);
-            await Assert.ThrowsAsync<AmazonSQSException>(() =>
+            await Assert.ThrowsAsync<ReceiptHandleIsInvalidException>(() =>
                 restartedClient.DeleteMessageAsync(queueUrl, beforeRestart.ReceiptHandle, timeout.Token));
 
             var redelivered = Assert.Single(
