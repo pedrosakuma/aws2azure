@@ -115,13 +115,24 @@ public sealed class SqsAdvancedBoundariesRealAzureTests(RealAzureProxyFixture fi
                             OutputTail(fixture.ProxyOutput, 8_000),
                             ex);
                     }
-                    var blockedSameGroup = await client.ReceiveMessageAsync(new ReceiveMessageRequest
+                    ReceiveMessageResponse blockedSameGroup;
+                    try
                     {
-                        QueueUrl = queueUrl,
-                        MaxNumberOfMessages = 1,
-                        WaitTimeSeconds = 2,
-                        MessageSystemAttributeNames = new List<string> { "All" },
-                    }, timeout.Token).ConfigureAwait(false);
+                        blockedSameGroup = await client.ReceiveMessageAsync(new ReceiveMessageRequest
+                        {
+                            QueueUrl = queueUrl,
+                            MaxNumberOfMessages = 1,
+                            WaitTimeSeconds = 2,
+                            MessageSystemAttributeNames = new List<string> { "All" },
+                        }, timeout.Token).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new InvalidOperationException(
+                            "FIFO blocked-group receive failed. Proxy output tail:\n" +
+                            OutputTail(fixture.ProxyOutput, 8_000),
+                            ex);
+                    }
                     Assert.Empty(blockedSameGroup.Messages);
                 }
                 await client.DeleteMessageAsync(queueUrl, message.ReceiptHandle, timeout.Token)
