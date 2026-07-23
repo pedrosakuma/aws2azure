@@ -211,7 +211,8 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
         string audience,
         string? sessionId,
         uint prefetchCredit,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        TimeSpan? acceptNextTimeout = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
         ArgumentException.ThrowIfNullOrWhiteSpace(audience);
@@ -221,16 +222,20 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
         var dataSession = await EnsureDataSessionAsync(cancellationToken).ConfigureAwait(false);
 
         var filter = ServiceBusSessionFilter.Encode(sessionId);
+        var linkName = $"aws2azure-recv-{queueName}-session-{Guid.NewGuid():N}";
         var settings = new AmqpLinkSettings
         {
-            Name = $"aws2azure-recv-{queueName}-session-{Guid.NewGuid():N}",
+            Name = linkName,
             Role = AmqpRole.Receiver,
             SourceAddress = ServiceBusEndpoint.BuildReceiverSourceAddress(queueName),
             SourceFilter = filter,
-            TargetAddress = null,
+            TargetAddress = linkName,
             SenderSettleMode = AmqpSenderSettleMode.Unsettled,
-            ReceiverSettleMode = AmqpReceiverSettleMode.First,
+            ReceiverSettleMode = AmqpReceiverSettleMode.Second,
             InitialDeliveryCount = null,
+            Properties = sessionId is null && acceptNextTimeout is { } timeout
+                ? ServiceBusSessionFilter.EncodeAcceptNextProperties(timeout)
+                : ReadOnlyMemory<byte>.Empty,
         };
 
         var link = await dataSession.AttachLinkAsync(settings, cancellationToken).ConfigureAwait(false);

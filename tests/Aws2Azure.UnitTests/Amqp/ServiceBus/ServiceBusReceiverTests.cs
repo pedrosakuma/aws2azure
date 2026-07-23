@@ -102,7 +102,10 @@ public sealed class ServiceBusReceiverTests
         await receiver.AbandonAsync(msg).WaitAsync(TimeSpan.FromSeconds(5));
 
         await WaitForDispositionAsync(broker, msg.DeliveryId);
-        Assert.Equal(AmqpDispositionOutcome.Modified, broker.Dispositions[msg.DeliveryId].Outcome);
+        var disposition = broker.Dispositions[msg.DeliveryId];
+        Assert.Equal(AmqpDispositionOutcome.Modified, disposition.Outcome);
+        Assert.Null(disposition.DeliveryFailed);
+        Assert.Null(disposition.UndeliverableHere);
     }
 
     [Fact]

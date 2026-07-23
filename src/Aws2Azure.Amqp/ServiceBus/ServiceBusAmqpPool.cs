@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Linq;
 using Aws2Azure.Amqp.Connection;
+using Aws2Azure.Amqp.Framing;
 using Aws2Azure.Amqp.Security;
 
 namespace Aws2Azure.Amqp.ServiceBus;
@@ -308,7 +309,12 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                 try
                 {
                     receiver = await slot.AcquireBrokerAssignedSessionReceiverAsync(
-                        connection, key, queueName, brokerWait.Token).ConfigureAwait(false);
+                        connection, key, queueName, remaining, brokerWait.Token).ConfigureAwait(false);
+                }
+                catch (AmqpLinkException ex) when (IsBrokerAcceptNextTimeout(ex))
+                {
+                    return new BrokerAssignedSessionReceiverResult(
+                        null, Stopwatch.GetElapsedTime(brokerWaitStarted.Value));
                 }
                 catch (OperationCanceledException) when (
                     !cancellationToken.IsCancellationRequested && brokerWait.IsCancellationRequested)
@@ -334,6 +340,9 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             }
         }
     }
+
+    internal static bool IsBrokerAcceptNextTimeout(AmqpLinkException exception) =>
+        string.Equals(exception.PeerCondition, AmqpErrorCondition.Timeout, StringComparison.Ordinal);
 
     /// <summary>
     /// Evicts the cached session receiver for
@@ -990,6 +999,7 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
             ServiceBusAmqpConnection connection,
             ServiceBusAmqpConnectionKey key,
             string queueName,
+            TimeSpan maxBrokerWait,
             CancellationToken cancellationToken)
         {
             ThrowIfDisposed();
@@ -1004,8 +1014,17 @@ internal sealed class ServiceBusAmqpPool : IAsyncDisposable
                 ServiceBusReceiver fresh;
                 try
                 {
+                    var serverTimeout = maxBrokerWait > TimeSpan.FromMilliseconds(100)
+                        ? maxBrokerWait - TimeSpan.FromMilliseconds(50)
+                        : TimeSpan.FromMilliseconds(Math.Max(1, maxBrokerWait.TotalMilliseconds * 0.8));
                     fresh = await connection
-                        .OpenSessionReceiverAsync(queueName, audience, sessionId: null, prefetchCredit: 0, cancellationToken)
+                        .OpenSessionReceiverAsync(
+                            queueName,
+                            audience,
+                            sessionId: null,
+                            prefetchCredit: 0,
+                            cancellationToken: cancellationToken,
+                            acceptNextTimeout: serverTimeout)
                         .ConfigureAwait(false);
                 }
                 catch

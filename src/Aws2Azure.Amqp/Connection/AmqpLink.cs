@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using Aws2Azure.Amqp.Framing;
 
 namespace Aws2Azure.Amqp.Connection;
@@ -40,6 +41,7 @@ internal abstract class AmqpLink
     // publish the struct safely across threads.
     private sealed class FaultBox { public AmqpError Error; }
     private FaultBox? _pendingFault;
+    private readonly ConcurrentDictionary<uint, TaskCompletionSource> _pendingReceiverSettlements = new();
 
     private int _state = StateClosed;
     private int _attachWriteAttempted;
@@ -241,6 +243,7 @@ internal abstract class AmqpLink
                     ? (_settings.InitialDeliveryCount ?? 0u)
                     : null,
                 MaxMessageSize = _settings.MaxMessageSize == 0 ? null : _settings.MaxMessageSize,
+                Properties = _settings.Properties,
             };
 
             var rentedAtt = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
@@ -394,7 +397,19 @@ internal abstract class AmqpLink
 
     internal virtual void DispatchTransfer(AmqpTransfer transfer, ReadOnlyMemory<byte> frameBody) { }
 
-    internal virtual void DispatchDisposition(AmqpDisposition disposition) { }
+    internal virtual void DispatchDisposition(AmqpDisposition disposition)
+    {
+        if (disposition.Role != AmqpRole.Sender || disposition.Settled != true)
+            return;
+
+        var first = disposition.First;
+        var last = disposition.Last ?? first;
+        for (var deliveryId = first; deliveryId <= last; deliveryId++)
+        {
+            if (_pendingReceiverSettlements.TryRemove(deliveryId, out var completion))
+                completion.TrySetResult();
+        }
+    }
 
     internal void OnRemoteHandleLearned(uint remoteHandle) => RemoteHandle = remoteHandle;
 
@@ -432,6 +447,24 @@ internal abstract class AmqpLink
         bool settled,
         CancellationToken cancellationToken)
     {
+        var awaitConfirmation = Role == AmqpRole.Receiver
+            && Settings.ReceiverSettleMode == AmqpReceiverSettleMode.Second;
+        TaskCompletionSource? confirmation = null;
+        if (awaitConfirmation)
+        {
+            confirmation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (!_pendingReceiverSettlements.TryAdd(deliveryId, confirmation))
+                throw new InvalidOperationException($"Settlement is already pending for delivery-id {deliveryId}.");
+            if (CurrentState != StateAttached)
+            {
+                _pendingReceiverSettlements.TryRemove(deliveryId, out _);
+                throw BuildPeerDetachException(
+                    "Receiver link closed before settlement could be sent.",
+                    PendingPeerError);
+            }
+            settled = false;
+        }
+
         var disposition = new AmqpDisposition
         {
             Role = AmqpRole.Receiver,
@@ -446,7 +479,26 @@ internal abstract class AmqpLink
             await _session.Connection.WriteSessionFrameAsync(
                 _session.OutgoingChannel, rented.AsMemory(0, dl), cancellationToken).ConfigureAwait(false);
         }
+        catch
+        {
+            if (confirmation is not null)
+                _pendingReceiverSettlements.TryRemove(deliveryId, out _);
+            throw;
+        }
         finally { ArrayPool<byte>.Shared.Return(rented); }
+
+        if (confirmation is not null)
+        {
+            try
+            {
+                await confirmation.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                _pendingReceiverSettlements.TryRemove(deliveryId, out _);
+                throw;
+            }
+        }
     }
 
     private void HandlePeerDetach(AmqpDetach detach)
@@ -515,7 +567,21 @@ internal abstract class AmqpLink
     /// local detach, peer-initiated detach, abort. Idempotent.
     /// </summary>
     private void CompleteWaitersTerminal(bool cancelled)
-        => CompleteRoleWaitersTerminal(cancelled, Volatile.Read(ref _pendingFault)?.Error);
+    {
+        var peerError = Volatile.Read(ref _pendingFault)?.Error;
+        CompleteRoleWaitersTerminal(cancelled, peerError);
+        foreach (var pending in _pendingReceiverSettlements)
+        {
+            if (!_pendingReceiverSettlements.TryRemove(pending.Key, out var completion))
+                continue;
+            if (cancelled)
+                completion.TrySetCanceled();
+            else
+                completion.TrySetException(BuildPeerDetachException(
+                    "Receiver link closed before settlement was confirmed.",
+                    peerError));
+        }
+    }
 
     private async ValueTask SendDetachAsync(bool closed, AmqpError? error, CancellationToken ct)
     {

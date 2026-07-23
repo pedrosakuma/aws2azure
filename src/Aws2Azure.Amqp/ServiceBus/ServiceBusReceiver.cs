@@ -10,7 +10,7 @@ namespace Aws2Azure.Amqp.ServiceBus;
 /// onto the AMQP outcomes:
 /// <list type="bullet">
 ///   <item><b>Complete</b> → <c>accepted</c> — SB removes the message.</item>
-///   <item><b>Abandon</b> → <c>modified{delivery-failed=true}</c> —
+///   <item><b>Abandon</b> → an empty <c>modified</c> outcome —
 ///   SB releases the lock and bumps <c>delivery-count</c>; the message
 ///   becomes re-deliverable after the queue's lock duration.</item>
 ///   <item><b>DeadLetter</b> → <c>rejected</c> with the SB-specific
@@ -239,9 +239,9 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
 
     /// <summary>
     /// Releases the lock and increments delivery-count so SB redelivers
-    /// after the lock duration. Maps to AMQP <c>modified</c> with
-    /// <c>delivery-failed=true</c> (SB's canonical "abandon" outcome
-    /// for clients that want delivery-count to advance on each retry).
+    /// after the lock duration. Azure's official clients map Abandon to an
+    /// empty AMQP <c>modified</c> outcome; Service Bus applies redrive and
+    /// delivery-count semantics to that canonical shape.
     /// </summary>
     public Task AbandonAsync(ServiceBusReceivedMessage message, CancellationToken cancellationToken = default)
     {
@@ -249,8 +249,8 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
         ThrowIfDisposed();
         if (message.LockToken is { } token)
             return SettleAsync(token, message.Delivery, static (link, delivery, ct) =>
-                link.ModifyAsync(delivery, deliveryFailed: true, undeliverableHere: null, ct), cancellationToken);
-        return _link.ModifyAsync(message.Delivery, deliveryFailed: true, undeliverableHere: null, cancellationToken);
+                link.ModifyAsync(delivery, deliveryFailed: null, undeliverableHere: null, ct), cancellationToken);
+        return _link.ModifyAsync(message.Delivery, deliveryFailed: null, undeliverableHere: null, cancellationToken);
     }
 
     /// <summary>Lock-token-only overload (see <see cref="CompleteAsync(Guid, CancellationToken)"/>).</summary>
@@ -260,7 +260,7 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
         return await SettleAsync(
             lockToken,
             static (link, delivery, ct) =>
-                link.ModifyAsync(delivery, deliveryFailed: true, undeliverableHere: null, ct),
+                link.ModifyAsync(delivery, deliveryFailed: null, undeliverableHere: null, ct),
             cancellationToken).ConfigureAwait(false);
     }
 

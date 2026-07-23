@@ -193,6 +193,7 @@ internal sealed class AmqpSenderLink : AmqpLink
     /// </summary>
     internal override void DispatchDisposition(AmqpDisposition disposition)
     {
+        base.DispatchDisposition(disposition);
         if (disposition.Role != AmqpRole.Receiver) return; // we only track sender-side here
         var first = disposition.First;
         var last = disposition.Last ?? first;

@@ -1,4 +1,5 @@
 using Aws2Azure.Amqp.Connection;
+using Aws2Azure.Amqp.Framing;
 using Aws2Azure.Amqp.ServiceBus;
 using Aws2Azure.UnitTests.Amqp.Transport;
 
@@ -123,6 +124,17 @@ public sealed class ServiceBusAmqpConnectionTests
         // with the requested session-id.
         var observed = Assert.Single(broker.SessionFiltersByLink);
         Assert.Equal("order-42", observed.Value);
+
+        broker.Inbox[receiver.Link.Name] = new Queue<ServiceBusBrokerSimulator.DeliveryToSend>(
+        [
+            new(Guid.NewGuid().ToByteArray(), Array.Empty<byte>()),
+        ]);
+        var message = Assert.Single(
+            await receiver.ReceiveBatchAsync(1, TimeSpan.FromSeconds(2))
+                .WaitAsync(TimeSpan.FromSeconds(5)));
+        await receiver.CompleteAsync(message).WaitAsync(TimeSpan.FromSeconds(5));
+        var disposition = Assert.Single(broker.Dispositions).Value;
+        Assert.False(disposition.Settled);
     }
 
     [Fact]
@@ -149,6 +161,48 @@ public sealed class ServiceBusAmqpConnectionTests
         Assert.Equal("broker-assigned-session", receiver.SessionId);
         var observed = Assert.Single(broker.SessionFiltersByLink);
         Assert.Null(observed.Value);
+        var attach = Assert.Single(broker.SessionAttachesByLink).Value;
+        Assert.Equal(AmqpReceiverSettleMode.Second, attach.ReceiverSettleMode);
+        Assert.StartsWith("aws2azure-recv-fifo-queue-session-", attach.TargetAddress);
+        Assert.Null(attach.TimeoutMilliseconds);
+    }
+
+    [Fact]
+    public async Task OpenSessionReceiverAsync_accept_next_sends_server_timeout()
+    {
+        var (client, server) = PipePairTransport.CreatePair();
+        await using var _ = server;
+
+        var broker = new ServiceBusBrokerSimulator(server);
+        broker.Start();
+
+        await using var conn = await ServiceBusAmqpConnection
+            .OpenAsync(client, new FakeTokenProvider(), DefaultSettings())
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        var audience = ServiceBusEndpoint.BuildQueueAudience("ns.servicebus.windows.net", "fifo-queue");
+        await using var receiver = await conn
+            .OpenSessionReceiverAsync(
+                "fifo-queue",
+                audience,
+                sessionId: null,
+                prefetchCredit: 0,
+                acceptNextTimeout: TimeSpan.FromSeconds(7))
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        var attach = Assert.Single(broker.SessionAttachesByLink).Value;
+        Assert.Equal(7_000u, attach.TimeoutMilliseconds);
+    }
+
+    [Fact]
+    public void Broker_accept_next_timeout_is_classified_as_empty_acquisition()
+    {
+        var exception = new AmqpLinkException("server wait elapsed")
+        {
+            PeerCondition = AmqpErrorCondition.Timeout,
+        };
+
+        Assert.True(ServiceBusAmqpPool.IsBrokerAcceptNextTimeout(exception));
     }
 
     [Fact]

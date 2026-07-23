@@ -248,10 +248,8 @@ public sealed class SqsAdvancedBoundariesRealAzureTests(RealAzureProxyFixture fi
             await restartedClient.ChangeMessageVisibilityAsync(
                 sourceUrls[0], sourceMessage.ReceiptHandle, 0, timeout.Token).ConfigureAwait(false);
 
-            // Service Bus evaluates MaxDeliveryCount when the source entity is
-            // asked for the next delivery. This poll triggers the broker-side
-            // dead-letter transition; the over-limit message must not escape
-            // back to the SQS source queue.
+            // The canonical Service Bus Abandon outcome applies
+            // MaxDeliveryCount before another source delivery is exposed.
             var sourceAfterLimit = await restartedClient.ReceiveMessageAsync(
                 new ReceiveMessageRequest
                 {

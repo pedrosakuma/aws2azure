@@ -4,9 +4,9 @@ namespace Aws2Azure.Amqp.ServiceBus;
 
 /// <summary>
 /// Helpers for the Service Bus AMQP <c>com.microsoft:session-filter</c>
-/// described type that rides on the receiver-link <c>source.filter</c>
-/// map (slice 7 — session-bound receivers for FIFO / per-MessageGroupId
-/// SQS queues).
+/// value that rides on the receiver-link <c>source.filter</c> map
+/// (slice 7 — session-bound receivers for FIFO / per-MessageGroupId SQS
+/// queues).
 /// <para>
 /// On the wire the filter is a single-entry map keyed by the symbol
 /// <c>com.microsoft:session-filter</c>; the value is either an AMQP string
@@ -19,14 +19,6 @@ internal static class ServiceBusSessionFilter
 {
     /// <summary>Symbol the source.filter map key uses.</summary>
     public const string FilterSymbol = "com.microsoft:session-filter";
-
-    /// <summary>
-    /// Service Bus AMQP described-type code used by the official Azure Go SDK
-    /// for a session filter value. The service-compatible legacy code is
-    /// <c>0x000000137000000C</c>; it differs from the arithmetically intended
-    /// <c>(0x137 &lt;&lt; 32) | 0x0C</c> value and must not be normalized.
-    /// </summary>
-    public const ulong FilterDescriptor = 0x0000_0013_7000_000CUL;
 
     /// <summary>
     /// Maximum session-id length we will accept before refusing to
@@ -60,10 +52,10 @@ internal static class ServiceBusSessionFilter
                 nameof(sessionId));
         }
 
-        // Worst-case sizing: key symbol header(2) + symbol body + described
-        // marker/descriptor + value string header(5) + UTF-8 bytes (up to
-        // 4 per UTF-16 char) + padding.
-        var valBytes = 1 + 9 + (sessionId?.Length ?? 0) * 4 + 5;
+        // Current Azure .NET and Java clients send a bare string/null value.
+        // The decoder below remains tolerant of the legacy described form
+        // emitted by the Go SDK.
+        var valBytes = 1 + (sessionId?.Length ?? 0) * 4 + 5;
         var elementsCap = 2 + FilterSymbol.Length      // key sym8
                         + valBytes;                    // value (string or null)
         Span<byte> elements = stackalloc byte[elementsCap];
@@ -71,10 +63,6 @@ internal static class ServiceBusSessionFilter
 
         AmqpVariableWriter.WriteSymbol(elements[o..], FilterSymbol, out var keyLen);
         o += keyLen;
-
-        elements[o++] = AmqpFormatCode.Described;
-        AmqpPrimitiveWriter.WriteULong(elements[o..], FilterDescriptor, out var descriptorLen);
-        o += descriptorLen;
 
         if (sessionId is null)
         {
@@ -88,6 +76,27 @@ internal static class ServiceBusSessionFilter
 
         // Map32 worst-case header = 9 bytes. Pad generously.
         var mapOut = new byte[o + 16];
+        AmqpCompoundWriter.WriteMap(mapOut, elements[..o], pairCount: 1, out var mapLen);
+        Array.Resize(ref mapOut, mapLen);
+        return mapOut;
+    }
+
+    public static ReadOnlyMemory<byte> EncodeAcceptNextProperties(TimeSpan timeout)
+    {
+        const string TimeoutSymbol = "com.microsoft:timeout";
+        var milliseconds = Math.Clamp(
+            timeout.TotalMilliseconds,
+            1,
+            uint.MaxValue);
+
+        Span<byte> elements = stackalloc byte[64];
+        var o = 0;
+        AmqpVariableWriter.WriteSymbol(elements[o..], TimeoutSymbol, out var keyLen);
+        o += keyLen;
+        AmqpPrimitiveWriter.WriteUInt(elements[o..], (uint)milliseconds, out var valueLen);
+        o += valueLen;
+
+        var mapOut = new byte[o + 8];
         AmqpCompoundWriter.WriteMap(mapOut, elements[..o], pairCount: 1, out var mapLen);
         Array.Resize(ref mapOut, mapLen);
         return mapOut;
