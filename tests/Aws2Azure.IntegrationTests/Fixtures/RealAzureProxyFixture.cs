@@ -895,7 +895,7 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
             if (process.HasExited)
             {
                 throw new InvalidOperationException(
-                    "Proxy process exited before becoming ready:" + Environment.NewLine + _proxyOutput);
+                    "Proxy process exited before becoming ready:" + Environment.NewLine + ProxyOutput);
             }
 
             try
@@ -913,7 +913,7 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
             await Task.Delay(500).ConfigureAwait(false);
         }
 
-        throw new TimeoutException($"Timed out waiting for proxy on port {port}.{Environment.NewLine}{_proxyOutput}");
+        throw new TimeoutException($"Timed out waiting for proxy on port {port}.{Environment.NewLine}{ProxyOutput}");
     }
 
     private static int GetFreePort()

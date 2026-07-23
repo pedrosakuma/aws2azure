@@ -33,6 +33,7 @@ internal abstract class AmqpLink
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     internal static TimeSpan PeerDetachFinalizationTimeout { get; set; } = TimeSpan.FromSeconds(30);
+    internal static TimeSpan ReceiverSettlementConfirmationTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
     // Captured peer error when the peer detached with one. Reads of
     // receiver-side queues and sender-side pending outcomes surface this
@@ -500,12 +501,25 @@ internal abstract class AmqpLink
         {
             try
             {
-                await confirmation.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+                // Once the disposition frame is on the wire, caller
+                // cancellation cannot tell us whether the broker settled the
+                // delivery. Finish the second-mode handshake so retries never
+                // target an already-settled delivery.
+                await confirmation.Task
+                    .WaitAsync(ReceiverSettlementConfirmationTimeout)
+                    .ConfigureAwait(false);
             }
-            catch
+            catch (TimeoutException ex)
+            {
+                Abort();
+                throw new AmqpLinkException(
+                    $"Broker did not confirm receiver settlement for delivery-id {deliveryId}.",
+                    ex,
+                    AmqpErrorKind.Transient);
+            }
+            finally
             {
                 _pendingReceiverSettlements.TryRemove(deliveryId, out _);
-                throw;
             }
         }
     }

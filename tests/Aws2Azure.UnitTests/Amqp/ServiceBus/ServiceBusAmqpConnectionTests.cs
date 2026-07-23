@@ -195,6 +195,54 @@ public sealed class ServiceBusAmqpConnectionTests
     }
 
     [Fact]
+    public async Task Session_settlement_finishes_confirmation_after_caller_cancels()
+    {
+        var (client, server) = PipePairTransport.CreatePair();
+        await using var _ = server;
+
+        var confirmationGate = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var broker = new ServiceBusBrokerSimulator(server)
+        {
+            SettlementConfirmationGate = confirmationGate,
+        };
+        broker.Start();
+
+        await using var conn = await ServiceBusAmqpConnection
+            .OpenAsync(client, new FakeTokenProvider(), DefaultSettings())
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        var audience = ServiceBusEndpoint.BuildQueueAudience(
+            "ns.servicebus.windows.net", "fifo-queue");
+        await using var receiver = await conn
+            .OpenSessionReceiverAsync(
+                "fifo-queue",
+                audience,
+                sessionId: "order-42",
+                prefetchCredit: 0)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        var lockToken = Guid.NewGuid();
+        broker.Inbox[receiver.Link.Name] = new Queue<ServiceBusBrokerSimulator.DeliveryToSend>(
+        [
+            new(lockToken.ToByteArray(), Array.Empty<byte>()),
+        ]);
+        var message = Assert.Single(
+            await receiver.ReceiveBatchAsync(1, TimeSpan.FromSeconds(2))
+                .WaitAsync(TimeSpan.FromSeconds(5)));
+
+        using var cancellation = new CancellationTokenSource();
+        var settlement = receiver.CompleteAsync(message, cancellation.Token);
+        await WaitForDispositionAsync(broker, message.DeliveryId);
+        cancellation.Cancel();
+        await Task.Delay(50);
+        Assert.False(settlement.IsCompleted);
+
+        confirmationGate.TrySetResult();
+        await settlement.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(0, receiver.InFlightCount);
+    }
+
+    [Fact]
     public void Broker_accept_next_timeout_is_classified_as_empty_acquisition()
     {
         var exception = new AmqpLinkException("server wait elapsed")
@@ -283,5 +331,24 @@ public sealed class ServiceBusAmqpConnectionTests
         var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
         Assert.False(ServiceBusAmqpConnection.ShouldRefreshAuthorization(
             cachedExpiry: null, now, TimeSpan.FromMinutes(5)));
+    }
+
+    private static async Task WaitForDispositionAsync(
+        ServiceBusBrokerSimulator broker,
+        uint deliveryId)
+    {
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (broker.Dispositions.ContainsKey(deliveryId))
+            {
+                return;
+            }
+
+            await Task.Delay(20);
+        }
+
+        throw new TimeoutException(
+            $"Disposition for delivery-id {deliveryId} did not arrive in time.");
     }
 }

@@ -129,6 +129,7 @@ internal sealed class ServiceBusBrokerSimulator
     private readonly Dictionary<uint, string> _senderLinkByClientHandle = new();
 
     public Task BrokerLoopTask { get; private set; } = Task.CompletedTask;
+    public TaskCompletionSource? SettlementConfirmationGate { get; set; }
 
     public void Start(CancellationToken cancellationToken = default)
     {
@@ -489,18 +490,27 @@ internal sealed class ServiceBusBrokerSimulator
                 rejectedError = err;
             }
         }
-        for (var id = first; id <= last; id++)
+        if (last >= first)
         {
-            Dispositions[id] = new DispositionRecord(
-                outcome,
-                d.Settled ?? false,
-                deliveryFailed,
-                undeliverableHere);
-            if (rejectedError is { } re) RejectedErrors[id] = re;
+            for (var id = first; ; id++)
+            {
+                Dispositions[id] = new DispositionRecord(
+                    outcome,
+                    d.Settled ?? false,
+                    deliveryFailed,
+                    undeliverableHere);
+                if (rejectedError is { } re) RejectedErrors[id] = re;
+                if (id == last) break;
+            }
         }
 
         if (d.Role == AmqpRole.Receiver && d.Settled != true)
         {
+            if (SettlementConfirmationGate is { } gate)
+            {
+                await gate.Task.ConfigureAwait(false);
+            }
+
             var state = d.State.IsEmpty ? ReadOnlyMemory<byte>.Empty : d.State.ToArray();
             await AmqpTestBroker.SendPerfAsync(_server, DataSessionChannel, new AmqpDisposition
             {
