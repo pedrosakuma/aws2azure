@@ -21,7 +21,7 @@ behavior_differences:
   - "ProvisionedThroughput / BillingMode values are accepted but not enforced; throughput is governed by the Cosmos account/database, not per-table."
   - "TableStatus is always returned as ACTIVE since Cosmos container creation is synchronous."
   - "On metadata-sidecar persist failure the container is best-effort deleted to avoid orphan containers."
-  - "GSI/LSI schemas are validated (key arity, HASH/RANGE roles, LSI HASH must match the table HASH, required Projection with projection type + INCLUDE NonKeyAttributes rules and limits (<=20 per index, <=100 total, names <=255 chars), attribute-definition references, name uniqueness, service limits) and persisted into the sidecar metadata. Index Query/Scan execution lands in later slices; until then a table can be created with indexes but querying them still returns ValidationException."
+  - "GSI/LSI schemas are validated (key arity, HASH/RANGE roles, LSI HASH must match the table HASH, required Projection with projection type + INCLUDE NonKeyAttributes rules and limits (<=20 per index, <=100 total, names <=255 chars), attribute-definition references, name uniqueness, service limits) and persisted into the sidecar metadata. LSI Query/Scan execution is available; GSI Query/Scan execution requires the opt-in `DynamoDb.EnableGlobalSecondaryIndexQueries=true` profile setting."
   - "GSI/LSI ProvisionedThroughput on an index is accepted but not enforced, mirroring base-table throughput handling."
   - "Core table creation is validated against real Azure Cosmos DB; index execution and other partial sub-features retain their narrower coverage noted above."
 references:

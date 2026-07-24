@@ -1,0 +1,53 @@
+schema_version: 1
+id: dynamodb-query-scan-indexes
+version: 1
+name: DynamoDB Query, Scan, and secondary indexes
+minimum_proxy_version: 0.1.0
+real_azure_seal_max_age_days: 90
+operations:
+  - dynamodb:Query
+  - dynamodb:Scan
+  - dynamodb:DescribeTable
+requirements:
+  - dynamodb_query_scan_indexes
+accepted_partial_operations:
+  - dynamodb:Query
+  - dynamodb:Scan
+accepted_design_gaps:
+  - "dynamodb:Secondary indexes (GSI / LSI)"
+  - "dynamodb:Throughput and throttling model"
+required_sub_feature_seals:
+  - operation: dynamodb:Query
+    sub_feature: IndexName (GSI / LSI)
+  - operation: dynamodb:Scan
+    sub_feature: IndexName (GSI / LSI)
+  - operation: dynamodb:DescribeTable
+    sub_feature: GSI/LSI description
+evidence:
+  qualification_artifact: ""
+  required_scenarios:
+    - representative-load
+    - query-pagination
+    - indexed-selective-predicate
+    - string-ordering
+    - numeric-ordering
+    - binary-ordering-rejection
+    - projection
+    - scan-membership
+    - describe-indexes
+    - numeric-backfill
+    - throttling
+    - restart
+    - retry-boundaries
+    - rollback
+  required_real_azure_scenarios:
+    - representative-load
+    - query-pagination
+    - indexed-selective-predicate
+    - string-ordering
+    - numeric-ordering
+    - scan-membership
+    - describe-indexes
+    - numeric-backfill
+    - restart
+    - rollback

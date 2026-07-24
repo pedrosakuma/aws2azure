@@ -11,7 +11,8 @@ sub_features:
   - { name: "BillingModeSummary echo", status: implemented }
   - { name: "TableArn synthesis (azure-region pseudo-arn)", status: implemented }
   - { name: "ItemCount / TableSizeBytes (live metrics)", status: unsupported }
-  - { name: "GSI/LSI description", status: partial }
+  - name: "GSI/LSI description"
+    status: partial
 behavior_differences:
   - "ItemCount and TableSizeBytes default to 0; populating them requires either Cosmos partition-key statistics or a stored aggregate, deferred to a later slice."
   - "TableArn is synthetic (region 'azure', account '000000000000'); real AWS arns carry the region + account id which are not meaningful in this deployment."

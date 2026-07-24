@@ -7,9 +7,10 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 /// <summary>
 /// Shared resolution of a DynamoDB <c>IndexName</c> against a table's
 /// secondary-index schemas, used by both <see cref="QueryHandler"/> and
-/// <see cref="ScanHandler"/>. Only Local Secondary Index (LSI) access is
-/// supported in the current slice; Global Secondary Index (GSI) and unknown
-/// indices are surfaced to the caller for a loud rejection.
+/// <see cref="ScanHandler"/>. Local Secondary Index (LSI) access is always
+/// available; Global Secondary Index (GSI) access is exposed to callers so
+/// they can enforce the opt-in configuration gate. Unknown indices are
+/// surfaced for a loud rejection.
 /// </summary>
 internal static class SecondaryIndexResolver
 {

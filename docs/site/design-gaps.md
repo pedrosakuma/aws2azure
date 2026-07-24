@@ -88,11 +88,11 @@ Capacity is Cosmos RU/s, not DynamoDB RCU/WCU. Cosmos 429 (throttled) is surface
 
 - **Status:** 🟡 partial
 
-All attributes live in one base container; GSI/LSI queries are opt-in and run as Cosmos queries over that container. GSI Query is a cross-partition fan-out (unlike a base-table Query's single-partition guarantee); string sort keys follow Cosmos code-point collation rather than DynamoDB UTF-8 byte order; numeric ordering relies on a synthetic order-preserving field written at item-write time.
+All attributes live in one base container; GSI queries are opt-in and LSI queries are always available over that container. GSI Query is a cross-partition fan-out (unlike a base-table Query's single-partition guarantee); string sort keys follow Cosmos code-point collation rather than DynamoDB UTF-8 byte order; numeric ordering relies on a synthetic order-preserving field written at item-write time.
 
 **Impact.** Items written before the encoded-ordering field existed are excluded from ordered numeric-GSI results until rewritten (a backfill gap). Binary sort keys cannot be ordered. IndexSizeBytes / ItemCount / Backfilling are not populated.
 
-**Workaround.** Keep GSI Query default-off unless the collation and backfill caveats are acceptable; rewrite pre-existing items to populate ordering fields.
+**Workaround.** Keep GSI Query default-off unless the collation and live-base-document caveats are acceptable. Enable exact numeric LSI ordering only after rewriting pre-existing items to populate ordering fields.
 
 <a id="dynamodb-key-encoding-and-on-disk-storage-format"></a>
 

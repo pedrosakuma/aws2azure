@@ -16,7 +16,7 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | dynamodb | [ListTagsOfResource](dynamodb.md#listtagsofresource) | ✅ implemented | — | `Azure Cosmos DB account/resource tags (control plane)` |
 | dynamodb | [PutItem](dynamodb.md#putitem) | 🟡 partial | ✅ | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [Query](dynamodb.md#query) | 🟡 partial | ✅ | `Azure Cosmos DB (Core SQL API)` |
-| dynamodb | [Scan](dynamodb.md#scan) | 🟡 partial | — | `Azure Cosmos DB (Core SQL API)` |
+| dynamodb | [Scan](dynamodb.md#scan) | 🟡 partial | ✅ | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [TagResource](dynamodb.md#tagresource) | ✅ implemented | — | `Azure Cosmos DB account/resource tags (control plane)` |
 | dynamodb | [TransactGetItems](dynamodb.md#transactgetitems) | 🟡 partial | — | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [TransactWriteItems](dynamodb.md#transactwriteitems) | 🟡 partial | — | `Azure Cosmos DB (Core SQL API) — single-partition stored-procedure transaction` |

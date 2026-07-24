@@ -82,6 +82,17 @@ public class QueryHandlerTests
         + "\"projectionType\":\"KEYS_ONLY\"}],"
         + "\"billingMode\":\"PAY_PER_REQUEST\"}";
 
+    private static readonly string MetadataLsiBinarySort =
+        "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        + "\"tableName\":\"orders\","
+        + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"sk\",\"type\":\"S\"},"
+        + "{\"name\":\"token\",\"type\":\"B\"}],"
+        + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
+        + "\"localSecondaryIndexes\":[{\"indexName\":\"byToken\","
+        + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"token\",\"keyType\":\"RANGE\"}],"
+        + "\"projectionType\":\"ALL\"}],"
+        + "\"billingMode\":\"PAY_PER_REQUEST\"}";
+
     // Composite table with a GSI ("byCustomer"), used for the GSI-rejection test.
     private static readonly string MetadataGsi =
         "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
@@ -947,6 +958,28 @@ public class QueryHandlerTests
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("begins_with", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task Query_lsi_binary_sort_key_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataLsiBinarySort) },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byToken\","
+                  + "\"KeyConditionExpression\":\"pk = :p\","
+                  + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\"a\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos,
+            enableGsi: false, enableLsiNumericOrdering: false, default);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("binary (B) sort key", ReadResponse(body));
+        Assert.Single(handler.Requests);
     }
 
     [Fact]

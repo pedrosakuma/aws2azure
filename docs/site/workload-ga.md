@@ -6,7 +6,8 @@ Legend: ⛔ blocked · 🟡 conditional · 🔵 candidate · ✅ GA
 
 | Profile | Version | Minimum proxy | Verdict | Blocking reasons |
 |---|---:|---|---|---|
-| DynamoDB basic table and item CRUD (`dynamodb-basic-crud`) | 1 | `0.1.0` | ✅ GA | 0 |
+| DynamoDB basic table and item CRUD (`dynamodb-basic-crud`) | 1 | `0.1.0` | 🔵 candidate | 11 |
+| DynamoDB Query, Scan, and secondary indexes (`dynamodb-query-scan-indexes`) | 1 | `0.1.0` | 🟡 conditional | 1 |
 | Kinesis basic record ingestion (`kinesis-basic-record-ingestion`) | 1 | `0.1.0` | 🔵 candidate | 1 |
 | Kinesis single consumer per shard (`kinesis-single-consumer-per-shard`) | 1 | `0.1.0` | 🔵 candidate | 1 |
 | S3 basic object CRUD (`s3-basic-object-crud`) | 1 | `0.1.0` | ✅ GA | 0 |
@@ -16,6 +17,6 @@ Legend: ⛔ blocked · 🟡 conditional · 🔵 candidate · ✅ GA
 | SNS subscription management (Service Bus Topics backend) (`sns-subscription-management-service-bus`) | 1 | `0.1.0` | 🔵 candidate | 1 |
 | SQS dead-letter and redrive (`sqs-dlq-redrive`) | 1 | `0.1.0` | ⛔ blocked | 8 |
 | SQS FIFO messaging over AMQP (`sqs-fifo-amqp`) | 1 | `0.1.0` | ⛔ blocked | 6 |
-| SQS standard messaging (`sqs-standard-messaging`) | 1 | `0.1.0` | ✅ GA | 0 |
+| SQS standard messaging (`sqs-standard-messaging`) | 1 | `0.1.0` | 🔵 candidate | 11 |
 
 A profile reaches GA only when every required operation is compatible or explicitly accepted, every real-Azure seal is fresh, and a matching reviewed qualification artifact is `qualified`.

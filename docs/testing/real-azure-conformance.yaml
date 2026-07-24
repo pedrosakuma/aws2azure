@@ -154,6 +154,33 @@ services:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureSecondaryIndexTests.Lsi_query_orders_by_index_sort_key_within_partition
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureSecondaryIndexTests.Lsi_query_orders_by_numeric_sort_key
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureSecondaryIndexTests.Lsi_scan_returns_only_index_members
+      - id: secondary-index-selective-predicate
+        priority: p0
+        category: read
+        evidence_source: real_azure
+        establishes_verification: true
+        description: GSI range predicates, residual filters, projection, ordering, and pagination preserve the certified selective subset.
+        operations: [Query]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureSecondaryIndexTests.Gsi_composite_query_orders_by_sort_key_across_real_pages
+      - id: secondary-index-describe
+        priority: p0
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: DescribeTable returns the persisted GSI and LSI schema, projection, synthetic ARN, and active GSI status.
+        operations: [DescribeTable]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureSecondaryIndexTests.DescribeTable_reports_certified_secondary_index_shape
+      - id: secondary-index-numeric-backfill
+        priority: p0
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: A pre-order-field numeric LSI item is excluded under exact ordering and becomes visible in correct order after a PutItem rewrite backfills the derived field.
+        operations: [Query, PutItem]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureSecondaryIndexTests.Numeric_lsi_backfill_rewrite_restores_legacy_item_membership
       - id: nested-projection
         priority: p1
         category: read
