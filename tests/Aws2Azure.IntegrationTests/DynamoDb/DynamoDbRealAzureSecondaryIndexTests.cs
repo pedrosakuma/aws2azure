@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Net.Http;
+using System.Text;
 using System.Threading.Tasks;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
@@ -118,6 +120,7 @@ public sealed class DynamoDbRealAzureSecondaryIndexTests
                 {
                     ["category"] = Str("evt"),
                     ["createdAt"] = Str(created),
+                    ["state"] = Str(i % 2 == 0 ? "active" : "inactive"),
                     ["payload"] = Str(new string('x', PayloadBytes)),
                 }));
             }
@@ -176,6 +179,36 @@ public sealed class DynamoDbRealAzureSecondaryIndexTests
             while (startKey is not null);
 
             Assert.Equal(expected, paged);
+
+            // (d) A selective sort-key range plus residual user filter and
+            // projection preserves the ordered subset without leaking the large
+            // non-projected payload.
+            var selective = await QueryUntilAsync(client, new QueryRequest
+            {
+                TableName = table,
+                IndexName = "byCategory",
+                KeyConditionExpression = "category = :c AND createdAt BETWEEN :lo AND :hi",
+                FilterExpression = "#state <> :inactive",
+                ProjectionExpression = "pk, sk, category, createdAt, #state",
+                ExpressionAttributeNames = new() { ["#state"] = "state" },
+                ExpressionAttributeValues = new()
+                {
+                    [":c"] = Str("evt"),
+                    [":lo"] = Str("00020"),
+                    [":hi"] = Str("00039"),
+                    [":inactive"] = Str("inactive"),
+                },
+            }, expectedCount: 10);
+
+            Assert.Equal(
+                expected.Skip(20).Take(20).Where(value =>
+                    int.Parse(value, CultureInfo.InvariantCulture) % 2 == 0),
+                selective.Select(item => item["createdAt"].S));
+            Assert.All(selective, item =>
+            {
+                Assert.Equal("active", item["state"].S);
+                Assert.False(item.ContainsKey("payload"));
+            });
         });
     }
 
@@ -413,6 +446,7 @@ public sealed class DynamoDbRealAzureSecondaryIndexTests
             {
                 TableName = table,
                 IndexName = "byCustomerKeysOnly",
+                Limit = 2,
             }, expectedCount: 4);
 
             Assert.Equal(4, items.Count);
@@ -447,11 +481,172 @@ public sealed class DynamoDbRealAzureSecondaryIndexTests
             {
                 TableName = table,
                 IndexName = "byScore",
+                Limit = 2,
             }, expectedCount: 3);
 
             Assert.Equal(3, items.Count);
             Assert.All(items, it => Assert.True(it.ContainsKey("score")));
             Assert.DoesNotContain(items, it => it["sk"].S == "sn");
+        });
+    }
+
+    [SkippableFact]
+    public async Task DescribeTable_reports_certified_secondary_index_shape()
+    {
+        Skip.IfNot(_fx.CosmosConfigured,
+            "AZURE_COSMOS_ENDPOINT/KEY/DATABASE not set — skipping real-Azure GSI/LSI validation.");
+
+        var table = NewTableName("idxdesc");
+        using var client = _fx.CreateDynamoDbClient();
+        await WithTableAsync(client, table, async () =>
+        {
+            var response = await client.DescribeTableAsync(table).ConfigureAwait(false);
+
+            Assert.Equal(4, response.Table.GlobalSecondaryIndexes.Count);
+            var byCustomer = Assert.Single(
+                response.Table.GlobalSecondaryIndexes,
+                index => index.IndexName == "byCustomer");
+            Assert.Equal(IndexStatus.ACTIVE, byCustomer.IndexStatus);
+            Assert.Equal(ProjectionType.ALL, byCustomer.Projection.ProjectionType);
+            Assert.Collection(
+                byCustomer.KeySchema,
+                key =>
+                {
+                    Assert.Equal("customer", key.AttributeName);
+                    Assert.Equal(KeyType.HASH, key.KeyType);
+                });
+
+            var byCustomerKeysOnly = Assert.Single(
+                response.Table.GlobalSecondaryIndexes,
+                index => index.IndexName == "byCustomerKeysOnly");
+            Assert.Equal(IndexStatus.ACTIVE, byCustomerKeysOnly.IndexStatus);
+            Assert.Equal(ProjectionType.KEYS_ONLY, byCustomerKeysOnly.Projection.ProjectionType);
+            Assert.Collection(
+                byCustomerKeysOnly.KeySchema,
+                key =>
+                {
+                    Assert.Equal("customer", key.AttributeName);
+                    Assert.Equal(KeyType.HASH, key.KeyType);
+                });
+
+            var byCategory = Assert.Single(
+                response.Table.GlobalSecondaryIndexes,
+                index => index.IndexName == "byCategory");
+            Assert.Equal(IndexStatus.ACTIVE, byCategory.IndexStatus);
+            Assert.Equal(ProjectionType.ALL, byCategory.Projection.ProjectionType);
+            Assert.Collection(
+                byCategory.KeySchema,
+                key =>
+                {
+                    Assert.Equal("category", key.AttributeName);
+                    Assert.Equal(KeyType.HASH, key.KeyType);
+                },
+                key =>
+                {
+                    Assert.Equal("createdAt", key.AttributeName);
+                    Assert.Equal(KeyType.RANGE, key.KeyType);
+                });
+
+            var byCategoryNum = Assert.Single(
+                response.Table.GlobalSecondaryIndexes,
+                index => index.IndexName == "byCategoryNum");
+            Assert.Equal(IndexStatus.ACTIVE, byCategoryNum.IndexStatus);
+            Assert.Equal(ProjectionType.ALL, byCategoryNum.Projection.ProjectionType);
+            Assert.Collection(
+                byCategoryNum.KeySchema,
+                key =>
+                {
+                    Assert.Equal("category", key.AttributeName);
+                    Assert.Equal(KeyType.HASH, key.KeyType);
+                },
+                key =>
+                {
+                    Assert.Equal("seq", key.AttributeName);
+                    Assert.Equal(KeyType.RANGE, key.KeyType);
+                });
+
+            foreach (var index in response.Table.GlobalSecondaryIndexes)
+            {
+                Assert.NotEmpty(index.IndexArn);
+            }
+
+            var lsi = Assert.Single(response.Table.LocalSecondaryIndexes);
+            Assert.Equal("byScore", lsi.IndexName);
+            Assert.NotEmpty(lsi.IndexArn);
+            Assert.Equal(ProjectionType.ALL, lsi.Projection.ProjectionType);
+            Assert.Collection(
+                lsi.KeySchema,
+                key =>
+                {
+                    Assert.Equal("pk", key.AttributeName);
+                    Assert.Equal(KeyType.HASH, key.KeyType);
+                },
+                key =>
+                {
+                    Assert.Equal("score", key.AttributeName);
+                    Assert.Equal(KeyType.RANGE, key.KeyType);
+                });
+        });
+    }
+
+    [SkippableFact]
+    public async Task Numeric_lsi_backfill_rewrite_restores_legacy_item_membership()
+    {
+        Skip.IfNot(_fx.CosmosConfigured,
+            "AZURE_COSMOS_ENDPOINT/KEY/DATABASE not set — skipping real-Azure GSI/LSI validation.");
+
+        var table = NewTableName("lsibf");
+        using var client = _fx.CreateDynamoDbClient();
+        await WithTableAsync(client, table, async () =>
+        {
+            const string pk = "p1";
+            const string sk = "legacy";
+            const string score = "100000000000000000001";
+            var encodedPk = Hex(pk);
+            var legacyDocument =
+                "{\"id\":\"" + Hex(sk)
+                + "\",\"_a2a_pk\":\"" + encodedPk
+                + "\",\"_a2a\":\"item\",\"pk\":\"" + pk
+                + "\",\"sk\":\"" + sk
+                + "\",\"score\":{\"_a2a:N\":\"" + score + "\"}}";
+
+            using var http = new HttpClient();
+            await CosmosRestBootstrap.CreateDocumentAsync(
+                http,
+                _fx.CosmosEndpoint,
+                _fx.CosmosMasterKey,
+                _fx.CosmosDatabase,
+                table,
+                encodedPk,
+                legacyDocument).ConfigureAwait(false);
+
+            var baseRequest = new QueryRequest
+            {
+                TableName = table,
+                KeyConditionExpression = "pk = :p",
+                ExpressionAttributeValues = new() { [":p"] = Str(pk) },
+            };
+            var visibleBaseItems = await QueryUntilAsync(client, baseRequest, expectedCount: 1);
+            Assert.Single(visibleBaseItems);
+
+            var request = new QueryRequest
+            {
+                TableName = table,
+                IndexName = "byScore",
+                KeyConditionExpression = "pk = :p",
+                ExpressionAttributeValues = new() { [":p"] = Str(pk) },
+            };
+            var before = await client.QueryAsync(request).ConfigureAwait(false);
+            Assert.Empty(before.Items);
+
+            await PutAsync(client, table, BaseItem(pk, sk, new()
+            {
+                ["score"] = new AttributeValue { N = score },
+            })).ConfigureAwait(false);
+
+            var after = await QueryUntilAsync(client, request, expectedCount: 1);
+            var item = Assert.Single(after);
+            Assert.Equal(score, Canonical(item["score"].N));
         });
     }
 
@@ -461,6 +656,8 @@ public sealed class DynamoDbRealAzureSecondaryIndexTests
 
     private static AttributeValue Str(string s) => new() { S = s };
     private static AttributeValue Num(int n) => new() { N = n.ToString(CultureInfo.InvariantCulture) };
+    private static string Hex(string value) =>
+        Convert.ToHexStringLower(Encoding.UTF8.GetBytes(value));
 
     private static Dictionary<string, AttributeValue> BaseItem(
         string pk, string sk, Dictionary<string, AttributeValue> extra)
@@ -603,6 +800,9 @@ public sealed class DynamoDbRealAzureSecondaryIndexTests
                 TableName = request.TableName,
                 IndexName = request.IndexName,
                 KeyConditionExpression = request.KeyConditionExpression,
+                FilterExpression = request.FilterExpression,
+                ProjectionExpression = request.ProjectionExpression,
+                ExpressionAttributeNames = request.ExpressionAttributeNames,
                 ExpressionAttributeValues = request.ExpressionAttributeValues,
                 ScanIndexForward = request.ScanIndexForward,
                 ExclusiveStartKey = startKey,
@@ -643,6 +843,7 @@ public sealed class DynamoDbRealAzureSecondaryIndexTests
                 IndexName = request.IndexName,
                 FilterExpression = request.FilterExpression,
                 ExpressionAttributeValues = request.ExpressionAttributeValues,
+                Limit = request.Limit,
                 ExclusiveStartKey = startKey,
             }).ConfigureAwait(false);
             all.AddRange(page.Items);

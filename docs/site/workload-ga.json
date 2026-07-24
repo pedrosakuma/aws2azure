@@ -5,7 +5,7 @@
     "profile_version": 1,
     "name": "DynamoDB basic table and item CRUD",
     "minimum_proxy_version": "0.1.0",
-    "verdict": "ga",
+    "verdict": "candidate",
     "findings": [
       {
         "code": "partial_operation_accepted",
@@ -44,10 +44,110 @@
         "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_basic_crud\u0027."
       },
       {
-        "code": "profile_ga",
-        "disposition": "report_only",
-        "subject": "dynamodb-basic-crud",
-        "message": "Compatibility, real-Azure seals, and operational qualification gates are satisfied."
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: provenance.source_runs[0] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: provenance.source_runs[1] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: provenance.source_runs[2] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: provenance.correctness_run is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: signal \u0027representative-load-throughput\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: qualified real-Azure artifact is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: scenario \u0027representative-load\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: scenario \u0027conditional-write-concurrency\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: scenario \u0027read-after-write\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: scenario \u0027restart\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: scenario \u0027rollback\u0027 measurement is stale"
+      }
+    ]
+  },
+  {
+    "schema_version": 1,
+    "profile_id": "dynamodb-query-scan-indexes",
+    "profile_version": 1,
+    "name": "DynamoDB Query, Scan, and secondary indexes",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "candidate",
+    "findings": [
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:Query",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:Scan",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:Secondary indexes (GSI / LSI)",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_query_scan_indexes\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:Throughput and throttling model",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_query_scan_indexes\u0027."
+      },
+      {
+        "code": "qualification_evidence_missing",
+        "disposition": "blocking",
+        "subject": "dynamodb-query-scan-indexes",
+        "message": "No reviewed real-Azure workload qualification artifact is referenced."
       }
     ]
   },
@@ -507,7 +607,7 @@
     "profile_version": 1,
     "name": "SQS standard messaging",
     "minimum_proxy_version": "0.1.0",
-    "verdict": "ga",
+    "verdict": "candidate",
     "findings": [
       {
         "code": "design_gap_accepted",
@@ -516,10 +616,70 @@
         "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_standard_messaging\u0027."
       },
       {
-        "code": "profile_ga",
-        "disposition": "report_only",
-        "subject": "sqs-standard-messaging",
-        "message": "Compatibility, real-Azure seals, and operational qualification gates are satisfied."
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: provenance.source_runs[0] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: provenance.source_runs[1] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: provenance.source_runs[2] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: provenance.correctness_run is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: signal \u0027representative-load-throughput\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: qualified real-Azure artifact is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: scenario \u0027representative-load\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: scenario \u0027redelivery\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: scenario \u0027concurrency\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: scenario \u0027restart\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: scenario \u0027rollback\u0027 measurement is stale"
       }
     ]
   }

@@ -50,8 +50,8 @@ design_gaps:
   - area: Secondary indexes (GSI / LSI)
     status: partial
     summary: >-
-      All attributes live in one base container; GSI/LSI queries are opt-in and
-      run as Cosmos queries over that container. GSI Query is a cross-partition
+      All attributes live in one base container; GSI queries are opt-in and
+      LSI queries are always available over that container. GSI Query is a cross-partition
       fan-out (unlike a base-table Query's single-partition guarantee); string
       sort keys follow Cosmos code-point collation rather than DynamoDB UTF-8
       byte order; numeric ordering relies on a synthetic order-preserving field
@@ -62,8 +62,9 @@ design_gaps:
       keys cannot be ordered. IndexSizeBytes / ItemCount / Backfilling are not
       populated.
     workaround: >-
-      Keep GSI Query default-off unless the collation and backfill caveats are
-      acceptable; rewrite pre-existing items to populate ordering fields.
+      Keep GSI Query default-off unless the collation and live-base-document
+      caveats are acceptable. Enable exact numeric LSI ordering only after
+      rewriting pre-existing items to populate ordering fields.
   - area: Key encoding and on-disk storage format
     status: by_design
     summary: >-
@@ -125,8 +126,11 @@ workload_patterns:
       - Secondary indexes (GSI / LSI)
       - Throughput and throttling model
     guidance: >-
-      Validate every expression and index access pattern against representative
-      data before migration.
+      Set EnableGlobalSecondaryIndexQueries=true for GSI access. For exact
+      high-precision numeric LSI ordering, rewrite existing indexed items and
+      then set EnableLocalSecondaryIndexNumericOrdering=true. Validate every
+      expression, projection, pagination boundary, and index access pattern
+      against representative data before migration.
   - id: dynamodb_single_partition_transactions
     name: Single-partition transactions
     compatibility: conditional

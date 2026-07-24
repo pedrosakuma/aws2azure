@@ -417,6 +417,18 @@ internal static partial class QueryHandler
         }
         else if (isLsiQuery)
         {
+            // Binary index values are envelope-stored objects. Cosmos cannot
+            // order those objects by their payload bytes, while every LSI Query
+            // is ordered by its index sort key. Reject rather than return a
+            // silently mis-ordered result.
+            if (string.Equals(lsiSortType, "B", StringComparison.Ordinal))
+            {
+                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                    "Ordered queries on a local secondary index with a binary (B) sort key are not supported.")
+                    .ConfigureAwait(false);
+                return;
+            }
+
             // LSI query: the sort-key predicate (if any) targets the RAW
             // stored attribute `c.<lsiSort>` (Option-A), not `c.id`. Reuse the
             // filter pushdown to translate it — distinct `@sk*` parameter
