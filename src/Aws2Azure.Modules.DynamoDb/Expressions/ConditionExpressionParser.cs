@@ -39,6 +39,8 @@ namespace Aws2Azure.Modules.DynamoDb.Expressions;
 /// </summary>
 internal sealed class ConditionExpressionParser
 {
+    internal const int MaxInOperands = 100;
+
     private readonly List<ExpressionToken> _tokens;
     private readonly IReadOnlyDictionary<string, string>? _names;
     private readonly IReadOnlyDictionary<string, JsonElement>? _values;
@@ -253,6 +255,11 @@ internal sealed class ConditionExpressionParser
                 while (Peek().Kind == TokenKind.Comma)
                 {
                     _pos++;
+                    if (operands.Count >= MaxInOperands)
+                    {
+                        throw Error(
+                            $"The IN operator supports at most {MaxInOperands} operands.");
+                    }
                     operands.Add(ParseOperand(allowSize: true));
                 }
                 if (Peek().Kind != TokenKind.RParen)

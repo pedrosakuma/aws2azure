@@ -25,6 +25,8 @@ required_sub_feature_seals:
     sub_feature: ConditionExpression transaction subset
   - operation: dynamodb:TransactWriteItems
     sub_feature: Positional CancellationReasons
+  - operation: dynamodb:TransactWriteItems
+    sub_feature: ClientRequestToken (idempotency)
 evidence:
   qualification_artifact: ""
   required_scenarios:
@@ -33,7 +35,7 @@ evidence:
     - transaction-atomicity-rollback
     - transaction-conditions-cancellation
     - transaction-scope-rejection
-    - transaction-idempotency-rejection
+    - transaction-idempotency
     - transaction-contention
     - transaction-restart-versioning
     - transaction-sproc-body-verification
@@ -44,7 +46,7 @@ evidence:
     - transaction-atomicity-rollback
     - transaction-conditions-cancellation
     - transaction-scope-rejection
-    - transaction-idempotency-rejection
+    - transaction-idempotency
     - transaction-contention
     - transaction-restart-versioning
     - transaction-sproc-body-verification

@@ -13,6 +13,22 @@ internal static class ProjectionExpressionParser
 {
     public static Projection Parse(
         string expression, IReadOnlyDictionary<string, string>? names)
+        => ParseCore(expression, names, consumedNames: null);
+
+    public static ProjectionExpressionParseResult ParseWithUsage(
+        string expression,
+        IReadOnlyDictionary<string, string>? names)
+    {
+        var consumedNames = new HashSet<string>(StringComparer.Ordinal);
+        return new ProjectionExpressionParseResult(
+            ParseCore(expression, names, consumedNames),
+            consumedNames);
+    }
+
+    private static Projection ParseCore(
+        string expression,
+        IReadOnlyDictionary<string, string>? names,
+        ISet<string>? consumedNames)
     {
         if (string.IsNullOrWhiteSpace(expression))
             throw new ExpressionSyntaxException(0, "ProjectionExpression cannot be empty.");
@@ -30,7 +46,8 @@ internal static class ProjectionExpressionParser
                 tokens,
                 ref position,
                 names,
-                AttributeAliasErrorStyle.Projection);
+                AttributeAliasErrorStyle.Projection,
+                consumedNames);
             paths.Add(path);
 
             var separator = ExpressionPathParser.Peek(tokens, position);
@@ -56,3 +73,7 @@ internal static class ProjectionExpressionParser
         return Projection.FromDocumentPaths(paths);
     }
 }
+
+internal sealed record ProjectionExpressionParseResult(
+    Projection Projection,
+    IReadOnlySet<string> ConsumedNames);

@@ -24,6 +24,8 @@ public sealed class RealAzureScenario
     public bool? EstablishesVerification { get; set; }
     public bool? OptionalCoverage { get; set; }
     public string Description { get; set; } = string.Empty;
+    public List<string> Profiles { get; set; } = new();
+    public bool? RequiresDynamoDbStoredProcedures { get; set; }
     public List<string> Operations { get; set; } = new();
     public List<string> Tests { get; set; } = new();
 }
@@ -50,5 +52,14 @@ public static class RealAzureConformanceValues
     public static readonly HashSet<string> EvidenceSources = new(System.StringComparer.OrdinalIgnoreCase)
     {
         "real_azure", "deterministic"
+    };
+
+    public static readonly HashSet<string> DynamoDbProfiles = new(
+        System.StringComparer.OrdinalIgnoreCase)
+    {
+        "source-validation",
+        "dynamodb-basic-crud",
+        "dynamodb-query-scan-indexes",
+        "dynamodb-single-partition-transactions",
     };
 }

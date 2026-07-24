@@ -369,10 +369,22 @@ public sealed class PersistedFormatCompatibilityTests
             DynamoDbPersistedFormatContract.LegacyAtomicTransactWriteBodySha256,
             legacyIdentities[1].GetProperty("bodySha256").GetString());
 
-        using var current = JsonDocument.Parse(
+        using var previous = JsonDocument.Parse(
             Fixture("current/stored-procedures-v2.json"));
+        var previousIdentities =
+            previous.RootElement.GetProperty("storedProcedures");
+        Assert.Equal(4, previousIdentities.GetArrayLength());
+        AssertStoredProcedure(
+            previousIdentities[2],
+            DynamoDbPersistedFormatContract
+                .PreviousAtomicTransactWriteStoredProcedureId,
+            DynamoDbPersistedFormatContract
+                .PreviousAtomicTransactWriteBodySha256);
+
+        using var current = JsonDocument.Parse(
+            Fixture("current/stored-procedures-v3.json"));
         var identities = current.RootElement.GetProperty("storedProcedures");
-        Assert.Equal(4, identities.GetArrayLength());
+        Assert.Equal(5, identities.GetArrayLength());
         AssertStoredProcedure(
             identities[0],
             SprocManager.SprocId,
@@ -383,21 +395,78 @@ public sealed class PersistedFormatCompatibilityTests
             DynamoDbPersistedFormatContract.LegacyAtomicTransactWriteBodySha256);
         AssertStoredProcedure(
             identities[2],
+            DynamoDbPersistedFormatContract
+                .PreviousAtomicTransactWriteStoredProcedureId,
+            DynamoDbPersistedFormatContract
+                .PreviousAtomicTransactWriteBodySha256);
+        AssertStoredProcedure(
+            identities[3],
             SprocManager.TransactSprocId,
             transactHash);
         AssertStoredProcedure(
-            identities[3],
+            identities[4],
             SprocManager.TransactGetSprocId,
             transactGetHash);
+    }
+
+    [Fact]
+    public void Transaction_idempotency_record_uses_reserved_hidden_identity()
+    {
+        var recordId =
+            TransactWriteItemsHandler.BuildIdempotencyRecordId("example-token");
+        Assert.StartsWith(
+            DynamoDbPersistedFormatContract.TransactionIdempotencyRecordIdPrefix,
+            recordId,
+            StringComparison.Ordinal);
+        Assert.True(recordId.Length <= 255);
+        Assert.StartsWith("_", recordId, StringComparison.Ordinal);
+
+        using var fixture = JsonDocument.Parse(
+            Fixture("current/transaction-idempotency-record.json"));
+        var root = fixture.RootElement;
+        Assert.Equal(recordId, root.GetProperty("id").GetString());
+        Assert.Equal(
+            DynamoDbPersistedFormatContract
+                .TransactionIdempotencyRecordDiscriminator,
+            root.GetProperty("_a2a").GetString());
+        Assert.Equal(
+            DynamoDbPersistedFormatContract.TransactionIdempotencyRecordVersion,
+            root.GetProperty("formatVersion").GetInt32());
+        Assert.Equal(
+            600_000,
+            root.GetProperty("expiresAtMs").GetInt64()
+            - root.GetProperty("createdAtMs").GetInt64());
+        Assert.Equal(660, root.GetProperty("ttl").GetInt32());
     }
 
     [Fact]
     public void Published_inventory_matches_runtime_versions_and_frozen_fixtures()
     {
         var root = RepositoryRoot();
+        using (var previousInventory = JsonDocument.Parse(File.ReadAllText(
+                   Path.Combine(
+                       root,
+                       "docs/compatibility/dynamodb-persisted-formats-v2.json"))))
+        {
+            Assert.Equal(
+                2,
+                previousInventory.RootElement.GetProperty("inventory_version")
+                    .GetInt32());
+            var previousStoredProcedures =
+                previousInventory.RootElement.GetProperty("stored_procedures");
+            Assert.Equal(4, previousStoredProcedures.GetArrayLength());
+            AssertStoredProcedure(
+                previousStoredProcedures[2],
+                DynamoDbPersistedFormatContract
+                    .PreviousAtomicTransactWriteStoredProcedureId,
+                DynamoDbPersistedFormatContract
+                    .PreviousAtomicTransactWriteBodySha256,
+                "body_sha256");
+        }
+
         var inventoryPath = Path.Combine(
             root,
-            "docs/compatibility/dynamodb-persisted-formats-v2.json");
+            "docs/compatibility/dynamodb-persisted-formats-v3.json");
         using var inventory = JsonDocument.Parse(File.ReadAllText(inventoryPath));
 
         Assert.Equal(
@@ -424,7 +493,7 @@ public sealed class PersistedFormatCompatibilityTests
         }
 
         var storedProcedures = inventory.RootElement.GetProperty("stored_procedures");
-        Assert.Equal(4, storedProcedures.GetArrayLength());
+        Assert.Equal(5, storedProcedures.GetArrayLength());
         AssertStoredProcedure(
             storedProcedures[0],
             SprocManager.SprocId,
@@ -437,17 +506,24 @@ public sealed class PersistedFormatCompatibilityTests
             "body_sha256");
         AssertStoredProcedure(
             storedProcedures[2],
+            DynamoDbPersistedFormatContract
+                .PreviousAtomicTransactWriteStoredProcedureId,
+            DynamoDbPersistedFormatContract
+                .PreviousAtomicTransactWriteBodySha256,
+            "body_sha256");
+        AssertStoredProcedure(
+            storedProcedures[3],
             SprocManager.TransactSprocId,
             Sha256(SprocManager.TransactSprocBody),
             "body_sha256");
         AssertStoredProcedure(
-            storedProcedures[3],
+            storedProcedures[4],
             SprocManager.TransactGetSprocId,
             Sha256(SprocManager.TransactGetSprocBody),
             "body_sha256");
 
         using var identityFixture = JsonDocument.Parse(
-            Fixture("current/stored-procedures-v2.json"));
+            Fixture("current/stored-procedures-v3.json"));
         Assert.Equal(
             DynamoDbPersistedFormatContract.StoredProcedureIdentityVersion,
             identityFixture.RootElement.GetProperty("identityVersion").GetInt32());
@@ -496,7 +572,19 @@ public sealed class PersistedFormatCompatibilityTests
                     DynamoDbPersistedFormatContract.StoredProcedureIdentityVersion,
                     current);
                 Assert.Equal(
-                    [1, DynamoDbPersistedFormatContract.StoredProcedureIdentityVersion],
+                    [1, 2, DynamoDbPersistedFormatContract.StoredProcedureIdentityVersion],
+                    readers);
+                break;
+            case "transaction-idempotency-record":
+                Assert.Equal(
+                    DynamoDbPersistedFormatContract
+                        .TransactionIdempotencyRecordVersion,
+                    current);
+                Assert.Equal(
+                    [
+                        DynamoDbPersistedFormatContract
+                            .TransactionIdempotencyRecordVersion,
+                    ],
                     readers);
                 break;
             case "ttl-index-derived-fields":

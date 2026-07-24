@@ -73,6 +73,7 @@ internal static class TransactGetItemsHandler
         }
 
         string? tableName = null;
+        var projections = new Projection?[request.TransactItems.Count];
         for (var index = 0; index < request.TransactItems.Count; index++)
         {
             var entry = request.TransactItems[index];
@@ -141,6 +142,73 @@ internal static class TransactGetItemsHandler
                 await RejectAsync(
                     ctx,
                     $"TransactItems[{index}].Get.Key is required and must be an object.")
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            var hasProjection = entry.Get.TryGetProperty(
+                "ProjectionExpression",
+                out var projectionElement);
+            var hasNames = entry.Get.TryGetProperty(
+                "ExpressionAttributeNames",
+                out var namesElement);
+            if (hasProjection)
+            {
+                if (projectionElement.ValueKind != JsonValueKind.String)
+                {
+                    await RejectAsync(
+                        ctx,
+                        $"TransactItems[{index}].Get.ProjectionExpression must be a string.")
+                        .ConfigureAwait(false);
+                    return;
+                }
+
+                IReadOnlyDictionary<string, string>? names = null;
+                if (hasNames
+                    && !TryReadExpressionAttributeNames(
+                        namesElement,
+                        out names,
+                        out var namesError))
+                {
+                    await RejectAsync(
+                        ctx,
+                        $"TransactItems[{index}].Get.{namesError}")
+                        .ConfigureAwait(false);
+                    return;
+                }
+
+                try
+                {
+                    var parsed = ProjectionExpressionParser.ParseWithUsage(
+                        projectionElement.GetString()!,
+                        names);
+                    if (TryFindUnused(
+                            names,
+                            parsed.ConsumedNames,
+                            out var unusedName))
+                    {
+                        await RejectAsync(
+                            ctx,
+                            $"Value provided in ExpressionAttributeNames unused in expressions: {unusedName}.")
+                            .ConfigureAwait(false);
+                        return;
+                    }
+                    projections[index] = parsed.Projection;
+                }
+                catch (ExpressionSyntaxException exception)
+                {
+                    await RejectAsync(
+                        ctx,
+                        $"Invalid ProjectionExpression (offset {exception.Position}): {exception.Message}")
+                        .ConfigureAwait(false);
+                    return;
+                }
+            }
+            else if (hasNames)
+            {
+                await RejectAsync(
+                    ctx,
+                    $"TransactItems[{index}].Get.ExpressionAttributeNames requires ProjectionExpression.")
                     .ConfigureAwait(false);
                 return;
             }
@@ -242,65 +310,7 @@ internal static class TransactGetItemsHandler
                 return;
             }
 
-            Projection? projection = null;
-            var hasProjection = get.TryGetProperty(
-                "ProjectionExpression",
-                out var projectionElement);
-            var hasNames = get.TryGetProperty(
-                "ExpressionAttributeNames",
-                out var namesElement);
-            if (hasProjection)
-            {
-                if (projectionElement.ValueKind != JsonValueKind.String)
-                {
-                    await RejectAsync(
-                        ctx,
-                        $"TransactItems[{index}].Get.ProjectionExpression must be a string.")
-                        .ConfigureAwait(false);
-                    return;
-                }
-
-                IReadOnlyDictionary<string, string>? names = null;
-                if (hasNames)
-                {
-                    if (!TryReadExpressionAttributeNames(
-                            namesElement,
-                            out names,
-                            out var namesError))
-                    {
-                        await RejectAsync(
-                            ctx,
-                            $"TransactItems[{index}].Get.{namesError}")
-                            .ConfigureAwait(false);
-                        return;
-                    }
-                }
-
-                try
-                {
-                    projection = ProjectionExpressionParser.Parse(
-                        projectionElement.GetString()!,
-                        names);
-                }
-                catch (ExpressionSyntaxException exception)
-                {
-                    await RejectAsync(
-                        ctx,
-                        $"Invalid ProjectionExpression (offset {exception.Position}): {exception.Message}")
-                        .ConfigureAwait(false);
-                    return;
-                }
-            }
-            else if (hasNames)
-            {
-                await RejectAsync(
-                    ctx,
-                    $"TransactItems[{index}].Get.ExpressionAttributeNames requires ProjectionExpression.")
-                    .ConfigureAwait(false);
-                return;
-            }
-
-            work[index] = new WorkUnit(documentId, projection);
+            work[index] = new WorkUnit(documentId, projections[index]);
             documentIds[index] = documentId;
         }
 
@@ -395,6 +405,27 @@ internal static class TransactGetItemsHandler
         names = values;
         error = null;
         return true;
+    }
+
+    private static bool TryFindUnused(
+        IReadOnlyDictionary<string, string>? declared,
+        IReadOnlySet<string> consumed,
+        out string? unused)
+    {
+        if (declared is not null)
+        {
+            foreach (var key in declared.Keys)
+            {
+                if (!consumed.Contains(key))
+                {
+                    unused = key;
+                    return true;
+                }
+            }
+        }
+
+        unused = null;
+        return false;
     }
 
     private static bool TryBuildResponse(

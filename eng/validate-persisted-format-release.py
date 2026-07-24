@@ -12,10 +12,10 @@ from typing import Any, NoReturn
 
 
 INVENTORY = pathlib.PurePosixPath(
-    "docs/compatibility/dynamodb-persisted-formats-v2.json"
+    "docs/compatibility/dynamodb-persisted-formats-v3.json"
 )
 PREVIOUS_INVENTORY = pathlib.PurePosixPath(
-    "docs/compatibility/dynamodb-persisted-formats-v1.json"
+    "docs/compatibility/dynamodb-persisted-formats-v2.json"
 )
 DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 

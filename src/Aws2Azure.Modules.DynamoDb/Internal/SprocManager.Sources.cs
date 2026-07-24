@@ -148,7 +148,7 @@ internal sealed partial class SprocManager
     }
 """;
 
-    // Strict evaluator used only by atomicTransactWrite_v3. The frozen
+    // Strict evaluator used by atomicTransactWrite_v3/v4. The frozen
     // atomicWrite_v2 body above keeps its original evaluator and hash.
     private const string TransactionConditionEvaluatorJs = """
     function evaluateCondition(ast, doc) {
@@ -553,7 +553,9 @@ function atomicWrite(op, docId, payload, conditionAst, updateAst) {
     /// <summary>
     /// Multi-operation stored procedure for <c>TransactWriteItems</c>. Executes
     /// a list of PUT / DELETE / CHECK operations atomically within a single
-    /// logical partition. Algorithm (rollback-safe):
+    /// logical partition. When an idempotency descriptor is present, its
+    /// internal record is committed in the same transaction as the user writes.
+    /// Algorithm (rollback-safe):
     /// <list type="number">
     ///   <item>Read every target document.</item>
     ///   <item>Evaluate every operation's condition. If ANY fails, emit
@@ -567,15 +569,120 @@ function atomicWrite(op, docId, payload, conditionAst, updateAst) {
     /// by the handler and documented as a gap.
     /// </summary>
     internal static readonly string TransactSprocBody = """
-function atomicTransactWrite(operations) {
+function atomicTransactWrite(operations, idempotency) {
     var ctx = getContext();
     var coll = ctx.getCollection();
     var resp = ctx.getResponse();
     var selfLink = coll.getSelfLink();
     var n = operations.length;
     var existing = new Array(n);
+    var nowMs = new Date().getTime();
 
-    readNext(0);
+    if (idempotency === null || idempotency === undefined) {
+        readNext(0);
+    } else {
+        validateIdempotencyInput();
+        readIdempotencyRecord();
+    }
+
+    function validateIdempotencyInput() {
+        if (typeof idempotency.id !== 'string'
+            || typeof idempotency.pk !== 'string'
+            || typeof idempotency.fingerprint !== 'string'
+            || typeof idempotency.windowMs !== 'number'
+            || idempotency.windowMs <= 0
+            || typeof idempotency.cleanupTtlSeconds !== 'number'
+            || idempotency.cleanupTtlSeconds <= 0) {
+            throw new Error('Malformed transaction idempotency descriptor');
+        }
+    }
+
+    function readIdempotencyRecord() {
+        var query = {
+            query: 'SELECT * FROM c WHERE c.id = @id',
+            parameters: [{ name: '@id', value: idempotency.id }]
+        };
+        var accepted = coll.queryDocuments(selfLink, query, {}, function(err, docs) {
+            if (err) throw err;
+            var record = (docs && docs.length > 0) ? docs[0] : null;
+            if (record && record.expiresAtMs > nowMs) {
+                replayOrReject(record);
+                return;
+            }
+            cleanupExpiredRecords();
+        });
+        if (!accepted) throw new Error('idempotency queryDocuments not accepted');
+    }
+
+    function replayOrReject(record) {
+        if (record._a2a !== 'transaction-idempotency-v1'
+            || record._a2a_pk !== idempotency.pk
+            || record.formatVersion !== 1
+            || typeof record.fingerprint !== 'string'
+            || typeof record.createdAtMs !== 'number'
+            || typeof record.expiresAtMs !== 'number') {
+            throw new Error('Malformed transaction idempotency record');
+        }
+        if (record.fingerprint !== idempotency.fingerprint) {
+            resp.setBody({ success: false, idempotencyMismatch: true });
+            return;
+        }
+        if (record.outcome === 'success') {
+            resp.setBody({ success: true, replayed: true });
+            return;
+        }
+        if (record.outcome === 'canceled'
+            && validReasons(record.reasons)) {
+            resp.setBody({
+                success: false,
+                reasons: record.reasons,
+                replayed: true
+            });
+            return;
+        }
+        throw new Error('Unknown transaction idempotency outcome');
+    }
+
+    function validReasons(reasons) {
+        if (!Array.isArray(reasons) || reasons.length !== n) return false;
+        var failed = false;
+        for (var i = 0; i < reasons.length; i++) {
+            if (!reasons[i] || (reasons[i].code !== 'None'
+                && reasons[i].code !== 'ConditionalCheckFailed')) {
+                return false;
+            }
+            if (reasons[i].code === 'ConditionalCheckFailed') failed = true;
+        }
+        return failed;
+    }
+
+    // Token records carry native ttl for containers where TTL is armed. This
+    // bounded partition-local sweep is the fallback for tables where it is not:
+    // each new token removes more expired records than it creates, while an
+    // inactive partition has finite retained state and no continuing growth.
+    function cleanupExpiredRecords() {
+        var query = {
+            query: "SELECT TOP 8 * FROM c WHERE c._a2a = 'transaction-idempotency-v1' AND c.expiresAtMs <= @now",
+            parameters: [{ name: '@now', value: nowMs }]
+        };
+        var accepted = coll.queryDocuments(selfLink, query, {}, function(err, docs) {
+            if (err) throw err;
+            deleteExpiredRecord(docs || [], 0);
+        });
+        if (!accepted) throw new Error('idempotency cleanup query not accepted');
+    }
+
+    function deleteExpiredRecord(docs, i) {
+        if (i >= docs.length) {
+            readNext(0);
+            return;
+        }
+        var accepted = coll.deleteDocument(docs[i]._self, function(err) {
+            if (err) throw err;
+            deleteExpiredRecord(docs, i + 1);
+        });
+        if (!accepted) throw new Error('idempotency cleanup delete not accepted');
+    }
 
     function readNext(i) {
         if (i >= n) { evaluateAndWrite(); return; }
@@ -625,12 +732,26 @@ function atomicTransactWrite(operations) {
             reasons[i] = pass ? { code: 'None' } : { code: 'ConditionalCheckFailed' };
             if (!pass) anyFail = true;
         }
-        if (anyFail) { resp.setBody({ success: false, reasons: reasons }); return; }
+        if (anyFail) {
+            completeWithIdempotency(
+                'canceled',
+                reasons,
+                function() {
+                    resp.setBody({ success: false, reasons: reasons });
+                });
+            return;
+        }
         writeNext(0);
     }
 
     function writeNext(i) {
-        if (i >= n) { resp.setBody({ success: true }); return; }
+        if (i >= n) {
+            completeWithIdempotency(
+                'success',
+                null,
+                function() { resp.setBody({ success: true }); });
+            return;
+        }
         var op = operations[i];
         if (op.type === 'PUT') {
             var accP = coll.upsertDocument(selfLink, op.doc, function(err) {
@@ -654,6 +775,30 @@ function atomicTransactWrite(operations) {
             // CHECK: read-only, no write.
             writeNext(i + 1);
         }
+    }
+
+    function completeWithIdempotency(outcome, reasons, complete) {
+        if (idempotency === null || idempotency === undefined) {
+            complete();
+            return;
+        }
+        var record = {
+            id: idempotency.id,
+            _a2a_pk: idempotency.pk,
+            _a2a: 'transaction-idempotency-v1',
+            formatVersion: 1,
+            fingerprint: idempotency.fingerprint,
+            createdAtMs: nowMs,
+            expiresAtMs: nowMs + idempotency.windowMs,
+            ttl: idempotency.cleanupTtlSeconds,
+            outcome: outcome
+        };
+        if (reasons !== null) record.reasons = reasons;
+        var accepted = coll.upsertDocument(selfLink, record, function(err) {
+            if (err) throw err;
+            complete();
+        });
+        if (!accepted) throw new Error('idempotency upsertDocument not accepted');
     }
 
 """ + TransactionConditionEvaluatorJs + """

@@ -1,19 +1,19 @@
 schema_version: 1
-inventory: docs/compatibility/dynamodb-persisted-formats-v2.json
+inventory: docs/compatibility/dynamodb-persisted-formats-v3.json
 scenarios:
   - id: adjacent-runtime-rollback
     qualification_state: blocked
     blocker: >-
       No trusted prior release implements the complete single-partition
-      transaction profile. The known v2 runtime uses independent reads and does
-      not enforce ClientRequestToken rejection, so it cannot be a rollback
-      target for issue 635.
+      transaction profile. The known v2 runtime uses independent reads and lacks
+      durable ClientRequestToken idempotency, so it cannot be a rollback target
+      for issue 635.
     topology: same-cosmos-container
     write_policy: serialized-runtime-switch
     steps:
       - candidate-create-table-with-index-and-ttl
       - candidate-write-v2-items-and-mint-v1-continuations
-      - candidate-provision-atomic-transact-write-v3-and-atomic-transact-get-v1
+      - candidate-provision-atomic-transact-write-v4-and-atomic-transact-get-v1
       - candidate-commit-and-snapshot-single-partition-transaction
       - freeze-writes-and-drain
       - block-before-runtime-switch-until-compatible-prior-is-approved
@@ -27,7 +27,8 @@ scenarios:
       - previous-continuation-consumed-by-candidate
       - base-query-scan-and-ordered-gsi-continuations-covered
       - stored-procedure-id-and-body-hash-match-frozen-source-inventory
-      - v2-and-v3-transaction-stored-procedure-identities-coexist
+      - v2-v3-and-v4-transaction-stored-procedure-identities-coexist
+      - transaction-idempotency-record-v1-is-hidden-and-expiry-bounded
       - conflicting-same-id-stored-procedure-body-fails-closed
       - known-v2-runtime-is-never-selected-as-profile-rollback-baseline
       - qualification-remains-inconclusive-without-compatible-prior

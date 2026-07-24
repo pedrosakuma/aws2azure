@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -11,9 +13,16 @@ public sealed class ConformanceExecutionPlan
     public int SchemaVersion { get; set; } = 1;
     public ConformancePlanSelection Selection { get; set; } = new();
     public bool HasPositiveRealAzureEvidence { get; set; }
+    public string ScenarioSetSha256 { get; set; } = string.Empty;
+    public ConformancePlanConfiguration Configuration { get; set; } = new();
     public List<PlannedConformanceScenario> Scenarios { get; set; } = new();
     public List<PlannedConformanceOperation> Operations { get; set; } = new();
     public List<ConformanceTestProjectPlan> TestProjects { get; set; } = new();
+}
+
+public sealed class ConformancePlanConfiguration
+{
+    public string DynamoDbStoredProcedureMode { get; set; } = "Disabled";
 }
 
 public sealed class ConformancePlanSelection
@@ -33,6 +42,8 @@ public sealed class PlannedConformanceScenario
     public string EvidenceSource { get; set; } = string.Empty;
     public bool EstablishesVerification { get; set; }
     public bool OptionalCoverage { get; set; }
+    public List<string> Profiles { get; set; } = new();
+    public bool RequiresDynamoDbStoredProcedures { get; set; }
     public List<string> Operations { get; set; } = new();
     public List<string> Tests { get; set; } = new();
 }
@@ -161,9 +172,13 @@ public static class ConformancePlanGenerator
         RealAzureConformanceMatrix matrix,
         string? service = null,
         string? scenario = null,
-        IReadOnlySet<string>? excludedScenarioIds = null)
+        IReadOnlySet<string>? excludedScenarioIds = null,
+        string? profile = null)
     {
         var selection = ConformanceMatrixSelector.Select(matrix, service, scenario);
+        profile = string.IsNullOrWhiteSpace(profile)
+            ? null
+            : profile.Trim().ToLowerInvariant();
         var exclusions = excludedScenarioIds is null
             ? null
             : new HashSet<string>(excludedScenarioIds, StringComparer.OrdinalIgnoreCase);
@@ -172,15 +187,28 @@ public static class ConformancePlanGenerator
                 matrixService => matrixService.Scenarios.Select(
                     matrixScenario => (Service: matrixService.Service, Scenario: matrixScenario)))
             .Where(entry => exclusions is null || !exclusions.Contains(entry.Scenario.Id))
+            .Where(entry => profile is null
+                            || entry.Scenario.Profiles is null
+                            || entry.Scenario.Profiles.Count == 0
+                            || entry.Scenario.Profiles.Contains(
+                                profile,
+                                StringComparer.OrdinalIgnoreCase))
             .OrderBy(entry => entry.Service, StringComparer.Ordinal)
             .ThenBy(entry => entry.Scenario.Id, StringComparer.Ordinal)
             .ToList();
+        if (orderedScenarios.Count == 0)
+        {
+            throw new ArgumentException(
+                $"Conformance profile '{profile}' selects no scenarios.",
+                nameof(profile));
+        }
         var plan = new ConformanceExecutionPlan
         {
             Selection = new ConformancePlanSelection
             {
                 Service = selection.Service,
-                Scenario = selection.Scenario
+                Scenario = selection.Scenario,
+                Profile = profile,
             },
             HasPositiveRealAzureEvidence = orderedScenarios.Any(
                 entry => entry.Scenario.EstablishesVerification == true
@@ -189,6 +217,12 @@ public static class ConformancePlanGenerator
                              "real_azure",
                              StringComparison.OrdinalIgnoreCase))
         };
+        plan.Configuration.DynamoDbStoredProcedureMode =
+            orderedScenarios.Any(entry =>
+                entry.Scenario.RequiresDynamoDbStoredProcedures == true)
+                ? "Preferred"
+                : "Disabled";
+        plan.ScenarioSetSha256 = ComputeScenarioSetSha256(orderedScenarios);
 
         foreach (var entry in orderedScenarios)
         {
@@ -201,6 +235,12 @@ public static class ConformancePlanGenerator
                 EvidenceSource = entry.Scenario.EvidenceSource.ToLowerInvariant(),
                 EstablishesVerification = entry.Scenario.EstablishesVerification == true,
                 OptionalCoverage = entry.Scenario.OptionalCoverage == true,
+                Profiles = (entry.Scenario.Profiles ?? [])
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(value => value, StringComparer.Ordinal)
+                    .ToList(),
+                RequiresDynamoDbStoredProcedures =
+                    entry.Scenario.RequiresDynamoDbStoredProcedures == true,
                 Operations = entry.Scenario.Operations
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .OrderBy(value => value, StringComparer.Ordinal)
@@ -246,6 +286,21 @@ public static class ConformancePlanGenerator
         }
 
         return plan;
+    }
+
+    private static string ComputeScenarioSetSha256(
+        IReadOnlyList<(string Service, RealAzureScenario Scenario)> scenarios)
+    {
+        var canonical = new StringBuilder();
+        foreach (var entry in scenarios)
+        {
+            canonical.Append(entry.Service.ToLowerInvariant())
+                .Append('\0')
+                .Append(entry.Scenario.Id.ToLowerInvariant())
+                .Append('\n');
+        }
+        return "sha256:" + Convert.ToHexStringLower(
+            SHA256.HashData(Encoding.UTF8.GetBytes(canonical.ToString())));
     }
 
     public static RealAzureConformanceMatrix SelectPlannedMatrix(

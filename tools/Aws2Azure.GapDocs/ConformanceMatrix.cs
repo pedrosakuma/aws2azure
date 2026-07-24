@@ -148,6 +148,48 @@ public static class ConformanceMatrixValidator
                 {
                     Err($"{prefix}.description missing");
                 }
+                var seenProfiles = new HashSet<string>(
+                    StringComparer.OrdinalIgnoreCase);
+                if (string.Equals(
+                        service,
+                        "dynamodb",
+                        StringComparison.OrdinalIgnoreCase)
+                    && (scenario.Profiles is null
+                        || scenario.Profiles.Count == 0))
+                {
+                    Err(
+                        $"{prefix}.profiles must explicitly declare DynamoDB workload-profile applicability");
+                }
+                foreach (var profile in scenario.Profiles ?? [])
+                {
+                    if (string.IsNullOrWhiteSpace(profile))
+                    {
+                        Err($"{prefix}.profiles contains an empty profile id");
+                    }
+                    else if (!seenProfiles.Add(profile))
+                    {
+                        Err($"{prefix}.profiles repeats profile '{profile}'");
+                    }
+                    else if (string.Equals(
+                                 service,
+                                 "dynamodb",
+                                 StringComparison.OrdinalIgnoreCase)
+                             && !RealAzureConformanceValues.DynamoDbProfiles
+                                 .Contains(profile))
+                    {
+                        Err(
+                            $"{prefix}.profiles contains unknown DynamoDB profile '{profile}'");
+                    }
+                }
+                if (scenario.RequiresDynamoDbStoredProcedures == true
+                    && !string.Equals(
+                        service,
+                        "dynamodb",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    Err(
+                        $"{prefix}.requires_dynamo_db_stored_procedures is valid only for dynamodb scenarios");
+                }
                 var scenarioOperations = scenario.Operations ?? [];
                 var scenarioTests = scenario.Tests ?? [];
                 if (scenarioOperations.Count == 0)

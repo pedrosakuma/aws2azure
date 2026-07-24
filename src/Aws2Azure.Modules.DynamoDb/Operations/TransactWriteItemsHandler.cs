@@ -19,7 +19,7 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 /// procedure transaction. Only Put, Delete, and ConditionCheck are supported,
 /// and every target must belong to one table and one logical partition.
 /// </summary>
-internal static class TransactWriteItemsHandler
+internal static partial class TransactWriteItemsHandler
 {
     private const int MaxItemsPerCall = 100;
     internal const int MaxSprocRequestBodyBytes = 2 * 1024 * 1024;
@@ -56,6 +56,11 @@ internal static class TransactWriteItemsHandler
         int? TtlSeconds,
         OrderKeyField[]? OrderKeys,
         string? ConditionJson);
+
+    private readonly record struct PreparedIdempotency(
+        string RecordId,
+        string PartitionKey,
+        string Fingerprint);
 
     public static async Task HandleTransactWriteItemsAsync(
         HttpContext ctx,
@@ -97,11 +102,11 @@ internal static class TransactWriteItemsHandler
                 .ConfigureAwait(false);
             return;
         }
-        if (request.ClientRequestToken is not null)
+        if (!TryValidateClientRequestToken(
+                request.ClientRequestToken,
+                out var clientRequestTokenError))
         {
-            await RejectAsync(
-                ctx,
-                "ClientRequestToken is not supported because aws2azure does not yet have a durable transaction idempotency record. Omit the token; it is rejected rather than silently ignored.")
+            await RejectAsync(ctx, clientRequestTokenError)
                 .ConfigureAwait(false);
             return;
         }
@@ -494,10 +499,25 @@ internal static class TransactWriteItemsHandler
                 input.ConditionJson);
         }
 
+        PreparedIdempotency? idempotency = null;
         PooledByteBufferWriter parameters;
         try
         {
-            parameters = BuildTransactRequestParamsBody(body, prepared);
+            if (request.ClientRequestToken is not null)
+            {
+                idempotency = new PreparedIdempotency(
+                    BuildIdempotencyRecordId(request.ClientRequestToken),
+                    partitionKey!,
+                    ComputeRequestFingerprint(
+                        tableName!,
+                        partitionKey!,
+                        body,
+                        prepared));
+            }
+            parameters = BuildTransactRequestParamsBody(
+                body,
+                prepared,
+                idempotency);
         }
         catch (TransactionRequestTooLargeException exception)
         {
@@ -508,7 +528,7 @@ internal static class TransactWriteItemsHandler
             return;
         }
         catch (Exception exception) when (
-            exception is JsonException or ArgumentException)
+            exception is JsonException or ArgumentException or FormatException)
         {
             await RejectAsync(
                 ctx,
@@ -541,6 +561,16 @@ internal static class TransactWriteItemsHandler
                 partitionKey!,
                 parameters.WrittenMemory,
                 ct).ConfigureAwait(false);
+            if (idempotency is not null
+                && IsRetryableIdempotentConflict(result))
+            {
+                result = await sprocContext.Manager.ExecuteTransactAsync(
+                    cosmos,
+                    tableName!,
+                    partitionKey!,
+                    parameters.WrittenMemory,
+                    ct).ConfigureAwait(false);
+            }
         }
 
         if (result.Success)
@@ -560,6 +590,16 @@ internal static class TransactWriteItemsHandler
                 string.IsNullOrWhiteSpace(result.ValidationError)
                     ? "Transaction condition evaluation failed validation."
                     : result.ValidationError)
+                .ConfigureAwait(false);
+            return;
+        }
+        if (result.IdempotencyMismatch)
+        {
+            await CosmosOpsShared.WriteErrorAsync(
+                ctx,
+                StatusCodes.Status400BadRequest,
+                "IdempotentParameterMismatchException",
+                "The request cannot be retried because its parameters do not match the original request associated with this ClientRequestToken.")
                 .ConfigureAwait(false);
             return;
         }
@@ -768,7 +808,8 @@ internal static class TransactWriteItemsHandler
 
     private static PooledByteBufferWriter BuildTransactRequestParamsBody(
         byte[] body,
-        PreparedRequestOp[] operations)
+        PreparedRequestOp[] operations,
+        PreparedIdempotency? idempotency = null)
     {
         var buffer = new PooledByteBufferWriter(512);
         try
@@ -817,7 +858,24 @@ internal static class TransactWriteItemsHandler
                 }
                 WriteByte(buffer, (byte)'}');
             }
-            WriteRaw(buffer, "]]"u8);
+            WriteRaw(buffer, "],"u8);
+            if (idempotency is { } token)
+            {
+                WriteRaw(buffer, "{\"id\":"u8);
+                WriteJsonString(buffer, token.RecordId);
+                WriteRaw(buffer, ",\"pk\":"u8);
+                WriteJsonString(buffer, token.PartitionKey);
+                WriteRaw(buffer, ",\"fingerprint\":"u8);
+                WriteJsonString(buffer, token.Fingerprint);
+                WriteRaw(
+                    buffer,
+                    ",\"windowMs\":600000,\"cleanupTtlSeconds\":660}"u8);
+            }
+            else
+            {
+                WriteRaw(buffer, "null"u8);
+            }
+            WriteByte(buffer, (byte)']');
             ThrowIfTransactRequestTooLarge(buffer);
             return buffer;
         }
@@ -932,6 +990,14 @@ internal static class TransactWriteItemsHandler
 
     internal static bool IsWithinTransactRequestBodyLimit(int byteCount)
         => byteCount <= MaxSprocRequestBodyBytes;
+
+    private static bool IsRetryableIdempotentConflict(
+        SprocTransactResult result)
+        => !result.Success
+           && !result.ConditionFailed
+           && !result.ValidationFailed
+           && !result.IdempotencyMismatch
+           && result.StatusCode is 409 or 412 or 449;
 
     internal static string BuildOperationsJson(PreparedOp[] operations)
     {

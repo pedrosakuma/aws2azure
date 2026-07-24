@@ -1,0 +1,11 @@
+{
+  "id": "_a2a$idempotency$v1$ZXhhbXBsZS10b2tlbg",
+  "_a2a_pk": "706172746974696f6e",
+  "_a2a": "transaction-idempotency-v1",
+  "formatVersion": 1,
+  "fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "createdAtMs": 1760000000000,
+  "expiresAtMs": 1760000600000,
+  "ttl": 660,
+  "outcome": "success"
+}

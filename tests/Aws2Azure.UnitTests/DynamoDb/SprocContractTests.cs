@@ -66,6 +66,21 @@ public sealed class SprocContractTests
             result.ValidationError);
     }
 
+    [Fact]
+    public async Task Transaction_idempotency_mismatch_is_preserved()
+    {
+        using var response = CosmosOk(
+            "{\"success\":false,\"idempotencyMismatch\":true}");
+
+        var result = await SprocResponseParser.ParseTransactAsync(
+            response,
+            CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.False(result.ConditionFailed);
+        Assert.True(result.IdempotencyMismatch);
+    }
+
     [Theory]
     [InlineData(
         "{\"success\":false,\"validationError\":{\"code\":\"Other\",\"message\":\"bad\"}}")]
@@ -167,7 +182,7 @@ public sealed class SprocContractTests
     }
 
     [Fact]
-    public void Transaction_v3_script_fails_closed_for_missing_and_unknown_operands()
+    public void Transaction_v4_script_fails_closed_for_missing_and_unknown_operands()
     {
         Assert.Contains(
             "if (!left.exists || !right.exists",
@@ -196,7 +211,7 @@ public sealed class SprocContractTests
     }
 
     [Fact]
-    public void Transaction_v3_script_compares_strings_by_utf8_bytes()
+    public void Transaction_v4_script_compares_strings_by_utf8_bytes()
     {
         Assert.Contains(
             "function compareUtf8(left, right)",
@@ -208,6 +223,43 @@ public sealed class SprocContractTests
             StringComparison.Ordinal);
         Assert.Contains(
             "code = 0x10000 + ((code - 0xD800) << 10)",
+            SprocManager.TransactSprocBody,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Transaction_v4_script_commits_and_replays_durable_token_outcomes()
+    {
+        Assert.Contains(
+            "function atomicTransactWrite(operations, idempotency)",
+            SprocManager.TransactSprocBody,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "_a2a: 'transaction-idempotency-v1'",
+            SprocManager.TransactSprocBody,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "expiresAtMs: nowMs + idempotency.windowMs",
+            SprocManager.TransactSprocBody,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "outcome: outcome",
+            SprocManager.TransactSprocBody,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "record.fingerprint !== idempotency.fingerprint",
+            SprocManager.TransactSprocBody,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "idempotencyMismatch: true",
+            SprocManager.TransactSprocBody,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "SELECT TOP 8 * FROM c WHERE c._a2a = 'transaction-idempotency-v1'",
+            SprocManager.TransactSprocBody,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "completeWithIdempotency(",
             SprocManager.TransactSprocBody,
             StringComparison.Ordinal);
     }

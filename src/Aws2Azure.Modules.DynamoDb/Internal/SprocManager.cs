@@ -27,8 +27,8 @@ internal sealed partial class SprocManager
     // intentionally unchanged in this release.
     public const string SprocId = DynamoDbPersistedFormatContract.AtomicWriteStoredProcedureId;
 
-    // Transaction bodies are immutable by ID. v3 tightens the condition and
-    // cancellation contract without mutating the rollback-compatible v2 body.
+    // Transaction bodies are immutable by ID. v4 adds the durable token record
+    // without mutating the frozen v2/v3 bodies.
     public const string TransactSprocId =
         DynamoDbPersistedFormatContract.AtomicTransactWriteStoredProcedureId;
 

@@ -161,6 +161,21 @@ internal static class SprocResponseParser
                             };
                         }
                         if (!success
+                            && root.TryGetProperty(
+                                "idempotencyMismatch",
+                                out var mismatch)
+                            && mismatch.ValueKind == JsonValueKind.True
+                            && !root.TryGetProperty("reasons", out _)
+                            && !root.TryGetProperty("validationError", out _))
+                        {
+                            return new SprocTransactResult
+                            {
+                                Attempted = true,
+                                IdempotencyMismatch = true,
+                                ResponseBody = body,
+                            };
+                        }
+                        if (!success
                             && root.TryGetProperty("reasons", out var reasons)
                             && reasons.ValueKind == JsonValueKind.Array)
                         {

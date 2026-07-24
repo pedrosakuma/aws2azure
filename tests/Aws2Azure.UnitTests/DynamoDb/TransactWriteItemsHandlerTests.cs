@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
+using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
 using Aws2Azure.Modules.DynamoDb.Operations;
 using Microsoft.AspNetCore.Http;
@@ -256,13 +257,17 @@ public class TransactWriteItemsHandlerTests
         Assert.Contains("ttl", resp);
     }
 
-    [Fact]
-    public async Task Client_request_token_is_rejected_instead_of_ignored()
+    [Theory]
+    [InlineData("")]
+    [InlineData("1234567890123456789012345678901234567")]
+    public async Task Invalid_client_request_token_length_is_rejected_before_io(
+        string token)
     {
         var (ctx, body) = NewCtx();
         var handler = new ScriptedHandler();
         var cosmos = BuildClient(handler);
-        var req = "{\"ClientRequestToken\":\"token-1\",\"TransactItems\":["
+        var req = "{\"ClientRequestToken\":\"" + token
+            + "\",\"TransactItems\":["
             + PutOp("1") + "]}";
 
         await Run(ctx, cosmos, EnabledSproc(), req);
@@ -270,8 +275,187 @@ public class TransactWriteItemsHandlerTests
         Assert.Equal(400, ctx.Response.StatusCode);
         var response = ReadResponse(body);
         Assert.Contains("ClientRequestToken", response);
-        Assert.Contains("durable", response);
+        Assert.Contains("1 and 36", response);
         Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Client_request_token_executes_with_durable_descriptor()
+    {
+        var (ctx, _) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaPkSk),
+                CosmosCreated(),
+                CosmosOk("{\"success\":true}"),
+            },
+        };
+
+        await Run(
+            ctx,
+            BuildClient(handler),
+            EnabledSproc(),
+            "{\"ClientRequestToken\":\"token-1\",\"TransactItems\":["
+            + PutOp("1") + "]}");
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        var execution = handler.Requests[^1];
+        using var parameters = JsonDocument.Parse(execution.Body!);
+        var idempotency = parameters.RootElement[1];
+        Assert.StartsWith(
+            DynamoDbPersistedFormatContract.TransactionIdempotencyRecordIdPrefix,
+            idempotency.GetProperty("id").GetString(),
+            StringComparison.Ordinal);
+        Assert.Equal("61", idempotency.GetProperty("pk").GetString());
+        Assert.Equal(
+            64,
+            idempotency.GetProperty("fingerprint").GetString()!.Length);
+        Assert.Equal(600_000, idempotency.GetProperty("windowMs").GetInt32());
+        Assert.Equal(
+            660,
+            idempotency.GetProperty("cleanupTtlSeconds").GetInt32());
+    }
+
+    [Fact]
+    public async Task Semantic_equivalent_requests_produce_same_fingerprint()
+    {
+        var first =
+            """
+            {
+              "ClientRequestToken": "stable-token",
+              "TransactItems": [{
+                "Put": {
+                  "TableName": "orders",
+                  "Item": {
+                    "pk": { "S": "a" },
+                    "sk": { "S": "1" },
+                    "n": { "N": "1.0" },
+                    "labels": { "SS": ["beta", "alpha"] },
+                    "map": { "M": { "z": { "S": "last" }, "a": { "N": "2.00" } } }
+                  },
+                  "ConditionExpression": "#n = :one",
+                  "ExpressionAttributeNames": { "#n": "n" },
+                  "ExpressionAttributeValues": { ":one": { "N": "1.00" } }
+                }
+              }]
+            }
+            """;
+        var second =
+            """
+            {
+              "TransactItems": [{
+                "Put": {
+                  "ExpressionAttributeValues": { ":value": { "N": "1" } },
+                  "ConditionExpression": "#number=:value",
+                  "Item": {
+                    "map": { "M": { "a": { "N": "2" }, "z": { "S": "last" } } },
+                    "labels": { "SS": ["alpha", "beta"] },
+                    "n": { "N": "1" },
+                    "sk": { "S": "1" },
+                    "pk": { "S": "a" }
+                  },
+                  "ExpressionAttributeNames": { "#number": "n" },
+                  "TableName": "orders"
+                }
+              }],
+              "ClientRequestToken": "stable-token",
+              "ReturnConsumedCapacity": "NONE"
+            }
+            """;
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaPkSk),
+                CosmosCreated(),
+                CosmosOk("{\"success\":true}"),
+                CosmosOk("{\"success\":true,\"replayed\":true}"),
+            },
+        };
+        var cosmos = BuildClient(handler);
+        var sproc = EnabledSproc();
+
+        var (firstContext, _) = NewCtx();
+        await Run(firstContext, cosmos, sproc, first);
+        var (secondContext, _) = NewCtx();
+        await Run(secondContext, cosmos, sproc, second);
+
+        Assert.Equal(200, firstContext.Response.StatusCode);
+        Assert.Equal(200, secondContext.Response.StatusCode);
+        var executions = handler.Requests
+            .Where(request => request.Uri.AbsolutePath.Contains(
+                "/sprocs/" + SprocManager.TransactSprocId,
+                StringComparison.Ordinal))
+            .ToArray();
+        Assert.Equal(2, executions.Length);
+        static string Fingerprint(CapturedRequest request)
+        {
+            using var body = JsonDocument.Parse(request.Body!);
+            return body.RootElement[1].GetProperty("fingerprint").GetString()!;
+        }
+        Assert.Equal(Fingerprint(executions[0]), Fingerprint(executions[1]));
+    }
+
+    [Fact]
+    public async Task Idempotency_mismatch_maps_to_native_dynamodb_error()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaPkSk),
+                CosmosCreated(),
+                CosmosOk(
+                    "{\"success\":false,\"idempotencyMismatch\":true}"),
+            },
+        };
+
+        await Run(
+            ctx,
+            BuildClient(handler),
+            EnabledSproc(),
+            "{\"ClientRequestToken\":\"token-1\",\"TransactItems\":["
+            + PutOp("1") + "]}");
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        using var response = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(
+            "com.amazonaws.dynamodb.v20120810#IdempotentParameterMismatchException",
+            response.RootElement.GetProperty("__type").GetString());
+    }
+
+    [Fact]
+    public async Task Token_request_retries_one_cosmos_write_conflict_safely()
+    {
+        var (ctx, _) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaPkSk),
+                CosmosCreated(),
+                CosmosStatus(HttpStatusCode.Conflict),
+                CosmosOk("{\"success\":true,\"replayed\":true}"),
+            },
+        };
+
+        await Run(
+            ctx,
+            BuildClient(handler),
+            EnabledSproc(),
+            "{\"ClientRequestToken\":\"token-1\",\"TransactItems\":["
+            + PutOp("1") + "]}");
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.Equal(
+            2,
+            handler.Requests.Count(request =>
+                request.Uri.AbsolutePath.Contains(
+                    "/sprocs/" + SprocManager.TransactSprocId,
+                    StringComparison.Ordinal)));
     }
 
     [Theory]
@@ -337,6 +521,40 @@ public class TransactWriteItemsHandlerTests
         Assert.Empty(handler.Requests);
     }
 
+    [Fact]
+    public async Task Token_fingerprint_validation_failure_stays_a_400()
+    {
+        var (context, body) = NewCtx();
+        var handler = new ScriptedHandler();
+
+        await Run(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            """
+            {
+              "ClientRequestToken": "token-1",
+              "TransactItems": [{
+                "Put": {
+                  "TableName": "orders",
+                  "Item": {
+                    "pk": { "S": "a" },
+                    "sk": { "S": "1" },
+                    "bad": { "B": "not-base64!" }
+                  }
+                }
+              }]
+            }
+            """);
+
+        Assert.Equal(400, context.Response.StatusCode);
+        Assert.Contains(
+            "valid base64",
+            ReadResponse(body),
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(handler.Requests);
+    }
+
     [Theory]
     [InlineData(
         """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionExpression":"attribute_not_exists(#pk)","ExpressionAttributeNames":{"#pk":"pk","#unused":"unused"}}}]}""",
@@ -357,6 +575,41 @@ public class TransactWriteItemsHandlerTests
         var response = ReadResponse(body);
         Assert.Contains("unused", response, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(expected, response, StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task In_with_more_than_100_operands_is_rejected_before_metadata_io()
+    {
+        var expression = new StringBuilder("v IN (");
+        var values = new StringBuilder();
+        for (var index = 0; index <= ConditionExpressionParser.MaxInOperands; index++)
+        {
+            if (index > 0)
+            {
+                expression.Append(',');
+                values.Append(',');
+            }
+            expression.Append(":v").Append(index);
+            values.Append("\":v").Append(index).Append("\":{\"S\":\"x\"}");
+        }
+        expression.Append(')');
+        var request =
+            "{\"TransactItems\":[{\"Put\":{\"TableName\":\"orders\",\"Item\":"
+            + "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"}},"
+            + "\"ConditionExpression\":\"" + expression + "\","
+            + "\"ExpressionAttributeValues\":{" + values + "}}}]}";
+        var handler = new ScriptedHandler();
+        var (context, body) = NewCtx();
+
+        await Run(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            request);
+
+        Assert.Equal(400, context.Response.StatusCode);
+        Assert.Contains("at most 100", ReadResponse(body));
         Assert.Empty(handler.Requests);
     }
 
@@ -521,8 +774,10 @@ public class TransactWriteItemsHandlerTests
         Assert.Contains("/sprocs/" + SprocManager.TransactSprocId, exec.Uri.AbsolutePath);
         Assert.NotNull(exec.Body);
         Assert.Contains("\"type\":\"PUT\"", exec.Body!);
-        // Params array wraps the operations array: [ [ {..}, {..} ] ]
+        // Params array wraps the operations array plus an optional token descriptor.
         Assert.StartsWith("[[", exec.Body!.Replace(" ", string.Empty));
+        using var parameters = JsonDocument.Parse(exec.Body);
+        Assert.Equal(JsonValueKind.Null, parameters.RootElement[1].ValueKind);
     }
 
     [Fact]

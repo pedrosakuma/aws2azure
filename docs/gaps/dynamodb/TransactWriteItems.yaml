@@ -6,7 +6,7 @@ sub_features:
   - name: Atomic Put / Delete / ConditionCheck
     status: implemented
     notes: >-
-      `atomicTransactWrite_v3` reads and validates every target before issuing
+      `atomicTransactWrite_v4` reads and validates every target before issuing
       writes. All writes execute inside one Cosmos logical-partition ACID
       transaction; a condition or write failure commits nothing.
       `atomicTransactWrite_v2` remains in the persisted-format inventory, but its
@@ -48,7 +48,8 @@ sub_features:
       duplicate set members, and malformed typed shapes are rejected.
       Non-empty string sets may contain an empty string, matching current
       DynamoDB policy. Every declared ExpressionAttributeNames and
-      ExpressionAttributeValues placeholder must be consumed.
+      ExpressionAttributeValues placeholder must be consumed. IN lists are
+      capped at DynamoDB's 100 operands before any metadata or script I/O.
   - name: Positional CancellationReasons
     status: implemented
     notes: >-
@@ -73,11 +74,24 @@ sub_features:
       before stored-procedure provisioning or execution. DynamoDB permits an
       aggregate 4 MiB transaction, so the proxy's accepted aggregate is lower.
   - name: ClientRequestToken (idempotency)
-    status: unsupported
+    status: implemented
     notes: >-
-      ClientRequestToken string values are mechanically rejected because the
-      proxy does not yet have a durable bounded idempotency record that survives
-      retries and process restart. Tokens are never accepted and then ignored.
+      Tokens are validated at 1–36 characters. `atomicTransactWrite_v4` writes a
+      collision-proof reserved record in the same Cosmos logical partition and
+      transaction as the user writes. Its stable SHA-256 fingerprint is based on
+      normalized transaction semantics: resolved condition ASTs, canonical
+      DynamoDB numbers/base64, sorted map properties and set members, and the
+      ordered operation list, so JSON property order and equivalent numeric/set
+      encodings do not cause false mismatches. Equivalent retries replay the
+      original success or positional condition-cancellation outcome without
+      applying writes again; a different fingerprint within the active window
+      returns IdempotentParameterMismatchException. The script uses Cosmos server
+      time for a 10-minute logical window, records created/expiry timestamps,
+      assigns a 660-second native ttl, and performs a bounded partition-local
+      sweep when container TTL is not armed. Expired records are safely replaced.
+      Preflight and script validation errors are not cached. The contract is
+      scoped to this operation's supported single-table/single-partition boundary;
+      callers must not reuse one token for a transaction in another partition.
   - name: ReturnValuesOnConditionCheckFailure
     status: unsupported
     notes: >-
@@ -93,10 +107,10 @@ behavior_differences:
   - "Duplicate operations on the same table/key are rejected with ValidationException before execution."
   - "Stored procedures must be enabled (Preferred or Required). There is no non-atomic fallback."
   - "Stored-procedure provisioning treats an HTTP 409 as success only after reading the existing resource and verifying the exact versioned id and body; an id/body conflict fails closed."
-  - "Transaction execution POSTs opt out of proxy-level automatic retries because a lost response is ambiguous without durable ClientRequestToken deduplication. Stored-procedure availability is cached per Cosmos account/database/container, invalidated on table lifecycle, and evicted/reprovisioned once after an execution 404."
-  - "`atomicWrite_v2` remains byte-identical. `atomicTransactWrite_v2` remains in the additive persisted-format identity set for future adjacent-runtime format checks, but it is not a workload-profile rollback target. The current condition/cancellation contract uses `atomicTransactWrite_v3`; TransactGet uses `atomicTransactGet_v1`."
-  - "The Cosmos Linux emulator cannot execute these scripts. V3 write semantics, v1 snapshots, contention, restart, and exact-body conflict handling require fresh real-Azure runs before new seals are committed."
-  - "No trusted prior release implements the complete profile: the known v2 runtime uses independent reads and does not enforce ClientRequestToken rejection. It is not an approved bootstrap/rollback target; qualification is rollout-only and records the adjacent-runtime row as skipped/inconclusive until a compatible prior release exists."
+  - "Transaction execution POSTs retain the no-automatic-retry transport option. Token-bearing requests explicitly retry only Cosmos write-conflict statuses once; any caller retry after an ambiguous/lost response is safe because the token outcome is committed atomically with the writes. Tokenless requests remain non-retried. Stored-procedure availability is cached per Cosmos account/database/container, invalidated on table lifecycle, and evicted/reprovisioned once after an execution 404."
+  - "`atomicWrite_v2`, `atomicTransactWrite_v2`, and `atomicTransactWrite_v3` remain frozen in the additive persisted-format identity set. The current durable idempotency contract uses `atomicTransactWrite_v4`; TransactGet uses `atomicTransactGet_v1`."
+  - "The Cosmos Linux emulator cannot execute these scripts. V4 write/idempotency semantics, v1 snapshots, contention, restart, and exact-body conflict handling require fresh real-Azure runs before new seals are committed."
+  - "No trusted prior release implements the complete profile: the known v2 runtime uses independent reads and lacks the durable ClientRequestToken contract. It is not an approved bootstrap/rollback target; qualification is rollout-only and records the adjacent-runtime row as skipped/inconclusive until a compatible prior release exists."
   - "The exact serialized stored-procedure parameter body is limited to 2 MiB, below DynamoDB's 4 MiB aggregate TransactWriteItems limit. Oversize requests fail with ValidationException before stored-procedure I/O."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TransactWriteItems.html

@@ -482,9 +482,16 @@ static int PlanConformance(string[] args, string gapsRoot, string defaultMatrixP
             return 1;
         }
 
-        var plan = ConformancePlanGenerator.Generate(matrix, service, scenario, excludedScenarios);
-        plan.Selection.Profile = profile;
-        plan.Selection.IsFiltered = scenario is not null || excludedScenarios.Count > 0;
+        var plan = ConformancePlanGenerator.Generate(
+            matrix,
+            service,
+            scenario,
+            excludedScenarios,
+            profile);
+        plan.Selection.IsFiltered =
+            scenario is not null
+            || excludedScenarios.Count > 0
+            || profile is not null;
         var content = ConformancePlanRenderer.RenderJson(plan) + Environment.NewLine;
         if (outputPath is null)
         {

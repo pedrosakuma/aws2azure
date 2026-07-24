@@ -113,6 +113,32 @@ public sealed class ConformanceMatrixTests
             StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void Validate_requires_registered_dynamodb_profile_metadata()
+    {
+        var (matrix, operations) = ValidMatrix();
+        var scenario = matrix.Services
+            .Single(service => service.Service == "dynamodb")
+            .Scenarios[0];
+        scenario.Profiles = [];
+
+        var missing = ConformanceMatrixValidator.Validate(matrix, operations);
+
+        Assert.Contains(
+            missing,
+            error => error.Contains(
+                "must explicitly declare DynamoDB workload-profile applicability",
+                StringComparison.Ordinal));
+
+        scenario.Profiles = ["not-a-profile"];
+        var unknown = ConformanceMatrixValidator.Validate(matrix, operations);
+        Assert.Contains(
+            unknown,
+            error => error.Contains(
+                "unknown DynamoDB profile 'not-a-profile'",
+                StringComparison.Ordinal));
+    }
+
     private static (RealAzureConformanceMatrix Matrix, IReadOnlyList<OperationDoc> Operations) ValidMatrix()
     {
         var matrix = new RealAzureConformanceMatrix
@@ -136,6 +162,9 @@ public sealed class ConformanceMatrixTests
                         EvidenceSource = "real_azure",
                         EstablishesVerification = true,
                         Description = "Core operation.",
+                        Profiles = service == "dynamodb"
+                            ? ["dynamodb-basic-crud"]
+                            : [],
                         Operations = ["KnownOperation"],
                         Tests = [$"Aws2Azure.IntegrationTests.{service}.Tests.Known_test"]
                     }

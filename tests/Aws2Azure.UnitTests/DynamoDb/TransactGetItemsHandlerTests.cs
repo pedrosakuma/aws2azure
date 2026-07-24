@@ -253,6 +253,40 @@ public sealed class TransactGetItemsHandlerTests
     }
 
     [Fact]
+    public async Task Unused_projection_alias_is_rejected_before_metadata_io()
+    {
+        var handler = new ScriptedHandler();
+        var (context, body) = NewContext();
+
+        await RunAsync(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            """
+            {
+              "TransactItems": [{
+                "Get": {
+                  "TableName": "orders",
+                  "Key": { "pk": { "S": "a" }, "sk": { "S": "1" } },
+                  "ProjectionExpression": "#pk",
+                  "ExpressionAttributeNames": {
+                    "#pk": "pk",
+                    "#unused": "unused"
+                  }
+                }
+              }]
+            }
+            """);
+
+        AssertValidation(context, body, "#unused");
+        Assert.Contains(
+            "unused",
+            ReadResponse(body),
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
     public async Task Missing_table_returns_resource_not_found()
     {
         var handler = new ScriptedHandler

@@ -1,8 +1,13 @@
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
+using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
+using System.Net;
+using System.Text;
 using System.Text.Json;
 using Xunit;
+using TransactionHandler =
+    Aws2Azure.Modules.DynamoDb.Operations.TransactWriteItemsHandler;
 
 namespace Aws2Azure.IntegrationTests.DynamoDb;
 
@@ -556,34 +561,386 @@ public sealed class DynamoDbRealAzureTransactionTests(
     }
 
     [SkippableFact]
-    public async Task Scope_token_rejection_and_versioned_sprocs_survive_restart()
+    public async Task Official_sdk_auto_generated_token_reaches_success()
     {
         SkipUnlessConfigured();
         using var client = fixture.CreateDynamoDbClient();
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
         await WithTableAsync(client, async table =>
         {
-            var tokenRequest = new TransactWriteItemsRequest
+            var request = new TransactWriteItemsRequest
             {
-                ClientRequestToken = "explicit-token",
                 TransactItems =
                 [
-                    Put(table, "restart", "token", "must-not-commit"),
+                    new TransactWriteItem
+                    {
+                        Put = new Put
+                        {
+                            TableName = table,
+                            Item = Item(
+                                "sdk-auto-token",
+                                "target",
+                                "committed"),
+                            ConditionExpression =
+                                "attribute_not_exists(#value)",
+                            ExpressionAttributeNames = new()
+                            {
+                                ["#value"] = "value",
+                            },
+                        },
+                    },
                 ],
             };
-            var tokenError = await Assert.ThrowsAsync<AmazonDynamoDBException>(
-                () => client.TransactWriteItemsAsync(
-                    tokenRequest,
+
+            await client.TransactWriteItemsAsync(request, timeout.Token);
+
+            Assert.True(await ExistsAsync(
+                client,
+                table,
+                "sdk-auto-token",
+                "target",
+                timeout.Token));
+        }, timeout.Token);
+    }
+
+    [SkippableFact]
+    public async Task Explicit_token_replay_mismatch_concurrency_cancellation_and_restart_are_durable()
+    {
+        SkipUnlessConfigured();
+        using var client = fixture.CreateDynamoDbClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(4));
+        await WithTableAsync(client, async table =>
+        {
+            const string partition = "idempotency";
+            var replayToken = "raw-replay-" + Guid.NewGuid().ToString("N")[..20];
+            var firstBody = BuildRawIdempotentPut(
+                table,
+                partition,
+                "replay",
+                replayToken,
+                "1.0",
+                reordered: false);
+            var equivalentBody = BuildRawIdempotentPut(
+                table,
+                partition,
+                "replay",
+                replayToken,
+                "1",
+                reordered: true);
+
+            var first = await SendRawAsync(
+                "TransactWriteItems",
+                firstBody,
+                timeout.Token);
+            Assert.Equal(HttpStatusCode.OK, first.Status);
+            var replay = await SendRawAsync(
+                "TransactWriteItems",
+                equivalentBody,
+                timeout.Token);
+            Assert.Equal(HttpStatusCode.OK, replay.Status);
+            var replayedItem = await ReadItemAsync(
+                client,
+                table,
+                partition,
+                "replay",
+                timeout.Token);
+            Assert.Equal("committed", replayedItem["marker"].S);
+            Assert.Equal("1", replayedItem["value"].N);
+
+            var mismatch = await SendRawAsync(
+                "TransactWriteItems",
+                BuildRawIdempotentPut(
+                    table,
+                    partition,
+                    "replay",
+                    replayToken,
+                    "2",
+                    reordered: false),
+                timeout.Token);
+            Assert.Equal(HttpStatusCode.BadRequest, mismatch.Status);
+            using (var mismatchDocument = JsonDocument.Parse(mismatch.Body))
+            {
+                Assert.Equal(
+                    "com.amazonaws.dynamodb.v20120810#IdempotentParameterMismatchException",
+                    mismatchDocument.RootElement.GetProperty("__type").GetString());
+            }
+
+            var concurrentToken =
+                "raw-concurrent-" + Guid.NewGuid().ToString("N")[..17];
+            var concurrentBody = BuildRawIdempotentPut(
+                table,
+                partition,
+                "concurrent",
+                concurrentToken,
+                "1",
+                reordered: false);
+            var concurrent = await Task.WhenAll(
+                SendRawAsync(
+                    "TransactWriteItems",
+                    concurrentBody,
+                    timeout.Token),
+                SendRawAsync(
+                    "TransactWriteItems",
+                    concurrentBody,
                     timeout.Token));
-            Assert.Equal("ValidationException", tokenError.ErrorCode);
-            Assert.Contains("ClientRequestToken", tokenError.Message);
+            Assert.All(
+                concurrent,
+                response => Assert.Equal(HttpStatusCode.OK, response.Status));
+            Assert.True(await ExistsAsync(
+                client,
+                table,
+                partition,
+                "concurrent",
+                timeout.Token));
+
+            await PutAsync(client, table, partition, "gate", new()
+            {
+                ["state"] = S("closed"),
+            }, timeout.Token);
+            var cancellationToken =
+                "raw-canceled-" + Guid.NewGuid().ToString("N")[..19];
+            var cancellationBody = $$"""
+                {
+                  "ClientRequestToken": "{{cancellationToken}}",
+                  "TransactItems": [
+                    {
+                      "ConditionCheck": {
+                        "TableName": "{{table}}",
+                        "Key": {
+                          "pk": { "S": "{{partition}}" },
+                          "sk": { "S": "gate" }
+                        },
+                        "ConditionExpression": "#state = :open",
+                        "ExpressionAttributeNames": { "#state": "state" },
+                        "ExpressionAttributeValues": {
+                          ":open": { "S": "open" }
+                        }
+                      }
+                    },
+                    {
+                      "Put": {
+                        "TableName": "{{table}}",
+                        "Item": {
+                          "pk": { "S": "{{partition}}" },
+                          "sk": { "S": "canceled-peer" },
+                          "marker": { "S": "must-not-commit" }
+                        }
+                      }
+                    }
+                  ]
+                }
+                """;
+            var canceled = await SendRawAsync(
+                "TransactWriteItems",
+                cancellationBody,
+                timeout.Token);
+            Assert.Equal(HttpStatusCode.BadRequest, canceled.Status);
+            Assert.Contains(
+                "TransactionCanceledException",
+                canceled.Body,
+                StringComparison.Ordinal);
+            await PutAsync(client, table, partition, "gate", new()
+            {
+                ["state"] = S("open"),
+            }, timeout.Token);
+            var canceledReplay = await SendRawAsync(
+                "TransactWriteItems",
+                cancellationBody,
+                timeout.Token);
+            Assert.Equal(HttpStatusCode.BadRequest, canceledReplay.Status);
+            Assert.Contains(
+                "TransactionCanceledException",
+                canceledReplay.Body,
+                StringComparison.Ordinal);
             Assert.False(await ExistsAsync(
                 client,
                 table,
-                "restart",
-                "token",
+                partition,
+                "canceled-peer",
                 timeout.Token));
 
+            var restartToken =
+                "raw-restart-" + Guid.NewGuid().ToString("N")[..20];
+            var restartBody = BuildRawIdempotentPut(
+                table,
+                partition,
+                "restart",
+                restartToken,
+                "1",
+                reordered: false);
+            await SendRawAndDiscardResponseAsync(
+                "TransactWriteItems",
+                restartBody,
+                timeout.Token);
+            Assert.True(await ExistsAsync(
+                client,
+                table,
+                partition,
+                "restart",
+                timeout.Token));
+
+            if (!string.IsNullOrWhiteSpace(fixture.CosmosMasterKey))
+            {
+                using var cosmos = new HttpClient();
+                using var tokenRecord = JsonDocument.Parse(
+                    await CosmosRestBootstrap.ReadDocumentAsync(
+                        cosmos,
+                        fixture.CosmosEndpoint,
+                        fixture.CosmosMasterKey,
+                        fixture.CosmosDatabase,
+                        table,
+                        TransactionHandler.BuildIdempotencyRecordId(
+                            replayToken),
+                        Convert.ToHexStringLower(
+                            Encoding.UTF8.GetBytes(partition))));
+                Assert.Equal(
+                    DynamoDbPersistedFormatContract
+                        .TransactionIdempotencyRecordDiscriminator,
+                    tokenRecord.RootElement.GetProperty("_a2a").GetString());
+                Assert.Equal(
+                    "success",
+                    tokenRecord.RootElement.GetProperty("outcome").GetString());
+                Assert.Equal(
+                    600_000,
+                    tokenRecord.RootElement.GetProperty("expiresAtMs").GetInt64()
+                    - tokenRecord.RootElement.GetProperty("createdAtMs").GetInt64());
+                Assert.Equal(
+                    660,
+                    tokenRecord.RootElement.GetProperty("ttl").GetInt32());
+            }
+
+            await fixture.RestartAsync();
+            var restartedReplay = await SendRawAsync(
+                "TransactWriteItems",
+                restartBody,
+                timeout.Token);
+            Assert.Equal(HttpStatusCode.OK, restartedReplay.Status);
+
+            var visible = await client.QueryAsync(
+                new QueryRequest
+                {
+                    TableName = table,
+                    KeyConditionExpression = "pk = :pk",
+                    ExpressionAttributeValues = new()
+                    {
+                        [":pk"] = S(partition),
+                    },
+                    ConsistentRead = true,
+                },
+                timeout.Token);
+            Assert.Equal(4, visible.Items.Count);
+            Assert.All(
+                visible.Items,
+                item =>
+                {
+                    Assert.Contains("pk", item.Keys);
+                    Assert.Contains("sk", item.Keys);
+                    Assert.DoesNotContain(
+                        item.Keys,
+                        name => name.StartsWith("_a2a", StringComparison.Ordinal));
+                });
+        }, timeout.Token);
+    }
+
+    [SkippableFact]
+    public async Task Projection_alias_and_in_operand_limits_reject_before_transaction_execution()
+    {
+        SkipUnlessConfigured();
+        using var client = fixture.CreateDynamoDbClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        await WithTableAsync(client, async table =>
+        {
+            await PutAsync(client, table, "validation", "target", new()
+            {
+                ["value"] = S("present"),
+            }, timeout.Token);
+
+            var sdkAliasError = await Assert.ThrowsAsync<AmazonDynamoDBException>(
+                () => client.TransactGetItemsAsync(
+                    new TransactGetItemsRequest
+                    {
+                        TransactItems =
+                        [
+                            new TransactGetItem
+                            {
+                                Get = new Get
+                                {
+                                    TableName = table,
+                                    Key = Key("validation", "target"),
+                                    ProjectionExpression = "#pk",
+                                    ExpressionAttributeNames = new()
+                                    {
+                                        ["#pk"] = "pk",
+                                        ["#unused"] = "unused",
+                                    },
+                                },
+                            },
+                        ],
+                    },
+                    timeout.Token));
+            Assert.Equal("ValidationException", sdkAliasError.ErrorCode);
+            Assert.Contains("#unused", sdkAliasError.Message);
+
+            var rawAlias = await SendRawAsync(
+                "TransactGetItems",
+                $$"""
+                {
+                  "TransactItems": [{
+                    "Get": {
+                      "ExpressionAttributeNames": {
+                        "#unused": "unused",
+                        "#pk": "pk"
+                      },
+                      "Key": {
+                        "sk": { "S": "target" },
+                        "pk": { "S": "validation" }
+                      },
+                      "ProjectionExpression": "#pk",
+                      "TableName": "{{table}}"
+                    }
+                  }]
+                }
+                """,
+                timeout.Token);
+            Assert.Equal(HttpStatusCode.BadRequest, rawAlias.Status);
+            Assert.Contains("#unused", rawAlias.Body);
+
+            var expression = new StringBuilder("value IN (");
+            var values = new StringBuilder();
+            for (var index = 0;
+                 index <= ConditionExpressionParser.MaxInOperands;
+                 index++)
+            {
+                if (index > 0)
+                {
+                    expression.Append(',');
+                    values.Append(',');
+                }
+                expression.Append(":v").Append(index);
+                values.Append("\":v").Append(index).Append("\":{\"S\":\"x\"}");
+            }
+            expression.Append(')');
+            var inLimit = await SendRawAsync(
+                "TransactWriteItems",
+                "{\"TransactItems\":[{\"ConditionCheck\":{\"TableName\":\""
+                + table + "\",\"Key\":{\"pk\":{\"S\":\"validation\"},"
+                + "\"sk\":{\"S\":\"target\"}},\"ConditionExpression\":\""
+                + expression + "\",\"ExpressionAttributeValues\":{"
+                + values + "}}}]}",
+                timeout.Token);
+            Assert.Equal(HttpStatusCode.BadRequest, inLimit.Status);
+            Assert.Contains("at most 100", inLimit.Body);
+        }, timeout.Token);
+    }
+
+    [SkippableFact]
+    public async Task Scope_and_versioned_sprocs_survive_restart()
+    {
+        SkipUnlessConfigured();
+        using var client = fixture.CreateDynamoDbClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        await WithTableAsync(client, async table =>
+        {
             var scopeRequest = new TransactWriteItemsRequest
             {
                 TransactItems =
@@ -657,20 +1014,6 @@ public sealed class DynamoDbRealAzureTransactionTests(
                 ],
             }, timeout.Token);
 
-            var restartedTokenError =
-                await Assert.ThrowsAsync<AmazonDynamoDBException>(
-                () => client.TransactWriteItemsAsync(
-                    tokenRequest,
-                    timeout.Token));
-            Assert.Equal(
-                "ValidationException",
-                restartedTokenError.ErrorCode);
-            Assert.False(await ExistsAsync(
-                client,
-                table,
-                "restart",
-                "token",
-                timeout.Token));
             var restartedScopeError =
                 await Assert.ThrowsAsync<AmazonDynamoDBException>(
                     () => client.TransactWriteItemsAsync(
@@ -695,7 +1038,7 @@ public sealed class DynamoDbRealAzureTransactionTests(
     }
 
     [SkippableFact]
-    public async Task Conflicting_v3_sproc_body_fails_closed_and_is_restored_in_isolated_table()
+    public async Task Conflicting_v4_sproc_body_fails_closed_and_is_restored_in_isolated_table()
     {
         SkipUnlessConfigured();
         Skip.If(
@@ -814,6 +1157,95 @@ public sealed class DynamoDbRealAzureTransactionTests(
                 }
             }
         }, timeout.Token);
+    }
+
+    private async Task<RawResponse> SendRawAsync(
+        string operation,
+        string body,
+        CancellationToken cancellationToken)
+    {
+        using var http = new HttpClient();
+        using var request = DynamoDbRequestBuilder.Build(
+            operation,
+            body,
+            RealAzureProxyFixture.AwsAccessKey,
+            RealAzureProxyFixture.AwsSecret,
+            new Uri(fixture.GetServiceUrl("dynamodb")));
+        using var response = await http.SendAsync(
+            request,
+            cancellationToken);
+        return new RawResponse(
+            response.StatusCode,
+            await response.Content.ReadAsStringAsync(cancellationToken));
+    }
+
+    private async Task SendRawAndDiscardResponseAsync(
+        string operation,
+        string body,
+        CancellationToken cancellationToken)
+    {
+        using var http = new HttpClient();
+        using var request = DynamoDbRequestBuilder.Build(
+            operation,
+            body,
+            RealAzureProxyFixture.AwsAccessKey,
+            RealAzureProxyFixture.AwsSecret,
+            new Uri(fixture.GetServiceUrl("dynamodb")));
+        using var response = await http.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+    }
+
+    private static string BuildRawIdempotentPut(
+        string table,
+        string partition,
+        string sort,
+        string token,
+        string number,
+        bool reordered)
+    {
+        if (!reordered)
+        {
+            return $$"""
+                {
+                  "ClientRequestToken": "{{token}}",
+                  "TransactItems": [{
+                    "Put": {
+                      "TableName": "{{table}}",
+                      "Item": {
+                        "pk": { "S": "{{partition}}" },
+                        "sk": { "S": "{{sort}}" },
+                        "value": { "N": "{{number}}" },
+                        "marker": { "S": "committed" }
+                      },
+                      "ConditionExpression": "attribute_not_exists(#marker)",
+                      "ExpressionAttributeNames": { "#marker": "marker" }
+                    }
+                  }]
+                }
+                """;
+        }
+
+        return $$"""
+            {
+              "ReturnConsumedCapacity": "NONE",
+              "TransactItems": [{
+                "Put": {
+                  "ExpressionAttributeNames": { "#m": "marker" },
+                  "ConditionExpression": "attribute_not_exists(#m)",
+                  "Item": {
+                    "marker": { "S": "committed" },
+                    "value": { "N": "{{number}}" },
+                    "sk": { "S": "{{sort}}" },
+                    "pk": { "S": "{{partition}}" }
+                  },
+                  "TableName": "{{table}}"
+                }
+              }],
+              "ClientRequestToken": "{{token}}"
+            }
+            """;
     }
 
     private void SkipUnlessConfigured()
@@ -1086,4 +1518,8 @@ public sealed class DynamoDbRealAzureTransactionTests(
     }
 
     private static AttributeValue S(string value) => new() { S = value };
+
+    private readonly record struct RawResponse(
+        HttpStatusCode Status,
+        string Body);
 }

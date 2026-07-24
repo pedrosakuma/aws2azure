@@ -51,6 +51,12 @@ internal sealed class SprocTransactResult
 
     public string? ValidationError { get; init; }
 
+    /// <summary>
+    /// The token exists inside the active idempotency window but its canonical
+    /// request fingerprint differs from this request.
+    /// </summary>
+    public bool IdempotencyMismatch { get; init; }
+
     /// <summary>HTTP status when the sproc call itself failed (non-2xx).</summary>
     public int StatusCode { get; init; }
 

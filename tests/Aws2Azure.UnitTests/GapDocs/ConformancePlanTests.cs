@@ -138,6 +138,63 @@ public sealed class ConformancePlanTests
             json.RootElement.GetProperty("test_projects")[0].GetProperty("project").GetString());
     }
 
+    [Fact]
+    public void DynamoDb_profiles_have_distinct_pinned_sets_hashes_and_configuration()
+    {
+        var matrix = ConformanceMatrixLoader.Load(Path.Combine(
+            RepositoryRoot(),
+            "docs",
+            "testing",
+            "real-azure-conformance.yaml"));
+        var basic = ConformancePlanGenerator.Generate(
+            matrix,
+            service: "dynamodb",
+            profile: "dynamodb-basic-crud");
+        var query = ConformancePlanGenerator.Generate(
+            matrix,
+            service: "dynamodb",
+            profile: "dynamodb-query-scan-indexes");
+        var transactions = ConformancePlanGenerator.Generate(
+            matrix,
+            service: "dynamodb",
+            profile: "dynamodb-single-partition-transactions");
+
+        Assert.Equal(
+            "sha256:c671f906e554de38de51d16e3373a0db03176b0a86220a13ca080fa42b70ac2e",
+            basic.ScenarioSetSha256);
+        Assert.Equal(
+            "sha256:72a44543a87d9eb1553d598c4b1aa8e9c1034e69115d9553dfeeca45af78dd21",
+            query.ScenarioSetSha256);
+        Assert.Equal(
+            "sha256:fe3b80790402fcf8b9a9dc04b5363d2577773751b222c79aa942e662ed433c18",
+            transactions.ScenarioSetSha256);
+        Assert.Equal("Disabled", basic.Configuration.DynamoDbStoredProcedureMode);
+        Assert.Equal("Disabled", query.Configuration.DynamoDbStoredProcedureMode);
+        Assert.Equal(
+            "Preferred",
+            transactions.Configuration.DynamoDbStoredProcedureMode);
+        Assert.DoesNotContain(
+            basic.Scenarios,
+            scenario => scenario.Id.StartsWith(
+                "transaction-",
+                StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            query.Scenarios,
+            scenario => scenario.Id.StartsWith(
+                "transaction-",
+                StringComparison.Ordinal));
+        Assert.All(
+            transactions.Scenarios,
+            scenario =>
+            {
+                Assert.StartsWith(
+                    "transaction-",
+                    scenario.Id,
+                    StringComparison.Ordinal);
+                Assert.True(scenario.RequiresDynamoDbStoredProcedures);
+            });
+    }
+
     private static RealAzureConformanceMatrix Matrix() => new()
     {
         SchemaVersion = 1,
@@ -217,4 +274,19 @@ public sealed class ConformancePlanTests
             }
         ]
     };
+
+    private static string RepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "aws2azure.slnx")))
+            {
+                return directory.FullName;
+            }
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not find repository root.");
+    }
 }

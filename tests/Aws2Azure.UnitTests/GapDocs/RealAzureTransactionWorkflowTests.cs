@@ -31,6 +31,12 @@ public sealed class RealAzureTransactionWorkflowTests
         "Aws2Azure.IntegrationTests",
         "DynamoDb",
         "DynamoDbRealAzureTransactionQualificationTests.cs"));
+    private static readonly string RealAzureFixtureSource = File.ReadAllText(Path.Combine(
+        RepositoryRoot,
+        "tests",
+        "Aws2Azure.IntegrationTests",
+        "Fixtures",
+        "RealAzureProxyFixture.cs"));
 
     [Fact]
     public void Transaction_profile_is_discoverable_and_records_rollback_blocker()
@@ -101,7 +107,7 @@ public sealed class RealAzureTransactionWorkflowTests
             Matrix,
             StringComparison.Ordinal);
         Assert.Contains(
-            "DynamoDbRealAzureTransactionTests.Conflicting_v3_sproc_body_fails_closed_and_is_restored_in_isolated_table",
+            "DynamoDbRealAzureTransactionTests.Conflicting_v4_sproc_body_fails_closed_and_is_restored_in_isolated_table",
             Matrix,
             StringComparison.Ordinal);
         Assert.Contains(
@@ -119,6 +125,39 @@ public sealed class RealAzureTransactionWorkflowTests
         Assert.False(
             File.Exists(BaselinePath),
             "An incompatible runtime must not be recorded as the transaction rollback baseline.");
+    }
+
+    [Fact]
+    public void Conformance_plan_drives_profile_specific_sproc_configuration()
+    {
+        Assert.Contains(
+            "--profile \"$QUALIFICATION_PROFILE\"",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            ".configuration.dynamo_db_stored_procedure_mode",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "AWS2AZURE_DDB_STORED_PROCEDURE_MODE=$ddb_sproc_mode",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "AWS2AZURE_DDB_STORED_PROCEDURE_MODE",
+            RealAzureFixtureSource,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "mode == \"Preferred\"",
+            RealAzureFixtureSource,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "dynamodb-basic-crud)\n",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "dynamodb-single-partition-transactions)\n",
+            Workflow,
+            StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()

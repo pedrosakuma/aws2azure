@@ -190,7 +190,7 @@ jobs:
             qualifying=true
             runtime_mode=candidate
             if [ "$profile" = dynamodb-single-partition-transactions ]; then
-              rollback_blocker="Transaction rollback qualification is blocked until a trusted prior release implements the same atomic snapshot, validation, and ClientRequestToken-rejection contract."
+              rollback_blocker="Transaction rollback qualification is blocked until a trusted prior release implements the same atomic snapshot, validation, and durable ClientRequestToken contract."
               echo "::warning::$rollback_blocker"
               {
                 echo
@@ -316,6 +316,18 @@ jobs:
           dotnet exec tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll \
             plan-conformance "${args[@]}" --output "$CONFORMANCE_PLAN"
 
+          ddb_sproc_mode="$(
+            jq -er '.configuration.dynamo_db_stored_procedure_mode' "$CONFORMANCE_PLAN"
+          )"
+          case "$ddb_sproc_mode" in
+            Disabled|Preferred) ;;
+            *)
+              echo "::error::Unsupported planned DynamoDB stored-procedure mode: $ddb_sproc_mode"
+              exit 1
+              ;;
+          esac
+          echo "AWS2AZURE_DDB_STORED_PROCEDURE_MODE=$ddb_sproc_mode" >> "$GITHUB_ENV"
+
           requires_real_azure="$(
             jq -r 'any(.scenarios[]; .evidence_source == "real_azure")' "$CONFORMANCE_PLAN"
           )"
@@ -334,6 +346,8 @@ jobs:
             echo "- Service: \`$SELECTED_SERVICE\`"
             echo "- Scenario: \`${SELECTED_SCENARIO:-all}\`"
             echo "- Scenarios: $(jq '.scenarios | length' "$CONFORMANCE_PLAN")"
+            echo "- Scenario set: \`$(jq -r '.scenario_set_sha256' "$CONFORMANCE_PLAN")\`"
+            echo "- DynamoDB stored procedures: \`$ddb_sproc_mode\`"
             echo "- Requires real Azure: \`$requires_real_azure\`"
             echo "- Enforce positive real-Azure evidence: \`$require_real_azure\`"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -409,6 +423,7 @@ jobs:
             --arg schema_version "1" \
             --arg git_sha "$(git rev-parse HEAD)" \
             --arg region "$AZURE_LOCATION" \
+            --arg dynamodb_stored_procedure_mode "$AWS2AZURE_DDB_STORED_PROCEDURE_MODE" \
             --arg matrix_sha256 "$(sha256sum docs/testing/real-azure-conformance.yaml | cut -d' ' -f1)" \
             --arg bicep_sha256 "$(sha256sum deploy/realazure/main.bicep | cut -d' ' -f1)" \
             --arg workflow_sha256 "$(sha256sum .github/workflows/integration-real-azure.yml | cut -d' ' -f1)" \
@@ -419,7 +434,8 @@ jobs:
               topology: "ephemeral-per-run",
               inputs: {
                 cosmos_database: "dynamodb",
-                event_hub: "kinesis-smoke"
+                event_hub: "kinesis-smoke",
+                dynamodb_stored_procedure_mode: $dynamodb_stored_procedure_mode
               },
               source_digests: {
                 conformance_matrix: ("sha256:" + $matrix_sha256),

@@ -1,7 +1,7 @@
 # Initial policy for the production-shaped single-partition transaction
 # workload. Rollback qualification is intentionally blocked: no trusted prior
 # release implements this profile's atomic snapshot, validation, and
-# ClientRequestToken-rejection contract. The adjacent-runtime scenario must be
+# durable ClientRequestToken contract. The adjacent-runtime scenario must be
 # recorded as skipped/inconclusive until such a release is approved.
 schema_version: 1
 profile_id: dynamodb-single-partition-transactions
@@ -64,7 +64,7 @@ scenarios:
     operation: TransactWriteItems
     evidence_source: real_azure
     signals: []
-  - id: transaction-idempotency-rejection
+  - id: transaction-idempotency
     service: dynamodb
     operation: TransactWriteItems
     evidence_source: real_azure

@@ -204,6 +204,12 @@
       {
         "code": "sub_feature_real_azure_seal_missing",
         "disposition": "blocking",
+        "subject": "dynamodb:TransactWriteItems#ClientRequestToken (idempotency)",
+        "message": "Required backend-specific sub-feature has no real-Azure verification seal."
+      },
+      {
+        "code": "sub_feature_real_azure_seal_missing",
+        "disposition": "blocking",
         "subject": "dynamodb:TransactWriteItems#ConditionExpression transaction subset",
         "message": "Required backend-specific sub-feature has no real-Azure verification seal."
       },

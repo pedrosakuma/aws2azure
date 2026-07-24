@@ -29,9 +29,12 @@ sub_features:
       workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/28566172080
     notes: >-
       Top-level attributes, aliases, and nested projection paths are applied
-      positionally after the server-side snapshot. The historical seal covers
-      projection behavior; the new snapshot sub-feature requires its own fresh
-      real-Azure seal before the transaction profile can advance.
+      positionally after the server-side snapshot. Every declared
+      ExpressionAttributeNames alias must be consumed; leftovers fail with
+      ValidationException before table metadata or stored-procedure I/O. The
+      historical seal covers projection behavior; the new snapshot/validation
+      contract requires fresh real-Azure evidence before the transaction profile
+      can advance.
   - name: ReturnConsumedCapacity
     status: unsupported
     notes: >-

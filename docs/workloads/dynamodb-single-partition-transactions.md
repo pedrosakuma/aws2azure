@@ -32,7 +32,7 @@ or count-mismatched 2xx script response fails closed.
 
 ## Certified write and condition contract
 
-`TransactWriteItems` invokes `atomicTransactWrite_v3` for `Put`, `Delete`, and
+`TransactWriteItems` invokes `atomicTransactWrite_v4` for `Put`, `Delete`, and
 `ConditionCheck`. `Update` is unsupported. The accepted condition subset is:
 
 - `AND`, `OR`, `NOT`;
@@ -64,30 +64,48 @@ consumed by the condition.
 
 Cancellation reasons are exact and positional. Legacy `Expected` /
 `ConditionalOperator`, `ReturnValuesOnConditionCheckFailure`, non-`NONE`
-capacity/collection metrics, and `ClientRequestToken` string values are rejected
-rather than ignored. Durable idempotent replay is therefore an explicit gap.
+capacity/collection metrics are rejected rather than ignored.
+
+`ClientRequestToken` accepts DynamoDB's 1–36 character range. The v4 script
+commits a proxy-reserved token record in the same logical partition and Cosmos
+transaction as the user writes. A canonical semantic fingerprint resolves
+expression aliases, normalizes numbers and base64, sorts map properties and set
+members, and preserves transaction operation order. Equivalent retries,
+including retries after a discarded response or process restart, replay the
+original success or condition-cancellation reasons without applying writes
+again. A changed request in the active window returns
+`IdempotentParameterMismatchException`. Cosmos server time defines the exact
+10-minute window; records carry created/expiry timestamps, native ttl, and a
+bounded partition-local cleanup fallback. Preflight/script validation failures
+are not cached. Because Cosmos cannot atomically coordinate two logical
+partitions, this contract is scoped to the profile's supported single-partition
+boundary; do not reuse one token for a different partition.
 
 ## Versioning and rollback
 
-`atomicWrite_v2` remains byte-identical. `atomicTransactWrite_v2` and its hash
-remain in persisted-format inventory version 2 for the adjacent-runtime rollback
-span; the candidate adds `atomicTransactWrite_v3` and `atomicTransactGet_v1`.
+`atomicWrite_v2`, `atomicTransactWrite_v2`, and `atomicTransactWrite_v3` remain
+byte-identical with their frozen hashes. Persisted-format inventory version 3
+adds `atomicTransactWrite_v4`, the internal idempotency-record v1 format, and
+retains `atomicTransactGet_v1`.
 Provisioning accepts HTTP 409 only after reading and matching the exact stored
 body, so an accidental same-id body conflict cannot be treated as available.
 The availability cache is scoped to account/database/container and is cleared
 on table lifecycle; an execution 404 evicts and reprovisions once. Transaction
-write execution disables proxy-level automatic retries because a lost response
-is ambiguous until durable `ClientRequestToken` deduplication exists.
+write execution retains the no-automatic-retry transport option. Token-bearing
+requests retry only Cosmos write-conflict statuses once; explicit caller retries
+after any ambiguous response replay the durable outcome. Tokenless writes remain
+non-retried.
 
 The real-Azure source suite covers atomic write rollback, snapshot coherence,
-condition/cancellation behavior, contention, scope and token rejection, process
+condition/cancellation behavior, contention, scope, durable token replay,
+mismatch/concurrency/cancellation behavior, process
 restart, and an isolated same-ID conflicting-body probe that exercises the real
-Cosmos 409/read/verify path and restores the exact v3 body. No new seal is
+Cosmos 409/read/verify path and restores the exact v4 body. No new seal is
 committed without an actual workflow run containing those tests.
 
 There is deliberately no approved-runtime ledger for this profile. The
 previously proposed v2 runtime performs independent transaction reads and does
-not enforce the profile's `ClientRequestToken` rejection contract, so it is not
+not implement the profile's durable `ClientRequestToken` contract, so it is not
 a valid bootstrap or rollback target. A sealed workflow run is candidate-only
 and rollout-only: the adjacent-runtime rows skip with the recorded compatibility
 blocker, workload generation must emit `inconclusive`, and the workflow must not
