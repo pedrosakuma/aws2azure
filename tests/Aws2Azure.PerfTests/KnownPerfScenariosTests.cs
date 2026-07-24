@@ -74,6 +74,8 @@ public sealed partial class KnownPerfScenariosTests
         "dynamodb.BatchWriteItem (25 items)",
         "dynamodb.BatchGetItem (25 items)",
         "dynamodb.BatchGetItem (large items)",
+        "dynamodb.TransactGetItems (10 items, single partition)",
+        "dynamodb.TransactWriteItems (5 puts, single partition)",
         "dynamodb.UpdateItem (SET expression)",
         "dynamodb.DeleteItem (idempotent)",
         "dynamodb.CosmosJsonParse (synthetic page)",

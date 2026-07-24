@@ -24,8 +24,300 @@ namespace Aws2Azure.Modules.DynamoDb.Internal;
 /// </summary>
 internal static class SprocEligibility
 {
+    private enum TransactionScalarKind
+    {
+        String,
+        Number,
+        Boolean,
+        Null,
+    }
+
     public static bool IsEligible(ConditionNode? condition, UpdateExpressionAst? update)
         => IsConditionEligible(condition) && IsUpdateEligible(update);
+
+    /// <summary>
+    /// Validates the exact condition subset interpreted by
+    /// <c>atomicTransactWrite_v3</c>. Transactional writes have no in-process
+    /// fallback, so every unsupported shape fails before the stored procedure is
+    /// invoked instead of risking divergent server-side evaluation.
+    /// </summary>
+    public static bool TryValidateTransactionCondition(
+        ConditionNode? condition,
+        out string? error)
+    {
+        error = null;
+        return ValidateTransactionCondition(condition, ref error);
+    }
+
+    private static bool ValidateTransactionCondition(
+        ConditionNode? node,
+        ref string? error)
+    {
+        switch (node)
+        {
+            case null:
+                return true;
+            case AndCondition and:
+                return ValidateTransactionCondition(and.Left, ref error)
+                    && ValidateTransactionCondition(and.Right, ref error);
+            case OrCondition or:
+                return ValidateTransactionCondition(or.Left, ref error)
+                    && ValidateTransactionCondition(or.Right, ref error);
+            case NotCondition not:
+                return ValidateTransactionCondition(not.Inner, ref error);
+            case CompareCondition compare:
+                if (!TryGetTransactionComparisonOperands(
+                        compare.Left,
+                        compare.Right,
+                        out var compareKind,
+                        ref error))
+                {
+                    return false;
+                }
+                if (compare.Op is not (CompareOp.Equal or CompareOp.NotEqual)
+                    && compareKind != TransactionScalarKind.String)
+                {
+                    error = "Transactional ordered comparisons support strings only; numbers are limited to equality, not-equal, and IN.";
+                    return false;
+                }
+                return true;
+            case BetweenCondition between:
+                if (!TryGetTransactionPath(between.Value, out _, ref error)
+                    || !TryGetTransactionScalar(between.Lower, out var lowerKind, ref error)
+                    || !TryGetTransactionScalar(between.Upper, out var upperKind, ref error))
+                {
+                    return false;
+                }
+                if (lowerKind != upperKind
+                    || lowerKind != TransactionScalarKind.String)
+                {
+                    error = "Transactional BETWEEN supports string bounds only.";
+                    return false;
+                }
+                return true;
+            case InCondition @in:
+                if (!TryGetTransactionPath(@in.Value, out _, ref error)
+                    || @in.Set.Count == 0)
+                {
+                    error ??= "Transactional IN requires a top-level attribute path and at least one scalar value.";
+                    return false;
+                }
+                TransactionScalarKind? inKind = null;
+                foreach (var operand in @in.Set)
+                {
+                    if (!TryGetTransactionScalar(operand, out var candidateKind, ref error))
+                    {
+                        return false;
+                    }
+                    if (inKind is null)
+                    {
+                        inKind = candidateKind;
+                    }
+                    else if (inKind.Value != candidateKind)
+                    {
+                        error = "Transactional IN values must all have the same scalar type.";
+                        return false;
+                    }
+                }
+                return true;
+            case AttributeExistsCondition exists:
+                return TryValidateTransactionPath(exists.Path, ref error);
+            case AttributeNotExistsCondition notExists:
+                return TryValidateTransactionPath(notExists.Path, ref error);
+            case BeginsWithCondition begins:
+                if (!TryGetTransactionPath(begins.Path, out _, ref error)
+                    || !TryGetTransactionScalar(begins.Prefix, out var prefixKind, ref error))
+                {
+                    return false;
+                }
+                if (prefixKind != TransactionScalarKind.String)
+                {
+                    error = "Transactional begins_with requires a string prefix.";
+                    return false;
+                }
+                return true;
+            case AttributeTypeCondition type:
+                if (!TryValidateTransactionPath(type.Path, ref error)
+                    || !TryReadTypeTag(type.TypeTag.Value, out var typeTag))
+                {
+                    error ??= "Transactional attribute_type requires a literal S, BOOL, or NULL type tag.";
+                    return false;
+                }
+                if (typeTag is not ("S" or "BOOL" or "NULL"))
+                {
+                    error = "Transactional attribute_type supports only S, BOOL, and NULL.";
+                    return false;
+                }
+                return true;
+            case ContainsCondition:
+                error = "contains() is not supported in transactional conditions.";
+                return false;
+            default:
+                error = "The ConditionExpression contains a node that is not supported in transactions.";
+                return false;
+        }
+    }
+
+    private static bool TryGetTransactionPath(
+        ConditionOperand operand,
+        out DocumentPath? path,
+        ref string? error)
+    {
+        if (operand is ConditionPathOperand pathOperand
+            && TryValidateTransactionPath(pathOperand.Path, ref error))
+        {
+            path = pathOperand.Path;
+            return true;
+        }
+
+        path = null;
+        error ??= "Transactional comparisons require a top-level attribute path on the left and a scalar value on the right.";
+        return false;
+    }
+
+    private static bool TryGetTransactionComparisonOperands(
+        ConditionOperand left,
+        ConditionOperand right,
+        out TransactionScalarKind kind,
+        ref string? error)
+    {
+        if (left is ConditionPathOperand leftPath)
+        {
+            if (!TryValidateTransactionPath(leftPath.Path, ref error))
+            {
+                kind = default;
+                return false;
+            }
+            return TryGetTransactionScalar(right, out kind, ref error);
+        }
+        if (right is ConditionPathOperand rightPath)
+        {
+            if (!TryValidateTransactionPath(rightPath.Path, ref error))
+            {
+                kind = default;
+                return false;
+            }
+            return TryGetTransactionScalar(left, out kind, ref error);
+        }
+
+        kind = default;
+        error =
+            "Transactional comparisons require exactly one top-level attribute path and one scalar value.";
+        return false;
+    }
+
+    private static bool TryValidateTransactionPath(
+        DocumentPath path,
+        ref string? error)
+    {
+        if (path.Segments.Count != 1
+            || path.Segments[0] is not AttributePathSegment attribute)
+        {
+            error = "Transactional conditions support top-level attribute paths only; nested and list-index paths are rejected.";
+            return false;
+        }
+        if (attribute.Name.IndexOf('.') >= 0)
+        {
+            error = "Transactional conditions do not support attribute names containing '.'.";
+            return false;
+        }
+        if (InferredAttributeStorage.IsReservedTopLevelName(attribute.Name))
+        {
+            error =
+                $"Transactional conditions cannot reference reserved attribute '{attribute.Name}'.";
+            return false;
+        }
+        if (InferredAttributeStorage.IsCosmosSystemField(attribute.Name))
+        {
+            error =
+                $"Transactional conditions cannot reference Cosmos system attribute '{attribute.Name}'.";
+            return false;
+        }
+        return true;
+    }
+
+    private static bool TryGetTransactionScalar(
+        ConditionOperand operand,
+        out TransactionScalarKind kind,
+        ref string? error)
+    {
+        if (operand is ConditionValueOperand value
+            && TryReadTransactionScalar(value.Value.Value, out kind))
+        {
+            return true;
+        }
+
+        kind = default;
+        error =
+            "Transactional condition values must be scalar S, BOOL, NULL, or JavaScript-safe N values; maps, lists, sets, binary, and unsafe numbers are rejected.";
+        return false;
+    }
+
+    private static bool TryReadTransactionScalar(
+        JsonElement attributeValue,
+        out TransactionScalarKind kind)
+    {
+        kind = default;
+        if (attributeValue.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        using var enumerator = attributeValue.EnumerateObject();
+        if (!enumerator.MoveNext())
+        {
+            return false;
+        }
+        var property = enumerator.Current;
+        if (enumerator.MoveNext())
+        {
+            return false;
+        }
+
+        switch (property.Name)
+        {
+            case "S" when property.Value.ValueKind == JsonValueKind.String:
+                kind = TransactionScalarKind.String;
+                return true;
+            case "N" when property.Value.ValueKind == JsonValueKind.String
+                && IsJsSafeNumber(property.Value.GetString()):
+                kind = TransactionScalarKind.Number;
+                return true;
+            case "BOOL" when property.Value.ValueKind is JsonValueKind.True or JsonValueKind.False:
+                kind = TransactionScalarKind.Boolean;
+                return true;
+            case "NULL" when property.Value.ValueKind == JsonValueKind.True:
+                kind = TransactionScalarKind.Null;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static bool TryReadTypeTag(JsonElement attributeValue, out string? typeTag)
+    {
+        typeTag = null;
+        if (attributeValue.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        using var enumerator = attributeValue.EnumerateObject();
+        if (!enumerator.MoveNext())
+        {
+            return false;
+        }
+        var property = enumerator.Current;
+        if (enumerator.MoveNext()
+            || property.Name != "S"
+            || property.Value.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        typeTag = property.Value.GetString();
+        return typeTag is not null;
+    }
 
     /// <summary>
     /// Finds the first condition path whose ROOT attribute is a reserved Cosmos

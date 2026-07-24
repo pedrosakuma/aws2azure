@@ -50,6 +50,18 @@ internal sealed class SprocTransactResult
     public string? ResponseBody { get; init; }
 }
 
+/// <summary>
+/// Result of an <c>atomicTransactGet</c> snapshot execution.
+/// </summary>
+internal sealed class SprocTransactGetResult
+{
+    public bool Attempted { get; init; }
+    public bool Success { get; init; }
+    public int StatusCode { get; init; }
+    public string? ErrorBody { get; init; }
+    public string? ResponseBody { get; init; }
+}
+
 internal sealed class SprocCreateBody
 {
     [System.Text.Json.Serialization.JsonPropertyName("id")]

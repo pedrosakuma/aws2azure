@@ -252,6 +252,8 @@ public sealed class DynamoDbPersistedFormatMigrationTests(
                 .ConfigureAwait(false);
             await PutFixtureItemAsync(candidate, table, "002", expiry, "candidate")
                 .ConfigureAwait(false);
+            await WriteTransactionPairAsync(candidate, table, "candidate")
+                .ConfigureAwait(false);
             var candidatePage = await QueryPageAsync(candidate, table, null)
                 .ConfigureAwait(false);
             Assert.NotEmpty(candidatePage.LastEvaluatedKey);
@@ -271,6 +273,10 @@ public sealed class DynamoDbPersistedFormatMigrationTests(
             previous = fixture.CreateDynamoDbClient(maxErrorRetry: 0);
 
             await AssertFixtureItemAsync(previous, table, "001", "candidate")
+                .ConfigureAwait(false);
+            await AssertTransactionPairAsync(previous, table, "candidate")
+                .ConfigureAwait(false);
+            await WriteTransactionPairAsync(previous, table, "previous")
                 .ConfigureAwait(false);
             var described = await previous.DescribeTableAsync(
                 new DescribeTableRequest { TableName = table }).ConfigureAwait(false);
@@ -366,6 +372,12 @@ public sealed class DynamoDbPersistedFormatMigrationTests(
                 .ConfigureAwait(false);
             await AssertFixtureItemAsync(candidate, table, "003", "previous")
                 .ConfigureAwait(false);
+            await AssertTransactionPairAsync(candidate, table, "previous")
+                .ConfigureAwait(false);
+            await WriteTransactionPairAsync(candidate, table, "candidate-restored")
+                .ConfigureAwait(false);
+            await AssertTransactionPairAsync(candidate, table, "candidate-restored")
+                .ConfigureAwait(false);
             var candidateDescription = await candidate.DescribeTableAsync(
                 new DescribeTableRequest { TableName = table }).ConfigureAwait(false);
             Assert.Contains(
@@ -451,6 +463,75 @@ public sealed class DynamoDbPersistedFormatMigrationTests(
             },
         }).ConfigureAwait(false);
     }
+
+    private static async Task WriteTransactionPairAsync(
+        AmazonDynamoDBClient client,
+        string table,
+        string writer)
+    {
+        await client.TransactWriteItemsAsync(new TransactWriteItemsRequest
+        {
+            TransactItems =
+            [
+                TransactionPut(table, "txn-left", writer),
+                TransactionPut(table, "txn-right", writer),
+            ],
+        }).ConfigureAwait(false);
+    }
+
+    private static async Task AssertTransactionPairAsync(
+        AmazonDynamoDBClient client,
+        string table,
+        string writer)
+    {
+        var response = await client.TransactGetItemsAsync(
+            new TransactGetItemsRequest
+            {
+                TransactItems =
+                [
+                    TransactionGet(table, "txn-left"),
+                    TransactionGet(table, "txn-right"),
+                ],
+            }).ConfigureAwait(false);
+        Assert.Equal(2, response.Responses.Count);
+        Assert.All(
+            response.Responses,
+            item => Assert.Equal(writer, item.Item["writer"].S));
+    }
+
+    private static TransactWriteItem TransactionPut(
+        string table,
+        string sortKey,
+        string writer)
+        => new()
+        {
+            Put = new Put
+            {
+                TableName = table,
+                Item = new Dictionary<string, AttributeValue>
+                {
+                    ["pk"] = new() { S = "partition-1" },
+                    ["sk"] = new() { S = sortKey },
+                    ["writer"] = new() { S = writer },
+                },
+            },
+        };
+
+    private static TransactGetItem TransactionGet(
+        string table,
+        string sortKey)
+        => new()
+        {
+            Get = new Get
+            {
+                TableName = table,
+                Key = new Dictionary<string, AttributeValue>
+                {
+                    ["pk"] = new() { S = "partition-1" },
+                    ["sk"] = new() { S = sortKey },
+                },
+            },
+        };
 
     private static string BuildLegacyDocument(JsonElement frozen, string futureExpiry)
     {

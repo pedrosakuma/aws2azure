@@ -148,6 +148,152 @@ internal sealed partial class SprocManager
     }
 """;
 
+    // Strict evaluator used only by atomicTransactWrite_v3. The frozen
+    // atomicWrite_v2 body above keeps its original evaluator and hash.
+    private const string TransactionConditionEvaluatorJs = """
+    function evaluateCondition(ast, doc) {
+        if (!ast) return true;
+        switch (ast.type) {
+            case 'AND':
+                return evaluateCondition(ast.left, doc) && evaluateCondition(ast.right, doc);
+            case 'OR':
+                return evaluateCondition(ast.left, doc) || evaluateCondition(ast.right, doc);
+            case 'NOT':
+                return !evaluateCondition(ast.operand, doc);
+            case 'COMPARE':
+                return evaluateCompare(ast, doc);
+            case 'BETWEEN':
+                return evaluateBetween(ast, doc);
+            case 'IN':
+                return evaluateIn(ast, doc);
+            case 'ATTR_EXISTS':
+                return hasAttr(doc, extractPath(ast.attr));
+            case 'ATTR_NOT_EXISTS':
+                return !hasAttr(doc, extractPath(ast.attr));
+            case 'ATTR_TYPE':
+                return checkAttrType(doc, extractPath(ast.attr), ast.attrType);
+            case 'BEGINS_WITH':
+                var str = readOperand(doc, ast.attr);
+                var prefix = readOperand(doc, ast.prefix);
+                return str.exists && prefix.exists
+                    && typeof str.value === 'string'
+                    && typeof prefix.value === 'string'
+                    && str.value.indexOf(prefix.value) === 0;
+            default:
+                throw new Error('Unsupported condition AST node: ' + ast.type);
+        }
+    }
+
+    function evaluateCompare(ast, doc) {
+        var left = readOperand(doc, ast.attr);
+        var right = readOperand(doc, ast.value);
+        if (!left.exists || !right.exists) {
+            return false;
+        }
+        if (ast.op === '=' || ast.op === 'EQ' || ast.op === '<>' || ast.op === 'NE') {
+            var equal = sameScalarType(left.value, right.value)
+                && left.value === right.value;
+            return (ast.op === '=' || ast.op === 'EQ') ? equal : !equal;
+        }
+        if (!sameScalarType(left.value, right.value)) return false;
+        switch (ast.op) {
+            case '<': case 'LT': return isOrdered(left.value) && left.value < right.value;
+            case '<=': case 'LE': return isOrdered(left.value) && left.value <= right.value;
+            case '>': case 'GT': return isOrdered(left.value) && left.value > right.value;
+            case '>=': case 'GE': return isOrdered(left.value) && left.value >= right.value;
+            default: throw new Error('Unsupported comparison operator: ' + ast.op);
+        }
+    }
+
+    function evaluateBetween(ast, doc) {
+        var value = readOperand(doc, ast.value);
+        var low = readOperand(doc, ast.low);
+        var high = readOperand(doc, ast.high);
+        return value.exists && low.exists && high.exists
+            && isOrdered(value.value)
+            && sameScalarType(value.value, low.value)
+            && sameScalarType(value.value, high.value)
+            && value.value >= low.value
+            && value.value <= high.value;
+    }
+
+    function evaluateIn(ast, doc) {
+        var value = readOperand(doc, ast.attr);
+        if (!value.exists) return false;
+        for (var i = 0; i < ast.values.length; i++) {
+            var candidate = readOperand(doc, ast.values[i]);
+            if (candidate.exists
+                && sameScalarType(value.value, candidate.value)
+                && value.value === candidate.value) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function readOperand(doc, operand) {
+        if (operand && typeof operand === 'object' && 'path' in operand) {
+            if (!hasAttr(doc, operand.path)) return { exists: false };
+            return { exists: true, value: getAttrValue(doc, operand.path) };
+        }
+        if (operand && typeof operand === 'object') {
+            throw new Error('Unsupported condition operand');
+        }
+        return { exists: true, value: operand };
+    }
+
+    function extractPath(operand) {
+        if (operand && typeof operand === 'object' && operand.path) return operand.path;
+        return operand;
+    }
+
+    function sameScalarType(left, right) {
+        if (left === null || right === null) return left === null && right === null;
+        var leftType = typeof left;
+        var rightType = typeof right;
+        if (leftType !== rightType) return false;
+        return leftType === 'string' || leftType === 'number' || leftType === 'boolean';
+    }
+
+    function isOrdered(value) {
+        return typeof value === 'string' || typeof value === 'number';
+    }
+
+    function getAttrValue(doc, path) {
+        if (!doc) return undefined;
+        var parts = path.split('.');
+        var cur = doc;
+        for (var i = 0; i < parts.length; i++) {
+            if (cur === null || cur === undefined) return undefined;
+            cur = cur[parts[i]];
+        }
+        return cur;
+    }
+
+    function hasAttr(doc, path) {
+        if (!doc) return false;
+        var parts = path.split('.');
+        var cur = doc;
+        for (var i = 0; i < parts.length; i++) {
+            if (cur === null || cur === undefined) return false;
+            if (!Object.prototype.hasOwnProperty.call(cur, parts[i])) return false;
+            cur = cur[parts[i]];
+        }
+        return true;
+    }
+
+    function checkAttrType(doc, path, expectedType) {
+        if (!hasAttr(doc, path)) return false;
+        var val = getAttrValue(doc, path);
+        switch (expectedType) {
+            case 'S': return typeof val === 'string';
+            case 'BOOL': return typeof val === 'boolean';
+            case 'NULL': return val === null;
+            default: throw new Error('Unsupported attribute_type tag: ' + expectedType);
+        }
+    }
+""";
+
     /// <summary>
     /// The JavaScript stored procedure body that executes atomic conditional writes.
     /// Handles PUT, UPDATE, and DELETE operations with optional condition evaluation.
@@ -424,7 +570,54 @@ function atomicTransactWrite(operations) {
         }
     }
 
-""" + ConditionEvaluatorJs + """
+""" + TransactionConditionEvaluatorJs + """
+}
+""";
+
+    /// <summary>
+    /// Read-only single-partition snapshot used by <c>TransactGetItems</c>.
+    /// Every query executes inside one Cosmos stored-procedure transaction, so
+    /// the returned positions observe one coherent committed snapshot.
+    /// </summary>
+    internal static readonly string TransactGetSprocBody = """
+function atomicTransactGet(documentIds) {
+    var ctx = getContext();
+    var coll = ctx.getCollection();
+    var resp = ctx.getResponse();
+    var selfLink = coll.getSelfLink();
+    var items = new Array(documentIds.length);
+
+    readNext(0);
+
+    function readNext(i) {
+        if (i >= documentIds.length) {
+            resp.setBody({ success: true, items: items });
+            return;
+        }
+
+        var query = {
+            query: 'SELECT * FROM c WHERE c.id = @id',
+            parameters: [{ name: '@id', value: documentIds[i] }]
+        };
+        var accepted = coll.queryDocuments(selfLink, query, {}, function(err, docs) {
+            if (err) throw err;
+            var item = (docs && docs.length > 0) ? docs[0] : null;
+            if (item) stripSystemFields(item);
+            items[i] = item;
+            readNext(i + 1);
+        });
+        if (!accepted) throw new Error('queryDocuments not accepted at position ' + i);
+    }
+
+    function stripSystemFields(doc) {
+        delete doc._rid;
+        delete doc._self;
+        delete doc._etag;
+        delete doc._ts;
+        delete doc._attachments;
+        delete doc._lsn;
+        delete doc._metadata;
+    }
 }
 """;
 }

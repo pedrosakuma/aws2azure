@@ -78,6 +78,7 @@ on:
           - secretsmanager-basic-lifecycle
           - dynamodb-basic-crud
           - dynamodb-query-scan-indexes
+          - dynamodb-single-partition-transactions
           - sqs-standard-messaging
           - sqs-dlq-redrive
           - sqs-fifo-amqp
@@ -161,7 +162,7 @@ jobs:
           if [ "$EVENT_NAME" = workflow_dispatch ] &&
              [ "$QUALIFICATION_PROFILE" != source-validation ]; then
             case "$QUALIFICATION_PROFILE:$SELECTED_SERVICE" in
-              s3-basic-object-crud:s3|secretsmanager-basic-lifecycle:secretsmanager|dynamodb-basic-crud:dynamodb|dynamodb-query-scan-indexes:dynamodb|sqs-standard-messaging:sqs|sqs-dlq-redrive:sqs|sqs-fifo-amqp:sqs|kinesis-single-consumer-per-shard:kinesis)
+              s3-basic-object-crud:s3|secretsmanager-basic-lifecycle:secretsmanager|dynamodb-basic-crud:dynamodb|dynamodb-query-scan-indexes:dynamodb|dynamodb-single-partition-transactions:dynamodb|sqs-standard-messaging:sqs|sqs-dlq-redrive:sqs|sqs-fifo-amqp:sqs|kinesis-single-consumer-per-shard:kinesis)
                 profile="$QUALIFICATION_PROFILE"
                 ;;
               *)

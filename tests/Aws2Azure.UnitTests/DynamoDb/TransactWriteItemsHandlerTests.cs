@@ -153,6 +153,29 @@ public class TransactWriteItemsHandlerTests
         Assert.Contains("exactly one", ReadResponse(body));
     }
 
+    [Theory]
+    [InlineData("""{"TransactItems":[{"Put":null}]}""", "Put must be an object")]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}}},"Delete":"invalid"}]}""",
+        "Delete must be an object")]
+    [InlineData("""{"TransactItems":[{"Update":null}]}""", "Update is not supported")]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}}},"Unknown":{}}]}""",
+        "unsupported action")]
+    public async Task Present_non_object_actions_are_rejected(
+        string request,
+        string expected)
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+
+        await Run(ctx, BuildClient(handler), EnabledSproc(), request);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains(expected, ReadResponse(body));
+        Assert.Empty(handler.Requests);
+    }
+
     [Fact]
     public async Task Cross_table_rejected()
     {
@@ -166,6 +189,7 @@ public class TransactWriteItemsHandlerTests
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("same table", ReadResponse(body));
+        Assert.Empty(handler.Requests);
     }
 
     [Fact]
@@ -181,6 +205,7 @@ public class TransactWriteItemsHandlerTests
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("partition-key", ReadResponse(body));
+        Assert.Single(handler.Requests);
     }
 
     [Fact]
@@ -195,6 +220,7 @@ public class TransactWriteItemsHandlerTests
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("multiple operations on one item", ReadResponse(body));
+        Assert.Single(handler.Requests);
     }
 
     [Fact]
@@ -228,6 +254,86 @@ public class TransactWriteItemsHandlerTests
         var resp = ReadResponse(body);
         Assert.Contains("ValidationException", resp);
         Assert.Contains("ttl", resp);
+    }
+
+    [Fact]
+    public async Task Client_request_token_is_rejected_instead_of_ignored()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+        var cosmos = BuildClient(handler);
+        var req = "{\"ClientRequestToken\":\"token-1\",\"TransactItems\":["
+            + PutOp("1") + "]}";
+
+        await Run(ctx, cosmos, EnabledSproc(), req);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        var response = ReadResponse(body);
+        Assert.Contains("ClientRequestToken", response);
+        Assert.Contains("durable", response);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}},"Expected":{"v":{"Exists":false}}}}]}""",
+        "Expected")]
+    [InlineData(
+        """{"TransactItems":[{"Delete":{"TableName":"orders","Key":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionalOperator":"AND"}}]}""",
+        "ConditionalOperator")]
+    [InlineData(
+        """{"TransactItems":[{"ConditionCheck":{"TableName":"orders","Key":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionExpression":"attribute_exists(pk)","ReturnValuesOnConditionCheckFailure":"ALL_OLD"}}]}""",
+        "ReturnValuesOnConditionCheckFailure")]
+    public async Task Legacy_and_unsupported_condition_members_are_rejected_before_cosmos(
+        string request,
+        string expected)
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+
+        await Run(ctx, BuildClient(handler), EnabledSproc(), request);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains(expected, ReadResponse(body));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionExpression":"m = :v","ExpressionAttributeValues":{":v":{"M":{"x":{"S":"y"}}}}}}]}""")]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionExpression":"xs = :v","ExpressionAttributeValues":{":v":{"L":[{"S":"y"}]}}}}]}""")]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionExpression":"blob = :v","ExpressionAttributeValues":{":v":{"B":"AQID"}}}}]}""")]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionExpression":"tags = :v","ExpressionAttributeValues":{":v":{"SS":["x"]}}}}]}""")]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionExpression":"n = :v","ExpressionAttributeValues":{":v":{"N":"9007199254740993"}}}}]}""")]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionExpression":"m.x = :v","ExpressionAttributeValues":{":v":{"S":"y"}}}}]}""")]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionExpression":"xs[0] = :v","ExpressionAttributeValues":{":v":{"S":"y"}}}}]}""")]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionExpression":"contains(xs, :v)","ExpressionAttributeValues":{":v":{"S":"y"}}}}]}""")]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionExpression":"size(xs) > :v","ExpressionAttributeValues":{":v":{"N":"0"}}}}]}""")]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionExpression":"v = other"}}]}""")]
+    public async Task Unsupported_transaction_condition_shapes_fail_before_sproc(
+        string request)
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetaPkSk) },
+        };
+
+        await Run(ctx, BuildClient(handler), EnabledSproc(), request);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        var response = ReadResponse(body);
+        Assert.Contains("supported transaction subset", response);
+        Assert.Single(handler.Requests);
     }
 
     [Fact]
@@ -268,7 +374,40 @@ public class TransactWriteItemsHandlerTests
         Assert.Equal(400, ctx.Response.StatusCode);
         var resp = ReadResponse(body);
         Assert.Contains("ValidationException", resp);
-        Assert.Contains("ExpressionAttributeValues", resp);
+        Assert.Contains("JavaScript-safe", resp);
+    }
+
+    [Fact]
+    public async Task Whitespace_condition_expression_is_rejected_not_dropped()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetaPkSk) },
+        };
+        var request =
+            """
+            {
+              "TransactItems": [
+                {
+                  "Put": {
+                    "TableName": "orders",
+                    "Item": {
+                      "pk": { "S": "a" },
+                      "sk": { "S": "1" }
+                    },
+                    "ConditionExpression": "   "
+                  }
+                }
+              ]
+            }
+            """;
+
+        await Run(ctx, BuildClient(handler), EnabledSproc(), request);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("must not be empty", ReadResponse(body));
+        Assert.Single(handler.Requests);
     }
 
     [Fact]
@@ -328,6 +467,61 @@ public class TransactWriteItemsHandlerTests
         Assert.Equal(2, reasons.GetArrayLength());
         Assert.Equal("None", reasons[0].GetProperty("Code").GetString());
         Assert.Equal("ConditionalCheckFailed", reasons[1].GetProperty("Code").GetString());
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"success\":true,\"reasons\":[]}")]
+    [InlineData("{\"success\":\"true\"}")]
+    public async Task Malformed_2xx_sproc_response_fails_closed(string response)
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaPkSk),
+                CosmosCreated(),
+                CosmosOk(response),
+            },
+        };
+
+        await Run(
+            ctx,
+            BuildClient(handler),
+            EnabledSproc(),
+            "{\"TransactItems\":[" + PutOp("1") + "]}");
+
+        Assert.Equal(500, ctx.Response.StatusCode);
+        Assert.Contains("malformed", ReadResponse(body), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("{\"success\":false,\"reasons\":[]}")]
+    [InlineData("{\"success\":false,\"reasons\":[{\"code\":\"Unknown\"}]}")]
+    [InlineData("{\"success\":false,\"reasons\":[{\"code\":\"ConditionalCheckFailed\"}]}")]
+    public async Task Malformed_or_unjustified_cancellation_reasons_fail_closed(
+        string response)
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaPkSk),
+                CosmosCreated(),
+                CosmosOk(response),
+            },
+        };
+
+        await Run(
+            ctx,
+            BuildClient(handler),
+            EnabledSproc(),
+            "{\"TransactItems\":[" + PutOp("1") + "]}");
+
+        Assert.Equal(500, ctx.Response.StatusCode);
+        Assert.Contains("cancellation reasons", ReadResponse(body), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -18,6 +18,7 @@ public sealed class WorkloadGaCertificationTests
     [InlineData("sqs-standard-messaging.yaml", "ga")]
     [InlineData("dynamodb-basic-crud.yaml", "ga")]
     [InlineData("dynamodb-query-scan-indexes.yaml", "candidate")]
+    [InlineData("dynamodb-single-partition-transactions.yaml", "conditional")]
     [InlineData("sns-standard-publish-service-bus.yaml", "candidate")]
     [InlineData("sns-standard-publish-event-grid.yaml", "candidate")]
     [InlineData("kinesis-basic-record-ingestion.yaml", "candidate")]

@@ -8,38 +8,48 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Aws2Azure.Modules.DynamoDb.Operations;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 
 namespace Aws2Azure.Modules.DynamoDb.Internal;
 
 internal static class SprocResponseParser
 {
-    // Reads the `success` boolean from the sproc response body. Returns false
-    // (flag indeterminate) when the body is missing, not JSON, or lacks a
-    // boolean `success` property — callers then treat the result as a commit.
-    private static bool TryReadSuccessFlag(string? body, out bool success)
+    private static bool TryReadObject(string? body, out JsonDocument? document)
     {
-        success = false;
+        document = null;
         if (string.IsNullOrEmpty(body))
         {
             return false;
         }
         try
         {
-            using var doc = JsonDocument.Parse(body);
-            if (doc.RootElement.ValueKind == JsonValueKind.Object
-                && doc.RootElement.TryGetProperty("success", out var s)
-                && (s.ValueKind == JsonValueKind.True || s.ValueKind == JsonValueKind.False))
+            document = JsonDocument.Parse(body);
+            if (document.RootElement.ValueKind == JsonValueKind.Object)
             {
-                success = s.GetBoolean();
                 return true;
             }
+            document.Dispose();
+            document = null;
         }
         catch (JsonException)
         {
-            // Fall through — treat as indeterminate.
         }
         return false;
+    }
+
+    private static bool TryReadSuccess(JsonElement root, out bool success)
+    {
+        success = false;
+        if (!root.TryGetProperty("success", out var value)
+            || (value.ValueKind != JsonValueKind.True
+                && value.ValueKind != JsonValueKind.False))
+        {
+            return false;
+        }
+
+        success = value.GetBoolean();
+        return true;
     }
 
     public static async Task<SprocExecuteResult> ParseSingleWriteAsync(HttpResponseMessage response, CancellationToken ct)
@@ -48,12 +58,44 @@ internal static class SprocResponseParser
 
         if (response.IsSuccessStatusCode)
         {
-            // Check if body contains conditionFailed: true (sproc returns 200 for condition failures now)
-            if (body.Contains("\"conditionFailed\":true") || body.Contains("\"conditionFailed\": true"))
+            if (TryReadObject(body, out var document))
             {
-                return new SprocExecuteResult { Success = false, ConditionFailed = true, ResponseBody = body };
+                using var parsed = document!;
+                {
+                    var root = parsed.RootElement;
+                    if (TryReadSuccess(root, out var success))
+                    {
+                        if (success)
+                        {
+                            if (!root.TryGetProperty("conditionFailed", out _))
+                            {
+                                return new SprocExecuteResult
+                                {
+                                    Success = true,
+                                    ResponseBody = body,
+                                };
+                            }
+                        }
+                        if (!success
+                            && root.TryGetProperty("conditionFailed", out var conditionFailed)
+                            && conditionFailed.ValueKind == JsonValueKind.True)
+                        {
+                            return new SprocExecuteResult
+                            {
+                                ConditionFailed = true,
+                                ResponseBody = body,
+                            };
+                        }
+                    }
+                }
             }
-            return new SprocExecuteResult { Success = true, ResponseBody = body };
+
+            return new SprocExecuteResult
+            {
+                StatusCode = StatusCodes.Status502BadGateway,
+                ErrorBody = "Stored procedure returned a malformed success response.",
+                ResponseBody = body,
+            };
         }
 
         // Legacy check for thrown condition-failed response (backwards compatibility)
@@ -75,18 +117,94 @@ internal static class SprocResponseParser
         var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         if (response.IsSuccessStatusCode)
         {
-            // Condition failure is reported as a 2xx with { success: false }.
-            // Parse the body rather than string-matching so whitespace / property
-            // ordering from the server can't be misread as a successful commit.
-            if (TryReadSuccessFlag(body, out var success) && !success)
+            if (TryReadObject(body, out var document))
             {
-                return new SprocTransactResult { Attempted = true, ConditionFailed = true, ResponseBody = body };
+                using var parsed = document!;
+                {
+                    var root = parsed.RootElement;
+                    if (TryReadSuccess(root, out var success))
+                    {
+                        if (success)
+                        {
+                            if (!root.TryGetProperty("reasons", out _))
+                            {
+                                return new SprocTransactResult
+                                {
+                                    Attempted = true,
+                                    Success = true,
+                                    ResponseBody = body,
+                                };
+                            }
+                        }
+                        if (!success
+                            && root.TryGetProperty("reasons", out var reasons)
+                            && reasons.ValueKind == JsonValueKind.Array)
+                        {
+                            return new SprocTransactResult
+                            {
+                                Attempted = true,
+                                ConditionFailed = true,
+                                ResponseBody = body,
+                            };
+                        }
+                    }
+                }
             }
 
-            return new SprocTransactResult { Attempted = true, Success = true, ResponseBody = body };
+            return new SprocTransactResult
+            {
+                Attempted = true,
+                StatusCode = StatusCodes.Status502BadGateway,
+                ErrorBody = "Transaction stored procedure returned a malformed success response.",
+                ResponseBody = body,
+            };
         }
 
         return new SprocTransactResult
+        {
+            Attempted = true,
+            StatusCode = (int)response.StatusCode,
+            ErrorBody = body,
+        };
+    }
+
+    public static async Task<SprocTransactGetResult> ParseTransactGetAsync(
+        HttpResponseMessage response,
+        CancellationToken ct)
+    {
+        var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        if (response.IsSuccessStatusCode)
+        {
+            if (TryReadObject(body, out var document))
+            {
+                using var parsed = document!;
+                {
+                    var root = parsed.RootElement;
+                    if (TryReadSuccess(root, out var success)
+                        && success
+                        && root.TryGetProperty("items", out var items)
+                        && items.ValueKind == JsonValueKind.Array)
+                    {
+                        return new SprocTransactGetResult
+                        {
+                            Attempted = true,
+                            Success = true,
+                            ResponseBody = body,
+                        };
+                    }
+                }
+            }
+
+            return new SprocTransactGetResult
+            {
+                Attempted = true,
+                StatusCode = StatusCodes.Status502BadGateway,
+                ErrorBody = "Snapshot stored procedure returned a malformed success response.",
+                ResponseBody = body,
+            };
+        }
+
+        return new SprocTransactGetResult
         {
             Attempted = true,
             StatusCode = (int)response.StatusCode,

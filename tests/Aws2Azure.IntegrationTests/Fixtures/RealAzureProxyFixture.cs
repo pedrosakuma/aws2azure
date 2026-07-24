@@ -604,7 +604,7 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         var azure = new StringBuilder();
         AppendService(services, "s3", BlobConfigured);
         var dynamoDbServiceOptions = (CosmosConfigured || CosmosWorkloadIdentityConfigured)
-            ? ", \"cosmosBinaryResponses\": true, \"cosmosBinaryRequests\": true, \"enableGlobalSecondaryIndexQueries\": true, \"enableLocalSecondaryIndexNumericOrdering\": true"
+            ? ", \"cosmosBinaryResponses\": true, \"cosmosBinaryRequests\": true, \"enableGlobalSecondaryIndexQueries\": true, \"enableLocalSecondaryIndexNumericOrdering\": true, \"useStoredProcedures\": \"Preferred\""
             : string.Empty;
         AppendService(services, "dynamodb", CosmosConfigured || CosmosWorkloadIdentityConfigured, dynamoDbServiceOptions);
         AppendService(services, "sqs", ServiceBusConfigured);

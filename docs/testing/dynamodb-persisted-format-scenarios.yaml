@@ -1,5 +1,5 @@
 schema_version: 1
-inventory: docs/compatibility/dynamodb-persisted-formats-v1.json
+inventory: docs/compatibility/dynamodb-persisted-formats-v2.json
 scenarios:
   - id: adjacent-runtime-rollback
     topology: same-cosmos-container
@@ -7,10 +7,13 @@ scenarios:
     steps:
       - candidate-create-table-with-index-and-ttl
       - candidate-write-v2-items-and-mint-v1-continuations
+      - candidate-provision-atomic-transact-write-v3-and-atomic-transact-get-v1
+      - candidate-commit-and-snapshot-single-partition-transaction
       - freeze-writes-and-drain
-      - previous-describe-read-page-and-rewrite
+      - previous-provision-retained-atomic-transact-write-v2
+      - previous-read-candidate-transaction-and-atomically-rewrite
       - restore-candidate
-      - candidate-read-previous-writes-and-rewrites
+      - candidate-read-previous-transaction-and-reprovision-v3-by-body-verification
       - candidate-cleanup
     required_assertions:
       - item-key-and-inferred-attribute-parity
@@ -21,7 +24,11 @@ scenarios:
       - previous-continuation-consumed-by-candidate
       - base-query-scan-and-ordered-gsi-continuations-covered
       - stored-procedure-id-and-body-hash-match-frozen-source-inventory
-    evidence_owner: issue-657
+      - v2-and-v3-transaction-stored-procedure-identities-coexist
+      - conflicting-same-id-stored-procedure-body-fails-closed
+      - candidate-and-previous-runtime-transaction-items-are-bidirectionally-readable
+      - transaction-rollback-remains-all-or-nothing-across-runtime-switch
+    evidence_owner: issues-657-and-635
 
   - id: historical-export-import
     topology: isolated-target-database

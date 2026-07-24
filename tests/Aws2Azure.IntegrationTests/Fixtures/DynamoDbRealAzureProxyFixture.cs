@@ -18,9 +18,10 @@ namespace Aws2Azure.IntegrationTests.Fixtures;
 /// isolated Azure Cosmos DB account, then drives it with the official AWS SDK
 /// for DynamoDB. A dedicated (Cosmos-only) fixture — rather than the shared
 /// multi-backend <see cref="RealAzureProxyFixture"/> used by the nightly
-/// smoke — because sealed-runtime rollback qualification (issue #627) needs
-/// its own <c>dynamodb-basic-crud</c> profile identity, independent of the
-/// <c>s3-basic-object-crud</c> profile the shared fixture is pinned to.
+/// smoke — because sealed-runtime rollback qualification needs a DynamoDB-owned
+/// profile identity (selected by <c>AWS2AZURE_QUALIFICATION_PROFILE</c>, with
+/// <c>dynamodb-basic-crud</c> as the default), independent of the S3 profile the
+/// shared fixture is pinned to.
 ///
 /// <para>A real process (not <c>WebApplicationFactory</c>) is required
 /// because the AWS SDK builds non-canonicalized request URIs for SigV4 that
@@ -68,7 +69,9 @@ public sealed class DynamoDbRealAzureProxyFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _runtimeSelection = SealedRuntimeSelection.Load("dynamodb-basic-crud", 1);
+        var profile = Env("AWS2AZURE_QUALIFICATION_PROFILE")
+            ?? "dynamodb-basic-crud";
+        _runtimeSelection = SealedRuntimeSelection.Load(profile, 1);
         _cosmosEndpoint = Env("AZURE_COSMOS_ENDPOINT");
         _cosmosKey = Env("AZURE_COSMOS_KEY");
         _cosmosDatabase = Env("AZURE_COSMOS_DATABASE");
@@ -218,7 +221,7 @@ public sealed class DynamoDbRealAzureProxyFixture : IAsyncLifetime
         return $$"""
             {
               "services": {
-                "dynamodb": { "enabled": true, "cosmosBinaryResponses": true, "cosmosBinaryRequests": true, "enableGlobalSecondaryIndexQueries": true }
+                "dynamodb": { "enabled": true, "cosmosBinaryResponses": true, "cosmosBinaryRequests": true, "enableGlobalSecondaryIndexQueries": true, "useStoredProcedures": "Preferred" }
               },
               "bindings": [
                 {

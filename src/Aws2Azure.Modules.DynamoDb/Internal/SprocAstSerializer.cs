@@ -182,8 +182,8 @@ internal static class SprocAstSerializer
                 break;
 
             default:
-                sb.Append("{\"type\":\"TRUE\"}"); // fallback - pass through
-                break;
+                throw new NotSupportedException(
+                    $"Unsupported condition AST node '{node.GetType().Name}'.");
         }
     }
 
@@ -201,8 +201,8 @@ internal static class SprocAstSerializer
                 sb.Append("{\"size\":\"").Append(EscapeJson(PathToString(sz.Path))).Append("\"}");
                 break;
             default:
-                sb.Append("null");
-                break;
+                throw new NotSupportedException(
+                    $"Unsupported condition operand '{operand.GetType().Name}'.");
         }
     }
 
@@ -263,8 +263,8 @@ internal static class SprocAstSerializer
                 sb.Append('}');
                 break;
             default:
-                sb.Append("{\"$k\":\"lit\",\"v\":null}");
-                break;
+                throw new NotSupportedException(
+                    $"Unsupported update operand '{operand.GetType().Name}'.");
         }
     }
 

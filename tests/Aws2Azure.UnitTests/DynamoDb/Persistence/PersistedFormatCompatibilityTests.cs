@@ -341,6 +341,7 @@ public sealed class PersistedFormatCompatibilityTests
     {
         var atomicHash = Sha256(SprocManager.SprocBody);
         var transactHash = Sha256(SprocManager.TransactSprocBody);
+        var transactGetHash = Sha256(SprocManager.TransactGetSprocBody);
 
         Assert.Equal(
             DynamoDbPersistedFormatContract.AtomicWriteBodySha256,
@@ -348,21 +349,46 @@ public sealed class PersistedFormatCompatibilityTests
         Assert.Equal(
             DynamoDbPersistedFormatContract.AtomicTransactWriteBodySha256,
             transactHash);
+        Assert.Equal(
+            DynamoDbPersistedFormatContract.AtomicTransactGetBodySha256,
+            transactGetHash);
 
-        using var frozen = JsonDocument.Parse(Fixture("current/stored-procedures.json"));
-        var identities = frozen.RootElement.GetProperty("storedProcedures");
+        using var legacy = JsonDocument.Parse(
+            Fixture("current/stored-procedures.json"));
+        var legacyIdentities = legacy.RootElement.GetProperty("storedProcedures");
         Assert.Equal(
+            DynamoDbPersistedFormatContract.AtomicWriteStoredProcedureId,
+            legacyIdentities[0].GetProperty("id").GetString());
+        Assert.Equal(
+            DynamoDbPersistedFormatContract.AtomicWriteBodySha256,
+            legacyIdentities[0].GetProperty("bodySha256").GetString());
+        Assert.Equal(
+            DynamoDbPersistedFormatContract.LegacyAtomicTransactWriteStoredProcedureId,
+            legacyIdentities[1].GetProperty("id").GetString());
+        Assert.Equal(
+            DynamoDbPersistedFormatContract.LegacyAtomicTransactWriteBodySha256,
+            legacyIdentities[1].GetProperty("bodySha256").GetString());
+
+        using var current = JsonDocument.Parse(
+            Fixture("current/stored-procedures-v2.json"));
+        var identities = current.RootElement.GetProperty("storedProcedures");
+        Assert.Equal(4, identities.GetArrayLength());
+        AssertStoredProcedure(
+            identities[0],
             SprocManager.SprocId,
-            identities[0].GetProperty("id").GetString());
-        Assert.Equal(
-            atomicHash,
-            identities[0].GetProperty("bodySha256").GetString());
-        Assert.Equal(
+            atomicHash);
+        AssertStoredProcedure(
+            identities[1],
+            DynamoDbPersistedFormatContract.LegacyAtomicTransactWriteStoredProcedureId,
+            DynamoDbPersistedFormatContract.LegacyAtomicTransactWriteBodySha256);
+        AssertStoredProcedure(
+            identities[2],
             SprocManager.TransactSprocId,
-            identities[1].GetProperty("id").GetString());
-        Assert.Equal(
-            transactHash,
-            identities[1].GetProperty("bodySha256").GetString());
+            transactHash);
+        AssertStoredProcedure(
+            identities[3],
+            SprocManager.TransactGetSprocId,
+            transactGetHash);
     }
 
     [Fact]
@@ -371,7 +397,7 @@ public sealed class PersistedFormatCompatibilityTests
         var root = RepositoryRoot();
         var inventoryPath = Path.Combine(
             root,
-            "docs/compatibility/dynamodb-persisted-formats-v1.json");
+            "docs/compatibility/dynamodb-persisted-formats-v2.json");
         using var inventory = JsonDocument.Parse(File.ReadAllText(inventoryPath));
 
         Assert.Equal(
@@ -398,17 +424,30 @@ public sealed class PersistedFormatCompatibilityTests
         }
 
         var storedProcedures = inventory.RootElement.GetProperty("stored_procedures");
-        Assert.Equal(SprocManager.SprocId,
-            storedProcedures[0].GetProperty("id").GetString());
-        Assert.Equal(Sha256(SprocManager.SprocBody),
-            storedProcedures[0].GetProperty("body_sha256").GetString());
-        Assert.Equal(SprocManager.TransactSprocId,
-            storedProcedures[1].GetProperty("id").GetString());
-        Assert.Equal(Sha256(SprocManager.TransactSprocBody),
-            storedProcedures[1].GetProperty("body_sha256").GetString());
+        Assert.Equal(4, storedProcedures.GetArrayLength());
+        AssertStoredProcedure(
+            storedProcedures[0],
+            SprocManager.SprocId,
+            Sha256(SprocManager.SprocBody),
+            "body_sha256");
+        AssertStoredProcedure(
+            storedProcedures[1],
+            DynamoDbPersistedFormatContract.LegacyAtomicTransactWriteStoredProcedureId,
+            DynamoDbPersistedFormatContract.LegacyAtomicTransactWriteBodySha256,
+            "body_sha256");
+        AssertStoredProcedure(
+            storedProcedures[2],
+            SprocManager.TransactSprocId,
+            Sha256(SprocManager.TransactSprocBody),
+            "body_sha256");
+        AssertStoredProcedure(
+            storedProcedures[3],
+            SprocManager.TransactGetSprocId,
+            Sha256(SprocManager.TransactGetSprocBody),
+            "body_sha256");
 
         using var identityFixture = JsonDocument.Parse(
-            Fixture("current/stored-procedures.json"));
+            Fixture("current/stored-procedures-v2.json"));
         Assert.Equal(
             DynamoDbPersistedFormatContract.StoredProcedureIdentityVersion,
             identityFixture.RootElement.GetProperty("identityVersion").GetInt32());
@@ -457,7 +496,7 @@ public sealed class PersistedFormatCompatibilityTests
                     DynamoDbPersistedFormatContract.StoredProcedureIdentityVersion,
                     current);
                 Assert.Equal(
-                    [DynamoDbPersistedFormatContract.StoredProcedureIdentityVersion],
+                    [1, DynamoDbPersistedFormatContract.StoredProcedureIdentityVersion],
                     readers);
                 break;
             case "ttl-index-derived-fields":
@@ -468,6 +507,16 @@ public sealed class PersistedFormatCompatibilityTests
                 Assert.Fail($"Unknown persisted-format inventory row '{id}'.");
                 break;
         }
+    }
+
+    private static void AssertStoredProcedure(
+        JsonElement identity,
+        string expectedId,
+        string expectedHash,
+        string hashProperty = "bodySha256")
+    {
+        Assert.Equal(expectedId, identity.GetProperty("id").GetString());
+        Assert.Equal(expectedHash, identity.GetProperty(hashProperty).GetString());
     }
 
     private static string Sha256(string value) =>

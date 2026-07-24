@@ -179,11 +179,13 @@ public sealed class DynamoDbPerfFixture : IAsyncLifetime
             }
 
             // CosmosBinary read/write paths and the #504 LSI numeric-ordering
-            // flag are top-level "dynamodb" block (DynamoDbSettings) props, NOT
-            // services.dynamodb (which only carries "enabled"). Mirrors
-            // RealAzureProxyFixture. The block is emitted only when at least one
-            // opt-in prop is active so the default emulator path is unchanged.
-            var ddbProps = new List<string>();
+            // flag and stored-procedure mode are DynamoDbSettings properties in
+            // services.dynamodb. Transactions require Preferred; other scenarios
+            // remain on their existing paths unless a conditional write is used.
+            var ddbProps = new List<string>
+            {
+                "\"useStoredProcedures\": \"Preferred\"",
+            };
             if (CosmosBinaryEnabled)
             {
                 ddbProps.Add("\"cosmosBinaryResponses\": true");
@@ -919,6 +921,116 @@ public sealed class DynamoDbPerfTests(DynamoDbPerfFixture fixture)
             });
 
         PerfReport.Append(result, notes: $"DynamoDB→Cosmos BatchWriteItem — 25 PutRequest/call, UnprocessedItems retried with backoff [{fixture.BackendLabel}]");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
+    }
+
+    [SkippableFact]
+    public async Task TransactGetItems_single_partition_snapshot_throughput()
+    {
+        Skip.IfNot(fixture.Ready, fixture.SkipReason);
+        Skip.IfNot(
+            fixture.IsRealAzure,
+            "The Cosmos Linux emulator does not execute stored procedures; this scenario requires real Azure.");
+
+        using var client = fixture.CreateClient();
+        using var memoryProbe = fixture.CreateMemoryProbe();
+        var result = await PerfRunner.RunAsync(
+            scenario: "dynamodb.TransactGetItems (10 items, single partition)",
+            concurrency: PerfConcurrency.Scale(4),
+            duration: TimeSpan.FromSeconds(20),
+            warmup: TimeSpan.FromSeconds(3),
+            memoryProbe: memoryProbe,
+            action: async (workerId, ct) =>
+            {
+                var normalizedWorker = workerId < 0 ? 0 : workerId;
+                var partition =
+                    $"p{normalizedWorker % fixture.SeededPartitions:D2}";
+                var items = new List<TransactGetItem>(10);
+                for (var index = 0; index < 10; index++)
+                {
+                    items.Add(new TransactGetItem
+                    {
+                        Get = new Get
+                        {
+                            TableName = fixture.QueryTableName,
+                            Key = new Dictionary<string, AttributeValue>
+                            {
+                                ["pk"] = new() { S = partition },
+                                ["sk"] = new() { S = $"s{index:D4}" },
+                            },
+                            ProjectionExpression = "pk, sk, payload",
+                        },
+                    });
+                }
+
+                var response = await client.TransactGetItemsAsync(
+                    new TransactGetItemsRequest { TransactItems = items },
+                    ct).ConfigureAwait(false);
+                if (response.Responses.Count != items.Count
+                    || response.Responses.Any(item => item.Item.Count == 0))
+                {
+                    throw new InvalidOperationException(
+                        "TransactGetItems did not return ten aligned snapshot items.");
+                }
+            });
+
+        PerfReport.Append(
+            result,
+            notes:
+                $"DynamoDB→Cosmos TransactGetItems — 10 projected items in one stored-procedure snapshot; real Azure only [{fixture.BackendLabel}]");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
+    }
+
+    [SkippableFact]
+    public async Task TransactWriteItems_single_partition_throughput()
+    {
+        Skip.IfNot(fixture.Ready, fixture.SkipReason);
+        Skip.IfNot(
+            fixture.IsRealAzure,
+            "The Cosmos Linux emulator does not execute stored procedures; this scenario requires real Azure.");
+
+        using var client = fixture.CreateClient();
+        using var memoryProbe = fixture.CreateMemoryProbe();
+        var result = await PerfRunner.RunAsync(
+            scenario: "dynamodb.TransactWriteItems (5 puts, single partition)",
+            concurrency: PerfConcurrency.Scale(4),
+            duration: TimeSpan.FromSeconds(20),
+            warmup: TimeSpan.FromSeconds(3),
+            memoryProbe: memoryProbe,
+            action: async (workerId, ct) =>
+            {
+                var normalizedWorker = workerId < 0 ? 0 : workerId;
+                var partition = $"txn-perf-{normalizedWorker:D2}";
+                var version = Guid.NewGuid().ToString("N");
+                var items = new List<TransactWriteItem>(5);
+                for (var index = 0; index < 5; index++)
+                {
+                    items.Add(new TransactWriteItem
+                    {
+                        Put = new Put
+                        {
+                            TableName = fixture.QueryTableName,
+                            Item = new Dictionary<string, AttributeValue>
+                            {
+                                ["pk"] = new() { S = partition },
+                                ["sk"] = new() { S = $"item-{index:D2}" },
+                                ["version"] = new() { S = version },
+                            },
+                        },
+                    });
+                }
+
+                await client.TransactWriteItemsAsync(
+                    new TransactWriteItemsRequest { TransactItems = items },
+                    ct).ConfigureAwait(false);
+            });
+
+        PerfReport.Append(
+            result,
+            notes:
+                $"DynamoDB→Cosmos TransactWriteItems — 5 atomic Put operations in one logical partition; real Azure only [{fixture.BackendLabel}]");
         result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
         result.AssertNoRegression();
     }

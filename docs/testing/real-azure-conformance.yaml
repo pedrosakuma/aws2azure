@@ -249,6 +249,78 @@ services:
         operations: [BatchGetItem, BatchWriteItem]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureConformanceTests.Batch_operations_round_trip_against_real_cosmos
+      - id: transaction-snapshot
+        priority: p0
+        category: read
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Concurrent atomic writers and TransactGetItems prove every positional projected response comes from one single-partition server-side snapshot.
+        operations: [TransactGetItems, TransactWriteItems]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Snapshot_reads_never_observe_mixed_transaction_versions
+      - id: transaction-atomicity-rollback
+        priority: p0
+        category: write
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Supported Put, Delete, and ConditionCheck operations commit together, while a failed condition rolls every write back.
+        operations: [TransactWriteItems]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Atomic_write_rollback_conditions_and_cancellation_are_aligned
+      - id: transaction-conditions-cancellation
+        priority: p0
+        category: cancellation
+        evidence_source: real_azure
+        establishes_verification: false
+        description: The exact scalar condition subset, missing-attribute not-equal semantics, and positional cancellation reasons are exercised against real Cosmos.
+        operations: [TransactWriteItems]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Atomic_write_rollback_conditions_and_cancellation_are_aligned
+      - id: transaction-scope-rejection
+        priority: p0
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Cross-partition transaction requests fail with ValidationException and leave every target absent before and after a proxy restart.
+        operations: [TransactWriteItems]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Scope_token_rejection_and_versioned_sprocs_survive_restart
+      - id: transaction-idempotency-rejection
+        priority: p0
+        category: cancellation
+        evidence_source: real_azure
+        establishes_verification: false
+        description: Non-empty ClientRequestToken is rejected consistently before execution and remains rejected after process restart; no false replay claim is made.
+        operations: [TransactWriteItems]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Scope_token_rejection_and_versioned_sprocs_survive_restart
+      - id: transaction-contention
+        priority: p0
+        category: concurrency
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Contending transactions on one gate item admit exactly one winner and exactly one atomically paired audit item.
+        operations: [TransactWriteItems]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Contending_transactions_admit_one_winner_and_one_audit
+      - id: transaction-restart-versioning
+        priority: p0
+        category: restart
+        evidence_source: real_azure
+        establishes_verification: false
+        description: Transaction state survives process restart and existing v3/v1 stored procedures are accepted only after exact body verification.
+        operations: [TransactGetItems, TransactWriteItems]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Scope_token_rejection_and_versioned_sprocs_survive_restart
+      - id: transaction-adjacent-runtime-rollback
+        priority: p0
+        category: rollback
+        evidence_source: real_azure
+        establishes_verification: false
+        description: Exact candidate and prior sealed runtimes read and atomically rewrite the same transaction items while v2 and v3 stored-procedure identities coexist.
+        operations: [TransactGetItems, TransactWriteItems]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionQualificationTests.Adjacent_runtime_transaction_rollback_is_atomic_and_compatible
       - id: write-throttled
         priority: p1
         category: throttling

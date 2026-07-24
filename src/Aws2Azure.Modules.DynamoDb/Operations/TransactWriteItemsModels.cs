@@ -45,6 +45,9 @@ internal sealed class TransactWriteItem
 
     [JsonPropertyName("ConditionCheck")]
     public JsonRange ConditionCheck { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>

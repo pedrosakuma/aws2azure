@@ -130,4 +130,16 @@ public class SprocAstSerializerTests
 
         Assert.Contains("\"remove\":[\"stale\"]", json);
     }
+
+    [Fact]
+    public void Unknown_condition_node_fails_closed()
+    {
+        var exception = Assert.Throws<NotSupportedException>(
+            () => SprocAstSerializer.SerializeCondition(
+                new UnsupportedCondition()));
+
+        Assert.Contains("Unsupported", exception.Message);
+    }
+
+    private sealed record UnsupportedCondition : ConditionNode;
 }

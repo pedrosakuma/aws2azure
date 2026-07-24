@@ -64,7 +64,7 @@ References:
 
 - **Status:** 🔵 by design
 
-The proxy issues independent Cosmos REST calls and does not propagate Cosmos session tokens between requests, so read-your-write determinism depends on the account's default consistency level (Strong is required for the conditional-write stored procedures to behave like DynamoDB). ConsistentRead effectiveness is therefore account-dependent.
+Ordinary operations issue independent Cosmos REST calls and do not propagate Cosmos session tokens between requests, so read-your-write determinism depends on the account's default consistency level. Single-partition TransactGetItems is the exception: it executes as one server-side stored-procedure snapshot. ConsistentRead effectiveness for non-transactional reads remains account-dependent.
 
 **Impact.** A DynamoDB client that assumes strong read-your-writes may observe stale reads if the Cosmos account is configured for Session/Eventual consistency. GSI reads are always eventually consistent (ConsistentRead=true is rejected, matching DynamoDB).
 

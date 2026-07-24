@@ -1,0 +1,21 @@
+{
+  "identityVersion": 2,
+  "storedProcedures": [
+    {
+      "id": "atomicWrite_v2",
+      "bodySha256": "68bb5745f1725ed43b2b06bf195cc34ffeb37c4b30fb56b446faf5444747b06a"
+    },
+    {
+      "id": "atomicTransactWrite_v2",
+      "bodySha256": "592335a445a63d7722f859955e1124ebff0f5c02a2ba038273e2f3d19c4cc5f1"
+    },
+    {
+      "id": "atomicTransactWrite_v3",
+      "bodySha256": "9440e9bb3d43b414ef68346659bef9184f6cb4658435090432bf658bbbc17426"
+    },
+    {
+      "id": "atomicTransactGet_v1",
+      "bodySha256": "355d2c74187d3d7c9c84b88f07992bca8954489e2e43f613a2934d978174db7b"
+    }
+  ]
+}

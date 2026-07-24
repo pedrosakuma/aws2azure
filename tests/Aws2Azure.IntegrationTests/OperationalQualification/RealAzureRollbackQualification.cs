@@ -182,6 +182,167 @@ internal static class RealAzureRollbackQualification
         }
     }
 
+    public static async Task<RealAzureRollbackResult> VerifyDynamoDbTransactionsAsync(
+                DynamoDbRealAzureProxyFixture fixture,
+                CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(fixture);
+        if (!fixture.SealedRollbackConfigured)
+        {
+            throw new InvalidOperationException(
+                "Real transaction rollback requires verified candidate and prior sealed runtimes.");
+        }
+
+        var startedAt = DateTimeOffset.UtcNow;
+        var stopwatch = Stopwatch.StartNew();
+        var table = "a2a-txn-rollback-" + Guid.NewGuid().ToString("N")[..16];
+        const string partition = "rollback";
+        var canary = "dynamodb-transaction-rollback-" + Guid.NewGuid().ToString("N");
+        var canaryDigest = Digest(canary);
+        var tableCreated = false;
+        var candidateRestored = false;
+        var candidateStoppedForRollback = false;
+        AmazonDynamoDBClient? priorClient = null;
+
+        using var candidateClient = fixture.CreateDynamoDbClient(maxErrorRetry: 0);
+        try
+        {
+            await candidateClient.CreateTableAsync(new CreateTableRequest
+            {
+                TableName = table,
+                AttributeDefinitions =
+                [
+                    new("pk", ScalarAttributeType.S),
+                            new("sk", ScalarAttributeType.S),
+                        ],
+                KeySchema =
+                [
+                    new("pk", KeyType.HASH),
+                            new("sk", KeyType.RANGE),
+                        ],
+                BillingMode = BillingMode.PAY_PER_REQUEST,
+            }, cancellationToken).ConfigureAwait(false);
+            tableCreated = true;
+            await WaitForTableActiveAsync(candidateClient, table, cancellationToken)
+                .ConfigureAwait(false);
+
+            await candidateClient.TransactWriteItemsAsync(
+                TransactionPutRequest(table, partition, canary, "candidate"),
+                cancellationToken).ConfigureAwait(false);
+            var candidateCreateCompletedAt = DateTimeOffset.UtcNow;
+            await AssertTransactionValuesAsync(
+                candidateClient,
+                table,
+                partition,
+                canary,
+                "candidate",
+                cancellationToken).ConfigureAwait(false);
+            var candidateReadCompletedAt = DateTimeOffset.UtcNow;
+
+            await fixture.StopForRuntimeSwitchAsync().ConfigureAwait(false);
+            candidateStoppedForRollback = true;
+            var candidateStoppedAt = DateTimeOffset.UtcNow;
+            await fixture.StartRuntimeAsync(SealedRuntimeRole.Prior)
+                .ConfigureAwait(false);
+            var priorStartedAt = DateTimeOffset.UtcNow;
+            priorClient = fixture.CreateDynamoDbClient(maxErrorRetry: 0);
+
+            await AssertTransactionValuesAsync(
+                priorClient,
+                table,
+                partition,
+                canary,
+                "candidate",
+                cancellationToken).ConfigureAwait(false);
+            await priorClient.TransactWriteItemsAsync(
+                TransactionPutRequest(table, partition, canary, "prior"),
+                cancellationToken).ConfigureAwait(false);
+            await AssertTransactionValuesAsync(
+                priorClient,
+                table,
+                partition,
+                canary,
+                "prior",
+                cancellationToken).ConfigureAwait(false);
+            var priorReadCompletedAt = DateTimeOffset.UtcNow;
+
+            var cleanupRequestedAt = TimestampAfter(priorReadCompletedAt);
+            await priorClient.TransactWriteItemsAsync(
+                TransactionDeleteRequest(table, partition),
+                cancellationToken).ConfigureAwait(false);
+            await AssertTransactionItemsAbsentAsync(
+                priorClient,
+                table,
+                partition,
+                cancellationToken).ConfigureAwait(false);
+            await priorClient.DeleteTableAsync(
+                new DeleteTableRequest { TableName = table },
+                cancellationToken).ConfigureAwait(false);
+            tableCreated = false;
+            await AssertDynamoDbTableAbsentAsync(
+                priorClient,
+                table,
+                cancellationToken).ConfigureAwait(false);
+            var cleanupVerifiedAt = DateTimeOffset.UtcNow;
+
+            await fixture.StopForRuntimeSwitchAsync().ConfigureAwait(false);
+            priorClient.Dispose();
+            priorClient = null;
+            await fixture.StartRuntimeAsync(SealedRuntimeRole.Candidate)
+                .ConfigureAwait(false);
+            candidateRestored = true;
+            candidateStoppedForRollback = false;
+            var candidateRestoredAt = DateTimeOffset.UtcNow;
+            var completedAt = TimestampAfter(candidateRestoredAt);
+
+            return new RealAzureRollbackResult(
+                stopwatch.Elapsed.TotalSeconds,
+                completedAt,
+                Proof(
+                    "dynamodb",
+                    "TransactGetItems",
+                    fixture,
+                    canaryDigest,
+                    "atomic_delete_both_items_then_delete_table_verify_resource_not_found_exception",
+                    startedAt,
+                    candidateCreateCompletedAt,
+                    candidateReadCompletedAt,
+                    candidateStoppedAt,
+                    priorStartedAt,
+                    priorReadCompletedAt,
+                    cleanupRequestedAt,
+                    cleanupVerifiedAt,
+                    candidateRestoredAt,
+                    completedAt));
+        }
+        finally
+        {
+            priorClient?.Dispose();
+            if (candidateStoppedForRollback && !candidateRestored)
+            {
+                if (fixture.ProxyStarted)
+                {
+                    await fixture.StopForRuntimeSwitchAsync().ConfigureAwait(false);
+                }
+                await fixture.StartRuntimeAsync(SealedRuntimeRole.Candidate)
+                    .ConfigureAwait(false);
+            }
+
+            if (tableCreated)
+            {
+                try
+                {
+                    await candidateClient.DeleteTableAsync(
+                        new DeleteTableRequest { TableName = table },
+                        CancellationToken.None).ConfigureAwait(false);
+                }
+                catch
+                {
+                }
+            }
+        }
+    }
+
     public static async Task<RealAzureRollbackResult> VerifyS3Async(
         RealAzureProxyFixture fixture,
         CancellationToken cancellationToken = default)
@@ -820,33 +981,33 @@ internal static class RealAzureRollbackQualification
         DateTimeOffset cleanupVerifiedAt,
         DateTimeOffset candidateRestoredAt,
         DateTimeOffset completedAt) => new()
-    {
-        ScenarioId = "rollback",
-        Service = service,
-        Operation = operation,
-        EvidenceRunId = RequiredEnvironment("GITHUB_RUN_ID"),
-        EvidenceRunAttempt = ReadPositiveInt("GITHUB_RUN_ATTEMPT"),
-        Candidate = fixture.CandidateRuntimeIdentity,
-        Prior = fixture.PriorRuntimeIdentity,
-        CandidateConfigDigest = fixture.ProxyConfigDigest,
-        PriorConfigDigest = fixture.ProxyConfigDigest,
-        CandidateBackendIdentityDigest = backendIdentityDigest,
-        PriorBackendIdentityDigest = backendIdentityDigest,
-        CandidateAwsBindingDigest = fixture.AwsBindingDigest,
-        PriorAwsBindingDigest = fixture.AwsBindingDigest,
-        CanaryDigest = canaryDigest,
-        CleanupSemantics = cleanupSemantics,
-        StartedAtUtc = startedAt,
-        CandidateCreateCompletedAtUtc = candidateCreateCompletedAt,
-        CandidateReadCompletedAtUtc = candidateReadCompletedAt,
-        CandidateStoppedAtUtc = candidateStoppedAt,
-        PriorStartedAtUtc = priorStartedAt,
-        PriorReadCompletedAtUtc = priorReadCompletedAt,
-        CleanupRequestedAtUtc = cleanupRequestedAt,
-        CleanupVerifiedAtUtc = cleanupVerifiedAt,
-        CandidateRestoredAtUtc = candidateRestoredAt,
-        CompletedAtUtc = completedAt,
-    };
+        {
+            ScenarioId = "rollback",
+            Service = service,
+            Operation = operation,
+            EvidenceRunId = RequiredEnvironment("GITHUB_RUN_ID"),
+            EvidenceRunAttempt = ReadPositiveInt("GITHUB_RUN_ATTEMPT"),
+            Candidate = fixture.CandidateRuntimeIdentity,
+            Prior = fixture.PriorRuntimeIdentity,
+            CandidateConfigDigest = fixture.ProxyConfigDigest,
+            PriorConfigDigest = fixture.ProxyConfigDigest,
+            CandidateBackendIdentityDigest = backendIdentityDigest,
+            PriorBackendIdentityDigest = backendIdentityDigest,
+            CandidateAwsBindingDigest = fixture.AwsBindingDigest,
+            PriorAwsBindingDigest = fixture.AwsBindingDigest,
+            CanaryDigest = canaryDigest,
+            CleanupSemantics = cleanupSemantics,
+            StartedAtUtc = startedAt,
+            CandidateCreateCompletedAtUtc = candidateCreateCompletedAt,
+            CandidateReadCompletedAtUtc = candidateReadCompletedAt,
+            CandidateStoppedAtUtc = candidateStoppedAt,
+            PriorStartedAtUtc = priorStartedAt,
+            PriorReadCompletedAtUtc = priorReadCompletedAt,
+            CleanupRequestedAtUtc = cleanupRequestedAt,
+            CleanupVerifiedAtUtc = cleanupVerifiedAt,
+            CandidateRestoredAtUtc = candidateRestoredAt,
+            CompletedAtUtc = completedAt,
+        };
 
     private static RealAzureRollbackProof Proof(
         string service,
@@ -864,33 +1025,208 @@ internal static class RealAzureRollbackQualification
         DateTimeOffset cleanupVerifiedAt,
         DateTimeOffset candidateRestoredAt,
         DateTimeOffset completedAt) => new()
+        {
+            ScenarioId = "rollback",
+            Service = service,
+            Operation = operation,
+            EvidenceRunId = RequiredEnvironment("GITHUB_RUN_ID"),
+            EvidenceRunAttempt = ReadPositiveInt("GITHUB_RUN_ATTEMPT"),
+            Candidate = fixture.CandidateRuntimeIdentity,
+            Prior = fixture.PriorRuntimeIdentity,
+            CandidateConfigDigest = fixture.ProxyConfigDigest,
+            PriorConfigDigest = fixture.ProxyConfigDigest,
+            CandidateBackendIdentityDigest = fixture.BackendIdentityDigest,
+            PriorBackendIdentityDigest = fixture.BackendIdentityDigest,
+            CandidateAwsBindingDigest = fixture.AwsBindingDigest,
+            PriorAwsBindingDigest = fixture.AwsBindingDigest,
+            CanaryDigest = canaryDigest,
+            CleanupSemantics = cleanupSemantics,
+            StartedAtUtc = startedAt,
+            CandidateCreateCompletedAtUtc = candidateCreateCompletedAt,
+            CandidateReadCompletedAtUtc = candidateReadCompletedAt,
+            CandidateStoppedAtUtc = candidateStoppedAt,
+            PriorStartedAtUtc = priorStartedAt,
+            PriorReadCompletedAtUtc = priorReadCompletedAt,
+            CleanupRequestedAtUtc = cleanupRequestedAt,
+            CleanupVerifiedAtUtc = cleanupVerifiedAt,
+            CandidateRestoredAtUtc = candidateRestoredAt,
+            CompletedAtUtc = completedAt,
+        };
+
+    private static TransactWriteItemsRequest TransactionPutRequest(
+        string table,
+        string partition,
+        string canary,
+        string writer)
+        => new()
+        {
+            TransactItems =
+            [
+                new TransactWriteItem
+                {
+                    Put = new Put
+                    {
+                        TableName = table,
+                        Item = TransactionItem(
+                            partition,
+                            "left",
+                            canary,
+                            writer),
+                    },
+                },
+                new TransactWriteItem
+                {
+                    Put = new Put
+                    {
+                        TableName = table,
+                        Item = TransactionItem(
+                            partition,
+                            "right",
+                            canary,
+                            writer),
+                    },
+                },
+            ],
+        };
+
+    private static TransactWriteItemsRequest TransactionDeleteRequest(
+        string table,
+        string partition)
+        => new()
+        {
+            TransactItems =
+            [
+                new TransactWriteItem
+                {
+                    Delete = new Amazon.DynamoDBv2.Model.Delete
+                    {
+                        TableName = table,
+                        Key = TransactionKey(partition, "left"),
+                    },
+                },
+                new TransactWriteItem
+                {
+                    Delete = new Amazon.DynamoDBv2.Model.Delete
+                    {
+                        TableName = table,
+                        Key = TransactionKey(partition, "right"),
+                    },
+                },
+            ],
+        };
+
+    private static async Task AssertTransactionValuesAsync(
+        IAmazonDynamoDB client,
+        string table,
+        string partition,
+        string canary,
+        string writer,
+        CancellationToken cancellationToken)
     {
-        ScenarioId = "rollback",
-        Service = service,
-        Operation = operation,
-        EvidenceRunId = RequiredEnvironment("GITHUB_RUN_ID"),
-        EvidenceRunAttempt = ReadPositiveInt("GITHUB_RUN_ATTEMPT"),
-        Candidate = fixture.CandidateRuntimeIdentity,
-        Prior = fixture.PriorRuntimeIdentity,
-        CandidateConfigDigest = fixture.ProxyConfigDigest,
-        PriorConfigDigest = fixture.ProxyConfigDigest,
-        CandidateBackendIdentityDigest = fixture.BackendIdentityDigest,
-        PriorBackendIdentityDigest = fixture.BackendIdentityDigest,
-        CandidateAwsBindingDigest = fixture.AwsBindingDigest,
-        PriorAwsBindingDigest = fixture.AwsBindingDigest,
-        CanaryDigest = canaryDigest,
-        CleanupSemantics = cleanupSemantics,
-        StartedAtUtc = startedAt,
-        CandidateCreateCompletedAtUtc = candidateCreateCompletedAt,
-        CandidateReadCompletedAtUtc = candidateReadCompletedAt,
-        CandidateStoppedAtUtc = candidateStoppedAt,
-        PriorStartedAtUtc = priorStartedAt,
-        PriorReadCompletedAtUtc = priorReadCompletedAt,
-        CleanupRequestedAtUtc = cleanupRequestedAt,
-        CleanupVerifiedAtUtc = cleanupVerifiedAt,
-        CandidateRestoredAtUtc = candidateRestoredAt,
-        CompletedAtUtc = completedAt,
-    };
+        var response = await client.TransactGetItemsAsync(
+            new TransactGetItemsRequest
+            {
+                TransactItems =
+                [
+                    new TransactGetItem
+                    {
+                        Get = new Get
+                        {
+                            TableName = table,
+                            Key = TransactionKey(partition, "left"),
+                        },
+                    },
+                    new TransactGetItem
+                    {
+                        Get = new Get
+                        {
+                            TableName = table,
+                            Key = TransactionKey(partition, "right"),
+                        },
+                    },
+                ],
+            },
+            cancellationToken).ConfigureAwait(false);
+        if (response.Responses.Count != 2)
+        {
+            throw new InvalidDataException(
+                "Sealed runtime rollback returned a misaligned transaction snapshot.");
+        }
+        foreach (var item in response.Responses.Select(value => value.Item))
+        {
+            if (!item.TryGetValue("payload", out var payload)
+                || !string.Equals(payload.S, canary, StringComparison.Ordinal)
+                || !item.TryGetValue("writer", out var writerAttribute)
+                || !string.Equals(
+                    writerAttribute.S,
+                    writer,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidDataException(
+                    "Sealed runtime rollback returned the wrong transaction canary.");
+            }
+        }
+    }
+
+    private static async Task AssertTransactionItemsAbsentAsync(
+        IAmazonDynamoDB client,
+        string table,
+        string partition,
+        CancellationToken cancellationToken)
+    {
+        var response = await client.TransactGetItemsAsync(
+            new TransactGetItemsRequest
+            {
+                TransactItems =
+                [
+                    new TransactGetItem
+                    {
+                        Get = new Get
+                        {
+                            TableName = table,
+                            Key = TransactionKey(partition, "left"),
+                        },
+                    },
+                    new TransactGetItem
+                    {
+                        Get = new Get
+                        {
+                            TableName = table,
+                            Key = TransactionKey(partition, "right"),
+                        },
+                    },
+                ],
+            },
+            cancellationToken).ConfigureAwait(false);
+        if (response.Responses.Count != 2
+            || response.Responses.Any(value => value.Item.Count != 0))
+        {
+            throw new InvalidDataException(
+                "Rollback cleanup left transaction items behind.");
+        }
+    }
+
+    private static Dictionary<string, AttributeValue> TransactionItem(
+        string partition,
+        string sort,
+        string canary,
+        string writer)
+        => new()
+        {
+            ["pk"] = new() { S = partition },
+            ["sk"] = new() { S = sort },
+            ["payload"] = new() { S = canary },
+            ["writer"] = new() { S = writer },
+        };
+
+    private static Dictionary<string, AttributeValue> TransactionKey(
+        string partition,
+        string sort)
+        => new()
+        {
+            ["pk"] = new() { S = partition },
+            ["sk"] = new() { S = sort },
+        };
 
     private static async Task AssertDynamoDbValueAsync(
         IAmazonDynamoDB client,
@@ -1012,33 +1348,33 @@ internal static class RealAzureRollbackQualification
         DateTimeOffset cleanupVerifiedAt,
         DateTimeOffset candidateRestoredAt,
         DateTimeOffset completedAt) => new()
-    {
-        ScenarioId = "rollback",
-        Service = service,
-        Operation = operation,
-        EvidenceRunId = RequiredEnvironment("GITHUB_RUN_ID"),
-        EvidenceRunAttempt = ReadPositiveInt("GITHUB_RUN_ATTEMPT"),
-        Candidate = fixture.CandidateRuntimeIdentity,
-        Prior = fixture.PriorRuntimeIdentity,
-        CandidateConfigDigest = fixture.ProxyConfigDigest,
-        PriorConfigDigest = fixture.ProxyConfigDigest,
-        CandidateBackendIdentityDigest = fixture.BackendIdentityDigest,
-        PriorBackendIdentityDigest = fixture.BackendIdentityDigest,
-        CandidateAwsBindingDigest = fixture.AwsBindingDigest,
-        PriorAwsBindingDigest = fixture.AwsBindingDigest,
-        CanaryDigest = canaryDigest,
-        CleanupSemantics = cleanupSemantics,
-        StartedAtUtc = startedAt,
-        CandidateCreateCompletedAtUtc = candidateCreateCompletedAt,
-        CandidateReadCompletedAtUtc = candidateReadCompletedAt,
-        CandidateStoppedAtUtc = candidateStoppedAt,
-        PriorStartedAtUtc = priorStartedAt,
-        PriorReadCompletedAtUtc = priorReadCompletedAt,
-        CleanupRequestedAtUtc = cleanupRequestedAt,
-        CleanupVerifiedAtUtc = cleanupVerifiedAt,
-        CandidateRestoredAtUtc = candidateRestoredAt,
-        CompletedAtUtc = completedAt,
-    };
+        {
+            ScenarioId = "rollback",
+            Service = service,
+            Operation = operation,
+            EvidenceRunId = RequiredEnvironment("GITHUB_RUN_ID"),
+            EvidenceRunAttempt = ReadPositiveInt("GITHUB_RUN_ATTEMPT"),
+            Candidate = fixture.CandidateRuntimeIdentity,
+            Prior = fixture.PriorRuntimeIdentity,
+            CandidateConfigDigest = fixture.ProxyConfigDigest,
+            PriorConfigDigest = fixture.ProxyConfigDigest,
+            CandidateBackendIdentityDigest = fixture.BackendIdentityDigest,
+            PriorBackendIdentityDigest = fixture.BackendIdentityDigest,
+            CandidateAwsBindingDigest = fixture.AwsBindingDigest,
+            PriorAwsBindingDigest = fixture.AwsBindingDigest,
+            CanaryDigest = canaryDigest,
+            CleanupSemantics = cleanupSemantics,
+            StartedAtUtc = startedAt,
+            CandidateCreateCompletedAtUtc = candidateCreateCompletedAt,
+            CandidateReadCompletedAtUtc = candidateReadCompletedAt,
+            CandidateStoppedAtUtc = candidateStoppedAt,
+            PriorStartedAtUtc = priorStartedAt,
+            PriorReadCompletedAtUtc = priorReadCompletedAt,
+            CleanupRequestedAtUtc = cleanupRequestedAt,
+            CleanupVerifiedAtUtc = cleanupVerifiedAt,
+            CandidateRestoredAtUtc = candidateRestoredAt,
+            CompletedAtUtc = completedAt,
+        };
 
     private static async Task AssertS3ValueAsync(
         IAmazonS3 client,
