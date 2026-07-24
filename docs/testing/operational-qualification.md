@@ -107,7 +107,9 @@ against the expected workflow, ref, source SHA, and run attempt:
 Producing and attesting an artifact is necessary but is not approval, workload
 qualification, rollback evidence, or a GA claim. The first trusted artifact may
 be recorded as `bootstrap`; it has no predecessor and therefore cannot claim
-rollback. A later artifact with a distinct complete runtime digest must be
+rollback. A bootstrap must already implement the profile contract it is meant to
+protect; an older artifact with known semantic gaps must not be entered merely
+to make rollback automation pass. A later artifact with a distinct complete runtime digest must be
 deployed and then successfully rolled back to that bootstrap artifact before
 rollback can become qualified. The profile-owned ledger under
 `docs/workloads/approved-runtimes/` records this distinction mechanically:

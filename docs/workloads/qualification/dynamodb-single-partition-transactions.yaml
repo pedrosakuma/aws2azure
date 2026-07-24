@@ -1,6 +1,8 @@
 # Initial policy for the production-shaped single-partition transaction
-# workload. The throughput floor remains unresolved until at least three
-# comparable sealed live-Cosmos runs are reviewed.
+# workload. Rollback qualification is intentionally blocked: no trusted prior
+# release implements this profile's atomic snapshot, validation, and
+# ClientRequestToken-rejection contract. The adjacent-runtime scenario must be
+# recorded as skipped/inconclusive until such a release is approved.
 schema_version: 1
 profile_id: dynamodb-single-partition-transactions
 profile_version: 1
@@ -73,6 +75,11 @@ scenarios:
     evidence_source: real_azure
     signals: []
   - id: transaction-restart-versioning
+    service: dynamodb
+    operation: TransactWriteItems
+    evidence_source: real_azure
+    signals: []
+  - id: transaction-sproc-body-verification
     service: dynamodb
     operation: TransactWriteItems
     evidence_source: real_azure

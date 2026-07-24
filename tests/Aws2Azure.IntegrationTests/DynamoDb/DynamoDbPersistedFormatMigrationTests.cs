@@ -188,7 +188,9 @@ public sealed class DynamoDbPersistedFormatMigrationTests(
         Skip.If(
             Environment.GetEnvironmentVariable(
                 "AWS2AZURE_DDB_PERSISTED_FORMAT_QUALIFICATION") != "1",
-            "AWS2AZURE_DDB_PERSISTED_FORMAT_QUALIFICATION is not enabled.");
+            Environment.GetEnvironmentVariable(
+                "AWS2AZURE_DDB_TRANSACTION_ROLLBACK_BLOCKER")
+            ?? "AWS2AZURE_DDB_PERSISTED_FORMAT_QUALIFICATION is not enabled.");
         Skip.IfNot(fixture.CosmosConfigured,
             "AZURE_COSMOS_ENDPOINT/KEY/DATABASE are not configured.");
         Skip.IfNot(fixture.SealedRollbackConfigured,

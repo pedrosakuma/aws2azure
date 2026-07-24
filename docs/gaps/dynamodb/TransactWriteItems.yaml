@@ -8,9 +8,10 @@ sub_features:
     notes: >-
       `atomicTransactWrite_v3` reads and validates every target before issuing
       writes. All writes execute inside one Cosmos logical-partition ACID
-      transaction; a condition or write failure commits nothing. The frozen
-      `atomicTransactWrite_v2` identity and hash remain published for adjacent
-      runtime rollback.
+      transaction; a condition or write failure commits nothing.
+      `atomicTransactWrite_v2` remains in the persisted-format inventory, but its
+      runtime is not compatible with the complete transaction workload profile
+      and is not an approved rollback baseline.
   - name: ConditionExpression transaction subset
     status: implemented
     notes: >-
@@ -26,7 +27,10 @@ sub_features:
       rejected before execution. Ordered string comparisons use DynamoDB's exact
       UTF-8 byte lexicographic order, including supplementary Unicode code
       points. Missing attributes never satisfy `<>`; differing DynamoDB types
-      do. Unknown AST nodes fail closed.
+      do. Runtime type errors for ordered operators, BETWEEN, and begins_with
+      are returned as a structured script validation result and mapped to
+      ValidationException; NOT never turns such an error into success. Unknown
+      AST nodes fail closed.
   - name: Unsupported condition forms fail closed
     status: implemented
     notes: >-
@@ -35,6 +39,16 @@ sub_features:
       contains(), size(), and unsupported attribute_type tags are rejected with
       ValidationException. Legacy Expected/ConditionalOperator are rejected
       instead of ignored.
+  - name: AttributeValue and placeholder preflight
+    status: implemented
+    notes: >-
+      Every Put item, Delete/ConditionCheck key, and condition value is validated
+      before table metadata or stored-procedure I/O. Empty sets, malformed
+      base64, invalid/out-of-range Number values and Number-set members,
+      duplicate set members, and malformed typed shapes are rejected.
+      Non-empty string sets may contain an empty string, matching current
+      DynamoDB policy. Every declared ExpressionAttributeNames and
+      ExpressionAttributeValues placeholder must be consumed.
   - name: Positional CancellationReasons
     status: implemented
     notes: >-
@@ -50,6 +64,14 @@ sub_features:
   - name: 100-item-per-call cap
     status: implemented
     notes: "Requests over 100 items are rejected with ValidationException."
+  - name: Serialized transaction body limit
+    status: partial
+    notes: >-
+      The exact UTF-8 stored-procedure parameter body is assembled once in a
+      pooled buffer and must not exceed Cosmos DB's 2 MiB request boundary.
+      Oversize requests are rejected deterministically with ValidationException
+      before stored-procedure provisioning or execution. DynamoDB permits an
+      aggregate 4 MiB transaction, so the proxy's accepted aggregate is lower.
   - name: ClientRequestToken (idempotency)
     status: unsupported
     notes: >-
@@ -72,10 +94,12 @@ behavior_differences:
   - "Stored procedures must be enabled (Preferred or Required). There is no non-atomic fallback."
   - "Stored-procedure provisioning treats an HTTP 409 as success only after reading the existing resource and verifying the exact versioned id and body; an id/body conflict fails closed."
   - "Transaction execution POSTs opt out of proxy-level automatic retries because a lost response is ambiguous without durable ClientRequestToken deduplication. Stored-procedure availability is cached per Cosmos account/database/container, invalidated on table lifecycle, and evicted/reprovisioned once after an execution 404."
-  - "`atomicWrite_v2` remains byte-identical. `atomicTransactWrite_v2` remains inventoried for rollback, while the certified condition/cancellation contract uses `atomicTransactWrite_v3`; TransactGet uses the independent `atomicTransactGet_v1` snapshot script."
-  - "The Cosmos Linux emulator cannot execute these scripts. The v2 predecessor has historical real-Azure evidence, but v3 write semantics, v1 snapshots, contention, restart, and adjacent-runtime rollback require fresh real-Azure runs before new seals are committed."
-  - "Large transactions may exceed Cosmos stored-procedure execution or response budgets; failures roll back rather than partially commit."
+  - "`atomicWrite_v2` remains byte-identical. `atomicTransactWrite_v2` remains in the additive persisted-format identity set for future adjacent-runtime format checks, but it is not a workload-profile rollback target. The current condition/cancellation contract uses `atomicTransactWrite_v3`; TransactGet uses `atomicTransactGet_v1`."
+  - "The Cosmos Linux emulator cannot execute these scripts. V3 write semantics, v1 snapshots, contention, restart, and exact-body conflict handling require fresh real-Azure runs before new seals are committed."
+  - "No trusted prior release implements the complete profile: the known v2 runtime uses independent reads and does not enforce ClientRequestToken rejection. It is not an approved bootstrap/rollback target; qualification is rollout-only and records the adjacent-runtime row as skipped/inconclusive until a compatible prior release exists."
+  - "The exact serialized stored-procedure parameter body is limited to 2 MiB, below DynamoDB's 4 MiB aggregate TransactWriteItems limit. Oversize requests fail with ValidationException before stored-procedure I/O."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TransactWriteItems.html
   - https://learn.microsoft.com/azure/cosmos-db/nosql/database-transactions-optimistic-concurrency
   - https://learn.microsoft.com/azure/cosmos-db/nosql/stored-procedures-triggers-udfs
+  - https://learn.microsoft.com/azure/cosmos-db/concepts-limits

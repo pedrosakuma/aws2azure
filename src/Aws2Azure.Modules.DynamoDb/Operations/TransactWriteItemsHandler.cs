@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -8,6 +9,7 @@ using System.Threading.Tasks;
 using Aws2Azure.Core.Buffers;
 using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
+using Aws2Azure.Modules.DynamoDb.Persistence;
 using Microsoft.AspNetCore.Http;
 
 namespace Aws2Azure.Modules.DynamoDb.Operations;
@@ -20,6 +22,7 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 internal static class TransactWriteItemsHandler
 {
     private const int MaxItemsPerCall = 100;
+    internal const int MaxSprocRequestBodyBytes = 2 * 1024 * 1024;
 
     private static readonly JsonDocumentOptions TransactItemParseOptions = new()
     {
@@ -42,7 +45,17 @@ internal static class TransactWriteItemsHandler
     private readonly record struct InputOp(
         OpKind Kind,
         JsonRange Range,
-        string Name);
+        string Name,
+        string? ConditionJson);
+
+    private readonly record struct PreparedRequestOp(
+        OpKind Kind,
+        string Id,
+        JsonRange Range,
+        string PartitionKey,
+        int? TtlSeconds,
+        OrderKeyField[]? OrderKeys,
+        string? ConditionJson);
 
     public static async Task HandleTransactWriteItemsAsync(
         HttpContext ctx,
@@ -260,7 +273,81 @@ internal static class TransactWriteItemsHandler
                 return;
             }
 
-            inputs[index] = new InputOp(kind, range, name);
+            if (kind == OpKind.Put)
+            {
+                if (!ItemHandlers.ValidateItemShape(keyBearer, out var shapeError))
+                {
+                    await RejectAsync(ctx, shapeError).ConfigureAwait(false);
+                    return;
+                }
+            }
+            else if (!ItemHandlers.ValidateKeyShape(keyBearer, out var keyShapeError))
+            {
+                await RejectAsync(ctx, keyShapeError).ConfigureAwait(false);
+                return;
+            }
+
+            if (operation.TryGetProperty(
+                    "ExpressionAttributeValues",
+                    out var expressionValues)
+                && !ItemHandlers.ValidateExpressionAttributeValues(
+                    expressionValues,
+                    out var expressionValueError))
+            {
+                await RejectAsync(ctx, expressionValueError).ConfigureAwait(false);
+                return;
+            }
+
+            ConditionNode? condition;
+            try
+            {
+                condition = ParseCondition(operation, out var conditionError);
+                if (conditionError is not null)
+                {
+                    await RejectAsync(ctx, conditionError).ConfigureAwait(false);
+                    return;
+                }
+            }
+            catch (ExpressionSyntaxException exception)
+            {
+                await RejectAsync(
+                    ctx,
+                    $"Invalid ConditionExpression (offset {exception.Position}): {exception.Message}")
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            if (kind == OpKind.Check && condition is null)
+            {
+                await RejectAsync(
+                    ctx,
+                    $"TransactItems[{index}].ConditionCheck.ConditionExpression is required.")
+                    .ConfigureAwait(false);
+                return;
+            }
+            if (!SprocEligibility.TryValidateTransactionCondition(
+                    condition,
+                    out var eligibilityError))
+            {
+                await RejectAsync(
+                    ctx,
+                    $"TransactItems[{index}].{name}.ConditionExpression is outside the supported transaction subset: {eligibilityError}")
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            string? conditionJson;
+            try
+            {
+                conditionJson = SprocAstSerializer.SerializeCondition(condition);
+            }
+            catch (NotSupportedException exception)
+            {
+                await RejectAsync(ctx, exception.Message).ConfigureAwait(false);
+                return;
+            }
+
+            inputs[index] = new InputOp(kind, range, name, conditionJson);
         }
 
         if (sprocContext is not { IsSprocEnabled: true } || sprocContext.Manager is null)
@@ -295,7 +382,7 @@ internal static class TransactWriteItemsHandler
         }
 
         var metadata = metadataRead.Metadata!;
-        var prepared = new PreparedOp[inputs.Length];
+        var prepared = new PreparedRequestOp[inputs.Length];
         var seenTargets = new HashSet<string>(StringComparer.Ordinal);
         string? partitionKey = null;
 
@@ -376,84 +463,19 @@ internal static class TransactWriteItemsHandler
                 return;
             }
 
-            ConditionNode? condition;
-            try
-            {
-                condition = ParseCondition(operation, out var conditionError);
-                if (conditionError is not null)
-                {
-                    await RejectAsync(ctx, conditionError).ConfigureAwait(false);
-                    return;
-                }
-            }
-            catch (ExpressionSyntaxException exception)
-            {
-                await RejectAsync(
-                    ctx,
-                    $"Invalid ConditionExpression (offset {exception.Position}): {exception.Message}")
-                    .ConfigureAwait(false);
-                return;
-            }
-            catch (ConditionParseConflictException exception)
-            {
-                await RejectAsync(ctx, exception.Message).ConfigureAwait(false);
-                return;
-            }
-
-            if (input.Kind == OpKind.Check && condition is null)
-            {
-                await RejectAsync(
-                    ctx,
-                    $"TransactItems[{index}].ConditionCheck.ConditionExpression is required.")
-                    .ConfigureAwait(false);
-                return;
-            }
-            if (!SprocEligibility.TryValidateTransactionCondition(
-                    condition,
-                    out var eligibilityError))
-            {
-                await RejectAsync(
-                    ctx,
-                    $"TransactItems[{index}].{input.Name}.ConditionExpression is outside the supported transaction subset: {eligibilityError}")
-                    .ConfigureAwait(false);
-                return;
-            }
-
-            string? conditionJson;
-            try
-            {
-                conditionJson = SprocAstSerializer.SerializeCondition(condition);
-            }
-            catch (NotSupportedException exception)
-            {
-                await RejectAsync(ctx, exception.Message).ConfigureAwait(false);
-                return;
-            }
-
-            byte[]? documentBytes = null;
+            int? ttlSeconds = null;
+            OrderKeyField[]? orderKeys = null;
             if (input.Kind == OpKind.Put)
             {
-                if (!ItemHandlers.ValidateItemShape(keyBearer, out var shapeError))
-                {
-                    await RejectAsync(ctx, shapeError).ConfigureAwait(false);
-                    return;
-                }
                 try
                 {
-                    var ttlSeconds = TtlTranslation.ComputeItemTtlSeconds(
+                    ttlSeconds = TtlTranslation.ComputeItemTtlSeconds(
                         keyBearer,
                         metadata.TimeToLive,
                         DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-                    var orderKeys = SecondaryIndexOrderKeys.Compute(
+                    orderKeys = SecondaryIndexOrderKeys.Compute(
                         metadata,
                         keyBearer);
-                    documentBytes = ItemHandlers.BuildItemDocumentBytes(
-                        documentId,
-                        candidatePartitionKey,
-                        keyBearer,
-                        binary: false,
-                        ttlSeconds,
-                        orderKeys);
                 }
                 catch (ArgumentException exception)
                 {
@@ -462,19 +484,31 @@ internal static class TransactWriteItemsHandler
                 }
             }
 
-            prepared[index] = new PreparedOp(
+            prepared[index] = new PreparedRequestOp(
                 input.Kind,
                 documentId,
-                documentBytes,
-                conditionJson);
+                input.Range,
+                candidatePartitionKey,
+                ttlSeconds,
+                orderKeys,
+                input.ConditionJson);
         }
 
         PooledByteBufferWriter parameters;
         try
         {
-            parameters = BuildTransactParamsBody(prepared);
+            parameters = BuildTransactRequestParamsBody(body, prepared);
         }
-        catch (JsonException)
+        catch (TransactionRequestTooLargeException exception)
+        {
+            await RejectAsync(
+                ctx,
+                $"The serialized TransactWriteItems stored-procedure request is {exception.ActualBytes} bytes, exceeding the Cosmos DB 2 MiB ({MaxSprocRequestBodyBytes}-byte) limit. DynamoDB permits up to 4 MiB, so split this transaction.")
+                .ConfigureAwait(false);
+            return;
+        }
+        catch (Exception exception) when (
+            exception is JsonException or ArgumentException)
         {
             await RejectAsync(
                 ctx,
@@ -516,6 +550,16 @@ internal static class TransactWriteItemsHandler
                 StatusCodes.Status200OK,
                 new TransactWriteItemsResponse(),
                 TransactWriteItemsJsonContext.Default.TransactWriteItemsResponse)
+                .ConfigureAwait(false);
+            return;
+        }
+        if (result.ValidationFailed)
+        {
+            await RejectAsync(
+                ctx,
+                string.IsNullOrWhiteSpace(result.ValidationError)
+                    ? "Transaction condition evaluation failed validation."
+                    : result.ValidationError)
                 .ConfigureAwait(false);
             return;
         }
@@ -679,12 +723,109 @@ internal static class TransactWriteItemsHandler
             return null;
         }
 
-        return ConditionGate.TryParse(
-            expression,
-            expected: null,
-            conditionalOperator: null,
+        var parsed = ConditionExpressionParser.ParseWithUsage(
+            expression!,
             names,
             expressionValues);
+        if (TryFindUnused(names, parsed.ConsumedNames, out var unusedName))
+        {
+            error =
+                $"Value provided in ExpressionAttributeNames unused in expressions: {unusedName}.";
+            return null;
+        }
+        if (TryFindUnused(
+                expressionValues,
+                parsed.ConsumedValues,
+                out var unusedValue))
+        {
+            error =
+                $"Value provided in ExpressionAttributeValues unused in expressions: {unusedValue}.";
+            return null;
+        }
+        return parsed.Node;
+    }
+
+    private static bool TryFindUnused<T>(
+        IReadOnlyDictionary<string, T>? declared,
+        IReadOnlySet<string> consumed,
+        out string? unused)
+    {
+        if (declared is not null)
+        {
+            foreach (var key in declared.Keys)
+            {
+                if (!consumed.Contains(key))
+                {
+                    unused = key;
+                    return true;
+                }
+            }
+        }
+
+        unused = null;
+        return false;
+    }
+
+    private static PooledByteBufferWriter BuildTransactRequestParamsBody(
+        byte[] body,
+        PreparedRequestOp[] operations)
+    {
+        var buffer = new PooledByteBufferWriter(512);
+        try
+        {
+            WriteRaw(buffer, "[["u8);
+            for (var index = 0; index < operations.Length; index++)
+            {
+                if (index > 0)
+                {
+                    WriteByte(buffer, (byte)',');
+                }
+
+                var operation = operations[index];
+                WriteRaw(
+                    buffer,
+                    operation.Kind switch
+                    {
+                        OpKind.Put => "{\"type\":\"PUT\",\"id\":"u8,
+                        OpKind.Delete => "{\"type\":\"DELETE\",\"id\":"u8,
+                        _ => "{\"type\":\"CHECK\",\"id\":"u8,
+                    });
+                WriteJsonString(buffer, operation.Id);
+                if (operation.Kind == OpKind.Put)
+                {
+                    WriteRaw(buffer, ",\"doc\":"u8);
+                    using var operationDocument = JsonDocument.Parse(
+                        body.AsMemory(operation.Range.Start, operation.Range.Length),
+                        TransactItemParseOptions);
+                    InferredAttributeStorage.WriteCosmosDocument(
+                        buffer,
+                        operation.Id,
+                        operation.PartitionKey,
+                        operationDocument.RootElement.GetProperty("Item"),
+                        operation.TtlSeconds,
+                        operation.OrderKeys);
+                }
+
+                WriteRaw(buffer, ",\"condition\":"u8);
+                if (operation.ConditionJson is null)
+                {
+                    WriteRaw(buffer, "null"u8);
+                }
+                else
+                {
+                    WriteUtf8(buffer, operation.ConditionJson);
+                }
+                WriteByte(buffer, (byte)'}');
+            }
+            WriteRaw(buffer, "]]"u8);
+            ThrowIfTransactRequestTooLarge(buffer);
+            return buffer;
+        }
+        catch
+        {
+            buffer.Dispose();
+            throw;
+        }
     }
 
     internal static PooledByteBufferWriter BuildTransactParamsBody(
@@ -743,6 +884,55 @@ internal static class TransactWriteItemsHandler
         writer.WriteEndArray();
     }
 
+    private static void WriteJsonString(
+        IBufferWriter<byte> output,
+        string value)
+    {
+        using var writer = new Utf8JsonWriter(output);
+        writer.WriteStringValue(value);
+        writer.Flush();
+    }
+
+    private static void WriteUtf8(
+        IBufferWriter<byte> output,
+        string value)
+    {
+        var span = output.GetSpan(Encoding.UTF8.GetMaxByteCount(value.Length));
+        var written = Encoding.UTF8.GetBytes(value, span);
+        output.Advance(written);
+    }
+
+    private static void WriteByte(
+        IBufferWriter<byte> output,
+        byte value)
+    {
+        var span = output.GetSpan(1);
+        span[0] = value;
+        output.Advance(1);
+    }
+
+    private static void WriteRaw(
+        IBufferWriter<byte> output,
+        ReadOnlySpan<byte> value)
+    {
+        var span = output.GetSpan(value.Length);
+        value.CopyTo(span);
+        output.Advance(value.Length);
+    }
+
+    private static void ThrowIfTransactRequestTooLarge(
+        PooledByteBufferWriter buffer)
+    {
+        var actualBytes = buffer.WrittenMemory.Length;
+        if (!IsWithinTransactRequestBodyLimit(actualBytes))
+        {
+            throw new TransactionRequestTooLargeException(actualBytes);
+        }
+    }
+
+    internal static bool IsWithinTransactRequestBodyLimit(int byteCount)
+        => byteCount <= MaxSprocRequestBodyBytes;
+
     internal static string BuildOperationsJson(PreparedOp[] operations)
     {
         using var stream = new MemoryStream();
@@ -755,7 +945,7 @@ internal static class TransactWriteItemsHandler
 
     private static bool TryReadCancellationReasons(
         string? body,
-        PreparedOp[] operations,
+        PreparedRequestOp[] operations,
         out string[]? reasons)
     {
         reasons = null;
@@ -865,4 +1055,10 @@ internal static class TransactWriteItemsHandler
             StatusCodes.Status400BadRequest,
             "ValidationException",
             message);
+
+    private sealed class TransactionRequestTooLargeException(int actualBytes)
+        : Exception
+    {
+        public int ActualBytes { get; } = actualBytes;
+    }
 }

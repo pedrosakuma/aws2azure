@@ -13,10 +13,9 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 ///         and legacy <c>Expected</c>/<c>ConditionalOperator</c>.</item>
 ///   <item>Resolution of <c>ExpressionAttributeNames</c> and
 ///         <c>ExpressionAttributeValues</c> to the parser.</item>
-///   <item>Reporting <c>ExpressionAttributeValues</c> entries that were
-///         declared but never referenced — AWS rejects this with
-///         ValidationException; we currently log the divergence in the
-///         gap doc and skip the strict check until Slice 5.</item>
+///   <item>Shared name/value binding. Callers that require strict unused-
+///         placeholder rejection use
+///         <see cref="ConditionExpressionParser.ParseWithUsage"/>.</item>
 /// </list>
 /// </summary>
 internal static class ConditionGate

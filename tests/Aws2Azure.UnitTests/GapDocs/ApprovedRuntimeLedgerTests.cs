@@ -23,17 +23,15 @@ public sealed class ApprovedRuntimeLedgerTests
             ValidationTime);
 
         Assert.Empty(errors);
-        Assert.Equal(5, records.Count);
+        Assert.Equal(4, records.Count);
         var approved = records.Where(record => record.Status == "approved").ToArray();
         var bootstrap = records.Where(record => record.Status == "bootstrap").ToArray();
         Assert.Equal(4, approved.Length);
-        var transactionBootstrap = Assert.Single(bootstrap);
-        Assert.Equal(
-            "dynamodb-single-partition-transactions",
-            transactionBootstrap.Profile.Id);
-        Assert.True(transactionBootstrap.Eligibility.RollbackBaselineEligible);
-        Assert.False(transactionBootstrap.Eligibility.PromotionEligible);
-        Assert.Null(transactionBootstrap.Qualification);
+        Assert.Empty(bootstrap);
+        Assert.DoesNotContain(
+            records,
+            record => record.Profile.Id
+                == "dynamodb-single-partition-transactions");
         Assert.All(approved, record =>
         {
             Assert.True(record.Eligibility.RollbackBaselineEligible);

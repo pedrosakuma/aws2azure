@@ -36,6 +36,7 @@ evidence:
     - transaction-idempotency-rejection
     - transaction-contention
     - transaction-restart-versioning
+    - transaction-sproc-body-verification
     - transaction-adjacent-runtime-rollback
   required_real_azure_scenarios:
     - representative-load
@@ -46,4 +47,5 @@ evidence:
     - transaction-idempotency-rejection
     - transaction-contention
     - transaction-restart-versioning
+    - transaction-sproc-body-verification
     - transaction-adjacent-runtime-rollback

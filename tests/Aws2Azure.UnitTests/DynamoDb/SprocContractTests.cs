@@ -48,6 +48,44 @@ public sealed class SprocContractTests
         Assert.Equal(StatusCodes.Status502BadGateway, result.StatusCode);
     }
 
+    [Fact]
+    public async Task Transaction_structured_validation_error_is_preserved()
+    {
+        using var response = CosmosOk(
+            "{\"success\":false,\"validationError\":{\"code\":\"ValidationException\",\"message\":\"Incorrect operand type for begins_with.\"}}");
+
+        var result = await SprocResponseParser.ParseTransactAsync(
+            response,
+            CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.False(result.ConditionFailed);
+        Assert.True(result.ValidationFailed);
+        Assert.Equal(
+            "Incorrect operand type for begins_with.",
+            result.ValidationError);
+    }
+
+    [Theory]
+    [InlineData(
+        "{\"success\":false,\"validationError\":{\"code\":\"Other\",\"message\":\"bad\"}}")]
+    [InlineData(
+        "{\"success\":false,\"validationError\":{\"code\":\"ValidationException\",\"message\":\"\"}}")]
+    [InlineData(
+        "{\"success\":false,\"validationError\":{\"code\":\"ValidationException\",\"message\":\"bad\"},\"reasons\":[]}")]
+    public async Task Malformed_transaction_validation_error_fails_closed(
+        string body)
+    {
+        using var response = CosmosOk(body);
+
+        var result = await SprocResponseParser.ParseTransactAsync(
+            response,
+            CancellationToken.None);
+
+        Assert.False(result.ValidationFailed);
+        Assert.Equal(StatusCodes.Status502BadGateway, result.StatusCode);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("{}")]
@@ -141,6 +179,18 @@ public sealed class SprocContractTests
             StringComparison.Ordinal);
         Assert.Contains(
             "throw new Error('Unsupported condition AST node:",
+            SprocManager.TransactSprocBody,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "a2aValidationError: true",
+            SprocManager.TransactSprocBody,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "validationError: {",
+            SprocManager.TransactSprocBody,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "Incorrect operand type for begins_with",
             SprocManager.TransactSprocBody,
             StringComparison.Ordinal);
     }

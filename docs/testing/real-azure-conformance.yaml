@@ -273,7 +273,7 @@ services:
         category: cancellation
         evidence_source: real_azure
         establishes_verification: false
-        description: AND/OR/NOT, reversed operands, string ordering/BETWEEN/IN, attribute_exists/not_exists, begins_with, attribute_type(S/BOOL/NULL), scalar equality/not-equal, numeric equality/not-equal/IN, numeric-order rejection, missing-attribute not-equal, and positional cancellation reasons are exercised with post-state checks against real Cosmos.
+        description: AND/OR/NOT, reversed operands, string ordering/BETWEEN/IN, attribute_exists/not_exists, begins_with, attribute_type(S/BOOL/NULL), scalar equality/not-equal, numeric equality/not-equal/IN, numeric-order rejection, NOT begins_with type-error propagation, missing-attribute not-equal, and positional cancellation reasons are exercised with post-state checks against real Cosmos.
         operations: [TransactWriteItems]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Supported_condition_subset_and_write_kinds_commit_expected_state
@@ -292,7 +292,7 @@ services:
         category: cancellation
         evidence_source: real_azure
         establishes_verification: false
-        description: Non-empty ClientRequestToken is rejected consistently before execution and remains rejected after process restart; no false replay claim is made.
+        description: Non-empty ClientRequestToken is rejected consistently before execution and after process restart, with the target item asserted absent after each rejection; no false replay claim is made.
         operations: [TransactWriteItems]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Scope_token_rejection_and_versioned_sprocs_survive_restart
@@ -314,12 +314,21 @@ services:
         operations: [TransactGetItems, TransactWriteItems]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Scope_token_rejection_and_versioned_sprocs_survive_restart
+      - id: transaction-sproc-body-verification
+        priority: p0
+        category: restart
+        evidence_source: real_azure
+        establishes_verification: false
+        description: An isolated table receives a conflicting atomicTransactWrite_v3 body; the proxy's create-409/read-exact-body path fails closed, commits no item, and recovers only after the conflict is removed and the exact current body is provisioned.
+        operations: [TransactWriteItems]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Conflicting_v3_sproc_body_fails_closed_and_is_restored_in_isolated_table
       - id: transaction-adjacent-runtime-rollback
         priority: p0
         category: rollback
         evidence_source: real_azure
         establishes_verification: false
-        description: Exact candidate and prior sealed runtimes read and atomically rewrite the same transaction items while v2 and v3 stored-procedure identities coexist.
+        description: Blocked bootstrap row. The tests must skip with the recorded compatibility blocker until a trusted prior release implements the complete transaction profile; the known v2 runtime is not an acceptable rollback target.
         operations: [TransactGetItems, TransactWriteItems]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionQualificationTests.Adjacent_runtime_transaction_rollback_is_atomic_and_compatible

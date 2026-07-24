@@ -34,7 +34,7 @@ internal static class DynamoDbPersistedFormatContract
 
     // Frozen by the v2 inventory. Body changes require another new ID.
     public const string AtomicTransactWriteBodySha256 =
-        "26d95f96fe3a00fa6e0dcd30b2df8c2b55a1d48cac22959ac489c253679d6541";
+        "c339afcc6fec9b86dc2e82e53d7e184143307129570cb40e70662bdb51bf8b10";
     public const string AtomicTransactGetBodySha256 =
         "355d2c74187d3d7c9c84b88f07992bca8954489e2e43f613a2934d978174db7b";
 }

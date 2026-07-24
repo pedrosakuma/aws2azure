@@ -1,5 +1,7 @@
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
+using Aws2Azure.Modules.DynamoDb.Internal;
+using System.Text.Json;
 using Xunit;
 
 namespace Aws2Azure.IntegrationTests.DynamoDb;
@@ -406,6 +408,48 @@ public sealed class DynamoDbRealAzureTransactionTests(
                 "source",
                 timeout.Token);
             Assert.Equal("7", sourceAfterRejection["count"].N);
+
+            var invalidNegatedBeginsWith =
+                await Assert.ThrowsAsync<AmazonDynamoDBException>(
+                    () => client.TransactWriteItemsAsync(
+                        new TransactWriteItemsRequest
+                        {
+                            TransactItems =
+                            [
+                                Check(
+                                    table,
+                                    partition,
+                                    "source",
+                                    "NOT begins_with(#count, :prefix)",
+                                    new()
+                                    {
+                                        [":prefix"] = S("7"),
+                                    },
+                                    new() { ["#count"] = "count" }),
+                                Put(
+                                    table,
+                                    partition,
+                                    "not-begins-with-peer",
+                                    "must-not-commit"),
+                            ],
+                        },
+                        timeout.Token));
+            Assert.Equal(
+                "ValidationException",
+                invalidNegatedBeginsWith.ErrorCode);
+            Assert.False(await ExistsAsync(
+                client,
+                table,
+                partition,
+                "not-begins-with-peer",
+                timeout.Token));
+            var sourceAfterTypeError = await ReadItemAsync(
+                client,
+                table,
+                partition,
+                "source",
+                timeout.Token);
+            Assert.Equal("7", sourceAfterTypeError["count"].N);
         }, timeout.Token);
     }
 
@@ -533,6 +577,12 @@ public sealed class DynamoDbRealAzureTransactionTests(
                     timeout.Token));
             Assert.Equal("ValidationException", tokenError.ErrorCode);
             Assert.Contains("ClientRequestToken", tokenError.Message);
+            Assert.False(await ExistsAsync(
+                client,
+                table,
+                "restart",
+                "token",
+                timeout.Token));
 
             var scopeRequest = new TransactWriteItemsRequest
             {
@@ -615,6 +665,12 @@ public sealed class DynamoDbRealAzureTransactionTests(
             Assert.Equal(
                 "ValidationException",
                 restartedTokenError.ErrorCode);
+            Assert.False(await ExistsAsync(
+                client,
+                table,
+                "restart",
+                "token",
+                timeout.Token));
             var restartedScopeError =
                 await Assert.ThrowsAsync<AmazonDynamoDBException>(
                     () => client.TransactWriteItemsAsync(
@@ -635,6 +691,128 @@ public sealed class DynamoDbRealAzureTransactionTests(
                 "partition-b",
                 "two",
                 timeout.Token));
+        }, timeout.Token);
+    }
+
+    [SkippableFact]
+    public async Task Conflicting_v3_sproc_body_fails_closed_and_is_restored_in_isolated_table()
+    {
+        SkipUnlessConfigured();
+        Skip.If(
+            string.IsNullOrWhiteSpace(fixture.CosmosMasterKey),
+            "AZURE_COSMOS_KEY is required for the direct Cosmos stored-procedure conflict probe.");
+        using var client = fixture.CreateDynamoDbClient();
+        using var http = new HttpClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        await WithTableAsync(client, async table =>
+        {
+            const string conflictingBody =
+                "function atomicTransactWrite(operations) { "
+                + "getContext().getResponse().setBody({success:true,conflictingBody:true}); }";
+            var conflictPresent = false;
+            try
+            {
+                await CosmosRestBootstrap.CreateStoredProcedureAsync(
+                    http,
+                    fixture.CosmosEndpoint,
+                    fixture.CosmosMasterKey,
+                    fixture.CosmosDatabase,
+                    table,
+                    SprocManager.TransactSprocId,
+                    conflictingBody);
+                conflictPresent = true;
+
+                var failure = await Assert.ThrowsAsync<AmazonDynamoDBException>(
+                    () => client.TransactWriteItemsAsync(
+                        new TransactWriteItemsRequest
+                        {
+                            TransactItems =
+                            [
+                                Put(
+                                    table,
+                                    "body-conflict",
+                                    "target",
+                                    "must-not-commit"),
+                            ],
+                        },
+                        timeout.Token));
+                Assert.Equal("InternalServerError", failure.ErrorCode);
+                Assert.False(await ExistsAsync(
+                    client,
+                    table,
+                    "body-conflict",
+                    "target",
+                    timeout.Token));
+
+                using (var conflicting = JsonDocument.Parse(
+                           await CosmosRestBootstrap.ReadStoredProcedureAsync(
+                               http,
+                               fixture.CosmosEndpoint,
+                               fixture.CosmosMasterKey,
+                               fixture.CosmosDatabase,
+                               table,
+                               SprocManager.TransactSprocId)))
+                {
+                    Assert.Equal(
+                        conflictingBody,
+                        conflicting.RootElement.GetProperty("body").GetString());
+                }
+
+                await CosmosRestBootstrap.DeleteStoredProcedureAsync(
+                    http,
+                    fixture.CosmosEndpoint,
+                    fixture.CosmosMasterKey,
+                    fixture.CosmosDatabase,
+                    table,
+                    SprocManager.TransactSprocId);
+                conflictPresent = false;
+                await fixture.RestartAsync();
+
+                await client.TransactWriteItemsAsync(
+                    new TransactWriteItemsRequest
+                    {
+                        TransactItems =
+                        [
+                            Put(
+                                table,
+                                "body-conflict",
+                                "target",
+                                "restored"),
+                        ],
+                    },
+                    timeout.Token);
+                Assert.True(await ExistsAsync(
+                    client,
+                    table,
+                    "body-conflict",
+                    "target",
+                    timeout.Token));
+
+                using var restored = JsonDocument.Parse(
+                    await CosmosRestBootstrap.ReadStoredProcedureAsync(
+                        http,
+                        fixture.CosmosEndpoint,
+                        fixture.CosmosMasterKey,
+                        fixture.CosmosDatabase,
+                        table,
+                        SprocManager.TransactSprocId));
+                Assert.Equal(
+                    SprocManager.TransactSprocBody,
+                    restored.RootElement.GetProperty("body").GetString());
+            }
+            finally
+            {
+                if (conflictPresent)
+                {
+                    await CosmosRestBootstrap.DeleteStoredProcedureAsync(
+                        http,
+                        fixture.CosmosEndpoint,
+                        fixture.CosmosMasterKey,
+                        fixture.CosmosDatabase,
+                        table,
+                        SprocManager.TransactSprocId);
+                }
+            }
         }, timeout.Token);
     }
 

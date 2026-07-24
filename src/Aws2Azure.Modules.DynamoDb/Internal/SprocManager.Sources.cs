@@ -175,10 +175,13 @@ internal sealed partial class SprocManager
             case 'BEGINS_WITH':
                 var str = readOperand(doc, ast.attr);
                 var prefix = readOperand(doc, ast.prefix);
-                return str.exists && prefix.exists
-                    && typeof str.value === 'string'
-                    && typeof prefix.value === 'string'
-                    && str.value.indexOf(prefix.value) === 0;
+                if (!str.exists || !prefix.exists) return false;
+                if (typeof str.value !== 'string'
+                    || typeof prefix.value !== 'string') {
+                    validationError(
+                        'Incorrect operand type for begins_with; both operands must be strings.');
+                }
+                return str.value.indexOf(prefix.value) === 0;
             default:
                 throw new Error('Unsupported condition AST node: ' + ast.type);
         }
@@ -195,9 +198,15 @@ internal sealed partial class SprocManager
                 && left.value === right.value;
             return (ast.op === '=' || ast.op === 'EQ') ? equal : !equal;
         }
-        if (!sameScalarType(left.value, right.value)) return false;
+        if (!sameScalarType(left.value, right.value)) {
+            validationError(
+                'Incorrect operand types for ordered comparison; operands must share one scalar type.');
+        }
         var order = orderedCompare(left.value, right.value);
-        if (order === null) return false;
+        if (order === null) {
+            validationError(
+                'Incorrect operand type for ordered comparison; this transaction profile supports strings only.');
+        }
         switch (ast.op) {
             case '<': case 'LT': return order < 0;
             case '<=': case 'LE': return order <= 0;
@@ -211,13 +220,19 @@ internal sealed partial class SprocManager
         var value = readOperand(doc, ast.value);
         var low = readOperand(doc, ast.low);
         var high = readOperand(doc, ast.high);
-        if (!value.exists || !low.exists || !high.exists
-            || !sameScalarType(value.value, low.value)
-            || !sameScalarType(value.value, high.value)) return false;
+        if (!value.exists || !low.exists || !high.exists) return false;
+        if (!sameScalarType(value.value, low.value)
+            || !sameScalarType(value.value, high.value)) {
+            validationError(
+                'Incorrect operand types for BETWEEN; the value and both bounds must share one scalar type.');
+        }
         var lowOrder = orderedCompare(value.value, low.value);
         var highOrder = orderedCompare(value.value, high.value);
-        return lowOrder !== null && highOrder !== null
-            && lowOrder >= 0 && highOrder <= 0;
+        if (lowOrder === null || highOrder === null) {
+            validationError(
+                'Incorrect operand type for BETWEEN; this transaction profile supports strings only.');
+        }
+        return lowOrder >= 0 && highOrder <= 0;
     }
 
     function evaluateIn(ast, doc) {
@@ -256,6 +271,10 @@ internal sealed partial class SprocManager
         var rightType = typeof right;
         if (leftType !== rightType) return false;
         return leftType === 'string' || leftType === 'number' || leftType === 'boolean';
+    }
+
+    function validationError(message) {
+        throw { a2aValidationError: true, message: message };
     }
 
     function orderedCompare(left, right) {
@@ -582,7 +601,27 @@ function atomicTransactWrite(operations) {
         var anyFail = false;
         for (var i = 0; i < n; i++) {
             var cond = operations[i].condition;
-            var pass = (cond === null || cond === undefined) ? true : evaluateCondition(cond, existing[i]);
+            var pass;
+            try {
+                pass = (cond === null || cond === undefined)
+                    ? true
+                    : evaluateCondition(cond, existing[i]);
+            } catch (err) {
+                if (err
+                    && err.a2aValidationError === true
+                    && typeof err.message === 'string') {
+                    resp.setBody({
+                        success: false,
+                        validationError: {
+                            code: 'ValidationException',
+                            message: 'TransactItems[' + i + '] condition validation failed: '
+                                + err.message
+                        }
+                    });
+                    return;
+                }
+                throw err;
+            }
             reasons[i] = pass ? { code: 'None' } : { code: 'ConditionalCheckFailed' };
             if (!pass) anyFail = true;
         }

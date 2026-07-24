@@ -3,8 +3,9 @@
 This version 1 profile covers `TransactGetItems` and `TransactWriteItems` only
 when every item belongs to one table and one logical partition. Its initial
 verdict is `conditional`: the implementation and discoverable real-Azure tests
-exist, but the new snapshot/write sub-features have no fresh seals and the
-qualification artifact is intentionally empty.
+exist, but the new snapshot/write sub-features have no fresh seals, the
+qualification artifact is intentionally empty, and no trusted prior release
+implements the complete profile well enough to qualify rollback.
 
 ## Required topology and configuration
 
@@ -12,7 +13,10 @@ qualification artifact is intentionally empty.
 - Co-locate every transaction item under one partition-key value in one table.
 - Do not send duplicate table/key targets in either operation.
 - Keep transactions within Cosmos stored-procedure execution and response
-  budgets; a rejected or failed request never falls back to partial REST calls.
+  budgets. The exact serialized stored-procedure parameter body must be at most
+  2 MiB, below DynamoDB's 4 MiB aggregate transaction limit; larger requests
+  fail with `ValidationException` before stored-procedure provisioning/execution.
+  A rejected or failed request never falls back to partial REST calls.
 
 Cross-table and cross-partition transactions fail with `ValidationException`
 before item data is read. That is a permanent Cosmos transaction-scope boundary,
@@ -46,6 +50,17 @@ DynamoDB's UTF-8 byte lexicographic order rather than JavaScript UTF-16 order.
 Maps, lists, sets, binary, enveloped numbers, nested/list-index/dotted paths,
 path-to-path comparisons, `contains`, and `size` fail before execution. Missing
 attributes do not satisfy `<>`, while differing DynamoDB types do.
+Runtime operand-type errors for ordered operators, `BETWEEN`, and
+`begins_with` are returned by the script as a structured validation result and
+mapped to `ValidationException`; `NOT` cannot invert such an error into success.
+
+Every transactional item, key, and expression value is validated before table
+metadata or stored-procedure I/O. Empty sets, malformed binary/base64, invalid or
+out-of-range numbers (including set members), duplicate set members, and invalid
+AttributeValue shapes are rejected. Empty strings remain allowed in non-empty
+string sets, matching current DynamoDB policy. Every declared
+`ExpressionAttributeNames` and `ExpressionAttributeValues` placeholder must be
+consumed by the condition.
 
 Cancellation reasons are exact and positional. Legacy `Expected` /
 `ConditionalOperator`, `ReturnValuesOnConditionCheckFailure`, non-`NONE`
@@ -64,14 +79,20 @@ on table lifecycle; an execution 404 evicts and reprovisions once. Transaction
 write execution disables proxy-level automatic retries because a lost response
 is ambiguous until durable `ClientRequestToken` deduplication exists.
 
-The real-Azure source suite covers atomic rollback, snapshot coherence,
+The real-Azure source suite covers atomic write rollback, snapshot coherence,
 condition/cancellation behavior, contention, scope and token rejection, process
-restart, and adjacent-runtime rollback. No new seal is committed without an
-actual workflow run containing those tests. Qualifying
-`integration-real-azure` runs select sealed rollback mode for this profile and
-resolve both the exact candidate and its committed bootstrap/approved prior
-runtime; a candidate-only configuration fails instead of silently skipping the
-adjacent-runtime test.
+restart, and an isolated same-ID conflicting-body probe that exercises the real
+Cosmos 409/read/verify path and restores the exact v3 body. No new seal is
+committed without an actual workflow run containing those tests.
+
+There is deliberately no approved-runtime ledger for this profile. The
+previously proposed v2 runtime performs independent transaction reads and does
+not enforce the profile's `ClientRequestToken` rejection contract, so it is not
+a valid bootstrap or rollback target. A sealed workflow run is candidate-only
+and rollout-only: the adjacent-runtime rows skip with the recorded compatibility
+blocker, workload generation must emit `inconclusive`, and the workflow must not
+claim rollback success. Rollback qualification can begin only after a distinct,
+trusted prior release implements this same profile.
 
 ## Performance and qualification boundary
 
@@ -86,4 +107,5 @@ The Cosmos Linux emulator cannot execute stored procedures, so these scenarios
 skip there and require real Azure. Any future throughput/latency claim must cite
 the real-Azure harness run; emulator results from other DynamoDB scenarios do
 not qualify this profile. GA additionally requires reviewed production-shaped
-load, rollback, and SLO evidence.
+load, rollback, and SLO evidence. Until a compatible prior release exists,
+operators must treat deployment as rollout-only with no qualified rollback.

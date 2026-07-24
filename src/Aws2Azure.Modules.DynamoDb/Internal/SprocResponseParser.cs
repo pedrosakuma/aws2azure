@@ -137,6 +137,30 @@ internal static class SprocResponseParser
                             }
                         }
                         if (!success
+                            && root.TryGetProperty("validationError", out _))
+                        {
+                            if (TryReadValidationError(
+                                    root,
+                                    out var validationError))
+                            {
+                                return new SprocTransactResult
+                                {
+                                    Attempted = true,
+                                    ValidationFailed = true,
+                                    ValidationError = validationError,
+                                    ResponseBody = body,
+                                };
+                            }
+                            return new SprocTransactResult
+                            {
+                                Attempted = true,
+                                StatusCode = StatusCodes.Status502BadGateway,
+                                ErrorBody =
+                                    "Transaction stored procedure returned a malformed validation response.",
+                                ResponseBody = body,
+                            };
+                        }
+                        if (!success
                             && root.TryGetProperty("reasons", out var reasons)
                             && reasons.ValueKind == JsonValueKind.Array)
                         {
@@ -166,6 +190,33 @@ internal static class SprocResponseParser
             StatusCode = (int)response.StatusCode,
             ErrorBody = body,
         };
+    }
+
+    private static bool TryReadValidationError(
+        JsonElement root,
+        out string? message)
+    {
+        message = null;
+        if (!root.TryGetProperty(
+                "validationError",
+                out var validationError)
+            || validationError.ValueKind != JsonValueKind.Object
+            || !validationError.TryGetProperty("code", out var code)
+            || code.ValueKind != JsonValueKind.String
+            || !string.Equals(
+                code.GetString(),
+                "ValidationException",
+                StringComparison.Ordinal)
+            || !validationError.TryGetProperty("message", out var messageElement)
+            || messageElement.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(messageElement.GetString())
+            || root.TryGetProperty("reasons", out _))
+        {
+            return false;
+        }
+
+        message = messageElement.GetString();
+        return true;
     }
 
     public static async Task<SprocTransactGetResult> ParseTransactGetAsync(

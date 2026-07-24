@@ -208,6 +208,14 @@ stored-procedure IDs/body hashes. Inventory v1 remains immutable history. A
 release-note digest pins the exact inventory bytes so a compatibility change
 cannot be omitted from promotion notes.
 
+Inventory compatibility is necessary but not sufficient for a workload-profile
+rollback claim. The current `atomicTransactWrite_v2` runtime predates the
+single-partition transaction profile's atomic snapshot and
+`ClientRequestToken`-rejection contracts, so it is not an approved rollback
+baseline for that profile. Until a distinct compatible release exists, the
+transaction workflow is rollout-only and records rollback as
+skipped/inconclusive rather than successful.
+
 | Format | Class | Compatibility boundary | Source and tests |
 |---|---|---|---|
 | Binding-centric JSON configuration, `AWS2AZURE__...` overrides, and documented startup environment controls | durable | Operator-owned startup state; the old configuration and production controls must retain their meaning throughout the supported rollback span. | [`ConfigDocument`](../src/Aws2Azure.Core/Configuration/ConfigDocument.cs#L5-L37), [`Program`](../src/Aws2Azure.Proxy/Program.cs#L89-L97), [`process controls`](../src/Aws2Azure.Proxy/Program.cs#L157-L202), [`connection cap`](../src/Aws2Azure.Core/Azure/AzureHttpClient.cs#L361-L372); [`ProxyConfigLoaderTests`](../tests/Aws2Azure.UnitTests/Configuration/ProxyConfigLoaderTests.cs#L22-L177), [`AzureHttpClientConnectionCapTests`](../tests/Aws2Azure.UnitTests/Azure/AzureHttpClientTests.cs#L271-L294) |

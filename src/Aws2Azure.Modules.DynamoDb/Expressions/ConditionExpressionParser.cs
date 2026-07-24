@@ -42,6 +42,8 @@ internal sealed class ConditionExpressionParser
     private readonly List<ExpressionToken> _tokens;
     private readonly IReadOnlyDictionary<string, string>? _names;
     private readonly IReadOnlyDictionary<string, JsonElement>? _values;
+    private readonly HashSet<string> _consumedNames = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _consumedValues = new(StringComparer.Ordinal);
     private int _pos;
 
     private ConditionExpressionParser(
@@ -58,6 +60,15 @@ internal sealed class ConditionExpressionParser
         string expression,
         IReadOnlyDictionary<string, string>? expressionAttributeNames,
         IReadOnlyDictionary<string, JsonElement>? expressionAttributeValues)
+        => ParseWithUsage(
+            expression,
+            expressionAttributeNames,
+            expressionAttributeValues).Node;
+
+    public static ConditionExpressionParseResult ParseWithUsage(
+        string expression,
+        IReadOnlyDictionary<string, string>? expressionAttributeNames,
+        IReadOnlyDictionary<string, JsonElement>? expressionAttributeValues)
     {
         if (string.IsNullOrWhiteSpace(expression))
             throw new ExpressionSyntaxException(0, "ConditionExpression cannot be empty.");
@@ -67,7 +78,10 @@ internal sealed class ConditionExpressionParser
         var root = parser.ParseOr();
         if (parser.Peek().Kind != TokenKind.EndOfInput)
             throw parser.Error("Unexpected trailing tokens in ConditionExpression.");
-        return root;
+        return new ConditionExpressionParseResult(
+            root,
+            parser._consumedNames,
+            parser._consumedValues);
     }
 
     // ----- precedence climb ------------------------------------------
@@ -277,7 +291,11 @@ internal sealed class ConditionExpressionParser
     // ----- shared parser helpers -------------------------------------
 
     private DocumentPath ParsePath()
-        => ExpressionPathParser.ParsePath(_tokens, ref _pos, _names);
+        => ExpressionPathParser.ParsePath(
+            _tokens,
+            ref _pos,
+            _names,
+            consumedNames: _consumedNames);
 
     private bool TryConsumeKeyword(string keyword)
     {
@@ -292,10 +310,18 @@ internal sealed class ConditionExpressionParser
     }
 
     private ValueRefOperand ResolveValueRef(ExpressionToken token)
-        => ExpressionPathParser.ResolveValueRef(token, _values);
+        => ExpressionPathParser.ResolveValueRef(
+            token,
+            _values,
+            _consumedValues);
 
     private ExpressionToken Peek() => _tokens[_pos];
 
     private ExpressionSyntaxException Error(string message)
         => ExpressionPathParser.Error(_tokens, _pos, message);
 }
+
+internal sealed record ConditionExpressionParseResult(
+    ConditionNode Node,
+    IReadOnlySet<string> ConsumedNames,
+    IReadOnlySet<string> ConsumedValues);

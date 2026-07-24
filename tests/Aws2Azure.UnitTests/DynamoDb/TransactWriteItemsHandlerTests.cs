@@ -300,6 +300,68 @@ public class TransactWriteItemsHandlerTests
 
     [Theory]
     [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"},"bad":{"SS":[]}}}}]}""",
+        "must not be empty")]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"},"bad":{"B":"not-base64!"}}}}]}""",
+        "valid base64")]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"},"bad":{"N":"1e126"}}}}]}""",
+        "invalid Number")]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"},"bad":{"NS":["1","not-a-number"]}}}}]}""",
+        "Number set member")]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"},"bad":{"SS":["same","same"]}}}}]}""",
+        "duplicate")]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"},"bad":{"NS":["1","1.0"]}}}}]}""",
+        "duplicate")]
+    [InlineData(
+        """{"TransactItems":[{"Delete":{"TableName":"orders","Key":{"pk":{"B":"not-base64!"},"sk":{"S":"1"}}}}]}""",
+        "valid base64")]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionExpression":"v = :bad","ExpressionAttributeValues":{":bad":{"N":"1e-131"}}}}]}""",
+        "invalid Number")]
+    public async Task Invalid_attribute_values_are_rejected_before_metadata_io(
+        string request,
+        string expected)
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+
+        await Run(ctx, BuildClient(handler), EnabledSproc(), request);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains(expected, ReadResponse(body), StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionExpression":"attribute_not_exists(#pk)","ExpressionAttributeNames":{"#pk":"pk","#unused":"unused"}}}]}""",
+        "#unused")]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionExpression":"attribute_not_exists(pk)","ExpressionAttributeValues":{":unused":{"S":"value"}}}}]}""",
+        ":unused")]
+    public async Task Unused_expression_placeholders_are_rejected_before_metadata_io(
+        string request,
+        string expected)
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+
+        await Run(ctx, BuildClient(handler), EnabledSproc(), request);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        var response = ReadResponse(body);
+        Assert.Contains("unused", response, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(expected, response, StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(
         """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionExpression":"m = :v","ExpressionAttributeValues":{":v":{"M":{"x":{"S":"y"}}}}}}]}""")]
     [InlineData(
         """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionExpression":"xs = :v","ExpressionAttributeValues":{":v":{"L":[{"S":"y"}]}}}}]}""")]
@@ -333,7 +395,7 @@ public class TransactWriteItemsHandlerTests
         Assert.Equal(400, ctx.Response.StatusCode);
         var response = ReadResponse(body);
         Assert.Contains("supported transaction subset", response);
-        Assert.Single(handler.Requests);
+        Assert.Empty(handler.Requests);
     }
 
     [Fact]
@@ -374,7 +436,7 @@ public class TransactWriteItemsHandlerTests
         Assert.Equal(400, ctx.Response.StatusCode);
         var resp = ReadResponse(body);
         Assert.Contains("ValidationException", resp);
-        Assert.Contains("bare JSON", resp);
+        Assert.Contains("invalid Number", resp);
     }
 
     [Fact]
@@ -407,7 +469,29 @@ public class TransactWriteItemsHandlerTests
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("must not be empty", ReadResponse(body));
-        Assert.Single(handler.Requests);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Empty_string_member_in_nonempty_string_set_is_accepted()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaPkSk),
+                CosmosCreated(),
+                CosmosOk("{\"success\":true}"),
+            },
+        };
+        var request =
+            """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"},"tags":{"SS":[""]}}}}]}""";
+
+        await Run(ctx, BuildClient(handler), EnabledSproc(), request);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.Equal(3, handler.Requests.Count);
     }
 
     [Fact]
@@ -467,6 +551,115 @@ public class TransactWriteItemsHandlerTests
         Assert.Equal(2, reasons.GetArrayLength());
         Assert.Equal("None", reasons[0].GetProperty("Code").GetString());
         Assert.Equal("ConditionalCheckFailed", reasons[1].GetProperty("Code").GetString());
+    }
+
+    [Fact]
+    public async Task Sproc_validation_error_maps_to_validation_exception()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaPkSk),
+                CosmosCreated(),
+                CosmosOk(
+                    "{\"success\":false,\"validationError\":{\"code\":\"ValidationException\",\"message\":\"TransactItems[0] condition validation failed: Incorrect operand type for begins_with.\"}}"),
+            },
+        };
+        var request =
+            """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionExpression":"NOT begins_with(v, :prefix)","ExpressionAttributeValues":{":prefix":{"S":"x"}}}}]}""";
+
+        await Run(ctx, BuildClient(handler), EnabledSproc(), request);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        var response = ReadResponse(body);
+        Assert.Contains("ValidationException", response);
+        Assert.Contains("begins_with", response);
+    }
+
+    [Fact]
+    public async Task Oversized_serialized_sproc_request_is_rejected_before_provisioning()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetaPkSk) },
+        };
+        var payload = new string('x', 21_000);
+        var request = new StringBuilder("{\"TransactItems\":[");
+        for (var index = 0; index < 100; index++)
+        {
+            if (index > 0)
+            {
+                request.Append(',');
+            }
+            request.Append(
+                "{\"Put\":{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"")
+                .Append(index)
+                .Append("\"},\"payload\":{\"S\":\"")
+                .Append(payload)
+                .Append("\"}}}}");
+        }
+        request.Append("]}");
+
+        await Run(
+            ctx,
+            BuildClient(handler),
+            EnabledSproc(),
+            request.ToString());
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        var response = ReadResponse(body);
+        Assert.Contains("2097152", response, StringComparison.Ordinal);
+        Assert.Contains("4 MiB", response, StringComparison.Ordinal);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public void Serialized_sproc_request_limit_is_inclusive_at_exact_boundary()
+    {
+        var emptyDoc = Encoding.UTF8.GetBytes("{\"payload\":\"\"}");
+        var emptyOp = new TransactWriteItemsHandler.PreparedOp(
+            TransactWriteItemsHandler.OpKind.Put,
+            "1",
+            emptyDoc,
+            null);
+        using var baseline =
+            TransactWriteItemsHandler.BuildTransactParamsBody([emptyOp]);
+        var fillerLength =
+            TransactWriteItemsHandler.MaxSprocRequestBodyBytes
+            - baseline.WrittenMemory.Length;
+        Assert.True(fillerLength > 0);
+
+        var exactOp = new TransactWriteItemsHandler.PreparedOp(
+            TransactWriteItemsHandler.OpKind.Put,
+            "1",
+            Encoding.UTF8.GetBytes(
+                "{\"payload\":\"" + new string('x', fillerLength) + "\"}"),
+            null);
+        using var exact =
+            TransactWriteItemsHandler.BuildTransactParamsBody([exactOp]);
+        Assert.Equal(
+            TransactWriteItemsHandler.MaxSprocRequestBodyBytes,
+            exact.WrittenMemory.Length);
+        Assert.True(
+            TransactWriteItemsHandler.IsWithinTransactRequestBodyLimit(
+                exact.WrittenMemory.Length));
+
+        var overOp = exactOp with
+        {
+            DocBytes = Encoding.UTF8.GetBytes(
+                "{\"payload\":\"" + new string('x', fillerLength + 1) + "\"}"),
+        };
+        using var over =
+            TransactWriteItemsHandler.BuildTransactParamsBody([overOp]);
+        Assert.Equal(
+            TransactWriteItemsHandler.MaxSprocRequestBodyBytes + 1,
+            over.WrittenMemory.Length);
+        Assert.False(
+            TransactWriteItemsHandler.IsWithinTransactRequestBodyLimit(
+                over.WrittenMemory.Length));
     }
 
     [Theory]

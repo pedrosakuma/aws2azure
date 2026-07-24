@@ -165,6 +165,86 @@ internal static class CosmosRestBootstrap
         return body;
     }
 
+    public static async Task CreateStoredProcedureAsync(
+        HttpClient http,
+        string endpoint,
+        string masterKey,
+        string databaseName,
+        string containerName,
+        string storedProcedureId,
+        string storedProcedureBody)
+    {
+        var resourceId = $"dbs/{databaseName}/colls/{containerName}";
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            new Uri(new Uri(endpoint), $"{resourceId}/sprocs"))
+        {
+            Content = new StringContent(
+                JsonSerializer.Serialize(new
+                {
+                    id = storedProcedureId,
+                    body = storedProcedureBody,
+                }),
+                Encoding.UTF8,
+                "application/json"),
+        };
+        SignMaster(request, masterKey, "post", "sprocs", resourceId);
+        using var response = await http.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            throw new InvalidOperationException(
+                $"Cosmos create stored procedure returned {(int)response.StatusCode}: {body}");
+        }
+    }
+
+    public static async Task<string> ReadStoredProcedureAsync(
+        HttpClient http,
+        string endpoint,
+        string masterKey,
+        string databaseName,
+        string containerName,
+        string storedProcedureId)
+    {
+        var resourceId =
+            $"dbs/{databaseName}/colls/{containerName}/sprocs/{storedProcedureId}";
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            new Uri(new Uri(endpoint), resourceId));
+        SignMaster(request, masterKey, "get", "sprocs", resourceId);
+        using var response = await http.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException(
+                $"Cosmos read stored procedure returned {(int)response.StatusCode}: {body}");
+        }
+        return body;
+    }
+
+    public static async Task DeleteStoredProcedureAsync(
+        HttpClient http,
+        string endpoint,
+        string masterKey,
+        string databaseName,
+        string containerName,
+        string storedProcedureId)
+    {
+        var resourceId =
+            $"dbs/{databaseName}/colls/{containerName}/sprocs/{storedProcedureId}";
+        using var request = new HttpRequestMessage(
+            HttpMethod.Delete,
+            new Uri(new Uri(endpoint), resourceId));
+        SignMaster(request, masterKey, "delete", "sprocs", resourceId);
+        using var response = await http.SendAsync(request);
+        if (!response.IsSuccessStatusCode && (int)response.StatusCode != 404)
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            throw new InvalidOperationException(
+                $"Cosmos delete stored procedure returned {(int)response.StatusCode}: {body}");
+        }
+    }
+
     public static async Task DeleteContainerAsync(
         HttpClient http,
         string endpoint,

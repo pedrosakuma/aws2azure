@@ -43,6 +43,14 @@ internal sealed class SprocTransactResult
     /// <see cref="ResponseBody"/> carries the positional <c>reasons</c> array.</summary>
     public bool ConditionFailed { get; init; }
 
+    /// <summary>
+    /// The stored procedure detected a DynamoDB condition operand/type validation
+    /// error before issuing any writes.
+    /// </summary>
+    public bool ValidationFailed { get; init; }
+
+    public string? ValidationError { get; init; }
+
     /// <summary>HTTP status when the sproc call itself failed (non-2xx).</summary>
     public int StatusCode { get; init; }
 
