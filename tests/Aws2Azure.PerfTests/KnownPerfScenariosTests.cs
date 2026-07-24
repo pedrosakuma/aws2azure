@@ -139,6 +139,13 @@ public sealed partial class KnownPerfScenariosTests
     }
 
     [Fact]
+    public void Transaction_scenarios_do_not_change_historical_fixture_configuration()
+    {
+        Assert.False(new DynamoDbPerfFixture().UseStoredProcedures);
+        Assert.True(new DynamoDbTransactionPerfFixture().UseStoredProcedures);
+    }
+
+    [Fact]
     public void Every_pairing_references_known_scenarios()
     {
         var path = FindRepoPath("docs", "perf", "baseline-reference.json");

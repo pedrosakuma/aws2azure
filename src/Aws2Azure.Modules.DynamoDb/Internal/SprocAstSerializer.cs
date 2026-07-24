@@ -1,7 +1,8 @@
 using System;
-using System.Collections.Generic;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using Aws2Azure.Core.Buffers;
 using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Persistence;
 
@@ -13,6 +14,11 @@ namespace Aws2Azure.Modules.DynamoDb.Internal;
 /// </summary>
 internal static class SprocAstSerializer
 {
+    private static readonly JsonWriterOptions WriterOptions = new()
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
     /// <summary>
     /// Serializes a ConditionNode tree to JSON for the sproc condition evaluator.
     /// Returns null if no condition is present.
@@ -20,9 +26,13 @@ internal static class SprocAstSerializer
     public static string? SerializeCondition(ConditionNode? node)
     {
         if (node is null) return null;
-        var sb = new StringBuilder(256);
-        WriteCondition(sb, node);
-        return sb.ToString();
+        using var buffer = new PooledByteBufferWriter(256);
+        using (var writer = new Utf8JsonWriter(buffer, WriterOptions))
+        {
+            WriteCondition(writer, node);
+            writer.Flush();
+        }
+        return Encoding.UTF8.GetString(buffer.WrittenMemory.Span);
     }
 
     /// <summary>
@@ -32,154 +42,167 @@ internal static class SprocAstSerializer
     public static string? SerializeUpdate(UpdateExpressionAst? ast)
     {
         if (ast is null) return null;
-        var sb = new StringBuilder(256);
-        sb.Append('{');
-        var first = true;
-
-        if (ast.Set is { Actions.Count: > 0 })
+        using var buffer = new PooledByteBufferWriter(256);
+        using (var writer = new Utf8JsonWriter(buffer, WriterOptions))
         {
-            first = false;
-            sb.Append("\"set\":[");
-            for (int i = 0; i < ast.Set.Actions.Count; i++)
-            {
-                if (i > 0) sb.Append(',');
-                WriteSetAction(sb, ast.Set.Actions[i]);
-            }
-            sb.Append(']');
-        }
+            writer.WriteStartObject();
 
-        if (ast.Remove is { Paths.Count: > 0 })
-        {
-            if (!first) sb.Append(',');
-            first = false;
-            sb.Append("\"remove\":[");
-            for (int i = 0; i < ast.Remove.Paths.Count; i++)
+            if (ast.Set is { Actions.Count: > 0 })
             {
-                if (i > 0) sb.Append(',');
-                sb.Append('"').Append(EscapeJson(PathToString(ast.Remove.Paths[i]))).Append('"');
+                writer.WriteStartArray("set");
+                for (int i = 0; i < ast.Set.Actions.Count; i++)
+                {
+                    WriteSetAction(writer, ast.Set.Actions[i]);
+                }
+                writer.WriteEndArray();
             }
-            sb.Append(']');
-        }
 
-        if (ast.Add is { Actions.Count: > 0 })
-        {
-            if (!first) sb.Append(',');
-            first = false;
-            sb.Append("\"add\":[");
-            for (int i = 0; i < ast.Add.Actions.Count; i++)
+            if (ast.Remove is { Paths.Count: > 0 })
             {
-                if (i > 0) sb.Append(',');
-                WriteAddAction(sb, ast.Add.Actions[i]);
+                writer.WriteStartArray("remove");
+                for (int i = 0; i < ast.Remove.Paths.Count; i++)
+                {
+                    writer.WriteStringValue(PathToString(ast.Remove.Paths[i]));
+                }
+                writer.WriteEndArray();
             }
-            sb.Append(']');
-        }
 
-        if (ast.Delete is { Actions.Count: > 0 })
-        {
-            if (!first) sb.Append(',');
-            sb.Append("\"delete\":[");
-            for (int i = 0; i < ast.Delete.Actions.Count; i++)
+            if (ast.Add is { Actions.Count: > 0 })
             {
-                if (i > 0) sb.Append(',');
-                WriteDeleteAction(sb, ast.Delete.Actions[i]);
+                writer.WriteStartArray("add");
+                for (int i = 0; i < ast.Add.Actions.Count; i++)
+                {
+                    WriteAddAction(writer, ast.Add.Actions[i]);
+                }
+                writer.WriteEndArray();
             }
-            sb.Append(']');
-        }
 
-        sb.Append('}');
-        return sb.ToString();
+            if (ast.Delete is { Actions.Count: > 0 })
+            {
+                writer.WriteStartArray("delete");
+                for (int i = 0; i < ast.Delete.Actions.Count; i++)
+                {
+                    WriteDeleteAction(writer, ast.Delete.Actions[i]);
+                }
+                writer.WriteEndArray();
+            }
+
+            writer.WriteEndObject();
+            writer.Flush();
+        }
+        return Encoding.UTF8.GetString(buffer.WrittenMemory.Span);
     }
 
-    private static void WriteCondition(StringBuilder sb, ConditionNode node)
+    private static void WriteCondition(Utf8JsonWriter writer, ConditionNode node)
     {
         switch (node)
         {
             case AndCondition and:
-                sb.Append("{\"type\":\"AND\",\"left\":");
-                WriteCondition(sb, and.Left);
-                sb.Append(",\"right\":");
-                WriteCondition(sb, and.Right);
-                sb.Append('}');
+                writer.WriteStartObject();
+                writer.WriteString("type", "AND");
+                writer.WritePropertyName("left");
+                WriteCondition(writer, and.Left);
+                writer.WritePropertyName("right");
+                WriteCondition(writer, and.Right);
+                writer.WriteEndObject();
                 break;
 
             case OrCondition or:
-                sb.Append("{\"type\":\"OR\",\"left\":");
-                WriteCondition(sb, or.Left);
-                sb.Append(",\"right\":");
-                WriteCondition(sb, or.Right);
-                sb.Append('}');
+                writer.WriteStartObject();
+                writer.WriteString("type", "OR");
+                writer.WritePropertyName("left");
+                WriteCondition(writer, or.Left);
+                writer.WritePropertyName("right");
+                WriteCondition(writer, or.Right);
+                writer.WriteEndObject();
                 break;
 
             case NotCondition not:
-                sb.Append("{\"type\":\"NOT\",\"operand\":");
-                WriteCondition(sb, not.Inner);
-                sb.Append('}');
+                writer.WriteStartObject();
+                writer.WriteString("type", "NOT");
+                writer.WritePropertyName("operand");
+                WriteCondition(writer, not.Inner);
+                writer.WriteEndObject();
                 break;
 
             case AttributeExistsCondition ae:
-                sb.Append("{\"type\":\"ATTR_EXISTS\",\"attr\":\"")
-                  .Append(EscapeJson(PathToString(ae.Path)))
-                  .Append("\"}");
+                writer.WriteStartObject();
+                writer.WriteString("type", "ATTR_EXISTS");
+                writer.WriteString("attr", PathToString(ae.Path));
+                writer.WriteEndObject();
                 break;
 
             case AttributeNotExistsCondition ane:
-                sb.Append("{\"type\":\"ATTR_NOT_EXISTS\",\"attr\":\"")
-                  .Append(EscapeJson(PathToString(ane.Path)))
-                  .Append("\"}");
+                writer.WriteStartObject();
+                writer.WriteString("type", "ATTR_NOT_EXISTS");
+                writer.WriteString("attr", PathToString(ane.Path));
+                writer.WriteEndObject();
                 break;
 
             case AttributeTypeCondition at:
-                sb.Append("{\"type\":\"ATTR_TYPE\",\"attr\":\"")
-                  .Append(EscapeJson(PathToString(at.Path)))
-                  .Append("\",\"attrType\":");
-                WriteValue(sb, at.TypeTag.Value);
-                sb.Append('}');
+                writer.WriteStartObject();
+                writer.WriteString("type", "ATTR_TYPE");
+                writer.WriteString("attr", PathToString(at.Path));
+                writer.WritePropertyName("attrType");
+                WriteValue(writer, at.TypeTag.Value);
+                writer.WriteEndObject();
                 break;
 
             case BeginsWithCondition bw:
-                sb.Append("{\"type\":\"BEGINS_WITH\",\"attr\":");
-                WriteOperand(sb, bw.Path);
-                sb.Append(",\"prefix\":");
-                WriteOperand(sb, bw.Prefix);
-                sb.Append('}');
+                writer.WriteStartObject();
+                writer.WriteString("type", "BEGINS_WITH");
+                writer.WritePropertyName("attr");
+                WriteOperand(writer, bw.Path);
+                writer.WritePropertyName("prefix");
+                WriteOperand(writer, bw.Prefix);
+                writer.WriteEndObject();
                 break;
 
             case ContainsCondition c:
-                sb.Append("{\"type\":\"CONTAINS\",\"attr\":");
-                WriteOperand(sb, c.Container);
-                sb.Append(",\"value\":");
-                WriteOperand(sb, c.Item);
-                sb.Append('}');
+                writer.WriteStartObject();
+                writer.WriteString("type", "CONTAINS");
+                writer.WritePropertyName("attr");
+                WriteOperand(writer, c.Container);
+                writer.WritePropertyName("value");
+                WriteOperand(writer, c.Item);
+                writer.WriteEndObject();
                 break;
 
             case CompareCondition cc:
-                sb.Append("{\"type\":\"COMPARE\",\"attr\":");
-                WriteOperand(sb, cc.Left);
-                sb.Append(",\"op\":\"").Append(OpToString(cc.Op)).Append("\",\"value\":");
-                WriteOperand(sb, cc.Right);
-                sb.Append('}');
+                writer.WriteStartObject();
+                writer.WriteString("type", "COMPARE");
+                writer.WritePropertyName("attr");
+                WriteOperand(writer, cc.Left);
+                writer.WriteString("op", OpToString(cc.Op));
+                writer.WritePropertyName("value");
+                WriteOperand(writer, cc.Right);
+                writer.WriteEndObject();
                 break;
 
             case BetweenCondition bt:
-                sb.Append("{\"type\":\"BETWEEN\",\"value\":");
-                WriteOperand(sb, bt.Value);
-                sb.Append(",\"low\":");
-                WriteOperand(sb, bt.Lower);
-                sb.Append(",\"high\":");
-                WriteOperand(sb, bt.Upper);
-                sb.Append('}');
+                writer.WriteStartObject();
+                writer.WriteString("type", "BETWEEN");
+                writer.WritePropertyName("value");
+                WriteOperand(writer, bt.Value);
+                writer.WritePropertyName("low");
+                WriteOperand(writer, bt.Lower);
+                writer.WritePropertyName("high");
+                WriteOperand(writer, bt.Upper);
+                writer.WriteEndObject();
                 break;
 
             case InCondition inn:
-                sb.Append("{\"type\":\"IN\",\"attr\":");
-                WriteOperand(sb, inn.Value);
-                sb.Append(",\"values\":[");
+                writer.WriteStartObject();
+                writer.WriteString("type", "IN");
+                writer.WritePropertyName("attr");
+                WriteOperand(writer, inn.Value);
+                writer.WriteStartArray("values");
                 for (int i = 0; i < inn.Set.Count; i++)
                 {
-                    if (i > 0) sb.Append(',');
-                    WriteOperand(sb, inn.Set[i]);
+                    WriteOperand(writer, inn.Set[i]);
                 }
-                sb.Append("]}");
+                writer.WriteEndArray();
+                writer.WriteEndObject();
                 break;
 
             default:
@@ -188,18 +211,22 @@ internal static class SprocAstSerializer
         }
     }
 
-    private static void WriteOperand(StringBuilder sb, ConditionOperand operand)
+    private static void WriteOperand(Utf8JsonWriter writer, ConditionOperand operand)
     {
         switch (operand)
         {
             case ConditionPathOperand cp:
-                sb.Append("{\"path\":\"").Append(EscapeJson(PathToString(cp.Path))).Append("\"}");
+                writer.WriteStartObject();
+                writer.WriteString("path", PathToString(cp.Path));
+                writer.WriteEndObject();
                 break;
             case ConditionValueOperand cv:
-                WriteValue(sb, cv.Value.Value);
+                WriteValue(writer, cv.Value.Value);
                 break;
             case SizeOperand sz:
-                sb.Append("{\"size\":\"").Append(EscapeJson(PathToString(sz.Path))).Append("\"}");
+                writer.WriteStartObject();
+                writer.WriteString("size", PathToString(sz.Path));
+                writer.WriteEndObject();
                 break;
             default:
                 throw new NotSupportedException(
@@ -207,28 +234,34 @@ internal static class SprocAstSerializer
         }
     }
 
-    private static void WriteSetAction(StringBuilder sb, SetAction action)
+    private static void WriteSetAction(Utf8JsonWriter writer, SetAction action)
     {
-        sb.Append("{\"path\":\"").Append(EscapeJson(PathToString(action.Path))).Append("\",\"value\":");
-        WriteValueOperand(sb, action.Value);
-        sb.Append('}');
+        writer.WriteStartObject();
+        writer.WriteString("path", PathToString(action.Path));
+        writer.WritePropertyName("value");
+        WriteValueOperand(writer, action.Value);
+        writer.WriteEndObject();
     }
 
-    private static void WriteAddAction(StringBuilder sb, AddAction action)
+    private static void WriteAddAction(Utf8JsonWriter writer, AddAction action)
     {
-        sb.Append("{\"path\":\"").Append(EscapeJson(PathToString(action.Path))).Append("\",\"value\":");
-        WriteValue(sb, action.Value.Value);
-        sb.Append('}');
+        writer.WriteStartObject();
+        writer.WriteString("path", PathToString(action.Path));
+        writer.WritePropertyName("value");
+        WriteValue(writer, action.Value.Value);
+        writer.WriteEndObject();
     }
 
-    private static void WriteDeleteAction(StringBuilder sb, DeleteAction action)
+    private static void WriteDeleteAction(Utf8JsonWriter writer, DeleteAction action)
     {
-        sb.Append("{\"path\":\"").Append(EscapeJson(PathToString(action.Path))).Append("\",\"value\":");
-        WriteValue(sb, action.Value.Value);
-        sb.Append('}');
+        writer.WriteStartObject();
+        writer.WriteString("path", PathToString(action.Path));
+        writer.WritePropertyName("value");
+        WriteValue(writer, action.Value.Value);
+        writer.WriteEndObject();
     }
 
-    private static void WriteValueOperand(StringBuilder sb, ValueOperand operand)
+    private static void WriteValueOperand(Utf8JsonWriter writer, ValueOperand operand)
     {
         // SET-value operands are tagged with a "$k" discriminator so the sproc's
         // resolveSetValue can interpret them unambiguously. Literal values are
@@ -237,31 +270,44 @@ internal static class SprocAstSerializer
         switch (operand)
         {
             case ValueRefOperand vr:
-                sb.Append("{\"$k\":\"lit\",\"v\":");
-                WriteValue(sb, vr.Value);
-                sb.Append('}');
+                writer.WriteStartObject();
+                writer.WriteString("$k", "lit");
+                writer.WritePropertyName("v");
+                WriteValue(writer, vr.Value);
+                writer.WriteEndObject();
                 break;
             case PathOperand po:
-                sb.Append("{\"$k\":\"path\",\"p\":\"").Append(EscapeJson(PathToString(po.Path))).Append("\"}");
+                writer.WriteStartObject();
+                writer.WriteString("$k", "path");
+                writer.WriteString("p", PathToString(po.Path));
+                writer.WriteEndObject();
                 break;
             case ArithmeticOperand ao:
-                sb.Append("{\"$k\":\"op\",\"o\":\"").Append(ao.Op == ArithmeticOp.Add ? "+" : "-").Append("\",\"l\":");
-                WriteValueOperand(sb, ao.Left);
-                sb.Append(",\"r\":");
-                WriteValueOperand(sb, ao.Right);
-                sb.Append('}');
+                writer.WriteStartObject();
+                writer.WriteString("$k", "op");
+                writer.WriteString("o", ao.Op == ArithmeticOp.Add ? "+" : "-");
+                writer.WritePropertyName("l");
+                WriteValueOperand(writer, ao.Left);
+                writer.WritePropertyName("r");
+                WriteValueOperand(writer, ao.Right);
+                writer.WriteEndObject();
                 break;
             case IfNotExistsOperand ine:
-                sb.Append("{\"$k\":\"ifne\",\"p\":\"").Append(EscapeJson(PathToString(ine.Path))).Append("\",\"f\":");
-                WriteValueOperand(sb, ine.Fallback);
-                sb.Append('}');
+                writer.WriteStartObject();
+                writer.WriteString("$k", "ifne");
+                writer.WriteString("p", PathToString(ine.Path));
+                writer.WritePropertyName("f");
+                WriteValueOperand(writer, ine.Fallback);
+                writer.WriteEndObject();
                 break;
             case ListAppendOperand la:
-                sb.Append("{\"$k\":\"lap\",\"l\":");
-                WriteValueOperand(sb, la.Left);
-                sb.Append(",\"r\":");
-                WriteValueOperand(sb, la.Right);
-                sb.Append('}');
+                writer.WriteStartObject();
+                writer.WriteString("$k", "lap");
+                writer.WritePropertyName("l");
+                WriteValueOperand(writer, la.Left);
+                writer.WritePropertyName("r");
+                WriteValueOperand(writer, la.Right);
+                writer.WriteEndObject();
                 break;
             default:
                 throw new NotSupportedException(
@@ -269,7 +315,7 @@ internal static class SprocAstSerializer
         }
     }
 
-    private static void WriteValue(StringBuilder sb, JsonElement value)
+    private static void WriteValue(Utf8JsonWriter writer, JsonElement value)
     {
         // Convert DynamoDB AttributeValue to inferred (native) format
         // DynamoDB format: {"S": "hello"}, {"N": "123"}, {"BOOL": true}, etc.
@@ -281,7 +327,7 @@ internal static class SprocAstSerializer
                 switch (prop.Name)
                 {
                     case "S":
-                        sb.Append('"').Append(EscapeJson(prop.Value.GetString() ?? "")).Append('"');
+                        writer.WriteStringValue(prop.Value.GetString() ?? "");
                         return;
                     case "N":
                         if (!InferredAttributeStorage.TryGetCanonicalBareJsonNumber(
@@ -291,89 +337,78 @@ internal static class SprocAstSerializer
                             throw new NotSupportedException(
                                 "Stored-procedure operands cannot contain enveloped DynamoDB numbers.");
                         }
-                        sb.Append(canonicalNumber);
+                        writer.WriteRawValue(canonicalNumber, skipInputValidation: true);
                         return;
                     case "BOOL":
-                        sb.Append(prop.Value.GetBoolean() ? "true" : "false");
+                        writer.WriteBooleanValue(prop.Value.GetBoolean());
                         return;
                     case "NULL":
-                        sb.Append("null");
+                        writer.WriteNullValue();
                         return;
                     case "B":
-                        // Binary as envelope
-                        sb.Append("{\"_a2a:B\":\"").Append(EscapeJson(prop.Value.GetString() ?? "")).Append("\"}");
+                        writer.WriteStartObject();
+                        writer.WriteString("_a2a:B", prop.Value.GetString() ?? "");
+                        writer.WriteEndObject();
                         return;
                     case "M":
-                        // Map: recurse
-                        WriteMapValue(sb, prop.Value);
+                        WriteMapValue(writer, prop.Value);
                         return;
                     case "L":
-                        // List: recurse
-                        WriteListValue(sb, prop.Value);
+                        WriteListValue(writer, prop.Value);
                         return;
                     case "SS":
-                        // String set as envelope
-                        sb.Append("{\"_a2a:SS\":");
-                        WriteStringArray(sb, prop.Value);
-                        sb.Append('}');
+                        writer.WriteStartObject();
+                        writer.WritePropertyName("_a2a:SS");
+                        WriteStringArray(writer, prop.Value);
+                        writer.WriteEndObject();
                         return;
                     case "NS":
-                        // Number set as envelope
-                        sb.Append("{\"_a2a:NS\":");
-                        WriteStringArray(sb, prop.Value);
-                        sb.Append('}');
+                        writer.WriteStartObject();
+                        writer.WritePropertyName("_a2a:NS");
+                        WriteStringArray(writer, prop.Value);
+                        writer.WriteEndObject();
                         return;
                     case "BS":
-                        // Binary set as envelope
-                        sb.Append("{\"_a2a:BS\":");
-                        WriteStringArray(sb, prop.Value);
-                        sb.Append('}');
+                        writer.WriteStartObject();
+                        writer.WritePropertyName("_a2a:BS");
+                        WriteStringArray(writer, prop.Value);
+                        writer.WriteEndObject();
                         return;
                 }
             }
         }
-        // Fallback: write raw JSON
-        sb.Append(value.GetRawText());
+        value.WriteTo(writer);
     }
 
-    private static void WriteMapValue(StringBuilder sb, JsonElement map)
+    private static void WriteMapValue(Utf8JsonWriter writer, JsonElement map)
     {
-        sb.Append('{');
-        var first = true;
+        writer.WriteStartObject();
         foreach (var prop in map.EnumerateObject())
         {
-            if (!first) sb.Append(',');
-            first = false;
-            sb.Append('"').Append(EscapeJson(prop.Name)).Append("\":");
-            WriteValue(sb, prop.Value);
+            writer.WritePropertyName(prop.Name);
+            WriteValue(writer, prop.Value);
         }
-        sb.Append('}');
+        writer.WriteEndObject();
     }
 
-    private static void WriteListValue(StringBuilder sb, JsonElement list)
+    private static void WriteListValue(Utf8JsonWriter writer, JsonElement list)
     {
-        sb.Append('[');
-        var first = true;
+        writer.WriteStartArray();
         foreach (var item in list.EnumerateArray())
         {
-            if (!first) sb.Append(',');
-            first = false;
-            WriteValue(sb, item);
+            WriteValue(writer, item);
         }
-        sb.Append(']');
+        writer.WriteEndArray();
     }
 
-    private static void WriteStringArray(StringBuilder sb, JsonElement arr)
+    private static void WriteStringArray(Utf8JsonWriter writer, JsonElement arr)
     {
-        sb.Append('[');
-        var first = true;
+        writer.WriteStartArray();
         foreach (var item in arr.EnumerateArray())
         {
-            if (!first) sb.Append(',');
-            first = false;
-            sb.Append('"').Append(EscapeJson(item.GetString() ?? "")).Append('"');
+            writer.WriteStringValue(item.GetString() ?? "");
         }
-        sb.Append(']');
+        writer.WriteEndArray();
     }
 
     private static string PathToString(DocumentPath path)
@@ -406,6 +441,4 @@ internal static class SprocAstSerializer
         _ => "="
     };
 
-    private static string EscapeJson(string s) =>
-        s.Replace("\\", "\\\\").Replace("\"", "\\\"");
 }

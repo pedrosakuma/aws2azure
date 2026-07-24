@@ -79,6 +79,18 @@ public sealed class DynamoDbRealAzureTransactionTests(
                     Put(table, "order-1", "created-2", "committed"),
                 ],
             }, timeout.Token);
+            Assert.True(await ExistsAsync(
+                client,
+                table,
+                "order-1",
+                "created-1",
+                timeout.Token));
+            Assert.True(await ExistsAsync(
+                client,
+                table,
+                "order-1",
+                "created-2",
+                timeout.Token));
             await PutAsync(client, table, "order-1", "typed-ne", new()
             {
                 ["flag"] = new AttributeValue { BOOL = true },
@@ -116,6 +128,15 @@ public sealed class DynamoDbRealAzureTransactionTests(
                 "order-1",
                 "typed-ne-peer",
                 timeout.Token));
+            var typedNotEqual = await ReadItemAsync(
+                client,
+                table,
+                "order-1",
+                "typed-ne",
+                timeout.Token);
+            Assert.Equal(
+                "different-type-ne-committed",
+                typedNotEqual["value"].S);
 
             var cancelled = await Assert.ThrowsAsync<TransactionCanceledException>(
                 () => client.TransactWriteItemsAsync(new TransactWriteItemsRequest
@@ -156,6 +177,13 @@ public sealed class DynamoDbRealAzureTransactionTests(
                 "order-1",
                 "rolled-back",
                 timeout.Token));
+            var gate = await ReadItemAsync(
+                client,
+                table,
+                "order-1",
+                "gate",
+                timeout.Token);
+            Assert.Equal("open", gate["state"].S);
 
             var missingNotEqual = await Assert.ThrowsAsync<TransactionCanceledException>(
                 () => client.TransactWriteItemsAsync(new TransactWriteItemsRequest
@@ -192,8 +220,192 @@ public sealed class DynamoDbRealAzureTransactionTests(
                 client,
                 table,
                 "order-1",
+                "missing-ne",
+                timeout.Token));
+            Assert.False(await ExistsAsync(
+                client,
+                table,
+                "order-1",
                 "missing-ne-peer",
                 timeout.Token));
+        }, timeout.Token);
+    }
+
+    [SkippableFact]
+    public async Task Supported_condition_subset_and_write_kinds_commit_expected_state()
+    {
+        SkipUnlessConfigured();
+        using var client = fixture.CreateDynamoDbClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        await WithTableAsync(client, async table =>
+        {
+            const string partition = "conditions";
+            await PutAsync(client, table, partition, "source", new()
+            {
+                ["text"] = S("mango"),
+                ["prefix"] = S("prefix-value"),
+                ["flag"] = new AttributeValue { BOOL = true },
+                ["nil"] = new AttributeValue { NULL = true },
+                ["count"] = new AttributeValue { N = "7" },
+            }, timeout.Token);
+            await PutAsync(client, table, partition, "delete-me", new()
+            {
+                ["marker"] = S("delete"),
+            }, timeout.Token);
+
+            var condition =
+                "(#text = :wrong OR #text = :mango) "
+                + "AND NOT (#text = :wrong) "
+                + "AND #text BETWEEN :low AND :high "
+                + "AND #text IN (:pear, :mango) "
+                + "AND attribute_exists(#text) "
+                + "AND attribute_not_exists(#missing) "
+                + "AND begins_with(#prefix, :prefix) "
+                + "AND attribute_type(#text, :typeS) "
+                + "AND attribute_type(#flag, :typeBool) "
+                + "AND attribute_type(#nil, :typeNull) "
+                + "AND #flag = :true "
+                + "AND #nil = :null "
+                + "AND #count = :seven "
+                + "AND #count <> :eight "
+                + "AND #count IN (:six, :seven) "
+                + "AND :low < #text "
+                + "AND :seven = #count";
+            var names = new Dictionary<string, string>
+            {
+                ["#text"] = "text",
+                ["#missing"] = "missing",
+                ["#prefix"] = "prefix",
+                ["#flag"] = "flag",
+                ["#nil"] = "nil",
+                ["#count"] = "count",
+            };
+            var values = new Dictionary<string, AttributeValue>
+            {
+                [":wrong"] = S("wrong"),
+                [":mango"] = S("mango"),
+                [":low"] = S("apple"),
+                [":high"] = S("zebra"),
+                [":pear"] = S("pear"),
+                [":prefix"] = S("prefix-"),
+                [":typeS"] = S("S"),
+                [":typeBool"] = S("BOOL"),
+                [":typeNull"] = S("NULL"),
+                [":true"] = new AttributeValue { BOOL = true },
+                [":null"] = new AttributeValue { NULL = true },
+                [":six"] = new AttributeValue { N = "6" },
+                [":seven"] = new AttributeValue { N = "7" },
+                [":eight"] = new AttributeValue { N = "8" },
+            };
+
+            await client.TransactWriteItemsAsync(new TransactWriteItemsRequest
+            {
+                TransactItems =
+                [
+                    Check(
+                        table,
+                        partition,
+                        "source",
+                        condition,
+                        values,
+                        names),
+                    new TransactWriteItem
+                    {
+                        Delete = new Delete
+                        {
+                            TableName = table,
+                            Key = Key(partition, "delete-me"),
+                            ConditionExpression = "attribute_exists(#marker)",
+                            ExpressionAttributeNames = new()
+                            {
+                                ["#marker"] = "marker",
+                            },
+                        },
+                    },
+                    new TransactWriteItem
+                    {
+                        Put = new Put
+                        {
+                            TableName = table,
+                            Item = Item(
+                                partition,
+                                "created",
+                                "committed"),
+                            ConditionExpression =
+                                "attribute_not_exists(#marker)",
+                            ExpressionAttributeNames = new()
+                            {
+                                ["#marker"] = "marker",
+                            },
+                        },
+                    },
+                ],
+            }, timeout.Token);
+
+            var source = await ReadItemAsync(
+                client,
+                table,
+                partition,
+                "source",
+                timeout.Token);
+            Assert.Equal("mango", source["text"].S);
+            Assert.True(source["flag"].BOOL);
+            Assert.True(source["nil"].NULL);
+            Assert.Equal("7", source["count"].N);
+            Assert.False(await ExistsAsync(
+                client,
+                table,
+                partition,
+                "delete-me",
+                timeout.Token));
+            var created = await ReadItemAsync(
+                client,
+                table,
+                partition,
+                "created",
+                timeout.Token);
+            Assert.Equal("committed", created["value"].S);
+
+            var unsupportedOrdering =
+                await Assert.ThrowsAsync<AmazonDynamoDBException>(
+                    () => client.TransactWriteItemsAsync(
+                        new TransactWriteItemsRequest
+                        {
+                            TransactItems =
+                            [
+                                Check(
+                                    table,
+                                    partition,
+                                    "source",
+                                    "#count < :eight",
+                                    new()
+                                    {
+                                        [":eight"] =
+                                            new AttributeValue { N = "8" },
+                                    },
+                                    new() { ["#count"] = "count" }),
+                                Put(
+                                    table,
+                                    partition,
+                                    "numeric-ordering-peer",
+                                    "must-not-commit"),
+                            ],
+                        },
+                        timeout.Token));
+            Assert.Equal("ValidationException", unsupportedOrdering.ErrorCode);
+            Assert.False(await ExistsAsync(
+                client,
+                table,
+                partition,
+                "numeric-ordering-peer",
+                timeout.Token));
+            var sourceAfterRejection = await ReadItemAsync(
+                client,
+                table,
+                partition,
+                "source",
+                timeout.Token);
+            Assert.Equal("7", sourceAfterRejection["count"].N);
         }, timeout.Token);
     }
 
@@ -676,6 +888,23 @@ public sealed class DynamoDbRealAzureTransactionTests(
             ConsistentRead = true,
         }, cancellationToken);
         return response.Item.Count > 0;
+    }
+
+    private static async Task<Dictionary<string, AttributeValue>> ReadItemAsync(
+        IAmazonDynamoDB client,
+        string table,
+        string partition,
+        string sort,
+        CancellationToken cancellationToken)
+    {
+        var response = await client.GetItemAsync(new GetItemRequest
+        {
+            TableName = table,
+            Key = Key(partition, sort),
+            ConsistentRead = true,
+        }, cancellationToken);
+        Assert.NotEmpty(response.Item);
+        return response.Item;
     }
 
     private static AttributeValue S(string value) => new() { S = value };

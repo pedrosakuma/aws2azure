@@ -278,6 +278,61 @@ public class SprocEligibilityTests
     }
 
     [Fact]
+    public void Transaction_certification_condition_composition_is_eligible()
+    {
+        var condition = Cond(
+            "(#text = :wrong OR #text = :mango) "
+            + "AND NOT (#text = :wrong) "
+            + "AND #text BETWEEN :low AND :high "
+            + "AND #text IN (:pear, :mango) "
+            + "AND attribute_exists(#text) "
+            + "AND attribute_not_exists(#missing) "
+            + "AND begins_with(#prefix, :prefix) "
+            + "AND attribute_type(#text, :typeS) "
+            + "AND attribute_type(#flag, :typeBool) "
+            + "AND attribute_type(#nil, :typeNull) "
+            + "AND #flag = :true "
+            + "AND #nil = :null "
+            + "AND #count = :seven "
+            + "AND #count <> :eight "
+            + "AND #count IN (:six, :seven) "
+            + "AND :low < #text "
+            + "AND :seven = #count",
+            names: new Dictionary<string, string>
+            {
+                ["#text"] = "text",
+                ["#missing"] = "missing",
+                ["#prefix"] = "prefix",
+                ["#flag"] = "flag",
+                ["#nil"] = "nil",
+                ["#count"] = "count",
+            },
+            values: new Dictionary<string, JsonElement>
+            {
+                [":wrong"] = Val("{\"S\":\"wrong\"}"),
+                [":mango"] = Val("{\"S\":\"mango\"}"),
+                [":low"] = Val("{\"S\":\"apple\"}"),
+                [":high"] = Val("{\"S\":\"zebra\"}"),
+                [":pear"] = Val("{\"S\":\"pear\"}"),
+                [":prefix"] = Val("{\"S\":\"prefix-\"}"),
+                [":typeS"] = Val("{\"S\":\"S\"}"),
+                [":typeBool"] = Val("{\"S\":\"BOOL\"}"),
+                [":typeNull"] = Val("{\"S\":\"NULL\"}"),
+                [":true"] = Val("{\"BOOL\":true}"),
+                [":null"] = Val("{\"NULL\":true}"),
+                [":six"] = Val("{\"N\":\"6\"}"),
+                [":seven"] = Val("{\"N\":\"7\"}"),
+                [":eight"] = Val("{\"N\":\"8\"}"),
+            });
+
+        Assert.True(
+            SprocEligibility.TryValidateTransactionCondition(
+                condition,
+                out var error),
+            error);
+    }
+
+    [Fact]
     public void Transaction_condition_subset_rejects_ordered_numeric_comparison()
     {
         var condition = Cond(

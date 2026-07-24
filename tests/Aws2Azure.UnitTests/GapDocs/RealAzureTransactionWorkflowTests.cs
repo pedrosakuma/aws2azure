@@ -19,6 +19,18 @@ public sealed class RealAzureTransactionWorkflowTests
         "workloads",
         "approved-runtimes",
         "dynamodb-single-partition-transactions.yaml"));
+    private static readonly string MigrationTestSource = File.ReadAllText(Path.Combine(
+        RepositoryRoot,
+        "tests",
+        "Aws2Azure.IntegrationTests",
+        "DynamoDb",
+        "DynamoDbPersistedFormatMigrationTests.cs"));
+    private static readonly string RollbackTestSource = File.ReadAllText(Path.Combine(
+        RepositoryRoot,
+        "tests",
+        "Aws2Azure.IntegrationTests",
+        "DynamoDb",
+        "DynamoDbRealAzureTransactionQualificationTests.cs"));
 
     [Fact]
     public void Transaction_profile_is_discoverable_and_requires_rollback_mode()
@@ -33,6 +45,18 @@ public sealed class RealAzureTransactionWorkflowTests
             StringComparison.Ordinal);
         Assert.Contains(
             "runtime_mode=rollback",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "persisted_format_qualification=0",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "persisted_format_qualification=1",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "AWS2AZURE_DDB_PERSISTED_FORMAT_QUALIFICATION=$persisted_format_qualification",
             Workflow,
             StringComparison.Ordinal);
         Assert.Contains(
@@ -59,6 +83,26 @@ public sealed class RealAzureTransactionWorkflowTests
         Assert.Contains(
             "DynamoDbRealAzureTransactionQualificationTests.Adjacent_runtime_transaction_rollback_is_atomic_and_compatible",
             Matrix,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "DynamoDbPersistedFormatMigrationTests.Adjacent_runtime_reads_rewrites_and_continuations_are_bidirectional",
+            Matrix,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "DynamoDbRealAzureTransactionTests.Supported_condition_subset_and_write_kinds_commit_expected_state",
+            Matrix,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "\"FullyQualifiedName=\" + .",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "[Collection(DynamoDbRealAzureLoadCollection.Name)]",
+            MigrationTestSource,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "[Collection(DynamoDbRealAzureLoadCollection.Name)]",
+            RollbackTestSource,
             StringComparison.Ordinal);
         Assert.Contains(
             "id: dynamodb-single-partition-transactions",

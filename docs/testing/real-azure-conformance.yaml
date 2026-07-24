@@ -263,18 +263,20 @@ services:
         category: write
         evidence_source: real_azure
         establishes_verification: true
-        description: Supported Put, Delete, and ConditionCheck operations commit together, while a failed condition rolls every write back.
+        description: Successful Put, Delete, and ConditionCheck operations commit together with verified post-state, while a failed condition preserves every pre-state and rolls every write back.
         operations: [TransactWriteItems]
         tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Supported_condition_subset_and_write_kinds_commit_expected_state
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Atomic_write_rollback_conditions_and_cancellation_are_aligned
       - id: transaction-conditions-cancellation
         priority: p0
         category: cancellation
         evidence_source: real_azure
         establishes_verification: false
-        description: The exact scalar condition subset, missing-attribute not-equal semantics, and positional cancellation reasons are exercised against real Cosmos.
+        description: AND/OR/NOT, reversed operands, string ordering/BETWEEN/IN, attribute_exists/not_exists, begins_with, attribute_type(S/BOOL/NULL), scalar equality/not-equal, numeric equality/not-equal/IN, numeric-order rejection, missing-attribute not-equal, and positional cancellation reasons are exercised with post-state checks against real Cosmos.
         operations: [TransactWriteItems]
         tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Supported_condition_subset_and_write_kinds_commit_expected_state
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Atomic_write_rollback_conditions_and_cancellation_are_aligned
       - id: transaction-scope-rejection
         priority: p0
@@ -321,6 +323,7 @@ services:
         operations: [TransactGetItems, TransactWriteItems]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionQualificationTests.Adjacent_runtime_transaction_rollback_is_atomic_and_compatible
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbPersistedFormatMigrationTests.Adjacent_runtime_reads_rewrites_and_continuations_are_bidirectional
       - id: write-throttled
         priority: p1
         category: throttling

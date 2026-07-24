@@ -122,7 +122,9 @@ def validate_stored_procedure_immutability(
     candidate_identities = stored_procedure_identities(candidate, "candidate inventory")
     for sproc_id, baseline_hash in baseline_identities.items():
         candidate_hash = candidate_identities.get(sproc_id)
-        if candidate_hash is not None and candidate_hash != baseline_hash:
+        if candidate_hash is None:
+            fail(f"baseline stored-procedure id is missing from candidate: {sproc_id}")
+        if candidate_hash != baseline_hash:
             fail(
                 f"stored-procedure body changed without a new id: {sproc_id}"
             )

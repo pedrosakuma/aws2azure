@@ -19,6 +19,20 @@ public class SprocAstSerializerTests
     private static JsonElement Val(string json)
         => JsonDocument.Parse(json).RootElement.Clone();
 
+    private static JsonElement StringVal(string value)
+        => JsonSerializer.SerializeToElement(
+            new Dictionary<string, string> { ["S"] = value });
+
+    private static JsonElement MapVal(string name, string value)
+        => JsonSerializer.SerializeToElement(
+            new Dictionary<string, Dictionary<string, Dictionary<string, string>>>
+            {
+                ["M"] = new()
+                {
+                    [name] = new() { ["S"] = value },
+                },
+            });
+
     private static UpdateExpressionAst Parse(string expr,
         IReadOnlyDictionary<string, string>? names = null,
         IReadOnlyDictionary<string, JsonElement>? values = null)
@@ -145,6 +159,62 @@ public class SprocAstSerializerTests
         var json = SprocAstSerializer.SerializeUpdate(ast)!;
 
         Assert.Contains("\"remove\":[\"stale\"]", json);
+    }
+
+    [Fact]
+    public void Update_round_trips_control_characters_in_paths_names_and_values()
+    {
+        var targetPath = "target\n\t\0\"\\";
+        var removedPath = "removed\0\n\t\"\\";
+        var mapName = "name\n\t\0\"\\";
+        var value = "value\0\t\n\"\\";
+        var ast = Parse(
+            "SET #target = :value REMOVE #removed",
+            names: new Dictionary<string, string>
+            {
+                ["#target"] = targetPath,
+                ["#removed"] = removedPath,
+            },
+            values: new Dictionary<string, JsonElement>
+            {
+                [":value"] = MapVal(mapName, value),
+            });
+
+        var json = SprocAstSerializer.SerializeUpdate(ast)!;
+
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        var set = root.GetProperty("set")[0];
+        Assert.Equal(targetPath, set.GetProperty("path").GetString());
+        Assert.Equal(
+            value,
+            set.GetProperty("value")
+                .GetProperty("v")
+                .GetProperty(mapName)
+                .GetString());
+        Assert.Equal(removedPath, root.GetProperty("remove")[0].GetString());
+    }
+
+    [Fact]
+    public void Condition_round_trips_control_characters_in_path_and_value_operands()
+    {
+        var path = "condition\n\t\0\"\\";
+        var value = "operand\0\n\t\"\\";
+        var condition = ConditionExpressionParser.Parse(
+            "attribute_exists(#path) AND #path = :value",
+            new Dictionary<string, string> { ["#path"] = path },
+            new Dictionary<string, JsonElement> { [":value"] = StringVal(value) });
+
+        var json = SprocAstSerializer.SerializeCondition(condition)!;
+
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        Assert.Equal(path, root.GetProperty("left").GetProperty("attr").GetString());
+        var comparison = root.GetProperty("right");
+        Assert.Equal(
+            path,
+            comparison.GetProperty("attr").GetProperty("path").GetString());
+        Assert.Equal(value, comparison.GetProperty("value").GetString());
     }
 
     [Fact]

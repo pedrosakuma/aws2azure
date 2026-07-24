@@ -135,6 +135,24 @@ class PersistedFormatReleaseTests(unittest.TestCase):
         self.write_notes(digest, "atomicWrite body changed.")
         self.run_tool(expect_success=False)
 
+    def test_existing_v2_stored_procedure_id_cannot_be_removed(self) -> None:
+        inventory_path = (
+            self.root / "docs/compatibility/dynamodb-persisted-formats-v2.json"
+        )
+        inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+        inventory["stored_procedures"] = [
+            value
+            for value in inventory["stored_procedures"]
+            if value["id"] != "atomicTransactWrite_v2"
+        ]
+        inventory_path.write_text(
+            json.dumps(inventory, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        digest = hashlib.sha256(inventory_path.read_bytes()).hexdigest()
+        self.write_notes(digest, "Removed atomicTransactWrite_v2.")
+        self.run_tool(expect_success=False)
+
     def test_v1_baseline_inventory_accepts_additive_v2_identity_set(self) -> None:
         shutil.rmtree(self.baseline)
         previous_relative = pathlib.Path(

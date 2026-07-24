@@ -158,6 +158,7 @@ jobs:
           qualification_sha="$(git rev-parse HEAD)"
           qualifying=false
           runtime_mode=source_validation
+          persisted_format_qualification=0
           profile=
           if [ "$EVENT_NAME" = workflow_dispatch ] &&
              [ "$QUALIFICATION_PROFILE" != source-validation ]; then
@@ -189,6 +190,7 @@ jobs:
             runtime_mode=candidate
             if [ "$profile" = dynamodb-single-partition-transactions ]; then
               runtime_mode=rollback
+              persisted_format_qualification=1
             fi
           fi
           {
@@ -198,6 +200,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           {
             echo "AWS2AZURE_SEALED_RUNTIME_MODE=$runtime_mode"
+            echo "AWS2AZURE_DDB_PERSISTED_FORMAT_QUALIFICATION=$persisted_format_qualification"
             echo "AWS2AZURE_QUALIFICATION_SHA=$qualification_sha"
             echo "AWS2AZURE_QUALIFICATION_PROFILE=$profile"
           } >> "$GITHUB_ENV"
