@@ -56,7 +56,7 @@
       "v1_fixture": "tests/Aws2Azure.UnitTests/DynamoDb/Persistence/Fixtures/current/stored-procedures.json",
       "v1_fixture_sha256": "22f14da61ee2fc6ec38d2cd0446708c0cc427894aad52dbde67f3d95d7f30512",
       "current_fixture": "tests/Aws2Azure.UnitTests/DynamoDb/Persistence/Fixtures/current/stored-procedures-v2.json",
-      "current_fixture_sha256": "e851b16efa1ebdbe0528071cad61ec2d96b6494516ff737b3fcf83317abcf32a"
+      "current_fixture_sha256": "840506618502b36580c66e482832d4474e6f83826436b6fcf2590ac4bf151eac"
     }
   ],
   "stored_procedures": [
@@ -70,7 +70,7 @@
     },
     {
       "id": "atomicTransactWrite_v3",
-      "body_sha256": "9440e9bb3d43b414ef68346659bef9184f6cb4658435090432bf658bbbc17426"
+      "body_sha256": "26d95f96fe3a00fa6e0dcd30b2df8c2b55a1d48cac22959ac489c253679d6541"
     },
     {
       "id": "atomicTransactGet_v1",

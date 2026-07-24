@@ -20,15 +20,17 @@ sub_features:
       attribute_exists, attribute_not_exists, begins_with, and attribute_type
       for S/BOOL/NULL. Paths must be one non-reserved top-level attribute and
       cannot name Cosmos system fields such as `_etag` or `_ts`.
-      Values must be S, BOOL, NULL, or an exactly JavaScript-safe N. Numbers are
-      limited to equality/not-equal and IN because high-precision stored numbers
-      use an envelope the script cannot order faithfully. Missing attributes
-      never satisfy `<>`; differing DynamoDB types do. Unknown AST nodes fail
-      closed.
+      Values must be S, BOOL, NULL, or an N whose canonical form the persisted
+      codec stores as a bare JSON number. Numbers are limited to
+      equality/not-equal and IN; any number stored in an `_a2a:N` envelope is
+      rejected before execution. Ordered string comparisons use DynamoDB's exact
+      UTF-8 byte lexicographic order, including supplementary Unicode code
+      points. Missing attributes never satisfy `<>`; differing DynamoDB types
+      do. Unknown AST nodes fail closed.
   - name: Unsupported condition forms fail closed
     status: implemented
     notes: >-
-      Maps/lists, sets, binary, unsafe/high-precision numbers, nested or
+      Maps/lists, sets, binary, enveloped numbers, nested or
       list-index paths, dotted attribute names, path-to-path comparisons,
       contains(), size(), and unsupported attribute_type tags are rejected with
       ValidationException. Legacy Expected/ConditionalOperator are rejected
@@ -69,6 +71,7 @@ behavior_differences:
   - "Duplicate operations on the same table/key are rejected with ValidationException before execution."
   - "Stored procedures must be enabled (Preferred or Required). There is no non-atomic fallback."
   - "Stored-procedure provisioning treats an HTTP 409 as success only after reading the existing resource and verifying the exact versioned id and body; an id/body conflict fails closed."
+  - "Transaction execution POSTs opt out of proxy-level automatic retries because a lost response is ambiguous without durable ClientRequestToken deduplication. Stored-procedure availability is cached per Cosmos account/database/container, invalidated on table lifecycle, and evicted/reprovisioned once after an execution 404."
   - "`atomicWrite_v2` remains byte-identical. `atomicTransactWrite_v2` remains inventoried for rollback, while the certified condition/cancellation contract uses `atomicTransactWrite_v3`; TransactGet uses the independent `atomicTransactGet_v1` snapshot script."
   - "The Cosmos Linux emulator cannot execute these scripts. The v2 predecessor has historical real-Azure evidence, but v3 write semantics, v1 snapshots, contention, restart, and adjacent-runtime rollback require fresh real-Azure runs before new seals are committed."
   - "Large transactions may exceed Cosmos stored-procedure execution or response budgets; failures roll back rather than partially commit."

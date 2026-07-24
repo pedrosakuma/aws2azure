@@ -55,7 +55,7 @@ internal sealed class CosmosClient
     /// <summary>
     /// Returns the Cosmos account endpoint URL (for cache keying).
     /// </summary>
-    public string AccountEndpoint => _endpoint;
+    public string AccountEndpoint => _baseUri.AbsoluteUri;
 
     public CosmosClient(
         AzureHttpClient http,
@@ -102,7 +102,8 @@ internal sealed class CosmosClient
         string requestUri,
         HttpContent? content,
         System.Collections.Generic.IReadOnlyList<KeyValuePair<string, string>>? extraHeaders,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool noRetry = false)
     {
         ReadOnlyMemory<byte>? bufferedContent = null;
         HttpContentHeaders? bufferedContentHeaders = null;
@@ -115,7 +116,7 @@ internal sealed class CosmosClient
         return await SendBufferedAsync(
             method, resourceType, resourceLink, requestUri,
             bufferedContent, bufferedContentHeaders, contentType: null,
-            extraHeaders, ct).ConfigureAwait(false);
+            extraHeaders, ct, noRetry).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -134,13 +135,14 @@ internal sealed class CosmosClient
         ReadOnlyMemory<byte> body,
         string contentType,
         System.Collections.Generic.IReadOnlyList<KeyValuePair<string, string>>? extraHeaders,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool noRetry = false)
     {
         ArgumentException.ThrowIfNullOrEmpty(contentType);
         return SendBufferedAsync(
             method, resourceType, resourceLink, requestUri,
             body, bufferedContentHeaders: null, contentType,
-            extraHeaders, ct);
+            extraHeaders, ct, noRetry);
     }
 
     private async Task<HttpResponseMessage> SendBufferedAsync(
@@ -152,7 +154,8 @@ internal sealed class CosmosClient
         HttpContentHeaders? bufferedContentHeaders,
         string? contentType,
         System.Collections.Generic.IReadOnlyList<KeyValuePair<string, string>>? extraHeaders,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool noRetry)
     {
         ArgumentNullException.ThrowIfNull(method);
         ArgumentNullException.ThrowIfNull(resourceType);
@@ -190,6 +193,10 @@ internal sealed class CosmosClient
             try
             {
                 using var request = new HttpRequestMessage(method, new Uri(endpoint, requestUri.TrimStart('/')));
+                if (noRetry)
+                {
+                    request.Options.Set(AzureHttpClient.NoRetryOption, true);
+                }
                 HttpContent? attemptContent = null;
                 try
                 {

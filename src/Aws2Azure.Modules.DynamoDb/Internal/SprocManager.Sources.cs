@@ -196,11 +196,13 @@ internal sealed partial class SprocManager
             return (ast.op === '=' || ast.op === 'EQ') ? equal : !equal;
         }
         if (!sameScalarType(left.value, right.value)) return false;
+        var order = orderedCompare(left.value, right.value);
+        if (order === null) return false;
         switch (ast.op) {
-            case '<': case 'LT': return isOrdered(left.value) && left.value < right.value;
-            case '<=': case 'LE': return isOrdered(left.value) && left.value <= right.value;
-            case '>': case 'GT': return isOrdered(left.value) && left.value > right.value;
-            case '>=': case 'GE': return isOrdered(left.value) && left.value >= right.value;
+            case '<': case 'LT': return order < 0;
+            case '<=': case 'LE': return order <= 0;
+            case '>': case 'GT': return order > 0;
+            case '>=': case 'GE': return order >= 0;
             default: throw new Error('Unsupported comparison operator: ' + ast.op);
         }
     }
@@ -209,12 +211,13 @@ internal sealed partial class SprocManager
         var value = readOperand(doc, ast.value);
         var low = readOperand(doc, ast.low);
         var high = readOperand(doc, ast.high);
-        return value.exists && low.exists && high.exists
-            && isOrdered(value.value)
-            && sameScalarType(value.value, low.value)
-            && sameScalarType(value.value, high.value)
-            && value.value >= low.value
-            && value.value <= high.value;
+        if (!value.exists || !low.exists || !high.exists
+            || !sameScalarType(value.value, low.value)
+            || !sameScalarType(value.value, high.value)) return false;
+        var lowOrder = orderedCompare(value.value, low.value);
+        var highOrder = orderedCompare(value.value, high.value);
+        return lowOrder !== null && highOrder !== null
+            && lowOrder >= 0 && highOrder <= 0;
     }
 
     function evaluateIn(ast, doc) {
@@ -255,8 +258,52 @@ internal sealed partial class SprocManager
         return leftType === 'string' || leftType === 'number' || leftType === 'boolean';
     }
 
-    function isOrdered(value) {
-        return typeof value === 'string' || typeof value === 'number';
+    function orderedCompare(left, right) {
+        if (typeof left !== 'string' || typeof right !== 'string') return null;
+        return compareUtf8(left, right);
+    }
+
+    function compareUtf8(left, right) {
+        var a = utf8Bytes(left);
+        var b = utf8Bytes(right);
+        var length = Math.min(a.length, b.length);
+        for (var i = 0; i < length; i++) {
+            if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+        }
+        return a.length === b.length ? 0 : (a.length < b.length ? -1 : 1);
+    }
+
+    function utf8Bytes(value) {
+        var bytes = [];
+        for (var i = 0; i < value.length; i++) {
+            var code = value.charCodeAt(i);
+            if (code >= 0xD800 && code <= 0xDBFF) {
+                var low = i + 1 < value.length ? value.charCodeAt(i + 1) : 0;
+                if (low >= 0xDC00 && low <= 0xDFFF) {
+                    code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+                    i++;
+                } else {
+                    code = 0xFFFD;
+                }
+            } else if (code >= 0xDC00 && code <= 0xDFFF) {
+                code = 0xFFFD;
+            }
+            if (code < 0x80) {
+                bytes.push(code);
+            } else if (code < 0x800) {
+                bytes.push(0xC0 | (code >> 6), 0x80 | (code & 0x3F));
+            } else if (code < 0x10000) {
+                bytes.push(0xE0 | (code >> 12),
+                    0x80 | ((code >> 6) & 0x3F),
+                    0x80 | (code & 0x3F));
+            } else {
+                bytes.push(0xF0 | (code >> 18),
+                    0x80 | ((code >> 12) & 0x3F),
+                    0x80 | ((code >> 6) & 0x3F),
+                    0x80 | (code & 0x3F));
+            }
+        }
+        return bytes;
     }
 
     function getAttrValue(doc, path) {

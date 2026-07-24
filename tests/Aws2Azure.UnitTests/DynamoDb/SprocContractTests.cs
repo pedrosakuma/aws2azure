@@ -145,15 +145,173 @@ public sealed class SprocContractTests
             StringComparison.Ordinal);
     }
 
-    private static CosmosClient BuildClient(ScriptedHandler handler)
+    [Fact]
+    public void Transaction_v3_script_compares_strings_by_utf8_bytes()
+    {
+        Assert.Contains(
+            "function compareUtf8(left, right)",
+            SprocManager.TransactSprocBody,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "return compareUtf8(left, right);",
+            SprocManager.TransactSprocBody,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "code = 0x10000 + ((code - 0xD800) << 10)",
+            SprocManager.TransactSprocBody,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Transaction_execution_disables_automatic_http_retries()
+    {
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosStatus(HttpStatusCode.ServiceUnavailable, "{}"),
+                CosmosOk("{\"success\":true}"),
+            },
+        };
+        var manager = new SprocManager(NullLogger<SprocManager>.Instance);
+
+        var result = await manager.ExecuteTransactAsync(
+            BuildClient(handler, maxAttempts: 3),
+            "orders",
+            "partition",
+            Encoding.UTF8.GetBytes("[[]]"),
+            CancellationToken.None);
+
+        Assert.Equal((int)HttpStatusCode.ServiceUnavailable, result.StatusCode);
+        var request = Assert.Single(handler.Requests);
+        Assert.True(request.NoRetry);
+    }
+
+    [Fact]
+    public async Task Sproc_provisioning_retains_automatic_http_retries()
+    {
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosStatus(HttpStatusCode.ServiceUnavailable, "{}"),
+                CosmosStatus(HttpStatusCode.Created, "{}"),
+            },
+        };
+        var manager = new SprocManager(NullLogger<SprocManager>.Instance);
+
+        var available = await manager.EnsureTransactSprocAsync(
+            BuildClient(handler, maxAttempts: 2),
+            "orders",
+            CancellationToken.None);
+
+        Assert.True(available);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.All(handler.Requests, request => Assert.False(request.NoRetry));
+    }
+
+    [Fact]
+    public async Task Sproc_cache_is_isolated_by_cosmos_account()
+    {
+        var firstHandler = new ScriptedHandler
+        {
+            Responses = { CosmosStatus(HttpStatusCode.Created, "{}") },
+        };
+        var secondHandler = new ScriptedHandler
+        {
+            Responses = { CosmosStatus(HttpStatusCode.Created, "{}") },
+        };
+        var manager = new SprocManager(NullLogger<SprocManager>.Instance);
+
+        Assert.True(await manager.EnsureTransactSprocAsync(
+            BuildClient(firstHandler, endpoint: "https://first.documents.azure.com/"),
+            "orders",
+            CancellationToken.None));
+        Assert.True(await manager.EnsureTransactSprocAsync(
+            BuildClient(secondHandler, endpoint: "https://second.documents.azure.com/"),
+            "orders",
+            CancellationToken.None));
+
+        Assert.Single(firstHandler.Requests);
+        Assert.Single(secondHandler.Requests);
+    }
+
+    [Fact]
+    public async Task Cached_sproc_not_found_is_evicted_reprovisioned_and_executed_once()
+    {
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosStatus(HttpStatusCode.Created, "{}"),
+                CosmosStatus(HttpStatusCode.NotFound, "{\"code\":\"NotFound\"}"),
+                CosmosStatus(HttpStatusCode.Created, "{}"),
+                CosmosOk("{\"success\":true}"),
+            },
+        };
+        var manager = new SprocManager(NullLogger<SprocManager>.Instance);
+        var client = BuildClient(handler, maxAttempts: 3);
+
+        Assert.True(await manager.EnsureTransactSprocAsync(
+            client,
+            "orders",
+            CancellationToken.None));
+
+        var result = await manager.ExecuteTransactAsync(
+            client,
+            "orders",
+            "partition",
+            Encoding.UTF8.GetBytes("[[]]"),
+            CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Collection(
+            handler.Requests,
+            request =>
+            {
+                Assert.EndsWith("/sprocs", request.Uri.AbsolutePath, StringComparison.Ordinal);
+                Assert.False(request.NoRetry);
+            },
+            request =>
+            {
+                Assert.EndsWith(
+                    "/sprocs/" + SprocManager.TransactSprocId,
+                    request.Uri.AbsolutePath,
+                    StringComparison.Ordinal);
+                Assert.True(request.NoRetry);
+            },
+            request =>
+            {
+                Assert.EndsWith("/sprocs", request.Uri.AbsolutePath, StringComparison.Ordinal);
+                Assert.False(request.NoRetry);
+            },
+            request =>
+            {
+                Assert.EndsWith(
+                    "/sprocs/" + SprocManager.TransactSprocId,
+                    request.Uri.AbsolutePath,
+                    StringComparison.Ordinal);
+                Assert.True(request.NoRetry);
+            });
+    }
+
+    private static CosmosClient BuildClient(
+        ScriptedHandler handler,
+        int maxAttempts = 1,
+        string endpoint = "https://example.documents.azure.com/")
     {
         var http = new AzureHttpClient(
             handler,
             ownsHandler: false,
-            new AzureHttpClientOptions { MaxAttempts = 1 });
+            new AzureHttpClientOptions
+            {
+                MaxAttempts = maxAttempts,
+                BaseRetryDelay = TimeSpan.FromMilliseconds(1),
+                MaxRetryDelay = TimeSpan.FromMilliseconds(2),
+            });
         var credentials = new CosmosCredentials
         {
-            Endpoint = "https://example.documents.azure.com/",
+            Endpoint = endpoint,
             PrimaryKey =
                 "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
             DatabaseName = "main",
@@ -186,7 +344,11 @@ public sealed class SprocContractTests
         {
             Requests.Add(new CapturedRequest(
                 request.Method,
-                request.RequestUri!));
+                request.RequestUri!,
+                request.Options.TryGetValue(
+                    AzureHttpClient.NoRetryOption,
+                    out var noRetry)
+                && noRetry));
             if (Responses.Count == 0)
             {
                 return Task.FromResult(
@@ -199,5 +361,8 @@ public sealed class SprocContractTests
         }
     }
 
-    private sealed record CapturedRequest(HttpMethod Method, Uri Uri);
+    private sealed record CapturedRequest(
+        HttpMethod Method,
+        Uri Uri,
+        bool NoRetry);
 }

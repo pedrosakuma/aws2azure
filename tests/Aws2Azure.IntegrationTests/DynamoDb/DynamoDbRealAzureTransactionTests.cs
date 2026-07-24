@@ -31,6 +31,41 @@ public sealed class DynamoDbRealAzureTransactionTests(
             {
                 ["value"] = S("keep"),
             }, timeout.Token);
+            await PutAsync(client, table, "order-1", "utf8-order", new()
+            {
+                ["rank"] = S("\uE000"),
+            }, timeout.Token);
+
+            await client.TransactWriteItemsAsync(new TransactWriteItemsRequest
+            {
+                TransactItems =
+                [
+                    Check(
+                        table,
+                        "order-1",
+                        "utf8-order",
+                        "#rank < :supplementary",
+                        new()
+                        {
+                            [":supplementary"] = S("\U00010000"),
+                        },
+                        new()
+                        {
+                            ["#rank"] = "rank",
+                        }),
+                    Put(
+                        table,
+                        "order-1",
+                        "utf8-order-peer",
+                        "committed"),
+                ],
+            }, timeout.Token);
+            Assert.True(await ExistsAsync(
+                client,
+                table,
+                "order-1",
+                "utf8-order-peer",
+                timeout.Token));
 
             await client.TransactWriteItemsAsync(new TransactWriteItemsRequest
             {

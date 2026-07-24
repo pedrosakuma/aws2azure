@@ -12,6 +12,7 @@ using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.DynamoDb.Internal;
 using Aws2Azure.Modules.DynamoDb.Operations;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Aws2Azure.UnitTests.DynamoDb;
@@ -156,6 +157,58 @@ public class TableLifecycleHandlersTests
         Assert.Equal("ACTIVE", desc.GetProperty("TableStatus").GetString());
         Assert.Equal(2, desc.GetProperty("AttributeDefinitions").GetArrayLength());
         Assert.Equal(2, desc.GetProperty("KeySchema").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task CreateTable_recreation_invalidates_cached_stored_procedures()
+    {
+        var (ctx, _) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                new(HttpStatusCode.Created) { Content = new StringContent("{}") },
+                new(HttpStatusCode.Created) { Content = new StringContent("{}") },
+                new(HttpStatusCode.Created) { Content = new StringContent("{}") },
+                new(HttpStatusCode.Created) { Content = new StringContent("{}") },
+            },
+        };
+        var cosmos = BuildClient(handler);
+        var manager = new SprocManager(NullLogger<SprocManager>.Instance);
+        var sprocContext = new SprocContext(
+            StoredProcedureMode.Preferred,
+            manager);
+
+        Assert.True(await manager.EnsureTransactSprocAsync(
+            cosmos,
+            "orders",
+            CancellationToken.None));
+
+        var request = Encoding.UTF8.GetBytes(
+            "{\"TableName\":\"orders\","
+            + "\"AttributeDefinitions\":[{\"AttributeName\":\"pk\",\"AttributeType\":\"S\"}],"
+            + "\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"}]}");
+        await TableLifecycleHandlers.HandleCreateTableAsync(
+            ctx,
+            request,
+            cosmos,
+            sprocContext,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.True(await manager.EnsureTransactSprocAsync(
+            cosmos,
+            "orders",
+            CancellationToken.None));
+        Assert.Equal(4, handler.Requests.Count);
+        Assert.EndsWith(
+            "/sprocs",
+            handler.Requests[0].Uri.AbsolutePath,
+            StringComparison.Ordinal);
+        Assert.EndsWith(
+            "/sprocs",
+            handler.Requests[3].Uri.AbsolutePath,
+            StringComparison.Ordinal);
     }
 
     [Fact]

@@ -374,7 +374,7 @@ public class TransactWriteItemsHandlerTests
         Assert.Equal(400, ctx.Response.StatusCode);
         var resp = ReadResponse(body);
         Assert.Contains("ValidationException", resp);
-        Assert.Contains("JavaScript-safe", resp);
+        Assert.Contains("bare JSON", resp);
     }
 
     [Fact]

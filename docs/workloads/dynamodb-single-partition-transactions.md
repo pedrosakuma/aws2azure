@@ -39,12 +39,13 @@ or count-mismatched 2xx script response fails closed.
 
 Paths must be one non-reserved top-level attribute and cannot name Cosmos system
 fields (`_etag`, `_ts`, and peers). Values must be `S`, `BOOL`,
-`NULL`, or a number that round-trips exactly through JavaScript. Numeric
-conditions are limited to equality/not-equal and `IN`; stored high-precision
-number envelopes cannot be ordered faithfully by the script. Maps, lists,
-sets, binary, unsafe numbers, nested/list-index/dotted paths, path-to-path
-comparisons, `contains`, and `size` fail before execution. Missing attributes do
-not satisfy `<>`, while differing DynamoDB types do.
+`NULL`, or a number whose canonical form the persisted codec stores as a bare
+JSON number. Numeric conditions are limited to equality/not-equal and `IN`;
+numbers stored in `_a2a:N` envelopes fail before execution. Ordered strings use
+DynamoDB's UTF-8 byte lexicographic order rather than JavaScript UTF-16 order.
+Maps, lists, sets, binary, enveloped numbers, nested/list-index/dotted paths,
+path-to-path comparisons, `contains`, and `size` fail before execution. Missing
+attributes do not satisfy `<>`, while differing DynamoDB types do.
 
 Cancellation reasons are exact and positional. Legacy `Expected` /
 `ConditionalOperator`, `ReturnValuesOnConditionCheckFailure`, non-`NONE`
@@ -58,11 +59,19 @@ remain in persisted-format inventory version 2 for the adjacent-runtime rollback
 span; the candidate adds `atomicTransactWrite_v3` and `atomicTransactGet_v1`.
 Provisioning accepts HTTP 409 only after reading and matching the exact stored
 body, so an accidental same-id body conflict cannot be treated as available.
+The availability cache is scoped to account/database/container and is cleared
+on table lifecycle; an execution 404 evicts and reprovisions once. Transaction
+write execution disables proxy-level automatic retries because a lost response
+is ambiguous until durable `ClientRequestToken` deduplication exists.
 
 The real-Azure source suite covers atomic rollback, snapshot coherence,
 condition/cancellation behavior, contention, scope and token rejection, process
 restart, and adjacent-runtime rollback. No new seal is committed without an
-actual workflow run containing those tests.
+actual workflow run containing those tests. Qualifying
+`integration-real-azure` runs select sealed rollback mode for this profile and
+resolve both the exact candidate and its committed bootstrap/approved prior
+runtime; a candidate-only configuration fails instead of silently skipping the
+adjacent-runtime test.
 
 ## Performance and qualification boundary
 

@@ -21,7 +21,7 @@ namespace Aws2Azure.Modules.DynamoDb.Internal;
 internal sealed partial class SprocManager
 {
     private readonly ILogger<SprocManager> _logger;
-    private readonly ConcurrentDictionary<string, SprocState> _sprocCache = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<SprocCacheKey, SprocState> _sprocCache = new();
 
     // atomicWrite_v2 is frozen by the persisted-format inventory. Its body is
     // intentionally unchanged in this release.
@@ -78,7 +78,7 @@ internal sealed partial class SprocManager
             new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", $"[\"{EscapeJsonString(partitionKey)}\"]"),
         };
 
-        using var response = await cosmos.SendAsync(
+        var response = await cosmos.SendAsync(
             HttpMethod.Post,
             "sprocs",
             sprocLink,
@@ -88,7 +88,42 @@ internal sealed partial class SprocManager
             headers,
             ct).ConfigureAwait(false);
 
-        return await SprocResponseParser.ParseSingleWriteAsync(response, ct).ConfigureAwait(false);
+        try
+        {
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                InvalidateNamedSproc(cosmos, containerName, SprocId);
+                if (await EnsureNamedSprocAsync(
+                        cosmos,
+                        containerName,
+                        SprocId,
+                        SprocBody,
+                        ct).ConfigureAwait(false))
+                {
+                    response.Dispose();
+                    response = await cosmos.SendAsync(
+                        HttpMethod.Post,
+                        "sprocs",
+                        sprocLink,
+                        requestUri,
+                        paramsBuf.WrittenMemory,
+                        "application/json",
+                        headers,
+                        ct).ConfigureAwait(false);
+                    if (response.StatusCode == HttpStatusCode.NotFound)
+                    {
+                        InvalidateNamedSproc(cosmos, containerName, SprocId);
+                    }
+                }
+            }
+
+            return await SprocResponseParser.ParseSingleWriteAsync(response, ct)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            response.Dispose();
+        }
     }
 
     /// <summary>
@@ -121,10 +156,54 @@ internal sealed partial class SprocManager
             new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", $"[\"{EscapeJsonString(partitionKey)}\"]"),
         };
 
-        using var response = await cosmos.SendAsync(
-            HttpMethod.Post, "sprocs", sprocLink, requestUri, paramsBody, "application/json", headers, ct).ConfigureAwait(false);
+        var response = await cosmos.SendAsync(
+            HttpMethod.Post,
+            "sprocs",
+            sprocLink,
+            requestUri,
+            paramsBody,
+            "application/json",
+            headers,
+            ct,
+            noRetry: true).ConfigureAwait(false);
 
-        return await SprocResponseParser.ParseTransactAsync(response, ct).ConfigureAwait(false);
+        try
+        {
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                InvalidateNamedSproc(cosmos, containerName, TransactSprocId);
+                if (await EnsureNamedSprocAsync(
+                        cosmos,
+                        containerName,
+                        TransactSprocId,
+                        TransactSprocBody,
+                        ct).ConfigureAwait(false))
+                {
+                    response.Dispose();
+                    response = await cosmos.SendAsync(
+                        HttpMethod.Post,
+                        "sprocs",
+                        sprocLink,
+                        requestUri,
+                        paramsBody,
+                        "application/json",
+                        headers,
+                        ct,
+                        noRetry: true).ConfigureAwait(false);
+                    if (response.StatusCode == HttpStatusCode.NotFound)
+                    {
+                        InvalidateNamedSproc(cosmos, containerName, TransactSprocId);
+                    }
+                }
+            }
+
+            return await SprocResponseParser.ParseTransactAsync(response, ct)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            response.Dispose();
+        }
     }
 
     public async Task<bool> EnsureTransactGetSprocAsync(
@@ -170,7 +249,7 @@ internal sealed partial class SprocManager
                 $"[\"{EscapeJsonString(partitionKey)}\"]"),
         };
 
-        using var response = await cosmos.SendAsync(
+        var response = await cosmos.SendAsync(
             HttpMethod.Post,
             "sprocs",
             sprocLink,
@@ -180,14 +259,48 @@ internal sealed partial class SprocManager
             headers,
             ct).ConfigureAwait(false);
 
-        return await SprocResponseParser.ParseTransactGetAsync(response, ct)
-            .ConfigureAwait(false);
+        try
+        {
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                InvalidateNamedSproc(cosmos, containerName, TransactGetSprocId);
+                if (await EnsureNamedSprocAsync(
+                        cosmos,
+                        containerName,
+                        TransactGetSprocId,
+                        TransactGetSprocBody,
+                        ct).ConfigureAwait(false))
+                {
+                    response.Dispose();
+                    response = await cosmos.SendAsync(
+                        HttpMethod.Post,
+                        "sprocs",
+                        sprocLink,
+                        requestUri,
+                        paramsBuf.WrittenMemory,
+                        "application/json",
+                        headers,
+                        ct).ConfigureAwait(false);
+                    if (response.StatusCode == HttpStatusCode.NotFound)
+                    {
+                        InvalidateNamedSproc(cosmos, containerName, TransactGetSprocId);
+                    }
+                }
+            }
+
+            return await SprocResponseParser.ParseTransactGetAsync(response, ct)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            response.Dispose();
+        }
     }
 
     private async Task<bool> EnsureNamedSprocAsync(
         CosmosClient cosmos, string containerName, string sprocId, string sprocBody, CancellationToken ct)
     {
-        var cacheKey = $"{cosmos.DatabaseName}:{containerName}:{sprocId}";
+        var cacheKey = CacheKey(cosmos, containerName, sprocId);
 
         if (_sprocCache.TryGetValue(cacheKey, out var state) && state == SprocState.Available)
         {
@@ -198,6 +311,31 @@ internal sealed partial class SprocManager
         _sprocCache[cacheKey] = created ? SprocState.Available : SprocState.Failed;
         return created;
     }
+
+    public void InvalidateContainer(CosmosClient cosmos, string containerName)
+    {
+        ArgumentNullException.ThrowIfNull(cosmos);
+        ArgumentException.ThrowIfNullOrEmpty(containerName);
+        InvalidateNamedSproc(cosmos, containerName, SprocId);
+        InvalidateNamedSproc(cosmos, containerName, TransactSprocId);
+        InvalidateNamedSproc(cosmos, containerName, TransactGetSprocId);
+    }
+
+    private void InvalidateNamedSproc(
+        CosmosClient cosmos,
+        string containerName,
+        string sprocId)
+        => _sprocCache.TryRemove(CacheKey(cosmos, containerName, sprocId), out _);
+
+    private static SprocCacheKey CacheKey(
+        CosmosClient cosmos,
+        string containerName,
+        string sprocId)
+        => new(
+            cosmos.AccountEndpoint,
+            cosmos.DatabaseName,
+            containerName,
+            sprocId);
 
     private async Task<bool> TryCreateNamedSprocAsync(
         CosmosClient cosmos, string containerName, string sprocId, string sprocBody, CancellationToken ct)
@@ -285,5 +423,11 @@ internal sealed partial class SprocManager
         }
     }
 
-    private enum SprocState { Unknown, Available, Failed }
+    private readonly record struct SprocCacheKey(
+        string AccountEndpoint,
+        string DatabaseName,
+        string ContainerName,
+        string SprocId);
+
+    private enum SprocState { Available, Failed }
 }

@@ -65,6 +65,22 @@ public class SprocAstSerializerTests
     }
 
     [Fact]
+    public void Bare_number_operand_uses_the_persisted_codec_canonical_form()
+    {
+        var ast = Parse(
+            "SET counter = :value",
+            values: new Dictionary<string, JsonElement>
+            {
+                [":value"] = Val("{\"N\":\"1e3\"}"),
+            });
+
+        var json = SprocAstSerializer.SerializeUpdate(ast)!;
+
+        Assert.Contains("\"v\":1000", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("1e3", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Path_assignment_serializes_as_path_envelope()
     {
         var ast = Parse("SET a = b");

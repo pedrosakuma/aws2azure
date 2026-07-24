@@ -187,6 +187,9 @@ jobs:
             fi
             qualifying=true
             runtime_mode=candidate
+            if [ "$profile" = dynamodb-single-partition-transactions ]; then
+              runtime_mode=rollback
+            fi
           fi
           {
             echo "qualifying=$qualifying"
@@ -227,7 +230,7 @@ jobs:
       - name: Build test harness and validation tools
         run: dotnet build -c Release --nologo
 
-      - name: Resolve exact sealed correctness candidate
+      - name: Resolve exact sealed correctness candidate and required rollback baseline
         if: steps.mode.outputs.qualifying == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -258,6 +261,44 @@ jobs:
           ./eng/resolve-sealed-runtime.sh "${args[@]}"
           cp "$PRIVATE_DIR/sealed-candidate/bundle/runtime-sha256.txt" \
             "$QUALIFICATION_DIR/runtime-sha256.txt"
+
+          if [ "${{ steps.mode.outputs.profile }}" = dynamodb-single-partition-transactions ]; then
+            gap_docs="tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll"
+            prior_ledger="$identity_dir/prior-ledger.json"
+            dotnet exec "$gap_docs" export-approved-runtime \
+              --profile "${{ steps.mode.outputs.profile }}" \
+              --output "$prior_ledger"
+            chmod 0600 "$prior_ledger"
+
+            prior_run_id="$(jq -er '.record.producer.run_id' "$prior_ledger")"
+            prior_attempt="$(jq -er '.record.producer.run_attempt' "$prior_ledger")"
+            prior_sha="$(jq -er '.record.runtime.source_sha' "$prior_ledger")"
+            prior_ref="$(jq -er '.record.attestation.source_ref' "$prior_ledger")"
+            prior_artifact_id="$(jq -er '.record.artifact.id' "$prior_ledger")"
+            ./eng/resolve-sealed-runtime.sh \
+              --repository "$GITHUB_REPOSITORY" \
+              --run-id "$prior_run_id" \
+              --run-attempt "$prior_attempt" \
+              --expected-sha "$prior_sha" \
+              --expected-ref "$prior_ref" \
+              --profile "${{ steps.mode.outputs.profile }}" \
+              --profile-version 1 \
+              --role prior \
+              --artifact-id "$prior_artifact_id" \
+              --ledger-json "$prior_ledger" \
+              --destination "$PRIVATE_DIR/sealed-prior" \
+              --identity-output "$identity_dir/prior-runtime.json" \
+              --github-env "$GITHUB_ENV"
+
+            for field in source.sha runtime.aggregate_digest runtime.executable_digest; do
+              candidate_value="$(jq -er ".$field" "$identity_dir/candidate-runtime.json")"
+              prior_value="$(jq -er ".$field" "$identity_dir/prior-runtime.json")"
+              if [ "$candidate_value" = "$prior_value" ]; then
+                echo "::error::Transaction candidate and rollback baseline must be distinct at $field."
+                exit 1
+              fi
+            done
+          fi
 
       - name: Validate conformance matrix
         run: >-
@@ -699,7 +740,7 @@ jobs:
             TestResults/real-azure-conformance/**
             artifacts/real-azure-qualification/runtime-sha256.txt
             artifacts/real-azure-qualification/config-manifest.json
-            artifacts/real-azure-qualification/sealed-runtimes/candidate-runtime.json
+            artifacts/real-azure-qualification/sealed-runtimes/**
             artifacts/real-azure-qualification/candidates/**
           if-no-files-found: error
 

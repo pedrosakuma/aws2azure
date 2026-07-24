@@ -23,14 +23,17 @@ public sealed class ApprovedRuntimeLedgerTests
             ValidationTime);
 
         Assert.Empty(errors);
-        Assert.Equal(4, records.Count);
+        Assert.Equal(5, records.Count);
         var approved = records.Where(record => record.Status == "approved").ToArray();
         var bootstrap = records.Where(record => record.Status == "bootstrap").ToArray();
-        // sqs-standard-messaging promoted to approved for issue #626: all four
-        // repository profiles (S3, SecretsManager, DynamoDB, SQS) are now
-        // approved with no remaining bootstrap-only record.
         Assert.Equal(4, approved.Length);
-        Assert.Empty(bootstrap);
+        var transactionBootstrap = Assert.Single(bootstrap);
+        Assert.Equal(
+            "dynamodb-single-partition-transactions",
+            transactionBootstrap.Profile.Id);
+        Assert.True(transactionBootstrap.Eligibility.RollbackBaselineEligible);
+        Assert.False(transactionBootstrap.Eligibility.PromotionEligible);
+        Assert.Null(transactionBootstrap.Qualification);
         Assert.All(approved, record =>
         {
             Assert.True(record.Eligibility.RollbackBaselineEligible);

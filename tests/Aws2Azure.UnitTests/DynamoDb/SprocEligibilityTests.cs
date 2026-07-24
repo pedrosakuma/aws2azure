@@ -294,6 +294,50 @@ public class SprocEligibilityTests
         Assert.Contains("strings only", error, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("n = :v", "100000000000000000000")]
+    [InlineData("n <> :v", "100000000000000000000")]
+    [InlineData("n > :v", "100000000000000000000")]
+    [InlineData("n = :v", "1e-7")]
+    [InlineData("n <> :v", "1e-7")]
+    [InlineData("n > :v", "1e-7")]
+    [InlineData("n = :v", "0.12345678901234567890123456789012345678")]
+    [InlineData("n <> :v", "0.12345678901234567890123456789012345678")]
+    [InlineData("n > :v", "0.12345678901234567890123456789012345678")]
+    public void Transaction_condition_subset_rejects_numbers_persisted_as_envelopes(
+        string expression,
+        string number)
+    {
+        var condition = Cond(
+            expression,
+            values: new Dictionary<string, JsonElement>
+            {
+                [":v"] = Val($"{{\"N\":\"{number}\"}}"),
+            });
+
+        Assert.False(
+            SprocEligibility.TryValidateTransactionCondition(
+                condition,
+                out _));
+    }
+
+    [Fact]
+    public void Transaction_condition_subset_accepts_number_when_codec_persists_it_bare()
+    {
+        var condition = Cond(
+            "n = :v",
+            values: new Dictionary<string, JsonElement>
+            {
+                [":v"] = Val("{\"N\":\"1e3\"}"),
+            });
+
+        Assert.True(
+            SprocEligibility.TryValidateTransactionCondition(
+                condition,
+                out var error),
+            error);
+    }
+
     [Fact]
     public void Transaction_condition_subset_rejects_numeric_between()
     {

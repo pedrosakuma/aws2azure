@@ -1,0 +1,84 @@
+# Initial policy for the production-shaped single-partition transaction
+# workload. The throughput floor remains unresolved until at least three
+# comparable sealed live-Cosmos runs are reviewed.
+schema_version: 1
+profile_id: dynamodb-single-partition-transactions
+profile_version: 1
+rules:
+  max_artifact_age_hours: 72
+  min_samples_per_scenario: 300
+  min_duration_seconds: 300
+  max_failure_rate: 0
+  zero_completions_disqualify: true
+  only_skipped_real_azure_disqualifies: true
+  min_distinct_runs: 3
+load_shape:
+  concurrency: 8
+  requested_duration_seconds: 300
+scenarios:
+  - id: representative-load
+    service: dynamodb
+    operation: TransactWriteItems
+    evidence_source: real_azure
+    signals:
+      - id: representative-load-throughput
+        source: backend_capacity
+        disposition: blocking
+        metric: throughput_per_sec
+        threshold_status: unresolved
+        threshold_reason: >-
+          No comparable repeated sealed live-Cosmos transaction runs have been
+          reviewed. Select a floor from the worst healthy run without using
+          emulator or A/B data.
+      - id: representative-load-p95
+        source: backend_capacity
+        disposition: report_only
+        metric: p95_ms
+      - id: representative-load-p99
+        source: backend_capacity
+        disposition: report_only
+        metric: p99_ms
+      - id: representative-load-throttle-rate
+        source: backend_capacity
+        disposition: report_only
+        metric: throttle_rate
+  - id: transaction-snapshot
+    service: dynamodb
+    operation: TransactGetItems
+    evidence_source: real_azure
+    signals: []
+  - id: transaction-atomicity-rollback
+    service: dynamodb
+    operation: TransactWriteItems
+    evidence_source: real_azure
+    signals: []
+  - id: transaction-conditions-cancellation
+    service: dynamodb
+    operation: TransactWriteItems
+    evidence_source: real_azure
+    signals: []
+  - id: transaction-scope-rejection
+    service: dynamodb
+    operation: TransactWriteItems
+    evidence_source: real_azure
+    signals: []
+  - id: transaction-idempotency-rejection
+    service: dynamodb
+    operation: TransactWriteItems
+    evidence_source: real_azure
+    signals: []
+  - id: transaction-contention
+    service: dynamodb
+    operation: TransactWriteItems
+    evidence_source: real_azure
+    signals: []
+  - id: transaction-restart-versioning
+    service: dynamodb
+    operation: TransactWriteItems
+    evidence_source: real_azure
+    signals: []
+  - id: transaction-adjacent-runtime-rollback
+    service: dynamodb
+    operation: TransactGetItems
+    evidence_source: real_azure
+    signals: []

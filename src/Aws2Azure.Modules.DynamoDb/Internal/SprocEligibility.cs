@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Persistence;
@@ -11,7 +10,7 @@ namespace Aws2Azure.Modules.DynamoDb.Internal;
 ///
 /// The server-side JS interprets a deliberately small slice of the DynamoDB
 /// expression surface. Features outside that slice — sets / binary / very
-/// high-precision numbers (all stored as <c>_a2a:</c> envelopes the JS does not
+/// enveloped numbers (all stored as <c>_a2a:</c> objects the JS does not
 /// understand), list-index paths, <c>ADD</c>/<c>DELETE</c> clauses, and the
 /// <c>size()</c> / <c>contains()</c> condition forms whose result depends on the
 /// stored attribute's encoded type — would produce results that silently diverge
@@ -249,7 +248,7 @@ internal static class SprocEligibility
 
         kind = default;
         error =
-            "Transactional condition values must be scalar S, BOOL, NULL, or JavaScript-safe N values; maps, lists, sets, binary, and unsafe numbers are rejected.";
+            "Transactional condition values must be scalar S, BOOL, NULL, or N values persisted as bare JSON numbers; maps, lists, sets, binary, and enveloped numbers are rejected.";
         return false;
     }
 
@@ -280,7 +279,7 @@ internal static class SprocEligibility
                 kind = TransactionScalarKind.String;
                 return true;
             case "N" when property.Value.ValueKind == JsonValueKind.String
-                && IsJsSafeNumber(property.Value.GetString()):
+                && IsBareStorageNumber(property.Value.GetString()):
                 kind = TransactionScalarKind.Number;
                 return true;
             case "BOOL" when property.Value.ValueKind is JsonValueKind.True or JsonValueKind.False:
@@ -559,7 +558,7 @@ internal static class SprocEligibility
 
     /// <summary>
     /// True if the DynamoDB AttributeValue is stored as a plain JSON shape the
-    /// sproc can read back losslessly: S, BOOL, NULL, native (JS-safe) N, and
+    /// sproc can read back losslessly: S, BOOL, NULL, bare-storage N, and
     /// maps / lists composed recursively of those. B / SS / NS / BS — and any N
     /// that does not round-trip through an IEEE-754 double — are rejected.
     /// </summary>
@@ -579,7 +578,7 @@ internal static class SprocEligibility
                 case "NULL":
                     return true;
                 case "N":
-                    return IsJsSafeNumber(prop.Value.GetString());
+                    return IsBareStorageNumber(prop.Value.GetString());
                 case "M":
                     foreach (var member in prop.Value.EnumerateObject())
                     {
@@ -608,37 +607,10 @@ internal static class SprocEligibility
     }
 
     /// <summary>
-    /// True if the DynamoDB number string round-trips exactly through a double,
-    /// so the sproc (which parses it as a JS number) stores and compares it
-    /// without precision loss. Numbers beyond System.Decimal range, or that lose
-    /// digits through a double, are rejected so they take the Decimal-based
-    /// fallback path instead.
+    /// True only when the persisted codec writes the DynamoDB number as a bare
+    /// JSON number. This intentionally delegates to the codec so eligibility can
+    /// never admit a value that storage represents as an <c>_a2a:N</c> envelope.
     /// </summary>
-    private static bool IsJsSafeNumber(string? number)
-    {
-        if (string.IsNullOrEmpty(number))
-        {
-            return false;
-        }
-
-        if (!decimal.TryParse(number, NumberStyles.Float, CultureInfo.InvariantCulture, out var dec))
-        {
-            return false;
-        }
-
-        var d = (double)dec;
-        if (!double.IsFinite(d))
-        {
-            return false;
-        }
-
-        try
-        {
-            return (decimal)d == dec;
-        }
-        catch (System.OverflowException)
-        {
-            return false;
-        }
-    }
+    private static bool IsBareStorageNumber(string? number)
+        => InferredAttributeStorage.TryGetCanonicalBareJsonNumber(number, out _);
 }

@@ -48,6 +48,14 @@ internal static partial class TableLifecycleHandlers
     internal const int MaxAttributeNameLength = 255;
 
     public static Task HandleCreateTableAsync(HttpContext ctx, byte[] body, CosmosClient cosmos, CancellationToken ct)
+        => HandleCreateTableAsync(ctx, body, cosmos, sprocContext: null, ct);
+
+    public static Task HandleCreateTableAsync(
+        HttpContext ctx,
+        byte[] body,
+        CosmosClient cosmos,
+        SprocContext? sprocContext,
+        CancellationToken ct)
     {
         CreateTableRequest? req;
         try
@@ -108,11 +116,15 @@ internal static partial class TableLifecycleHandlers
             return WriteErrorAsync(ctx, 400, "ValidationException", orphanError);
         }
 
-        return CreateTableCoreAsync(ctx, req, cosmos, ct);
+        return CreateTableCoreAsync(ctx, req, cosmos, sprocContext, ct);
     }
 
     private static async Task CreateTableCoreAsync(
-        HttpContext ctx, CreateTableRequest req, CosmosClient cosmos, CancellationToken ct)
+        HttpContext ctx,
+        CreateTableRequest req,
+        CosmosClient cosmos,
+        SprocContext? sprocContext,
+        CancellationToken ct)
     {
         var dbLink = "dbs/" + cosmos.DatabaseName;
         var containerBody = BuildContainerBody(req.TableName!);
@@ -144,6 +156,8 @@ internal static partial class TableLifecycleHandlers
             return;
         }
 
+        sprocContext?.Manager?.InvalidateContainer(cosmos, req.TableName!);
+
         // Persist the sidecar metadata so DescribeTable can rebuild the AWS shape.
         var meta = new TableMetadata
         {
@@ -174,7 +188,19 @@ internal static partial class TableLifecycleHandlers
         await WriteJsonAsync(ctx, 200, resp, TableLifecycleJsonContext.Default.CreateTableResponse).ConfigureAwait(false);
     }
 
-    public static async Task HandleDeleteTableAsync(HttpContext ctx, byte[] body, CosmosClient cosmos, CancellationToken ct)
+    public static Task HandleDeleteTableAsync(
+        HttpContext ctx,
+        byte[] body,
+        CosmosClient cosmos,
+        CancellationToken ct)
+        => HandleDeleteTableAsync(ctx, body, cosmos, sprocContext: null, ct);
+
+    public static async Task HandleDeleteTableAsync(
+        HttpContext ctx,
+        byte[] body,
+        CosmosClient cosmos,
+        SprocContext? sprocContext,
+        CancellationToken ct)
     {
         DeleteTableRequest? req;
         try
@@ -206,6 +232,7 @@ internal static partial class TableLifecycleHandlers
 
         if (resp.StatusCode == HttpStatusCode.NotFound)
         {
+            sprocContext?.Manager?.InvalidateContainer(cosmos, req.TableName!);
             await WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
                 $"Cannot do operations on a non-existent table: {req.TableName}").ConfigureAwait(false);
             return;
@@ -219,6 +246,7 @@ internal static partial class TableLifecycleHandlers
 
         // Invalidate metadata cache after successful deletion
         CosmosOpsShared.MetadataCache.Invalidate(cosmos.AccountEndpoint, cosmos.DatabaseName, req.TableName!);
+        sprocContext?.Manager?.InvalidateContainer(cosmos, req.TableName!);
 
         var description = meta is not null
             ? BuildTableDescription(meta, status: "DELETING")

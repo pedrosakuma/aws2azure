@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using System.Text.Json;
 using Aws2Azure.Modules.DynamoDb.Expressions;
+using Aws2Azure.Modules.DynamoDb.Persistence;
 
 namespace Aws2Azure.Modules.DynamoDb.Internal;
 
@@ -283,9 +284,14 @@ internal static class SprocAstSerializer
                         sb.Append('"').Append(EscapeJson(prop.Value.GetString() ?? "")).Append('"');
                         return;
                     case "N":
-                        // Numbers are stored as strings in DDB; output as JSON number if possible
-                        var numStr = prop.Value.GetString() ?? "0";
-                        sb.Append(numStr);
+                        if (!InferredAttributeStorage.TryGetCanonicalBareJsonNumber(
+                                prop.Value.GetString(),
+                                out var canonicalNumber))
+                        {
+                            throw new NotSupportedException(
+                                "Stored-procedure operands cannot contain enveloped DynamoDB numbers.");
+                        }
+                        sb.Append(canonicalNumber);
                         return;
                     case "BOOL":
                         sb.Append(prop.Value.GetBoolean() ? "true" : "false");

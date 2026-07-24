@@ -141,10 +141,20 @@ public sealed class DynamoDbServiceModule : IServiceModule
         switch (parsed.Operation)
         {
             case DynamoDbOperation.CreateTable:
-                await TableLifecycleHandlers.HandleCreateTableAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                await TableLifecycleHandlers.HandleCreateTableAsync(
+                    context,
+                    parsed.Body,
+                    cosmos,
+                    _sprocContext,
+                    context.RequestAborted).ConfigureAwait(false);
                 return;
             case DynamoDbOperation.DeleteTable:
-                await TableLifecycleHandlers.HandleDeleteTableAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
+                await TableLifecycleHandlers.HandleDeleteTableAsync(
+                    context,
+                    parsed.Body,
+                    cosmos,
+                    _sprocContext,
+                    context.RequestAborted).ConfigureAwait(false);
                 return;
             case DynamoDbOperation.DescribeTable:
                 await TableLifecycleHandlers.HandleDescribeTableAsync(context, parsed.Body, cosmos, context.RequestAborted).ConfigureAwait(false);
