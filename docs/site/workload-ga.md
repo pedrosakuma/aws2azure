@@ -7,7 +7,7 @@ Legend: ⛔ blocked · 🟡 conditional · 🔵 candidate · ✅ GA
 | Profile | Version | Minimum proxy | Verdict | Blocking reasons |
 |---|---:|---|---|---|
 | DynamoDB basic table and item CRUD (`dynamodb-basic-crud`) | 1 | `0.1.0` | 🔵 candidate | 11 |
-| DynamoDB Query, Scan, and secondary indexes (`dynamodb-query-scan-indexes`) | 1 | `0.1.0` | 🟡 conditional | 1 |
+| DynamoDB Query, Scan, and secondary indexes (`dynamodb-query-scan-indexes`) | 1 | `0.1.0` | 🔵 candidate | 1 |
 | Kinesis basic record ingestion (`kinesis-basic-record-ingestion`) | 1 | `0.1.0` | 🔵 candidate | 1 |
 | Kinesis single consumer per shard (`kinesis-single-consumer-per-shard`) | 1 | `0.1.0` | 🔵 candidate | 1 |
 | S3 basic object CRUD (`s3-basic-object-crud`) | 1 | `0.1.0` | ✅ GA | 0 |

@@ -163,7 +163,7 @@
 
 - **Status:** ✅ implemented
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API) — GET /dbs/{db}/colls/{name} + sidecar metadata`
-- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
+- **Real-Azure verified:** ✅ 2026-07-24 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/30059183242) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/30059183242)
 
 ### Sub-features
 
@@ -173,7 +173,7 @@
 | BillingModeSummary echo | ✅ implemented | — |  |  |  |
 | TableArn synthesis (azure-region pseudo-arn) | ✅ implemented | — |  |  |  |
 | ItemCount / TableSizeBytes (live metrics) | ⛔ unsupported | — |  |  |  |
-| GSI/LSI description | 🟡 partial | — |  |  |  |
+| GSI/LSI description | 🟡 partial | ✅ |  |  |  |
 
 ### Behaviour differences
 
@@ -326,7 +326,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
-- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
+- **Real-Azure verified:** ✅ 2026-07-24 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/30059183242) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/30059183242)
 
 ### Sub-features
 
@@ -370,7 +370,7 @@
 
 - **Status:** 🟡 partial
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
-- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
+- **Real-Azure verified:** ✅ 2026-07-24 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/30059183242) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/30059183242)
 
 ### Sub-features
 

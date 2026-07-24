@@ -3,9 +3,9 @@ operation: DescribeTable
 azure_equivalent: "Azure Cosmos DB (Core SQL API) — GET /dbs/{db}/colls/{name} + sidecar metadata"
 status: implemented
 verified_real_azure:
-  date: "2026-07-16"
-  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
-  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
+  date: "2026-07-24"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/30059183242
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/30059183242
 sub_features:
   - { name: "AttributeDefinitions / KeySchema round-trip", status: implemented }
   - { name: "BillingModeSummary echo", status: implemented }
@@ -13,6 +13,10 @@ sub_features:
   - { name: "ItemCount / TableSizeBytes (live metrics)", status: unsupported }
   - name: "GSI/LSI description"
     status: partial
+    verified_real_azure:
+      date: "2026-07-24"
+      evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/30059183242
+      workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/30059183242
 behavior_differences:
   - "ItemCount and TableSizeBytes default to 0; populating them requires either Cosmos partition-key statistics or a stored aggregate, deferred to a later slice."
   - "TableArn is synthetic (region 'azure', account '000000000000'); real AWS arns carry the region + account id which are not meaningful in this deployment."

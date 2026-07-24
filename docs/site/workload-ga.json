@@ -117,7 +117,7 @@
     "profile_version": 1,
     "name": "DynamoDB Query, Scan, and secondary indexes",
     "minimum_proxy_version": "0.1.0",
-    "verdict": "conditional",
+    "verdict": "candidate",
     "findings": [
       {
         "code": "partial_operation_accepted",
@@ -144,10 +144,10 @@
         "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_query_scan_indexes\u0027."
       },
       {
-        "code": "sub_feature_real_azure_seal_missing",
+        "code": "qualification_evidence_missing",
         "disposition": "blocking",
-        "subject": "dynamodb:DescribeTable#GSI/LSI description",
-        "message": "Required backend-specific sub-feature has no real-Azure verification seal."
+        "subject": "dynamodb-query-scan-indexes",
+        "message": "No reviewed real-Azure workload qualification artifact is referenced."
       }
     ]
   },
