@@ -30,7 +30,15 @@ feature-specific A/B experiments.
   shape within the reviewed propagation budget. Immediately after FIC creation,
   Entra may transiently return AADSTS70021, AADSTS700212, or AADSTS70025; only
   those exact codes on HTTP 400/401 are retried within the five-minute setup
-  budget. Other `invalid_client` codes fail immediately.
+  budget. Other `invalid_client` codes fail immediately. A newly assigned Key
+  Vault data-plane role is also a setup transition: the load workflow waits
+  until both new assignments are at least five minutes old, then samples eight
+  fresh connections per identity. It accepts only the exact `ForbiddenByRbac`
+  inner code during readiness; if any RBAC denial remains, it requires a full
+  five-minute clean `ListSecrets` authorization window and resets that window
+  on every further denial. Other 403s fail immediately. This setup gate does
+  not retry production AWS operations or reinterpret an authorization failure
+  as success.
 - **rollback**: deploy the sealed candidate, create/read canary state, replace it
   with the previously approved sealed runtime without changing the backend, and
   verify the same state plus cleanup. A source build of "main" or a config-only

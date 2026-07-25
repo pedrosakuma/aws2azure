@@ -68,4 +68,41 @@ public sealed class RealAzureWorkloadLoadTrackerTests
         Assert.DoesNotContain("vault.example", json, StringComparison.Ordinal);
         Assert.DoesNotContain("token", json, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Failure_summary_records_first_and_last_load_window_offsets()
+    {
+        var tracker = new RealAzureWorkloadLoadTracker(
+            "secretsmanager",
+            ["ListSecrets"]);
+        var failure = new Amazon.SecretsManager.AmazonSecretsManagerException(
+            "backend details")
+        {
+            StatusCode = HttpStatusCode.Forbidden,
+            ErrorCode = "AccessDeniedException",
+        };
+
+        tracker.RecordFailure(
+            "ListSecrets",
+            12,
+            throttled: false,
+            exception: failure,
+            windowOffset: TimeSpan.FromSeconds(1.25));
+        tracker.RecordFailure(
+            "ListSecrets",
+            8,
+            throttled: false,
+            exception: failure,
+            windowOffset: TimeSpan.FromSeconds(42.5));
+        tracker.RecordFailure(
+            "ListSecrets",
+            9,
+            throttled: false,
+            exception: failure,
+            windowOffset: TimeSpan.FromSeconds(0.75));
+
+        Assert.Equal(
+            "aws_service/status-403/code-AccessDeniedException/first-at-0.750s/last-at-42.500s",
+            tracker.FirstFailure("ListSecrets"));
+    }
 }

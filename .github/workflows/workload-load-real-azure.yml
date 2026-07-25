@@ -440,6 +440,7 @@ jobs:
             --arg realazure_fixture_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/Fixtures/RealAzureProxyFixture.cs | cut -d' ' -f1)" \
             --arg dynamodb_fixture_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/Fixtures/DynamoDbRealAzureProxyFixture.cs | cut -d' ' -f1)" \
             --arg federation_classifier_sha256 "$(sha256sum .github/scripts/classify-entra-federation-response.sh | cut -d' ' -f1)" \
+            --arg keyvault_rbac_stability_sha256 "$(sha256sum .github/scripts/keyvault_rbac_stability.py | cut -d' ' -f1)" \
             --arg manifest_sha256 "$(sha256sum "docs/workloads/$PROFILE.yaml" | cut -d' ' -f1)" \
             --arg policy_sha256 "$(sha256sum "docs/workloads/qualification/$PROFILE.yaml" | cut -d' ' -f1)" \
             --argjson topology "$topology" \
@@ -480,6 +481,7 @@ jobs:
                 realazure_fixture: ("sha256:" + $realazure_fixture_sha256),
                 dynamodb_fixture: ("sha256:" + $dynamodb_fixture_sha256),
                 federation_response_classifier: ("sha256:" + $federation_classifier_sha256),
+                keyvault_rbac_stability: ("sha256:" + $keyvault_rbac_stability_sha256),
                 workload_manifest: ("sha256:" + $manifest_sha256),
                 qualification_policy: ("sha256:" + $policy_sha256)
               }
@@ -742,6 +744,7 @@ jobs:
             echo "AWS2AZURE_ROTATION_OBJECT_ID_B=$object_b"
             echo "AWS2AZURE_ROTATION_ROLE_ASSIGNMENT_ID_B=$role_b"
             echo "AWS2AZURE_ROTATION_TOKEN_FILE_B=$TOKEN_B"
+            echo "AWS2AZURE_ROTATION_ROLE_ASSIGNMENTS_CREATED_AT_EPOCH=$(date -u +%s)"
             echo "AWS2AZURE_ROTATION_FEDERATED_ISSUER_DIGEST=sha256:$(printf '%s' "$issuer" | sha256sum | cut -d' ' -f1)"
             echo "AWS2AZURE_ROTATION_FEDERATED_SUBJECT_DIGEST=sha256:$(printf '%s' "$subject" | sha256sum | cut -d' ' -f1)"
             echo "AWS2AZURE_ROTATION_FEDERATED_AUDIENCE_DIGEST=sha256:$(printf '%s' "$audience" | sha256sum | cut -d' ' -f1)"
@@ -752,6 +755,16 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
+          if [[ ! "${AWS2AZURE_ROTATION_ROLE_ASSIGNMENTS_CREATED_AT_EPOCH:-}" =~ ^[0-9]+$ ]]; then
+            echo "::error::Runtime Key Vault role assignment creation time is missing or invalid."
+            exit 1
+          fi
+          role_assignments_ready_at=$((AWS2AZURE_ROTATION_ROLE_ASSIGNMENTS_CREATED_AT_EPOCH + 300))
+          role_assignment_wait=$((role_assignments_ready_at - $(date -u +%s)))
+          if [ "$role_assignment_wait" -gt 0 ]; then
+            echo "Waiting ${role_assignment_wait}s for the new Key Vault data-plane roles to reach the reviewed five-minute minimum age."
+            sleep "$role_assignment_wait"
+          fi
           refresh_assertion() {
             local destination="$1"
             ( umask 077
@@ -779,10 +792,14 @@ jobs:
             local token_file="$3"
             local exchange_file="$PRIVATE_DIR/$label-exchange.json"
             local header_file="$PRIVATE_DIR/$label-authorization.header"
-            local vault_file="$PRIVATE_DIR/$label-vault.json"
             local deadline=$(( $(date -u +%s) + 300 ))
             local federation_retries=0
-            local rbac_retries=0
+            local exchange_status
+            local classification
+            local disposition
+            local error_name
+            local aadsts_code
+            local verification_status
 
             while [ "$(date -u +%s)" -lt "$deadline" ]; do
               exchange_status="$(curl -sS -o "$exchange_file" -w '%{http_code}' \
@@ -799,22 +816,7 @@ jobs:
                 jq -er '"Authorization: Bearer " + .access_token' \
                   "$exchange_file" > "$header_file"
                 chmod 0600 "$header_file"
-                vault_status="$(curl -sS -o "$vault_file" -w '%{http_code}' \
-                  -H "@$header_file" \
-                  "${AZURE_KEYVAULT_URL%/}/secrets?api-version=7.4")"
-                chmod 0600 "$vault_file"
-                if [ "$vault_status" = 200 ]; then
-                  rm -f "$exchange_file" "$header_file" "$vault_file"
-                  echo "$label federation retries: $federation_retries; RBAC retries: $rbac_retries"
-                  return 0
-                fi
-                if [ "$vault_status" = 403 ]; then
-                  rbac_retries=$((rbac_retries + 1))
-                  sleep 5
-                  continue
-                fi
-                echo "::error::$label Key Vault setup probe failed with unexpected HTTP $vault_status."
-                return 1
+                break
               fi
 
               classification="$(
@@ -828,10 +830,29 @@ jobs:
                 continue
               fi
               echo "::error::$label federation setup probe failed with unexpected HTTP $exchange_status (error=$error_name, aadsts=$aadsts_code)."
+              rm -f "$exchange_file" "$header_file"
               return 1
             done
-            echo "::error::$label federation/RBAC propagation exceeded five minutes."
-            return 1
+
+            if [ ! -s "$header_file" ]; then
+              echo "::error::$label federation propagation exceeded five minutes."
+              rm -f "$exchange_file" "$header_file"
+              return 1
+            fi
+
+            echo "$label federation retries: $federation_retries"
+            set +e
+            python3 ./.github/scripts/keyvault_rbac_stability.py \
+              --label "$label" \
+              --vault-url "$AZURE_KEYVAULT_URL" \
+              --authorization-header-file "$header_file"
+            verification_status=$?
+            set -e
+            rm -f "$exchange_file" "$header_file"
+            if [ "$verification_status" -ne 0 ]; then
+              echo "::error::$label Key Vault RBAC stability verification failed."
+              return "$verification_status"
+            fi
           }
 
           refresh_assertion "$AWS2AZURE_ROTATION_TOKEN_FILE_A"
