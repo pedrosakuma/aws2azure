@@ -100,8 +100,6 @@ internal static class SprocDispatcher
                 : SprocWriteResult.NotAttempted);
         }
 
-        var conditionAstJson = SprocAstSerializer.SerializeCondition(condition);
-        var updateAstJson = SprocAstSerializer.SerializeUpdate(updateAst);
         var result = await ctx.Manager.ExecuteAsync(
             cosmos,
             containerName,
@@ -109,8 +107,8 @@ internal static class SprocDispatcher
             operation,
             docId,
             payload,
-            conditionAstJson,
-            updateAstJson,
+            condition,
+            updateAst,
             ct).ConfigureAwait(false);
 
         return (true, result, default);

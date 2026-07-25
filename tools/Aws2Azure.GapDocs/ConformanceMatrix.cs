@@ -120,6 +120,18 @@ public static class ConformanceMatrixValidator
                 {
                     Err($"{prefix} invalid category '{scenario.Category}'; allowed: {string.Join(", ", RealAzureConformanceValues.Categories.OrderBy(v => v, StringComparer.Ordinal))}");
                 }
+                else if (string.Equals(
+                             scenario.Category,
+                             "rollback",
+                             StringComparison.OrdinalIgnoreCase)
+                         && !string.Equals(
+                             scenario.Id,
+                             "rollback",
+                             StringComparison.Ordinal))
+                {
+                    Err(
+                        $"{prefix} rollback category must use canonical scenario id 'rollback'");
+                }
                 if (!RealAzureConformanceValues.EvidenceSources.Contains(scenario.EvidenceSource))
                 {
                     Err($"{prefix} invalid evidence_source '{scenario.EvidenceSource}'; allowed: deterministic, real_azure");

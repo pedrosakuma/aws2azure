@@ -48,6 +48,8 @@ public sealed class WorkloadGaSubFeatureSeal
 public sealed class WorkloadGaEvidence
 {
     public string QualificationArtifact { get; set; } = string.Empty;
+    public string RollbackStatus { get; set; } = string.Empty;
+    public string RollbackBlocker { get; set; } = string.Empty;
     public List<string> RequiredScenarios { get; set; } = new();
     public List<string> RequiredRealAzureScenarios { get; set; } = new();
 }
@@ -113,6 +115,8 @@ public static class WorkloadGaManifestLoader
         manifest.AcceptedDesignGaps ??= new List<string>();
         manifest.RequiredSubFeatureSeals ??= new List<WorkloadGaSubFeatureSeal>();
         manifest.Evidence ??= new WorkloadGaEvidence();
+        manifest.Evidence.RollbackStatus ??= string.Empty;
+        manifest.Evidence.RollbackBlocker ??= string.Empty;
         manifest.Evidence.RequiredScenarios ??= new List<string>();
         manifest.Evidence.RequiredRealAzureScenarios ??= new List<string>();
     }
@@ -283,6 +287,42 @@ public static class WorkloadGaManifestValidator
                     "is not present in evidence.required_scenarios");
             }
         }
+        if (manifest.Evidence.RollbackStatus.Length > 0
+            && manifest.Evidence.RollbackStatus != "blocked")
+        {
+            Err("evidence.rollback_status must be 'blocked' when present");
+        }
+        if (manifest.Evidence.RollbackStatus == "blocked")
+        {
+            if (!manifest.Evidence.RequiredScenarios.Contains(
+                    "rollback",
+                    StringComparer.Ordinal)
+                || !manifest.Evidence.RequiredRealAzureScenarios.Contains(
+                    "rollback",
+                    StringComparer.Ordinal))
+            {
+                Err(
+                    "blocked rollback status requires canonical 'rollback' in both required scenario lists");
+            }
+            if (string.IsNullOrWhiteSpace(
+                    manifest.Evidence.RollbackBlocker))
+            {
+                Err(
+                    "evidence.rollback_blocker is required when rollback_status is blocked");
+            }
+            if (!string.IsNullOrWhiteSpace(
+                    manifest.Evidence.QualificationArtifact))
+            {
+                Err(
+                    "blocked rollback status must not reference a qualification artifact");
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(
+                     manifest.Evidence.RollbackBlocker))
+        {
+            Err(
+                "evidence.rollback_blocker requires rollback_status: blocked");
+        }
 
         return errors;
     }
@@ -352,6 +392,24 @@ public static class WorkloadGaEvaluator
             new HashSet<string>(manifest.AcceptedDesignGaps, StringComparer.OrdinalIgnoreCase);
         var hasCompatibilityBlocker = false;
         var hasSealBlocker = false;
+        if (manifest.Evidence.RollbackStatus == "blocked")
+        {
+            var ledgerPath = Path.Combine(
+                repoRoot,
+                "docs",
+                "workloads",
+                "approved-runtimes",
+                manifest.Id + ".yaml");
+            hasCompatibilityBlocker = true;
+            Add(
+                report,
+                File.Exists(ledgerPath)
+                    ? "rollback_blocker_ledger_conflict"
+                    : "rollback_runtime_unavailable",
+                "blocking",
+                manifest.Id,
+                manifest.Evidence.RollbackBlocker);
+        }
 
         foreach (var reference in manifest.Operations.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
         {

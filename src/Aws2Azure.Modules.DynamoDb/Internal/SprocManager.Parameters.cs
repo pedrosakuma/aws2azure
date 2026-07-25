@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Aws2Azure.Core.Buffers;
+using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Operations;
 using Microsoft.Extensions.Logging;
 
@@ -19,11 +20,45 @@ internal sealed partial class SprocManager
     /// Writes the single-write sproc parameter list
     /// <c>[op, docId, payload, conditionAst, updateAst]</c> straight into a
     /// pooled UTF-8 buffer. The document <paramref name="payload"/> (and the
-    /// already-serialized condition/update ASTs) are spliced as raw JSON bytes,
-    /// so there is no <c>byte[] → string → byte[]</c> round-trip. Output is
-    /// byte-identical to <see cref="BuildParamsJson"/> (verified by tests).
+    /// condition/update ASTs are serialized directly into the request buffer, so
+    /// there is no full AST string or <c>byte[] → string → byte[]</c> round-trip.
     /// </summary>
     internal static void WriteSingleWriteParams(
+        PooledByteBufferWriter buf,
+        SprocOperation op,
+        string docId,
+        ReadOnlyMemory<byte>? payload,
+        ConditionNode? conditionAst,
+        UpdateExpressionAst? updateAst)
+    {
+        WriteByte(buf, (byte)'[');
+        WriteRaw(buf, OpLiteral(op));
+        WriteByte(buf, (byte)',');
+        WriteMinimallyEscapedJsonString(buf, docId);
+        WriteByte(buf, (byte)',');
+        WriteRawFragment(buf, payload);
+        WriteByte(buf, (byte)',');
+        if (conditionAst is null)
+        {
+            WriteRaw(buf, "null"u8);
+        }
+        else
+        {
+            SprocAstSerializer.WriteCondition(buf, conditionAst);
+        }
+        WriteByte(buf, (byte)',');
+        if (updateAst is null)
+        {
+            WriteRaw(buf, "null"u8);
+        }
+        else
+        {
+            SprocAstSerializer.WriteUpdate(buf, updateAst);
+        }
+        WriteByte(buf, (byte)']');
+    }
+
+    internal static void WriteSingleWriteParamsJsonFragments(
         PooledByteBufferWriter buf,
         SprocOperation op,
         string docId,
@@ -91,7 +126,7 @@ internal sealed partial class SprocManager
             WriteRaw(buf, "null"u8);
             return;
         }
-        var span = buf.GetSpan(Encoding.UTF8.GetMaxByteCount(fragment.Length));
+        var span = buf.GetSpan(Encoding.UTF8.GetByteCount(fragment));
         int written = Encoding.UTF8.GetBytes(fragment, span);
         buf.Advance(written);
     }
@@ -103,12 +138,20 @@ internal sealed partial class SprocManager
     private static void WriteMinimallyEscapedJsonString(IBufferWriter<byte> buf, string s)
     {
         WriteByte(buf, (byte)'"');
-        int max = Encoding.UTF8.GetMaxByteCount(s.Length);
-        byte[] tmp = ArrayPool<byte>.Shared.Rent(max);
+        int byteCount = Encoding.UTF8.GetByteCount(s);
+        byte[] tmp = ArrayPool<byte>.Shared.Rent(byteCount);
         try
         {
             int n = Encoding.UTF8.GetBytes(s, tmp);
-            var span = buf.GetSpan(n * 2);
+            var escapes = 0;
+            for (var index = 0; index < n; index++)
+            {
+                if (tmp[index] is (byte)'\\' or (byte)'"')
+                {
+                    escapes++;
+                }
+            }
+            var span = buf.GetSpan(n + escapes);
             int pos = 0;
             for (int i = 0; i < n; i++)
             {

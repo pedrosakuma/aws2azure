@@ -59,6 +59,8 @@ try {
             Invoke-DotNet test tests/Aws2Azure.PerfTests -c Release --no-build --nologo `
                 --filter "Category!=RelativeGate"
             Invoke-DotNet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- --validate
+            Invoke-DotNet run --project tools/Aws2Azure.GapDocs --no-build -c Release -- `
+                validate-conformance-discovery --configuration Release --no-build
             if ($RequireAot -or $IsLinux) {
                 Invoke-AotPublish
             } else {

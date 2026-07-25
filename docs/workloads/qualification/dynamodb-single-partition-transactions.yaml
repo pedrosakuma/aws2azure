@@ -1,7 +1,7 @@
 # Initial policy for the production-shaped single-partition transaction
 # workload. Rollback qualification is intentionally blocked: no trusted prior
 # release implements this profile's atomic snapshot, validation, and
-# durable ClientRequestToken contract. The adjacent-runtime scenario must be
+# durable ClientRequestToken contract. The canonical rollback scenario must be
 # recorded as skipped/inconclusive until such a release is approved.
 # Qualification currently provisions a single-write Cosmos account. Any future
 # multi-write run must configure one authoritative preferred writable region;
@@ -97,7 +97,7 @@ scenarios:
     operation: TransactWriteItems
     evidence_source: real_azure
     signals: []
-  - id: transaction-adjacent-runtime-rollback
+  - id: rollback
     service: dynamodb
     operation: TransactGetItems
     evidence_source: real_azure

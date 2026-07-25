@@ -269,7 +269,7 @@ services:
         establishes_verification: true
         profiles: [dynamodb-single-partition-transactions]
         requires_dynamo_db_stored_procedures: true
-        description: Concurrent atomic writers and TransactGetItems prove every positional projected response comes from one single-partition server-side snapshot.
+        description: Barrier-synchronized writer/read overlap keeps wide TransactGetItems requests in flight across committed pair updates, requires at least two observed committed versions, and repeatedly proves each projected left/right pair is internally coherent from one single-partition server-side snapshot.
         operations: [TransactGetItems, TransactWriteItems]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Snapshot_reads_never_observe_mixed_transaction_versions
@@ -280,11 +280,11 @@ services:
         establishes_verification: false
         profiles: [dynamodb-single-partition-transactions]
         requires_dynamo_db_stored_procedures: true
-        description: Multi-write account metadata, a preferred authoritative region, and injected endpoint failure prove that transaction snapshots, writes, and durable token replay never execute in a second writable region; missing multi-write preference fails closed.
+        description: Fresh clients discover the first configured transaction authority (or fail closed), single-write clients use the discovered writable endpoint, and injected endpoint failure proves that transaction snapshots, writes, and durable token replay never execute in a second writable region.
         operations: [TransactGetItems, TransactWriteItems]
         tests:
-          - Aws2Azure.UnitTests.DynamoDb.CosmosRegionRoutingTests.Shared_container_rejects_conflicting_binding_region_pins
-          - Aws2Azure.UnitTests.DynamoDb.CosmosRegionRoutingTests.Shared_container_write_region_change_is_retryable_unavailable
+          - Aws2Azure.UnitTests.DynamoDb.CosmosRegionRoutingTests.Fresh_clients_use_first_configured_transaction_authority_or_fail
+          - Aws2Azure.UnitTests.DynamoDb.CosmosRegionRoutingTests.Fresh_single_write_clients_use_discovered_authoritative_endpoint
           - Aws2Azure.UnitTests.DynamoDb.CosmosRegionRoutingTests.Strict_transaction_discovery_refreshes_statusless_fallback
           - Aws2Azure.UnitTests.DynamoDb.TransactGetItemsHandlerTests.Snapshot_stays_on_authoritative_write_region_after_failure
           - Aws2Azure.UnitTests.DynamoDb.TransactWriteItemsHandlerTests.Idempotent_transaction_stays_on_authoritative_write_region_after_failure
@@ -386,14 +386,14 @@ services:
         operations: [TransactWriteItems]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Conflicting_v5_sproc_body_fails_closed_and_is_restored_in_isolated_table
-      - id: transaction-adjacent-runtime-rollback
+      - id: rollback
         priority: p0
         category: rollback
         evidence_source: real_azure
         establishes_verification: false
         profiles: [dynamodb-single-partition-transactions]
         requires_dynamo_db_stored_procedures: true
-        description: Blocked bootstrap row. The tests must skip with the recorded compatibility blocker until a trusted prior release implements the complete transaction profile; the known v2 runtime is not an acceptable rollback target.
+        description: Canonical blocked rollback row. The tests skip with the recorded compatibility blocker until a trusted prior release implements the complete transaction profile; the known v2 runtime is not an approved rollback target and this row cannot establish a qualification claim.
         operations: [TransactGetItems, TransactWriteItems]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionQualificationTests.Adjacent_runtime_transaction_rollback_is_atomic_and_compatible

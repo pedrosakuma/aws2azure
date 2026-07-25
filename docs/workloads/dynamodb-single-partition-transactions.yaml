@@ -30,6 +30,11 @@ required_sub_feature_seals:
     sub_feature: ClientRequestToken (idempotency)
 evidence:
   qualification_artifact: ""
+  rollback_status: blocked
+  rollback_blocker: >-
+    No approved runtime implements the complete atomic snapshot, validation,
+    and durable ClientRequestToken contract, so rollback qualification is
+    inconclusive and this profile has no GA claim.
   required_scenarios:
     - representative-load
     - transaction-snapshot
@@ -42,7 +47,7 @@ evidence:
     - transaction-contention
     - transaction-restart-versioning
     - transaction-sproc-body-verification
-    - transaction-adjacent-runtime-rollback
+    - rollback
   required_real_azure_scenarios:
     - representative-load
     - transaction-snapshot
@@ -53,4 +58,4 @@ evidence:
     - transaction-contention
     - transaction-restart-versioning
     - transaction-sproc-body-verification
-    - transaction-adjacent-runtime-rollback
+    - rollback

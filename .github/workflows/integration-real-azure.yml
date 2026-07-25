@@ -356,32 +356,13 @@ jobs:
       # require every matrix identity to match exactly (or a theory case with
       # the identity followed by its argument list) before constructing filters.
       - name: Verify planned test discovery
-        run: |
-          failed=0
-          while IFS= read -r project; do
-            discovered="$RUNNER_TEMP/$(basename "$project")-discovered.txt"
-            dotnet test "$project" -c Release --no-build --nologo --list-tests > "$discovered"
-
-            while IFS= read -r identity; do
-              if ! awk -v expected="$identity" '
-                {
-                  line = $0
-                  sub(/^[[:space:]]+/, "", line)
-                  sub(/\r$/, "", line)
-                  if (line == expected || index(line, expected "(") == 1) found = 1
-                }
-                END { exit found ? 0 : 1 }
-              ' "$discovered"; then
-                echo "::error::Planned test was not discovered in $project: $identity"
-                failed=1
-              fi
-            done < <(
-              jq -r --arg project "$project" \
-                '.test_projects[] | select(.project == $project) | .tests[]' \
-                "$CONFORMANCE_PLAN"
-            )
-          done < <(jq -r '.test_projects[].project' "$CONFORMANCE_PLAN")
-          exit "$failed"
+        run: >-
+          dotnet exec
+          tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll
+          validate-conformance-discovery
+          --plan "$CONFORMANCE_PLAN"
+          --configuration Release
+          --no-build
 
       - name: Build planned test filters
         id: filters
@@ -708,6 +689,14 @@ jobs:
             if [ "$profile" = dynamodb-single-partition-transactions ]; then
               if [ "$verdict" != inconclusive ]; then
                 echo "::error::Transaction rollback blocker must produce verdict 'inconclusive', not '$verdict'."
+                status=1
+              fi
+              if ! grep -q '^- id: rollback$' "$output"; then
+                echo "::error::Transaction qualification must emit the canonical rollback scenario."
+                status=1
+              fi
+              if [ -e "docs/workloads/approved-runtimes/$profile.yaml" ]; then
+                echo "::error::Blocked transaction qualification must not have an approved runtime ledger."
                 status=1
               fi
               {

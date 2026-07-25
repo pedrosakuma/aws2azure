@@ -139,6 +139,24 @@ public sealed class ConformanceMatrixTests
                 StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void Validate_requires_canonical_rollback_scenario_id()
+    {
+        var (matrix, operations) = ValidMatrix();
+        var scenario = matrix.Services[0].Scenarios[0];
+        scenario.Category = "rollback";
+        scenario.Id = "adjacent-runtime-rollback";
+        scenario.EstablishesVerification = false;
+
+        var errors = ConformanceMatrixValidator.Validate(matrix, operations);
+
+        Assert.Contains(
+            errors,
+            error => error.Contains(
+                "rollback category must use canonical scenario id 'rollback'",
+                StringComparison.Ordinal));
+    }
+
     private static (RealAzureConformanceMatrix Matrix, IReadOnlyList<OperationDoc> Operations) ValidMatrix()
     {
         var matrix = new RealAzureConformanceMatrix

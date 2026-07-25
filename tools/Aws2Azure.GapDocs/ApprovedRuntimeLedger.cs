@@ -374,6 +374,16 @@ public static partial class ApprovedRuntimeLedgerValidator
                     $"'{record.Profile.Id}'");
             }
         }
+        foreach (var profile in profiles.Where(profile =>
+                     profile.Evidence.RollbackStatus == "blocked"))
+        {
+            if (seenProfiles.Contains(profile.Id))
+            {
+                errors.Add(
+                    $"{profile.SourceFile}: rollback_status is blocked, so profile " +
+                    $"'{profile.Id}' must not have an approved-runtime record");
+            }
+        }
 
         ValidateUnambiguousProducerIdentities(records, errors);
         return errors;

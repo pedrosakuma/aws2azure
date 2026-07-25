@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Aws2Azure.Core.Buffers;
+using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Operations;
 using Microsoft.Extensions.Logging;
 
@@ -57,8 +58,8 @@ internal sealed partial class SprocManager
         SprocOperation operation,
         string docId,
         ReadOnlyMemory<byte>? payload,
-        string? conditionAst,
-        string? updateAst,
+        ConditionNode? conditionAst,
+        UpdateExpressionAst? updateAst,
         CancellationToken ct)
     {
         // POST /dbs/{db}/colls/{coll}/sprocs/atomicWrite
@@ -71,7 +72,13 @@ internal sealed partial class SprocManager
         // zero-copy (no StringContent re-encode). Sproc params are inherently
         // text JSON (CosmosBinary does not apply to stored-procedure input).
         using var paramsBuf = new PooledByteBufferWriter(256);
-        WriteSingleWriteParams(paramsBuf, operation, docId, payload, conditionAst, updateAst);
+        WriteSingleWriteParams(
+            paramsBuf,
+            operation,
+            docId,
+            payload,
+            conditionAst,
+            updateAst);
 
         var headers = new[]
         {

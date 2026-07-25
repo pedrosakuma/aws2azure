@@ -45,66 +45,6 @@ internal static partial class TransactWriteItemsHandler
             + encoded;
     }
 
-    private static string ComputeRequestFingerprint(
-        string tableName,
-        string partitionKey,
-        byte[] body,
-        PreparedRequestOp[] operations)
-    {
-        using var writer = new CanonicalFingerprintWriter();
-        writer.WriteRaw("{\"version\":"u8);
-        writer.WriteJsonString(FingerprintVersion);
-        writer.WriteRaw(",\"table\":"u8);
-        writer.WriteJsonString(tableName);
-        writer.WriteRaw(",\"partition\":"u8);
-        writer.WriteJsonString(partitionKey);
-        writer.WriteRaw(",\"operations\":["u8);
-        for (var index = 0; index < operations.Length; index++)
-        {
-            if (index > 0)
-            {
-                writer.WriteByte((byte)',');
-            }
-
-            var operation = operations[index];
-            writer.WriteRaw("{\"type\":"u8);
-            writer.WriteJsonString(
-                operation.Kind switch
-                {
-                    OpKind.Put => "PUT",
-                    OpKind.Delete => "DELETE",
-                    _ => "CHECK",
-                });
-            writer.WriteRaw(",\"id\":"u8);
-            writer.WriteJsonString(operation.Id);
-            if (operation.Kind == OpKind.Put)
-            {
-                writer.WriteRaw(",\"item\":"u8);
-                using var operationDocument = JsonDocument.Parse(
-                    body.AsMemory(
-                        operation.Range.Start,
-                        operation.Range.Length),
-                    TransactItemParseOptions);
-                WriteCanonicalAttributeMap(
-                    writer,
-                    operationDocument.RootElement.GetProperty("Item"));
-            }
-
-            writer.WriteRaw(",\"condition\":"u8);
-            if (operation.ConditionJson is null)
-            {
-                writer.WriteRaw("null"u8);
-            }
-            else
-            {
-                writer.WriteRawUtf8(operation.ConditionJson);
-            }
-            writer.WriteByte((byte)'}');
-        }
-        writer.WriteRaw("]}"u8);
-        return writer.Complete();
-    }
-
     private static void WriteCanonicalAttributeMap(
         CanonicalFingerprintWriter writer,
         JsonElement map)
@@ -294,6 +234,8 @@ internal static partial class TransactWriteItemsHandler
             _textWriter = new IncrementalHashTextWriter(_hash);
         }
 
+        public IncrementalHash Hash => _hash;
+
         public void WriteRaw(ReadOnlySpan<byte> value)
             => _hash.AppendData(value);
 
@@ -310,12 +252,6 @@ internal static partial class TransactWriteItemsHandler
             JavaScriptEncoder.Default.Encode(_textWriter, value);
             _textWriter.CompleteSegment();
             WriteByte((byte)'"');
-        }
-
-        public void WriteRawUtf8(string value)
-        {
-            _textWriter.Write(value);
-            _textWriter.CompleteSegment();
         }
 
         public string Complete()

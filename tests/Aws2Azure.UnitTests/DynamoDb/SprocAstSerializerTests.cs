@@ -1,7 +1,12 @@
 using System.Collections.Generic;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using Aws2Azure.Core.Buffers;
 using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
+using Aws2Azure.Modules.DynamoDb.Operations;
 using Xunit;
 
 namespace Aws2Azure.UnitTests.DynamoDb;
@@ -16,6 +21,20 @@ namespace Aws2Azure.UnitTests.DynamoDb;
 /// </summary>
 public class SprocAstSerializerTests
 {
+    private static string SerializeCondition(ConditionNode node)
+    {
+        using var buffer = new PooledByteBufferWriter(256);
+        SprocAstSerializer.WriteCondition(buffer, node);
+        return Encoding.UTF8.GetString(buffer.WrittenMemory.Span);
+    }
+
+    private static string SerializeUpdate(UpdateExpressionAst ast)
+    {
+        using var buffer = new PooledByteBufferWriter(256);
+        SprocAstSerializer.WriteUpdate(buffer, ast);
+        return Encoding.UTF8.GetString(buffer.WrittenMemory.Span);
+    }
+
     private static JsonElement Val(string json)
         => JsonDocument.Parse(json).RootElement.Clone();
 
@@ -45,7 +64,7 @@ public class SprocAstSerializerTests
             names: new Dictionary<string, string> { ["#n"] = "name" },
             values: new Dictionary<string, JsonElement> { [":v"] = Val("{\"S\":\"bob\"}") });
 
-        var json = SprocAstSerializer.SerializeUpdate(ast)!;
+        var json = SerializeUpdate(ast);
 
         Assert.Contains("\"set\":[", json);
         Assert.Contains("\"path\":\"name\"", json);
@@ -58,7 +77,7 @@ public class SprocAstSerializerTests
         var ast = Parse("SET counter = counter + :i",
             values: new Dictionary<string, JsonElement> { [":i"] = Val("{\"N\":\"1\"}") });
 
-        var json = SprocAstSerializer.SerializeUpdate(ast)!;
+        var json = SerializeUpdate(ast);
 
         // {"$k":"op","o":"+","l":{"$k":"path","p":"counter"},"r":{"$k":"lit","v":1}}
         Assert.Contains("\"$k\":\"op\"", json);
@@ -73,7 +92,7 @@ public class SprocAstSerializerTests
         var ast = Parse("SET counter = counter - :i",
             values: new Dictionary<string, JsonElement> { [":i"] = Val("{\"N\":\"3\"}") });
 
-        var json = SprocAstSerializer.SerializeUpdate(ast)!;
+        var json = SerializeUpdate(ast);
 
         Assert.Contains("\"o\":\"-\"", json);
     }
@@ -88,7 +107,7 @@ public class SprocAstSerializerTests
                 [":value"] = Val("{\"N\":\"1e3\"}"),
             });
 
-        var json = SprocAstSerializer.SerializeUpdate(ast)!;
+        var json = SerializeUpdate(ast);
 
         Assert.Contains("\"v\":1000", json, StringComparison.Ordinal);
         Assert.DoesNotContain("1e3", json, StringComparison.Ordinal);
@@ -99,7 +118,7 @@ public class SprocAstSerializerTests
     {
         var ast = Parse("SET a = b");
 
-        var json = SprocAstSerializer.SerializeUpdate(ast)!;
+        var json = SerializeUpdate(ast);
 
         Assert.Contains("\"path\":\"a\"", json);
         Assert.Contains("{\"$k\":\"path\",\"p\":\"b\"}", json);
@@ -111,7 +130,7 @@ public class SprocAstSerializerTests
         var ast = Parse("SET v = if_not_exists(v, :start)",
             values: new Dictionary<string, JsonElement> { [":start"] = Val("{\"N\":\"0\"}") });
 
-        var json = SprocAstSerializer.SerializeUpdate(ast)!;
+        var json = SerializeUpdate(ast);
 
         // {"$k":"ifne","p":"v","f":{"$k":"lit","v":0}}
         Assert.Contains("\"$k\":\"ifne\"", json);
@@ -125,7 +144,7 @@ public class SprocAstSerializerTests
         var ast = Parse("SET items = list_append(items, :more)",
             values: new Dictionary<string, JsonElement> { [":more"] = Val("{\"L\":[{\"S\":\"x\"}]}") });
 
-        var json = SprocAstSerializer.SerializeUpdate(ast)!;
+        var json = SerializeUpdate(ast);
 
         // {"$k":"lap","l":{"$k":"path","p":"items"},"r":{"$k":"lit","v":["x"]}}
         Assert.Contains("\"$k\":\"lap\"", json);
@@ -144,7 +163,7 @@ public class SprocAstSerializerTests
                 [":v"] = Val("{\"M\":{\"op\":{\"S\":\"+\"},\"path\":{\"S\":\"x\"}}}")
             });
 
-        var json = SprocAstSerializer.SerializeUpdate(ast)!;
+        var json = SerializeUpdate(ast);
 
         // The whole map is nested under the "lit" envelope, so resolveSetValue
         // returns it verbatim.
@@ -156,7 +175,7 @@ public class SprocAstSerializerTests
     {
         var ast = Parse("REMOVE stale");
 
-        var json = SprocAstSerializer.SerializeUpdate(ast)!;
+        var json = SerializeUpdate(ast);
 
         Assert.Contains("\"remove\":[\"stale\"]", json);
     }
@@ -180,7 +199,7 @@ public class SprocAstSerializerTests
                 [":value"] = MapVal(mapName, value),
             });
 
-        var json = SprocAstSerializer.SerializeUpdate(ast)!;
+        var json = SerializeUpdate(ast);
 
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
@@ -205,7 +224,7 @@ public class SprocAstSerializerTests
             new Dictionary<string, string> { ["#path"] = path },
             new Dictionary<string, JsonElement> { [":value"] = StringVal(value) });
 
-        var json = SprocAstSerializer.SerializeCondition(condition)!;
+        var json = SerializeCondition(condition);
 
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
@@ -218,14 +237,155 @@ public class SprocAstSerializerTests
     }
 
     [Fact]
+    public void Condition_bytes_match_utf8_json_writer_escaping()
+    {
+        var path = "name<>&\u2028é\n\t\0\"\\";
+        var value = "value<>&\u2029é\n\t\0\"\\";
+        var condition = ConditionExpressionParser.Parse(
+            "#path = :value",
+            new Dictionary<string, string> { ["#path"] = path },
+            new Dictionary<string, JsonElement>
+            {
+                [":value"] = StringVal(value),
+            });
+        using var actual = new PooledByteBufferWriter(256);
+        SprocAstSerializer.WriteCondition(actual, condition);
+
+        using var expected = new PooledByteBufferWriter(256);
+        using (var writer = new Utf8JsonWriter(
+                   expected,
+                   new JsonWriterOptions
+                   {
+                       Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+                   }))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("type", "COMPARE");
+            writer.WriteStartObject("attr");
+            writer.WriteString("path", path);
+            writer.WriteEndObject();
+            writer.WriteString("op", "=");
+            writer.WriteString("value", value);
+            writer.WriteEndObject();
+            writer.Flush();
+        }
+
+        Assert.Equal(
+            expected.WrittenMemory.ToArray(),
+            actual.WrittenMemory.ToArray());
+    }
+
+    [Fact]
     public void Unknown_condition_node_fails_closed()
     {
         var exception = Assert.Throws<NotSupportedException>(
-            () => SprocAstSerializer.SerializeCondition(
+            () => SerializeCondition(
                 new UnsupportedCondition()));
 
         Assert.Contains("Unsupported", exception.Message);
     }
+
+    [Fact]
+    public void Repeated_large_value_references_abort_at_bound_without_ast_materialization()
+    {
+        const int referenceCount = 199;
+        const int valueLength = 100 * 1024;
+        var condition = RepeatedStringCondition(referenceCount, valueLength);
+
+        var overflow = WriteBounded(condition, withFingerprint: true);
+        Assert.Equal(
+            TransactWriteItemsHandler.MaxSprocRequestBodyBytes,
+            overflow.Limit);
+        Assert.InRange(
+            overflow.WrittenBytes,
+            overflow.Limit - 2048,
+            overflow.Limit);
+
+        _ = WriteBounded(condition, withFingerprint: true);
+        long minimumAllocated = long.MaxValue;
+        for (var round = 0; round < 5; round++)
+        {
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            _ = WriteBounded(condition, withFingerprint: true);
+            minimumAllocated = Math.Min(
+                minimumAllocated,
+                GC.GetAllocatedBytesForCurrentThread() - before);
+        }
+
+        var expandedUtf16Bytes =
+            (long)referenceCount * valueLength * sizeof(char);
+        Assert.True(
+            minimumAllocated < expandedUtf16Bytes / 4,
+            $"Bounded streaming allocated {minimumAllocated:N0} bytes; " +
+            $"a quarter of the avoided expanded UTF-16 AST is " +
+            $"{expandedUtf16Bytes / 4:N0} bytes.");
+    }
+
+    [Fact]
+    public void Condition_streaming_honors_the_exact_two_mib_boundary()
+    {
+        var empty = RepeatedStringCondition(referenceCount: 1, valueLength: 0);
+        using var baseline = new PooledByteBufferWriter(256);
+        SprocAstSerializer.WriteCondition(baseline, empty);
+        var valueLength =
+            TransactWriteItemsHandler.MaxSprocRequestBodyBytes
+            - baseline.WrittenMemory.Length;
+
+        var exactCondition = RepeatedStringCondition(1, valueLength);
+        using var exact = NewBoundedWriter();
+        SprocAstSerializer.WriteCondition(exact, exactCondition);
+        Assert.Equal(
+            TransactWriteItemsHandler.MaxSprocRequestBodyBytes,
+            exact.WrittenMemory.Length);
+
+        var oversizedCondition = RepeatedStringCondition(1, valueLength + 1);
+        using var oversized = NewBoundedWriter();
+        var exception = Assert.Throws<BoundedBufferWriterLimitException>(
+            () => SprocAstSerializer.WriteCondition(
+                oversized,
+                oversizedCondition));
+        Assert.Equal(
+            TransactWriteItemsHandler.MaxSprocRequestBodyBytes,
+            exception.Limit);
+    }
+
+    private static ConditionNode RepeatedStringCondition(
+        int referenceCount,
+        int valueLength)
+    {
+        var expression = string.Join(
+            " OR ",
+            Enumerable.Repeat("#value = :value", referenceCount));
+        return ConditionExpressionParser.Parse(
+            expression,
+            new Dictionary<string, string> { ["#value"] = "value" },
+            new Dictionary<string, JsonElement>
+            {
+                [":value"] = StringVal(new string('x', valueLength)),
+            });
+    }
+
+    private static BoundedBufferWriterLimitException WriteBounded(
+        ConditionNode condition,
+        bool withFingerprint)
+    {
+        using var writer = NewBoundedWriter();
+        using var fingerprint = withFingerprint
+            ? IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
+            : null;
+        return Assert.Throws<BoundedBufferWriterLimitException>(
+            () => SprocAstSerializer.WriteCondition(
+                writer,
+                condition,
+                fingerprint));
+    }
+
+    private static BoundedPooledByteBufferWriter NewBoundedWriter()
+        => new(
+            TransactWriteItemsHandler.MaxSprocRequestBodyBytes,
+            initialCapacity: 512,
+            maximumScratchSizeHint:
+                TransactWriteItemsHandler.MaxSprocRequestBodyBytes);
 
     private sealed record UnsupportedCondition : ConditionNode;
 }

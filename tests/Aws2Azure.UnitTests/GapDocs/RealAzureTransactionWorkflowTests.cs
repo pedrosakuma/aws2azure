@@ -13,6 +13,11 @@ public sealed class RealAzureTransactionWorkflowTests
         "docs",
         "testing",
         "real-azure-conformance.yaml"));
+    private static readonly string Manifest = File.ReadAllText(Path.Combine(
+        RepositoryRoot,
+        "docs",
+        "workloads",
+        "dynamodb-single-partition-transactions.yaml"));
     private static readonly string BaselinePath = Path.Combine(
         RepositoryRoot,
         "docs",
@@ -80,6 +85,14 @@ public sealed class RealAzureTransactionWorkflowTests
             "Transaction rollback blocker must produce verdict 'inconclusive'",
             Workflow,
             StringComparison.Ordinal);
+        Assert.Contains(
+            "Transaction qualification must emit the canonical rollback scenario",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "Blocked transaction qualification must not have an approved runtime ledger",
+            Workflow,
+            StringComparison.Ordinal);
         Assert.DoesNotContain(
             "runtime_mode=rollback",
             Workflow,
@@ -98,8 +111,16 @@ public sealed class RealAzureTransactionWorkflowTests
     public void Transaction_rollback_blocker_and_exact_body_probe_are_registered()
     {
         Assert.Contains(
-            "transaction-adjacent-runtime-rollback",
+            "- id: rollback",
             Matrix,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "    - rollback",
+            Manifest,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "transaction-adjacent-runtime-rollback",
+            Manifest,
             StringComparison.Ordinal);
         Assert.Contains(
             "DynamoDbRealAzureTransactionQualificationTests.Adjacent_runtime_transaction_rollback_is_atomic_and_compatible",
@@ -130,7 +151,7 @@ public sealed class RealAzureTransactionWorkflowTests
             Matrix,
             StringComparison.Ordinal);
         Assert.Contains(
-            "\"FullyQualifiedName=\" + .",
+            "validate-conformance-discovery",
             Workflow,
             StringComparison.Ordinal);
         Assert.Contains(

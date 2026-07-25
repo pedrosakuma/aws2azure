@@ -34,6 +34,15 @@ if (args.Length > 0 && args[0] == "plan-conformance")
         Path.Combine(repoRoot, "docs", "testing", "real-azure-conformance.yaml"));
 }
 
+if (args.Length > 0 && args[0] == "validate-conformance-discovery")
+{
+    return ValidateConformanceDiscovery(
+        args[1..],
+        repoRoot,
+        gapsRoot,
+        Path.Combine(repoRoot, "docs", "testing", "real-azure-conformance.yaml"));
+}
+
 if (args.Length > 0 && args[0] == "validate-qualification")
 {
     return ValidateQualification(args[1..]);
@@ -501,6 +510,93 @@ static int PlanConformance(string[] args, string gapsRoot, string defaultMatrixP
         {
             File.WriteAllText(outputPath, content);
         }
+        return 0;
+    }
+    catch (Exception exception) when (exception is ArgumentException
+                                      or FileNotFoundException
+                                      or InvalidDataException
+                                      or InvalidOperationException
+                                      or IOException
+                                      or UnauthorizedAccessException
+                                      or YamlException)
+    {
+        Console.Error.WriteLine("[gap-docs] " + exception.Message);
+        return 2;
+    }
+}
+
+static int ValidateConformanceDiscovery(
+    string[] args,
+    string repoRoot,
+    string gapsRoot,
+    string defaultMatrixPath)
+{
+    string? planPath = null;
+    string? matrixPath = null;
+    var configuration = "Release";
+    var noBuild = false;
+    for (var index = 0; index < args.Length; index++)
+    {
+        switch (args[index])
+        {
+            case "--plan" when index + 1 < args.Length
+                               && !args[index + 1].StartsWith("--", StringComparison.Ordinal):
+                planPath = args[++index];
+                break;
+            case "--matrix" when index + 1 < args.Length
+                                 && !args[index + 1].StartsWith("--", StringComparison.Ordinal):
+                matrixPath = args[++index];
+                break;
+            case "--configuration" when index + 1 < args.Length
+                                        && !args[index + 1].StartsWith("--", StringComparison.Ordinal):
+                configuration = args[++index];
+                break;
+            case "--no-build":
+                noBuild = true;
+                break;
+            default:
+                Console.Error.WriteLine(
+                    $"Unknown or incomplete option '{args[index]}'.");
+                return 1;
+        }
+    }
+
+    try
+    {
+        ConformanceExecutionPlan plan;
+        if (planPath is not null)
+        {
+            plan = ConformancePlanRenderer.ParseJson(
+                Path.GetFullPath(planPath));
+        }
+        else
+        {
+            var docs = Loader.LoadAll(gapsRoot);
+            var matrix = ConformanceMatrixLoader.Load(
+                Path.GetFullPath(matrixPath ?? defaultMatrixPath));
+            var matrixErrors = ConformanceMatrixValidator.Validate(matrix, docs);
+            if (matrixErrors.Count > 0)
+            {
+                WriteErrors("real-Azure conformance matrix", matrixErrors);
+                return 1;
+            }
+            plan = ConformancePlanGenerator.Generate(matrix);
+        }
+
+        var errors = ConformanceTestDiscoveryRunner.Validate(
+            plan,
+            repoRoot,
+            configuration,
+            noBuild);
+        if (errors.Count > 0)
+        {
+            WriteErrors("conformance test discovery", errors);
+            return 1;
+        }
+
+        Console.WriteLine(
+            $"[gap-docs] {plan.TestProjects.Sum(project => project.Tests.Count)} " +
+            "planned conformance test identity/identities discovered exactly");
         return 0;
     }
     catch (Exception exception) when (exception is ArgumentException

@@ -157,8 +157,14 @@
     "profile_version": 1,
     "name": "DynamoDB single-table single-partition transactions",
     "minimum_proxy_version": "0.1.0",
-    "verdict": "conditional",
+    "verdict": "blocked",
     "findings": [
+      {
+        "code": "rollback_runtime_unavailable",
+        "disposition": "blocking",
+        "subject": "dynamodb-single-partition-transactions",
+        "message": "No approved runtime implements the complete atomic snapshot, validation, and durable ClientRequestToken contract, so rollback qualification is inconclusive and this profile has no GA claim."
+      },
       {
         "code": "partial_operation_accepted",
         "disposition": "advisory",

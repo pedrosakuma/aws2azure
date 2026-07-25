@@ -48,7 +48,7 @@ internal static partial class TransactWriteItemsHandler
         JsonRange Range,
         string Name,
         long BaseItemSize,
-        string? ConditionJson);
+        ConditionNode? Condition);
 
     private readonly record struct PreparedRequestOp(
         OpKind Kind,
@@ -57,12 +57,11 @@ internal static partial class TransactWriteItemsHandler
         string PartitionKey,
         int? TtlSeconds,
         OrderKeyField[]? OrderKeys,
-        string? ConditionJson);
+        ConditionNode? Condition);
 
     private readonly record struct PreparedIdempotency(
         string RecordId,
-        string PartitionKey,
-        string Fingerprint);
+        string PartitionKey);
 
     public static async Task HandleTransactWriteItemsAsync(
         HttpContext ctx,
@@ -361,23 +360,12 @@ internal static partial class TransactWriteItemsHandler
                 return;
             }
 
-            string? conditionJson;
-            try
-            {
-                conditionJson = SprocAstSerializer.SerializeCondition(condition);
-            }
-            catch (NotSupportedException exception)
-            {
-                await RejectAsync(ctx, exception.Message).ConfigureAwait(false);
-                return;
-            }
-
             inputs[index] = new InputOp(
                 kind,
                 range,
                 name,
                 baseItemSize,
-                conditionJson);
+                condition);
         }
 
         if (sprocContext is not { IsSprocEnabled: true } || sprocContext.Manager is null)
@@ -547,7 +535,7 @@ internal static partial class TransactWriteItemsHandler
                 candidatePartitionKey,
                 ttlSeconds,
                 orderKeys,
-                input.ConditionJson);
+                input.Condition);
         }
 
         PreparedIdempotency? idempotency = null;
@@ -558,14 +546,10 @@ internal static partial class TransactWriteItemsHandler
             {
                 idempotency = new PreparedIdempotency(
                     BuildIdempotencyRecordId(request.ClientRequestToken),
-                    partitionKey!,
-                    ComputeRequestFingerprint(
-                        tableName!,
-                        partitionKey!,
-                        body,
-                        prepared));
+                    partitionKey!);
             }
             parameters = BuildTransactRequestParamsBody(
+                tableName!,
                 body,
                 prepared,
                 idempotency);
@@ -873,6 +857,7 @@ internal static partial class TransactWriteItemsHandler
     }
 
     private static BoundedPooledByteBufferWriter BuildTransactRequestParamsBody(
+        string tableName,
         byte[] body,
         PreparedRequestOp[] operations,
         PreparedIdempotency? idempotency = null)
@@ -881,8 +866,21 @@ internal static partial class TransactWriteItemsHandler
             MaxSprocRequestBodyBytes,
             initialCapacity: 512,
             maximumScratchSizeHint: MaxSerializerContiguousWriteBytes);
+        CanonicalFingerprintWriter? fingerprint = null;
         try
         {
+            if (idempotency is not null)
+            {
+                fingerprint = new CanonicalFingerprintWriter();
+                fingerprint.WriteRaw("{\"version\":"u8);
+                fingerprint.WriteJsonString(FingerprintVersion);
+                fingerprint.WriteRaw(",\"table\":"u8);
+                fingerprint.WriteJsonString(tableName);
+                fingerprint.WriteRaw(",\"partition\":"u8);
+                fingerprint.WriteJsonString(idempotency.Value.PartitionKey);
+                fingerprint.WriteRaw(",\"operations\":["u8);
+            }
+
             WriteRaw(buffer, "[["u8);
             for (var index = 0; index < operations.Length; index++)
             {
@@ -892,6 +890,24 @@ internal static partial class TransactWriteItemsHandler
                 }
 
                 var operation = operations[index];
+                if (fingerprint is not null)
+                {
+                    if (index > 0)
+                    {
+                        fingerprint.WriteByte((byte)',');
+                    }
+                    fingerprint.WriteRaw("{\"type\":"u8);
+                    fingerprint.WriteJsonString(
+                        operation.Kind switch
+                        {
+                            OpKind.Put => "PUT",
+                            OpKind.Delete => "DELETE",
+                            _ => "CHECK",
+                        });
+                    fingerprint.WriteRaw(",\"id\":"u8);
+                    fingerprint.WriteJsonString(operation.Id);
+                }
+
                 WriteRaw(
                     buffer,
                     operation.Kind switch
@@ -914,28 +930,43 @@ internal static partial class TransactWriteItemsHandler
                         operationDocument.RootElement.GetProperty("Item"),
                         operation.TtlSeconds,
                         operation.OrderKeys);
+                    if (fingerprint is not null)
+                    {
+                        fingerprint.WriteRaw(",\"item\":"u8);
+                        WriteCanonicalAttributeMap(
+                            fingerprint,
+                            operationDocument.RootElement.GetProperty("Item"));
+                    }
                 }
 
                 WriteRaw(buffer, ",\"condition\":"u8);
-                if (operation.ConditionJson is null)
+                fingerprint?.WriteRaw(",\"condition\":"u8);
+                if (operation.Condition is null)
                 {
                     WriteRaw(buffer, "null"u8);
+                    fingerprint?.WriteRaw("null"u8);
                 }
                 else
                 {
-                    WriteUtf8(buffer, operation.ConditionJson);
+                    SprocAstSerializer.WriteCondition(
+                        buffer,
+                        operation.Condition,
+                        fingerprint?.Hash);
                 }
                 WriteByte(buffer, (byte)'}');
+                fingerprint?.WriteByte((byte)'}');
             }
             WriteRaw(buffer, "],"u8);
             if (idempotency is { } token)
             {
+                fingerprint!.WriteRaw("]}"u8);
+                var digest = fingerprint.Complete();
                 WriteRaw(buffer, "{\"id\":"u8);
                 WriteJsonString(buffer, token.RecordId);
                 WriteRaw(buffer, ",\"pk\":"u8);
                 WriteJsonString(buffer, token.PartitionKey);
                 WriteRaw(buffer, ",\"fingerprint\":"u8);
-                WriteJsonString(buffer, token.Fingerprint);
+                WriteJsonString(buffer, digest);
                 WriteRaw(
                     buffer,
                     ",\"windowMs\":600000,\"cleanupTtlSeconds\":660}"u8);
@@ -951,6 +982,10 @@ internal static partial class TransactWriteItemsHandler
         {
             buffer.Dispose();
             throw;
+        }
+        finally
+        {
+            fingerprint?.Dispose();
         }
     }
 
@@ -1020,15 +1055,6 @@ internal static partial class TransactWriteItemsHandler
         using var writer = new Utf8JsonWriter(output);
         writer.WriteStringValue(value);
         writer.Flush();
-    }
-
-    private static void WriteUtf8(
-        IBufferWriter<byte> output,
-        string value)
-    {
-        var span = output.GetSpan(Encoding.UTF8.GetMaxByteCount(value.Length));
-        var written = Encoding.UTF8.GetBytes(value, span);
-        output.Advance(written);
     }
 
     private static void WriteByte(
@@ -1113,7 +1139,7 @@ internal static partial class TransactWriteItemsHandler
                 }
                 if (code == "ConditionalCheckFailed")
                 {
-                    if (operations[index].ConditionJson is null)
+                    if (operations[index].Condition is null)
                     {
                         return false;
                     }

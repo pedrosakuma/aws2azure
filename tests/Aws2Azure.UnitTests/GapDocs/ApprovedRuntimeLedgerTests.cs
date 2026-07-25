@@ -302,6 +302,25 @@ public sealed class ApprovedRuntimeLedgerTests
     }
 
     [Fact]
+    public void Blocked_rollback_profile_must_not_have_a_runtime_record()
+    {
+        var profile = Profile("test-profile", 1);
+        profile.SourceFile = "docs/workloads/test-profile.yaml";
+        profile.Evidence.RollbackStatus = "blocked";
+
+        var errors = ApprovedRuntimeLedgerValidator.Validate(
+            [ValidRecord()],
+            [profile],
+            ValidationTime);
+
+        Assert.Contains(
+            errors,
+            error => error.Contains(
+                "must not have an approved-runtime record",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Loader_rejects_unknown_fields()
     {
         var path = Path.Combine(

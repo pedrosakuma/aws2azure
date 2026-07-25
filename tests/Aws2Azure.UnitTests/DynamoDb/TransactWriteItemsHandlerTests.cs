@@ -1289,6 +1289,98 @@ public class TransactWriteItemsHandlerTests
     }
 
     [Fact]
+    public async Task Repeated_large_condition_value_references_fail_bounded_and_deterministically()
+    {
+        const int referenceCount = 199;
+        var expression = string.Join(
+            " OR ",
+            Enumerable.Repeat("#value = :value", referenceCount));
+        var largeValue = new string('x', 100 * 1024);
+        var request =
+            "{\"ClientRequestToken\":\"bounded-condition-token\"," +
+            "\"TransactItems\":[{\"ConditionCheck\":{\"TableName\":\"orders\"," +
+            "\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"}}," +
+            "\"ConditionExpression\":\"" + expression + "\"," +
+            "\"ExpressionAttributeNames\":{\"#value\":\"value\"}," +
+            "\"ExpressionAttributeValues\":{\":value\":{\"S\":\"" +
+            largeValue + "\"}}}}]}";
+
+        static async Task<(string Response, ScriptedHandler Handler)> ExecuteAsync(
+            string body)
+        {
+            CosmosOpsShared.MetadataCache.Clear();
+            var (context, responseBody) = NewCtx();
+            var handler = new ScriptedHandler
+            {
+                Responses = { CosmosOk(MetaPkSk) },
+            };
+            await Run(
+                context,
+                BuildClient(handler),
+                EnabledSproc(),
+                body);
+            Assert.Equal(400, context.Response.StatusCode);
+            return (ReadResponse(responseBody), handler);
+        }
+
+        var first = await ExecuteAsync(request);
+        var second = await ExecuteAsync(request);
+
+        Assert.Equal(first.Response, second.Response);
+        Assert.Contains("ValidationException", first.Response);
+        Assert.Contains("2097152", first.Response, StringComparison.Ordinal);
+        Assert.Contains("4 MiB", first.Response, StringComparison.Ordinal);
+        Assert.Single(first.Handler.Requests);
+        Assert.Single(second.Handler.Requests);
+        Assert.All(
+            first.Handler.Requests.Concat(second.Handler.Requests),
+            captured => Assert.DoesNotContain(
+                "/sprocs/",
+                captured.Uri.AbsolutePath,
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Large_valid_condition_uses_exact_utf8_space_without_false_overflow()
+    {
+        var value = new string('x', 909 * 1024);
+        var request =
+            "{\"TransactItems\":[{\"ConditionCheck\":{\"TableName\":\"orders\"," +
+            "\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"}}," +
+            "\"ConditionExpression\":\"#value = :value\"," +
+            "\"ExpressionAttributeNames\":{\"#value\":\"value\"}," +
+            "\"ExpressionAttributeValues\":{\":value\":{\"S\":\"" +
+            value + "\"}}}}]}";
+        var (context, _) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaPkSk),
+                CosmosCreated(),
+                CosmosOk("{\"success\":true}"),
+            },
+        };
+
+        await Run(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            request);
+
+        Assert.Equal(200, context.Response.StatusCode);
+        var execution = handler.Requests[^1];
+        using var parameters = JsonDocument.Parse(execution.Body!);
+        var condition = parameters.RootElement[0][0].GetProperty("condition");
+        Assert.Equal(
+            value.Length,
+            condition.GetProperty("value").GetString()!.Length);
+        Assert.True(
+            Encoding.UTF8.GetByteCount(execution.Body!)
+            < TransactWriteItemsHandler.MaxSprocRequestBodyBytes);
+    }
+
+    [Fact]
     public void Serialized_sproc_request_limit_is_inclusive_at_exact_boundary()
     {
         var emptyDoc = Encoding.UTF8.GetBytes("{\"payload\":\"\"}");

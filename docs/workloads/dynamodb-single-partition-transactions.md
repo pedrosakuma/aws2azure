@@ -2,10 +2,10 @@
 
 This version 1 profile covers `TransactGetItems` and `TransactWriteItems` only
 when every item belongs to one table and one logical partition. Its initial
-verdict is `conditional`: the implementation and discoverable real-Azure tests
-exist, but the new snapshot/write sub-features have no fresh seals, the
-qualification artifact is intentionally empty, and no trusted prior release
-implements the complete profile well enough to qualify rollback.
+verdict is `blocked`: the implementation and discoverable real-Azure tests
+exist, but the canonical rollback requirement has no approved runtime ledger or
+trusted prior release. The new snapshot/write sub-features also have no fresh
+seals, and the qualification artifact is intentionally empty.
 
 ## Required topology and configuration
 

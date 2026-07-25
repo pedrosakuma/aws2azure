@@ -140,6 +140,33 @@ public sealed class RealAzureWorkloadQualificationTests
     }
 
     [Fact]
+    public void Generate_canonicalizes_blocked_rollback_and_stays_inconclusive()
+    {
+        var evidence = Evidence("passed", eligible: true);
+        var service = Assert.Single(evidence.Services);
+        service.Scenarios[0].Category = "rollback";
+        service.Scenarios[0].Outcome = "skipped";
+        service.Scenarios[0].EstablishesVerification = false;
+        service.Operations[0].EligibleForVerifiedRealAzure = false;
+        service.Operations[0].BlockingOutcomes =
+            ["adjacent-runtime-rollback:skipped", "no_positive_real_azure_evidence"];
+        service.Scenarios[0].Id = "adjacent-runtime-rollback";
+        service.Operations[0].Scenarios = ["adjacent-runtime-rollback"];
+
+        var document = RealAzureWorkloadQualificationGenerator.Generate(
+            evidence,
+            [new RealAzureWorkloadOperation { Service = "s3", Operation = "PutObject" }],
+            Metadata("rollback"));
+
+        Assert.Equal("inconclusive", document.Verdict);
+        var rollback = Assert.Single(document.Scenarios);
+        Assert.Equal("rollback", rollback.Id);
+        Assert.Equal(1, rollback.Skipped);
+        Assert.Empty(document.RollbackProofs);
+        Assert.Empty(SloQualificationValidator.Validate(document, GeneratedTime));
+    }
+
+    [Fact]
     public void Generate_emits_shared_conformance_scenario_once_for_multiple_operations()
     {
         var evidence = Evidence("passed", eligible: true);

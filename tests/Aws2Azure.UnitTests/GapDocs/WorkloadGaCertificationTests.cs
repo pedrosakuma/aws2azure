@@ -18,7 +18,7 @@ public sealed class WorkloadGaCertificationTests
     [InlineData("sqs-standard-messaging.yaml", "ga")]
     [InlineData("dynamodb-basic-crud.yaml", "ga")]
     [InlineData("dynamodb-query-scan-indexes.yaml", "candidate")]
-    [InlineData("dynamodb-single-partition-transactions.yaml", "conditional")]
+    [InlineData("dynamodb-single-partition-transactions.yaml", "blocked")]
     [InlineData("sns-standard-publish-service-bus.yaml", "candidate")]
     [InlineData("sns-standard-publish-event-grid.yaml", "candidate")]
     [InlineData("kinesis-basic-record-ingestion.yaml", "candidate")]
@@ -37,6 +37,50 @@ public sealed class WorkloadGaCertificationTests
             new DateOnly(2026, 7, 22));
 
         Assert.Equal(expectedVerdict, report.Verdict);
+    }
+
+    [Fact]
+    public void Transaction_profile_is_blocked_without_an_approved_rollback_runtime()
+    {
+        var manifest = LoadManifest(
+            "dynamodb-single-partition-transactions.yaml");
+
+        var report = WorkloadGaEvaluator.Evaluate(
+            manifest,
+            Operations,
+            Designs,
+            RepoRoot,
+            new DateOnly(2026, 7, 22));
+
+        Assert.Equal("blocked", report.Verdict);
+        Assert.Contains(
+            report.Findings,
+            finding => finding.Code == "rollback_runtime_unavailable"
+                       && finding.Disposition == "blocking");
+    }
+
+    [Fact]
+    public void Blocked_rollback_state_requires_canonical_scenario_and_reason()
+    {
+        var manifest = MinimalManifest();
+        manifest.Evidence.RollbackStatus = "blocked";
+        manifest.Evidence.RollbackBlocker = string.Empty;
+
+        var errors = WorkloadGaManifestValidator.Validate(
+            manifest,
+            MinimalOperations(),
+            Designs);
+
+        Assert.Contains(
+            errors,
+            error => error.Contains(
+                "canonical 'rollback'",
+                StringComparison.Ordinal));
+        Assert.Contains(
+            errors,
+            error => error.Contains(
+                "rollback_blocker is required",
+                StringComparison.Ordinal));
     }
 
     [Fact]
