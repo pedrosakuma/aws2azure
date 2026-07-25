@@ -12,7 +12,7 @@ Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned
 | Service | Area | Status |
 |---|---|---|
 | [dynamodb](#dynamodb) | Transaction scope is single-partition, single-table | 🔵 by design |
-| [dynamodb](#dynamodb) | Transaction execution is pinned to one Cosmos write region | 🔵 by design |
+| [dynamodb](#dynamodb) | Transaction execution has one configured Cosmos authority | 🔵 by design |
 | [dynamodb](#dynamodb) | Consistency and read-your-writes | 🔵 by design |
 | [dynamodb](#dynamodb) | Throughput and throttling model | 🔵 by design |
 | [dynamodb](#dynamodb) | Secondary indexes (GSI / LSI) | 🟡 partial |
@@ -59,17 +59,17 @@ References:
 
 - <https://learn.microsoft.com/azure/cosmos-db/nosql/stored-procedures-triggers-udfs>
 
-<a id="dynamodb-transaction-execution-is-pinned-to-one-cosmos-write-region"></a>
+<a id="dynamodb-transaction-execution-has-one-configured-cosmos-authority"></a>
 
-### Transaction execution is pinned to one Cosmos write region
+### Transaction execution has one configured Cosmos authority
 
 - **Status:** 🔵 by design
 
-Cosmos stored procedures execute through a writable region. To preserve one atomic snapshot and one durable ClientRequestToken history, every TransactGetItems/TransactWriteItems execution is pinned to one authoritative regional endpoint per physical account/database/container across all bindings. The proxy never replays a transaction in a second independently writable region.
+Cosmos stored procedures execute through a writable region. To preserve one atomic snapshot and one durable ClientRequestToken history, every TransactGetItems/TransactWriteItems execution uses one deployment-stable regional authority. On a multi-write account this is exactly target.preferredRegions[0], not the first currently available match. The proxy never replays a transaction in a second independently writable region or through the dynamically routed global account endpoint.
 
-**Impact.** Multi-write accounts require target.preferredRegions to contain a current writable region. The first match is authoritative for the process lifetime. Bindings that share a container must resolve the same endpoint; conflicting policies are rejected. If topology cannot be identified or the pinned endpoint is unavailable, the transaction returns a validation or retryable AWS error instead of using a different writable region. Non-transactional routing and read failover are unchanged.
+**Impact.** Multi-write deployments must configure the same first preferred region on every replica and binding that targets the same data. Losing that region makes transactions unavailable even if another write region remains healthy; this is the availability cost of preserving one transaction/idempotency authority. Non-transactional routing and read failover are unchanged.
 
-**Workaround.** Prefer a single-write Cosmos account for this profile, or configure an explicit ordered preferredRegions list whose first matching writable region is the intended transaction authority. Restore that endpoint before retrying; restart the proxy only when intentionally re-resolving account topology.
+**Workaround.** Prefer a single-write Cosmos account for this profile, or configure an explicit preferredRegions list whose first entry is the intended transaction authority. Restore that region before retrying. Change the first entry only as a coordinated migration after outstanding 10-minute idempotency windows and replication have converged; restarting alone never changes authority.
 
 References:
 

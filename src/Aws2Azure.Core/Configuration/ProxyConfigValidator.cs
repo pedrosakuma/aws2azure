@@ -170,6 +170,12 @@ public static class ProxyConfigValidator
             }
             if (cosmos.PreferredRegions is { } preferredRegions)
             {
+                if (preferredRegions.Count == 0)
+                {
+                    errors.Add(
+                        $"{dynamoDbPrefix}.target.preferredRegions: when present, " +
+                        "the list must contain an authoritative first region.");
+                }
                 for (var r = 0; r < preferredRegions.Count; r++)
                 {
                     if (string.IsNullOrWhiteSpace(preferredRegions[r]))

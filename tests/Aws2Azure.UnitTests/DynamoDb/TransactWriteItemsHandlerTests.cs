@@ -45,6 +45,28 @@ public class TransactWriteItemsHandlerTests
         + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
         + "\"billingMode\":\"PAY_PER_REQUEST\"}";
 
+    private static string MetaPkSkWithLsi(
+        string projectionType,
+        string? nonKeyAttributes = null)
+    {
+        var projected = nonKeyAttributes is null
+            ? string.Empty
+            : ",\"nonKeyAttributes\":[\"" + nonKeyAttributes + "\"]";
+        return
+            "{\"id\":\"__aws2azure_table_meta__\"," +
+            "\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\"," +
+            "\"tableName\":\"orders\"," +
+            "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"}," +
+            "{\"name\":\"sk\",\"type\":\"S\"},{\"name\":\"ix\",\"type\":\"S\"}]," +
+            "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}," +
+            "{\"name\":\"sk\",\"keyType\":\"RANGE\"}]," +
+            "\"localSecondaryIndexes\":[{\"indexName\":\"byIx\"," +
+            "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}," +
+            "{\"name\":\"ix\",\"keyType\":\"RANGE\"}]," +
+            "\"projectionType\":\"" + projectionType + "\"" + projected + "}]," +
+            "\"billingMode\":\"PAY_PER_REQUEST\"}";
+    }
+
     private static CosmosClient BuildClient(
         ScriptedHandler handler,
         string endpoint = "https://example.documents.azure.com/",
@@ -115,6 +137,11 @@ public class TransactWriteItemsHandlerTests
            "\"sk\":{\"S\":\"1\"},\"payload\":{\"S\":\"" +
            new string('x', payloadBytes) + "\"}}}}";
 
+    private static string PutOpWithIndexedPayload(int payloadBytes)
+        => "{\"Put\":{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"a\"}," +
+           "\"sk\":{\"S\":\"1\"},\"ix\":{\"S\":\"z\"},\"payload\":{\"S\":\"" +
+           new string('x', payloadBytes) + "\"}}}}";
+
     private static string MultiWriteAccountJson =>
         """
         {
@@ -125,6 +152,19 @@ public class TransactWriteItemsHandlerTests
           ],
           "writableLocations": [
             { "name": "West US", "databaseAccountEndpoint": "https://txn-write-west.documents.azure.com/" },
+            { "name": "East US", "databaseAccountEndpoint": "https://txn-write-east.documents.azure.com/" }
+          ]
+        }
+        """;
+
+    private static string MultiWriteLaterOnlyAccountJson =>
+        """
+        {
+          "enableMultipleWriteLocations": true,
+          "readableLocations": [
+            { "name": "East US", "databaseAccountEndpoint": "https://txn-write-east.documents.azure.com/" }
+          ],
+          "writableLocations": [
             { "name": "East US", "databaseAccountEndpoint": "https://txn-write-east.documents.azure.com/" }
           ]
         }
@@ -189,6 +229,267 @@ public class TransactWriteItemsHandlerTests
         Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
         Assert.Contains("400 KiB", ReadResponse(body), StringComparison.Ordinal);
         Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("KEYS_ONLY", null, 29)]
+    [InlineData("INCLUDE", "payload", 40)]
+    [InlineData("ALL", null, 40)]
+    public void Local_secondary_index_size_uses_projection_and_unique_keys(
+        string projectionType,
+        string? includedAttribute,
+        long expectedCombinedSize)
+    {
+        using var itemDocument = JsonDocument.Parse(
+            """{"pk":{"S":"a"},"sk":{"S":"1"},"ix":{"S":"z"},"payload":{"S":"data"}}""");
+        var metadata = new TableMetadata
+        {
+            KeySchema =
+            [
+                new TableKeySchemaElement { Name = "pk", KeyType = "HASH" },
+                new TableKeySchemaElement { Name = "sk", KeyType = "RANGE" },
+            ],
+            LocalSecondaryIndexes =
+            [
+                new TableIndexDefinition
+                {
+                    IndexName = "byIx",
+                    KeySchema =
+                    [
+                        new TableKeySchemaElement
+                        {
+                            Name = "pk",
+                            KeyType = "HASH",
+                        },
+                        new TableKeySchemaElement
+                        {
+                            Name = "ix",
+                            KeyType = "RANGE",
+                        },
+                    ],
+                    ProjectionType = projectionType,
+                    NonKeyAttributes = includedAttribute is null
+                        ? null
+                        : [includedAttribute, "pk", "ix"],
+                },
+            ],
+        };
+
+        Assert.True(
+            DynamoDbItemSize.TryCalculate(
+                itemDocument.RootElement,
+                out var baseSize,
+                out var baseError),
+            baseError);
+        Assert.Equal(20, baseSize);
+        Assert.True(
+            DynamoDbItemSize.TryCalculateWithLocalSecondaryIndexes(
+                itemDocument.RootElement,
+                metadata,
+                baseSize,
+                out var combinedSize,
+                out var error),
+            error);
+
+        Assert.Equal(expectedCombinedSize, combinedSize);
+    }
+
+    [Fact]
+    public void Sparse_local_secondary_index_adds_no_entry_size()
+    {
+        using var itemDocument = JsonDocument.Parse(
+            """{"pk":{"S":"a"},"sk":{"S":"1"},"payload":{"S":"data"}}""");
+        var metadata = new TableMetadata
+        {
+            KeySchema =
+            [
+                new TableKeySchemaElement { Name = "pk", KeyType = "HASH" },
+                new TableKeySchemaElement { Name = "sk", KeyType = "RANGE" },
+            ],
+            LocalSecondaryIndexes =
+            [
+                new TableIndexDefinition
+                {
+                    IndexName = "byIx",
+                    KeySchema =
+                    [
+                        new TableKeySchemaElement
+                        {
+                            Name = "pk",
+                            KeyType = "HASH",
+                        },
+                        new TableKeySchemaElement
+                        {
+                            Name = "ix",
+                            KeyType = "RANGE",
+                        },
+                    ],
+                    ProjectionType = "ALL",
+                },
+            ],
+        };
+
+        Assert.True(
+            DynamoDbItemSize.TryCalculate(
+                itemDocument.RootElement,
+                out var baseSize,
+                out var baseError),
+            baseError);
+        Assert.True(
+            DynamoDbItemSize.TryCalculateWithLocalSecondaryIndexes(
+                itemDocument.RootElement,
+                metadata,
+                baseSize,
+                out var combinedSize,
+                out var error),
+            error);
+
+        Assert.Equal(baseSize, combinedSize);
+    }
+
+    [Fact]
+    public void Local_secondary_index_size_sums_every_corresponding_entry()
+    {
+        using var itemDocument = JsonDocument.Parse(
+            """{"pk":{"S":"a"},"sk":{"S":"1"},"ix":{"S":"z"},"iy":{"S":"q"},"payload":{"S":"data"}}""");
+        var metadata = new TableMetadata
+        {
+            KeySchema =
+            [
+                new TableKeySchemaElement { Name = "pk", KeyType = "HASH" },
+                new TableKeySchemaElement { Name = "sk", KeyType = "RANGE" },
+            ],
+            LocalSecondaryIndexes =
+            [
+                new TableIndexDefinition
+                {
+                    IndexName = "byIx",
+                    KeySchema =
+                    [
+                        new TableKeySchemaElement
+                        {
+                            Name = "pk",
+                            KeyType = "HASH",
+                        },
+                        new TableKeySchemaElement
+                        {
+                            Name = "ix",
+                            KeyType = "RANGE",
+                        },
+                    ],
+                    ProjectionType = "KEYS_ONLY",
+                },
+                new TableIndexDefinition
+                {
+                    IndexName = "byIy",
+                    KeySchema =
+                    [
+                        new TableKeySchemaElement
+                        {
+                            Name = "pk",
+                            KeyType = "HASH",
+                        },
+                        new TableKeySchemaElement
+                        {
+                            Name = "iy",
+                            KeyType = "RANGE",
+                        },
+                    ],
+                    ProjectionType = "ALL",
+                },
+            ],
+        };
+
+        Assert.True(
+            DynamoDbItemSize.TryCalculate(
+                itemDocument.RootElement,
+                out var baseSize,
+                out var baseError),
+            baseError);
+        Assert.Equal(23, baseSize);
+        Assert.True(
+            DynamoDbItemSize.TryCalculateWithLocalSecondaryIndexes(
+                itemDocument.RootElement,
+                metadata,
+                baseSize,
+                out var combinedSize,
+                out var error),
+            error);
+
+        Assert.Equal(55, combinedSize);
+    }
+
+    [Theory]
+    [InlineData("KEYS_ONLY", null, DynamoDbItemSize.MaximumBytes - 25)]
+    [InlineData("INCLUDE", "payload", 204784)]
+    [InlineData("ALL", null, 204784)]
+    public async Task Local_secondary_index_combined_size_accepts_exact_boundary(
+        string projectionType,
+        string? includedAttribute,
+        int payloadBytes)
+    {
+        var (ctx, _) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaPkSkWithLsi(
+                    projectionType,
+                    includedAttribute)),
+                CosmosCreated(),
+                CosmosOk("{\"success\":true}"),
+            },
+        };
+
+        await Run(
+            ctx,
+            BuildClient(handler),
+            EnabledSproc(),
+            "{\"TransactItems\":[" +
+            PutOpWithIndexedPayload(payloadBytes) + "]}");
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Equal(3, handler.Requests.Count);
+    }
+
+    [Theory]
+    [InlineData("KEYS_ONLY", null, DynamoDbItemSize.MaximumBytes - 24)]
+    [InlineData("INCLUDE", "payload", 204785)]
+    [InlineData("ALL", null, 204785)]
+    public async Task Local_secondary_index_combined_size_rejects_before_sproc(
+        string projectionType,
+        string? includedAttribute,
+        int payloadBytes)
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaPkSkWithLsi(
+                    projectionType,
+                    includedAttribute)),
+            },
+        };
+
+        await Run(
+            ctx,
+            BuildClient(handler),
+            EnabledSproc(),
+            "{\"TransactItems\":[" +
+            PutOpWithIndexedPayload(payloadBytes) + "]}");
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        Assert.Contains(
+            "local secondary index entries",
+            ReadResponse(body),
+            StringComparison.Ordinal);
+        Assert.Single(handler.Requests);
+        Assert.DoesNotContain(
+            handler.Requests,
+            request => request.Uri.AbsolutePath.Contains(
+                "/sprocs",
+                StringComparison.Ordinal));
     }
 
     [Fact]
@@ -489,7 +790,11 @@ public class TransactWriteItemsHandlerTests
             using var body = JsonDocument.Parse(request.Body!);
             return body.RootElement[1].GetProperty("fingerprint").GetString()!;
         }
-        Assert.Equal(Fingerprint(executions[0]), Fingerprint(executions[1]));
+        var fingerprint = Fingerprint(executions[0]);
+        Assert.Equal(
+            "aa7a21a707d061dd1b5acd0d0d9b8c9f9823d7837a5e7dfc3980ceea667e3c45",
+            fingerprint);
+        Assert.Equal(fingerprint, Fingerprint(executions[1]));
     }
 
     [Fact]
@@ -930,13 +1235,10 @@ public class TransactWriteItemsHandlerTests
     [Fact]
     public async Task Oversized_serialized_sproc_request_is_rejected_before_provisioning()
     {
-        var (ctx, body) = NewCtx();
-        var handler = new ScriptedHandler
-        {
-            Responses = { CosmosOk(MetaPkSk) },
-        };
         var payload = new string('x', 21_000);
-        var request = new StringBuilder("{\"TransactItems\":[");
+        var request = new StringBuilder(
+            "{\"ClientRequestToken\":\"bounded-many-put-token\"," +
+            "\"TransactItems\":[");
         for (var index = 0; index < 100; index++)
         {
             if (index > 0)
@@ -952,6 +1254,11 @@ public class TransactWriteItemsHandlerTests
         }
         request.Append("]}");
 
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetaPkSk) },
+        };
         await Run(
             ctx,
             BuildClient(handler),
@@ -963,6 +1270,22 @@ public class TransactWriteItemsHandlerTests
         Assert.Contains("2097152", response, StringComparison.Ordinal);
         Assert.Contains("4 MiB", response, StringComparison.Ordinal);
         Assert.Single(handler.Requests);
+
+        CosmosOpsShared.MetadataCache.Clear();
+        var (retryContext, retryBody) = NewCtx();
+        var retryHandler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetaPkSk) },
+        };
+        await Run(
+            retryContext,
+            BuildClient(retryHandler),
+            EnabledSproc(),
+            request.ToString());
+
+        Assert.Equal(400, retryContext.Response.StatusCode);
+        Assert.Equal(response, ReadResponse(retryBody));
+        Assert.Single(retryHandler.Requests);
     }
 
     [Fact]
@@ -1001,14 +1324,41 @@ public class TransactWriteItemsHandlerTests
             DocBytes = Encoding.UTF8.GetBytes(
                 "{\"payload\":\"" + new string('x', fillerLength + 1) + "\"}"),
         };
-        using var over =
-            TransactWriteItemsHandler.BuildTransactParamsBody([overOp]);
+        var exception = Assert.Throws<BoundedBufferWriterLimitException>(
+            () => TransactWriteItemsHandler.BuildTransactParamsBody([overOp]));
         Assert.Equal(
-            TransactWriteItemsHandler.MaxSprocRequestBodyBytes + 1,
-            over.WrittenMemory.Length);
-        Assert.False(
-            TransactWriteItemsHandler.IsWithinTransactRequestBodyLimit(
-                over.WrittenMemory.Length));
+            TransactWriteItemsHandler.MaxSprocRequestBodyBytes,
+            exception.Limit);
+    }
+
+    [Fact]
+    public void Bounded_writer_honors_limit_without_rejecting_overestimated_hint()
+    {
+        using var writer = new BoundedPooledByteBufferWriter(
+            maximumCapacity: 16,
+            initialCapacity: 8,
+            maximumScratchSizeHint: 32);
+
+        var scratch = writer.GetSpan(17);
+        scratch[..16].Fill((byte)'x');
+        writer.Advance(16);
+
+        Assert.Equal(16, writer.WrittenMemory.Length);
+        Assert.Equal(16, writer.MaximumCapacity);
+        writer.GetSpan(1)[0] = (byte)'y';
+        Assert.Throws<BoundedBufferWriterLimitException>(
+            () => writer.Advance(1));
+
+        using var overflow = new BoundedPooledByteBufferWriter(
+            maximumCapacity: 16,
+            initialCapacity: 8,
+            maximumScratchSizeHint: 32);
+        overflow.GetSpan(17).Fill((byte)'x');
+        var exception = Assert.Throws<BoundedBufferWriterLimitException>(
+            () => overflow.Advance(17));
+        Assert.Equal(16, exception.Limit);
+        Assert.Equal(0, exception.WrittenBytes);
+        Assert.Equal(17, exception.RequestedBytes);
     }
 
     [Theory]
@@ -1171,6 +1521,45 @@ public class TransactWriteItemsHandlerTests
             requestItem => requestItem.Uri.AbsolutePath.Contains(
                 "/sprocs",
                 StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Multi_write_transaction_never_uses_later_preferred_region()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            AccountTopologyJson = MultiWriteLaterOnlyAccountJson,
+            Responses = { CosmosOk(MetaPkSk) },
+        };
+
+        await Run(
+            ctx,
+            BuildClient(
+                handler,
+                endpoint:
+                    "https://txn-write-authority-absent.documents.azure.com/",
+                preferredRegions: ["West US", "East US"]),
+            EnabledSproc(),
+            "{\"ClientRequestToken\":\"stable-authority\",\"TransactItems\":[" +
+            PutOp("1") + "]}");
+
+        Assert.Equal(
+            StatusCodes.Status500InternalServerError,
+            ctx.Response.StatusCode);
+        Assert.Contains(
+            "West US",
+            ReadResponse(body),
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            handler.Requests,
+            requestItem => requestItem.Uri.AbsolutePath.Contains(
+                "/sprocs",
+                StringComparison.Ordinal));
+        Assert.Contains(
+            handler.Requests,
+            requestItem => requestItem.Uri.Host
+                == "txn-write-east.documents.azure.com");
     }
 
     [Theory]

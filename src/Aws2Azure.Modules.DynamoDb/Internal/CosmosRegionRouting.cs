@@ -100,6 +100,7 @@ internal enum CosmosTransactionEndpointSelectionStatus
     Ready,
     TopologyUnavailable,
     PreferredWriteRegionRequired,
+    AuthoritativeWriteRegionUnavailable,
 }
 
 internal static class CosmosAccountInfoParser
@@ -308,35 +309,30 @@ internal static class CosmosRegionRouting
             return CosmosTransactionEndpointSelectionStatus.Ready;
         }
 
-        if (preferredRegions is not null)
+        if (preferredRegions is null
+            || preferredRegions.Count == 0
+            || string.IsNullOrWhiteSpace(preferredRegions[0]))
         {
-            for (var preferredIndex = 0;
-                 preferredIndex < preferredRegions.Count;
-                 preferredIndex++)
-            {
-                var preferred = preferredRegions[preferredIndex];
-                if (string.IsNullOrWhiteSpace(preferred))
-                {
-                    continue;
-                }
+            return CosmosTransactionEndpointSelectionStatus.PreferredWriteRegionRequired;
+        }
 
-                for (var locationIndex = 0;
-                     locationIndex < account.WritableLocations.Length;
-                     locationIndex++)
-                {
-                    var location = account.WritableLocations[locationIndex];
-                    if (location.Name.Equals(
-                            preferred.Trim(),
-                            StringComparison.OrdinalIgnoreCase))
-                    {
-                        endpoint = location.Endpoint;
-                        return CosmosTransactionEndpointSelectionStatus.Ready;
-                    }
-                }
+        var authority = preferredRegions[0].Trim();
+        for (var locationIndex = 0;
+             locationIndex < account.WritableLocations.Length;
+             locationIndex++)
+        {
+            var location = account.WritableLocations[locationIndex];
+            if (location.Name.Equals(
+                    authority,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                endpoint = location.Endpoint;
+                return CosmosTransactionEndpointSelectionStatus.Ready;
             }
         }
 
-        return CosmosTransactionEndpointSelectionStatus.PreferredWriteRegionRequired;
+        return CosmosTransactionEndpointSelectionStatus
+            .AuthoritativeWriteRegionUnavailable;
     }
 
     /// <summary>

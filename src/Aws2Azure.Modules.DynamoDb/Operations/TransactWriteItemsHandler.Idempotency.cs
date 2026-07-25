@@ -1,9 +1,11 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
+using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
-using Aws2Azure.Core.Buffers;
 using Aws2Azure.Modules.DynamoDb.Internal;
 using Aws2Azure.Modules.DynamoDb.Persistence;
 
@@ -49,62 +51,62 @@ internal static partial class TransactWriteItemsHandler
         byte[] body,
         PreparedRequestOp[] operations)
     {
-        using var canonical = new PooledByteBufferWriter(512);
-        using (var writer = new Utf8JsonWriter(canonical))
+        using var writer = new CanonicalFingerprintWriter();
+        writer.WriteRaw("{\"version\":"u8);
+        writer.WriteJsonString(FingerprintVersion);
+        writer.WriteRaw(",\"table\":"u8);
+        writer.WriteJsonString(tableName);
+        writer.WriteRaw(",\"partition\":"u8);
+        writer.WriteJsonString(partitionKey);
+        writer.WriteRaw(",\"operations\":["u8);
+        for (var index = 0; index < operations.Length; index++)
         {
-            writer.WriteStartObject();
-            writer.WriteString("version", FingerprintVersion);
-            writer.WriteString("table", tableName);
-            writer.WriteString("partition", partitionKey);
-            writer.WriteStartArray("operations");
-            foreach (var operation in operations)
+            if (index > 0)
             {
-                writer.WriteStartObject();
-                writer.WriteString(
-                    "type",
-                    operation.Kind switch
-                    {
-                        OpKind.Put => "PUT",
-                        OpKind.Delete => "DELETE",
-                        _ => "CHECK",
-                    });
-                writer.WriteString("id", operation.Id);
-                if (operation.Kind == OpKind.Put)
-                {
-                    using var operationDocument = JsonDocument.Parse(
-                        body.AsMemory(
-                            operation.Range.Start,
-                            operation.Range.Length),
-                        TransactItemParseOptions);
-                    writer.WritePropertyName("item");
-                    WriteCanonicalAttributeMap(
-                        writer,
-                        operationDocument.RootElement.GetProperty("Item"));
-                }
-
-                writer.WritePropertyName("condition");
-                if (operation.ConditionJson is null)
-                {
-                    writer.WriteNullValue();
-                }
-                else
-                {
-                    writer.WriteRawValue(operation.ConditionJson);
-                }
-                writer.WriteEndObject();
+                writer.WriteByte((byte)',');
             }
-            writer.WriteEndArray();
-            writer.WriteEndObject();
-            writer.Flush();
-        }
 
-        Span<byte> digest = stackalloc byte[SHA256.HashSizeInBytes];
-        SHA256.HashData(canonical.WrittenMemory.Span, digest);
-        return Convert.ToHexStringLower(digest);
+            var operation = operations[index];
+            writer.WriteRaw("{\"type\":"u8);
+            writer.WriteJsonString(
+                operation.Kind switch
+                {
+                    OpKind.Put => "PUT",
+                    OpKind.Delete => "DELETE",
+                    _ => "CHECK",
+                });
+            writer.WriteRaw(",\"id\":"u8);
+            writer.WriteJsonString(operation.Id);
+            if (operation.Kind == OpKind.Put)
+            {
+                writer.WriteRaw(",\"item\":"u8);
+                using var operationDocument = JsonDocument.Parse(
+                    body.AsMemory(
+                        operation.Range.Start,
+                        operation.Range.Length),
+                    TransactItemParseOptions);
+                WriteCanonicalAttributeMap(
+                    writer,
+                    operationDocument.RootElement.GetProperty("Item"));
+            }
+
+            writer.WriteRaw(",\"condition\":"u8);
+            if (operation.ConditionJson is null)
+            {
+                writer.WriteRaw("null"u8);
+            }
+            else
+            {
+                writer.WriteRawUtf8(operation.ConditionJson);
+            }
+            writer.WriteByte((byte)'}');
+        }
+        writer.WriteRaw("]}"u8);
+        return writer.Complete();
     }
 
     private static void WriteCanonicalAttributeMap(
-        Utf8JsonWriter writer,
+        CanonicalFingerprintWriter writer,
         JsonElement map)
     {
         var properties = new List<JsonProperty>();
@@ -115,17 +117,23 @@ internal static partial class TransactWriteItemsHandler
         properties.Sort(static (left, right) =>
             string.CompareOrdinal(left.Name, right.Name));
 
-        writer.WriteStartObject();
-        foreach (var property in properties)
+        writer.WriteByte((byte)'{');
+        for (var index = 0; index < properties.Count; index++)
         {
-            writer.WritePropertyName(property.Name);
+            if (index > 0)
+            {
+                writer.WriteByte((byte)',');
+            }
+            var property = properties[index];
+            writer.WriteJsonString(property.Name);
+            writer.WriteByte((byte)':');
             WriteCanonicalAttributeValue(writer, property.Value);
         }
-        writer.WriteEndObject();
+        writer.WriteByte((byte)'}');
     }
 
     private static void WriteCanonicalAttributeValue(
-        Utf8JsonWriter writer,
+        CanonicalFingerprintWriter writer,
         JsonElement attribute)
     {
         if (!ParsedAttributeValue.TryParse(attribute, out var parsed))
@@ -134,12 +142,13 @@ internal static partial class TransactWriteItemsHandler
                 "AttributeValue must contain exactly one supported type tag.");
         }
 
-        writer.WriteStartObject();
-        writer.WritePropertyName(parsed.TypeTag);
+        writer.WriteByte((byte)'{');
+        writer.WriteJsonString(parsed.TypeTag);
+        writer.WriteByte((byte)':');
         switch (parsed.TypeTag)
         {
             case AttributeValueTypes.String:
-                writer.WriteStringValue(parsed.Value.GetString());
+                writer.WriteJsonString(parsed.Value.GetString()!);
                 break;
             case AttributeValueTypes.Number:
                 if (!InferredAttributeStorage.TryNormalizeDdbNumber(
@@ -150,30 +159,36 @@ internal static partial class TransactWriteItemsHandler
                 {
                     throw new ArgumentException(numberError);
                 }
-                writer.WriteStringValue(canonical);
+                writer.WriteJsonString(canonical);
                 break;
             case AttributeValueTypes.Binary:
-                writer.WriteStringValue(
+                writer.WriteJsonString(
                     Convert.ToBase64String(
                         Convert.FromBase64String(
                             parsed.Value.GetString() ?? string.Empty)));
                 break;
             case AttributeValueTypes.Bool:
-                writer.WriteBooleanValue(parsed.Value.GetBoolean());
+                writer.WriteRaw(
+                    parsed.Value.GetBoolean() ? "true"u8 : "false"u8);
                 break;
             case AttributeValueTypes.Null:
-                writer.WriteBooleanValue(true);
+                writer.WriteRaw("true"u8);
                 break;
             case AttributeValueTypes.Map:
                 WriteCanonicalAttributeMap(writer, parsed.Value);
                 break;
             case AttributeValueTypes.List:
-                writer.WriteStartArray();
+                writer.WriteByte((byte)'[');
+                var listIndex = 0;
                 foreach (var element in parsed.Value.EnumerateArray())
                 {
+                    if (listIndex++ > 0)
+                    {
+                        writer.WriteByte((byte)',');
+                    }
                     WriteCanonicalAttributeValue(writer, element);
                 }
-                writer.WriteEndArray();
+                writer.WriteByte((byte)']');
                 break;
             case AttributeValueTypes.StringSet:
                 WriteSortedStringSet(writer, parsed.Value);
@@ -188,11 +203,11 @@ internal static partial class TransactWriteItemsHandler
                 throw new ArgumentException(
                     $"Unsupported AttributeValue type '{parsed.TypeTag}'.");
         }
-        writer.WriteEndObject();
+        writer.WriteByte((byte)'}');
     }
 
     private static void WriteSortedStringSet(
-        Utf8JsonWriter writer,
+        CanonicalFingerprintWriter writer,
         JsonElement values)
     {
         var sorted = new List<string>();
@@ -201,16 +216,20 @@ internal static partial class TransactWriteItemsHandler
             sorted.Add(value.GetString() ?? string.Empty);
         }
         sorted.Sort(StringComparer.Ordinal);
-        writer.WriteStartArray();
-        foreach (var value in sorted)
+        writer.WriteByte((byte)'[');
+        for (var index = 0; index < sorted.Count; index++)
         {
-            writer.WriteStringValue(value);
+            if (index > 0)
+            {
+                writer.WriteByte((byte)',');
+            }
+            writer.WriteJsonString(sorted[index]);
         }
-        writer.WriteEndArray();
+        writer.WriteByte((byte)']');
     }
 
     private static void WriteSortedNumberSet(
-        Utf8JsonWriter writer,
+        CanonicalFingerprintWriter writer,
         JsonElement values)
     {
         var sorted = new List<string>();
@@ -227,16 +246,20 @@ internal static partial class TransactWriteItemsHandler
             sorted.Add(canonical);
         }
         sorted.Sort(StringComparer.Ordinal);
-        writer.WriteStartArray();
-        foreach (var value in sorted)
+        writer.WriteByte((byte)'[');
+        for (var index = 0; index < sorted.Count; index++)
         {
-            writer.WriteStringValue(value);
+            if (index > 0)
+            {
+                writer.WriteByte((byte)',');
+            }
+            writer.WriteJsonString(sorted[index]);
         }
-        writer.WriteEndArray();
+        writer.WriteByte((byte)']');
     }
 
     private static void WriteSortedBinarySet(
-        Utf8JsonWriter writer,
+        CanonicalFingerprintWriter writer,
         JsonElement values)
     {
         var sorted = new List<string>();
@@ -248,11 +271,141 @@ internal static partial class TransactWriteItemsHandler
                         value.GetString() ?? string.Empty)));
         }
         sorted.Sort(StringComparer.Ordinal);
-        writer.WriteStartArray();
-        foreach (var value in sorted)
+        writer.WriteByte((byte)'[');
+        for (var index = 0; index < sorted.Count; index++)
         {
-            writer.WriteStringValue(value);
+            if (index > 0)
+            {
+                writer.WriteByte((byte)',');
+            }
+            writer.WriteJsonString(sorted[index]);
         }
-        writer.WriteEndArray();
+        writer.WriteByte((byte)']');
+    }
+
+    private sealed class CanonicalFingerprintWriter : IDisposable
+    {
+        private readonly IncrementalHash _hash =
+            IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        private readonly IncrementalHashTextWriter _textWriter;
+
+        public CanonicalFingerprintWriter()
+        {
+            _textWriter = new IncrementalHashTextWriter(_hash);
+        }
+
+        public void WriteRaw(ReadOnlySpan<byte> value)
+            => _hash.AppendData(value);
+
+        public void WriteByte(byte value)
+        {
+            Span<byte> buffer = stackalloc byte[1];
+            buffer[0] = value;
+            _hash.AppendData(buffer);
+        }
+
+        public void WriteJsonString(string value)
+        {
+            WriteByte((byte)'"');
+            JavaScriptEncoder.Default.Encode(_textWriter, value);
+            _textWriter.CompleteSegment();
+            WriteByte((byte)'"');
+        }
+
+        public void WriteRawUtf8(string value)
+        {
+            _textWriter.Write(value);
+            _textWriter.CompleteSegment();
+        }
+
+        public string Complete()
+        {
+            _textWriter.CompleteSegment();
+            var digest = _hash.GetHashAndReset();
+            return Convert.ToHexStringLower(digest);
+        }
+
+        public void Dispose()
+        {
+            _textWriter.Dispose();
+            _hash.Dispose();
+        }
+    }
+
+    private sealed class IncrementalHashTextWriter : TextWriter
+    {
+        private readonly IncrementalHash _hash;
+        private readonly Encoder _encoder = Encoding.UTF8.GetEncoder();
+        private byte[] _buffer = ArrayPool<byte>.Shared.Rent(1024);
+
+        public IncrementalHashTextWriter(IncrementalHash hash)
+        {
+            _hash = hash;
+        }
+
+        public override Encoding Encoding => Encoding.UTF8;
+
+        public override void Write(char value)
+        {
+            Span<char> character = stackalloc char[1];
+            character[0] = value;
+            Write(character);
+        }
+
+        public override void Write(char[] buffer, int index, int count)
+            => Write(buffer.AsSpan(index, count));
+
+        public override void Write(string? value)
+        {
+            if (value is not null)
+            {
+                Write(value.AsSpan());
+            }
+        }
+
+        public override void Write(ReadOnlySpan<char> buffer)
+        {
+            while (!buffer.IsEmpty)
+            {
+                _encoder.Convert(
+                    buffer,
+                    _buffer,
+                    flush: false,
+                    out var charsUsed,
+                    out var bytesUsed,
+                    out _);
+                if (bytesUsed > 0)
+                {
+                    _hash.AppendData(_buffer.AsSpan(0, bytesUsed));
+                }
+                buffer = buffer[charsUsed..];
+            }
+        }
+
+        public void CompleteSegment()
+        {
+            _encoder.Convert(
+                ReadOnlySpan<char>.Empty,
+                _buffer,
+                flush: true,
+                out _,
+                out var bytesUsed,
+                out _);
+            if (bytesUsed > 0)
+            {
+                _hash.AppendData(_buffer.AsSpan(0, bytesUsed));
+            }
+            _encoder.Reset();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (_buffer.Length != 0)
+            {
+                ArrayPool<byte>.Shared.Return(_buffer);
+                _buffer = [];
+            }
+            base.Dispose(disposing);
+        }
     }
 }

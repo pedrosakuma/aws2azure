@@ -195,8 +195,9 @@ public sealed class AzureTargetConfig
     public string? ManagementEndpoint { get; set; }
 
     /// <summary>
-    /// Ordered Cosmos region preference list (<c>cosmos</c>). The first matching
-    /// writable region is the authoritative endpoint for DynamoDB transactions.
+    /// Ordered Cosmos region preference list (<c>cosmos</c>). On a multi-write
+    /// account the first entry, and only that entry, is the authoritative region
+    /// for DynamoDB transactions; later entries are non-transaction fallbacks.
     /// </summary>
     public List<string>? PreferredRegions { get; set; }
 

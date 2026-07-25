@@ -101,6 +101,81 @@ public class CosmosRegionRoutingTests
     }
 
     [Fact]
+    public void Nontransaction_multi_write_routing_can_use_later_available_region()
+    {
+        var candidates = CosmosRegionRouting.BuildCandidateEndpoints(
+            AccountInfo(multiWrite: true),
+            new[] { "West US", "East US" },
+            isRead: false,
+            endpoint => endpoint != West);
+
+        Assert.Equal(East, candidates[0]);
+        Assert.DoesNotContain(West, candidates);
+    }
+
+    [Fact]
+    public void Transaction_selection_uses_only_first_configured_multi_write_region()
+    {
+        var reordered = new CosmosAccountInfo(
+            Global,
+            CosmosConsistencyLevel.Session,
+            enableMultipleWriteLocations: true,
+            readableLocations:
+            [
+                new CosmosAccountLocation("East US", East),
+                new CosmosAccountLocation("West US", West),
+            ],
+            writableLocations:
+            [
+                new CosmosAccountLocation("East US", East),
+                new CosmosAccountLocation("West US", West),
+            ]);
+        var laterOnly = new CosmosAccountInfo(
+            Global,
+            CosmosConsistencyLevel.Session,
+            enableMultipleWriteLocations: true,
+            readableLocations:
+            [
+                new CosmosAccountLocation("East US", East),
+            ],
+            writableLocations:
+            [
+                new CosmosAccountLocation("East US", East),
+            ]);
+
+        var reorderedStatus =
+            CosmosRegionRouting.SelectTransactionEndpoint(
+                reordered,
+                ["West US", "East US"],
+                out var reorderedEndpoint);
+        var laterOnlyStatus =
+            CosmosRegionRouting.SelectTransactionEndpoint(
+                laterOnly,
+                ["West US", "East US"],
+                out var laterOnlyEndpoint);
+        var blankFirstStatus =
+            CosmosRegionRouting.SelectTransactionEndpoint(
+                reordered,
+                [" ", "East US"],
+                out var blankFirstEndpoint);
+
+        Assert.Equal(
+            CosmosTransactionEndpointSelectionStatus.Ready,
+            reorderedStatus);
+        Assert.Equal(West, reorderedEndpoint);
+        Assert.Equal(
+            CosmosTransactionEndpointSelectionStatus
+                .AuthoritativeWriteRegionUnavailable,
+            laterOnlyStatus);
+        Assert.Null(laterOnlyEndpoint);
+        Assert.Equal(
+            CosmosTransactionEndpointSelectionStatus
+                .PreferredWriteRegionRequired,
+            blankFirstStatus);
+        Assert.Null(blankFirstEndpoint);
+    }
+
+    [Fact]
     public void Failover_statuses_match_cosmos_region_triggers()
     {
         using var unavailable = new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
@@ -271,67 +346,107 @@ public class CosmosRegionRoutingTests
     }
 
     [Fact]
-    public async Task Shared_container_rejects_conflicting_binding_region_pins()
+    public async Task Fresh_clients_use_first_configured_transaction_authority_or_fail()
     {
-        var westConfiguredEndpoint = new Uri(
-            "https://acct-transaction-west-config.documents.azure.com/");
-        var eastConfiguredEndpoint = new Uri(
-            "https://acct-transaction-east-config.documents.azure.com/");
-        var westHandler = new SequenceHandler(
+        var completeConfiguredEndpoint = new Uri(
+            "https://acct-transaction-complete.documents.azure.com/");
+        var reorderedConfiguredEndpoint = new Uri(
+            "https://acct-transaction-reordered.documents.azure.com/");
+        var laterOnlyConfiguredEndpoint = new Uri(
+            "https://acct-transaction-later-only.documents.azure.com/");
+        var completeHandler = new SequenceHandler(
             (Func<HttpRequestMessage, bool>)(request =>
-                request.RequestUri == westConfiguredEndpoint),
+                request.RequestUri == completeConfiguredEndpoint),
             (Func<HttpResponseMessage>)(() => JsonResponse(
                 HttpStatusCode.OK,
-                MultiWriteAccountJson())));
-        var eastHandler = new SequenceHandler(
+                MultiWriteAccountJson(
+                    new CosmosAccountLocation("West US", West),
+                    new CosmosAccountLocation("East US", East)))));
+        var reorderedHandler = new SequenceHandler(
             (Func<HttpRequestMessage, bool>)(request =>
-                request.RequestUri == eastConfiguredEndpoint),
+                request.RequestUri == reorderedConfiguredEndpoint),
             (Func<HttpResponseMessage>)(() => JsonResponse(
                 HttpStatusCode.OK,
-                MultiWriteAccountJson())));
-        using var westHttp = new AzureHttpClient(
-            westHandler,
+                MultiWriteAccountJson(
+                    new CosmosAccountLocation("East US", East),
+                    new CosmosAccountLocation("West US", West)))));
+        var laterOnlyHandler = new SequenceHandler(
+            (Func<HttpRequestMessage, bool>)(request =>
+                request.RequestUri == laterOnlyConfiguredEndpoint),
+            (Func<HttpResponseMessage>)(() => JsonResponse(
+                HttpStatusCode.OK,
+                MultiWriteAccountJson(
+                    new CosmosAccountLocation("East US", East)))));
+        using var completeHttp = new AzureHttpClient(
+            completeHandler,
             ownsHandler: false,
             NoRetryOptions());
-        using var eastHttp = new AzureHttpClient(
-            eastHandler,
+        using var reorderedHttp = new AzureHttpClient(
+            reorderedHandler,
             ownsHandler: false,
             NoRetryOptions());
-        var westCredentials = Credentials(westConfiguredEndpoint.AbsoluteUri);
-        westCredentials.PreferredRegions = ["West US"];
-        var eastCredentials = Credentials(eastConfiguredEndpoint.AbsoluteUri);
-        eastCredentials.PreferredRegions = ["East US"];
-        var westClient = new CosmosClient(
-            westHttp,
-            westCredentials,
-            new MasterKeyCosmosAuthenticator(westCredentials.PrimaryKey));
-        var eastClient = new CosmosClient(
-            eastHttp,
-            eastCredentials,
-            new MasterKeyCosmosAuthenticator(eastCredentials.PrimaryKey));
+        using var laterOnlyHttp = new AzureHttpClient(
+            laterOnlyHandler,
+            ownsHandler: false,
+            NoRetryOptions());
+        var completeCredentials = Credentials(
+            completeConfiguredEndpoint.AbsoluteUri);
+        completeCredentials.PreferredRegions = ["West US", "East US"];
+        var reorderedCredentials = Credentials(
+            reorderedConfiguredEndpoint.AbsoluteUri);
+        reorderedCredentials.PreferredRegions = ["West US", "East US"];
+        var laterOnlyCredentials = Credentials(
+            laterOnlyConfiguredEndpoint.AbsoluteUri);
+        laterOnlyCredentials.PreferredRegions = ["West US", "East US"];
+        var completeClient = new CosmosClient(
+            completeHttp,
+            completeCredentials,
+            new MasterKeyCosmosAuthenticator(
+                completeCredentials.PrimaryKey));
+        var reorderedClient = new CosmosClient(
+            reorderedHttp,
+            reorderedCredentials,
+            new MasterKeyCosmosAuthenticator(
+                reorderedCredentials.PrimaryKey));
+        var laterOnlyClient = new CosmosClient(
+            laterOnlyHttp,
+            laterOnlyCredentials,
+            new MasterKeyCosmosAuthenticator(
+                laterOnlyCredentials.PrimaryKey));
 
-        var west = await westClient.ResolveTransactionRouteAsync(
+        var complete = await completeClient.ResolveTransactionRouteAsync(
             "orders",
             CancellationToken.None);
-        var east = await eastClient.ResolveTransactionRouteAsync(
+        var reordered = await reorderedClient.ResolveTransactionRouteAsync(
+            "orders",
+            CancellationToken.None);
+        var laterOnly = await laterOnlyClient.ResolveTransactionRouteAsync(
             "orders",
             CancellationToken.None);
 
         Assert.Equal(
             CosmosTransactionRouteResolutionStatus.Ready,
-            west.Status);
-        Assert.Equal(West, west.Route.Endpoint);
+            complete.Status);
+        Assert.Equal(West, complete.Route.Endpoint);
         Assert.Equal(
-            CosmosTransactionRouteResolutionStatus.InvalidConfiguration,
-            east.Status);
+            CosmosTransactionRouteResolutionStatus.Ready,
+            reordered.Status);
+        Assert.Equal(West, reordered.Route.Endpoint);
+        Assert.Equal(
+            CosmosTransactionRouteResolutionStatus.Unavailable,
+            laterOnly.Status);
         Assert.Contains(
-            "already pinned",
-            east.Error,
+            "West US",
+            laterOnly.Error,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "not executed in a later preferred region",
+            laterOnly.Error,
             StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Shared_container_write_region_change_is_retryable_unavailable()
+    public async Task Fresh_single_write_clients_use_discovered_authoritative_endpoint()
     {
         var westConfiguredEndpoint = new Uri(
             "https://acct-topology-west-config.documents.azure.com/");
@@ -384,13 +499,11 @@ public class CosmosRegionRoutingTests
         Assert.Equal(
             CosmosTransactionRouteResolutionStatus.Ready,
             west.Status);
+        Assert.Equal(West, west.Route.Endpoint);
         Assert.Equal(
-            CosmosTransactionRouteResolutionStatus.Unavailable,
+            CosmosTransactionRouteResolutionStatus.Ready,
             east.Status);
-        Assert.Contains(
-            "no longer reported writable",
-            east.Error,
-            StringComparison.Ordinal);
+        Assert.Equal(East, east.Route.Endpoint);
     }
 
     private static CosmosAccountInfo AccountInfo(bool multiWrite)
@@ -455,22 +568,30 @@ public class CosmosRegionRoutingTests
         """;
     }
 
-    private static string MultiWriteAccountJson() =>
-        $$"""
+    private static string MultiWriteAccountJson(
+        params CosmosAccountLocation[] locations)
+    {
+        var locationJson = new StringBuilder();
+        for (var index = 0; index < locations.Length; index++)
         {
-          "id": "shared-transaction-account",
-          "userConsistencyPolicy": { "defaultConsistencyLevel": "Session" },
-          "enableMultipleWriteLocations": true,
-          "readableLocations": [
-            { "name": "West US", "databaseAccountEndpoint": "{{West.AbsoluteUri}}" },
-            { "name": "East US", "databaseAccountEndpoint": "{{East.AbsoluteUri}}" }
-          ],
-          "writableLocations": [
-            { "name": "West US", "databaseAccountEndpoint": "{{West.AbsoluteUri}}" },
-            { "name": "East US", "databaseAccountEndpoint": "{{East.AbsoluteUri}}" }
-          ]
+            if (index > 0)
+            {
+                locationJson.Append(',');
+            }
+            locationJson.Append("{\"name\":\"")
+                .Append(locations[index].Name)
+                .Append("\",\"databaseAccountEndpoint\":\"")
+                .Append(locations[index].Endpoint.AbsoluteUri)
+                .Append("\"}");
         }
-        """;
+
+        return
+            "{\"id\":\"shared-transaction-account\"," +
+            "\"userConsistencyPolicy\":{\"defaultConsistencyLevel\":\"Session\"}," +
+            "\"enableMultipleWriteLocations\":true," +
+            "\"readableLocations\":[" + locationJson + "]," +
+            "\"writableLocations\":[" + locationJson + "]}";
+    }
 
     private static string SingleWriteAccountJson(
         string accountIdentity,
@@ -486,8 +607,7 @@ public class CosmosRegionRoutingTests
             { "name": "Second", "databaseAccountEndpoint": "{{second.AbsoluteUri}}" }
           ],
           "writableLocations": [
-            { "name": "First", "databaseAccountEndpoint": "{{first.AbsoluteUri}}" },
-            { "name": "Second", "databaseAccountEndpoint": "{{second.AbsoluteUri}}" }
+            { "name": "First", "databaseAccountEndpoint": "{{first.AbsoluteUri}}" }
           ]
         }
         """;

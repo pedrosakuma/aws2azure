@@ -13,17 +13,23 @@ implements the complete profile well enough to qualify rollback.
 - Co-locate every transaction item under one partition-key value in one table.
 - Do not send duplicate table/key targets in either operation.
 - Use a single-write Cosmos account, or set the binding's
-  `target.preferredRegions` so its first matching writable region is the intended
-  transaction authority. Multi-write accounts without a matching preferred
-  writable region are rejected before transaction execution.
+  `target.preferredRegions[0]` to the intended transaction authority. Configure
+  that same first entry on every replica and binding targeting the same data.
+  Later entries remain available for ordinary routing but are never transaction
+  fallbacks. If the authority is not reported writable, transactions fail
+  retryably rather than running in a later region.
 - Keep transactions within Cosmos stored-procedure execution and response
   budgets. The exact serialized stored-procedure parameter body must be at most
-  2 MiB, below DynamoDB's 4 MiB aggregate transaction limit; larger requests
-  fail with `ValidationException` before stored-procedure provisioning/execution.
-  A rejected or failed request never falls back to partial REST calls.
-- Keep each transactional Put item at or below 400 KiB. The proxy counts UTF-8
-  attribute names/string values, decoded binary bytes, scalar/set values, and
-  list/map overhead before metadata or stored-procedure I/O.
+  2 MiB, below DynamoDB's 4 MiB aggregate transaction limit. A bounded pooled
+  writer stops serialization at overflow, and token fingerprints are hashed
+  incrementally without retaining a second canonical transaction body. Larger
+  requests fail with `ValidationException` before stored-procedure
+  provisioning/execution. A rejected or failed request never falls back to
+  partial REST calls.
+- Keep each transactional Put's base item at or below 400 KiB. On tables with
+  LSIs, the base item plus every corresponding projected LSI entry must also fit
+  in 400 KiB. KEYS_ONLY, INCLUDE, ALL, sparse-index membership, and repeated
+  base/index key names follow DynamoDB projection sizing.
 
 Cross-table and cross-partition transactions fail with `ValidationException`
 before item data is read. That is a permanent Cosmos transaction-scope boundary,
@@ -91,14 +97,15 @@ the profile's supported single-partition boundary; do not reuse one token for a
 different partition.
 
 Every transaction snapshot, write, and idempotency-record operation uses one
-regional endpoint pinned per physical account/database/container across all
-bindings. Single-write accounts use their authoritative writable location;
-multi-write accounts use the first configured preferred region that Cosmos
-reports writable. Bindings sharing a container must resolve the same endpoint or
-the request fails with `ValidationException`. A 403/3, 408, 503, timeout, or
-transport failure never triggers replay in another writable region. The proxy
-returns a retryable AWS error and keeps the original pin for the process lifetime.
-Ordinary non-transactional region routing is unchanged.
+regional authority. Single-write accounts use their explicit writable location.
+For multi-write accounts, `target.preferredRegions[0]` is the authority across
+restarts and topology refreshes. A fresh process that discovers only a later
+writable region fails retryably and never executes there or through the global
+account endpoint. A 403/3, 408, 503, timeout, or transport failure likewise never
+triggers regional replay. This opt-in trades transaction availability during an
+authority-region outage for stable atomic/idempotency history. Treat a first-entry
+change as a coordinated migration after outstanding 10-minute token windows and
+replication converge. Ordinary non-transactional routing is unchanged.
 
 ## Versioning and rollback
 

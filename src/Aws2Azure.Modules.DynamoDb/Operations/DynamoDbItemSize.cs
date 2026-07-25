@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Text;
 using System.Text.Json;
+using Aws2Azure.Modules.DynamoDb.Internal;
 using Aws2Azure.Modules.DynamoDb.Persistence;
 
 namespace Aws2Azure.Modules.DynamoDb.Operations;
@@ -26,6 +27,126 @@ internal static class DynamoDbItemSize
         {
             size += Encoding.UTF8.GetByteCount(attribute.Name);
             if (!TryAddValueSize(attribute.Value, ref size, out error))
+            {
+                return false;
+            }
+        }
+
+        error = string.Empty;
+        return true;
+    }
+
+    public static bool TryCalculateWithLocalSecondaryIndexes(
+        JsonElement item,
+        TableMetadata metadata,
+        long baseItemSize,
+        out long combinedSize,
+        out string error)
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+        combinedSize = baseItemSize;
+        if (metadata.LocalSecondaryIndexes is not { Count: > 0 } indexes)
+        {
+            error = string.Empty;
+            return true;
+        }
+
+        foreach (var index in indexes)
+        {
+            if (!TryAddLocalSecondaryIndexEntry(
+                    item,
+                    metadata,
+                    index,
+                    baseItemSize,
+                    ref combinedSize,
+                    out error))
+            {
+                return false;
+            }
+        }
+
+        error = string.Empty;
+        return true;
+    }
+
+    private static bool TryAddLocalSecondaryIndexEntry(
+        JsonElement item,
+        TableMetadata metadata,
+        TableIndexDefinition index,
+        long baseItemSize,
+        ref long combinedSize,
+        out string error)
+    {
+        var hasRangeKey = false;
+        var indexKeyNames = new string?[index.KeySchema.Count];
+        for (var keyIndex = 0; keyIndex < index.KeySchema.Count; keyIndex++)
+        {
+            var key = index.KeySchema[keyIndex];
+            indexKeyNames[keyIndex] = key.Name;
+            if (string.Equals(key.KeyType, "RANGE", StringComparison.Ordinal))
+            {
+                hasRangeKey = true;
+            }
+        }
+
+        if (!hasRangeKey)
+        {
+            error =
+                $"Local secondary index '{index.IndexName}' has invalid metadata: a RANGE key is required.";
+            return false;
+        }
+
+        for (var keyIndex = 0; keyIndex < indexKeyNames.Length; keyIndex++)
+        {
+            if (!item.TryGetProperty(indexKeyNames[keyIndex]!, out _))
+            {
+                error = string.Empty;
+                return true;
+            }
+        }
+
+        if (string.Equals(
+                index.ProjectionType,
+                "ALL",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            combinedSize += baseItemSize;
+            error = string.Empty;
+            return true;
+        }
+        if (!string.Equals(
+                index.ProjectionType,
+                "KEYS_ONLY",
+                StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(
+                index.ProjectionType,
+                "INCLUDE",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            error =
+                $"Local secondary index '{index.IndexName}' has unsupported projection type '{index.ProjectionType}'.";
+            return false;
+        }
+
+        var projected = SecondaryIndexResolver.ResolveIndexProjection(
+            metadata,
+            index,
+            indexKeyNames)!;
+        for (var attributeIndex = 0;
+             attributeIndex < projected.Count;
+             attributeIndex++)
+        {
+            var attributeName = projected[attributeIndex];
+            if (!item.TryGetProperty(attributeName, out var attributeValue))
+            {
+                continue;
+            }
+
+            combinedSize += Encoding.UTF8.GetByteCount(attributeName);
+            if (!TryAddValueSize(
+                    attributeValue,
+                    ref combinedSize,
+                    out error))
             {
                 return false;
             }

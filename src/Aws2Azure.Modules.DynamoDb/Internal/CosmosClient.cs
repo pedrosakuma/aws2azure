@@ -42,8 +42,6 @@ internal sealed class CosmosClient
     private static readonly TimeSpan EndpointUnavailableTtl = TimeSpan.FromSeconds(30);
     private static readonly ConcurrentDictionary<string, CosmosAccountCacheEntry> AccountCache =
         new(StringComparer.OrdinalIgnoreCase);
-    private static readonly ConcurrentDictionary<string, Uri> TransactionEndpointPins =
-        new(StringComparer.Ordinal);
 
     public string DatabaseName { get; }
 
@@ -198,9 +196,20 @@ internal sealed class CosmosClient
         {
             return CosmosTransactionRouteResolution.InvalidConfiguration(
                 "Transactions on a Cosmos account with multiple writable regions " +
-                "require target.preferredRegions to name at least one current " +
-                "writable region. The first matching region is authoritative and " +
-                "transaction execution never fails over to another writable region.");
+                "require target.preferredRegions[0] to name the deployment's " +
+                "authoritative transaction region. Later preferred regions are " +
+                "never transaction fallbacks.");
+        }
+        if (selection
+            == CosmosTransactionEndpointSelectionStatus
+                .AuthoritativeWriteRegionUnavailable)
+        {
+            var authority = _preferredRegions![0].Trim();
+            return CosmosTransactionRouteResolution.Unavailable(
+                $"The configured authoritative Cosmos transaction region " +
+                $"'{authority}' is not currently reported writable. The " +
+                "transaction was not executed in a later preferred region; " +
+                "restore the authority and retry.");
         }
         if (selection == CosmosTransactionEndpointSelectionStatus.TopologyUnavailable
             || selected is null)
@@ -210,52 +219,14 @@ internal sealed class CosmosClient
                 "identity. The transaction was not executed; retry the request.");
         }
 
-        var cacheKey = BuildTransactionRouteCacheKey(account, containerName);
-        var pinned = TransactionEndpointPins.GetOrAdd(cacheKey, selected);
-        if (!pinned.AbsoluteUri.Equals(
-                selected.AbsoluteUri,
-                StringComparison.OrdinalIgnoreCase))
-        {
-            if (!account.EnableMultipleWriteLocations
-                || !ContainsWritableEndpoint(account, pinned))
-            {
-                return CosmosTransactionRouteResolution.Unavailable(
-                    "The authoritative Cosmos transaction endpoint is no longer " +
-                    "reported writable. The existing process-lifetime pin was " +
-                    "retained and the transaction was not executed; retry after " +
-                    "restoring that endpoint or restarting the proxy to " +
-                    "intentionally resolve new topology.");
-            }
-            return CosmosTransactionRouteResolution.InvalidConfiguration(
-                "Bindings that share one Cosmos account/database/container must " +
-                "resolve the same authoritative transaction write region. " +
-                $"This container is already pinned to '{pinned.AbsoluteUri}', " +
-                $"but the current binding resolves '{selected.AbsoluteUri}'.");
-        }
         if (_regionLogger is not null)
         {
             DynamoDbLog.SelectedEndpoint(
                 _regionLogger,
                 "transaction",
-                pinned.AbsoluteUri);
+                selected.AbsoluteUri);
         }
-        return CosmosTransactionRouteResolution.Ready(pinned);
-    }
-
-    private static bool ContainsWritableEndpoint(
-        CosmosAccountInfo account,
-        Uri endpoint)
-    {
-        for (var index = 0; index < account.WritableLocations.Length; index++)
-        {
-            if (account.WritableLocations[index].Endpoint.AbsoluteUri.Equals(
-                    endpoint.AbsoluteUri,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-        return false;
+        return CosmosTransactionRouteResolution.Ready(selected);
     }
 
     internal async Task<HttpResponseMessage> SendTransactionAsync(
@@ -695,16 +666,6 @@ internal sealed class CosmosClient
 
         return false;
     }
-
-    private string BuildTransactionRouteCacheKey(
-        CosmosAccountInfo account,
-        string containerName)
-        => string.Concat(
-            account.AccountIdentity.ToUpperInvariant(),
-            "\n",
-            DatabaseName,
-            "\n",
-            containerName);
 
     private Task<CosmosAccountInfo> RefreshAccountInfoForRoutingAsync(CancellationToken ct)
         => GetOrRefreshAccountInfoAsync(forceRefresh: true, strict: false, ct);

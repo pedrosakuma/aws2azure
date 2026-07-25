@@ -6,7 +6,6 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Aws2Azure.Core.Buffers;
 using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
 using Aws2Azure.Modules.DynamoDb.Persistence;
@@ -23,6 +22,8 @@ internal static partial class TransactWriteItemsHandler
 {
     private const int MaxItemsPerCall = 100;
     internal const int MaxSprocRequestBodyBytes = 2 * 1024 * 1024;
+    private const int MaxSerializerContiguousWriteBytes =
+        (6 * DynamoDbItemSize.MaximumBytes) + 4096;
 
     private static readonly JsonDocumentOptions TransactItemParseOptions = new()
     {
@@ -46,6 +47,7 @@ internal static partial class TransactWriteItemsHandler
         OpKind Kind,
         JsonRange Range,
         string Name,
+        long BaseItemSize,
         string? ConditionJson);
 
     private readonly record struct PreparedRequestOp(
@@ -278,6 +280,7 @@ internal static partial class TransactWriteItemsHandler
                 return;
             }
 
+            long baseItemSize = 0;
             if (kind == OpKind.Put)
             {
                 if (!ItemHandlers.ValidateItemShape(keyBearer, out var shapeError))
@@ -287,17 +290,17 @@ internal static partial class TransactWriteItemsHandler
                 }
                 if (!DynamoDbItemSize.TryCalculate(
                         keyBearer,
-                        out var itemSize,
+                        out baseItemSize,
                         out var itemSizeError))
                 {
                     await RejectAsync(ctx, itemSizeError).ConfigureAwait(false);
                     return;
                 }
-                if (itemSize > DynamoDbItemSize.MaximumBytes)
+                if (baseItemSize > DynamoDbItemSize.MaximumBytes)
                 {
                     await RejectAsync(
                         ctx,
-                        $"TransactItems[{index}].Put.Item is {itemSize} bytes; " +
+                        $"TransactItems[{index}].Put.Item is {baseItemSize} bytes; " +
                         $"DynamoDB items must not exceed {DynamoDbItemSize.MaximumBytes} bytes (400 KiB).")
                         .ConfigureAwait(false);
                     return;
@@ -369,7 +372,12 @@ internal static partial class TransactWriteItemsHandler
                 return;
             }
 
-            inputs[index] = new InputOp(kind, range, name, conditionJson);
+            inputs[index] = new InputOp(
+                kind,
+                range,
+                name,
+                baseItemSize,
+                conditionJson);
         }
 
         if (sprocContext is not { IsSprocEnabled: true } || sprocContext.Manager is null)
@@ -417,6 +425,32 @@ internal static partial class TransactWriteItemsHandler
             var operation = operationDocument.RootElement;
             var keyBearer = operation.GetProperty(
                 input.Kind == OpKind.Put ? "Item" : "Key");
+
+            if (input.Kind == OpKind.Put)
+            {
+                if (!DynamoDbItemSize.TryCalculateWithLocalSecondaryIndexes(
+                        keyBearer,
+                        metadata,
+                        input.BaseItemSize,
+                        out var combinedSize,
+                        out var combinedSizeError))
+                {
+                    await RejectAsync(ctx, combinedSizeError)
+                        .ConfigureAwait(false);
+                    return;
+                }
+                if (combinedSize > DynamoDbItemSize.MaximumBytes)
+                {
+                    await RejectAsync(
+                        ctx,
+                        $"TransactItems[{index}].Put.Item plus its local " +
+                        $"secondary index entries is {combinedSize} bytes; " +
+                        $"the combined DynamoDB limit is " +
+                        $"{DynamoDbItemSize.MaximumBytes} bytes (400 KiB).")
+                        .ConfigureAwait(false);
+                    return;
+                }
+            }
 
             foreach (var keyDefinition in metadata.KeySchema)
             {
@@ -517,7 +551,7 @@ internal static partial class TransactWriteItemsHandler
         }
 
         PreparedIdempotency? idempotency = null;
-        PooledByteBufferWriter parameters;
+        BoundedPooledByteBufferWriter parameters;
         try
         {
             if (request.ClientRequestToken is not null)
@@ -536,11 +570,11 @@ internal static partial class TransactWriteItemsHandler
                 prepared,
                 idempotency);
         }
-        catch (TransactionRequestTooLargeException exception)
+        catch (BoundedBufferWriterLimitException)
         {
             await RejectAsync(
                 ctx,
-                $"The serialized TransactWriteItems stored-procedure request is {exception.ActualBytes} bytes, exceeding the Cosmos DB 2 MiB ({MaxSprocRequestBodyBytes}-byte) limit. DynamoDB permits up to 4 MiB, so split this transaction.")
+                $"The serialized TransactWriteItems stored-procedure request exceeds the Cosmos DB 2 MiB ({MaxSprocRequestBodyBytes}-byte) limit. DynamoDB permits up to 4 MiB, so split this transaction.")
                 .ConfigureAwait(false);
             return;
         }
@@ -838,12 +872,15 @@ internal static partial class TransactWriteItemsHandler
         return false;
     }
 
-    private static PooledByteBufferWriter BuildTransactRequestParamsBody(
+    private static BoundedPooledByteBufferWriter BuildTransactRequestParamsBody(
         byte[] body,
         PreparedRequestOp[] operations,
         PreparedIdempotency? idempotency = null)
     {
-        var buffer = new PooledByteBufferWriter(512);
+        var buffer = new BoundedPooledByteBufferWriter(
+            MaxSprocRequestBodyBytes,
+            initialCapacity: 512,
+            maximumScratchSizeHint: MaxSerializerContiguousWriteBytes);
         try
         {
             WriteRaw(buffer, "[["u8);
@@ -908,7 +945,6 @@ internal static partial class TransactWriteItemsHandler
                 WriteRaw(buffer, "null"u8);
             }
             WriteByte(buffer, (byte)']');
-            ThrowIfTransactRequestTooLarge(buffer);
             return buffer;
         }
         catch
@@ -918,10 +954,13 @@ internal static partial class TransactWriteItemsHandler
         }
     }
 
-    internal static PooledByteBufferWriter BuildTransactParamsBody(
+    internal static BoundedPooledByteBufferWriter BuildTransactParamsBody(
         PreparedOp[] operations)
     {
-        var buffer = new PooledByteBufferWriter(512);
+        var buffer = new BoundedPooledByteBufferWriter(
+            MaxSprocRequestBodyBytes,
+            initialCapacity: 512,
+            maximumScratchSizeHint: MaxSerializerContiguousWriteBytes);
         try
         {
             using var writer = new Utf8JsonWriter(buffer);
@@ -1008,16 +1047,6 @@ internal static partial class TransactWriteItemsHandler
         var span = output.GetSpan(value.Length);
         value.CopyTo(span);
         output.Advance(value.Length);
-    }
-
-    private static void ThrowIfTransactRequestTooLarge(
-        PooledByteBufferWriter buffer)
-    {
-        var actualBytes = buffer.WrittenMemory.Length;
-        if (!IsWithinTransactRequestBodyLimit(actualBytes))
-        {
-            throw new TransactionRequestTooLargeException(actualBytes);
-        }
     }
 
     internal static bool IsWithinTransactRequestBodyLimit(int byteCount)
@@ -1171,9 +1200,4 @@ internal static partial class TransactWriteItemsHandler
                     "InternalServerError",
                     resolution.Error);
 
-    private sealed class TransactionRequestTooLargeException(int actualBytes)
-        : Exception
-    {
-        public int ActualBytes { get; } = actualBytes;
-    }
 }

@@ -36,6 +36,19 @@ public sealed class TransactGetItemsHandlerTests
         }
         """;
 
+    private const string MultiWriteLaterOnlyAccountJson =
+        """
+        {
+          "enableMultipleWriteLocations": true,
+          "readableLocations": [
+            { "name": "East US", "databaseAccountEndpoint": "https://txn-get-east.documents.azure.com/" }
+          ],
+          "writableLocations": [
+            { "name": "East US", "databaseAccountEndpoint": "https://txn-get-east.documents.azure.com/" }
+          ]
+        }
+        """;
+
     public TransactGetItemsHandlerTests()
     {
         CosmosOpsShared.MetadataCache.Clear();
@@ -263,6 +276,44 @@ public sealed class TransactGetItemsHandlerTests
             request => Assert.Equal(
                 "txn-get-west.documents.azure.com",
                 request.Uri.Host));
+    }
+
+    [Fact]
+    public async Task Snapshot_never_uses_later_preferred_region()
+    {
+        var handler = new ScriptedHandler
+        {
+            AccountTopologyJson = MultiWriteLaterOnlyAccountJson,
+            Responses = { CosmosOk(MetaPkSk) },
+        };
+        var (context, body) = NewContext();
+
+        await RunAsync(
+            context,
+            BuildClient(
+                handler,
+                endpoint:
+                    "https://txn-get-authority-absent.documents.azure.com/",
+                preferredRegions: ["West US", "East US"]),
+            EnabledSproc(),
+            SingleGet());
+
+        Assert.Equal(
+            StatusCodes.Status500InternalServerError,
+            context.Response.StatusCode);
+        Assert.Contains(
+            "West US",
+            ReadResponse(body),
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            handler.Requests,
+            request => request.Uri.AbsolutePath.Contains(
+                "/sprocs",
+                StringComparison.Ordinal));
+        Assert.Contains(
+            handler.Requests,
+            request => request.Uri.Host
+                == "txn-get-east.documents.azure.com");
     }
 
     [Fact]

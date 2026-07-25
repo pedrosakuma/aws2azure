@@ -65,22 +65,25 @@ sub_features:
   - name: 100-item-per-call cap
     status: implemented
     notes: "Requests over 100 items are rejected with ValidationException."
-  - name: 400 KiB Put item cap
+  - name: 400 KiB Put and local-index aggregate cap
     status: implemented
     notes: >-
-      Every transactional Put is sized from DynamoDB semantics before table
-      metadata, topology discovery, or stored-procedure I/O. UTF-8 attribute-name
-      and string bytes, decoded binary bytes, scalar/set values, and list/map
-      overhead count toward the 409600-byte boundary. Oversize items fail with
-      ValidationException.
+      Every transactional Put first enforces the base-item limit, then after table
+      metadata is loaded enforces base item plus every corresponding local
+      secondary-index entry at the same 409600-byte boundary. KEYS_ONLY, INCLUDE,
+      and ALL projections use DynamoDB attribute-name/value sizing; base/index key
+      names are included once per index entry, sparse LSIs add no entry, and an
+      attribute projected into multiple physical entries is counted in each.
+      Oversize requests fail with ValidationException before stored-procedure I/O.
   - name: Serialized transaction body limit
     status: partial
     notes: >-
-      The exact UTF-8 stored-procedure parameter body is assembled once in a
-      pooled buffer and must not exceed Cosmos DB's 2 MiB request boundary.
-      Oversize requests are rejected deterministically with ValidationException
-      before stored-procedure provisioning or execution. DynamoDB permits an
-      aggregate 4 MiB transaction, so the proxy's accepted aggregate is lower.
+      The exact UTF-8 stored-procedure parameter body is assembled in a
+      2 MiB-bounded pooled IBufferWriter. Serialization stops as soon as the limit
+      is crossed, so an oversized body is never fully materialized. Oversize
+      requests are rejected deterministically with ValidationException before
+      stored-procedure provisioning or execution. DynamoDB permits an aggregate
+      4 MiB transaction, so the proxy's accepted aggregate is lower.
   - name: ClientRequestToken (idempotency)
     status: implemented
     notes: >-
@@ -90,7 +93,9 @@ sub_features:
       normalized transaction semantics: resolved condition ASTs, canonical
       DynamoDB numbers/base64, sorted map properties and set members, and the
       ordered operation list, so JSON property order and equivalent numeric/set
-      encodings do not cause false mismatches. Equivalent retries replay the
+      encodings do not cause false mismatches. Canonical bytes feed SHA-256
+      incrementally through a fixed pooled UTF-8 scratch buffer; the handler does
+      not retain a second full transaction representation. Equivalent retries replay the
       original success or positional condition-cancellation outcome without
       applying writes again; a different fingerprint within the active window
       returns IdempotentParameterMismatchException. The script samples Cosmos
@@ -102,18 +107,16 @@ sub_features:
       Preflight and script validation errors are not cached. The contract is
       scoped to this operation's supported single-table/single-partition boundary;
       callers must not reuse one token for a transaction in another partition.
-  - name: Authoritative Cosmos write-region pinning
+  - name: Deployment-stable Cosmos transaction authority
     status: implemented
     notes: >-
       Account topology is resolved before transaction stored-procedure
-      provisioning/execution. Single-write accounts pin the current authoritative
-      writable endpoint. Multi-write accounts require target.preferredRegions;
-      the first configured region that Cosmos reports writable is pinned
-      deterministically per physical account/database/container for the process
-      lifetime. Every binding sharing that container must resolve the same
-      endpoint; conflicting regional policies fail with ValidationException. A
-      transient failure, timeout, or write-region rejection returns a retryable
-      AWS InternalServerError without replaying in another writable region.
+      provisioning/execution. Single-write accounts use their explicit writable
+      regional endpoint. Multi-write accounts require target.preferredRegions[0],
+      which remains authoritative across process restarts regardless of which other
+      writable regions are currently discoverable. If that first region is absent,
+      unavailable, timed out, or rejects writes, the operation fails retryably
+      without replaying its writes or durable idempotency record in a later region.
   - name: ReturnValuesOnConditionCheckFailure
     status: unsupported
     notes: >-
@@ -129,13 +132,13 @@ behavior_differences:
   - "Duplicate operations on the same table/key are rejected with ValidationException before execution."
   - "Stored procedures must be enabled (Preferred or Required). There is no non-atomic fallback."
   - "Stored-procedure provisioning treats an HTTP 409 as success only after reading the existing resource and verifying the exact versioned id and body; an id/body conflict fails closed."
-  - "Transaction provisioning and execution use one authoritative regional endpoint per physical Cosmos account/database/container across all bindings. Multi-write accounts without a matching target.preferredRegions entry, and bindings that resolve conflicting authoritative endpoints for one container, are rejected before transaction execution. A pinned endpoint is never replaced after 403/3, 408, 503, timeout, or transport failure; the proxy returns a retryable AWS error rather than replaying the snapshot/write/idempotency operation in another independently writable region. Ordinary non-transactional region routing is unchanged."
+  - "Transaction provisioning and execution use one configured authority. For a multi-write account, target.preferredRegions[0] is a deployment contract: every replica and binding targeting the same data must configure the same first region. A fresh process that discovers only a later writable region fails retryably and never executes the snapshot/write/idempotency operation there or through the dynamically routed global account endpoint. Changing the first entry is an explicit operational migration, not failover. Ordinary non-transactional region routing can still use later available preferences."
   - "Transaction execution POSTs retain the no-automatic-retry transport option. Token-bearing requests explicitly retry only Cosmos write-conflict statuses once on the same pinned endpoint; any caller retry after an ambiguous/lost response is safe because the token outcome is committed atomically with the writes. Tokenless requests remain non-retried. Stored-procedure availability is cached per Cosmos account/database/container, invalidated on table lifecycle, and evicted/reprovisioned once after an execution 404."
   - "`atomicWrite_v2`, `atomicTransactWrite_v2`, `atomicTransactWrite_v3`, and `atomicTransactWrite_v4` remain frozen in the additive persisted-format identity set. The current durable idempotency contract uses `atomicTransactWrite_v5`; TransactGet uses `atomicTransactGet_v1`."
   - "The Cosmos Linux emulator cannot execute these scripts. V5 write/idempotency semantics, v1 snapshots, contention, restart, and exact-body conflict handling require fresh real-Azure runs before new seals are committed."
   - "No trusted prior release implements the complete profile: the known v2 runtime uses independent reads and lacks the durable ClientRequestToken contract. It is not an approved bootstrap/rollback target; qualification is rollout-only and records the adjacent-runtime row as skipped/inconclusive until a compatible prior release exists."
-  - "The exact serialized stored-procedure parameter body is limited to 2 MiB, below DynamoDB's 4 MiB aggregate TransactWriteItems limit. Oversize requests fail with ValidationException before stored-procedure I/O."
-  - "Each Put item is limited to DynamoDB's 400 KiB item boundary before metadata or stored-procedure I/O."
+  - "The exact serialized stored-procedure parameter body is limited to 2 MiB, below DynamoDB's 4 MiB aggregate TransactWriteItems limit. A bounded pooled writer stops on overflow, and token fingerprints are hashed incrementally instead of retaining a second canonical body. Oversize requests fail with ValidationException before stored-procedure I/O."
+  - "Each Put first obeys the base 400 KiB item boundary; after metadata load, the base item plus all corresponding KEYS_ONLY/INCLUDE/ALL local-secondary-index entries must also fit within 400 KiB."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TransactWriteItems.html
   - https://learn.microsoft.com/azure/cosmos-db/nosql/database-transactions-optimistic-concurrency

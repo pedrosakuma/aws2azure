@@ -186,7 +186,7 @@
       {
         "code": "design_gap_accepted",
         "disposition": "advisory",
-        "subject": "dynamodb:Transaction execution is pinned to one Cosmos write region",
+        "subject": "dynamodb:Transaction execution has one configured Cosmos authority",
         "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_single_partition_transactions\u0027."
       },
       {
