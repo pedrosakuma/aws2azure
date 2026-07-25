@@ -251,6 +251,14 @@ public sealed class BlobCredentials
 public sealed class ServiceBusCredentials
 {
     public string Namespace { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Optional REST endpoint override for queue management/runtime calls.
+    /// Production derives the canonical HTTPS endpoint from <see cref="Namespace"/>;
+    /// the Service Bus emulator exposes REST and AMQP on separate ports.
+    /// </summary>
+    public string? ManagementEndpoint { get; set; }
+
     public string SasKeyName { get; set; } = string.Empty;
     public string SasKey { get; set; } = string.Empty;
 

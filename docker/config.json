@@ -29,6 +29,7 @@
           "kind": "serviceBus",
           "target": {
             "namespace": "http://servicebus-emulator:5672/",
+            "managementEndpoint": "http://servicebus-emulator:5300/",
             "transport": "Amqp"
           },
           "auth": {

@@ -121,6 +121,11 @@ public static class ProxyConfigValidator
             {
                 errors.Add($"{sqsPrefix}.auth.key: required.");
             }
+            if (!string.IsNullOrWhiteSpace(sb.ManagementEndpoint))
+            {
+                ValidateAbsoluteUri(sb.ManagementEndpoint, $"{sqsPrefix}.target.managementEndpoint", errors,
+                    Uri.UriSchemeHttp, Uri.UriSchemeHttps);
+            }
             if (!Enum.IsDefined(typeof(SqsTransport), sb.Transport))
             {
                 errors.Add($"{sqsPrefix}.target.transport: unknown value '{(int)sb.Transport}'.");

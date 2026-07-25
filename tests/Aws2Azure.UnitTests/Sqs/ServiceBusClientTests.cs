@@ -1,5 +1,6 @@
 using System;
 using System.Net.Http;
+using Aws2Azure.Amqp.ServiceBus;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.Sqs.Internal;
 using Xunit;
@@ -37,6 +38,28 @@ public class ServiceBusClientTests
 
         var uri = client.BuildUri("myqueue/messages", "timeout=0");
         Assert.Equal("https://my-ns.servicebus.windows.net/myqueue/messages?timeout=0", uri.AbsoluteUri);
+    }
+
+    [Fact]
+    public void Management_endpoint_override_is_used_for_rest_calls()
+    {
+        var creds = new ServiceBusCredentials
+        {
+            Namespace = "http://127.0.0.1:5672",
+            ManagementEndpoint = "http://127.0.0.1:5300",
+            SasKeyName = "RootManageSharedAccessKey",
+            SasKey = Convert.ToBase64String(new byte[] { 1, 2, 3 }),
+        };
+        using var http = new Aws2Azure.Core.Azure.AzureHttpClient();
+        var client = new ServiceBusClient(http, creds);
+
+        Assert.Equal(new Uri("http://127.0.0.1:5300/"), client.BaseEndpoint);
+        Assert.Equal(
+            new Uri("http://127.0.0.1:5300/myqueue?api-version=2021-05"),
+            client.BuildUri("myqueue", $"api-version={ServiceBusClient.ApiVersion}"));
+        Assert.Equal(
+            new ServiceBusAmqpEndpoint("127.0.0.1", 5672, useTls: false, logicalNamespace: "localhost"),
+            ServiceBusClient.ResolveAmqpEndpoint(creds.Namespace));
     }
 
     [Fact]
