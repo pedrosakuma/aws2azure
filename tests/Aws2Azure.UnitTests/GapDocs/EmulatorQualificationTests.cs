@@ -88,6 +88,102 @@ public sealed class EmulatorQualificationTests
     }
 
     [Fact]
+    public void Generate_excludes_registered_real_azure_only_scenarios()
+    {
+        const string reference = """
+            {
+              "scenarios": {
+                "proxy.Put": {
+                  "minThroughputPerSec": 50,
+                  "maxP99Ms": 100
+                },
+                "dynamodb.TransactGetItems (10 items, single partition)": {
+                  "emulatorRequired": false,
+                  "minThroughputPerSec": 0,
+                  "maxP99Ms": 0
+                }
+              }
+            }
+            """;
+        const string latest = """
+            {
+              "scenarios": {
+                "proxy.Put": {
+                  "elapsedSeconds": 20,
+                  "completed": 1000,
+                  "failures": 0,
+                  "throughputPerSec": 100,
+                  "p50Ms": 10,
+                  "p95Ms": 20,
+                  "p99Ms": 50,
+                  "memoryMeasured": false,
+                  "peakWorkingSetMb": 0,
+                  "allocBytesPerOp": 0,
+                  "capturedAtUtc": "2026-07-16T16:59:00Z"
+                }
+              }
+            }
+            """;
+        using var fixture = Fixture(reference, latest);
+
+        var document = fixture.Generate();
+
+        Assert.Equal("passed", document.Verdict);
+        Assert.DoesNotContain(document.Findings, finding => finding.Code == "missing_scenario");
+        var service = Assert.Single(document.Profile.Services);
+        Assert.Equal(["proxy.Put"], service.Operations);
+    }
+
+    [Theory]
+    [InlineData("not approved", "proxy.Transaction", 0, false)]
+    [InlineData("thresholds", "dynamodb.TransactGetItems (10 items, single partition)", 1, false)]
+    [InlineData("thresholds", "dynamodb.TransactGetItems (10 items, single partition)", -1, false)]
+    [InlineData("pairing", "dynamodb.TransactGetItems (10 items, single partition)", 0, true)]
+    public void Generate_rejects_emulator_optional_certification_escape_hatches(
+        string expectedMessage,
+        string optionalName,
+        double minThroughput,
+        bool paired)
+    {
+        var pairing = paired
+            ? $$"""
+                ,
+                "pairings": {
+                  "{{optionalName}}": {
+                    "baseline": "proxy.Put",
+                    "minThroughputRatio": 0.5
+                  }
+                }
+                """
+            : string.Empty;
+        var reference = $$"""
+            {
+              "scenarios": {
+                "proxy.Put": {
+                  "minThroughputPerSec": 50,
+                  "maxP99Ms": 100
+                },
+                "{{optionalName}}": {
+                  "emulatorRequired": false,
+                  "minThroughputPerSec": {{minThroughput}},
+                  "maxP99Ms": 0
+                }
+              }
+              {{pairing}}
+            }
+            """;
+        using var fixture = Fixture(
+            reference,
+            Latest(
+                ProxyRow(completed: 1000, failures: 0, throughput: 100, p99: 50),
+                BaselineRow(throughput: 120, p99: 40)));
+
+        var exception = Assert.Throws<InvalidDataException>(() => fixture.Generate());
+
+        Assert.Contains(expectedMessage, exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Generate_keeps_low_nonzero_failure_rate_advisory()
     {
         using var fixture = Fixture(

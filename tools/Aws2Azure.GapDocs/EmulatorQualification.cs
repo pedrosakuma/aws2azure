@@ -20,6 +20,12 @@ public sealed class EmulatorQualificationMetadata
 
 public static class EmulatorQualificationGenerator
 {
+    private static readonly HashSet<string> EmulatorOptionalScenarios = new(StringComparer.Ordinal)
+    {
+        "dynamodb.TransactGetItems (10 items, single partition)",
+        "dynamodb.TransactWriteItems (5 puts, single partition)"
+    };
+
     public static SloQualificationDocument Generate(
         string referencePath,
         string latestPath,
@@ -42,14 +48,16 @@ public static class EmulatorQualificationGenerator
             throw new ArgumentException("Max row age must be within the TimeSpan range.", nameof(metadata));
         }
 
-        var orderedNames = reference.Scenarios.Keys
+        var orderedNames = reference.Scenarios
+            .Where(entry => entry.Value.EmulatorRequired)
+            .Select(entry => entry.Key)
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToList();
         var scenarioIds = orderedNames
             .Select((name, index) => (name, id: $"scenario-{index + 1:D3}"))
             .ToDictionary(entry => entry.name, entry => entry.id, StringComparer.Ordinal);
         var availableRows = latest.Scenarios
-            .Where(entry => reference.Scenarios.ContainsKey(entry.Key))
+            .Where(entry => scenarioIds.ContainsKey(entry.Key))
             .ToList();
         if (availableRows.Count == 0)
         {
@@ -400,6 +408,30 @@ public static class EmulatorQualificationGenerator
             {
                 throw new InvalidDataException($"Perf reference scenario must not be null: {name}");
             }
+            if (!threshold.EmulatorRequired)
+            {
+                if (!EmulatorOptionalScenarios.Contains(name))
+                {
+                    throw new InvalidDataException(
+                        $"Perf reference scenario is not approved as emulator-optional: {name}");
+                }
+                if (threshold.MinThroughputPerSec != 0
+                    || threshold.MaxP99Ms != 0
+                    || threshold.MaxPeakWorkingSetMb != 0
+                    || threshold.MaxAllocBytesPerOp != 0)
+                {
+                    throw new InvalidDataException(
+                        $"Emulator-optional scenario must not define emulator thresholds: {name}");
+                }
+                if (reference.Pairings.ContainsKey(name)
+                    || reference.Pairings.Values.Any(pairing =>
+                        pairing is not null
+                        && string.Equals(pairing.Baseline, name, StringComparison.Ordinal)))
+                {
+                    throw new InvalidDataException(
+                        $"Emulator-optional scenario must not participate in a relative pairing: {name}");
+                }
+            }
         }
         foreach (var (name, pairing) in reference.Pairings)
         {
@@ -530,6 +562,7 @@ public sealed class EmulatorReferenceDocument
 
 public sealed class EmulatorReferenceThreshold
 {
+    public bool EmulatorRequired { get; set; } = true;
     public double MinThroughputPerSec { get; set; }
     public double MaxP99Ms { get; set; }
     public double MaxPeakWorkingSetMb { get; set; }
