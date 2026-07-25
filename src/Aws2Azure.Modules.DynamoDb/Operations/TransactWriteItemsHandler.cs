@@ -70,6 +70,16 @@ internal static partial class TransactWriteItemsHandler
         SprocContext? sprocContext,
         CancellationToken ct)
     {
+        if (!JsonUnicodePreflight.TryValidate(body, out var jsonError))
+        {
+            await CosmosOpsShared.WriteErrorAsync(
+                ctx,
+                StatusCodes.Status400BadRequest,
+                "SerializationException",
+                jsonError).ConfigureAwait(false);
+            return;
+        }
+
         TransactWriteItemsRequest? request;
         try
         {
@@ -77,7 +87,10 @@ internal static partial class TransactWriteItemsHandler
                 body,
                 TransactWriteItemsJsonContext.Default.TransactWriteItemsRequest);
         }
-        catch (JsonException exception)
+        catch (Exception exception) when (
+            exception is JsonException
+                or InvalidOperationException
+                or ArgumentException)
         {
             await CosmosOpsShared.WriteErrorAsync(
                 ctx,
@@ -416,6 +429,15 @@ internal static partial class TransactWriteItemsHandler
 
             if (input.Kind == OpKind.Put)
             {
+                if (!ItemHandlers.ValidateKeyAttributesInItem(
+                        keyBearer,
+                        metadata,
+                        out var keyValidationError))
+                {
+                    await RejectAsync(ctx, keyValidationError)
+                        .ConfigureAwait(false);
+                    return;
+                }
                 if (!DynamoDbItemSize.TryCalculateWithLocalSecondaryIndexes(
                         keyBearer,
                         metadata,
@@ -439,25 +461,30 @@ internal static partial class TransactWriteItemsHandler
                     return;
                 }
             }
-
-            foreach (var keyDefinition in metadata.KeySchema)
+            else
             {
-                if (!keyBearer.TryGetProperty(keyDefinition.Name, out var attribute))
+                foreach (var keyDefinition in metadata.KeySchema)
                 {
-                    await RejectAsync(
-                        ctx,
-                        $"TransactItems[{index}].{input.Name} is missing required key attribute '{keyDefinition.Name}'.")
-                        .ConfigureAwait(false);
-                    return;
-                }
-                if (!ItemKeyFormatter.ValidateKeyAttributeType(
-                        attribute,
-                        metadata,
-                        keyDefinition.Name,
-                        out var typeError))
-                {
-                    await RejectAsync(ctx, typeError).ConfigureAwait(false);
-                    return;
+                    if (!keyBearer.TryGetProperty(
+                            keyDefinition.Name,
+                            out var attribute))
+                    {
+                        await RejectAsync(
+                            ctx,
+                            $"TransactItems[{index}].{input.Name} is missing required key attribute '{keyDefinition.Name}'.")
+                            .ConfigureAwait(false);
+                        return;
+                    }
+                    if (!ItemKeyFormatter.ValidateKeyAttributeType(
+                            attribute,
+                            metadata,
+                            keyDefinition.Name,
+                            out var typeError))
+                    {
+                        await RejectAsync(ctx, typeError)
+                            .ConfigureAwait(false);
+                        return;
+                    }
                 }
             }
 
@@ -772,6 +799,13 @@ internal static partial class TransactWriteItemsHandler
             var values = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var property in namesElement.EnumerateObject())
             {
+                if (!ConditionExpressionParser.TryValidatePlaceholderLength(
+                        property.Name,
+                        out var placeholderError))
+                {
+                    error = placeholderError;
+                    return null;
+                }
                 if (property.Value.ValueKind != JsonValueKind.String)
                 {
                     error =
@@ -797,6 +831,13 @@ internal static partial class TransactWriteItemsHandler
                 StringComparer.Ordinal);
             foreach (var property in valuesElement.EnumerateObject())
             {
+                if (!ConditionExpressionParser.TryValidatePlaceholderLength(
+                        property.Name,
+                        out var placeholderError))
+                {
+                    error = placeholderError;
+                    return null;
+                }
                 values[property.Name] = property.Value.Clone();
             }
             expressionValues = values;

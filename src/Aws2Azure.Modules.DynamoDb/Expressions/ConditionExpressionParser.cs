@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using System.Text.Json;
 
 namespace Aws2Azure.Modules.DynamoDb.Expressions;
@@ -40,6 +41,16 @@ namespace Aws2Azure.Modules.DynamoDb.Expressions;
 internal sealed class ConditionExpressionParser
 {
     internal const int MaxInOperands = 100;
+    internal const int MaxExpressionUtf8Bytes = 4 * 1024;
+    internal const int MaxPlaceholderUtf8Bytes = 255;
+    internal const int MaxOperators = 300;
+    internal const int MaxAstDepth = MaxOperators;
+    internal const int MaxParserNestingDepth = 64;
+
+    private static readonly Encoding StrictUtf8 =
+        new UTF8Encoding(
+            encoderShouldEmitUTF8Identifier: false,
+            throwOnInvalidBytes: true);
 
     private readonly List<ExpressionToken> _tokens;
     private readonly IReadOnlyDictionary<string, string>? _names;
@@ -47,6 +58,11 @@ internal sealed class ConditionExpressionParser
     private readonly HashSet<string> _consumedNames = new(StringComparer.Ordinal);
     private readonly HashSet<string> _consumedValues = new(StringComparer.Ordinal);
     private int _pos;
+    private int _groupDepth;
+
+    private readonly record struct ParsedCondition(
+        ConditionNode Node,
+        int Depth);
 
     private ConditionExpressionParser(
         List<ExpressionToken> tokens,
@@ -75,61 +91,119 @@ internal sealed class ConditionExpressionParser
         if (string.IsNullOrWhiteSpace(expression))
             throw new ExpressionSyntaxException(0, "ConditionExpression cannot be empty.");
 
+        ValidateEncodedLength(expression);
         var tokens = ExpressionLexer.Tokenise(expression);
+        ValidateOperatorCount(tokens);
         var parser = new ConditionExpressionParser(tokens, expressionAttributeNames, expressionAttributeValues);
         var root = parser.ParseOr();
         if (parser.Peek().Kind != TokenKind.EndOfInput)
             throw parser.Error("Unexpected trailing tokens in ConditionExpression.");
         return new ConditionExpressionParseResult(
-            root,
+            root.Node,
             parser._consumedNames,
             parser._consumedValues);
     }
 
+    internal static bool TryValidatePlaceholderLength(
+        string placeholder,
+        out string error)
+    {
+        int byteCount;
+        try
+        {
+            byteCount = StrictUtf8.GetByteCount(placeholder);
+        }
+        catch (EncoderFallbackException)
+        {
+            error =
+                $"Expression placeholder '{placeholder}' must contain valid Unicode scalar values.";
+            return false;
+        }
+
+        if (byteCount > MaxPlaceholderUtf8Bytes)
+        {
+            error =
+                $"Expression placeholder '{placeholder}' exceeds the maximum encoded length of {MaxPlaceholderUtf8Bytes} bytes.";
+            return false;
+        }
+
+        error = string.Empty;
+        return true;
+    }
+
     // ----- precedence climb ------------------------------------------
 
-    private ConditionNode ParseOr()
+    private ParsedCondition ParseOr()
     {
         var left = ParseAnd();
         while (TryConsumeKeyword("OR"))
         {
             var right = ParseAnd();
-            left = new OrCondition(left, right);
+            left = CreateBinary(
+                new OrCondition(left.Node, right.Node),
+                left.Depth,
+                right.Depth);
         }
         return left;
     }
 
-    private ConditionNode ParseAnd()
+    private ParsedCondition ParseAnd()
     {
         var left = ParseNot();
         while (TryConsumeKeyword("AND"))
         {
             var right = ParseNot();
-            left = new AndCondition(left, right);
+            left = CreateBinary(
+                new AndCondition(left.Node, right.Node),
+                left.Depth,
+                right.Depth);
         }
         return left;
     }
 
-    private ConditionNode ParseNot()
+    private ParsedCondition ParseNot()
     {
-        if (TryConsumeKeyword("NOT"))
+        var notCount = 0;
+        while (TryConsumeKeyword("NOT"))
         {
-            return new NotCondition(ParseNot());
+            notCount++;
         }
-        return ParseUnit();
+
+        var parsed = ParseUnit();
+        while (notCount-- > 0)
+        {
+            parsed = CreateUnary(
+                new NotCondition(parsed.Node),
+                parsed.Depth);
+        }
+        return parsed;
     }
 
-    private ConditionNode ParseUnit()
+    private ParsedCondition ParseUnit()
     {
         var t = Peek();
         if (t.Kind == TokenKind.LParen)
         {
             _pos++;
-            var inner = ParseOr();
-            if (Peek().Kind != TokenKind.RParen)
-                throw Error("Expected ')' to close grouped condition.");
-            _pos++;
-            return inner;
+            _groupDepth++;
+            if (_groupDepth > MaxParserNestingDepth)
+            {
+                throw Error(
+                    $"ConditionExpression exceeds the maximum nesting depth of {MaxParserNestingDepth}.");
+            }
+
+            try
+            {
+                var inner = ParseOr();
+                if (Peek().Kind != TokenKind.RParen)
+                    throw Error("Expected ')' to close grouped condition.");
+                _pos++;
+                return inner;
+            }
+            finally
+            {
+                _groupDepth--;
+            }
         }
 
         // Function or comparison — function names are recognised by
@@ -152,7 +226,7 @@ internal sealed class ConditionExpressionParser
         || string.Equals(name, "begins_with", StringComparison.OrdinalIgnoreCase)
         || string.Equals(name, "contains", StringComparison.OrdinalIgnoreCase);
 
-    private ConditionNode ParseFunctionCall(string name)
+    private ParsedCondition ParseFunctionCall(string name)
     {
         _pos++; // consume identifier
         if (Peek().Kind != TokenKind.LParen) throw Error($"Expected '(' after function '{name}'.");
@@ -204,10 +278,10 @@ internal sealed class ConditionExpressionParser
 
         if (Peek().Kind != TokenKind.RParen) throw Error($"Expected ')' to close {name}().");
         _pos++;
-        return node;
+        return new ParsedCondition(node, 1);
     }
 
-    private ConditionNode ParseComparison()
+    private ParsedCondition ParseComparison()
     {
         var left = ParseOperand(allowSize: true);
         var t = Peek();
@@ -232,7 +306,9 @@ internal sealed class ConditionExpressionParser
                 };
                 _pos++;
                 var right = ParseOperand(allowSize: true);
-                return new CompareCondition(op, left, right);
+                return new ParsedCondition(
+                    new CompareCondition(op, left, right),
+                    1);
             }
             case TokenKind.Identifier
                 when string.Equals(t.Text, "BETWEEN", StringComparison.OrdinalIgnoreCase):
@@ -242,7 +318,9 @@ internal sealed class ConditionExpressionParser
                 if (!TryConsumeKeyword("AND"))
                     throw Error("Expected 'AND' between BETWEEN bounds.");
                 var upper = ParseOperand(allowSize: true);
-                return new BetweenCondition(left, lower, upper);
+                return new ParsedCondition(
+                    new BetweenCondition(left, lower, upper),
+                    1);
             }
             case TokenKind.Identifier
                 when string.Equals(t.Text, "IN", StringComparison.OrdinalIgnoreCase):
@@ -265,7 +343,9 @@ internal sealed class ConditionExpressionParser
                 if (Peek().Kind != TokenKind.RParen)
                     throw Error("Expected ')' to close IN list.");
                 _pos++;
-                return new InCondition(left, operands);
+                return new ParsedCondition(
+                    new InCondition(left, operands),
+                    1);
             }
             default:
                 throw Error("Expected a comparison operator, BETWEEN, or IN.");
@@ -326,6 +406,111 @@ internal sealed class ConditionExpressionParser
 
     private ExpressionSyntaxException Error(string message)
         => ExpressionPathParser.Error(_tokens, _pos, message);
+
+    private ParsedCondition CreateBinary(
+        ConditionNode node,
+        int leftDepth,
+        int rightDepth)
+        => CreateWithDepth(node, checked(1 + Math.Max(leftDepth, rightDepth)));
+
+    private ParsedCondition CreateUnary(
+        ConditionNode node,
+        int operandDepth)
+        => CreateWithDepth(node, checked(1 + operandDepth));
+
+    private ParsedCondition CreateWithDepth(ConditionNode node, int depth)
+    {
+        if (depth > MaxAstDepth)
+        {
+            throw Error(
+                $"ConditionExpression exceeds the maximum AST depth of {MaxAstDepth}.");
+        }
+        return new ParsedCondition(node, depth);
+    }
+
+    private static void ValidateEncodedLength(string expression)
+    {
+        int byteCount;
+        try
+        {
+            byteCount = StrictUtf8.GetByteCount(expression);
+        }
+        catch (EncoderFallbackException)
+        {
+            throw new ExpressionSyntaxException(
+                0,
+                "ConditionExpression must contain valid Unicode scalar values.");
+        }
+
+        if (byteCount > MaxExpressionUtf8Bytes)
+        {
+            throw new ExpressionSyntaxException(
+                0,
+                $"ConditionExpression exceeds the maximum encoded length of {MaxExpressionUtf8Bytes} bytes (4 KiB).");
+        }
+    }
+
+    private static void ValidateOperatorCount(
+        IReadOnlyList<ExpressionToken> tokens)
+    {
+        var count = 0;
+        for (var index = 0; index < tokens.Count; index++)
+        {
+            var token = tokens[index];
+            if (token.Kind is TokenKind.Equals
+                or TokenKind.NotEquals
+                or TokenKind.Less
+                or TokenKind.LessEquals
+                or TokenKind.Greater
+                or TokenKind.GreaterEquals)
+            {
+                count++;
+            }
+            else if (token.Kind == TokenKind.Identifier)
+            {
+                var isKeyword =
+                    string.Equals(
+                        token.Text,
+                        "AND",
+                        StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(
+                        token.Text,
+                        "OR",
+                        StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(
+                        token.Text,
+                        "NOT",
+                        StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(
+                        token.Text,
+                        "BETWEEN",
+                        StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(
+                        token.Text,
+                        "IN",
+                        StringComparison.OrdinalIgnoreCase);
+                var isFunction =
+                    index + 1 < tokens.Count
+                    && tokens[index + 1].Kind == TokenKind.LParen
+                    && (IsBooleanFunctionName(token.Text)
+                        || string.Equals(
+                            token.Text,
+                            "size",
+                            StringComparison.OrdinalIgnoreCase));
+                if (isKeyword || isFunction)
+                {
+                    count++;
+                }
+            }
+
+            if (count > MaxOperators)
+            {
+                throw new ExpressionSyntaxException(
+                    token.Position,
+                    $"ConditionExpression exceeds the maximum complexity of {MaxOperators} operators.");
+            }
+        }
+    }
 }
 
 internal sealed record ConditionExpressionParseResult(

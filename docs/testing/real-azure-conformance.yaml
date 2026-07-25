@@ -370,7 +370,7 @@ services:
         establishes_verification: false
         profiles: [dynamodb-single-partition-transactions]
         requires_dynamo_db_stored_procedures: true
-        description: Transaction state and durable ClientRequestToken outcomes survive process restart; existing v4/v1 stored procedures are accepted only after exact body verification.
+        description: Transaction state and durable ClientRequestToken outcomes survive process restart; existing atomicTransactWrite_v5/atomicTransactGet_v1 stored procedures are accepted only after exact body verification.
         operations: [TransactGetItems, TransactWriteItems]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Scope_and_versioned_sprocs_survive_restart

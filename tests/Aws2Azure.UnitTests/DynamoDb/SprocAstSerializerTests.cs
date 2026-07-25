@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -288,7 +287,7 @@ public class SprocAstSerializerTests
     [Fact]
     public void Repeated_large_value_references_abort_at_bound_without_ast_materialization()
     {
-        const int referenceCount = 199;
+        const int referenceCount = 100;
         const int valueLength = 100 * 1024;
         var condition = RepeatedStringCondition(referenceCount, valueLength);
 

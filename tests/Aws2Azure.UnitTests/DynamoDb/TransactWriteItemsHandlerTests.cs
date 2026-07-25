@@ -67,6 +67,25 @@ public class TransactWriteItemsHandlerTests
             "\"billingMode\":\"PAY_PER_REQUEST\"}";
     }
 
+    private static readonly string MetaPkSkWithSecondaryIndexes =
+        "{\"id\":\"__aws2azure_table_meta__\"," +
+        "\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\"," +
+        "\"tableName\":\"orders\"," +
+        "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"}," +
+        "{\"name\":\"sk\",\"type\":\"S\"},{\"name\":\"gpk\",\"type\":\"S\"}," +
+        "{\"name\":\"gsk\",\"type\":\"B\"},{\"name\":\"lsk\",\"type\":\"S\"}]," +
+        "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}," +
+        "{\"name\":\"sk\",\"keyType\":\"RANGE\"}]," +
+        "\"globalSecondaryIndexes\":[{\"indexName\":\"byGlobal\"," +
+        "\"keySchema\":[{\"name\":\"gpk\",\"keyType\":\"HASH\"}," +
+        "{\"name\":\"gsk\",\"keyType\":\"RANGE\"}]," +
+        "\"projectionType\":\"ALL\"}]," +
+        "\"localSecondaryIndexes\":[{\"indexName\":\"byLocal\"," +
+        "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}," +
+        "{\"name\":\"lsk\",\"keyType\":\"RANGE\"}]," +
+        "\"projectionType\":\"ALL\"}]," +
+        "\"billingMode\":\"PAY_PER_REQUEST\"}";
+
     private static CosmosClient BuildClient(
         ScriptedHandler handler,
         string endpoint = "https://example.documents.azure.com/",
@@ -123,6 +142,18 @@ public class TransactWriteItemsHandlerTests
         => TransactWriteItemsHandler.HandleTransactWriteItemsAsync(
             ctx, Encoding.UTF8.GetBytes(req), cosmos, sproc, CancellationToken.None);
 
+    private static Task Run(
+        DefaultHttpContext ctx,
+        CosmosClient cosmos,
+        SprocContext? sproc,
+        byte[] request)
+        => TransactWriteItemsHandler.HandleTransactWriteItemsAsync(
+            ctx,
+            request,
+            cosmos,
+            sproc,
+            CancellationToken.None);
+
     private static string PutOp(string sk, string? condition = null)
     {
         var cond = condition is null
@@ -141,6 +172,20 @@ public class TransactWriteItemsHandlerTests
         => "{\"Put\":{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"a\"}," +
            "\"sk\":{\"S\":\"1\"},\"ix\":{\"S\":\"z\"},\"payload\":{\"S\":\"" +
            new string('x', payloadBytes) + "\"}}}}";
+
+    private static string BuildConditionalOperation(
+        string action,
+        string expression)
+    {
+        var keyProperty = action == "Put"
+            ? "\"Item\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"}}"
+            : "\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"}}";
+        return
+            "{\"TransactItems\":[{\"" + action +
+            "\":{\"TableName\":\"orders\"," + keyProperty +
+            ",\"ConditionExpression\":\"" + expression +
+            "\",\"ExpressionAttributeValues\":{\":v\":{\"S\":\"x\"}}}}]}";
+    }
 
     private static string MultiWriteAccountJson =>
         """
@@ -920,6 +965,428 @@ public class TransactWriteItemsHandlerTests
         Assert.Empty(handler.Requests);
     }
 
+    [Theory]
+    [InlineData("Put")]
+    [InlineData("Delete")]
+    [InlineData("ConditionCheck")]
+    public async Task Condition_expression_over_encoded_limit_is_rejected_before_io(
+        string action)
+    {
+        const string prefix = "v = :v";
+        var expression =
+            prefix
+            + new string(
+                ' ',
+                ConditionExpressionParser.MaxExpressionUtf8Bytes
+                - Encoding.UTF8.GetByteCount(prefix)
+                + 1);
+        var handler = new ScriptedHandler();
+        var (context, body) = NewCtx();
+
+        await Run(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            BuildConditionalOperation(action, expression));
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("4 KiB", ReadResponse(body), StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Fifty_thousand_or_expression_is_rejected_without_io_or_crash()
+    {
+        var expression = string.Join(
+            " OR ",
+            Enumerable.Repeat("attribute_exists(pk)", 50_001));
+        var request =
+            "{\"TransactItems\":[{\"ConditionCheck\":{\"TableName\":\"orders\"," +
+            "\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"}}," +
+            "\"ConditionExpression\":\"" + expression + "\"}}]}";
+        var handler = new ScriptedHandler();
+        var (context, body) = NewCtx();
+
+        await Run(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            request);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("4 KiB", ReadResponse(body), StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public void Condition_expression_encoded_length_limit_is_inclusive()
+    {
+        const string prefix = "é = :v";
+        var expression =
+            prefix
+            + new string(
+                ' ',
+                ConditionExpressionParser.MaxExpressionUtf8Bytes
+                - Encoding.UTF8.GetByteCount(prefix));
+        using var value = JsonDocument.Parse("""{"S":"x"}""");
+        var values = new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+        {
+            [":v"] = value.RootElement.Clone(),
+        };
+
+        var parsed = ConditionExpressionParser.Parse(
+            expression,
+            expressionAttributeNames: null,
+            values);
+
+        Assert.IsType<CompareCondition>(parsed);
+        var overLimit = expression + " ";
+        var exception = Assert.Throws<ExpressionSyntaxException>(
+            () => ConditionExpressionParser.Parse(
+                overLimit,
+                expressionAttributeNames: null,
+                values));
+        Assert.Contains("4 KiB", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Condition_operator_limit_is_inclusive_and_precedes_parsing()
+    {
+        var atLimit =
+            "NOT "
+            + string.Join(
+                " OR ",
+                Enumerable.Repeat("attribute_exists(v)", 150));
+        var parsed = ConditionExpressionParser.Parse(
+            atLimit,
+            expressionAttributeNames: null,
+            expressionAttributeValues: null);
+
+        Assert.NotNull(parsed);
+        var overLimit = string.Join(
+            " OR ",
+            Enumerable.Repeat("attribute_exists(v)", 151));
+        var exception = Assert.Throws<ExpressionSyntaxException>(
+            () => ConditionExpressionParser.Parse(
+                overLimit,
+                expressionAttributeNames: null,
+                expressionAttributeValues: null));
+        Assert.Contains(
+            ConditionExpressionParser.MaxOperators.ToString(),
+            exception.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Excessive_condition_nesting_is_rejected_before_io()
+    {
+        var expression =
+            new string(
+                '(',
+                ConditionExpressionParser.MaxParserNestingDepth + 1)
+            + "attribute_exists(v)"
+            + new string(
+                ')',
+                ConditionExpressionParser.MaxParserNestingDepth + 1);
+        var handler = new ScriptedHandler();
+        var (context, body) = NewCtx();
+
+        await Run(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            "{\"TransactItems\":[{\"ConditionCheck\":{\"TableName\":\"orders\"," +
+            "\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"}}," +
+            "\"ConditionExpression\":\"" + expression + "\"}}]}");
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains(
+            "nesting depth",
+            ReadResponse(body),
+            StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Condition_ast_depth_boundary_serializes_without_stack_overflow()
+    {
+        var expression =
+            string.Concat(
+                Enumerable.Repeat(
+                    "NOT ",
+                    ConditionExpressionParser.MaxAstDepth - 1))
+            + "attribute_exists(v)";
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaPkSk),
+                CosmosCreated(),
+                CosmosOk("{\"success\":true}"),
+            },
+        };
+        var (context, _) = NewCtx();
+
+        await Run(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            "{\"TransactItems\":[{\"ConditionCheck\":{\"TableName\":\"orders\"," +
+            "\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"}}," +
+            "\"ConditionExpression\":\"" + expression + "\"}}]}");
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(3, handler.Requests.Count);
+    }
+
+    [Fact]
+    public void Condition_depth_bounds_accept_operator_budget_and_reject_deeper_groups()
+    {
+        var atAstLimit =
+            string.Concat(
+                Enumerable.Repeat(
+                    "NOT ",
+                    ConditionExpressionParser.MaxAstDepth - 1))
+            + "attribute_exists(v)";
+        Assert.NotNull(
+            ConditionExpressionParser.Parse(
+                atAstLimit,
+                expressionAttributeNames: null,
+                expressionAttributeValues: null));
+
+        var grouped =
+            new string(
+                '(',
+                ConditionExpressionParser.MaxParserNestingDepth)
+            + "attribute_exists(v)"
+            + new string(
+                ')',
+                ConditionExpressionParser.MaxParserNestingDepth);
+        Assert.NotNull(
+            ConditionExpressionParser.Parse(
+                grouped,
+                expressionAttributeNames: null,
+                expressionAttributeValues: null));
+
+        var tooDeep =
+            '(' + grouped + ')';
+        var exception = Assert.Throws<ExpressionSyntaxException>(
+            () => ConditionExpressionParser.Parse(
+                tooDeep,
+                expressionAttributeNames: null,
+                expressionAttributeValues: null));
+        Assert.Contains(
+            "nesting depth",
+            exception.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("ExpressionAttributeNames", "#")]
+    [InlineData("ExpressionAttributeValues", ":")]
+    public async Task Oversized_expression_placeholder_is_rejected_before_io(
+        string member,
+        string sigil)
+    {
+        var placeholder =
+            sigil
+            + new string(
+                'p',
+                ConditionExpressionParser.MaxPlaceholderUtf8Bytes);
+        var expression = sigil == "#"
+            ? $"attribute_exists({placeholder})"
+            : $"v = {placeholder}";
+        var placeholderBody = member == "ExpressionAttributeNames"
+            ? "\"" + placeholder + "\":\"v\""
+            : "\"" + placeholder + "\":{\"S\":\"x\"}";
+        var request =
+            "{\"TransactItems\":[{\"ConditionCheck\":{\"TableName\":\"orders\"," +
+            "\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"}}," +
+            "\"ConditionExpression\":\"" + expression + "\",\"" + member +
+            "\":{" + placeholderBody + "}}}]}";
+        var handler = new ScriptedHandler();
+        var (context, body) = NewCtx();
+
+        await Run(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            request);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("255 bytes", ReadResponse(body), StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Raw_invalid_utf8_is_a_serialization_error_before_io(
+        bool invalidPropertyName)
+    {
+        var prefix = Encoding.UTF8.GetBytes(
+            invalidPropertyName
+                ? "{\"TransactItems\":[{\"Put\":{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"},\""
+                : "{\"TransactItems\":[{\"Put\":{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"},\"bad\":{\"S\":\"");
+        var suffix = Encoding.UTF8.GetBytes(
+            invalidPropertyName
+                ? "\":{\"S\":\"x\"}}}}]}"
+                : "\"}}}}]}");
+        var request = new byte[prefix.Length + 3 + suffix.Length];
+        prefix.CopyTo(request, 0);
+        request[prefix.Length] = 0xED;
+        request[prefix.Length + 1] = 0xA0;
+        request[prefix.Length + 2] = 0x80;
+        suffix.CopyTo(request, prefix.Length + 3);
+        var handler = new ScriptedHandler();
+        var (context, body) = NewCtx();
+
+        await Run(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            request);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        var response = ReadResponse(body);
+        Assert.Contains(
+            "SerializationException",
+            response,
+            StringComparison.Ordinal);
+        Assert.Contains("valid Unicode", response, StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"},"bad":{"S":"\uD800"}}}}]}""")]
+    [InlineData(
+        """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"},"\uD800":{"S":"x"}}}}]}""")]
+    [InlineData(
+        """{"TransactItems":[{"ConditionCheck":{"TableName":"orders","Key":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionExpression":"attribute_exists(#n)","ExpressionAttributeNames":{"#n":"\uD800"}}}]}""")]
+    [InlineData(
+        """{"TransactItems":[{"ConditionCheck":{"TableName":"orders","Key":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionExpression":"v = :v","ExpressionAttributeValues":{":v":{"S":"\uD800"}}}}]}""")]
+    public async Task Lone_surrogate_is_a_serialization_error_before_io(
+        string request)
+    {
+        var handler = new ScriptedHandler();
+        var (context, body) = NewCtx();
+
+        await Run(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            request);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        var response = ReadResponse(body);
+        Assert.Contains(
+            "SerializationException",
+            response,
+            StringComparison.Ordinal);
+        Assert.Contains("valid Unicode", response, StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("""{"gpk":{"N":"1"}}""", "gpk", "declares S")]
+    [InlineData("""{"gsk":{"B":""}}""", "gsk", "must not be empty")]
+    [InlineData("""{"lsk":{"N":"1"}}""", "lsk", "declares S")]
+    [InlineData("""{"lsk":{"S":""}}""", "lsk", "must not be empty")]
+    public async Task Invalid_present_secondary_index_key_is_rejected_before_sproc(
+        string extraAttribute,
+        string attributeName,
+        string expected)
+    {
+        var request =
+            "{\"TransactItems\":[{\"Put\":{\"TableName\":\"orders\",\"Item\":" +
+            "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"}," +
+            extraAttribute[1..^1] + "}}}]}";
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetaPkSkWithSecondaryIndexes) },
+        };
+        var (context, body) = NewCtx();
+
+        await Run(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            request);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        var response = ReadResponse(body);
+        Assert.Contains(attributeName, response, StringComparison.Ordinal);
+        Assert.Contains(expected, response, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(handler.Requests);
+        Assert.DoesNotContain(
+            handler.Requests,
+            request => request.Uri.AbsolutePath.Contains(
+                "/sprocs/",
+                StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("gpk", ItemHandlers.MaximumPartitionKeyBytes + 1, "2048")]
+    [InlineData("lsk", ItemHandlers.MaximumSortKeyBytes + 1, "1024")]
+    public async Task Oversized_present_secondary_index_key_is_rejected_before_sproc(
+        string attributeName,
+        int byteCount,
+        string expectedLimit)
+    {
+        var request =
+            "{\"TransactItems\":[{\"Put\":{\"TableName\":\"orders\",\"Item\":" +
+            "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"},\"" +
+            attributeName + "\":{\"S\":\"" + new string('x', byteCount) +
+            "\"}}}}]}";
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetaPkSkWithSecondaryIndexes) },
+        };
+        var (context, body) = NewCtx();
+
+        await Run(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            request);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        var response = ReadResponse(body);
+        Assert.Contains(attributeName, response, StringComparison.Ordinal);
+        Assert.Contains(expectedLimit, response, StringComparison.Ordinal);
+        Assert.Single(handler.Requests);
+        Assert.DoesNotContain(
+            handler.Requests,
+            request => request.Uri.AbsolutePath.Contains(
+                "/sprocs/",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Sparse_secondary_indexes_allow_all_index_keys_to_be_absent()
+    {
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaPkSkWithSecondaryIndexes),
+                CosmosCreated(),
+                CosmosOk("{\"success\":true}"),
+            },
+        };
+        var (context, _) = NewCtx();
+
+        await Run(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"},"emoji":{"S":"\uD83D\uDE00"}}}}]}""");
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(3, handler.Requests.Count);
+    }
+
     [Fact]
     public async Task Token_fingerprint_validation_failure_stays_a_400()
     {
@@ -1291,7 +1758,7 @@ public class TransactWriteItemsHandlerTests
     [Fact]
     public async Task Repeated_large_condition_value_references_fail_bounded_and_deterministically()
     {
-        const int referenceCount = 199;
+        const int referenceCount = 100;
         var expression = string.Join(
             " OR ",
             Enumerable.Repeat("#value = :value", referenceCount));

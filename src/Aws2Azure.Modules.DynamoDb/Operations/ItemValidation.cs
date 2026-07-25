@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.Text;
 using System.Text.Json;
 using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
@@ -10,6 +11,14 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 
 internal static partial class ItemHandlers
 {
+    internal const int MaximumPartitionKeyBytes = 2048;
+    internal const int MaximumSortKeyBytes = 1024;
+
+    private static readonly Encoding StrictUtf8 =
+        new UTF8Encoding(
+            encoderShouldEmitUTF8Identifier: false,
+            throwOnInvalidBytes: true);
+
     /// <summary>
     /// Validates every attribute in the Item is a single-property typed
     /// value (per the DynamoDB JSON wire format) AND that each payload's
@@ -345,21 +354,214 @@ internal static partial class ItemHandlers
         return false;
     }
 
-    private static bool ValidateKeyAttributesInItem(JsonElement item, TableMetadata meta, out string error)
+    internal static bool ValidateKeyAttributesInItem(
+        JsonElement item,
+        TableMetadata meta,
+        out string error)
     {
-        foreach (var k in meta.KeySchema)
+        foreach (var key in meta.KeySchema)
         {
-            if (!item.TryGetProperty(k.Name, out var attr))
+            if (!item.TryGetProperty(key.Name, out var attribute))
             {
-                error = $"Item is missing required key attribute '{k.Name}'.";
+                error =
+                    $"Item is missing required key attribute '{key.Name}'.";
                 return false;
             }
-            if (!ItemKeyFormatter.ValidateKeyAttributeType(attr, meta, k.Name, out var typeError))
+            if (!ValidateItemKeyAttribute(
+                    attribute,
+                    meta,
+                    key,
+                    out error))
             {
-                error = typeError;
                 return false;
             }
         }
+
+        if (!ValidatePresentSecondaryIndexKeys(
+                item,
+                meta,
+                meta.GlobalSecondaryIndexes,
+                out error)
+            || !ValidatePresentSecondaryIndexKeys(
+                item,
+                meta,
+                meta.LocalSecondaryIndexes,
+                out error))
+        {
+            return false;
+        }
+
+        error = string.Empty;
+        return true;
+    }
+
+    private static bool ValidatePresentSecondaryIndexKeys(
+        JsonElement item,
+        TableMetadata meta,
+        List<TableIndexDefinition>? indexes,
+        out string error)
+    {
+        if (indexes is null)
+        {
+            error = string.Empty;
+            return true;
+        }
+
+        foreach (var index in indexes)
+        {
+            foreach (var key in index.KeySchema)
+            {
+                if (!item.TryGetProperty(key.Name, out var attribute))
+                {
+                    continue;
+                }
+                if (!ValidateItemKeyAttribute(
+                        attribute,
+                        meta,
+                        key,
+                        out error))
+                {
+                    error =
+                        $"Secondary index '{index.IndexName}' {error}";
+                    return false;
+                }
+            }
+        }
+
+        error = string.Empty;
+        return true;
+    }
+
+    private static bool ValidateItemKeyAttribute(
+        JsonElement attribute,
+        TableMetadata meta,
+        TableKeySchemaElement key,
+        out string error)
+    {
+        if (!ItemKeyFormatter.TryGetDeclaredKeyType(
+                meta,
+                key.Name,
+                out var declaredType))
+        {
+            error =
+                $"key attribute '{key.Name}' is not declared in the table's AttributeDefinitions.";
+            return false;
+        }
+        if (!AttributeValueTypes.IsScalarKeyType(declaredType))
+        {
+            error =
+                $"key attribute '{key.Name}' has unsupported declared type '{declaredType}'; DynamoDB keys must use S, N, or B.";
+            return false;
+        }
+        if (!ParsedAttributeValue.TryParse(attribute, out var parsed))
+        {
+            error =
+                $"key attribute '{key.Name}' must be a single-property typed attribute value.";
+            return false;
+        }
+        if (!string.Equals(
+                parsed.TypeTag,
+                declaredType,
+                StringComparison.Ordinal))
+        {
+            error =
+                $"key attribute '{key.Name}' has type {parsed.TypeTag} but the table declares {declaredType}.";
+            return false;
+        }
+        if (parsed.Value.ValueKind != JsonValueKind.String)
+        {
+            error =
+                $"key attribute '{key.Name}' value must be a JSON string per DynamoDB wire format.";
+            return false;
+        }
+
+        var raw = parsed.Value.GetString()!;
+        int byteCount;
+        switch (declaredType)
+        {
+            case AttributeValueTypes.String:
+                if (raw.Length == 0)
+                {
+                    error =
+                        $"key attribute '{key.Name}' value must not be empty.";
+                    return false;
+                }
+                try
+                {
+                    byteCount = StrictUtf8.GetByteCount(raw);
+                }
+                catch (EncoderFallbackException)
+                {
+                    error =
+                        $"key attribute '{key.Name}' must contain valid Unicode scalar values.";
+                    return false;
+                }
+                break;
+
+            case AttributeValueTypes.Number:
+                if (!InferredAttributeStorage.TryNormalizeDdbNumber(
+                        raw,
+                        out _,
+                        out _,
+                        out var numberError))
+                {
+                    error =
+                        $"key attribute '{key.Name}' has an invalid Number value: {numberError}";
+                    return false;
+                }
+                byteCount = raw.Length;
+                break;
+
+            case AttributeValueTypes.Binary:
+                if (!TryDecodeBase64(
+                        raw,
+                        out var bytes,
+                        out byteCount))
+                {
+                    error =
+                        $"key attribute '{key.Name}' binary value is not valid base64.";
+                    return false;
+                }
+                ArrayPool<byte>.Shared.Return(bytes);
+                if (byteCount == 0)
+                {
+                    error =
+                        $"key attribute '{key.Name}' binary value must not be empty.";
+                    return false;
+                }
+                break;
+
+            default:
+                error =
+                    $"key attribute '{key.Name}' has unsupported type '{declaredType}'.";
+                return false;
+        }
+
+        var isPartitionKey = string.Equals(
+            key.KeyType,
+            "HASH",
+            StringComparison.OrdinalIgnoreCase);
+        var isSortKey = string.Equals(
+            key.KeyType,
+            "RANGE",
+            StringComparison.OrdinalIgnoreCase);
+        if (!isPartitionKey && !isSortKey)
+        {
+            error =
+                $"key attribute '{key.Name}' has unsupported key role '{key.KeyType}'.";
+            return false;
+        }
+
+        var maximumBytes = isPartitionKey
+            ? MaximumPartitionKeyBytes
+            : MaximumSortKeyBytes;
+        if (byteCount > maximumBytes)
+        {
+            error =
+                $"key attribute '{key.Name}' is {byteCount} bytes and exceeds DynamoDB's {maximumBytes}-byte {(isPartitionKey ? "partition" : "sort")} key limit.";
+            return false;
+        }
+
         error = string.Empty;
         return true;
     }

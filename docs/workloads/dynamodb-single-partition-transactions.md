@@ -67,11 +67,17 @@ Runtime operand-type errors for ordered operators, `BETWEEN`, and
 `begins_with` are returned by the script as a structured validation result and
 mapped to `ValidationException`; `NOT` cannot invert such an error into success.
 
-Every transactional item, key, and expression value is validated before table
-metadata or stored-procedure I/O. Empty sets, malformed binary/base64, invalid or
-out-of-range numbers (including set members), duplicate set members, and invalid
-AttributeValue shapes are rejected. Empty strings remain allowed in non-empty
-string sets, matching current DynamoDB policy. Every declared
+Every transactional item, key, and expression value receives shape validation
+before table metadata or stored-procedure I/O. Empty sets, malformed
+binary/base64, invalid or out-of-range numbers (including set members), duplicate
+set members, and invalid AttributeValue shapes are rejected. After metadata is
+loaded, present GSI/LSI key attributes must match their declared S/N/B type, be
+non-empty, and fit DynamoDB's 2,048-byte partition key or 1,024-byte sort key
+limit before LSI sizing or stored-procedure I/O; absent sparse-index keys remain
+valid. Empty strings remain allowed in non-empty string sets, matching current
+DynamoDB policy. Condition expressions are limited to 4 KiB encoded UTF-8, 300
+operators, an AST depth of 300, and parser nesting of 64; placeholder identifiers
+are limited to 255 encoded bytes. Every declared
 `ExpressionAttributeNames` and `ExpressionAttributeValues` placeholder must be
 consumed by the condition.
 
@@ -79,7 +85,7 @@ Cancellation reasons are exact and positional. Legacy `Expected` /
 `ConditionalOperator`, `ReturnValuesOnConditionCheckFailure`, non-`NONE`
 capacity/collection metrics are rejected rather than ignored.
 
-`ClientRequestToken` accepts DynamoDB's 1–36 character range. The v4 script
+`ClientRequestToken` accepts DynamoDB's 1–36 character range. The v5 script
 commits a proxy-reserved token record in the same logical partition and Cosmos
 transaction as the user writes. A canonical semantic fingerprint resolves
 expression aliases, normalizes numbers and base64, sorts map properties and set
