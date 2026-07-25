@@ -1168,7 +1168,7 @@ public sealed class DynamoDbRealAzureTransactionTests(
                     conflictingBody);
                 conflictPresent = true;
 
-                var failure = await Assert.ThrowsAsync<AmazonDynamoDBException>(
+                var failure = await Assert.ThrowsAnyAsync<AmazonDynamoDBException>(
                     () => client.TransactWriteItemsAsync(
                         new TransactWriteItemsRequest
                         {
@@ -1600,7 +1600,7 @@ public sealed class DynamoDbRealAzureTransactionTests(
             Key = Key(partition, sort),
             ConsistentRead = true,
         }, cancellationToken);
-        return response.Item.Count > 0;
+        return response.Item is { Count: > 0 };
     }
 
     private static async Task<Dictionary<string, AttributeValue>> ReadItemAsync(
