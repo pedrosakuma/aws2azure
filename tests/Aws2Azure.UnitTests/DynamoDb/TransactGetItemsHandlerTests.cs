@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
+using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
 using Aws2Azure.Modules.DynamoDb.Operations;
 using Aws2Azure.Modules.DynamoDb.Persistence;
@@ -396,6 +397,95 @@ public sealed class TransactGetItemsHandlerTests
             "unused",
             ReadResponse(body),
             StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Projection_expression_over_encoded_limit_is_rejected_before_metadata_io()
+    {
+        var expression =
+            "a"
+            + new string(
+                ' ',
+                ProjectionExpressionParser.MaxExpressionUtf8Bytes);
+        var request =
+            "{\"TransactItems\":[{\"Get\":{\"TableName\":\"orders\"," +
+            "\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"}}," +
+            "\"ProjectionExpression\":\"" + expression + "\"}}]}";
+        var handler = new ScriptedHandler();
+        var (context, body) = NewContext();
+
+        await RunAsync(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            request);
+
+        AssertValidation(context, body, "4 KiB");
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Overlong_projection_alias_is_rejected_before_metadata_io()
+    {
+        var alias =
+            "#"
+            + new string(
+                'p',
+                ProjectionExpressionParser.MaxPlaceholderUtf8Bytes);
+        var request =
+            "{\"TransactItems\":[{\"Get\":{\"TableName\":\"orders\"," +
+            "\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"}}," +
+            "\"ProjectionExpression\":\"" + alias + "\"," +
+            "\"ExpressionAttributeNames\":{\"" + alias + "\":\"pk\"}}}]}";
+        var handler = new ScriptedHandler();
+        var (context, body) = NewContext();
+
+        await RunAsync(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            request);
+
+        AssertValidation(context, body, "255 bytes");
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(
+        """{"TransactItems":[{"Get":{"TableName":"order\uD800s","Key":{"pk":{"S":"a"},"sk":{"S":"1"}}}}]}""")]
+    [InlineData(
+        """{"TransactItems":[{"Get":{"TableName":"orders","Key":{"pk":{"S":"a"},"sk":{"S":"1"}},"ProjectionExpression":"\uD800"}}]}""")]
+    [InlineData(
+        """{"TransactItems":[{"Get":{"TableName":"orders","Key":{"pk":{"S":"a"},"sk":{"S":"1"}},"ProjectionExpression":"#p","ExpressionAttributeNames":{"\uD800":"pk"}}}]}""")]
+    [InlineData(
+        """{"TransactItems":[{"Get":{"TableName":"orders","Key":{"pk":{"S":"a"},"sk":{"S":"1"}},"ProjectionExpression":"#p","ExpressionAttributeNames":{"#p":"\uD800"}}}]}""")]
+    [InlineData(
+        """{"TransactItems":[{"Get":{"TableName":"orders","Key":{"pk":{"S":"\uD800"},"sk":{"S":"1"}}}}]}""")]
+    public async Task Lone_surrogate_is_a_serialization_error_before_io(
+        string request)
+    {
+        var handler = new ScriptedHandler();
+        var (context, body) = NewContext();
+
+        await RunAsync(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            request);
+
+        Assert.Equal(
+            StatusCodes.Status400BadRequest,
+            context.Response.StatusCode);
+        var response = ReadResponse(body);
+        Assert.Contains(
+            "SerializationException",
+            response,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "valid Unicode",
+            response,
+            StringComparison.Ordinal);
         Assert.Empty(handler.Requests);
     }
 

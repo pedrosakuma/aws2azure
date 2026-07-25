@@ -97,6 +97,15 @@ internal static class ExpressionPathParser
         AttributeAliasErrorStyle aliasErrorStyle = AttributeAliasErrorStyle.Expression,
         ISet<string>? consumedNames = null)
     {
+        if (!ExpressionParameterLimits.TryValidatePlaceholderLength(
+                token.Text,
+                out var placeholderError))
+        {
+            throw new ExpressionSyntaxException(
+                token.Position,
+                placeholderError);
+        }
+
         if (names is not null && names.TryGetValue(token.Text, out var resolved))
         {
             consumedNames?.Add(token.Text);
@@ -114,6 +123,15 @@ internal static class ExpressionPathParser
         IReadOnlyDictionary<string, JsonElement>? values,
         ISet<string>? consumedValues = null)
     {
+        if (!ExpressionParameterLimits.TryValidatePlaceholderLength(
+                token.Text,
+                out var placeholderError))
+        {
+            throw new ExpressionSyntaxException(
+                token.Position,
+                placeholderError);
+        }
+
         if (values is null || !values.TryGetValue(token.Text, out var resolved))
         {
             throw new ExpressionSyntaxException(token.Position,

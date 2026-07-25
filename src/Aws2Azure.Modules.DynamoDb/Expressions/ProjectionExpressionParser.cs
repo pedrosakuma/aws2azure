@@ -11,6 +11,11 @@ namespace Aws2Azure.Modules.DynamoDb.Expressions;
 /// </summary>
 internal static class ProjectionExpressionParser
 {
+    internal const int MaxExpressionUtf8Bytes =
+        ExpressionParameterLimits.MaxExpressionUtf8Bytes;
+    internal const int MaxPlaceholderUtf8Bytes =
+        ExpressionParameterLimits.MaxPlaceholderUtf8Bytes;
+
     public static Projection Parse(
         string expression, IReadOnlyDictionary<string, string>? names)
         => ParseCore(expression, names, consumedNames: null);
@@ -33,6 +38,10 @@ internal static class ProjectionExpressionParser
         if (string.IsNullOrWhiteSpace(expression))
             throw new ExpressionSyntaxException(0, "ProjectionExpression cannot be empty.");
 
+        ExpressionParameterLimits.ValidateEncodedLength(
+            expression,
+            "ProjectionExpression");
+        ExpressionParameterLimits.ValidateAttributeNamePlaceholders(names);
         var tokens = ExpressionLexer.Tokenise(expression);
         var paths = new List<DocumentPath>();
         int position = 0;

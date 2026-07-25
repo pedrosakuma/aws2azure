@@ -26,6 +26,16 @@ internal static class TransactGetItemsHandler
         SprocContext? sprocContext,
         CancellationToken ct)
     {
+        if (!JsonUnicodePreflight.TryValidate(body, out var jsonError))
+        {
+            await CosmosOpsShared.WriteErrorAsync(
+                ctx,
+                StatusCodes.Status400BadRequest,
+                "SerializationException",
+                jsonError).ConfigureAwait(false);
+            return;
+        }
+
         TransactGetItemsRequest? request;
         try
         {
@@ -33,7 +43,10 @@ internal static class TransactGetItemsHandler
                 body,
                 TransactGetItemsJsonContext.Default.TransactGetItemsRequest);
         }
-        catch (JsonException exception)
+        catch (Exception exception) when (
+            exception is JsonException
+                or InvalidOperationException
+                or ArgumentException)
         {
             await CosmosOpsShared.WriteErrorAsync(
                 ctx,

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Text;
 using System.Text.Json;
 
 namespace Aws2Azure.Modules.DynamoDb.Expressions;
@@ -41,16 +40,13 @@ namespace Aws2Azure.Modules.DynamoDb.Expressions;
 internal sealed class ConditionExpressionParser
 {
     internal const int MaxInOperands = 100;
-    internal const int MaxExpressionUtf8Bytes = 4 * 1024;
-    internal const int MaxPlaceholderUtf8Bytes = 255;
+    internal const int MaxExpressionUtf8Bytes =
+        ExpressionParameterLimits.MaxExpressionUtf8Bytes;
+    internal const int MaxPlaceholderUtf8Bytes =
+        ExpressionParameterLimits.MaxPlaceholderUtf8Bytes;
     internal const int MaxOperators = 300;
     internal const int MaxAstDepth = MaxOperators;
     internal const int MaxParserNestingDepth = 64;
-
-    private static readonly Encoding StrictUtf8 =
-        new UTF8Encoding(
-            encoderShouldEmitUTF8Identifier: false,
-            throwOnInvalidBytes: true);
 
     private readonly List<ExpressionToken> _tokens;
     private readonly IReadOnlyDictionary<string, string>? _names;
@@ -92,6 +88,8 @@ internal sealed class ConditionExpressionParser
             throw new ExpressionSyntaxException(0, "ConditionExpression cannot be empty.");
 
         ValidateEncodedLength(expression);
+        ExpressionParameterLimits.ValidateAttributeNamePlaceholders(
+            expressionAttributeNames);
         var tokens = ExpressionLexer.Tokenise(expression);
         ValidateOperatorCount(tokens);
         var parser = new ConditionExpressionParser(tokens, expressionAttributeNames, expressionAttributeValues);
@@ -107,29 +105,9 @@ internal sealed class ConditionExpressionParser
     internal static bool TryValidatePlaceholderLength(
         string placeholder,
         out string error)
-    {
-        int byteCount;
-        try
-        {
-            byteCount = StrictUtf8.GetByteCount(placeholder);
-        }
-        catch (EncoderFallbackException)
-        {
-            error =
-                $"Expression placeholder '{placeholder}' must contain valid Unicode scalar values.";
-            return false;
-        }
-
-        if (byteCount > MaxPlaceholderUtf8Bytes)
-        {
-            error =
-                $"Expression placeholder '{placeholder}' exceeds the maximum encoded length of {MaxPlaceholderUtf8Bytes} bytes.";
-            return false;
-        }
-
-        error = string.Empty;
-        return true;
-    }
+        => ExpressionParameterLimits.TryValidatePlaceholderLength(
+            placeholder,
+            out error);
 
     // ----- precedence climb ------------------------------------------
 
@@ -429,26 +407,9 @@ internal sealed class ConditionExpressionParser
     }
 
     private static void ValidateEncodedLength(string expression)
-    {
-        int byteCount;
-        try
-        {
-            byteCount = StrictUtf8.GetByteCount(expression);
-        }
-        catch (EncoderFallbackException)
-        {
-            throw new ExpressionSyntaxException(
-                0,
-                "ConditionExpression must contain valid Unicode scalar values.");
-        }
-
-        if (byteCount > MaxExpressionUtf8Bytes)
-        {
-            throw new ExpressionSyntaxException(
-                0,
-                $"ConditionExpression exceeds the maximum encoded length of {MaxExpressionUtf8Bytes} bytes (4 KiB).");
-        }
-    }
+        => ExpressionParameterLimits.ValidateEncodedLength(
+            expression,
+            "ConditionExpression");
 
     private static void ValidateOperatorCount(
         IReadOnlyList<ExpressionToken> tokens)

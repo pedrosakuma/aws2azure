@@ -1,4 +1,7 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text;
 using System.Text.Json;
 using Aws2Azure.Modules.DynamoDb.Expressions;
 using Xunit;
@@ -59,6 +62,143 @@ public class ProjectionTests
 
         Assert.Single(result);
         Assert.True(result.ContainsKey("Name"));
+    }
+
+    [Fact]
+    public void Encoded_length_limit_accepts_4096_and_rejects_4097_bytes()
+    {
+        var expression =
+            "a"
+            + new string(
+                ' ',
+                ProjectionExpressionParser.MaxExpressionUtf8Bytes - 1);
+        Assert.Equal(
+            4096,
+            Encoding.UTF8.GetByteCount(expression));
+
+        Assert.NotNull(Parse(expression));
+
+        var overLimit = expression + " ";
+        Assert.Equal(
+            4097,
+            Encoding.UTF8.GetByteCount(overLimit));
+        var exception = Assert.Throws<ExpressionSyntaxException>(
+            () => Parse(overLimit));
+        Assert.Contains("4 KiB", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Encoded_length_limit_counts_multibyte_utf8()
+    {
+        const string prefix = "é";
+        var expression =
+            prefix
+            + new string(
+                ' ',
+                ProjectionExpressionParser.MaxExpressionUtf8Bytes
+                - Encoding.UTF8.GetByteCount(prefix));
+        Assert.Equal(
+            ProjectionExpressionParser.MaxExpressionUtf8Bytes,
+            Encoding.UTF8.GetByteCount(expression));
+
+        Assert.NotNull(Parse(expression));
+
+        var exception = Assert.Throws<ExpressionSyntaxException>(
+            () => Parse(expression + " "));
+        Assert.Contains("4 KiB", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Hundred_thousand_paths_fail_length_preflight_without_large_parse_allocation()
+    {
+        var expression = string.Join(
+            ",",
+            Enumerable.Repeat("a", 100_000));
+        _ = Assert.Throws<ExpressionSyntaxException>(
+            () => Parse(
+                new string(
+                    'a',
+                    ProjectionExpressionParser.MaxExpressionUtf8Bytes + 1)));
+
+        ExpressionSyntaxException? exception = null;
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        try
+        {
+            _ = Parse(expression);
+        }
+        catch (ExpressionSyntaxException caught)
+        {
+            exception = caught;
+        }
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.NotNull(exception);
+        Assert.Contains(
+            "4 KiB",
+            exception.Message,
+            StringComparison.Ordinal);
+        Assert.True(
+            allocated < 128 * 1024,
+            $"ProjectionExpression length preflight allocated {allocated:N0} bytes.");
+    }
+
+    [Fact]
+    public void Invalid_unicode_is_rejected_before_tokenization()
+    {
+        var exception = Assert.Throws<ExpressionSyntaxException>(
+            () => Parse("\uD800"));
+
+        Assert.Contains(
+            "valid Unicode",
+            exception.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Expression_attribute_name_placeholder_limit_counts_utf8_bytes()
+    {
+        var atLimit = "#" + new string('é', 127);
+        Assert.Equal(
+            ProjectionExpressionParser.MaxPlaceholderUtf8Bytes,
+            Encoding.UTF8.GetByteCount(atLimit));
+        var names = new Dictionary<string, string>
+        {
+            [atLimit] = "Name",
+        };
+
+        Assert.NotNull(
+            ProjectionExpressionParser.Parse(atLimit, names));
+
+        var overLimit = atLimit + "a";
+        Assert.Equal(
+            ProjectionExpressionParser.MaxPlaceholderUtf8Bytes + 1,
+            Encoding.UTF8.GetByteCount(overLimit));
+        var overLimitNames = new Dictionary<string, string>
+        {
+            [overLimit] = "Name",
+        };
+        var exception = Assert.Throws<ExpressionSyntaxException>(
+            () => ProjectionExpressionParser.Parse(
+                overLimit,
+                overLimitNames));
+        Assert.Contains("255 bytes", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Resolved_attribute_name_is_not_subject_to_placeholder_limit()
+    {
+        var attributeName = new string('é', 128);
+        Assert.True(
+            Encoding.UTF8.GetByteCount(attributeName)
+            > ProjectionExpressionParser.MaxPlaceholderUtf8Bytes);
+        var names = new Dictionary<string, string>
+        {
+            ["#n"] = attributeName,
+        };
+
+        var projection = ProjectionExpressionParser.Parse("#n", names);
+
+        Assert.Equal(attributeName, Assert.Single(projection.RootNames));
     }
 
     // --- Nested map --------------------------------------------------------
