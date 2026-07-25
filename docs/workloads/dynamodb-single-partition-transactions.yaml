@@ -14,6 +14,7 @@ accepted_partial_operations:
   - dynamodb:TransactWriteItems
 accepted_design_gaps:
   - "dynamodb:Transaction scope is single-partition, single-table"
+  - "dynamodb:Transaction execution is pinned to one Cosmos write region"
 required_sub_feature_seals:
   - operation: dynamodb:TransactGetItems
     sub_feature: Single-table single-partition snapshot
@@ -32,6 +33,8 @@ evidence:
   required_scenarios:
     - representative-load
     - transaction-snapshot
+    - transaction-region-pinning
+    - transaction-preflight-contracts
     - transaction-atomicity-rollback
     - transaction-conditions-cancellation
     - transaction-scope-rejection

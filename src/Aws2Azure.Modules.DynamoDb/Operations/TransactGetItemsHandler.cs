@@ -314,9 +314,22 @@ internal static class TransactGetItemsHandler
             documentIds[index] = documentId;
         }
 
+        var routeResolution = await cosmos.ResolveTransactionRouteAsync(
+                tableName!,
+                ct)
+            .ConfigureAwait(false);
+        if (routeResolution.Status
+            != CosmosTransactionRouteResolutionStatus.Ready)
+        {
+            await WriteRoutingFailureAsync(ctx, routeResolution)
+                .ConfigureAwait(false);
+            return;
+        }
+
         var ready = await sprocContext.Manager.EnsureTransactGetSprocAsync(
             cosmos,
             tableName!,
+            routeResolution.Route,
             ct).ConfigureAwait(false);
         if (!ready)
         {
@@ -334,6 +347,7 @@ internal static class TransactGetItemsHandler
             tableName!,
             partitionKey!,
             documentIds,
+            routeResolution.Route,
             ct).ConfigureAwait(false);
         if (!result.Success)
         {
@@ -519,6 +533,23 @@ internal static class TransactGetItemsHandler
             StatusCodes.Status400BadRequest,
             "ValidationException",
             message);
+
+    private static Task WriteRoutingFailureAsync(
+        HttpContext ctx,
+        CosmosTransactionRouteResolution resolution)
+        => resolution.Status
+            == CosmosTransactionRouteResolutionStatus.InvalidConfiguration
+            ? RejectAsync(ctx, resolution.Error)
+            : resolution.BackendStatus is { } backendStatus
+                ? CosmosOpsShared.WriteCosmosStatusErrorAsync(
+                    ctx,
+                    backendStatus,
+                    resolution.Error)
+                : CosmosOpsShared.WriteErrorAsync(
+                    ctx,
+                    StatusCodes.Status500InternalServerError,
+                    "InternalServerError",
+                    resolution.Error);
 
     private readonly record struct WorkUnit(string DocumentId, Projection? Projection);
 }

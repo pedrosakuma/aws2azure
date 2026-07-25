@@ -6,7 +6,7 @@ sub_features:
   - name: Atomic Put / Delete / ConditionCheck
     status: implemented
     notes: >-
-      `atomicTransactWrite_v4` reads and validates every target before issuing
+      `atomicTransactWrite_v5` reads and validates every target before issuing
       writes. All writes execute inside one Cosmos logical-partition ACID
       transaction; a condition or write failure commits nothing.
       `atomicTransactWrite_v2` remains in the persisted-format inventory, but its
@@ -65,6 +65,14 @@ sub_features:
   - name: 100-item-per-call cap
     status: implemented
     notes: "Requests over 100 items are rejected with ValidationException."
+  - name: 400 KiB Put item cap
+    status: implemented
+    notes: >-
+      Every transactional Put is sized from DynamoDB semantics before table
+      metadata, topology discovery, or stored-procedure I/O. UTF-8 attribute-name
+      and string bytes, decoded binary bytes, scalar/set values, and list/map
+      overhead count toward the 409600-byte boundary. Oversize items fail with
+      ValidationException.
   - name: Serialized transaction body limit
     status: partial
     notes: >-
@@ -76,7 +84,7 @@ sub_features:
   - name: ClientRequestToken (idempotency)
     status: implemented
     notes: >-
-      Tokens are validated at 1–36 characters. `atomicTransactWrite_v4` writes a
+      Tokens are validated at 1–36 characters. `atomicTransactWrite_v5` writes a
       collision-proof reserved record in the same Cosmos logical partition and
       transaction as the user writes. Its stable SHA-256 fingerprint is based on
       normalized transaction semantics: resolved condition ASTs, canonical
@@ -85,13 +93,27 @@ sub_features:
       encodings do not cause false mismatches. Equivalent retries replay the
       original success or positional condition-cancellation outcome without
       applying writes again; a different fingerprint within the active window
-      returns IdempotentParameterMismatchException. The script uses Cosmos server
-      time for a 10-minute logical window, records created/expiry timestamps,
+      returns IdempotentParameterMismatchException. The script samples Cosmos
+      server time immediately before the atomic token upsert/completion, so
+      validation reads and condition work do not consume any of the advertised
+      10-minute post-completion window. It records created/expiry timestamps,
       assigns a 660-second native ttl, and performs a bounded partition-local
       sweep when container TTL is not armed. Expired records are safely replaced.
       Preflight and script validation errors are not cached. The contract is
       scoped to this operation's supported single-table/single-partition boundary;
       callers must not reuse one token for a transaction in another partition.
+  - name: Authoritative Cosmos write-region pinning
+    status: implemented
+    notes: >-
+      Account topology is resolved before transaction stored-procedure
+      provisioning/execution. Single-write accounts pin the current authoritative
+      writable endpoint. Multi-write accounts require target.preferredRegions;
+      the first configured region that Cosmos reports writable is pinned
+      deterministically per physical account/database/container for the process
+      lifetime. Every binding sharing that container must resolve the same
+      endpoint; conflicting regional policies fail with ValidationException. A
+      transient failure, timeout, or write-region rejection returns a retryable
+      AWS InternalServerError without replaying in another writable region.
   - name: ReturnValuesOnConditionCheckFailure
     status: unsupported
     notes: >-
@@ -107,11 +129,13 @@ behavior_differences:
   - "Duplicate operations on the same table/key are rejected with ValidationException before execution."
   - "Stored procedures must be enabled (Preferred or Required). There is no non-atomic fallback."
   - "Stored-procedure provisioning treats an HTTP 409 as success only after reading the existing resource and verifying the exact versioned id and body; an id/body conflict fails closed."
-  - "Transaction execution POSTs retain the no-automatic-retry transport option. Token-bearing requests explicitly retry only Cosmos write-conflict statuses once; any caller retry after an ambiguous/lost response is safe because the token outcome is committed atomically with the writes. Tokenless requests remain non-retried. Stored-procedure availability is cached per Cosmos account/database/container, invalidated on table lifecycle, and evicted/reprovisioned once after an execution 404."
-  - "`atomicWrite_v2`, `atomicTransactWrite_v2`, and `atomicTransactWrite_v3` remain frozen in the additive persisted-format identity set. The current durable idempotency contract uses `atomicTransactWrite_v4`; TransactGet uses `atomicTransactGet_v1`."
-  - "The Cosmos Linux emulator cannot execute these scripts. V4 write/idempotency semantics, v1 snapshots, contention, restart, and exact-body conflict handling require fresh real-Azure runs before new seals are committed."
+  - "Transaction provisioning and execution use one authoritative regional endpoint per physical Cosmos account/database/container across all bindings. Multi-write accounts without a matching target.preferredRegions entry, and bindings that resolve conflicting authoritative endpoints for one container, are rejected before transaction execution. A pinned endpoint is never replaced after 403/3, 408, 503, timeout, or transport failure; the proxy returns a retryable AWS error rather than replaying the snapshot/write/idempotency operation in another independently writable region. Ordinary non-transactional region routing is unchanged."
+  - "Transaction execution POSTs retain the no-automatic-retry transport option. Token-bearing requests explicitly retry only Cosmos write-conflict statuses once on the same pinned endpoint; any caller retry after an ambiguous/lost response is safe because the token outcome is committed atomically with the writes. Tokenless requests remain non-retried. Stored-procedure availability is cached per Cosmos account/database/container, invalidated on table lifecycle, and evicted/reprovisioned once after an execution 404."
+  - "`atomicWrite_v2`, `atomicTransactWrite_v2`, `atomicTransactWrite_v3`, and `atomicTransactWrite_v4` remain frozen in the additive persisted-format identity set. The current durable idempotency contract uses `atomicTransactWrite_v5`; TransactGet uses `atomicTransactGet_v1`."
+  - "The Cosmos Linux emulator cannot execute these scripts. V5 write/idempotency semantics, v1 snapshots, contention, restart, and exact-body conflict handling require fresh real-Azure runs before new seals are committed."
   - "No trusted prior release implements the complete profile: the known v2 runtime uses independent reads and lacks the durable ClientRequestToken contract. It is not an approved bootstrap/rollback target; qualification is rollout-only and records the adjacent-runtime row as skipped/inconclusive until a compatible prior release exists."
   - "The exact serialized stored-procedure parameter body is limited to 2 MiB, below DynamoDB's 4 MiB aggregate TransactWriteItems limit. Oversize requests fail with ValidationException before stored-procedure I/O."
+  - "Each Put item is limited to DynamoDB's 400 KiB item boundary before metadata or stored-procedure I/O."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TransactWriteItems.html
   - https://learn.microsoft.com/azure/cosmos-db/nosql/database-transactions-optimistic-concurrency

@@ -148,7 +148,7 @@ internal sealed partial class SprocManager
     }
 """;
 
-    // Strict evaluator used by atomicTransactWrite_v3/v4. The frozen
+    // Strict evaluator used by atomicTransactWrite_v3/v4/v5. The frozen
     // atomicWrite_v2 body above keeps its original evaluator and hash.
     private const string TransactionConditionEvaluatorJs = """
     function evaluateCondition(ast, doc) {
@@ -576,7 +576,7 @@ function atomicTransactWrite(operations, idempotency) {
     var selfLink = coll.getSelfLink();
     var n = operations.length;
     var existing = new Array(n);
-    var nowMs = new Date().getTime();
+    var lookupNowMs = new Date().getTime();
 
     if (idempotency === null || idempotency === undefined) {
         readNext(0);
@@ -605,7 +605,7 @@ function atomicTransactWrite(operations, idempotency) {
         var accepted = coll.queryDocuments(selfLink, query, {}, function(err, docs) {
             if (err) throw err;
             var record = (docs && docs.length > 0) ? docs[0] : null;
-            if (record && record.expiresAtMs > nowMs) {
+            if (record && record.expiresAtMs > lookupNowMs) {
                 replayOrReject(record);
                 return;
             }
@@ -663,7 +663,7 @@ function atomicTransactWrite(operations, idempotency) {
     function cleanupExpiredRecords() {
         var query = {
             query: "SELECT TOP 8 * FROM c WHERE c._a2a = 'transaction-idempotency-v1' AND c.expiresAtMs <= @now",
-            parameters: [{ name: '@now', value: nowMs }]
+            parameters: [{ name: '@now', value: lookupNowMs }]
         };
         var accepted = coll.queryDocuments(selfLink, query, {}, function(err, docs) {
             if (err) throw err;
@@ -782,14 +782,15 @@ function atomicTransactWrite(operations, idempotency) {
             complete();
             return;
         }
+        var completionNowMs = new Date().getTime();
         var record = {
             id: idempotency.id,
             _a2a_pk: idempotency.pk,
             _a2a: 'transaction-idempotency-v1',
             formatVersion: 1,
             fingerprint: idempotency.fingerprint,
-            createdAtMs: nowMs,
-            expiresAtMs: nowMs + idempotency.windowMs,
+            createdAtMs: completionNowMs,
+            expiresAtMs: completionNowMs + idempotency.windowMs,
             ttl: idempotency.cleanupTtlSeconds,
             outcome: outcome
         };

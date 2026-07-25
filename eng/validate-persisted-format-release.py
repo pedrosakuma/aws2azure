@@ -12,10 +12,10 @@ from typing import Any, NoReturn
 
 
 INVENTORY = pathlib.PurePosixPath(
-    "docs/compatibility/dynamodb-persisted-formats-v3.json"
+    "docs/compatibility/dynamodb-persisted-formats-v4.json"
 )
 PREVIOUS_INVENTORY = pathlib.PurePosixPath(
-    "docs/compatibility/dynamodb-persisted-formats-v2.json"
+    "docs/compatibility/dynamodb-persisted-formats-v3.json"
 )
 DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 
@@ -189,6 +189,17 @@ def string_constants(source: str) -> dict[str, str]:
         source,
     ):
         values[match.group(1)] = json.loads(match.group(2))
+    for match in re.finditer(
+        r'\bconst\s+string\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*'
+        r'"""\n(.*?)\n([ \t]*)""";',
+        source,
+        flags=re.DOTALL,
+    ):
+        values[match.group(1)] = raw_string_literal(
+            match.group(2),
+            match.group(3),
+            match.group(1),
+        )
     return values
 
 

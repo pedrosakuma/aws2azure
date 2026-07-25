@@ -24,6 +24,7 @@ public class CosmosRegionRoutingTests
     {
         var info = CosmosAccountInfoParser.Parse(Encoding.UTF8.GetBytes("""
         {
+          "id": "acct",
           "userConsistencyPolicy": { "defaultConsistencyLevel": "Session" },
           "enableMultipleWriteLocations": true,
           "readableLocations": [
@@ -37,6 +38,7 @@ public class CosmosRegionRoutingTests
         """), Global);
 
         Assert.Equal(CosmosConsistencyLevel.Session, info.DefaultConsistency);
+        Assert.Equal("acct", info.AccountIdentity);
         Assert.True(info.EnableMultipleWriteLocations);
         Assert.Equal(2, info.ReadableLocations.Length);
         Assert.Equal("East US", info.ReadableLocations[0].Name);
@@ -214,6 +216,183 @@ public class CosmosRegionRoutingTests
         Assert.Equal("acct-west.documents.azure.com", handler.Requests[^1].RequestUri!.Host);
     }
 
+    [Fact]
+    public async Task Strict_transaction_discovery_refreshes_statusless_fallback()
+    {
+        var global = new Uri(
+            "https://acct-transaction-strict.documents.azure.com/");
+        var rootReads = 0;
+        var handler = new SequenceHandler(
+            (Func<HttpRequestMessage, bool>)(request =>
+                request.RequestUri == global),
+            (Func<HttpResponseMessage>)(() =>
+            {
+                rootReads++;
+                return JsonResponse(HttpStatusCode.TooManyRequests, "{}");
+            }),
+            (Func<HttpRequestMessage, bool>)(request =>
+                request.RequestUri!.AbsolutePath.EndsWith(
+                    "/docs/1",
+                    StringComparison.Ordinal)),
+            (Func<HttpResponseMessage>)(() => JsonResponse(
+                HttpStatusCode.OK,
+                "{}")));
+        using var http = new AzureHttpClient(
+            handler,
+            ownsHandler: false,
+            NoRetryOptions());
+        var credentials = Credentials(global.AbsoluteUri);
+        credentials.PreferredRegions = ["West US"];
+        var client = new CosmosClient(
+            http,
+            credentials,
+            new MasterKeyCosmosAuthenticator(credentials.PrimaryKey));
+
+        using var read = await client.SendAsync(
+            HttpMethod.Get,
+            "docs",
+            "dbs/main/colls/orders/docs/1",
+            "/dbs/main/colls/orders/docs/1",
+            content: null,
+            extraHeaders: null,
+            CancellationToken.None);
+        var resolution = await client.ResolveTransactionRouteAsync(
+            "orders",
+            CancellationToken.None);
+
+        Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+        Assert.Equal(2, rootReads);
+        Assert.Equal(
+            CosmosTransactionRouteResolutionStatus.Unavailable,
+            resolution.Status);
+        Assert.Equal(
+            HttpStatusCode.TooManyRequests,
+            resolution.BackendStatus);
+    }
+
+    [Fact]
+    public async Task Shared_container_rejects_conflicting_binding_region_pins()
+    {
+        var westConfiguredEndpoint = new Uri(
+            "https://acct-transaction-west-config.documents.azure.com/");
+        var eastConfiguredEndpoint = new Uri(
+            "https://acct-transaction-east-config.documents.azure.com/");
+        var westHandler = new SequenceHandler(
+            (Func<HttpRequestMessage, bool>)(request =>
+                request.RequestUri == westConfiguredEndpoint),
+            (Func<HttpResponseMessage>)(() => JsonResponse(
+                HttpStatusCode.OK,
+                MultiWriteAccountJson())));
+        var eastHandler = new SequenceHandler(
+            (Func<HttpRequestMessage, bool>)(request =>
+                request.RequestUri == eastConfiguredEndpoint),
+            (Func<HttpResponseMessage>)(() => JsonResponse(
+                HttpStatusCode.OK,
+                MultiWriteAccountJson())));
+        using var westHttp = new AzureHttpClient(
+            westHandler,
+            ownsHandler: false,
+            NoRetryOptions());
+        using var eastHttp = new AzureHttpClient(
+            eastHandler,
+            ownsHandler: false,
+            NoRetryOptions());
+        var westCredentials = Credentials(westConfiguredEndpoint.AbsoluteUri);
+        westCredentials.PreferredRegions = ["West US"];
+        var eastCredentials = Credentials(eastConfiguredEndpoint.AbsoluteUri);
+        eastCredentials.PreferredRegions = ["East US"];
+        var westClient = new CosmosClient(
+            westHttp,
+            westCredentials,
+            new MasterKeyCosmosAuthenticator(westCredentials.PrimaryKey));
+        var eastClient = new CosmosClient(
+            eastHttp,
+            eastCredentials,
+            new MasterKeyCosmosAuthenticator(eastCredentials.PrimaryKey));
+
+        var west = await westClient.ResolveTransactionRouteAsync(
+            "orders",
+            CancellationToken.None);
+        var east = await eastClient.ResolveTransactionRouteAsync(
+            "orders",
+            CancellationToken.None);
+
+        Assert.Equal(
+            CosmosTransactionRouteResolutionStatus.Ready,
+            west.Status);
+        Assert.Equal(West, west.Route.Endpoint);
+        Assert.Equal(
+            CosmosTransactionRouteResolutionStatus.InvalidConfiguration,
+            east.Status);
+        Assert.Contains(
+            "already pinned",
+            east.Error,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Shared_container_write_region_change_is_retryable_unavailable()
+    {
+        var westConfiguredEndpoint = new Uri(
+            "https://acct-topology-west-config.documents.azure.com/");
+        var eastConfiguredEndpoint = new Uri(
+            "https://acct-topology-east-config.documents.azure.com/");
+        var westHandler = new SequenceHandler(
+            (Func<HttpRequestMessage, bool>)(request =>
+                request.RequestUri == westConfiguredEndpoint),
+            (Func<HttpResponseMessage>)(() => JsonResponse(
+                HttpStatusCode.OK,
+                SingleWriteAccountJson(
+                    "shared-topology-account",
+                    West,
+                    East))));
+        var eastHandler = new SequenceHandler(
+            (Func<HttpRequestMessage, bool>)(request =>
+                request.RequestUri == eastConfiguredEndpoint),
+            (Func<HttpResponseMessage>)(() => JsonResponse(
+                HttpStatusCode.OK,
+                SingleWriteAccountJson(
+                    "shared-topology-account",
+                    East,
+                    West))));
+        using var westHttp = new AzureHttpClient(
+            westHandler,
+            ownsHandler: false,
+            NoRetryOptions());
+        using var eastHttp = new AzureHttpClient(
+            eastHandler,
+            ownsHandler: false,
+            NoRetryOptions());
+        var westCredentials = Credentials(westConfiguredEndpoint.AbsoluteUri);
+        var eastCredentials = Credentials(eastConfiguredEndpoint.AbsoluteUri);
+        var westClient = new CosmosClient(
+            westHttp,
+            westCredentials,
+            new MasterKeyCosmosAuthenticator(westCredentials.PrimaryKey));
+        var eastClient = new CosmosClient(
+            eastHttp,
+            eastCredentials,
+            new MasterKeyCosmosAuthenticator(eastCredentials.PrimaryKey));
+
+        var west = await westClient.ResolveTransactionRouteAsync(
+            "orders",
+            CancellationToken.None);
+        var east = await eastClient.ResolveTransactionRouteAsync(
+            "orders",
+            CancellationToken.None);
+
+        Assert.Equal(
+            CosmosTransactionRouteResolutionStatus.Ready,
+            west.Status);
+        Assert.Equal(
+            CosmosTransactionRouteResolutionStatus.Unavailable,
+            east.Status);
+        Assert.Contains(
+            "no longer reported writable",
+            east.Error,
+            StringComparison.Ordinal);
+    }
+
     private static CosmosAccountInfo AccountInfo(bool multiWrite)
     {
         return new CosmosAccountInfo(
@@ -261,6 +440,7 @@ public class CosmosRegionRoutingTests
         var writableName = writableFirst == West ? "West US" : "East US";
         return $$"""
         {
+          "id": "shared-transaction-account",
           "userConsistencyPolicy": { "defaultConsistencyLevel": "Session" },
           "enableMultipleWriteLocations": {{multiWrite.ToString().ToLowerInvariant()}},
           "readableLocations": [
@@ -274,6 +454,43 @@ public class CosmosRegionRoutingTests
         }
         """;
     }
+
+    private static string MultiWriteAccountJson() =>
+        $$"""
+        {
+          "id": "shared-transaction-account",
+          "userConsistencyPolicy": { "defaultConsistencyLevel": "Session" },
+          "enableMultipleWriteLocations": true,
+          "readableLocations": [
+            { "name": "West US", "databaseAccountEndpoint": "{{West.AbsoluteUri}}" },
+            { "name": "East US", "databaseAccountEndpoint": "{{East.AbsoluteUri}}" }
+          ],
+          "writableLocations": [
+            { "name": "West US", "databaseAccountEndpoint": "{{West.AbsoluteUri}}" },
+            { "name": "East US", "databaseAccountEndpoint": "{{East.AbsoluteUri}}" }
+          ]
+        }
+        """;
+
+    private static string SingleWriteAccountJson(
+        string accountIdentity,
+        Uri first,
+        Uri second) =>
+        $$"""
+        {
+          "id": "{{accountIdentity}}",
+          "userConsistencyPolicy": { "defaultConsistencyLevel": "Session" },
+          "enableMultipleWriteLocations": false,
+          "readableLocations": [
+            { "name": "First", "databaseAccountEndpoint": "{{first.AbsoluteUri}}" },
+            { "name": "Second", "databaseAccountEndpoint": "{{second.AbsoluteUri}}" }
+          ],
+          "writableLocations": [
+            { "name": "First", "databaseAccountEndpoint": "{{first.AbsoluteUri}}" },
+            { "name": "Second", "databaseAccountEndpoint": "{{second.AbsoluteUri}}" }
+          ]
+        }
+        """;
 
     private sealed class SequenceHandler : HttpMessageHandler
     {

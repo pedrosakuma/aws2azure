@@ -45,15 +45,21 @@ public class TransactWriteItemsHandlerTests
         + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
         + "\"billingMode\":\"PAY_PER_REQUEST\"}";
 
-    private static CosmosClient BuildClient(ScriptedHandler handler)
+    private static CosmosClient BuildClient(
+        ScriptedHandler handler,
+        string endpoint = "https://example.documents.azure.com/",
+        IReadOnlyList<string>? preferredRegions = null)
     {
         var http = new AzureHttpClient(handler, ownsHandler: false,
             new AzureHttpClientOptions { MaxAttempts = 1 });
         var creds = new CosmosCredentials
         {
-            Endpoint = "https://example.documents.azure.com/",
+            Endpoint = endpoint,
             PrimaryKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
             DatabaseName = "main",
+            PreferredRegions = preferredRegions is null
+                ? null
+                : new List<string>(preferredRegions),
         };
         return new CosmosClient(http, creds, new MasterKeyCosmosAuthenticator(creds.PrimaryKey));
     }
@@ -84,6 +90,13 @@ public class TransactWriteItemsHandlerTests
     private static HttpResponseMessage CosmosStatus(HttpStatusCode code, string body = "{}")
         => new(code) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
+    private static HttpResponseMessage CosmosWriteRegionRejected()
+    {
+        var response = CosmosStatus(HttpStatusCode.Forbidden);
+        response.Headers.TryAddWithoutValidation("x-ms-substatus", "3");
+        return response;
+    }
+
     private static Task Run(DefaultHttpContext ctx, CosmosClient cosmos, SprocContext? sproc, string req)
         => TransactWriteItemsHandler.HandleTransactWriteItemsAsync(
             ctx, Encoding.UTF8.GetBytes(req), cosmos, sproc, CancellationToken.None);
@@ -95,6 +108,87 @@ public class TransactWriteItemsHandlerTests
             : ",\"ConditionExpression\":\"" + condition + "\"";
         return "{\"Put\":{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\""
             + sk + "\"},\"v\":{\"N\":\"1\"}}" + cond + "}}";
+    }
+
+    private static string PutOpWithPayload(int payloadBytes)
+        => "{\"Put\":{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"a\"}," +
+           "\"sk\":{\"S\":\"1\"},\"payload\":{\"S\":\"" +
+           new string('x', payloadBytes) + "\"}}}}";
+
+    private static string MultiWriteAccountJson =>
+        """
+        {
+          "enableMultipleWriteLocations": true,
+          "readableLocations": [
+            { "name": "West US", "databaseAccountEndpoint": "https://txn-write-west.documents.azure.com/" },
+            { "name": "East US", "databaseAccountEndpoint": "https://txn-write-east.documents.azure.com/" }
+          ],
+          "writableLocations": [
+            { "name": "West US", "databaseAccountEndpoint": "https://txn-write-west.documents.azure.com/" },
+            { "name": "East US", "databaseAccountEndpoint": "https://txn-write-east.documents.azure.com/" }
+          ]
+        }
+        """;
+
+    [Fact]
+    public void Item_size_uses_utf8_attribute_names_and_decoded_binary_bytes()
+    {
+        using var document = JsonDocument.Parse(
+            """{"é":{"B":"AQID"}}""");
+
+        Assert.True(DynamoDbItemSize.TryCalculate(
+            document.RootElement,
+            out var size,
+            out var error),
+            error);
+        Assert.Equal(5, size);
+    }
+
+    [Fact]
+    public async Task Put_item_just_under_400_kib_is_accepted()
+    {
+        const int fixedItemBytes = 13;
+        var (ctx, _) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaPkSk),
+                CosmosCreated(),
+                CosmosOk("{\"success\":true}"),
+            },
+        };
+
+        await Run(
+            ctx,
+            BuildClient(handler),
+            EnabledSproc(),
+            "{\"TransactItems\":[" +
+            PutOpWithPayload(DynamoDbItemSize.MaximumBytes - fixedItemBytes - 1) +
+            "]}");
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Equal(3, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task Put_item_over_400_kib_is_rejected_before_cosmos_io()
+    {
+        const int fixedItemBytes = 13;
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+
+        await Run(
+            ctx,
+            BuildClient(handler),
+            EnabledSproc(),
+            "{\"TransactItems\":[" +
+            PutOpWithPayload(DynamoDbItemSize.MaximumBytes - fixedItemBytes + 1) +
+            "]}");
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        Assert.Contains("400 KiB", ReadResponse(body), StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
     }
 
     [Fact]
@@ -995,6 +1089,125 @@ public class TransactWriteItemsHandlerTests
     }
 
     [Fact]
+    public async Task Idempotent_transaction_stays_on_authoritative_write_region_after_failure()
+    {
+        var handler = new ScriptedHandler
+        {
+            AccountTopologyJson = MultiWriteAccountJson,
+            Responses =
+            {
+                CosmosOk(MetaPkSk),
+                CosmosCreated(),
+                CosmosWriteRegionRejected(),
+            },
+        };
+        var cosmos = BuildClient(
+            handler,
+            endpoint: "https://txn-write-global.documents.azure.com/",
+            preferredRegions: ["West US", "East US"]);
+        var sproc = EnabledSproc();
+        const string request =
+            "{\"ClientRequestToken\":\"pinned-token\",\"TransactItems\":[" +
+            "{\"Put\":{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"a\"}," +
+            "\"sk\":{\"S\":\"1\"},\"v\":{\"N\":\"1\"}}}}]}";
+
+        var (firstContext, firstBody) = NewCtx();
+        await Run(firstContext, cosmos, sproc, request);
+        Assert.Equal(
+            StatusCodes.Status500InternalServerError,
+            firstContext.Response.StatusCode);
+        Assert.Contains(
+            "InternalServerError",
+            ReadResponse(firstBody),
+            StringComparison.Ordinal);
+
+        var requestsAfterFailure = handler.Requests.Count;
+        var (retryContext, _) = NewCtx();
+        await Run(retryContext, cosmos, sproc, request);
+
+        Assert.Equal(
+            StatusCodes.Status500InternalServerError,
+            retryContext.Response.StatusCode);
+        Assert.Equal(requestsAfterFailure, handler.Requests.Count);
+        Assert.DoesNotContain(
+            handler.Requests,
+            captured => captured.Uri.Host
+                == "txn-write-east.documents.azure.com");
+        Assert.All(
+            handler.Requests.Where(requestItem =>
+                requestItem.Uri.AbsolutePath.Contains(
+                    "/sprocs",
+                    StringComparison.Ordinal)),
+            requestItem => Assert.Equal(
+                "txn-write-west.documents.azure.com",
+                requestItem.Uri.Host));
+    }
+
+    [Fact]
+    public async Task Multi_write_transaction_without_matching_preference_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            AccountTopologyJson = MultiWriteAccountJson,
+            Responses = { CosmosOk(MetaPkSk) },
+        };
+
+        await Run(
+            ctx,
+            BuildClient(
+                handler,
+                endpoint: "https://txn-write-unpinned.documents.azure.com/"),
+            EnabledSproc(),
+            "{\"TransactItems\":[" + PutOp("1") + "]}");
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        Assert.Contains(
+            "preferredRegions",
+            ReadResponse(body),
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            handler.Requests,
+            requestItem => requestItem.Uri.AbsolutePath.Contains(
+                "/sprocs",
+                StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized, "AccessDeniedException")]
+    [InlineData(
+        HttpStatusCode.TooManyRequests,
+        "ProvisionedThroughputExceededException")]
+    public async Task Topology_discovery_preserves_cosmos_error_mapping(
+        HttpStatusCode topologyStatus,
+        string expectedCode)
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            AccountTopologyStatus = topologyStatus,
+            Responses = { CosmosOk(MetaPkSk) },
+        };
+
+        await Run(
+            ctx,
+            BuildClient(
+                handler,
+                endpoint:
+                    $"https://txn-topology-{(int)topologyStatus}.documents.azure.com/"),
+            EnabledSproc(),
+            "{\"TransactItems\":[" + PutOp("1") + "]}");
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        Assert.Contains(expectedCode, ReadResponse(body), StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            handler.Requests,
+            requestItem => requestItem.Uri.AbsolutePath.Contains(
+                "/sprocs",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Delete_operation_builds_delete_op()
     {
         var (ctx, body) = NewCtx();
@@ -1039,9 +1252,23 @@ public class TransactWriteItemsHandlerTests
     {
         public List<HttpResponseMessage> Responses { get; } = new();
         public List<CapturedRequest> Requests { get; } = new();
+        public string? AccountTopologyJson { get; init; }
+        public HttpStatusCode? AccountTopologyStatus { get; init; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
+            if (request.Method == HttpMethod.Get
+                && request.RequestUri!.AbsolutePath == "/")
+            {
+                if (AccountTopologyStatus is { } status)
+                {
+                    return CosmosStatus(status);
+                }
+                return CosmosOk(
+                    AccountTopologyJson
+                    ?? SingleWriteAccountJson(request.RequestUri));
+            }
+
             string? bodyText = null;
             if (request.Content is not null)
             {
@@ -1066,6 +1293,22 @@ public class TransactWriteItemsHandlerTests
                 Responses.RemoveAt(0);
             }
             return next;
+        }
+
+        private static string SingleWriteAccountJson(Uri endpoint)
+        {
+            var accountEndpoint = endpoint.GetLeftPart(UriPartial.Authority) + "/";
+            return $$"""
+                {
+                  "enableMultipleWriteLocations": false,
+                  "readableLocations": [
+                    { "name": "East US", "databaseAccountEndpoint": "{{accountEndpoint}}" }
+                  ],
+                  "writableLocations": [
+                    { "name": "East US", "databaseAccountEndpoint": "{{accountEndpoint}}" }
+                  ]
+                }
+                """;
         }
     }
 

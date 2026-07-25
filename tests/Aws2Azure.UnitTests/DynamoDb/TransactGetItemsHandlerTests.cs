@@ -21,6 +21,21 @@ public sealed class TransactGetItemsHandlerTests
         + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
         + "\"billingMode\":\"PAY_PER_REQUEST\"}";
 
+    private const string MultiWriteAccountJson =
+        """
+        {
+          "enableMultipleWriteLocations": true,
+          "readableLocations": [
+            { "name": "West US", "databaseAccountEndpoint": "https://txn-get-west.documents.azure.com/" },
+            { "name": "East US", "databaseAccountEndpoint": "https://txn-get-east.documents.azure.com/" }
+          ],
+          "writableLocations": [
+            { "name": "West US", "databaseAccountEndpoint": "https://txn-get-west.documents.azure.com/" },
+            { "name": "East US", "databaseAccountEndpoint": "https://txn-get-east.documents.azure.com/" }
+          ]
+        }
+        """;
+
     public TransactGetItemsHandlerTests()
     {
         CosmosOpsShared.MetadataCache.Clear();
@@ -201,6 +216,53 @@ public sealed class TransactGetItemsHandlerTests
 
         Assert.Equal(StatusCodes.Status500InternalServerError, context.Response.StatusCode);
         Assert.Contains("malformed", ReadResponse(body), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Snapshot_stays_on_authoritative_write_region_after_failure()
+    {
+        var handler = new ScriptedHandler
+        {
+            AccountTopologyJson = MultiWriteAccountJson,
+            Responses =
+            {
+                CosmosOk(MetaPkSk),
+                CosmosCreated(),
+                CosmosWriteRegionRejected(),
+            },
+        };
+        var cosmos = BuildClient(
+            handler,
+            endpoint: "https://txn-get-global.documents.azure.com/",
+            preferredRegions: ["West US", "East US"]);
+        var sproc = EnabledSproc();
+
+        var (firstContext, _) = NewContext();
+        await RunAsync(firstContext, cosmos, sproc, SingleGet());
+        Assert.Equal(
+            StatusCodes.Status500InternalServerError,
+            firstContext.Response.StatusCode);
+
+        var requestsAfterFailure = handler.Requests.Count;
+        var (retryContext, _) = NewContext();
+        await RunAsync(retryContext, cosmos, sproc, SingleGet());
+
+        Assert.Equal(
+            StatusCodes.Status500InternalServerError,
+            retryContext.Response.StatusCode);
+        Assert.Equal(requestsAfterFailure, handler.Requests.Count);
+        Assert.DoesNotContain(
+            handler.Requests,
+            request => request.Uri.Host
+                == "txn-get-east.documents.azure.com");
+        Assert.All(
+            handler.Requests.Where(request =>
+                request.Uri.AbsolutePath.Contains(
+                    "/sprocs",
+                    StringComparison.Ordinal)),
+            request => Assert.Equal(
+                "txn-get-west.documents.azure.com",
+                request.Uri.Host));
     }
 
     [Fact]
@@ -389,7 +451,10 @@ public sealed class TransactGetItemsHandlerTests
             StoredProcedureMode.Preferred,
             new SprocManager(NullLogger<SprocManager>.Instance));
 
-    private static CosmosClient BuildClient(ScriptedHandler handler)
+    private static CosmosClient BuildClient(
+        ScriptedHandler handler,
+        string endpoint = "https://example.documents.azure.com/",
+        IReadOnlyList<string>? preferredRegions = null)
     {
         var http = new AzureHttpClient(
             handler,
@@ -397,10 +462,13 @@ public sealed class TransactGetItemsHandlerTests
             new AzureHttpClientOptions { MaxAttempts = 1 });
         var credentials = new CosmosCredentials
         {
-            Endpoint = "https://example.documents.azure.com/",
+            Endpoint = endpoint,
             PrimaryKey =
                 "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
             DatabaseName = "main",
+            PreferredRegions = preferredRegions is null
+                ? null
+                : new List<string>(preferredRegions),
         };
         return new CosmosClient(
             http,
@@ -453,15 +521,31 @@ public sealed class TransactGetItemsHandlerTests
             Content = new StringContent(body, Encoding.UTF8, "application/json"),
         };
 
+    private static HttpResponseMessage CosmosWriteRegionRejected()
+    {
+        var response = CosmosStatus(HttpStatusCode.Forbidden, "{}");
+        response.Headers.TryAddWithoutValidation("x-ms-substatus", "3");
+        return response;
+    }
+
     private sealed class ScriptedHandler : HttpMessageHandler
     {
         public List<HttpResponseMessage> Responses { get; } = [];
         public List<CapturedRequest> Requests { get; } = [];
+        public string? AccountTopologyJson { get; init; }
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
+            if (request.Method == HttpMethod.Get
+                && request.RequestUri!.AbsolutePath == "/")
+            {
+                return CosmosOk(
+                    AccountTopologyJson
+                    ?? SingleWriteAccountJson(request.RequestUri));
+            }
+
             var body = request.Content is null
                 ? null
                 : await request.Content.ReadAsStringAsync(cancellationToken);
@@ -496,6 +580,22 @@ public sealed class TransactGetItemsHandlerTests
             var response = Responses[0];
             Responses.RemoveAt(0);
             return response;
+        }
+
+        private static string SingleWriteAccountJson(Uri endpoint)
+        {
+            var accountEndpoint = endpoint.GetLeftPart(UriPartial.Authority) + "/";
+            return $$"""
+                {
+                  "enableMultipleWriteLocations": false,
+                  "readableLocations": [
+                    { "name": "East US", "databaseAccountEndpoint": "{{accountEndpoint}}" }
+                  ],
+                  "writableLocations": [
+                    { "name": "East US", "databaseAccountEndpoint": "{{accountEndpoint}}" }
+                  ]
+                }
+                """;
         }
     }
 

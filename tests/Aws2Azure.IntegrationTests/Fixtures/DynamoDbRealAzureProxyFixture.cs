@@ -49,6 +49,7 @@ public sealed class DynamoDbRealAzureProxyFixture : IAsyncLifetime
     private string? _cosmosEndpoint;
     private string? _cosmosKey;
     private string? _cosmosDatabase;
+    private string _storedProcedureMode = "Disabled";
 
     public bool CosmosConfigured { get; private set; }
     public bool ProxyStarted { get; private set; }
@@ -71,6 +72,13 @@ public sealed class DynamoDbRealAzureProxyFixture : IAsyncLifetime
     {
         var profile = Env("AWS2AZURE_QUALIFICATION_PROFILE")
             ?? "dynamodb-basic-crud";
+        _storedProcedureMode = ResolveStoredProcedureMode(
+            profile,
+            Env("AWS2AZURE_DDB_STORED_PROCEDURE_MODE"),
+            sourceValidation: string.Equals(
+                Env("AWS2AZURE_SEALED_RUNTIME_MODE"),
+                "source_validation",
+                StringComparison.Ordinal));
         _runtimeSelection = SealedRuntimeSelection.Load(profile, 1);
         _cosmosEndpoint = Env("AZURE_COSMOS_ENDPOINT");
         _cosmosKey = Env("AZURE_COSMOS_KEY");
@@ -218,10 +226,11 @@ public sealed class DynamoDbRealAzureProxyFixture : IAsyncLifetime
 
     private string BuildConfigJson()
     {
+        var serviceOptions = BuildDynamoDbServiceOptions(_storedProcedureMode);
         return $$"""
             {
               "services": {
-                "dynamodb": { "enabled": true, "cosmosBinaryResponses": true, "cosmosBinaryRequests": true, "enableGlobalSecondaryIndexQueries": true, "useStoredProcedures": "Preferred" }
+                "dynamodb": { {{serviceOptions}} }
               },
               "bindings": [
                 {
@@ -236,6 +245,56 @@ public sealed class DynamoDbRealAzureProxyFixture : IAsyncLifetime
               ]
             }
             """;
+    }
+
+    internal static string ResolveStoredProcedureMode(
+        string profile,
+        string? configuredMode,
+        bool sourceValidation = false)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(profile);
+        var mode = string.IsNullOrWhiteSpace(configuredMode)
+            ? "Disabled"
+            : configuredMode.Trim();
+        if (mode is not ("Disabled" or "Preferred"))
+        {
+            throw new InvalidDataException(
+                "AWS2AZURE_DDB_STORED_PROCEDURE_MODE must be Disabled or Preferred.");
+        }
+        if (sourceValidation)
+        {
+            return mode;
+        }
+
+        var transactionProfile = string.Equals(
+            profile,
+            "dynamodb-single-partition-transactions",
+            StringComparison.Ordinal);
+        if (transactionProfile && mode != "Preferred")
+        {
+            throw new InvalidDataException(
+                "The dynamodb-single-partition-transactions profile requires " +
+                "AWS2AZURE_DDB_STORED_PROCEDURE_MODE=Preferred.");
+        }
+        if (!transactionProfile && mode != "Disabled")
+        {
+            throw new InvalidDataException(
+                "AWS2AZURE_DDB_STORED_PROCEDURE_MODE=Preferred is reserved for " +
+                "the dynamodb-single-partition-transactions profile.");
+        }
+
+        return mode;
+    }
+
+    internal static string BuildDynamoDbServiceOptions(string mode)
+    {
+        var storedProcedureOption = mode == "Preferred"
+            ? ", \"useStoredProcedures\": \"Preferred\""
+            : string.Empty;
+        return "\"enabled\": true, \"cosmosBinaryResponses\": true, " +
+            "\"cosmosBinaryRequests\": true, " +
+            "\"enableGlobalSecondaryIndexQueries\": true" +
+            storedProcedureOption;
     }
 
     private static string? Env(string name)

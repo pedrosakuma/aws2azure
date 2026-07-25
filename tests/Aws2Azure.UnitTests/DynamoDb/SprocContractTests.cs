@@ -182,7 +182,7 @@ public sealed class SprocContractTests
     }
 
     [Fact]
-    public void Transaction_v4_script_fails_closed_for_missing_and_unknown_operands()
+    public void Transaction_v5_script_fails_closed_for_missing_and_unknown_operands()
     {
         Assert.Contains(
             "if (!left.exists || !right.exists",
@@ -211,7 +211,7 @@ public sealed class SprocContractTests
     }
 
     [Fact]
-    public void Transaction_v4_script_compares_strings_by_utf8_bytes()
+    public void Transaction_v5_script_compares_strings_by_utf8_bytes()
     {
         Assert.Contains(
             "function compareUtf8(left, right)",
@@ -228,7 +228,7 @@ public sealed class SprocContractTests
     }
 
     [Fact]
-    public void Transaction_v4_script_commits_and_replays_durable_token_outcomes()
+    public void Transaction_v5_script_commits_and_replays_durable_token_outcomes()
     {
         Assert.Contains(
             "function atomicTransactWrite(operations, idempotency)",
@@ -239,7 +239,7 @@ public sealed class SprocContractTests
             SprocManager.TransactSprocBody,
             StringComparison.Ordinal);
         Assert.Contains(
-            "expiresAtMs: nowMs + idempotency.windowMs",
+            "expiresAtMs: completionNowMs + idempotency.windowMs",
             SprocManager.TransactSprocBody,
             StringComparison.Ordinal);
         Assert.Contains(
@@ -261,6 +261,42 @@ public sealed class SprocContractTests
         Assert.Contains(
             "completeWithIdempotency(",
             SprocManager.TransactSprocBody,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Transaction_token_window_starts_at_completion_clock()
+    {
+        var script = SprocManager.TransactSprocBody;
+        var completeFunction = script.IndexOf(
+            "function completeWithIdempotency(outcome, reasons, complete)",
+            StringComparison.Ordinal);
+        var completionClock = script.IndexOf(
+            "var completionNowMs = new Date().getTime();",
+            StringComparison.Ordinal);
+        var record = script.IndexOf(
+            "var record = {",
+            completionClock,
+            StringComparison.Ordinal);
+
+        Assert.True(completeFunction >= 0);
+        Assert.True(completionClock > completeFunction);
+        Assert.True(record > completionClock);
+        Assert.Contains(
+            "createdAtMs: completionNowMs",
+            script,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "expiresAtMs: completionNowMs + idempotency.windowMs",
+            script,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "record.expiresAtMs > lookupNowMs",
+            script,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "createdAtMs: lookupNowMs",
+            script,
             StringComparison.Ordinal);
     }
 

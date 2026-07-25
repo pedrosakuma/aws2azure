@@ -40,12 +40,25 @@ sub_features:
     notes: >-
       Omitted or NONE is accepted. Other values are rejected with
       ValidationException rather than silently omitting ConsumedCapacity.
+  - name: Authoritative Cosmos write-region pinning
+    status: implemented
+    notes: >-
+      Although the stored procedure is read-only, Cosmos executes it through the
+      write-region transaction boundary. Single-write accounts pin the current
+      authoritative writable endpoint. Multi-write accounts require
+      target.preferredRegions; the first configured region that Cosmos reports
+      writable is pinned deterministically per
+      physical account/database/container for the process lifetime. Every binding
+      sharing that container must resolve the same endpoint; conflicting regional
+      policies fail with ValidationException. Endpoint failure returns a retryable
+      AWS InternalServerError without replay in another writable region.
 behavior_differences:
   - "**Single table + single partition key only.** Cross-table and cross-partition reads are rejected before the snapshot stored procedure is invoked. DynamoDB can transact across tables and partitions."
   - "Duplicate keys in one request are rejected with ValidationException before item data is read."
   - "Stored procedures must be enabled. The Cosmos Linux emulator does not execute server-side scripts, so snapshot execution is a real-Azure-only test surface; no new snapshot seal is recorded until that suite runs."
   - "Key values use the proxy-owned encoded Cosmos id/partition-key format (S -> hex UTF-8, B -> hex raw bytes, N -> order-preserving digits); the effective raw key limit remains approximately 127 bytes."
   - "The stored-procedure response is JSON text even when CosmosBinary document responses are enabled; projected DynamoDB AttributeValue maps are reconstructed from the returned raw documents."
+  - "Transaction snapshot provisioning/execution never fails over between independently writable Cosmos regions. One physical account/database/container has one process-lifetime authority across every binding. A multi-write account without a matching target.preferredRegions entry, or bindings that resolve conflicting endpoints for one container, are rejected before snapshot execution; 403/3, 408, 503, timeout, and transport failures on the pinned endpoint surface as retryable AWS errors. Ordinary non-transactional read failover remains unchanged."
 references:
   - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TransactGetItems.html
   - https://learn.microsoft.com/azure/cosmos-db/nosql/database-transactions-optimistic-concurrency

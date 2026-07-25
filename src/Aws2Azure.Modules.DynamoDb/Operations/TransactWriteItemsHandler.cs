@@ -285,6 +285,23 @@ internal static partial class TransactWriteItemsHandler
                     await RejectAsync(ctx, shapeError).ConfigureAwait(false);
                     return;
                 }
+                if (!DynamoDbItemSize.TryCalculate(
+                        keyBearer,
+                        out var itemSize,
+                        out var itemSizeError))
+                {
+                    await RejectAsync(ctx, itemSizeError).ConfigureAwait(false);
+                    return;
+                }
+                if (itemSize > DynamoDbItemSize.MaximumBytes)
+                {
+                    await RejectAsync(
+                        ctx,
+                        $"TransactItems[{index}].Put.Item is {itemSize} bytes; " +
+                        $"DynamoDB items must not exceed {DynamoDbItemSize.MaximumBytes} bytes (400 KiB).")
+                        .ConfigureAwait(false);
+                    return;
+                }
             }
             else if (!ItemHandlers.ValidateKeyShape(keyBearer, out var keyShapeError))
             {
@@ -540,9 +557,22 @@ internal static partial class TransactWriteItemsHandler
         SprocTransactResult result;
         using (parameters)
         {
+            var routeResolution = await cosmos.ResolveTransactionRouteAsync(
+                    tableName!,
+                    ct)
+                .ConfigureAwait(false);
+            if (routeResolution.Status
+                != CosmosTransactionRouteResolutionStatus.Ready)
+            {
+                await WriteRoutingFailureAsync(ctx, routeResolution)
+                    .ConfigureAwait(false);
+                return;
+            }
+
             var ready = await sprocContext.Manager.EnsureTransactSprocAsync(
                 cosmos,
                 tableName!,
+                routeResolution.Route,
                 ct).ConfigureAwait(false);
             if (!ready)
             {
@@ -560,6 +590,7 @@ internal static partial class TransactWriteItemsHandler
                 tableName!,
                 partitionKey!,
                 parameters.WrittenMemory,
+                routeResolution.Route,
                 ct).ConfigureAwait(false);
             if (idempotency is not null
                 && IsRetryableIdempotentConflict(result))
@@ -569,6 +600,7 @@ internal static partial class TransactWriteItemsHandler
                     tableName!,
                     partitionKey!,
                     parameters.WrittenMemory,
+                    routeResolution.Route,
                     ct).ConfigureAwait(false);
             }
         }
@@ -1121,6 +1153,23 @@ internal static partial class TransactWriteItemsHandler
             StatusCodes.Status400BadRequest,
             "ValidationException",
             message);
+
+    private static Task WriteRoutingFailureAsync(
+        HttpContext ctx,
+        CosmosTransactionRouteResolution resolution)
+        => resolution.Status
+            == CosmosTransactionRouteResolutionStatus.InvalidConfiguration
+            ? RejectAsync(ctx, resolution.Error)
+            : resolution.BackendStatus is { } backendStatus
+                ? CosmosOpsShared.WriteCosmosStatusErrorAsync(
+                    ctx,
+                    backendStatus,
+                    resolution.Error)
+                : CosmosOpsShared.WriteErrorAsync(
+                    ctx,
+                    StatusCodes.Status500InternalServerError,
+                    "InternalServerError",
+                    resolution.Error);
 
     private sealed class TransactionRequestTooLargeException(int actualBytes)
         : Exception

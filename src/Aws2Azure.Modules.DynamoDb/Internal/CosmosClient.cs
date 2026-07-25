@@ -42,6 +42,8 @@ internal sealed class CosmosClient
     private static readonly TimeSpan EndpointUnavailableTtl = TimeSpan.FromSeconds(30);
     private static readonly ConcurrentDictionary<string, CosmosAccountCacheEntry> AccountCache =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, Uri> TransactionEndpointPins =
+        new(StringComparer.Ordinal);
 
     public string DatabaseName { get; }
 
@@ -143,6 +145,283 @@ internal sealed class CosmosClient
             method, resourceType, resourceLink, requestUri,
             body, bufferedContentHeaders: null, contentType,
             extraHeaders, ct, noRetry);
+    }
+
+    internal async Task<CosmosTransactionRouteResolution>
+        ResolveTransactionRouteAsync(
+            string containerName,
+            CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(containerName);
+
+        CosmosAccountInfo account;
+        try
+        {
+            account = await GetOrRefreshAccountInfoAsync(
+                    forceRefresh: false,
+                    strict: true,
+                    ct)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (EntraIdTokenException exception)
+        {
+            return CosmosTransactionRouteResolution.Unavailable(
+                "Cosmos authentication failed while discovering the transaction " +
+                "write-region topology. The transaction was not executed.",
+                exception.BackendStatus);
+        }
+        catch (HttpRequestException exception)
+            when (exception.StatusCode is { } statusCode)
+        {
+            return CosmosTransactionRouteResolution.Unavailable(
+                "Cosmos rejected transaction write-region topology discovery. " +
+                "The transaction was not executed.",
+                statusCode);
+        }
+        catch
+        {
+            return CosmosTransactionRouteResolution.Unavailable(
+                "The Cosmos write-region topology could not be discovered. " +
+                "The transaction was not executed; retry the request.");
+        }
+
+        var selection = CosmosRegionRouting.SelectTransactionEndpoint(
+            account,
+            _preferredRegions,
+            out var selected);
+        if (selection
+            == CosmosTransactionEndpointSelectionStatus.PreferredWriteRegionRequired)
+        {
+            return CosmosTransactionRouteResolution.InvalidConfiguration(
+                "Transactions on a Cosmos account with multiple writable regions " +
+                "require target.preferredRegions to name at least one current " +
+                "writable region. The first matching region is authoritative and " +
+                "transaction execution never fails over to another writable region.");
+        }
+        if (selection == CosmosTransactionEndpointSelectionStatus.TopologyUnavailable
+            || selected is null)
+        {
+            return CosmosTransactionRouteResolution.Unavailable(
+                "The Cosmos account did not return a reliable writable-region " +
+                "identity. The transaction was not executed; retry the request.");
+        }
+
+        var cacheKey = BuildTransactionRouteCacheKey(account, containerName);
+        var pinned = TransactionEndpointPins.GetOrAdd(cacheKey, selected);
+        if (!pinned.AbsoluteUri.Equals(
+                selected.AbsoluteUri,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            if (!account.EnableMultipleWriteLocations
+                || !ContainsWritableEndpoint(account, pinned))
+            {
+                return CosmosTransactionRouteResolution.Unavailable(
+                    "The authoritative Cosmos transaction endpoint is no longer " +
+                    "reported writable. The existing process-lifetime pin was " +
+                    "retained and the transaction was not executed; retry after " +
+                    "restoring that endpoint or restarting the proxy to " +
+                    "intentionally resolve new topology.");
+            }
+            return CosmosTransactionRouteResolution.InvalidConfiguration(
+                "Bindings that share one Cosmos account/database/container must " +
+                "resolve the same authoritative transaction write region. " +
+                $"This container is already pinned to '{pinned.AbsoluteUri}', " +
+                $"but the current binding resolves '{selected.AbsoluteUri}'.");
+        }
+        if (_regionLogger is not null)
+        {
+            DynamoDbLog.SelectedEndpoint(
+                _regionLogger,
+                "transaction",
+                pinned.AbsoluteUri);
+        }
+        return CosmosTransactionRouteResolution.Ready(pinned);
+    }
+
+    private static bool ContainsWritableEndpoint(
+        CosmosAccountInfo account,
+        Uri endpoint)
+    {
+        for (var index = 0; index < account.WritableLocations.Length; index++)
+        {
+            if (account.WritableLocations[index].Endpoint.AbsoluteUri.Equals(
+                    endpoint.AbsoluteUri,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    internal async Task<HttpResponseMessage> SendTransactionAsync(
+        CosmosTransactionRoute route,
+        HttpMethod method,
+        string resourceType,
+        string resourceLink,
+        string requestUri,
+        HttpContent? content,
+        IReadOnlyList<KeyValuePair<string, string>>? extraHeaders,
+        CancellationToken ct,
+        bool noRetry = false)
+    {
+        ReadOnlyMemory<byte>? bufferedContent = null;
+        HttpContentHeaders? bufferedContentHeaders = null;
+        if (content is not null)
+        {
+            bufferedContent = await content.ReadAsByteArrayAsync(ct)
+                .ConfigureAwait(false);
+            bufferedContentHeaders = content.Headers;
+        }
+
+        return await SendTransactionBufferedAsync(
+                route,
+                method,
+                resourceType,
+                resourceLink,
+                requestUri,
+                bufferedContent,
+                bufferedContentHeaders,
+                contentType: null,
+                extraHeaders,
+                ct,
+                noRetry)
+            .ConfigureAwait(false);
+    }
+
+    internal Task<HttpResponseMessage> SendTransactionAsync(
+        CosmosTransactionRoute route,
+        HttpMethod method,
+        string resourceType,
+        string resourceLink,
+        string requestUri,
+        ReadOnlyMemory<byte> body,
+        string contentType,
+        IReadOnlyList<KeyValuePair<string, string>>? extraHeaders,
+        CancellationToken ct,
+        bool noRetry = false)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(contentType);
+        return SendTransactionBufferedAsync(
+            route,
+            method,
+            resourceType,
+            resourceLink,
+            requestUri,
+            body,
+            bufferedContentHeaders: null,
+            contentType,
+            extraHeaders,
+            ct,
+            noRetry);
+    }
+
+    private async Task<HttpResponseMessage> SendTransactionBufferedAsync(
+        CosmosTransactionRoute route,
+        HttpMethod method,
+        string resourceType,
+        string resourceLink,
+        string requestUri,
+        ReadOnlyMemory<byte>? bufferedContent,
+        HttpContentHeaders? bufferedContentHeaders,
+        string? contentType,
+        IReadOnlyList<KeyValuePair<string, string>>? extraHeaders,
+        CancellationToken ct,
+        bool noRetry)
+    {
+        ArgumentNullException.ThrowIfNull(method);
+        ArgumentNullException.ThrowIfNull(resourceType);
+        ArgumentNullException.ThrowIfNull(resourceLink);
+        ArgumentException.ThrowIfNullOrEmpty(requestUri);
+        ArgumentNullException.ThrowIfNull(route.Endpoint);
+
+        var endpoint = route.Endpoint;
+        if (!IsEndpointAvailable(endpoint))
+        {
+            return BuildSyntheticServiceUnavailable(method, endpoint, requestUri);
+        }
+
+        try
+        {
+            using var request = new HttpRequestMessage(
+                method,
+                new Uri(endpoint, requestUri.TrimStart('/')));
+            if (noRetry)
+            {
+                request.Options.Set(AzureHttpClient.NoRetryOption, true);
+            }
+
+            HttpContent? attemptContent = null;
+            try
+            {
+                if (bufferedContent.HasValue)
+                {
+                    attemptContent = CreateBufferedContent(
+                        bufferedContent.Value,
+                        bufferedContentHeaders,
+                        contentType);
+                    request.Content = attemptContent;
+                }
+
+                await AuthenticateAndApplyHeadersAsync(
+                        request,
+                        resourceType,
+                        resourceLink,
+                        extraHeaders,
+                        ct)
+                    .ConfigureAwait(false);
+
+                var response = await BackendTimingContext.TimeAsync(
+                        () => _http.SendAsync(
+                            request,
+                            HttpCompletionOption.ResponseHeadersRead,
+                            ct))
+                    .ConfigureAwait(false);
+                if (CosmosRegionRouting.IsPinnedTransactionEndpointUnavailable(
+                        response))
+                {
+                    MarkEndpointUnavailable(endpoint);
+                    if (response.StatusCode == HttpStatusCode.Forbidden)
+                    {
+                        response.Dispose();
+                        return BuildSyntheticServiceUnavailable(
+                            method,
+                            endpoint,
+                            requestUri);
+                    }
+                }
+
+                return response;
+            }
+            finally
+            {
+                attemptContent?.Dispose();
+            }
+        }
+        catch (EntraIdTokenException ex)
+        {
+            return new HttpResponseMessage(ex.BackendStatus)
+            {
+                RequestMessage = new HttpRequestMessage(
+                    method,
+                    new Uri(endpoint, requestUri.TrimStart('/'))),
+                Content = new ByteArrayContent([]),
+            };
+        }
+        catch (HttpRequestException)
+        {
+            MarkEndpointUnavailable(endpoint);
+            return BuildSyntheticServiceUnavailable(method, endpoint, requestUri);
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            MarkEndpointUnavailable(endpoint);
+            return BuildSyntheticServiceUnavailable(method, endpoint, requestUri);
+        }
     }
 
     private async Task<HttpResponseMessage> SendBufferedAsync(
@@ -417,6 +696,16 @@ internal sealed class CosmosClient
         return false;
     }
 
+    private string BuildTransactionRouteCacheKey(
+        CosmosAccountInfo account,
+        string containerName)
+        => string.Concat(
+            account.AccountIdentity.ToUpperInvariant(),
+            "\n",
+            DatabaseName,
+            "\n",
+            containerName);
+
     private Task<CosmosAccountInfo> RefreshAccountInfoForRoutingAsync(CancellationToken ct)
         => GetOrRefreshAccountInfoAsync(forceRefresh: true, strict: false, ct);
 
@@ -429,7 +718,8 @@ internal sealed class CosmosClient
         var snapshot = _accountCache.Snapshot;
         if (!forceRefresh
             && snapshot is { } cached
-            && cached.ExpiresAt > now)
+            && cached.ExpiresAt > now
+            && (!strict || cached.Info.HasWriteTopology))
         {
             return cached.Info;
         }
@@ -441,7 +731,8 @@ internal sealed class CosmosClient
             snapshot = _accountCache.Snapshot;
             if (!forceRefresh
                 && snapshot is { } cachedAfterWait
-                && cachedAfterWait.ExpiresAt > now)
+                && cachedAfterWait.ExpiresAt > now
+                && (!strict || cachedAfterWait.Info.HasWriteTopology))
             {
                 return cachedAfterWait.Info;
             }

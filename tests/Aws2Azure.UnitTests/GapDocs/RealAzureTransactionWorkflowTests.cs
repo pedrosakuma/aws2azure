@@ -37,6 +37,17 @@ public sealed class RealAzureTransactionWorkflowTests
         "Aws2Azure.IntegrationTests",
         "Fixtures",
         "RealAzureProxyFixture.cs"));
+    private static readonly string DynamoDbFixtureSource = File.ReadAllText(Path.Combine(
+        RepositoryRoot,
+        "tests",
+        "Aws2Azure.IntegrationTests",
+        "Fixtures",
+        "DynamoDbRealAzureProxyFixture.cs"));
+    private static readonly string LoadWorkflow = File.ReadAllText(Path.Combine(
+        RepositoryRoot,
+        ".github",
+        "workflows",
+        "workload-load-real-azure.yml"));
 
     [Fact]
     public void Transaction_profile_is_discoverable_and_records_rollback_blocker()
@@ -107,7 +118,15 @@ public sealed class RealAzureTransactionWorkflowTests
             Matrix,
             StringComparison.Ordinal);
         Assert.Contains(
-            "DynamoDbRealAzureTransactionTests.Conflicting_v4_sproc_body_fails_closed_and_is_restored_in_isolated_table",
+            "transaction-region-pinning",
+            Matrix,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "transaction-preflight-contracts",
+            Matrix,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "DynamoDbRealAzureTransactionTests.Conflicting_v5_sproc_body_fails_closed_and_is_restored_in_isolated_table",
             Matrix,
             StringComparison.Ordinal);
         Assert.Contains(
@@ -149,6 +168,22 @@ public sealed class RealAzureTransactionWorkflowTests
         Assert.Contains(
             "mode == \"Preferred\"",
             RealAzureFixtureSource,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "AWS2AZURE_DDB_STORED_PROCEDURE_MODE",
+            DynamoDbFixtureSource,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "source_validation",
+            DynamoDbFixtureSource,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "dynamodb-single-partition-transactions",
+            DynamoDbFixtureSource,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "AWS2AZURE_DDB_STORED_PROCEDURE_MODE: Disabled",
+            LoadWorkflow,
             StringComparison.Ordinal);
         Assert.DoesNotContain(
             "dynamodb-basic-crud)\n",

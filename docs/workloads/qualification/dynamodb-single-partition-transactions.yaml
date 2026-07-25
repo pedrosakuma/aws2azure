@@ -3,6 +3,9 @@
 # release implements this profile's atomic snapshot, validation, and
 # durable ClientRequestToken contract. The adjacent-runtime scenario must be
 # recorded as skipped/inconclusive until such a release is approved.
+# Qualification currently provisions a single-write Cosmos account. Any future
+# multi-write run must configure one authoritative preferred writable region;
+# transaction execution must never fail over between writable regions.
 schema_version: 1
 profile_id: dynamodb-single-partition-transactions
 profile_version: 1
@@ -48,6 +51,16 @@ scenarios:
     service: dynamodb
     operation: TransactGetItems
     evidence_source: real_azure
+    signals: []
+  - id: transaction-region-pinning
+    service: dynamodb
+    operation: TransactWriteItems
+    evidence_source: deterministic
+    signals: []
+  - id: transaction-preflight-contracts
+    service: dynamodb
+    operation: TransactWriteItems
+    evidence_source: deterministic
     signals: []
   - id: transaction-atomicity-rollback
     service: dynamodb

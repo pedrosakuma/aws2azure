@@ -273,6 +273,36 @@ services:
         operations: [TransactGetItems, TransactWriteItems]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Snapshot_reads_never_observe_mixed_transaction_versions
+      - id: transaction-region-pinning
+        priority: p0
+        category: service_unavailable
+        evidence_source: deterministic
+        establishes_verification: false
+        profiles: [dynamodb-single-partition-transactions]
+        requires_dynamo_db_stored_procedures: true
+        description: Multi-write account metadata, a preferred authoritative region, and injected endpoint failure prove that transaction snapshots, writes, and durable token replay never execute in a second writable region; missing multi-write preference fails closed.
+        operations: [TransactGetItems, TransactWriteItems]
+        tests:
+          - Aws2Azure.UnitTests.DynamoDb.CosmosRegionRoutingTests.Shared_container_rejects_conflicting_binding_region_pins
+          - Aws2Azure.UnitTests.DynamoDb.CosmosRegionRoutingTests.Shared_container_write_region_change_is_retryable_unavailable
+          - Aws2Azure.UnitTests.DynamoDb.CosmosRegionRoutingTests.Strict_transaction_discovery_refreshes_statusless_fallback
+          - Aws2Azure.UnitTests.DynamoDb.TransactGetItemsHandlerTests.Snapshot_stays_on_authoritative_write_region_after_failure
+          - Aws2Azure.UnitTests.DynamoDb.TransactWriteItemsHandlerTests.Idempotent_transaction_stays_on_authoritative_write_region_after_failure
+          - Aws2Azure.UnitTests.DynamoDb.TransactWriteItemsHandlerTests.Multi_write_transaction_without_matching_preference_is_rejected
+      - id: transaction-preflight-contracts
+        priority: p0
+        category: core
+        evidence_source: deterministic
+        establishes_verification: false
+        profiles: [dynamodb-single-partition-transactions]
+        requires_dynamo_db_stored_procedures: true
+        description: Deterministic unit contracts pin DynamoDB item-size accounting, the transactional Put 400 KiB pre-I/O boundary, and the server-side completion clock that starts the ten-minute ClientRequestToken window.
+        operations: [TransactWriteItems]
+        tests:
+          - Aws2Azure.UnitTests.DynamoDb.SprocContractTests.Transaction_token_window_starts_at_completion_clock
+          - Aws2Azure.UnitTests.DynamoDb.TransactWriteItemsHandlerTests.Item_size_uses_utf8_attribute_names_and_decoded_binary_bytes
+          - Aws2Azure.UnitTests.DynamoDb.TransactWriteItemsHandlerTests.Put_item_just_under_400_kib_is_accepted
+          - Aws2Azure.UnitTests.DynamoDb.TransactWriteItemsHandlerTests.Put_item_over_400_kib_is_rejected_before_cosmos_io
       - id: transaction-atomicity-rollback
         priority: p0
         category: write
@@ -352,10 +382,10 @@ services:
         establishes_verification: false
         profiles: [dynamodb-single-partition-transactions]
         requires_dynamo_db_stored_procedures: true
-        description: An isolated table receives a conflicting atomicTransactWrite_v4 body; the proxy's create-409/read-exact-body path fails closed, commits no item, and recovers only after the conflict is removed and the exact current body is provisioned.
+        description: An isolated table receives a conflicting atomicTransactWrite_v5 body; the proxy's create-409/read-exact-body path fails closed, commits no item, and recovers only after the conflict is removed and the exact current body is provisioned.
         operations: [TransactWriteItems]
         tests:
-          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Conflicting_v4_sproc_body_fails_closed_and_is_restored_in_isolated_table
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Conflicting_v5_sproc_body_fails_closed_and_is_restored_in_isolated_table
       - id: transaction-adjacent-runtime-rollback
         priority: p0
         category: rollback

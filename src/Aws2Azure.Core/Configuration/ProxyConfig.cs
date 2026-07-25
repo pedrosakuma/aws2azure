@@ -434,7 +434,13 @@ public sealed class CosmosCredentials : IAadAuthCredentials
     /// readable location in this order, then fall back through remaining
     /// readable locations and finally the configured account endpoint. Writes
     /// use the account's writable location, or the preferred writable location
-    /// when Cosmos reports multi-write support.
+    /// when Cosmos reports multi-write support. DynamoDB transaction stored
+    /// procedures use the first preferred region that Cosmos reports writable
+    /// as one process-lifetime authoritative endpoint per physical
+    /// account/database/container across all bindings; they never fail over to a
+    /// second writable region. Multi-write transaction profiles therefore require
+    /// at least one matching preferred region, and bindings sharing a container
+    /// must resolve the same endpoint.
     /// </summary>
     public List<string>? PreferredRegions { get; set; }
 

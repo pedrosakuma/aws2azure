@@ -36,7 +36,7 @@ internal static class SprocEligibility
 
     /// <summary>
     /// Validates the exact condition subset interpreted by
-    /// <c>atomicTransactWrite_v4</c>. Transactional writes have no in-process
+    /// <c>atomicTransactWrite_v5</c>. Transactional writes have no in-process
     /// fallback, so every unsupported shape fails before the stored procedure is
     /// invoked instead of risking divergent server-side evaluation.
     /// </summary>

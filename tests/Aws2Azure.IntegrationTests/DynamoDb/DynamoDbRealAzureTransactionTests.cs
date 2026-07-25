@@ -1038,7 +1038,7 @@ public sealed class DynamoDbRealAzureTransactionTests(
     }
 
     [SkippableFact]
-    public async Task Conflicting_v4_sproc_body_fails_closed_and_is_restored_in_isolated_table()
+    public async Task Conflicting_v5_sproc_body_fails_closed_and_is_restored_in_isolated_table()
     {
         SkipUnlessConfigured();
         Skip.If(

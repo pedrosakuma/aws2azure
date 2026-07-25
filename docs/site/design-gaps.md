@@ -12,6 +12,7 @@ Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned
 | Service | Area | Status |
 |---|---|---|
 | [dynamodb](#dynamodb) | Transaction scope is single-partition, single-table | 🔵 by design |
+| [dynamodb](#dynamodb) | Transaction execution is pinned to one Cosmos write region | 🔵 by design |
 | [dynamodb](#dynamodb) | Consistency and read-your-writes | 🔵 by design |
 | [dynamodb](#dynamodb) | Throughput and throttling model | 🔵 by design |
 | [dynamodb](#dynamodb) | Secondary indexes (GSI / LSI) | 🟡 partial |
@@ -56,6 +57,23 @@ TransactWriteItems / TransactGetItems are translated to a Cosmos DB stored-proce
 
 References:
 
+- <https://learn.microsoft.com/azure/cosmos-db/nosql/stored-procedures-triggers-udfs>
+
+<a id="dynamodb-transaction-execution-is-pinned-to-one-cosmos-write-region"></a>
+
+### Transaction execution is pinned to one Cosmos write region
+
+- **Status:** 🔵 by design
+
+Cosmos stored procedures execute through a writable region. To preserve one atomic snapshot and one durable ClientRequestToken history, every TransactGetItems/TransactWriteItems execution is pinned to one authoritative regional endpoint per physical account/database/container across all bindings. The proxy never replays a transaction in a second independently writable region.
+
+**Impact.** Multi-write accounts require target.preferredRegions to contain a current writable region. The first match is authoritative for the process lifetime. Bindings that share a container must resolve the same endpoint; conflicting policies are rejected. If topology cannot be identified or the pinned endpoint is unavailable, the transaction returns a validation or retryable AWS error instead of using a different writable region. Non-transactional routing and read failover are unchanged.
+
+**Workaround.** Prefer a single-write Cosmos account for this profile, or configure an explicit ordered preferredRegions list whose first matching writable region is the intended transaction authority. Restore that endpoint before retrying; restart the proxy only when intentionally re-resolving account topology.
+
+References:
+
+- <https://learn.microsoft.com/azure/cosmos-db/nosql/how-to-multi-master>
 - <https://learn.microsoft.com/azure/cosmos-db/nosql/stored-procedures-triggers-udfs>
 
 <a id="dynamodb-consistency-and-read-your-writes"></a>

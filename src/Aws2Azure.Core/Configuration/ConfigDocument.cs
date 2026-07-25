@@ -194,7 +194,10 @@ public sealed class AzureTargetConfig
     /// <summary>Management REST endpoint override (<c>serviceBus</c> / <c>serviceBusTopics</c>).</summary>
     public string? ManagementEndpoint { get; set; }
 
-    /// <summary>Ordered Cosmos region preference list (<c>cosmos</c>).</summary>
+    /// <summary>
+    /// Ordered Cosmos region preference list (<c>cosmos</c>). The first matching
+    /// writable region is the authoritative endpoint for DynamoDB transactions.
+    /// </summary>
     public List<string>? PreferredRegions { get; set; }
 
     /// <summary>Namespace-default wire transport (SQS / <c>serviceBus</c>).</summary>

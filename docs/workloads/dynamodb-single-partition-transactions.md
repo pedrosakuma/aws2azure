@@ -12,11 +12,18 @@ implements the complete profile well enough to qualify rollback.
 - Set `DynamoDb.UseStoredProcedures` to `Preferred` or `Required`.
 - Co-locate every transaction item under one partition-key value in one table.
 - Do not send duplicate table/key targets in either operation.
+- Use a single-write Cosmos account, or set the binding's
+  `target.preferredRegions` so its first matching writable region is the intended
+  transaction authority. Multi-write accounts without a matching preferred
+  writable region are rejected before transaction execution.
 - Keep transactions within Cosmos stored-procedure execution and response
   budgets. The exact serialized stored-procedure parameter body must be at most
   2 MiB, below DynamoDB's 4 MiB aggregate transaction limit; larger requests
   fail with `ValidationException` before stored-procedure provisioning/execution.
   A rejected or failed request never falls back to partial REST calls.
+- Keep each transactional Put item at or below 400 KiB. The proxy counts UTF-8
+  attribute names/string values, decoded binary bytes, scalar/set values, and
+  list/map overhead before metadata or stored-procedure I/O.
 
 Cross-table and cross-partition transactions fail with `ValidationException`
 before item data is read. That is a permanent Cosmos transaction-scope boundary,
@@ -32,7 +39,7 @@ or count-mismatched 2xx script response fails closed.
 
 ## Certified write and condition contract
 
-`TransactWriteItems` invokes `atomicTransactWrite_v4` for `Put`, `Delete`, and
+`TransactWriteItems` invokes `atomicTransactWrite_v5` for `Put`, `Delete`, and
 `ConditionCheck`. `Update` is unsupported. The accepted condition subset is:
 
 - `AND`, `OR`, `NOT`;
@@ -74,33 +81,45 @@ members, and preserves transaction operation order. Equivalent retries,
 including retries after a discarded response or process restart, replay the
 original success or condition-cancellation reasons without applying writes
 again. A changed request in the active window returns
-`IdempotentParameterMismatchException`. Cosmos server time defines the exact
-10-minute window; records carry created/expiry timestamps, native ttl, and a
-bounded partition-local cleanup fallback. Preflight/script validation failures
-are not cached. Because Cosmos cannot atomically coordinate two logical
-partitions, this contract is scoped to the profile's supported single-partition
-boundary; do not reuse one token for a different partition.
+`IdempotentParameterMismatchException`. The script samples Cosmos server time
+immediately before the atomic token upsert/completion, so reads and condition
+work do not shorten the 10-minute post-completion window. Records carry
+created/expiry timestamps, native ttl, and a bounded partition-local cleanup
+fallback. Preflight/script validation failures are not cached. Because Cosmos
+cannot atomically coordinate two logical partitions, this contract is scoped to
+the profile's supported single-partition boundary; do not reuse one token for a
+different partition.
+
+Every transaction snapshot, write, and idempotency-record operation uses one
+regional endpoint pinned per physical account/database/container across all
+bindings. Single-write accounts use their authoritative writable location;
+multi-write accounts use the first configured preferred region that Cosmos
+reports writable. Bindings sharing a container must resolve the same endpoint or
+the request fails with `ValidationException`. A 403/3, 408, 503, timeout, or
+transport failure never triggers replay in another writable region. The proxy
+returns a retryable AWS error and keeps the original pin for the process lifetime.
+Ordinary non-transactional region routing is unchanged.
 
 ## Versioning and rollback
 
-`atomicWrite_v2`, `atomicTransactWrite_v2`, and `atomicTransactWrite_v3` remain
-byte-identical with their frozen hashes. Persisted-format inventory version 3
-adds `atomicTransactWrite_v4`, the internal idempotency-record v1 format, and
+`atomicWrite_v2` and `atomicTransactWrite_v2`/`v3`/`v4` remain byte-identical
+with their frozen hashes. Persisted-format inventory version 4 adds
+`atomicTransactWrite_v5`, retains the internal idempotency-record v1 format, and
 retains `atomicTransactGet_v1`.
 Provisioning accepts HTTP 409 only after reading and matching the exact stored
 body, so an accidental same-id body conflict cannot be treated as available.
-The availability cache is scoped to account/database/container and is cleared
-on table lifecycle; an execution 404 evicts and reprovisions once. Transaction
-write execution retains the no-automatic-retry transport option. Token-bearing
-requests retry only Cosmos write-conflict statuses once; explicit caller retries
-after any ambiguous response replay the durable outcome. Tokenless writes remain
-non-retried.
+The availability cache is scoped to account/database/container and is cleared on
+table lifecycle; an execution 404 evicts and reprovisions once on the same pinned
+endpoint. Transaction write execution retains the no-automatic-retry transport
+option. Token-bearing requests retry only Cosmos write-conflict statuses once on
+that endpoint; explicit caller retries after any ambiguous response replay the
+durable outcome. Tokenless writes remain non-retried.
 
 The real-Azure source suite covers atomic write rollback, snapshot coherence,
 condition/cancellation behavior, contention, scope, durable token replay,
 mismatch/concurrency/cancellation behavior, process
 restart, and an isolated same-ID conflicting-body probe that exercises the real
-Cosmos 409/read/verify path and restores the exact v4 body. No new seal is
+Cosmos 409/read/verify path and restores the exact v5 body. No new seal is
 committed without an actual workflow run containing those tests.
 
 There is deliberately no approved-runtime ledger for this profile. The
