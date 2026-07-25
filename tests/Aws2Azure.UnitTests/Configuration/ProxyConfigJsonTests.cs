@@ -31,7 +31,7 @@ public class ProxyConfigJsonTests
               "aws": { "accessKeyId": "AKIA1", "secretAccessKey": "secret1" },
               "azure": {
                 "s3":       { "kind": "blob",       "target": { "accountName": "acc1" }, "auth": { "mode": "sharedKey", "key": "key1" } },
-                "sqs":      { "kind": "serviceBus", "target": { "namespace": "ns1" },    "auth": { "mode": "sas", "keyName": "RootManageSharedAccessKey", "key": "sb1" } },
+                "sqs":      { "kind": "serviceBus", "target": { "namespace": "ns1", "managementEndpoint": "http://127.0.0.1:5300/" }, "auth": { "mode": "sas", "keyName": "RootManageSharedAccessKey", "key": "sb1" } },
                 "dynamodb": { "kind": "cosmos",     "target": { "endpoint": "https://x.documents.azure.com", "databaseName": "db1", "preferredRegions": [ "West US", "East US" ] }, "auth": { "mode": "sharedKey", "key": "cosmos1" } }
               }
             }
@@ -51,6 +51,7 @@ public class ProxyConfigJsonTests
         Assert.Equal("acc1", entry.Azure.Blob!.AccountName);
         Assert.Equal("key1", entry.Azure.Blob.AccountKey);
         Assert.Equal("ns1", entry.Azure.ServiceBus!.Namespace);
+        Assert.Equal("http://127.0.0.1:5300/", entry.Azure.ServiceBus.ManagementEndpoint);
         Assert.Equal("sb1", entry.Azure.ServiceBus.SasKey);
         Assert.Equal("https://x.documents.azure.com", entry.Azure.Cosmos!.Endpoint);
         Assert.Equal("db1", entry.Azure.Cosmos.DatabaseName);

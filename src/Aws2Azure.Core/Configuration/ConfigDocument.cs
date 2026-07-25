@@ -191,7 +191,7 @@ public sealed class AzureTargetConfig
     /// <summary>Logical Cosmos database mapped to the DynamoDB namespace (<c>cosmos</c>).</summary>
     public string? DatabaseName { get; set; }
 
-    /// <summary>Management REST endpoint override (<c>serviceBusTopics</c>).</summary>
+    /// <summary>Management REST endpoint override (<c>serviceBus</c> / <c>serviceBusTopics</c>).</summary>
     public string? ManagementEndpoint { get; set; }
 
     /// <summary>Ordered Cosmos region preference list (<c>cosmos</c>).</summary>

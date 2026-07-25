@@ -19,9 +19,10 @@ namespace Aws2Azure.IntegrationTests.Fixtures;
 /// (xUnit does not let a test class join two collections): the
 /// emulator boots in <see cref="InitializeAsync"/>, then we write an
 /// appsettings JSON that points the SQS module at the emulator's
-/// mapped AMQP port via the new plain-AMQP URL convention
+/// mapped AMQP port via the plain-AMQP URL convention
 /// (<c>http://{host}:{port}/</c> on the credential's namespace
-/// field) and with <c>"transport": "Amqp"</c>.</para>
+/// field), the emulator's separate REST port via
+/// <c>managementEndpoint</c>, and with <c>"transport": "Amqp"</c>.</para>
 ///
 /// <para>Skips host-side via <see cref="DockerAvailable"/> when Docker
 /// isn't reachable so fork PRs and sandboxes that lack Docker don't
@@ -81,6 +82,7 @@ public sealed class SqsEmulatorProxyFixture : IAsyncLifetime
             "aws2azure-sqs-it-" + Guid.NewGuid().ToString("N") + ".json");
 
         var amqpUrl = $"http://{_emulator.AmqpHost}:{_emulator.AmqpPort}/";
+        var managementUrl = $"http://{_emulator.AmqpHost}:{_emulator.HttpPort}/";
         File.WriteAllText(_configFile, $$"""
             {
               "listen": "http://127.0.0.1:0",
@@ -99,6 +101,7 @@ public sealed class SqsEmulatorProxyFixture : IAsyncLifetime
                       "kind": "serviceBus",
                       "target": {
                         "namespace": "{{amqpUrl}}",
+                        "managementEndpoint": "{{managementUrl}}",
                         "transport": "Amqp"
                       },
                       "auth": {

@@ -84,7 +84,11 @@ public class SqsTransportConfigTests : IDisposable
             "azure": {
               "sqs": {
                 "kind": "serviceBus",
-                "target": { "namespace": "ns", "transport": "amqp" },
+                "target": {
+                  "namespace": "http://127.0.0.1:5672/",
+                  "managementEndpoint": "http://127.0.0.1:5300/",
+                  "transport": "amqp"
+                },
                 "auth": { "mode": "sas", "keyName": "kn", "key": "kv" },
                 "queues": {
                   "legacy": { "transport": "rest" },
@@ -99,6 +103,8 @@ public class SqsTransportConfigTests : IDisposable
         var config = ProxyConfigLoader.Load(_tempFile, envVars: new Dictionary<string, string?>());
         var sb = config.Credentials[0].Azure.ServiceBus!;
 
+        Assert.Equal("http://127.0.0.1:5672/", sb.Namespace);
+        Assert.Equal("http://127.0.0.1:5300/", sb.ManagementEndpoint);
         Assert.Equal(SqsTransport.Amqp, sb.Transport);
         Assert.Equal(SqsTransport.Rest, sb.Queues!["legacy"].Transport);
         Assert.Equal(SqsTransport.Amqp, sb.Queues!["modern"].Transport);

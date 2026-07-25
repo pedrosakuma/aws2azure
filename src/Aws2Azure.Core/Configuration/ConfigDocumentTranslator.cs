@@ -167,6 +167,7 @@ public static class ConfigDocumentTranslator
         return new ServiceBusCredentials
         {
             Namespace = backend.Target.Namespace ?? string.Empty,
+            ManagementEndpoint = backend.Target.ManagementEndpoint,
             Transport = backend.Target.Transport ?? SqsTransport.Rest,
             SasKeyName = backend.Auth.KeyName ?? string.Empty,
             SasKey = backend.Auth.Key ?? string.Empty,

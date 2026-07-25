@@ -67,7 +67,10 @@ internal sealed class ServiceBusClient
 
         _http = http;
         _namespace = credentials.Namespace;
-        _baseEndpoint = ResolveEndpoint(credentials.Namespace);
+        _baseEndpoint = ResolveEndpoint(
+            string.IsNullOrWhiteSpace(credentials.ManagementEndpoint)
+                ? credentials.Namespace
+                : credentials.ManagementEndpoint);
         _auth = new ServiceBusSasAuthenticator(credentials.SasKeyName, credentials.SasKey);
     }
 

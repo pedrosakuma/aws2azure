@@ -58,6 +58,7 @@ public sealed class SqsPerfFixture : IAsyncLifetime
             }
 
             var amqpUrl = $"http://{_emulator.AmqpHost}:{_emulator.AmqpPort}/";
+            var managementUrl = $"http://{_emulator.AmqpHost}:{_emulator.HttpPort}/";
             var config = $$"""
                 {
                   "listen": "http://127.0.0.1:0",
@@ -76,6 +77,7 @@ public sealed class SqsPerfFixture : IAsyncLifetime
                           "kind": "serviceBus",
                           "target": {
                             "namespace": "{{amqpUrl}}",
+                            "managementEndpoint": "{{managementUrl}}",
                             "transport": "Amqp"
                           },
                           "auth": {

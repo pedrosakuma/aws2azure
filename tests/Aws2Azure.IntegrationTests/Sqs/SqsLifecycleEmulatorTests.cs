@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -185,6 +186,48 @@ public sealed class SqsLifecycleEmulatorTests
     }
 
     [SkippableFact]
+    public async Task ChangeMessageVisibility_zero_redelivery_uses_rest_management_endpoint()
+    {
+        Skip.IfNot(_fixture.DockerAvailable, "Docker not available.");
+
+        var queueName = ServiceBusEmulatorFixture.StandardQueue;
+        var body = "cmv-zero-" + Guid.NewGuid().ToString("N");
+        using var client = _fixture.CreateSqsClient();
+
+        using (var send = await PostAsync(client, "SendMessage", new
+        {
+            QueueUrl = QueueUrl(queueName),
+            MessageBody = body,
+        }).ConfigureAwait(false))
+        {
+            Assert.Equal(HttpStatusCode.OK, send.StatusCode);
+        }
+
+        var first = await ReceiveBodyAsync(client, queueName, body).ConfigureAwait(false);
+        Assert.Equal(1, first.ReceiveCount);
+
+        using (var abandon = await PostAsync(client, "ChangeMessageVisibility", new
+        {
+            QueueUrl = QueueUrl(queueName),
+            ReceiptHandle = first.ReceiptHandle,
+            VisibilityTimeout = 0,
+        }).ConfigureAwait(false))
+        {
+            Assert.Equal(HttpStatusCode.OK, abandon.StatusCode);
+        }
+
+        var redelivered = await ReceiveBodyAsync(client, queueName, body).ConfigureAwait(false);
+        Assert.True(redelivered.ReceiveCount > first.ReceiveCount);
+
+        using var delete = await PostAsync(client, "DeleteMessage", new
+        {
+            QueueUrl = QueueUrl(queueName),
+            ReceiptHandle = redelivered.ReceiptHandle,
+        }).ConfigureAwait(false);
+        Assert.Equal(HttpStatusCode.OK, delete.StatusCode);
+    }
+
+    [SkippableFact]
     public async Task ChangeMessageVisibility_extends_the_lock_so_message_is_not_redelivered()
     {
         Skip.IfNot(_fixture.DockerAvailable, "Docker not available.");
@@ -250,6 +293,54 @@ public sealed class SqsLifecycleEmulatorTests
 
     private static string QueueUrl(string name) =>
         $"https://sqs.us-east-1.amazonaws.com/000000000000/{name}";
+
+    private static async Task<(string ReceiptHandle, int ReceiveCount)> ReceiveBodyAsync(
+        HttpClient client,
+        string queueName,
+        string expectedBody)
+    {
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            using var response = await PostAsync(client, "ReceiveMessage", new
+            {
+                QueueUrl = QueueUrl(queueName),
+                MaxNumberOfMessages = 1,
+                WaitTimeSeconds = 1,
+                MessageSystemAttributeNames = new[] { "ApproximateReceiveCount" },
+            }).ConfigureAwait(false);
+            var payload = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            Assert.True(response.StatusCode == HttpStatusCode.OK,
+                $"ReceiveMessage status={(int)response.StatusCode}, body={payload}");
+
+            using var document = JsonDocument.Parse(payload);
+            var messages = document.RootElement.GetProperty("Messages");
+            if (messages.GetArrayLength() == 0)
+            {
+                continue;
+            }
+
+            var message = messages[0];
+            var receiptHandle = message.GetProperty("ReceiptHandle").GetString()!;
+            if (message.GetProperty("Body").GetString() == expectedBody)
+            {
+                var receiveCount = int.Parse(
+                    message.GetProperty("Attributes").GetProperty("ApproximateReceiveCount").GetString()!,
+                    CultureInfo.InvariantCulture);
+                return (receiptHandle, receiveCount);
+            }
+
+            using var delete = await PostAsync(client, "DeleteMessage", new
+            {
+                QueueUrl = QueueUrl(queueName),
+                ReceiptHandle = receiptHandle,
+            }).ConfigureAwait(false);
+            Assert.Equal(HttpStatusCode.OK, delete.StatusCode);
+        }
+
+        throw new Xunit.Sdk.XunitException(
+            $"Message body '{expectedBody}' was not received from queue '{queueName}' within 10 seconds.");
+    }
 
     /// <summary>
     /// Issue a SigV4-signed AWS-JSON-1.0 SQS request against the

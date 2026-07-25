@@ -163,7 +163,7 @@ non-secret **`target`** (where — commit-safe topology) is split from the secre
         // SQS -> Service Bus (queues).
         "sqs": {
           "kind": "serviceBus",
-          "target": { "namespace": "http://servicebus-emulator:5672/", "transport": "Amqp" },
+          "target": { "namespace": "http://servicebus-emulator:5672/", "managementEndpoint": "http://servicebus-emulator:5300/", "transport": "Amqp" },
           "auth":   { "mode": "sas", "keyName": "RootManageSharedAccessKey", "key": "..." }
         },
         // SNS -> Service Bus (topics). Optionally set eventGridFallback

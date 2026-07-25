@@ -51,6 +51,7 @@ internal static class FootprintConfig
                   "kind": "serviceBus",
                   "target": {
                     "namespace": "http://127.0.0.1:5672/",
+                    "managementEndpoint": "http://127.0.0.1:5300/",
                     "transport": "Amqp"
                   },
                   "auth": {
