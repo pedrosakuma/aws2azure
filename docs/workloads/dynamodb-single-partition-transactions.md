@@ -174,7 +174,13 @@ claiming backend concurrency from client-side timing. Coherent snapshot
 isolation remains established separately by the real-Azure
 `transaction-snapshot` correctness scenario, which runs a continuously
 committing writer during repeated full-set reads. Any 429 still fails the run
-and blocks evidence. Any future throughput/latency claim must cite that
+and blocks evidence. The first run with the paced producer,
+[`30218893156`](https://github.com/pedrosakuma/aws2azure/actions/runs/30218893156),
+was also non-qualifying: its representative window completed, but rollback
+cleanup verification dereferenced the intentionally empty `Item` positions
+returned for absent transaction keys. That harness defect produced no load
+evidence and is fixed by treating null/empty positions as absent while still
+rejecting any populated item. Any future throughput/latency claim must cite that
 real-Azure harness run; emulator results from other DynamoDB scenarios do not
 qualify this profile. GA additionally requires three reviewed load runs,
 correctness, rollback, and SLO evidence. The throughput floor remains
