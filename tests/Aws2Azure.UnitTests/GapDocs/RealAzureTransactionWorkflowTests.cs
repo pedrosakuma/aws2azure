@@ -171,6 +171,14 @@ public sealed class RealAzureTransactionWorkflowTests
             "[Collection(DynamoDbRealAzureLoadCollection.Name)]",
             RollbackTestSource,
             StringComparison.Ordinal);
+        Assert.Contains(
+            "string.Equals(profile, ProfileId, StringComparison.Ordinal)",
+            RollbackTestSource,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "Transaction rollback runs only for its qualifying workload profile.",
+            RollbackTestSource,
+            StringComparison.Ordinal);
         Assert.True(
             File.Exists(BaselinePath),
             "The compatible transaction bootstrap must be committed.");

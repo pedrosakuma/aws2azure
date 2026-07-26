@@ -18,12 +18,15 @@ public sealed class DynamoDbRealAzureTransactionQualificationTests(
     [SkippableFact]
     public async Task Adjacent_runtime_transaction_rollback_is_atomic_and_compatible()
     {
+        var profile = Environment.GetEnvironmentVariable(
+            "AWS2AZURE_QUALIFICATION_PROFILE");
+        Skip.IfNot(
+            string.Equals(profile, ProfileId, StringComparison.Ordinal),
+            "Transaction rollback runs only for its qualifying workload profile.");
         Skip.IfNot(
             fixture.CosmosConfigured,
             "Real Azure Cosmos DB is not configured.");
 
-        var profile = Environment.GetEnvironmentVariable(
-            "AWS2AZURE_QUALIFICATION_PROFILE");
         var runtimeMode = Environment.GetEnvironmentVariable(
             "AWS2AZURE_SEALED_RUNTIME_MODE");
         Assert.Equal(ProfileId, profile);
