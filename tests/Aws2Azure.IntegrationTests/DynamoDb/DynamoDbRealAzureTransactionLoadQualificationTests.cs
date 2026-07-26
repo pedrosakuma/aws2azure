@@ -415,48 +415,54 @@ public sealed class DynamoDbRealAzureTransactionLoadQualificationTests(
         {
             completedIterations.RecordStarted();
             var version = $"{worker:D2}-{iteration++:D8}";
-            await MeasureAsync(
-                tracker,
-                "TransactWriteItems",
-                () => client.TransactWriteItemsAsync(
-                    new TransactWriteItemsRequest
-                    {
-                        TransactItems = writeSorts
-                            .Select(sort => Put(table, Partition, sort, version))
-                            .ToList(),
-                    },
-                    cancellationToken),
-                IsThrottle).ConfigureAwait(false);
-            await completedIterations.CompleteAfterAsync(() =>
-                MeasureAsync(
+            try
+            {
+                await MeasureAsync(
                     tracker,
-                    "TransactGetItems",
-                    async () =>
-                    {
-                        var response = await client.TransactGetItemsAsync(
-                            new TransactGetItemsRequest
-                            {
-                                TransactItems = readSorts
-                                    .Select(sort => Get(table, Partition, sort))
-                                    .ToList(),
-                            },
-                            cancellationToken).ConfigureAwait(false);
-                        if (response.Responses.Count != 10)
+                    "TransactWriteItems",
+                    () => client.TransactWriteItemsAsync(
+                        new TransactWriteItemsRequest
                         {
-                            throw new InvalidDataException(
-                                "Transaction load read did not return ten items.");
-                        }
-                        for (var index = 0; index < response.Responses.Count; index++)
+                            TransactItems = writeSorts
+                                .Select(sort => Put(table, Partition, sort, version))
+                                .ToList(),
+                        },
+                        cancellationToken),
+                    IsThrottle).ConfigureAwait(false);
+                await completedIterations.CompleteAfterAsync(() =>
+                    MeasureAsync(
+                        tracker,
+                        "TransactGetItems",
+                        async () =>
                         {
-                            var expected = index < 5 ? version : "seed";
-                            if (response.Responses[index].Item["version"].S != expected)
+                            var response = await client.TransactGetItemsAsync(
+                                new TransactGetItemsRequest
+                                {
+                                    TransactItems = readSorts
+                                        .Select(sort => Get(table, Partition, sort))
+                                        .ToList(),
+                                },
+                                cancellationToken).ConfigureAwait(false);
+                            if (response.Responses.Count != 10)
                             {
                                 throw new InvalidDataException(
-                                    "Transaction load read returned an unexpected version.");
+                                    "Transaction load read did not return ten items.");
                             }
-                        }
-                    },
-                    IsThrottle)).ConfigureAwait(false);
+                            for (var index = 0; index < response.Responses.Count; index++)
+                            {
+                                var expected = index < 5 ? version : "seed";
+                                if (response.Responses[index].Item["version"].S != expected)
+                                {
+                                    throw new InvalidDataException(
+                                        "Transaction load read returned an unexpected version.");
+                                }
+                            }
+                        },
+                        IsThrottle)).ConfigureAwait(false);
+            }
+            catch when (!cancellationToken.IsCancellationRequested)
+            {
+            }
         }
     }
 

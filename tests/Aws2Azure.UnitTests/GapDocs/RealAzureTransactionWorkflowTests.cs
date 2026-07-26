@@ -320,6 +320,18 @@ public sealed class RealAzureTransactionWorkflowTests
             "\"get_items_per_transaction\": 10",
             LoadWorkflow,
             StringComparison.Ordinal);
+        Assert.Contains(
+            "echo \"LOAD_CONCURRENCY=4\"",
+            LoadWorkflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "concurrency: 4",
+            LoadPolicy,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "catch when (!cancellationToken.IsCancellationRequested)",
+            LoadProducer,
+            StringComparison.Ordinal);
     }
 
     [Fact]

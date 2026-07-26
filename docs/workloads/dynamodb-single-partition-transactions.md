@@ -158,7 +158,11 @@ The Cosmos Linux emulator cannot execute stored procedures, so these scenarios
 skip there and require real Azure. A dedicated production-shaped real-Azure
 producer now runs the complete policy scenario set, including one exact
 candidate-to-bootstrap rollback proof, and can emit sealed load evidence for a
-later distinct runtime. Any future throughput/latency claim must cite that
+later distinct runtime. The provisional serverless calibration uses concurrency
+4 for five-write/ten-read transaction iterations. The initial concurrency-8 run
+[`30208156245`](https://github.com/pedrosakuma/aws2azure/actions/runs/30208156245)
+was non-qualifying after a surfaced `TransactGetItems` 429; it supplied no
+throughput floor and is not promotion evidence. Any future throughput/latency claim must cite that
 real-Azure harness run; emulator results from other DynamoDB scenarios do not
 qualify this profile. GA additionally requires three reviewed load runs,
 correctness, rollback, and SLO evidence. The throughput floor remains
