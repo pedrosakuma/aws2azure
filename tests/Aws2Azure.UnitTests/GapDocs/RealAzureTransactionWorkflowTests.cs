@@ -332,6 +332,34 @@ public sealed class RealAzureTransactionWorkflowTests
             "catch when (!cancellationToken.IsCancellationRequested)",
             LoadProducer,
             StringComparison.Ordinal);
+        Assert.Contains(
+            "TimeSpan.FromMilliseconds(200)",
+            LoadProducer,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "\"transaction-read-after-write\"",
+            LoadProducer,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "snapshotVersion,\n                    expectedVersion",
+            LoadProducer,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "observed.Count != sampleCount",
+            LoadProducer,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "overlappedSamples",
+            LoadProducer,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "using var client = fixture.CreateDynamoDbClient(maxErrorRetry: 0);",
+            LoadProducer,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "maxErrorRetry: 1",
+            LoadProducer,
+            StringComparison.Ordinal);
     }
 
     [Fact]

@@ -32,7 +32,7 @@ evidence:
   qualification_artifact: ""
   required_scenarios:
     - representative-load
-    - transaction-snapshot
+    - transaction-read-after-write
     - transaction-region-pinning
     - transaction-preflight-contracts
     - transaction-atomicity-rollback
@@ -45,7 +45,7 @@ evidence:
     - rollback
   required_real_azure_scenarios:
     - representative-load
-    - transaction-snapshot
+    - transaction-read-after-write
     - transaction-atomicity-rollback
     - transaction-conditions-cancellation
     - transaction-scope-rejection

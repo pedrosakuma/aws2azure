@@ -47,7 +47,7 @@ scenarios:
         source: backend_capacity
         disposition: report_only
         metric: throttle_rate
-  - id: transaction-snapshot
+  - id: transaction-read-after-write
     service: dynamodb
     operation: TransactGetItems
     evidence_source: real_azure
