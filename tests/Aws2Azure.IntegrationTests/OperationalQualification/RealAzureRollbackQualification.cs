@@ -1199,7 +1199,7 @@ internal static class RealAzureRollbackQualification
             },
             cancellationToken).ConfigureAwait(false);
         if (response.Responses.Count != 2
-            || response.Responses.Any(value => value.Item.Count != 0))
+            || response.Responses.Any(value => value?.Item is { Count: > 0 }))
         {
             throw new InvalidDataException(
                 "Rollback cleanup left transaction items behind.");

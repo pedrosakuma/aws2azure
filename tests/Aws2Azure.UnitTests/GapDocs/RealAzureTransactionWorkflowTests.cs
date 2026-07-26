@@ -65,6 +65,12 @@ public sealed class RealAzureTransactionWorkflowTests
         "Aws2Azure.IntegrationTests",
         "DynamoDb",
         "DynamoDbRealAzureTransactionLoadQualificationTests.cs"));
+    private static readonly string RollbackQualificationSource = File.ReadAllText(Path.Combine(
+        RepositoryRoot,
+        "tests",
+        "Aws2Azure.IntegrationTests",
+        "OperationalQualification",
+        "RealAzureRollbackQualification.cs"));
     private static readonly string LoadPolicy = File.ReadAllText(Path.Combine(
         RepositoryRoot,
         "docs",
@@ -359,6 +365,10 @@ public sealed class RealAzureTransactionWorkflowTests
         Assert.DoesNotContain(
             "maxErrorRetry: 1",
             LoadProducer,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "value?.Item is { Count: > 0 }",
+            RollbackQualificationSource,
             StringComparison.Ordinal);
     }
 
