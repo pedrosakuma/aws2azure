@@ -761,20 +761,35 @@ jobs:
           fi
           role_assignments_ready_at=$((AWS2AZURE_ROTATION_ROLE_ASSIGNMENTS_CREATED_AT_EPOCH + 300))
           role_assignment_wait=$((role_assignments_ready_at - $(date -u +%s)))
+          if [ "$role_assignment_wait" -gt 300 ]; then
+            echo "::error::Runtime Key Vault role assignment creation time is unexpectedly in the future."
+            exit 1
+          fi
           if [ "$role_assignment_wait" -gt 0 ]; then
             echo "Waiting ${role_assignment_wait}s for the new Key Vault data-plane roles to reach the reviewed five-minute minimum age."
             sleep "$role_assignment_wait"
           fi
           refresh_assertion() {
             local destination="$1"
+            local deadline="$2"
+            local remaining=$((deadline - SECONDS))
+            if [ "$remaining" -le 0 ]; then
+              echo "::error::Runtime identity token setup exceeded the shared five-minute deadline."
+              return 1
+            fi
             ( umask 077
-              curl -fsS \
+              curl -fsS --connect-timeout "$remaining" --max-time "$remaining" \
                 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
                 "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" |
                 python3 -c \
                   'import json, pathlib, sys; value=json.load(sys.stdin).get("value"); assert value; pathlib.Path(sys.argv[1]).write_text(value)' \
                   "$destination"
             )
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::Runtime identity token setup completed after the shared five-minute deadline."
+              rm -f "$destination"
+              return 1
+            fi
             chmod 0600 "$destination"
           }
           assert_distinct_assertions() {
@@ -786,23 +801,33 @@ jobs:
               return 1
             fi
           }
-          verify_identity() {
+          acquire_identity_token() {
             local label="$1"
             local client_id="$2"
             local token_file="$3"
+            local deadline="$4"
             local exchange_file="$PRIVATE_DIR/$label-exchange.json"
             local header_file="$PRIVATE_DIR/$label-authorization.header"
-            local deadline=$(( $(date -u +%s) + 300 ))
             local federation_retries=0
             local exchange_status
+            local curl_status
             local classification
             local disposition
             local error_name
             local aadsts_code
-            local verification_status
+            local remaining
+            local sleep_seconds
 
-            while [ "$(date -u +%s)" -lt "$deadline" ]; do
+            while true; do
+              remaining=$((deadline - SECONDS))
+              if [ "$remaining" -le 0 ]; then
+                echo "::error::$label federation propagation exceeded the shared five-minute deadline."
+                rm -f "$exchange_file" "$header_file"
+                return 1
+              fi
+              set +e
               exchange_status="$(curl -sS -o "$exchange_file" -w '%{http_code}' \
+                --connect-timeout "$remaining" --max-time "$remaining" \
                 -X POST "https://login.microsoftonline.com/$AZURE_TENANT_ID/oauth2/v2.0/token" \
                 -H 'Content-Type: application/x-www-form-urlencoded' \
                 --data-urlencode 'grant_type=client_credentials' \
@@ -810,12 +835,31 @@ jobs:
                 --data-urlencode 'scope=https://vault.azure.net/.default' \
                 --data-urlencode 'client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer' \
                 --data-urlencode "client_assertion@$token_file")"
-              chmod 0600 "$exchange_file"
+              curl_status=$?
+              set -e
+              if [ -f "$exchange_file" ]; then
+                chmod 0600 "$exchange_file"
+              fi
+              if [ "$curl_status" -ne 0 ]; then
+                echo "::error::$label federation token request failed at the transport layer."
+                rm -f "$exchange_file" "$header_file"
+                return 1
+              fi
+              if [ "$SECONDS" -ge "$deadline" ]; then
+                echo "::error::$label federation token request completed after the shared five-minute deadline."
+                rm -f "$exchange_file" "$header_file"
+                return 1
+              fi
 
               if [ "$exchange_status" = 200 ]; then
                 jq -er '"Authorization: Bearer " + .access_token' \
                   "$exchange_file" > "$header_file"
                 chmod 0600 "$header_file"
+                if [ "$SECONDS" -ge "$deadline" ]; then
+                  echo "::error::$label federation token parsing completed after the shared five-minute deadline."
+                  rm -f "$exchange_file" "$header_file"
+                  return 1
+                fi
                 break
               fi
 
@@ -826,7 +870,17 @@ jobs:
               IFS=$'\t' read -r disposition error_name aadsts_code <<< "$classification"
               if [ "$disposition" = retry ]; then
                 federation_retries=$((federation_retries + 1))
-                sleep 5
+                remaining=$((deadline - SECONDS))
+                if [ "$remaining" -le 0 ]; then
+                  echo "::error::$label federation propagation exceeded the shared five-minute deadline."
+                  rm -f "$exchange_file" "$header_file"
+                  return 1
+                fi
+                sleep_seconds=5
+                if [ "$remaining" -lt "$sleep_seconds" ]; then
+                  sleep_seconds="$remaining"
+                fi
+                sleep "$sleep_seconds"
                 continue
               fi
               echo "::error::$label federation setup probe failed with unexpected HTTP $exchange_status (error=$error_name, aadsts=$aadsts_code)."
@@ -834,34 +888,39 @@ jobs:
               return 1
             done
 
-            if [ ! -s "$header_file" ]; then
-              echo "::error::$label federation propagation exceeded five minutes."
-              rm -f "$exchange_file" "$header_file"
-              return 1
-            fi
-
             echo "$label federation retries: $federation_retries"
-            set +e
-            python3 ./.github/scripts/keyvault_rbac_stability.py \
-              --label "$label" \
-              --vault-url "$AZURE_KEYVAULT_URL" \
-              --authorization-header-file "$header_file"
-            verification_status=$?
-            set -e
-            rm -f "$exchange_file" "$header_file"
-            if [ "$verification_status" -ne 0 ]; then
-              echo "::error::$label Key Vault RBAC stability verification failed."
-              return "$verification_status"
-            fi
           }
 
-          refresh_assertion "$AWS2AZURE_ROTATION_TOKEN_FILE_A"
-          verify_identity runtime-a \
-            "$AWS2AZURE_ROTATION_CLIENT_ID_A" "$AWS2AZURE_ROTATION_TOKEN_FILE_A"
-          refresh_assertion "$AWS2AZURE_ROTATION_TOKEN_FILE_B"
+          token_setup_deadline=$((SECONDS + 300))
+          refresh_assertion "$AWS2AZURE_ROTATION_TOKEN_FILE_A" "$token_setup_deadline"
+          refresh_assertion "$AWS2AZURE_ROTATION_TOKEN_FILE_B" "$token_setup_deadline"
           assert_distinct_assertions
-          verify_identity runtime-b \
-            "$AWS2AZURE_ROTATION_CLIENT_ID_B" "$AWS2AZURE_ROTATION_TOKEN_FILE_B"
+          acquire_identity_token runtime-a \
+            "$AWS2AZURE_ROTATION_CLIENT_ID_A" "$AWS2AZURE_ROTATION_TOKEN_FILE_A" \
+            "$token_setup_deadline"
+          acquire_identity_token runtime-b \
+            "$AWS2AZURE_ROTATION_CLIENT_ID_B" "$AWS2AZURE_ROTATION_TOKEN_FILE_B" \
+            "$token_setup_deadline"
+
+          header_a="$PRIVATE_DIR/runtime-a-authorization.header"
+          header_b="$PRIVATE_DIR/runtime-b-authorization.header"
+          set +e
+          python3 ./.github/scripts/keyvault_rbac_stability.py \
+            --label runtime-identities \
+            --vault-url "$AZURE_KEYVAULT_URL" \
+            --authorization-header-file "runtime-a=$header_a" \
+            --authorization-header-file "runtime-b=$header_b"
+          verification_status=$?
+          set -e
+          rm -f \
+            "$PRIVATE_DIR/runtime-a-exchange.json" \
+            "$PRIVATE_DIR/runtime-b-exchange.json" \
+            "$header_a" \
+            "$header_b"
+          if [ "$verification_status" -ne 0 ]; then
+            echo "::error::Runtime identity Key Vault RBAC stability verification failed."
+            exit "$verification_status"
+          fi
 
       - name: Run production-shaped workload through the official AWS SDK
         env:
