@@ -158,8 +158,9 @@ The Cosmos Linux emulator cannot execute stored procedures, so these scenarios
 skip there and require real Azure. A dedicated production-shaped real-Azure
 producer now runs the complete policy scenario set, including one exact
 candidate-to-bootstrap rollback proof, and can emit sealed load evidence for a
-later distinct runtime. The provisional serverless calibration uses concurrency
-4 for five-write/ten-read transaction iterations. The initial concurrency-8 run
+later distinct runtime. The provisional serverless calibration now uses one
+worker with a 500 ms interval between five-write/ten-read transaction
+iterations. The initial concurrency-8 run
 [`30208156245`](https://github.com/pedrosakuma/aws2azure/actions/runs/30208156245)
 was non-qualifying after a surfaced `TransactGetItems` 429; it supplied no
 throughput floor and is not promotion evidence. The first c=4 qualifying run
@@ -180,7 +181,14 @@ was also non-qualifying: its representative window completed, but rollback
 cleanup verification dereferenced the intentionally empty `Item` positions
 returned for absent transaction keys. That harness defect produced no load
 evidence and is fixed by treating null/empty positions as absent while still
-rejecting any populated item. Any future throughput/latency claim must cite that
+rejecting any populated item. The next c=4 run,
+[`30222981057`](https://github.com/pedrosakuma/aws2azure/actions/runs/30222981057),
+was non-qualifying after 144,763 of 155,693 operation attempts received Cosmos
+429 responses. Once throttling began, four unpaced workers immediately
+re-entered and amplified the failure rate. The revised shape uses one worker
+and a 500 ms interval after every iteration, including failed iterations; SDK
+retries remain disabled and any single 429 still blocks evidence. Any future
+throughput/latency claim must cite that
 real-Azure harness run; emulator results from other DynamoDB scenarios do not
 qualify this profile. GA additionally requires three reviewed load runs,
 correctness, rollback, and SLO evidence. The throughput floor remains

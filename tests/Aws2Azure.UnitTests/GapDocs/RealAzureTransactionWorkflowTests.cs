@@ -327,11 +327,19 @@ public sealed class RealAzureTransactionWorkflowTests
             LoadWorkflow,
             StringComparison.Ordinal);
         Assert.Contains(
-            "echo \"LOAD_CONCURRENCY=4\"",
+            "echo \"LOAD_CONCURRENCY=1\"",
             LoadWorkflow,
             StringComparison.Ordinal);
         Assert.Contains(
-            "concurrency: 4",
+            "echo \"LOAD_ITERATION_INTERVAL_MS=500\"",
+            LoadWorkflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "AWS2AZURE_LOAD_ITERATION_INTERVAL_MS: ${{ env.LOAD_ITERATION_INTERVAL_MS }}",
+            LoadWorkflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "concurrency: 1",
             LoadPolicy,
             StringComparison.Ordinal);
         Assert.Contains(
@@ -340,6 +348,14 @@ public sealed class RealAzureTransactionWorkflowTests
             StringComparison.Ordinal);
         Assert.Contains(
             "TimeSpan.FromMilliseconds(200)",
+            LoadProducer,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "ReadPositiveInt(\"AWS2AZURE_LOAD_ITERATION_INTERVAL_MS\", 500)",
+            LoadProducer,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "await Task.Delay(iterationInterval, cancellationToken)",
             LoadProducer,
             StringComparison.Ordinal);
         Assert.Contains(

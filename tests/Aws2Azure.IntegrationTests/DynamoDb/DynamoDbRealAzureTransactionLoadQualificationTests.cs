@@ -77,6 +77,8 @@ public sealed class DynamoDbRealAzureTransactionLoadQualificationTests(
         File.Delete(fullOutputPath);
         File.Delete($"{fullOutputPath}.pending");
         var concurrency = ReadPositiveInt("AWS2AZURE_LOAD_CONCURRENCY", 8);
+        var iterationInterval = TimeSpan.FromMilliseconds(
+            ReadPositiveInt("AWS2AZURE_LOAD_ITERATION_INTERVAL_MS", 500));
         var requestedDuration = TimeSpan.FromSeconds(
             ReadPositiveInt("AWS2AZURE_LOAD_DURATION_SECONDS", 300));
         var tracker = new RealAzureWorkloadLoadTracker(Service, Operations);
@@ -118,6 +120,7 @@ public sealed class DynamoDbRealAzureTransactionLoadQualificationTests(
                     tracker,
                     completedIterations,
                     worker,
+                    iterationInterval,
                     requestedDuration,
                     stopwatch,
                     timeout.Token))
@@ -399,6 +402,7 @@ public sealed class DynamoDbRealAzureTransactionLoadQualificationTests(
         RealAzureWorkloadLoadTracker tracker,
         CompletedIterationCounter completedIterations,
         int worker,
+        TimeSpan iterationInterval,
         TimeSpan duration,
         Stopwatch stopwatch,
         CancellationToken cancellationToken)
@@ -462,6 +466,14 @@ public sealed class DynamoDbRealAzureTransactionLoadQualificationTests(
             }
             catch when (!cancellationToken.IsCancellationRequested)
             {
+            }
+            finally
+            {
+                if (stopwatch.Elapsed < duration)
+                {
+                    await Task.Delay(iterationInterval, cancellationToken)
+                        .ConfigureAwait(false);
+                }
             }
         }
     }

@@ -18,7 +18,7 @@ rules:
   only_skipped_real_azure_disqualifies: true
   min_distinct_runs: 3
 load_shape:
-  concurrency: 4
+  concurrency: 1
   requested_duration_seconds: 300
 scenarios:
   - id: representative-load
