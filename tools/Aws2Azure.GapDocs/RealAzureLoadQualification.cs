@@ -1039,15 +1039,17 @@ public static class RealAzureLoadQualificationGenerator
                 "Rollback proof contains configuration, backend, binding, or canary drift.");
         }
 
-        var expectedCleanup = proof.Service switch
+        var expectedCleanup = (run.Profile.Id, proof.Service) switch
         {
-            "s3" => "delete_object_delete_bucket_verify_no_such_bucket",
-            "secretsmanager" =>
+            (_, "s3") => "delete_object_delete_bucket_verify_no_such_bucket",
+            (_, "secretsmanager") =>
                 "force_delete_without_recovery_verify_resource_not_found_key_vault_soft_delete",
-            "dynamodb" => "delete_table_verify_resource_not_found_exception",
-            "sqs" =>
+            ("dynamodb-single-partition-transactions", "dynamodb") =>
+                "atomic_delete_both_items_then_delete_table_verify_resource_not_found_exception",
+            (_, "dynamodb") => "delete_table_verify_resource_not_found_exception",
+            (_, "sqs") =>
                 "amqp_link_scoped_lock_requires_redelivery_after_restart_delete_queue_verify_empty",
-            "kinesis" =>
+            (_, "kinesis") =>
                 "event_hubs_retention_no_immediate_record_delete",
             _ => string.Empty,
         };

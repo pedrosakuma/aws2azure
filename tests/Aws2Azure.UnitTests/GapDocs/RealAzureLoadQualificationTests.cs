@@ -540,6 +540,30 @@ public sealed class RealAzureLoadQualificationTests
     }
 
     [Fact]
+    public void Generate_accepts_transaction_specific_atomic_rollback_cleanup()
+    {
+        var inputs = TransactionRollbackInputs();
+        var selections = RunSelections(inputs.Candidate, inputs.Evidence);
+
+        var document = RealAzureLoadQualificationGenerator.Generate(
+            inputs.Manifest,
+            inputs.Candidate,
+            inputs.Policy,
+            inputs.Evidence,
+            Metadata(),
+            inputs.Prior,
+            selections.Correctness,
+            selections.Load);
+
+        Assert.Equal("qualified", document.Verdict);
+        Assert.All(
+            document.RollbackProofs,
+            proof => Assert.Equal(
+                "atomic_delete_both_items_then_delete_table_verify_resource_not_found_exception",
+                proof.CleanupSemantics));
+    }
+
+    [Fact]
     public void Generate_rejects_missing_or_duplicate_rollback_proof()
     {
         var missing = RollbackInputs();
@@ -1401,6 +1425,90 @@ public sealed class RealAzureLoadQualificationTests
             SealedRuntimeEvidenceValidator.IdentityKey(
                 Assert.Single(evidence[0].RollbackProofs).Prior));
         return (manifest, candidate, policy, evidence, prior);
+    }
+
+    private static (
+        WorkloadGaManifest Manifest,
+        SloQualificationDocument Candidate,
+        WorkloadQualificationPolicy Policy,
+        RealAzureLoadEvidence[] Evidence,
+        ApprovedRuntimeRecord Prior) TransactionRollbackInputs()
+    {
+        const string profileId = "dynamodb-single-partition-transactions";
+        var inputs = RollbackInputs();
+        var prior = ApprovedRuntimeLedgerLoader.Load(Path.Combine(
+            FindRepoRoot(),
+            "docs",
+            "workloads",
+            "approved-runtimes",
+            profileId + ".yaml"));
+
+        inputs.Manifest.Id = profileId;
+        inputs.Manifest.Name = "DynamoDB single-partition transactions";
+        inputs.Manifest.Operations =
+        [
+            "dynamodb:TransactGetItems",
+            "dynamodb:TransactWriteItems",
+        ];
+        inputs.Candidate.Profile.Id = profileId;
+        inputs.Candidate.Candidate.Runtime!.Profile.Id = profileId;
+        inputs.Candidate.Profile.Services =
+        [
+            new SloQualificationProfileService
+            {
+                Service = "dynamodb",
+                Operations = ["TransactGetItems", "TransactWriteItems"],
+            }
+        ];
+        inputs.Policy.ProfileId = profileId;
+        inputs.Policy.Scenarios[0].Service = "dynamodb";
+        inputs.Policy.Scenarios[0].Operation = "TransactWriteItems";
+        inputs.Policy.Scenarios[1].Service = "dynamodb";
+        inputs.Policy.Scenarios[1].Operation = "TransactGetItems";
+
+        foreach (var run in inputs.Evidence)
+        {
+            run.Profile.Id = profileId;
+            run.Candidate.Runtime!.Profile.Id = profileId;
+            run.Profile.Services =
+            [
+                new SloQualificationProfileService
+                {
+                    Service = "dynamodb",
+                    Operations = ["TransactGetItems", "TransactWriteItems"],
+                }
+            ];
+            run.OperationMix[0].Service = "dynamodb";
+            run.OperationMix[0].Operation = "TransactWriteItems";
+            run.OperationMix.Add(new RealAzureLoadOperationMeasurement
+            {
+                Service = "dynamodb",
+                Operation = "TransactGetItems",
+                Completions = 100,
+                P95Milliseconds = 10,
+                P99Milliseconds = 20,
+            });
+            run.Scenarios[0].Service = "dynamodb";
+            run.Scenarios[0].Operation = "TransactWriteItems";
+            var rollbackScenario = Assert.Single(
+                run.Scenarios,
+                scenario => scenario.Id == "rollback");
+            rollbackScenario.Service = "dynamodb";
+            rollbackScenario.Operation = "TransactGetItems";
+            var proof = Assert.Single(run.RollbackProofs);
+            proof.Service = "dynamodb";
+            proof.Operation = "TransactGetItems";
+            proof.Prior = PriorRuntime(prior);
+            proof.CleanupSemantics =
+                "atomic_delete_both_items_then_delete_table_verify_resource_not_found_exception";
+        }
+
+        return (
+            inputs.Manifest,
+            inputs.Candidate,
+            inputs.Policy,
+            inputs.Evidence,
+            prior);
     }
 
     private static RealAzureCredentialRotationProof RotationProof(

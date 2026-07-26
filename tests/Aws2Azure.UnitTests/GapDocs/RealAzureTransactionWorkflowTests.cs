@@ -54,6 +54,23 @@ public sealed class RealAzureTransactionWorkflowTests
         ".github",
         "workflows",
         "workload-load-real-azure.yml"));
+    private static readonly string QualificationWorkflow = File.ReadAllText(Path.Combine(
+        RepositoryRoot,
+        ".github",
+        "workflows",
+        "qualification-real-azure.yml"));
+    private static readonly string LoadProducer = File.ReadAllText(Path.Combine(
+        RepositoryRoot,
+        "tests",
+        "Aws2Azure.IntegrationTests",
+        "DynamoDb",
+        "DynamoDbRealAzureTransactionLoadQualificationTests.cs"));
+    private static readonly string LoadPolicy = File.ReadAllText(Path.Combine(
+        RepositoryRoot,
+        "docs",
+        "workloads",
+        "qualification",
+        "dynamodb-single-partition-transactions.yaml"));
 
     [Fact]
     public void Transaction_profile_resolves_exact_candidate_and_bootstrap_prior()
@@ -238,6 +255,18 @@ public sealed class RealAzureTransactionWorkflowTests
             "AWS2AZURE_DDB_STORED_PROCEDURE_MODE: Disabled",
             LoadWorkflow,
             StringComparison.Ordinal);
+        Assert.Contains(
+            "echo \"AWS2AZURE_DDB_STORED_PROCEDURE_MODE=Preferred\"",
+            LoadWorkflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "--arg dynamodb_stored_procedure_mode \"$AWS2AZURE_DDB_STORED_PROCEDURE_MODE\"",
+            LoadWorkflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "dynamodb_stored_procedure_mode: $dynamodb_stored_procedure_mode",
+            LoadWorkflow,
+            StringComparison.Ordinal);
         Assert.DoesNotContain(
             "dynamodb-basic-crud)\n",
             Workflow,
@@ -246,6 +275,102 @@ public sealed class RealAzureTransactionWorkflowTests
             "dynamodb-single-partition-transactions)\n",
             Workflow,
             StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Transaction_load_producer_and_final_qualification_are_selectable()
+    {
+        Assert.Contains(
+            "- dynamodb-single-partition-transactions",
+            LoadWorkflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "- dynamodb-single-partition-transactions",
+            QualificationWorkflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "dynamodb-single-partition-transactions)",
+            LoadWorkflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "RUNNER_PATH=tests/Aws2Azure.IntegrationTests/DynamoDb/DynamoDbRealAzureTransactionLoadQualificationTests.cs",
+            LoadWorkflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "TEST_FILTER=Category=DynamoDbTransactionLoadQualification",
+            LoadWorkflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "BICEP_PATH=deploy/realazure/dynamodb-load.bicep",
+            LoadWorkflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "[ \"$PROFILE\" = dynamodb-single-partition-transactions ]",
+            LoadWorkflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "qualification-only producer skipped during source validation",
+            LoadWorkflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "\"write_items_per_transaction\": 5",
+            LoadWorkflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "\"get_items_per_transaction\": 10",
+            LoadWorkflow,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Transaction_load_evidence_covers_policy_once_with_one_real_rollback()
+    {
+        var scenarioIds = LoadPolicy
+            .Split('\n')
+            .Where(line => line.StartsWith("  - id: ", StringComparison.Ordinal))
+            .Select(line => line["  - id: ".Length..].Trim())
+            .ToArray();
+
+        Assert.Equal(12, scenarioIds.Length);
+        Assert.All(
+            scenarioIds,
+            scenario => Assert.Contains(
+                $"\"{scenario}\"",
+                LoadProducer,
+                StringComparison.Ordinal));
+        Assert.Equal(
+            1,
+            CountOccurrences(
+                LoadProducer,
+                "VerifyDynamoDbTransactionsAsync("));
+        Assert.Contains(
+            "RequiredScenarioIds",
+            LoadProducer,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "evidence.RollbackProofs.Count",
+            LoadProducer,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "completedIterations.Count",
+            LoadProducer,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "QualificationMode = \"sealed\"",
+            LoadProducer,
+            StringComparison.Ordinal);
+    }
+
+    private static int CountOccurrences(string source, string value)
+    {
+        var count = 0;
+        var offset = 0;
+        while ((offset = source.IndexOf(value, offset, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            offset += value.Length;
+        }
+        return count;
     }
 
     private static string FindRepositoryRoot()

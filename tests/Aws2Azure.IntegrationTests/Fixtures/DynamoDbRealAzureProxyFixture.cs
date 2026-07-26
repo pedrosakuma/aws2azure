@@ -50,11 +50,21 @@ public sealed class DynamoDbRealAzureProxyFixture : IAsyncLifetime
     private string? _cosmosKey;
     private string? _cosmosDatabase;
     private string _storedProcedureMode = "Disabled";
+    private bool _captureTransactionRoutes;
 
     public bool CosmosConfigured { get; private set; }
     public bool ProxyStarted { get; private set; }
     public string ProxyServiceUrl => $"http://{ProxyHostName}:{_proxyPort}";
-    public string ProxyOutput => _proxyOutput.ToString();
+    public string ProxyOutput
+    {
+        get
+        {
+            lock (_proxyOutput)
+            {
+                return _proxyOutput.ToString();
+            }
+        }
+    }
     public string CosmosEndpoint => _cosmosEndpoint ?? string.Empty;
     internal string CosmosKey => _cosmosKey ?? string.Empty;
     internal string CosmosDatabase => _cosmosDatabase ?? string.Empty;
@@ -145,6 +155,12 @@ public sealed class DynamoDbRealAzureProxyFixture : IAsyncLifetime
             SealedRuntimeRole.Candidate);
         await WaitForProxyAsync(_proxyPort, TimeSpan.FromMinutes(2)).ConfigureAwait(false);
         ProxyStarted = true;
+    }
+
+    public async Task RestartWithTransactionRouteCaptureAsync()
+    {
+        _captureTransactionRoutes = true;
+        await RestartAsync().ConfigureAwait(false);
     }
 
     public async Task StopForRuntimeSwitchAsync()
@@ -312,13 +328,18 @@ public sealed class DynamoDbRealAzureProxyFixture : IAsyncLifetime
         SealedRuntimeRole runtimeRole)
     {
         var repoRoot = FindRepoRoot();
+        var environment = new Dictionary<string, string?>();
+        if (_captureTransactionRoutes)
+        {
+            environment["Logging__LogLevel__Aws2Azure.Modules.DynamoDb"] = "Debug";
+        }
         var startInfo = SealedRuntimeLauncher.CreateStartInfo(
             _runtimeSelection,
             runtimeRole,
             repoRoot,
             port,
             configFile,
-            new Dictionary<string, string?>());
+            environment);
 
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         process.OutputDataReceived += (_, args) => AppendOutput(args.Data);
