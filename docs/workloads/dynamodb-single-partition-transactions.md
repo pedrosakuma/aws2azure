@@ -155,9 +155,13 @@ The registered scenarios are
 zero-threshold waivers pending reviewed measurements.
 
 The Cosmos Linux emulator cannot execute stored procedures, so these scenarios
-skip there and require real Azure. Any future throughput/latency claim must cite
-the real-Azure harness run; emulator results from other DynamoDB scenarios do
-not qualify this profile. GA additionally requires reviewed production-shaped
-load, rollback, and SLO evidence. The throughput floor remains unresolved, no
-operational qualification artifact exists, and the bootstrap must not be
-treated as candidate, approved, GA, or production promotion evidence.
+skip there and require real Azure. A dedicated production-shaped real-Azure
+producer now runs the complete policy scenario set, including one exact
+candidate-to-bootstrap rollback proof, and can emit sealed load evidence for a
+later distinct runtime. Any future throughput/latency claim must cite that
+real-Azure harness run; emulator results from other DynamoDB scenarios do not
+qualify this profile. GA additionally requires three reviewed load runs,
+correctness, rollback, and SLO evidence. The throughput floor remains
+unresolved, no operational qualification artifact is committed, and the
+bootstrap must not be treated as candidate, approved, GA, or production
+promotion evidence.

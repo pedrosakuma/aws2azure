@@ -18,6 +18,19 @@ namespace Aws2Azure.IntegrationTests.DynamoDb;
 /// </summary>
 internal static class CosmosRestBootstrap
 {
+    public static async Task<byte[]> ReadAccountAsync(
+        HttpClient http,
+        string endpoint,
+        string masterKey,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(endpoint));
+        SignMaster(request, masterKey, "get", string.Empty, string.Empty);
+        using var response = await http.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsByteArrayAsync(cancellationToken);
+    }
+
     public static async Task EnsureDatabaseAsync(
         HttpClient http, string endpoint, string masterKey, string databaseName)
     {
