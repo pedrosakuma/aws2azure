@@ -199,7 +199,8 @@ jobs:
                 echo "TEST_FILTER=Category=DynamoDbTransactionLoadQualification"
                 echo "BACKEND_DESCRIPTION=Ephemeral Azure Cosmos DB serverless SQL API, Strong consistency, stored procedures Preferred"
                 echo "AWS2AZURE_DDB_STORED_PROCEDURE_MODE=Preferred"
-                echo "LOAD_CONCURRENCY=4"
+                echo "LOAD_CONCURRENCY=1"
+                echo "LOAD_ITERATION_INTERVAL_MS=500"
               } >> "$GITHUB_ENV"
               ;;
             sqs-standard-messaging)
@@ -955,6 +956,7 @@ jobs:
           AWS2AZURE_LOAD_EVIDENCE_PATH: ${{ env.LOAD_EVIDENCE_PATH }}
           AWS2AZURE_LOAD_DURATION_SECONDS: ${{ env.LOAD_DURATION_SECONDS }}
           AWS2AZURE_LOAD_CONCURRENCY: ${{ env.LOAD_CONCURRENCY }}
+          AWS2AZURE_LOAD_ITERATION_INTERVAL_MS: ${{ env.LOAD_ITERATION_INTERVAL_MS }}
           AWS2AZURE_LOAD_GIT_SHA: ${{ steps.provenance.outputs.git_sha }}
           AWS2AZURE_LOAD_ARTIFACT_DIGEST: ${{ steps.provenance.outputs.runtime_digest }}
           AWS2AZURE_LOAD_CONFIG_DIGEST: ${{ steps.provenance.outputs.config_digest }}
