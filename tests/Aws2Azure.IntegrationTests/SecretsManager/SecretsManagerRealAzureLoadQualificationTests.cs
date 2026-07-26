@@ -48,6 +48,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
         var windowStart = DateTimeOffset.UtcNow;
         var networkTarget = new Uri(new Uri(vaultUrl), "secrets?api-version=7.4");
         var networkBefore = await ProbeNetworkAsync(networkTarget, 12).ConfigureAwait(false);
+        var loadStartedAt = DateTimeOffset.UtcNow;
         var stopwatch = Stopwatch.StartNew();
         using var client = fixture.CreateSecretsManagerClient();
         using var timeout = new CancellationTokenSource(requestedDuration + TimeSpan.FromMinutes(30));
@@ -95,12 +96,14 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
         await SecretsManagerCredentialRotationQualification.RefreshGitHubOidcTokenAsync(
             RequiredEnvironment("AWS2AZURE_ROTATION_TOKEN_FILE_A"),
             timeout.Token).ConfigureAwait(false);
+        var restartStartedAt = DateTimeOffset.UtcNow;
         var restart = await VerifyScenarioAsync(
             "restart",
             "CreateSecret",
             "real_azure",
             () => RealAzureRestartQualification.VerifySecretsManagerAsync(fixture))
             .ConfigureAwait(false);
+        var rotationStartedAt = DateTimeOffset.UtcNow;
         var rotation = await SecretsManagerCredentialRotationQualification.VerifyAsync(
             fixture,
             timeout.Token).ConfigureAwait(false);
@@ -262,7 +265,11 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
         await LoadEvidenceProducerGuard.PublishAsync(
             completedIterations.Count,
             operationOutcomes,
-            fixture.ProxyOutput,
+            fixture.ProxyOutput
+            + Environment.NewLine
+            + $"Secrets Manager qualification timing (UTC): load-start={loadStartedAt:O}; "
+            + $"load-end={loadEnd:O}; restart-start={restartStartedAt:O}; "
+            + $"rotation-start={rotationStartedAt:O}.",
             async () =>
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath)!);
@@ -303,7 +310,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
             var created = false;
             try
             {
-                await MeasureAsync(tracker, "CreateSecret", async () =>
+                await MeasureAsync(tracker, "CreateSecret", stopwatch, async () =>
                 {
                     await client.CreateSecretAsync(new CreateSecretRequest
                     {
@@ -314,7 +321,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                 }).ConfigureAwait(false);
                 created = true;
 
-                await MeasureAsync(tracker, "DescribeSecret", async () =>
+                await MeasureAsync(tracker, "DescribeSecret", stopwatch, async () =>
                 {
                     var response = await client.DescribeSecretAsync(
                         new DescribeSecretRequest { SecretId = name },
@@ -325,7 +332,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                     }
                 }).ConfigureAwait(false);
 
-                await MeasureAsync(tracker, "GetSecretValue", async () =>
+                await MeasureAsync(tracker, "GetSecretValue", stopwatch, async () =>
                 {
                     await GetExpectedValueAsync(
                         client,
@@ -334,7 +341,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                         cancellationToken).ConfigureAwait(false);
                 }).ConfigureAwait(false);
 
-                await MeasureAsync(tracker, "PutSecretValue", async () =>
+                await MeasureAsync(tracker, "PutSecretValue", stopwatch, async () =>
                 {
                     var response = await client.PutSecretValueAsync(new PutSecretValueRequest
                     {
@@ -347,7 +354,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                     }
                 }).ConfigureAwait(false);
 
-                await MeasureAsync(tracker, "GetSecretValue", async () =>
+                await MeasureAsync(tracker, "GetSecretValue", stopwatch, async () =>
                 {
                     await GetExpectedValueAsync(
                         client,
@@ -356,7 +363,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                         cancellationToken).ConfigureAwait(false);
                 }).ConfigureAwait(false);
 
-                await MeasureAsync(tracker, "UpdateSecret", async () =>
+                await MeasureAsync(tracker, "UpdateSecret", stopwatch, async () =>
                 {
                     var response = await client.UpdateSecretAsync(new UpdateSecretRequest
                     {
@@ -370,7 +377,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                     }
                 }).ConfigureAwait(false);
 
-                await MeasureAsync(tracker, "GetSecretValue", async () =>
+                await MeasureAsync(tracker, "GetSecretValue", stopwatch, async () =>
                 {
                     await GetExpectedValueAsync(
                         client,
@@ -379,7 +386,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                         cancellationToken).ConfigureAwait(false);
                 }).ConfigureAwait(false);
 
-                await MeasureAsync(tracker, "ListSecrets", async () =>
+                await MeasureAsync(tracker, "ListSecrets", stopwatch, async () =>
                 {
                     await client.ListSecretsAsync(
                         new ListSecretsRequest(),
@@ -387,7 +394,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                 }).ConfigureAwait(false);
 
                 await completedIterations.CompleteAfterAsync(
-                    () => MeasureAsync(tracker, "DeleteSecret", async () =>
+                    () => MeasureAsync(tracker, "DeleteSecret", stopwatch, async () =>
                     {
                         await client.DeleteSecretAsync(new DeleteSecretRequest
                         {
@@ -423,6 +430,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
     private static async Task MeasureAsync(
         RealAzureWorkloadLoadTracker tracker,
         string operation,
+        Stopwatch loadWindow,
         Func<Task> action)
     {
         var started = Stopwatch.GetTimestamp();
@@ -438,7 +446,8 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                 operation,
                 Stopwatch.GetElapsedTime(started).TotalMilliseconds,
                 IsThrottle(exception),
-                exception);
+                exception,
+                loadWindow.Elapsed);
             throw;
         }
     }

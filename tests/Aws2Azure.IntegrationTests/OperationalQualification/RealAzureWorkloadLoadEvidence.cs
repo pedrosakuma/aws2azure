@@ -173,9 +173,14 @@ internal sealed class RealAzureWorkloadLoadTracker
         string operation,
         double elapsedMilliseconds,
         bool throttled,
-        Exception? exception = null)
+        Exception? exception = null,
+        TimeSpan? windowOffset = null)
     {
-        _operations[operation].RecordFailure(elapsedMilliseconds, throttled, exception);
+        _operations[operation].RecordFailure(
+            elapsedMilliseconds,
+            throttled,
+            exception,
+            windowOffset);
     }
 
     public List<RealAzureWorkloadLoadOperationMeasurement> Snapshot()
@@ -203,7 +208,7 @@ internal sealed class RealAzureWorkloadLoadTracker
 
     public string? FirstFailure(string operation)
     {
-        return _operations[operation].FirstFailure?.ToString();
+        return _operations[operation].FailureSummary;
     }
 
     public RealAzureWorkloadFirstFailure? FirstFailureDetail(string operation)
@@ -217,11 +222,38 @@ internal sealed class RealAzureWorkloadLoadTracker
         private long _completions;
         private long _failures;
         private long _throttles;
+        private long _firstFailureWindowOffsetTicks = -1;
+        private long _lastFailureWindowOffsetTicks = -1;
         private RealAzureWorkloadFirstFailure? _firstFailure;
 
         public IEnumerable<double> Latencies => _latencies;
         public long Throttles => Interlocked.Read(ref _throttles);
         public RealAzureWorkloadFirstFailure? FirstFailure => Volatile.Read(ref _firstFailure);
+        public string? FailureSummary
+        {
+            get
+            {
+                var first = FirstFailure;
+                if (first is null)
+                {
+                    return null;
+                }
+                var firstTicks = Interlocked.Read(ref _firstFailureWindowOffsetTicks);
+                if (firstTicks < 0)
+                {
+                    return first.ToString();
+                }
+
+                var firstOffset = TimeSpan.FromTicks(firstTicks).TotalSeconds;
+                var lastTicks = Interlocked.Read(ref _lastFailureWindowOffsetTicks);
+                var lastOffset = lastTicks < 0
+                    ? firstOffset
+                    : TimeSpan.FromTicks(lastTicks).TotalSeconds;
+                return string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"{first}/first-at-{firstOffset:0.000}s/last-at-{lastOffset:0.000}s");
+            }
+        }
 
         public void RecordSuccess(double elapsedMilliseconds)
         {
@@ -232,10 +264,17 @@ internal sealed class RealAzureWorkloadLoadTracker
         public void RecordFailure(
             double elapsedMilliseconds,
             bool throttled,
-            Exception? exception = null)
+            Exception? exception,
+            TimeSpan? windowOffset)
         {
             _latencies.Enqueue(elapsedMilliseconds);
             Interlocked.Increment(ref _failures);
+            if (windowOffset is { } offset)
+            {
+                var ticks = Math.Max(0, offset.Ticks);
+                UpdateMinimum(ref _firstFailureWindowOffsetTicks, ticks);
+                UpdateMaximum(ref _lastFailureWindowOffsetTicks, ticks);
+            }
             if (exception is not null)
             {
                 Interlocked.CompareExchange(
@@ -246,6 +285,38 @@ internal sealed class RealAzureWorkloadLoadTracker
             if (throttled)
             {
                 Interlocked.Increment(ref _throttles);
+            }
+        }
+
+        private static void UpdateMinimum(ref long location, long value)
+        {
+            while (true)
+            {
+                var current = Volatile.Read(ref location);
+                if (current >= 0 && current <= value)
+                {
+                    return;
+                }
+                if (Interlocked.CompareExchange(ref location, value, current) == current)
+                {
+                    return;
+                }
+            }
+        }
+
+        private static void UpdateMaximum(ref long location, long value)
+        {
+            while (true)
+            {
+                var current = Volatile.Read(ref location);
+                if (current >= value)
+                {
+                    return;
+                }
+                if (Interlocked.CompareExchange(ref location, value, current) == current)
+                {
+                    return;
+                }
             }
         }
 

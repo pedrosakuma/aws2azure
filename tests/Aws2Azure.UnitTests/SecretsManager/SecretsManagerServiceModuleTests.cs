@@ -330,6 +330,43 @@ public sealed class SecretsManagerServiceModuleTests
     }
 
     [Fact]
+    public async Task HandleAsync_ListSecrets_preserves_forbidden_without_production_retry()
+    {
+        var listAttempts = 0;
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        "{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}",
+                        Encoding.UTF8,
+                        "application/json"),
+                });
+            }
+
+            listAttempts++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden)
+            {
+                Content = new StringContent(
+                    "{\"error\":{\"code\":\"Forbidden\",\"innererror\":{\"code\":\"ForbiddenByRbac\"}}}",
+                    Encoding.UTF8,
+                    "application/json"),
+            });
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.ListSecrets", string.Empty);
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+        Assert.Contains("AccessDeniedException", await ReadBodyAsync(context));
+        Assert.Equal(1, listAttempts);
+    }
+
+    [Fact]
     public async Task HandleAsync_ListSecrets_forwards_next_token_as_key_vault_skiptoken()
     {
         string? requestedUri = null;
