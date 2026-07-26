@@ -13,13 +13,19 @@ internal sealed class CosmosAccountInfo
         CosmosConsistencyLevel defaultConsistency,
         bool enableMultipleWriteLocations,
         CosmosAccountLocation[] readableLocations,
-        CosmosAccountLocation[] writableLocations)
+        CosmosAccountLocation[] writableLocations,
+        bool hasWriteTopology = true,
+        string? accountIdentity = null)
     {
         AccountEndpoint = accountEndpoint;
         DefaultConsistency = defaultConsistency;
         EnableMultipleWriteLocations = enableMultipleWriteLocations;
         ReadableLocations = readableLocations;
         WritableLocations = writableLocations;
+        HasWriteTopology = hasWriteTopology;
+        AccountIdentity = string.IsNullOrWhiteSpace(accountIdentity)
+            ? accountEndpoint.AbsoluteUri
+            : accountIdentity;
     }
 
     public Uri AccountEndpoint { get; }
@@ -27,6 +33,8 @@ internal sealed class CosmosAccountInfo
     public bool EnableMultipleWriteLocations { get; }
     public CosmosAccountLocation[] ReadableLocations { get; }
     public CosmosAccountLocation[] WritableLocations { get; }
+    public bool HasWriteTopology { get; }
+    public string AccountIdentity { get; }
 
     public static CosmosAccountInfo Fallback(Uri accountEndpoint)
     {
@@ -39,11 +47,61 @@ internal sealed class CosmosAccountInfo
             CosmosConsistencyLevel.Unknown,
             enableMultipleWriteLocations: false,
             readableLocations: fallback,
-            writableLocations: fallback);
+            writableLocations: fallback,
+            hasWriteTopology: false,
+            accountIdentity: accountEndpoint.AbsoluteUri);
     }
 }
 
 internal readonly record struct CosmosAccountLocation(string Name, Uri Endpoint);
+
+internal readonly record struct CosmosTransactionRoute(Uri Endpoint);
+
+internal enum CosmosTransactionRouteResolutionStatus
+{
+    Ready,
+    InvalidConfiguration,
+    Unavailable,
+}
+
+internal readonly record struct CosmosTransactionRouteResolution(
+    CosmosTransactionRouteResolutionStatus Status,
+    CosmosTransactionRoute Route,
+    string Error,
+    HttpStatusCode? BackendStatus)
+{
+    public static CosmosTransactionRouteResolution Ready(Uri endpoint) =>
+        new(
+            CosmosTransactionRouteResolutionStatus.Ready,
+            new CosmosTransactionRoute(endpoint),
+            string.Empty,
+            null);
+
+    public static CosmosTransactionRouteResolution InvalidConfiguration(
+        string error) =>
+        new(
+            CosmosTransactionRouteResolutionStatus.InvalidConfiguration,
+            default,
+            error,
+            null);
+
+    public static CosmosTransactionRouteResolution Unavailable(
+        string error,
+        HttpStatusCode? backendStatus = null) =>
+        new(
+            CosmosTransactionRouteResolutionStatus.Unavailable,
+            default,
+            error,
+            backendStatus);
+}
+
+internal enum CosmosTransactionEndpointSelectionStatus
+{
+    Ready,
+    TopologyUnavailable,
+    PreferredWriteRegionRequired,
+    AuthoritativeWriteRegionUnavailable,
+}
 
 internal static class CosmosAccountInfoParser
 {
@@ -58,17 +116,41 @@ internal static class CosmosAccountInfoParser
             }
 
             var consistency = ParseDefaultConsistency(doc.RootElement);
+            var accountIdentity = configuredEndpoint.AbsoluteUri;
+            if (doc.RootElement.TryGetProperty("id", out var idElement)
+                && idElement.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(idElement.GetString()))
+            {
+                accountIdentity = idElement.GetString()!;
+            }
             var multiWrite = false;
+            var hasMultiWriteFlag = false;
             if (doc.RootElement.TryGetProperty("enableMultipleWriteLocations", out var multiWriteEl)
                 && (multiWriteEl.ValueKind == JsonValueKind.True || multiWriteEl.ValueKind == JsonValueKind.False))
             {
                 multiWrite = multiWriteEl.GetBoolean();
+                hasMultiWriteFlag = true;
             }
 
-            var readable = ParseLocations(doc.RootElement, "readableLocations", configuredEndpoint);
-            var writable = ParseLocations(doc.RootElement, "writableLocations", configuredEndpoint);
+            var readable = ParseLocations(
+                doc.RootElement,
+                "readableLocations",
+                configuredEndpoint,
+                out _);
+            var writable = ParseLocations(
+                doc.RootElement,
+                "writableLocations",
+                configuredEndpoint,
+                out var hasWritableLocations);
 
-            return new CosmosAccountInfo(configuredEndpoint, consistency, multiWrite, readable, writable);
+            return new CosmosAccountInfo(
+                configuredEndpoint,
+                consistency,
+                multiWrite,
+                readable,
+                writable,
+                hasMultiWriteFlag && hasWritableLocations,
+                accountIdentity);
         }
         catch (JsonException)
         {
@@ -93,8 +175,13 @@ internal static class CosmosAccountInfoParser
         return CosmosConsistency.FromName(level.GetString());
     }
 
-    private static CosmosAccountLocation[] ParseLocations(JsonElement root, string propertyName, Uri configuredEndpoint)
+    private static CosmosAccountLocation[] ParseLocations(
+        JsonElement root,
+        string propertyName,
+        Uri configuredEndpoint,
+        out bool hasExplicitLocations)
     {
+        hasExplicitLocations = false;
         if (!root.TryGetProperty(propertyName, out var locationsEl)
             || locationsEl.ValueKind != JsonValueKind.Array)
         {
@@ -137,6 +224,10 @@ internal static class CosmosAccountInfoParser
         if (locations.Count == 0)
         {
             locations.Add(new CosmosAccountLocation(string.Empty, configuredEndpoint));
+        }
+        else
+        {
+            hasExplicitLocations = true;
         }
 
         return locations.ToArray();
@@ -200,6 +291,50 @@ internal static class CosmosRegionRouting
         return candidates.ToArray();
     }
 
+    public static CosmosTransactionEndpointSelectionStatus SelectTransactionEndpoint(
+        CosmosAccountInfo account,
+        IReadOnlyList<string>? preferredRegions,
+        out Uri? endpoint)
+    {
+        ArgumentNullException.ThrowIfNull(account);
+        endpoint = null;
+        if (!account.HasWriteTopology || account.WritableLocations.Length == 0)
+        {
+            return CosmosTransactionEndpointSelectionStatus.TopologyUnavailable;
+        }
+
+        if (!account.EnableMultipleWriteLocations)
+        {
+            endpoint = account.WritableLocations[0].Endpoint;
+            return CosmosTransactionEndpointSelectionStatus.Ready;
+        }
+
+        if (preferredRegions is null
+            || preferredRegions.Count == 0
+            || string.IsNullOrWhiteSpace(preferredRegions[0]))
+        {
+            return CosmosTransactionEndpointSelectionStatus.PreferredWriteRegionRequired;
+        }
+
+        var authority = preferredRegions[0].Trim();
+        for (var locationIndex = 0;
+             locationIndex < account.WritableLocations.Length;
+             locationIndex++)
+        {
+            var location = account.WritableLocations[locationIndex];
+            if (location.Name.Equals(
+                    authority,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                endpoint = location.Endpoint;
+                return CosmosTransactionEndpointSelectionStatus.Ready;
+            }
+        }
+
+        return CosmosTransactionEndpointSelectionStatus
+            .AuthoritativeWriteRegionUnavailable;
+    }
+
     /// <summary>
     /// Decides whether a Cosmos response should trigger a cross-region failover
     /// retry. Reads and writes are treated differently on purpose:
@@ -229,6 +364,16 @@ internal static class CosmosRegionRouting
 
         return response.StatusCode == HttpStatusCode.ServiceUnavailable
             || response.StatusCode == HttpStatusCode.RequestTimeout;
+    }
+
+    public static bool IsPinnedTransactionEndpointUnavailable(
+        HttpResponseMessage response)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        return response.StatusCode is HttpStatusCode.ServiceUnavailable
+            or HttpStatusCode.RequestTimeout
+            || (response.StatusCode == HttpStatusCode.Forbidden
+                && HasSubStatus(response, "3"));
     }
 
     public static string BuildLocationSummary(CosmosAccountLocation[] locations)

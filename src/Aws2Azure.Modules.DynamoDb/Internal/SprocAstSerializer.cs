@@ -1,392 +1,520 @@
 using System;
-using System.Collections.Generic;
+using System.Buffers;
+using System.IO;
+using System.Security.Cryptography;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using Aws2Azure.Modules.DynamoDb.Expressions;
+using Aws2Azure.Modules.DynamoDb.Persistence;
 
 namespace Aws2Azure.Modules.DynamoDb.Internal;
 
 /// <summary>
-/// Serializes the C# condition/update AST into JSON that the atomicWrite sproc can interpret.
-/// The JS sproc evaluates conditions and applies updates using these serialized ASTs.
+/// Serializes the C# condition/update AST into canonical JSON that the atomic
+/// stored procedures interpret.
 /// </summary>
 internal static class SprocAstSerializer
 {
-    /// <summary>
-    /// Serializes a ConditionNode tree to JSON for the sproc condition evaluator.
-    /// Returns null if no condition is present.
-    /// </summary>
-    public static string? SerializeCondition(ConditionNode? node)
+    private static readonly JavaScriptEncoder JsonEncoder =
+        JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
+
+    public static void WriteCondition(
+        IBufferWriter<byte> output,
+        ConditionNode node,
+        IncrementalHash? fingerprint = null)
     {
-        if (node is null) return null;
-        var sb = new StringBuilder(256);
-        WriteCondition(sb, node);
-        return sb.ToString();
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentNullException.ThrowIfNull(node);
+        using var writer = new CanonicalJsonWriter(output, fingerprint);
+        WriteCondition(writer, node);
     }
 
-    /// <summary>
-    /// Serializes an UpdateExpressionAst to JSON for the sproc update executor.
-    /// Returns null if no updates are present.
-    /// </summary>
-    public static string? SerializeUpdate(UpdateExpressionAst? ast)
+    public static void WriteUpdate(
+        IBufferWriter<byte> output,
+        UpdateExpressionAst ast)
     {
-        if (ast is null) return null;
-        var sb = new StringBuilder(256);
-        sb.Append('{');
-        var first = true;
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentNullException.ThrowIfNull(ast);
+        using var writer = new CanonicalJsonWriter(output, fingerprint: null);
+        writer.WriteByte((byte)'{');
+        var wroteProperty = false;
 
         if (ast.Set is { Actions.Count: > 0 })
         {
-            first = false;
-            sb.Append("\"set\":[");
-            for (int i = 0; i < ast.Set.Actions.Count; i++)
+            writer.WriteRaw("\"set\":["u8);
+            for (var index = 0; index < ast.Set.Actions.Count; index++)
             {
-                if (i > 0) sb.Append(',');
-                WriteSetAction(sb, ast.Set.Actions[i]);
+                if (index > 0)
+                {
+                    writer.WriteByte((byte)',');
+                }
+                WriteSetAction(writer, ast.Set.Actions[index]);
             }
-            sb.Append(']');
+            writer.WriteByte((byte)']');
+            wroteProperty = true;
         }
 
         if (ast.Remove is { Paths.Count: > 0 })
         {
-            if (!first) sb.Append(',');
-            first = false;
-            sb.Append("\"remove\":[");
-            for (int i = 0; i < ast.Remove.Paths.Count; i++)
+            WritePropertySeparator(writer, wroteProperty);
+            writer.WriteRaw("\"remove\":["u8);
+            for (var index = 0; index < ast.Remove.Paths.Count; index++)
             {
-                if (i > 0) sb.Append(',');
-                sb.Append('"').Append(EscapeJson(PathToString(ast.Remove.Paths[i]))).Append('"');
+                if (index > 0)
+                {
+                    writer.WriteByte((byte)',');
+                }
+                writer.WriteJsonString(PathToString(ast.Remove.Paths[index]));
             }
-            sb.Append(']');
+            writer.WriteByte((byte)']');
+            wroteProperty = true;
         }
 
         if (ast.Add is { Actions.Count: > 0 })
         {
-            if (!first) sb.Append(',');
-            first = false;
-            sb.Append("\"add\":[");
-            for (int i = 0; i < ast.Add.Actions.Count; i++)
+            WritePropertySeparator(writer, wroteProperty);
+            writer.WriteRaw("\"add\":["u8);
+            for (var index = 0; index < ast.Add.Actions.Count; index++)
             {
-                if (i > 0) sb.Append(',');
-                WriteAddAction(sb, ast.Add.Actions[i]);
+                if (index > 0)
+                {
+                    writer.WriteByte((byte)',');
+                }
+                WriteAddAction(writer, ast.Add.Actions[index]);
             }
-            sb.Append(']');
+            writer.WriteByte((byte)']');
+            wroteProperty = true;
         }
 
         if (ast.Delete is { Actions.Count: > 0 })
         {
-            if (!first) sb.Append(',');
-            sb.Append("\"delete\":[");
-            for (int i = 0; i < ast.Delete.Actions.Count; i++)
+            WritePropertySeparator(writer, wroteProperty);
+            writer.WriteRaw("\"delete\":["u8);
+            for (var index = 0; index < ast.Delete.Actions.Count; index++)
             {
-                if (i > 0) sb.Append(',');
-                WriteDeleteAction(sb, ast.Delete.Actions[i]);
+                if (index > 0)
+                {
+                    writer.WriteByte((byte)',');
+                }
+                WriteDeleteAction(writer, ast.Delete.Actions[index]);
             }
-            sb.Append(']');
+            writer.WriteByte((byte)']');
         }
 
-        sb.Append('}');
-        return sb.ToString();
+        writer.WriteByte((byte)'}');
     }
 
-    private static void WriteCondition(StringBuilder sb, ConditionNode node)
+    private static void WritePropertySeparator(
+        CanonicalJsonWriter writer,
+        bool wroteProperty)
+    {
+        if (wroteProperty)
+        {
+            writer.WriteByte((byte)',');
+        }
+    }
+
+    private static void WriteCondition(
+        CanonicalJsonWriter writer,
+        ConditionNode node)
     {
         switch (node)
         {
             case AndCondition and:
-                sb.Append("{\"type\":\"AND\",\"left\":");
-                WriteCondition(sb, and.Left);
-                sb.Append(",\"right\":");
-                WriteCondition(sb, and.Right);
-                sb.Append('}');
+                writer.WriteRaw("{\"type\":\"AND\",\"left\":"u8);
+                WriteCondition(writer, and.Left);
+                writer.WriteRaw(",\"right\":"u8);
+                WriteCondition(writer, and.Right);
+                writer.WriteByte((byte)'}');
                 break;
 
             case OrCondition or:
-                sb.Append("{\"type\":\"OR\",\"left\":");
-                WriteCondition(sb, or.Left);
-                sb.Append(",\"right\":");
-                WriteCondition(sb, or.Right);
-                sb.Append('}');
+                writer.WriteRaw("{\"type\":\"OR\",\"left\":"u8);
+                WriteCondition(writer, or.Left);
+                writer.WriteRaw(",\"right\":"u8);
+                WriteCondition(writer, or.Right);
+                writer.WriteByte((byte)'}');
                 break;
 
             case NotCondition not:
-                sb.Append("{\"type\":\"NOT\",\"operand\":");
-                WriteCondition(sb, not.Inner);
-                sb.Append('}');
+                writer.WriteRaw("{\"type\":\"NOT\",\"operand\":"u8);
+                WriteCondition(writer, not.Inner);
+                writer.WriteByte((byte)'}');
                 break;
 
-            case AttributeExistsCondition ae:
-                sb.Append("{\"type\":\"ATTR_EXISTS\",\"attr\":\"")
-                  .Append(EscapeJson(PathToString(ae.Path)))
-                  .Append("\"}");
+            case AttributeExistsCondition exists:
+                writer.WriteRaw("{\"type\":\"ATTR_EXISTS\",\"attr\":"u8);
+                writer.WriteJsonString(PathToString(exists.Path));
+                writer.WriteByte((byte)'}');
                 break;
 
-            case AttributeNotExistsCondition ane:
-                sb.Append("{\"type\":\"ATTR_NOT_EXISTS\",\"attr\":\"")
-                  .Append(EscapeJson(PathToString(ane.Path)))
-                  .Append("\"}");
+            case AttributeNotExistsCondition notExists:
+                writer.WriteRaw("{\"type\":\"ATTR_NOT_EXISTS\",\"attr\":"u8);
+                writer.WriteJsonString(PathToString(notExists.Path));
+                writer.WriteByte((byte)'}');
                 break;
 
-            case AttributeTypeCondition at:
-                sb.Append("{\"type\":\"ATTR_TYPE\",\"attr\":\"")
-                  .Append(EscapeJson(PathToString(at.Path)))
-                  .Append("\",\"attrType\":");
-                WriteValue(sb, at.TypeTag.Value);
-                sb.Append('}');
+            case AttributeTypeCondition attributeType:
+                writer.WriteRaw("{\"type\":\"ATTR_TYPE\",\"attr\":"u8);
+                writer.WriteJsonString(PathToString(attributeType.Path));
+                writer.WriteRaw(",\"attrType\":"u8);
+                WriteValue(writer, attributeType.TypeTag.Value);
+                writer.WriteByte((byte)'}');
                 break;
 
-            case BeginsWithCondition bw:
-                sb.Append("{\"type\":\"BEGINS_WITH\",\"attr\":");
-                WriteOperand(sb, bw.Path);
-                sb.Append(",\"prefix\":");
-                WriteOperand(sb, bw.Prefix);
-                sb.Append('}');
+            case BeginsWithCondition beginsWith:
+                writer.WriteRaw("{\"type\":\"BEGINS_WITH\",\"attr\":"u8);
+                WriteOperand(writer, beginsWith.Path);
+                writer.WriteRaw(",\"prefix\":"u8);
+                WriteOperand(writer, beginsWith.Prefix);
+                writer.WriteByte((byte)'}');
                 break;
 
-            case ContainsCondition c:
-                sb.Append("{\"type\":\"CONTAINS\",\"attr\":");
-                WriteOperand(sb, c.Container);
-                sb.Append(",\"value\":");
-                WriteOperand(sb, c.Item);
-                sb.Append('}');
+            case ContainsCondition contains:
+                writer.WriteRaw("{\"type\":\"CONTAINS\",\"attr\":"u8);
+                WriteOperand(writer, contains.Container);
+                writer.WriteRaw(",\"value\":"u8);
+                WriteOperand(writer, contains.Item);
+                writer.WriteByte((byte)'}');
                 break;
 
-            case CompareCondition cc:
-                sb.Append("{\"type\":\"COMPARE\",\"attr\":");
-                WriteOperand(sb, cc.Left);
-                sb.Append(",\"op\":\"").Append(OpToString(cc.Op)).Append("\",\"value\":");
-                WriteOperand(sb, cc.Right);
-                sb.Append('}');
+            case CompareCondition compare:
+                writer.WriteRaw("{\"type\":\"COMPARE\",\"attr\":"u8);
+                WriteOperand(writer, compare.Left);
+                writer.WriteRaw(",\"op\":"u8);
+                writer.WriteJsonString(OpToString(compare.Op));
+                writer.WriteRaw(",\"value\":"u8);
+                WriteOperand(writer, compare.Right);
+                writer.WriteByte((byte)'}');
                 break;
 
-            case BetweenCondition bt:
-                sb.Append("{\"type\":\"BETWEEN\",\"value\":");
-                WriteOperand(sb, bt.Value);
-                sb.Append(",\"low\":");
-                WriteOperand(sb, bt.Lower);
-                sb.Append(",\"high\":");
-                WriteOperand(sb, bt.Upper);
-                sb.Append('}');
+            case BetweenCondition between:
+                writer.WriteRaw("{\"type\":\"BETWEEN\",\"value\":"u8);
+                WriteOperand(writer, between.Value);
+                writer.WriteRaw(",\"low\":"u8);
+                WriteOperand(writer, between.Lower);
+                writer.WriteRaw(",\"high\":"u8);
+                WriteOperand(writer, between.Upper);
+                writer.WriteByte((byte)'}');
                 break;
 
-            case InCondition inn:
-                sb.Append("{\"type\":\"IN\",\"attr\":");
-                WriteOperand(sb, inn.Value);
-                sb.Append(",\"values\":[");
-                for (int i = 0; i < inn.Set.Count; i++)
+            case InCondition @in:
+                writer.WriteRaw("{\"type\":\"IN\",\"attr\":"u8);
+                WriteOperand(writer, @in.Value);
+                writer.WriteRaw(",\"values\":["u8);
+                for (var index = 0; index < @in.Set.Count; index++)
                 {
-                    if (i > 0) sb.Append(',');
-                    WriteOperand(sb, inn.Set[i]);
+                    if (index > 0)
+                    {
+                        writer.WriteByte((byte)',');
+                    }
+                    WriteOperand(writer, @in.Set[index]);
                 }
-                sb.Append("]}");
+                writer.WriteRaw("]}"u8);
                 break;
 
             default:
-                sb.Append("{\"type\":\"TRUE\"}"); // fallback - pass through
-                break;
+                throw new NotSupportedException(
+                    $"Unsupported condition AST node '{node.GetType().Name}'.");
         }
     }
 
-    private static void WriteOperand(StringBuilder sb, ConditionOperand operand)
+    private static void WriteOperand(
+        CanonicalJsonWriter writer,
+        ConditionOperand operand)
     {
         switch (operand)
         {
-            case ConditionPathOperand cp:
-                sb.Append("{\"path\":\"").Append(EscapeJson(PathToString(cp.Path))).Append("\"}");
+            case ConditionPathOperand path:
+                writer.WriteRaw("{\"path\":"u8);
+                writer.WriteJsonString(PathToString(path.Path));
+                writer.WriteByte((byte)'}');
                 break;
-            case ConditionValueOperand cv:
-                WriteValue(sb, cv.Value.Value);
+            case ConditionValueOperand value:
+                WriteValue(writer, value.Value.Value);
                 break;
-            case SizeOperand sz:
-                sb.Append("{\"size\":\"").Append(EscapeJson(PathToString(sz.Path))).Append("\"}");
+            case SizeOperand size:
+                writer.WriteRaw("{\"size\":"u8);
+                writer.WriteJsonString(PathToString(size.Path));
+                writer.WriteByte((byte)'}');
                 break;
             default:
-                sb.Append("null");
-                break;
+                throw new NotSupportedException(
+                    $"Unsupported condition operand '{operand.GetType().Name}'.");
         }
     }
 
-    private static void WriteSetAction(StringBuilder sb, SetAction action)
+    private static void WriteSetAction(
+        CanonicalJsonWriter writer,
+        SetAction action)
     {
-        sb.Append("{\"path\":\"").Append(EscapeJson(PathToString(action.Path))).Append("\",\"value\":");
-        WriteValueOperand(sb, action.Value);
-        sb.Append('}');
+        writer.WriteRaw("{\"path\":"u8);
+        writer.WriteJsonString(PathToString(action.Path));
+        writer.WriteRaw(",\"value\":"u8);
+        WriteValueOperand(writer, action.Value);
+        writer.WriteByte((byte)'}');
     }
 
-    private static void WriteAddAction(StringBuilder sb, AddAction action)
+    private static void WriteAddAction(
+        CanonicalJsonWriter writer,
+        AddAction action)
     {
-        sb.Append("{\"path\":\"").Append(EscapeJson(PathToString(action.Path))).Append("\",\"value\":");
-        WriteValue(sb, action.Value.Value);
-        sb.Append('}');
+        writer.WriteRaw("{\"path\":"u8);
+        writer.WriteJsonString(PathToString(action.Path));
+        writer.WriteRaw(",\"value\":"u8);
+        WriteValue(writer, action.Value.Value);
+        writer.WriteByte((byte)'}');
     }
 
-    private static void WriteDeleteAction(StringBuilder sb, DeleteAction action)
+    private static void WriteDeleteAction(
+        CanonicalJsonWriter writer,
+        DeleteAction action)
     {
-        sb.Append("{\"path\":\"").Append(EscapeJson(PathToString(action.Path))).Append("\",\"value\":");
-        WriteValue(sb, action.Value.Value);
-        sb.Append('}');
+        writer.WriteRaw("{\"path\":"u8);
+        writer.WriteJsonString(PathToString(action.Path));
+        writer.WriteRaw(",\"value\":"u8);
+        WriteValue(writer, action.Value.Value);
+        writer.WriteByte((byte)'}');
     }
 
-    private static void WriteValueOperand(StringBuilder sb, ValueOperand operand)
+    private static void WriteValueOperand(
+        CanonicalJsonWriter writer,
+        ValueOperand operand)
     {
-        // SET-value operands are tagged with a "$k" discriminator so the sproc's
-        // resolveSetValue can interpret them unambiguously. Literal values are
-        // wrapped (even maps/lists), so a user attribute that happens to look
-        // like an operand can never be misread (#202).
         switch (operand)
         {
-            case ValueRefOperand vr:
-                sb.Append("{\"$k\":\"lit\",\"v\":");
-                WriteValue(sb, vr.Value);
-                sb.Append('}');
+            case ValueRefOperand value:
+                writer.WriteRaw("{\"$k\":\"lit\",\"v\":"u8);
+                WriteValue(writer, value.Value);
+                writer.WriteByte((byte)'}');
                 break;
-            case PathOperand po:
-                sb.Append("{\"$k\":\"path\",\"p\":\"").Append(EscapeJson(PathToString(po.Path))).Append("\"}");
+            case PathOperand path:
+                writer.WriteRaw("{\"$k\":\"path\",\"p\":"u8);
+                writer.WriteJsonString(PathToString(path.Path));
+                writer.WriteByte((byte)'}');
                 break;
-            case ArithmeticOperand ao:
-                sb.Append("{\"$k\":\"op\",\"o\":\"").Append(ao.Op == ArithmeticOp.Add ? "+" : "-").Append("\",\"l\":");
-                WriteValueOperand(sb, ao.Left);
-                sb.Append(",\"r\":");
-                WriteValueOperand(sb, ao.Right);
-                sb.Append('}');
+            case ArithmeticOperand arithmetic:
+                writer.WriteRaw("{\"$k\":\"op\",\"o\":"u8);
+                writer.WriteJsonString(
+                    arithmetic.Op == ArithmeticOp.Add ? "+" : "-");
+                writer.WriteRaw(",\"l\":"u8);
+                WriteValueOperand(writer, arithmetic.Left);
+                writer.WriteRaw(",\"r\":"u8);
+                WriteValueOperand(writer, arithmetic.Right);
+                writer.WriteByte((byte)'}');
                 break;
-            case IfNotExistsOperand ine:
-                sb.Append("{\"$k\":\"ifne\",\"p\":\"").Append(EscapeJson(PathToString(ine.Path))).Append("\",\"f\":");
-                WriteValueOperand(sb, ine.Fallback);
-                sb.Append('}');
+            case IfNotExistsOperand ifNotExists:
+                writer.WriteRaw("{\"$k\":\"ifne\",\"p\":"u8);
+                writer.WriteJsonString(PathToString(ifNotExists.Path));
+                writer.WriteRaw(",\"f\":"u8);
+                WriteValueOperand(writer, ifNotExists.Fallback);
+                writer.WriteByte((byte)'}');
                 break;
-            case ListAppendOperand la:
-                sb.Append("{\"$k\":\"lap\",\"l\":");
-                WriteValueOperand(sb, la.Left);
-                sb.Append(",\"r\":");
-                WriteValueOperand(sb, la.Right);
-                sb.Append('}');
+            case ListAppendOperand listAppend:
+                writer.WriteRaw("{\"$k\":\"lap\",\"l\":"u8);
+                WriteValueOperand(writer, listAppend.Left);
+                writer.WriteRaw(",\"r\":"u8);
+                WriteValueOperand(writer, listAppend.Right);
+                writer.WriteByte((byte)'}');
                 break;
             default:
-                sb.Append("{\"$k\":\"lit\",\"v\":null}");
-                break;
+                throw new NotSupportedException(
+                    $"Unsupported update operand '{operand.GetType().Name}'.");
         }
     }
 
-    private static void WriteValue(StringBuilder sb, JsonElement value)
+    private static void WriteValue(
+        CanonicalJsonWriter writer,
+        JsonElement value)
     {
-        // Convert DynamoDB AttributeValue to inferred (native) format
-        // DynamoDB format: {"S": "hello"}, {"N": "123"}, {"BOOL": true}, etc.
-        // Inferred format: "hello", 123, true, etc.
         if (value.ValueKind == JsonValueKind.Object)
         {
-            foreach (var prop in value.EnumerateObject())
+            foreach (var property in value.EnumerateObject())
             {
-                switch (prop.Name)
+                switch (property.Name)
                 {
                     case "S":
-                        sb.Append('"').Append(EscapeJson(prop.Value.GetString() ?? "")).Append('"');
+                        writer.WriteJsonString(property.Value.GetString() ?? "");
                         return;
                     case "N":
-                        // Numbers are stored as strings in DDB; output as JSON number if possible
-                        var numStr = prop.Value.GetString() ?? "0";
-                        sb.Append(numStr);
+                        if (!InferredAttributeStorage.TryGetCanonicalBareJsonNumber(
+                                property.Value.GetString(),
+                                out var canonicalNumber))
+                        {
+                            throw new NotSupportedException(
+                                "Stored-procedure operands cannot contain enveloped DynamoDB numbers.");
+                        }
+                        writer.WriteRawUtf8(canonicalNumber);
                         return;
                     case "BOOL":
-                        sb.Append(prop.Value.GetBoolean() ? "true" : "false");
+                        writer.WriteRaw(
+                            property.Value.GetBoolean() ? "true"u8 : "false"u8);
                         return;
                     case "NULL":
-                        sb.Append("null");
+                        writer.WriteRaw("null"u8);
                         return;
                     case "B":
-                        // Binary as envelope
-                        sb.Append("{\"_a2a:B\":\"").Append(EscapeJson(prop.Value.GetString() ?? "")).Append("\"}");
+                        writer.WriteRaw("{\"_a2a:B\":"u8);
+                        writer.WriteJsonString(property.Value.GetString() ?? "");
+                        writer.WriteByte((byte)'}');
                         return;
                     case "M":
-                        // Map: recurse
-                        WriteMapValue(sb, prop.Value);
+                        WriteMapValue(writer, property.Value);
                         return;
                     case "L":
-                        // List: recurse
-                        WriteListValue(sb, prop.Value);
+                        WriteListValue(writer, property.Value);
                         return;
                     case "SS":
-                        // String set as envelope
-                        sb.Append("{\"_a2a:SS\":");
-                        WriteStringArray(sb, prop.Value);
-                        sb.Append('}');
+                        writer.WriteRaw("{\"_a2a:SS\":"u8);
+                        WriteStringArray(writer, property.Value);
+                        writer.WriteByte((byte)'}');
                         return;
                     case "NS":
-                        // Number set as envelope
-                        sb.Append("{\"_a2a:NS\":");
-                        WriteStringArray(sb, prop.Value);
-                        sb.Append('}');
+                        writer.WriteRaw("{\"_a2a:NS\":"u8);
+                        WriteStringArray(writer, property.Value);
+                        writer.WriteByte((byte)'}');
                         return;
                     case "BS":
-                        // Binary set as envelope
-                        sb.Append("{\"_a2a:BS\":");
-                        WriteStringArray(sb, prop.Value);
-                        sb.Append('}');
+                        writer.WriteRaw("{\"_a2a:BS\":"u8);
+                        WriteStringArray(writer, property.Value);
+                        writer.WriteByte((byte)'}');
                         return;
                 }
             }
         }
-        // Fallback: write raw JSON
-        sb.Append(value.GetRawText());
+
+        WriteJsonElement(writer, value);
     }
 
-    private static void WriteMapValue(StringBuilder sb, JsonElement map)
+    private static void WriteMapValue(
+        CanonicalJsonWriter writer,
+        JsonElement map)
     {
-        sb.Append('{');
-        var first = true;
-        foreach (var prop in map.EnumerateObject())
+        writer.WriteByte((byte)'{');
+        var index = 0;
+        foreach (var property in map.EnumerateObject())
         {
-            if (!first) sb.Append(',');
-            first = false;
-            sb.Append('"').Append(EscapeJson(prop.Name)).Append("\":");
-            WriteValue(sb, prop.Value);
+            if (index++ > 0)
+            {
+                writer.WriteByte((byte)',');
+            }
+            writer.WriteJsonString(property.Name);
+            writer.WriteByte((byte)':');
+            WriteValue(writer, property.Value);
         }
-        sb.Append('}');
+        writer.WriteByte((byte)'}');
     }
 
-    private static void WriteListValue(StringBuilder sb, JsonElement list)
+    private static void WriteListValue(
+        CanonicalJsonWriter writer,
+        JsonElement list)
     {
-        sb.Append('[');
-        var first = true;
+        writer.WriteByte((byte)'[');
+        var index = 0;
         foreach (var item in list.EnumerateArray())
         {
-            if (!first) sb.Append(',');
-            first = false;
-            WriteValue(sb, item);
+            if (index++ > 0)
+            {
+                writer.WriteByte((byte)',');
+            }
+            WriteValue(writer, item);
         }
-        sb.Append(']');
+        writer.WriteByte((byte)']');
     }
 
-    private static void WriteStringArray(StringBuilder sb, JsonElement arr)
+    private static void WriteStringArray(
+        CanonicalJsonWriter writer,
+        JsonElement array)
     {
-        sb.Append('[');
-        var first = true;
-        foreach (var item in arr.EnumerateArray())
+        writer.WriteByte((byte)'[');
+        var index = 0;
+        foreach (var item in array.EnumerateArray())
         {
-            if (!first) sb.Append(',');
-            first = false;
-            sb.Append('"').Append(EscapeJson(item.GetString() ?? "")).Append('"');
+            if (index++ > 0)
+            {
+                writer.WriteByte((byte)',');
+            }
+            writer.WriteJsonString(item.GetString() ?? "");
         }
-        sb.Append(']');
+        writer.WriteByte((byte)']');
+    }
+
+    private static void WriteJsonElement(
+        CanonicalJsonWriter writer,
+        JsonElement value)
+    {
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.Object:
+                writer.WriteByte((byte)'{');
+                var propertyIndex = 0;
+                foreach (var property in value.EnumerateObject())
+                {
+                    if (propertyIndex++ > 0)
+                    {
+                        writer.WriteByte((byte)',');
+                    }
+                    writer.WriteJsonString(property.Name);
+                    writer.WriteByte((byte)':');
+                    WriteJsonElement(writer, property.Value);
+                }
+                writer.WriteByte((byte)'}');
+                break;
+            case JsonValueKind.Array:
+                writer.WriteByte((byte)'[');
+                var itemIndex = 0;
+                foreach (var item in value.EnumerateArray())
+                {
+                    if (itemIndex++ > 0)
+                    {
+                        writer.WriteByte((byte)',');
+                    }
+                    WriteJsonElement(writer, item);
+                }
+                writer.WriteByte((byte)']');
+                break;
+            case JsonValueKind.String:
+                writer.WriteJsonString(value.GetString() ?? "");
+                break;
+            case JsonValueKind.Number:
+                writer.WriteRawUtf8(value.GetRawText());
+                break;
+            case JsonValueKind.True:
+                writer.WriteRaw("true"u8);
+                break;
+            case JsonValueKind.False:
+                writer.WriteRaw("false"u8);
+                break;
+            case JsonValueKind.Null:
+                writer.WriteRaw("null"u8);
+                break;
+            default:
+                throw new NotSupportedException(
+                    $"Unsupported JSON value kind '{value.ValueKind}'.");
+        }
     }
 
     private static string PathToString(DocumentPath path)
     {
-        var sb = new StringBuilder();
-        foreach (var seg in path.Segments)
+        var builder = new StringBuilder();
+        foreach (var segment in path.Segments)
         {
-            switch (seg)
+            switch (segment)
             {
-                case AttributePathSegment a:
-                    if (sb.Length > 0) sb.Append('.');
-                    sb.Append(a.Name);
+                case AttributePathSegment attribute:
+                    if (builder.Length > 0)
+                    {
+                        builder.Append('.');
+                    }
+                    builder.Append(attribute.Name);
                     break;
-                case IndexPathSegment i:
-                    sb.Append('[').Append(i.Index).Append(']');
+                case IndexPathSegment index:
+                    builder.Append('[').Append(index.Index).Append(']');
                     break;
             }
         }
-        return sb.ToString();
+        return builder.ToString();
     }
 
     private static string OpToString(CompareOp op) => op switch
@@ -397,9 +525,144 @@ internal static class SprocAstSerializer
         CompareOp.LessEqual => "<=",
         CompareOp.Greater => ">",
         CompareOp.GreaterEqual => ">=",
-        _ => "="
+        _ => "=",
     };
 
-    private static string EscapeJson(string s) =>
-        s.Replace("\\", "\\\\").Replace("\"", "\\\"");
+    private sealed class CanonicalJsonWriter : IDisposable
+    {
+        private readonly IBufferWriter<byte> _output;
+        private readonly IncrementalHash? _fingerprint;
+        private readonly BufferWriterTextWriter _textWriter;
+
+        public CanonicalJsonWriter(
+            IBufferWriter<byte> output,
+            IncrementalHash? fingerprint)
+        {
+            _output = output;
+            _fingerprint = fingerprint;
+            _textWriter = new BufferWriterTextWriter(this);
+        }
+
+        public void WriteByte(byte value)
+        {
+            var span = _output.GetSpan(1);
+            span[0] = value;
+            _output.Advance(1);
+            if (_fingerprint is not null)
+            {
+                Span<byte> fingerprintByte = stackalloc byte[1];
+                fingerprintByte[0] = value;
+                _fingerprint.AppendData(fingerprintByte);
+            }
+        }
+
+        public void WriteRaw(ReadOnlySpan<byte> value)
+        {
+            if (value.IsEmpty)
+            {
+                return;
+            }
+            var span = _output.GetSpan(value.Length);
+            value.CopyTo(span);
+            _output.Advance(value.Length);
+            _fingerprint?.AppendData(value);
+        }
+
+        public void WriteJsonString(string value)
+        {
+            WriteByte((byte)'"');
+            JsonEncoder.Encode(_textWriter, value);
+            _textWriter.CompleteSegment();
+            WriteByte((byte)'"');
+        }
+
+        public void WriteRawUtf8(string value)
+        {
+            _textWriter.Write(value);
+            _textWriter.CompleteSegment();
+        }
+
+        private void WriteEncoded(ReadOnlySpan<byte> value)
+            => WriteRaw(value);
+
+        public void Dispose()
+            => _textWriter.Dispose();
+
+        private sealed class BufferWriterTextWriter : TextWriter
+        {
+            private readonly CanonicalJsonWriter _owner;
+            private readonly Encoder _encoder = Encoding.UTF8.GetEncoder();
+            private byte[] _buffer = ArrayPool<byte>.Shared.Rent(1024);
+
+            public BufferWriterTextWriter(CanonicalJsonWriter owner)
+            {
+                _owner = owner;
+            }
+
+            public override Encoding Encoding => Encoding.UTF8;
+
+            public override void Write(char value)
+            {
+                Span<char> character = stackalloc char[1];
+                character[0] = value;
+                Write(character);
+            }
+
+            public override void Write(char[] buffer, int index, int count)
+                => Write(buffer.AsSpan(index, count));
+
+            public override void Write(string? value)
+            {
+                if (value is not null)
+                {
+                    Write(value.AsSpan());
+                }
+            }
+
+            public override void Write(ReadOnlySpan<char> buffer)
+            {
+                while (!buffer.IsEmpty)
+                {
+                    _encoder.Convert(
+                        buffer,
+                        _buffer,
+                        flush: false,
+                        out var charsUsed,
+                        out var bytesUsed,
+                        out _);
+                    if (bytesUsed > 0)
+                    {
+                        _owner.WriteEncoded(_buffer.AsSpan(0, bytesUsed));
+                    }
+                    buffer = buffer[charsUsed..];
+                }
+            }
+
+            public void CompleteSegment()
+            {
+                _encoder.Convert(
+                    ReadOnlySpan<char>.Empty,
+                    _buffer,
+                    flush: true,
+                    out _,
+                    out var bytesUsed,
+                    out _);
+                if (bytesUsed > 0)
+                {
+                    _owner.WriteEncoded(_buffer.AsSpan(0, bytesUsed));
+                }
+                _encoder.Reset();
+            }
+
+            protected override void Dispose(bool disposing)
+            {
+                if (_buffer.Length != 0)
+                {
+                    ArrayPool<byte>.Shared.Return(_buffer);
+                    _buffer = [];
+                }
+                base.Dispose(disposing);
+            }
+        }
+    }
 }

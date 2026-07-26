@@ -227,6 +227,28 @@ public class ProxyConfigValidatorTests
     }
 
     [Fact]
+    public void Throws_when_cosmos_preferred_regions_is_present_but_empty()
+    {
+        var config = ValidBase();
+        config.Credentials[0].Azure.Cosmos = new CosmosCredentials
+        {
+            Endpoint = "https://x.documents.azure.com/",
+            DatabaseName = "main",
+            PrimaryKey =
+                "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+            PreferredRegions = [],
+        };
+
+        var exception = Assert.Throws<ProxyConfigException>(
+            () => ProxyConfigValidator.Validate(config));
+
+        Assert.Contains(
+            "preferredRegions: when present, the list must contain an authoritative first region",
+            exception.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Throws_when_event_grid_mixes_access_key_and_aad()
     {
         var config = new ProxyConfig

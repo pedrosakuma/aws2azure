@@ -1,6 +1,7 @@
 using Aws2Azure.Core.Buffers;
 using System;
 using System.Text;
+using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
 using Aws2Azure.Modules.DynamoDb.Operations;
 using Xunit;
@@ -22,7 +23,13 @@ public class SprocParamsEncodingTests
         using var buf = new PooledByteBufferWriter(64);
         ReadOnlyMemory<byte>? payloadBytes =
             payload is null ? (ReadOnlyMemory<byte>?)null : Encoding.UTF8.GetBytes(payload);
-        SprocManager.WriteSingleWriteParams(buf, op, docId, payloadBytes, conditionAst, updateAst);
+        SprocManager.WriteSingleWriteParamsJsonFragments(
+            buf,
+            op,
+            docId,
+            payloadBytes,
+            conditionAst,
+            updateAst);
         return buf.WrittenMemory.ToArray();
     }
 
@@ -57,6 +64,30 @@ public class SprocParamsEncodingTests
     {
         var bytes = WriteSingleWrite(SprocOperation.Delete, "k", payload: null, conditionAst: null, updateAst: null);
         Assert.Equal("[\"DELETE\",\"k\",null,null,null]", Encoding.UTF8.GetString(bytes));
+    }
+
+    [Fact]
+    public void SingleWrite_ast_is_streamed_directly_into_parameter_body()
+    {
+        var condition = ConditionExpressionParser.Parse(
+            "attribute_not_exists(id)",
+            expressionAttributeNames: null,
+            expressionAttributeValues: null);
+        var payload = Encoding.UTF8.GetBytes("{\"id\":\"1\"}");
+        using var buffer = new PooledByteBufferWriter(64);
+
+        SprocManager.WriteSingleWriteParams(
+            buffer,
+            SprocOperation.Put,
+            "1",
+            payload,
+            condition,
+            updateAst: null);
+
+        Assert.Equal(
+            "[\"PUT\",\"1\",{\"id\":\"1\"}," +
+            "{\"type\":\"ATTR_NOT_EXISTS\",\"attr\":\"id\"},null]",
+            Encoding.UTF8.GetString(buffer.WrittenMemory.Span));
     }
 
     private static byte[] BuildTransact(params TransactWriteItemsHandler.PreparedOp[] ops)

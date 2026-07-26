@@ -127,6 +127,7 @@ services:
         category: core
         evidence_source: real_azure
         establishes_verification: true
+        profiles: [dynamodb-basic-crud]
         description: Table and item create, write, consistent read, delete lifecycle.
         operations: [CreateTable, DescribeTable, PutItem, GetItem, DeleteItem, DeleteTable]
         tests:
@@ -136,6 +137,7 @@ services:
         category: pagination
         evidence_source: real_azure
         establishes_verification: true
+        profiles: [dynamodb-query-scan-indexes]
         description: Indexed Query preserves ordering and continuation across real Cosmos pages.
         operations: [Query]
         tests:
@@ -145,6 +147,7 @@ services:
         category: core
         evidence_source: real_azure
         establishes_verification: true
+        profiles: [dynamodb-query-scan-indexes]
         description: GSI and LSI query and scan semantics cover hash-only, numeric ordering, membership, and projection against real Cosmos.
         operations: [Query, Scan]
         tests:
@@ -159,6 +162,7 @@ services:
         category: read
         evidence_source: real_azure
         establishes_verification: true
+        profiles: [dynamodb-query-scan-indexes]
         description: GSI range predicates, residual filters, projection, ordering, and pagination preserve the certified selective subset.
         operations: [Query]
         tests:
@@ -168,6 +172,7 @@ services:
         category: core
         evidence_source: real_azure
         establishes_verification: true
+        profiles: [dynamodb-query-scan-indexes]
         description: DescribeTable returns the persisted GSI and LSI schema, projection, synthetic ARN, and active GSI status.
         operations: [DescribeTable]
         tests:
@@ -177,6 +182,7 @@ services:
         category: core
         evidence_source: real_azure
         establishes_verification: true
+        profiles: [dynamodb-query-scan-indexes]
         description: A pre-order-field numeric LSI item is excluded under exact ordering and becomes visible in correct order after a PutItem rewrite backfills the derived field.
         operations: [Query, PutItem]
         tests:
@@ -186,6 +192,7 @@ services:
         category: read
         evidence_source: real_azure
         establishes_verification: true
+        profiles: [dynamodb-basic-crud]
         description: Nested map and list ProjectionExpression paths prune a real Cosmos item correctly.
         operations: [GetItem]
         tests:
@@ -195,6 +202,7 @@ services:
         category: core
         evidence_source: real_azure
         establishes_verification: true
+        profiles: [source-validation]
         description: TTL control-plane state and per-item expiry translation round-trip against real Cosmos.
         operations: [DescribeTimeToLive, UpdateTimeToLive, PutItem, GetItem]
         tests:
@@ -204,6 +212,7 @@ services:
         category: core
         evidence_source: real_azure
         establishes_verification: true
+        profiles: [dynamodb-query-scan-indexes]
         description: A frozen v1 /pk item envelope is exported from an isolated real-Cosmos source, decoded by the current reader, imported through the public API into a /_a2a_pk target, and the rollback source is proven unchanged.
         operations: [CreateTable, UpdateTimeToLive, PutItem, GetItem, Query, Scan, DeleteTable]
         tests:
@@ -214,6 +223,7 @@ services:
         evidence_source: real_azure
         establishes_verification: false
         optional_coverage: true
+        profiles: [dynamodb-basic-crud]
         description: Opt-in CosmosBinary response negotiation and fused GetItem decoding are exercised against real Cosmos.
         operations: [GetItem]
         tests:
@@ -225,6 +235,7 @@ services:
         evidence_source: real_azure
         establishes_verification: false
         optional_coverage: true
+        profiles: [dynamodb-basic-crud]
         description: Opt-in CosmosBinary request bodies are accepted, parsed, and indexed by real Cosmos.
         operations: [PutItem]
         tests:
@@ -236,6 +247,7 @@ services:
         evidence_source: real_azure
         establishes_verification: false
         optional_coverage: true
+        profiles: [dynamodb-basic-crud]
         description: DynamoDB item CRUD uses an Entra workload identity against the real Cosmos data plane.
         operations: [DescribeTable, PutItem, GetItem, DeleteItem]
         tests:
@@ -245,15 +257,155 @@ services:
         category: batch
         evidence_source: real_azure
         establishes_verification: true
+        profiles: [source-validation]
         description: BatchGetItem and BatchWriteItem preserve per-item results on real Cosmos.
         operations: [BatchGetItem, BatchWriteItem]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureConformanceTests.Batch_operations_round_trip_against_real_cosmos
+      - id: transaction-snapshot
+        priority: p0
+        category: read
+        evidence_source: real_azure
+        establishes_verification: true
+        profiles: [dynamodb-single-partition-transactions]
+        requires_dynamo_db_stored_procedures: true
+        description: A continuously committing writer atomically advances 72 same-partition items while repeated full-set TransactGetItems samples prove positional alignment and one coherent version per response; the sampling interval must span several writer commits and distinct committed versions.
+        operations: [TransactGetItems, TransactWriteItems]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Snapshot_reads_never_observe_mixed_transaction_versions
+      - id: transaction-region-pinning
+        priority: p0
+        category: service_unavailable
+        evidence_source: deterministic
+        establishes_verification: false
+        profiles: [dynamodb-single-partition-transactions]
+        requires_dynamo_db_stored_procedures: true
+        description: Fresh clients discover the first configured transaction authority (or fail closed), single-write clients use the discovered writable endpoint, and injected endpoint failure proves that transaction snapshots, writes, and durable token replay never execute in a second writable region.
+        operations: [TransactGetItems, TransactWriteItems]
+        tests:
+          - Aws2Azure.UnitTests.DynamoDb.CosmosRegionRoutingTests.Fresh_clients_use_first_configured_transaction_authority_or_fail
+          - Aws2Azure.UnitTests.DynamoDb.CosmosRegionRoutingTests.Fresh_single_write_clients_use_discovered_authoritative_endpoint
+          - Aws2Azure.UnitTests.DynamoDb.CosmosRegionRoutingTests.Strict_transaction_discovery_refreshes_statusless_fallback
+          - Aws2Azure.UnitTests.DynamoDb.TransactGetItemsHandlerTests.Snapshot_stays_on_authoritative_write_region_after_failure
+          - Aws2Azure.UnitTests.DynamoDb.TransactWriteItemsHandlerTests.Idempotent_transaction_stays_on_authoritative_write_region_after_failure
+          - Aws2Azure.UnitTests.DynamoDb.TransactWriteItemsHandlerTests.Multi_write_transaction_without_matching_preference_is_rejected
+      - id: transaction-preflight-contracts
+        priority: p0
+        category: core
+        evidence_source: deterministic
+        establishes_verification: false
+        profiles: [dynamodb-single-partition-transactions]
+        requires_dynamo_db_stored_procedures: true
+        description: Deterministic unit contracts pin DynamoDB item-size accounting, the transactional Put 400 KiB pre-I/O boundary, and the server-side completion clock that starts the ten-minute ClientRequestToken window.
+        operations: [TransactWriteItems]
+        tests:
+          - Aws2Azure.UnitTests.DynamoDb.SprocContractTests.Transaction_token_window_starts_at_completion_clock
+          - Aws2Azure.UnitTests.DynamoDb.TransactWriteItemsHandlerTests.Item_size_uses_utf8_attribute_names_and_decoded_binary_bytes
+          - Aws2Azure.UnitTests.DynamoDb.TransactWriteItemsHandlerTests.Put_item_just_under_400_kib_is_accepted
+          - Aws2Azure.UnitTests.DynamoDb.TransactWriteItemsHandlerTests.Put_item_over_400_kib_is_rejected_before_cosmos_io
+      - id: transaction-atomicity-rollback
+        priority: p0
+        category: write
+        evidence_source: real_azure
+        establishes_verification: true
+        profiles: [dynamodb-single-partition-transactions]
+        requires_dynamo_db_stored_procedures: true
+        description: Successful Put, Delete, and ConditionCheck operations commit together with verified post-state, while a failed condition preserves every pre-state and rolls every write back.
+        operations: [TransactWriteItems]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Supported_condition_subset_and_write_kinds_commit_expected_state
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Atomic_write_rollback_conditions_and_cancellation_are_aligned
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Projection_alias_and_in_operand_limits_reject_before_transaction_execution
+      - id: transaction-conditions-cancellation
+        priority: p0
+        category: cancellation
+        evidence_source: real_azure
+        establishes_verification: false
+        profiles: [dynamodb-single-partition-transactions]
+        requires_dynamo_db_stored_procedures: true
+        description: AND/OR/NOT, reversed operands, string ordering/BETWEEN/IN, attribute_exists/not_exists, begins_with, attribute_type(S/BOOL/NULL), scalar equality/not-equal, numeric equality/not-equal/IN, numeric-order rejection, NOT begins_with type-error propagation, missing-attribute not-equal, and positional cancellation reasons are exercised with post-state checks against real Cosmos.
+        operations: [TransactWriteItems]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Supported_condition_subset_and_write_kinds_commit_expected_state
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Atomic_write_rollback_conditions_and_cancellation_are_aligned
+      - id: transaction-scope-rejection
+        priority: p0
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        profiles: [dynamodb-single-partition-transactions]
+        requires_dynamo_db_stored_procedures: true
+        description: Cross-partition transaction requests fail with ValidationException and leave every target absent before and after a proxy restart.
+        operations: [TransactWriteItems]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Scope_and_versioned_sprocs_survive_restart
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Projection_alias_and_in_operand_limits_reject_before_transaction_execution
+      - id: transaction-idempotency
+        priority: p0
+        category: cancellation
+        evidence_source: real_azure
+        establishes_verification: false
+        profiles: [dynamodb-single-partition-transactions]
+        requires_dynamo_db_stored_procedures: true
+        description: Official-SDK auto tokens and explicit raw tokens commit successfully; equivalent retries, concurrent duplicates, cached cancellations, discarded-response restart replay, mismatch errors, and hidden durable token records are verified against real Cosmos without double mutation.
+        operations: [TransactWriteItems]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Official_sdk_auto_generated_token_reaches_success
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Explicit_token_replay_mismatch_concurrency_cancellation_and_restart_are_durable
+      - id: transaction-contention
+        priority: p0
+        category: concurrency
+        evidence_source: real_azure
+        establishes_verification: true
+        profiles: [dynamodb-single-partition-transactions]
+        requires_dynamo_db_stored_procedures: true
+        description: Contending transactions on one gate item admit exactly one winner and exactly one atomically paired audit item.
+        operations: [TransactWriteItems]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Contending_transactions_admit_one_winner_and_one_audit
+      - id: transaction-restart-versioning
+        priority: p0
+        category: restart
+        evidence_source: real_azure
+        establishes_verification: false
+        profiles: [dynamodb-single-partition-transactions]
+        requires_dynamo_db_stored_procedures: true
+        description: Transaction state and durable ClientRequestToken outcomes survive process restart; existing atomicTransactWrite_v5/atomicTransactGet_v1 stored procedures are accepted only after exact body verification.
+        operations: [TransactGetItems, TransactWriteItems]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Scope_and_versioned_sprocs_survive_restart
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Explicit_token_replay_mismatch_concurrency_cancellation_and_restart_are_durable
+      - id: transaction-sproc-body-verification
+        priority: p0
+        category: restart
+        evidence_source: real_azure
+        establishes_verification: false
+        profiles: [dynamodb-single-partition-transactions]
+        requires_dynamo_db_stored_procedures: true
+        description: An isolated table receives a conflicting atomicTransactWrite_v5 body; the proxy's create-409/read-exact-body path fails closed, commits no item, and recovers only after the conflict is removed and the exact current body is provisioned.
+        operations: [TransactWriteItems]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Conflicting_v5_sproc_body_fails_closed_and_is_restored_in_isolated_table
+      - id: rollback
+        priority: p0
+        category: rollback
+        evidence_source: real_azure
+        establishes_verification: false
+        profiles: [dynamodb-single-partition-transactions]
+        requires_dynamo_db_stored_procedures: true
+        description: Canonical blocked rollback row. The tests skip with the recorded compatibility blocker until a trusted prior release implements the complete transaction profile; the known v2 runtime is not an approved rollback target and this row cannot establish a qualification claim.
+        operations: [TransactGetItems, TransactWriteItems]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionQualificationTests.Adjacent_runtime_transaction_rollback_is_atomic_and_compatible
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbPersistedFormatMigrationTests.Adjacent_runtime_reads_rewrites_and_continuations_are_bidirectional
       - id: write-throttled
         priority: p1
         category: throttling
         evidence_source: deterministic
         establishes_verification: false
+        profiles:
+          - dynamodb-basic-crud
+          - dynamodb-query-scan-indexes
         description: A test-only backend deterministically injects Cosmos HTTP 429 and verifies ProvisionedThroughputExceededException plus an AWS SDK retry; this is not a naturally observed Cosmos throttle.
         operations: [ListTables]
         tests:
@@ -263,6 +415,9 @@ services:
         category: timeout
         evidence_source: deterministic
         establishes_verification: false
+        profiles:
+          - dynamodb-basic-crud
+          - dynamodb-query-scan-indexes
         description: A test-only backend deterministically injects Cosmos HTTP 408 and verifies the native retryable DynamoDB error; this is not a naturally observed Cosmos timeout.
         operations: [ListTables]
         tests:
@@ -272,6 +427,9 @@ services:
         category: service_unavailable
         evidence_source: deterministic
         establishes_verification: false
+        profiles:
+          - dynamodb-basic-crud
+          - dynamodb-query-scan-indexes
         description: A test-only backend deterministically injects Cosmos HTTP 503 and verifies the native retryable DynamoDB error; this is not a naturally observed Cosmos outage.
         operations: [ListTables]
         tests:
@@ -281,6 +439,9 @@ services:
         category: invalid_credentials
         evidence_source: real_azure
         establishes_verification: false
+        profiles:
+          - dynamodb-basic-crud
+          - dynamodb-query-scan-indexes
         description: An isolated binding sends a deterministic invalid primary key to real Cosmos DB and verifies the native non-retryable DynamoDB error without revoking shared credentials.
         operations: [ListTables]
         tests:
@@ -290,6 +451,7 @@ services:
         category: concurrency
         evidence_source: real_azure
         establishes_verification: true
+        profiles: [dynamodb-basic-crud]
         description: Concurrent conditional updates admit exactly one winner.
         operations: [UpdateItem]
         tests:
@@ -299,6 +461,7 @@ services:
         category: retry_exhaustion
         evidence_source: deterministic
         establishes_verification: false
+        profiles: [dynamodb-basic-crud]
         description: The official AWS SDK exhausts its bounded retry budget against a persistent retryable backend failure and returns the native terminal error.
         operations: [PutItem]
         tests:
@@ -308,6 +471,7 @@ services:
         category: restart
         evidence_source: real_azure
         establishes_verification: false
+        profiles: [dynamodb-basic-crud]
         description: Item state written through the candidate remains readable after the out-of-process proxy is terminated and restarted with the same immutable configuration.
         operations: [PutItem, GetItem]
         tests:

@@ -194,7 +194,11 @@ public sealed class AzureTargetConfig
     /// <summary>Management REST endpoint override (<c>serviceBus</c> / <c>serviceBusTopics</c>).</summary>
     public string? ManagementEndpoint { get; set; }
 
-    /// <summary>Ordered Cosmos region preference list (<c>cosmos</c>).</summary>
+    /// <summary>
+    /// Ordered Cosmos region preference list (<c>cosmos</c>). On a multi-write
+    /// account the first entry, and only that entry, is the authoritative region
+    /// for DynamoDB transactions; later entries are non-transaction fallbacks.
+    /// </summary>
     public List<string>? PreferredRegions { get; set; }
 
     /// <summary>Namespace-default wire transport (SQS / <c>serviceBus</c>).</summary>

@@ -74,6 +74,8 @@ public sealed partial class KnownPerfScenariosTests
         "dynamodb.BatchWriteItem (25 items)",
         "dynamodb.BatchGetItem (25 items)",
         "dynamodb.BatchGetItem (large items)",
+        "dynamodb.TransactGetItems (10 items, single partition)",
+        "dynamodb.TransactWriteItems (5 puts, single partition)",
         "dynamodb.UpdateItem (SET expression)",
         "dynamodb.DeleteItem (idempotent)",
         "dynamodb.CosmosJsonParse (synthetic page)",
@@ -134,6 +136,13 @@ public sealed partial class KnownPerfScenariosTests
         Assert.True(stale.Length == 0,
             "baseline-reference.json contains entries for scenarios no longer present in KnownPerfScenariosTests.All:\n  - " +
             string.Join("\n  - ", stale));
+    }
+
+    [Fact]
+    public void Transaction_scenarios_do_not_change_historical_fixture_configuration()
+    {
+        Assert.False(new DynamoDbPerfFixture().UseStoredProcedures);
+        Assert.True(new DynamoDbTransactionPerfFixture().UseStoredProcedures);
     }
 
     [Fact]

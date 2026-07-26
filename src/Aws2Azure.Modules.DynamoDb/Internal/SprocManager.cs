@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -8,6 +9,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Aws2Azure.Core.Buffers;
+using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Operations;
 using Microsoft.Extensions.Logging;
 
@@ -20,18 +22,19 @@ namespace Aws2Azure.Modules.DynamoDb.Internal;
 internal sealed partial class SprocManager
 {
     private readonly ILogger<SprocManager> _logger;
-    private readonly ConcurrentDictionary<string, SprocState> _sprocCache = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<SprocCacheKey, SprocState> _sprocCache = new();
 
-    // Versioned so a body change provisions a fresh sproc instead of silently
-    // running stale server-side JS (EnsureSproc treats 409 as success and never
-    // replaces the body). v2 fixes the invalid mixed-link readDocument bug (#202).
+    // atomicWrite_v2 is frozen by the persisted-format inventory. Its body is
+    // intentionally unchanged in this release.
     public const string SprocId = DynamoDbPersistedFormatContract.AtomicWriteStoredProcedureId;
 
-    // Versioned so a future body change provisions a fresh sproc instead of
-    // silently running stale server-side JS (EnsureSproc treats 409 as success
-    // and never replaces the body).
+    // Transaction bodies are immutable by ID. v5 starts the durable token window
+    // at completion without mutating the frozen v2/v3/v4 bodies.
     public const string TransactSprocId =
         DynamoDbPersistedFormatContract.AtomicTransactWriteStoredProcedureId;
+
+    public const string TransactGetSprocId =
+        DynamoDbPersistedFormatContract.AtomicTransactGetStoredProcedureId;
 
     public SprocManager(ILogger<SprocManager> logger)
     {
@@ -55,8 +58,8 @@ internal sealed partial class SprocManager
         SprocOperation operation,
         string docId,
         ReadOnlyMemory<byte>? payload,
-        string? conditionAst,
-        string? updateAst,
+        ConditionNode? conditionAst,
+        UpdateExpressionAst? updateAst,
         CancellationToken ct)
     {
         // POST /dbs/{db}/colls/{coll}/sprocs/atomicWrite
@@ -69,7 +72,13 @@ internal sealed partial class SprocManager
         // zero-copy (no StringContent re-encode). Sproc params are inherently
         // text JSON (CosmosBinary does not apply to stored-procedure input).
         using var paramsBuf = new PooledByteBufferWriter(256);
-        WriteSingleWriteParams(paramsBuf, operation, docId, payload, conditionAst, updateAst);
+        WriteSingleWriteParams(
+            paramsBuf,
+            operation,
+            docId,
+            payload,
+            conditionAst,
+            updateAst);
 
         var headers = new[]
         {
@@ -86,7 +95,42 @@ internal sealed partial class SprocManager
             headers,
             ct).ConfigureAwait(false);
 
-        return await SprocResponseParser.ParseSingleWriteAsync(response, ct).ConfigureAwait(false);
+        try
+        {
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                InvalidateNamedSproc(cosmos, containerName, SprocId);
+                if (await EnsureNamedSprocAsync(
+                        cosmos,
+                        containerName,
+                        SprocId,
+                        SprocBody,
+                        ct).ConfigureAwait(false))
+                {
+                    response.Dispose();
+                    response = await cosmos.SendAsync(
+                        HttpMethod.Post,
+                        "sprocs",
+                        sprocLink,
+                        requestUri,
+                        paramsBuf.WrittenMemory,
+                        "application/json",
+                        headers,
+                        ct).ConfigureAwait(false);
+                    if (response.StatusCode == HttpStatusCode.NotFound)
+                    {
+                        InvalidateNamedSproc(cosmos, containerName, SprocId);
+                    }
+                }
+            }
+
+            return await SprocResponseParser.ParseSingleWriteAsync(response, ct)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            response.Dispose();
+        }
     }
 
     /// <summary>
@@ -94,7 +138,28 @@ internal sealed partial class SprocManager
     /// given container. Cached separately from the single-write sproc.
     /// </summary>
     public async Task<bool> EnsureTransactSprocAsync(CosmosClient cosmos, string containerName, CancellationToken ct)
-        => await EnsureNamedSprocAsync(cosmos, containerName, TransactSprocId, TransactSprocBody, ct).ConfigureAwait(false);
+        => await EnsureNamedSprocAsync(
+                cosmos,
+                containerName,
+                TransactSprocId,
+                TransactSprocBody,
+                transactionRoute: null,
+                ct)
+            .ConfigureAwait(false);
+
+    public async Task<bool> EnsureTransactSprocAsync(
+        CosmosClient cosmos,
+        string containerName,
+        CosmosTransactionRoute transactionRoute,
+        CancellationToken ct)
+        => await EnsureNamedSprocAsync(
+                cosmos,
+                containerName,
+                TransactSprocId,
+                TransactSprocBody,
+                transactionRoute,
+                ct)
+            .ConfigureAwait(false);
 
     /// <summary>
     /// Executes the <c>atomicTransactWrite</c> sproc with a pre-built JSON
@@ -106,6 +171,38 @@ internal sealed partial class SprocManager
         string containerName,
         string partitionKey,
         ReadOnlyMemory<byte> paramsBody,
+        CancellationToken ct)
+        => await ExecuteTransactCoreAsync(
+                cosmos,
+                containerName,
+                partitionKey,
+                paramsBody,
+                transactionRoute: null,
+                ct)
+            .ConfigureAwait(false);
+
+    public async Task<SprocTransactResult> ExecuteTransactAsync(
+        CosmosClient cosmos,
+        string containerName,
+        string partitionKey,
+        ReadOnlyMemory<byte> paramsBody,
+        CosmosTransactionRoute transactionRoute,
+        CancellationToken ct)
+        => await ExecuteTransactCoreAsync(
+                cosmos,
+                containerName,
+                partitionKey,
+                paramsBody,
+                transactionRoute,
+                ct)
+            .ConfigureAwait(false);
+
+    private async Task<SprocTransactResult> ExecuteTransactCoreAsync(
+        CosmosClient cosmos,
+        string containerName,
+        string partitionKey,
+        ReadOnlyMemory<byte> paramsBody,
+        CosmosTransactionRoute? transactionRoute,
         CancellationToken ct)
     {
         var sprocLink = $"dbs/{cosmos.DatabaseName}/colls/{containerName}/sprocs/{TransactSprocId}";
@@ -119,29 +216,326 @@ internal sealed partial class SprocManager
             new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", $"[\"{EscapeJsonString(partitionKey)}\"]"),
         };
 
-        var response = await cosmos.SendAsync(
-            HttpMethod.Post, "sprocs", sprocLink, requestUri, paramsBody, "application/json", headers, ct).ConfigureAwait(false);
+        var response = transactionRoute is { } pinned
+            ? await cosmos.SendTransactionAsync(
+                    pinned,
+                    HttpMethod.Post,
+                    "sprocs",
+                    sprocLink,
+                    requestUri,
+                    paramsBody,
+                    "application/json",
+                    headers,
+                    ct,
+                    noRetry: true)
+                .ConfigureAwait(false)
+            : await cosmos.SendAsync(
+                    HttpMethod.Post,
+                    "sprocs",
+                    sprocLink,
+                    requestUri,
+                    paramsBody,
+                    "application/json",
+                    headers,
+                    ct,
+                    noRetry: true)
+                .ConfigureAwait(false);
 
-        return await SprocResponseParser.ParseTransactAsync(response, ct).ConfigureAwait(false);
+        try
+        {
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                InvalidateNamedSproc(cosmos, containerName, TransactSprocId);
+                if (await EnsureNamedSprocAsync(
+                        cosmos,
+                        containerName,
+                        TransactSprocId,
+                        TransactSprocBody,
+                        transactionRoute,
+                        ct).ConfigureAwait(false))
+                {
+                    response.Dispose();
+                    response = transactionRoute is { } retryPinned
+                        ? await cosmos.SendTransactionAsync(
+                                retryPinned,
+                                HttpMethod.Post,
+                                "sprocs",
+                                sprocLink,
+                                requestUri,
+                                paramsBody,
+                                "application/json",
+                                headers,
+                                ct,
+                                noRetry: true)
+                            .ConfigureAwait(false)
+                        : await cosmos.SendAsync(
+                                HttpMethod.Post,
+                                "sprocs",
+                                sprocLink,
+                                requestUri,
+                                paramsBody,
+                                "application/json",
+                                headers,
+                                ct,
+                                noRetry: true)
+                            .ConfigureAwait(false);
+                    if (response.StatusCode == HttpStatusCode.NotFound)
+                    {
+                        InvalidateNamedSproc(cosmos, containerName, TransactSprocId);
+                    }
+                }
+            }
+
+            return await SprocResponseParser.ParseTransactAsync(response, ct)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            response.Dispose();
+        }
+    }
+
+    public async Task<bool> EnsureTransactGetSprocAsync(
+        CosmosClient cosmos,
+        string containerName,
+        CancellationToken ct)
+        => await EnsureNamedSprocAsync(
+            cosmos,
+            containerName,
+            TransactGetSprocId,
+            TransactGetSprocBody,
+            transactionRoute: null,
+            ct).ConfigureAwait(false);
+
+    public async Task<bool> EnsureTransactGetSprocAsync(
+        CosmosClient cosmos,
+        string containerName,
+        CosmosTransactionRoute transactionRoute,
+        CancellationToken ct)
+        => await EnsureNamedSprocAsync(
+                cosmos,
+                containerName,
+                TransactGetSprocId,
+                TransactGetSprocBody,
+                transactionRoute,
+                ct)
+            .ConfigureAwait(false);
+
+    public async Task<SprocTransactGetResult> ExecuteTransactGetAsync(
+        CosmosClient cosmos,
+        string containerName,
+        string partitionKey,
+        IReadOnlyList<string> documentIds,
+        CancellationToken ct)
+        => await ExecuteTransactGetCoreAsync(
+                cosmos,
+                containerName,
+                partitionKey,
+                documentIds,
+                transactionRoute: null,
+                ct)
+            .ConfigureAwait(false);
+
+    public async Task<SprocTransactGetResult> ExecuteTransactGetAsync(
+        CosmosClient cosmos,
+        string containerName,
+        string partitionKey,
+        IReadOnlyList<string> documentIds,
+        CosmosTransactionRoute transactionRoute,
+        CancellationToken ct)
+        => await ExecuteTransactGetCoreAsync(
+                cosmos,
+                containerName,
+                partitionKey,
+                documentIds,
+                transactionRoute,
+                ct)
+            .ConfigureAwait(false);
+
+    private async Task<SprocTransactGetResult> ExecuteTransactGetCoreAsync(
+        CosmosClient cosmos,
+        string containerName,
+        string partitionKey,
+        IReadOnlyList<string> documentIds,
+        CosmosTransactionRoute? transactionRoute,
+        CancellationToken ct)
+    {
+        var sprocLink =
+            $"dbs/{cosmos.DatabaseName}/colls/{containerName}/sprocs/{TransactGetSprocId}";
+        var requestUri = $"/{sprocLink}";
+
+        using var paramsBuf = new PooledByteBufferWriter(256);
+        using (var writer = new Utf8JsonWriter(paramsBuf))
+        {
+            writer.WriteStartArray();
+            writer.WriteStartArray();
+            for (var i = 0; i < documentIds.Count; i++)
+            {
+                writer.WriteStringValue(documentIds[i]);
+            }
+            writer.WriteEndArray();
+            writer.WriteEndArray();
+            writer.Flush();
+        }
+
+        var headers = new[]
+        {
+            new KeyValuePair<string, string>(
+                "x-ms-documentdb-partitionkey",
+                $"[\"{EscapeJsonString(partitionKey)}\"]"),
+        };
+
+        var response = transactionRoute is { } pinned
+            ? await cosmos.SendTransactionAsync(
+                    pinned,
+                    HttpMethod.Post,
+                    "sprocs",
+                    sprocLink,
+                    requestUri,
+                    paramsBuf.WrittenMemory,
+                    "application/json",
+                    headers,
+                    ct,
+                    noRetry: true)
+                .ConfigureAwait(false)
+            : await cosmos.SendAsync(
+                    HttpMethod.Post,
+                    "sprocs",
+                    sprocLink,
+                    requestUri,
+                    paramsBuf.WrittenMemory,
+                    "application/json",
+                    headers,
+                    ct)
+                .ConfigureAwait(false);
+
+        try
+        {
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                InvalidateNamedSproc(cosmos, containerName, TransactGetSprocId);
+                if (await EnsureNamedSprocAsync(
+                        cosmos,
+                        containerName,
+                        TransactGetSprocId,
+                        TransactGetSprocBody,
+                        transactionRoute,
+                        ct).ConfigureAwait(false))
+                {
+                    response.Dispose();
+                    response = transactionRoute is { } retryPinned
+                        ? await cosmos.SendTransactionAsync(
+                                retryPinned,
+                                HttpMethod.Post,
+                                "sprocs",
+                                sprocLink,
+                                requestUri,
+                                paramsBuf.WrittenMemory,
+                                "application/json",
+                                headers,
+                                ct,
+                                noRetry: true)
+                            .ConfigureAwait(false)
+                        : await cosmos.SendAsync(
+                                HttpMethod.Post,
+                                "sprocs",
+                                sprocLink,
+                                requestUri,
+                                paramsBuf.WrittenMemory,
+                                "application/json",
+                                headers,
+                                ct)
+                            .ConfigureAwait(false);
+                    if (response.StatusCode == HttpStatusCode.NotFound)
+                    {
+                        InvalidateNamedSproc(cosmos, containerName, TransactGetSprocId);
+                    }
+                }
+            }
+
+            return await SprocResponseParser.ParseTransactGetAsync(response, ct)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            response.Dispose();
+        }
     }
 
     private async Task<bool> EnsureNamedSprocAsync(
-        CosmosClient cosmos, string containerName, string sprocId, string sprocBody, CancellationToken ct)
+        CosmosClient cosmos,
+        string containerName,
+        string sprocId,
+        string sprocBody,
+        CancellationToken ct)
+        => await EnsureNamedSprocAsync(
+                cosmos,
+                containerName,
+                sprocId,
+                sprocBody,
+                transactionRoute: null,
+                ct)
+            .ConfigureAwait(false);
+
+    private async Task<bool> EnsureNamedSprocAsync(
+        CosmosClient cosmos,
+        string containerName,
+        string sprocId,
+        string sprocBody,
+        CosmosTransactionRoute? transactionRoute,
+        CancellationToken ct)
     {
-        var cacheKey = $"{cosmos.DatabaseName}:{containerName}:{sprocId}";
+        var cacheKey = CacheKey(cosmos, containerName, sprocId);
 
         if (_sprocCache.TryGetValue(cacheKey, out var state) && state == SprocState.Available)
         {
             return true;
         }
 
-        var created = await TryCreateNamedSprocAsync(cosmos, containerName, sprocId, sprocBody, ct).ConfigureAwait(false);
+        var created = await TryCreateNamedSprocAsync(
+                cosmos,
+                containerName,
+                sprocId,
+                sprocBody,
+                transactionRoute,
+                ct)
+            .ConfigureAwait(false);
         _sprocCache[cacheKey] = created ? SprocState.Available : SprocState.Failed;
         return created;
     }
 
+    public void InvalidateContainer(CosmosClient cosmos, string containerName)
+    {
+        ArgumentNullException.ThrowIfNull(cosmos);
+        ArgumentException.ThrowIfNullOrEmpty(containerName);
+        InvalidateNamedSproc(cosmos, containerName, SprocId);
+        InvalidateNamedSproc(cosmos, containerName, TransactSprocId);
+        InvalidateNamedSproc(cosmos, containerName, TransactGetSprocId);
+    }
+
+    private void InvalidateNamedSproc(
+        CosmosClient cosmos,
+        string containerName,
+        string sprocId)
+        => _sprocCache.TryRemove(CacheKey(cosmos, containerName, sprocId), out _);
+
+    private static SprocCacheKey CacheKey(
+        CosmosClient cosmos,
+        string containerName,
+        string sprocId)
+        => new(
+            cosmos.AccountEndpoint,
+            cosmos.DatabaseName,
+            containerName,
+            sprocId);
+
     private async Task<bool> TryCreateNamedSprocAsync(
-        CosmosClient cosmos, string containerName, string sprocId, string sprocBody, CancellationToken ct)
+        CosmosClient cosmos,
+        string containerName,
+        string sprocId,
+        string sprocBody,
+        CosmosTransactionRoute? transactionRoute,
+        CancellationToken ct)
     {
         var sprocsLink = $"dbs/{cosmos.DatabaseName}/colls/{containerName}";
         var requestUri = $"/{sprocsLink}/sprocs";
@@ -151,8 +545,26 @@ internal sealed partial class SprocManager
 
         using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-        var response = await cosmos.SendAsync(
-            HttpMethod.Post, "sprocs", sprocsLink, requestUri, content, extraHeaders: null, ct).ConfigureAwait(false);
+        using var response = transactionRoute is { } pinned
+            ? await cosmos.SendTransactionAsync(
+                    pinned,
+                    HttpMethod.Post,
+                    "sprocs",
+                    sprocsLink,
+                    requestUri,
+                    content,
+                    extraHeaders: null,
+                    ct)
+                .ConfigureAwait(false)
+            : await cosmos.SendAsync(
+                    HttpMethod.Post,
+                    "sprocs",
+                    sprocsLink,
+                    requestUri,
+                    content,
+                    extraHeaders: null,
+                    ct)
+                .ConfigureAwait(false);
 
         if (response.IsSuccessStatusCode)
         {
@@ -161,8 +573,24 @@ internal sealed partial class SprocManager
         }
         if (response.StatusCode == HttpStatusCode.Conflict)
         {
-            DynamoDbLog.LogSprocAlreadyExists(_logger, containerName);
-            return true;
+            if (await VerifyNamedSprocAsync(
+                    cosmos,
+                    containerName,
+                    sprocId,
+                    sprocBody,
+                    transactionRoute,
+                    ct).ConfigureAwait(false))
+            {
+                DynamoDbLog.LogSprocAlreadyExists(_logger, containerName);
+                return true;
+            }
+
+            DynamoDbLog.LogSprocCreateFailed(
+                _logger,
+                containerName,
+                (int)response.StatusCode,
+                $"Stored procedure '{sprocId}' already exists with an unverifiable or different body.");
+            return false;
         }
 
         var errorBody = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
@@ -170,5 +598,65 @@ internal sealed partial class SprocManager
         return false;
     }
 
-    private enum SprocState { Unknown, Available, Failed }
+    private async Task<bool> VerifyNamedSprocAsync(
+        CosmosClient cosmos,
+        string containerName,
+        string sprocId,
+        string expectedBody,
+        CosmosTransactionRoute? transactionRoute,
+        CancellationToken ct)
+    {
+        var sprocLink =
+            $"dbs/{cosmos.DatabaseName}/colls/{containerName}/sprocs/{sprocId}";
+        using var response = transactionRoute is { } pinned
+            ? await cosmos.SendTransactionAsync(
+                    pinned,
+                    HttpMethod.Get,
+                    "sprocs",
+                    sprocLink,
+                    $"/{sprocLink}",
+                    content: null,
+                    extraHeaders: null,
+                    ct)
+                .ConfigureAwait(false)
+            : await cosmos.SendAsync(
+                    HttpMethod.Get,
+                    "sprocs",
+                    sprocLink,
+                    $"/{sprocLink}",
+                    content: null,
+                    extraHeaders: null,
+                    ct)
+                .ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            return false;
+        }
+
+        var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            var root = document.RootElement;
+            return root.ValueKind == JsonValueKind.Object
+                && root.TryGetProperty("id", out var id)
+                && id.ValueKind == JsonValueKind.String
+                && string.Equals(id.GetString(), sprocId, StringComparison.Ordinal)
+                && root.TryGetProperty("body", out var script)
+                && script.ValueKind == JsonValueKind.String
+                && string.Equals(script.GetString(), expectedBody, StringComparison.Ordinal);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private readonly record struct SprocCacheKey(
+        string AccountEndpoint,
+        string DatabaseName,
+        string ContainerName,
+        string SprocId);
+
+    private enum SprocState { Available, Failed }
 }

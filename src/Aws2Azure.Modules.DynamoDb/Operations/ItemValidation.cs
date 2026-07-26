@@ -1,5 +1,7 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
+using System.Text;
 using System.Text.Json;
 using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
@@ -9,6 +11,14 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 
 internal static partial class ItemHandlers
 {
+    internal const int MaximumPartitionKeyBytes = 2048;
+    internal const int MaximumSortKeyBytes = 1024;
+
+    private static readonly Encoding StrictUtf8 =
+        new UTF8Encoding(
+            encoderShouldEmitUTF8Identifier: false,
+            throwOnInvalidBytes: true);
+
     /// <summary>
     /// Validates every attribute in the Item is a single-property typed
     /// value (per the DynamoDB JSON wire format) AND that each payload's
@@ -20,6 +30,12 @@ internal static partial class ItemHandlers
     /// </summary>
     internal static bool ValidateItemShape(JsonElement item, out string error)
     {
+        if (item.ValueKind != JsonValueKind.Object)
+        {
+            error = "Item must be a JSON object.";
+            return false;
+        }
+
         foreach (var prop in item.EnumerateObject())
         {
             if (InferredAttributeStorage.IsReservedTopLevelName(prop.Name)
@@ -37,6 +53,69 @@ internal static partial class ItemHandlers
         return true;
     }
 
+    internal static bool ValidateKeyShape(JsonElement key, out string error)
+    {
+        if (key.ValueKind != JsonValueKind.Object)
+        {
+            error = "Key must be a JSON object.";
+            return false;
+        }
+
+        foreach (var property in key.EnumerateObject())
+        {
+            if (!ValidateAttributePayload(
+                    $"Key attribute '{property.Name}'",
+                    property.Value,
+                    out error))
+            {
+                return false;
+            }
+            if (!ParsedAttributeValue.TryParse(property.Value, out var parsed)
+                || !AttributeValueTypes.IsScalarKeyType(parsed.TypeTag))
+            {
+                error =
+                    $"Key attribute '{property.Name}' must use scalar type S, N, or B.";
+                return false;
+            }
+
+            if ((parsed.TypeTag is AttributeValueTypes.String
+                    or AttributeValueTypes.Binary)
+                && parsed.Value.GetString()!.Length == 0)
+            {
+                error = $"Key attribute '{property.Name}' value must not be empty.";
+                return false;
+            }
+        }
+
+        error = string.Empty;
+        return true;
+    }
+
+    internal static bool ValidateExpressionAttributeValues(
+        JsonElement values,
+        out string error)
+    {
+        if (values.ValueKind != JsonValueKind.Object)
+        {
+            error = "ExpressionAttributeValues must be a JSON object.";
+            return false;
+        }
+
+        foreach (var property in values.EnumerateObject())
+        {
+            if (!ValidateAttributePayload(
+                    $"ExpressionAttributeValues['{property.Name}']",
+                    property.Value,
+                    out error))
+            {
+                return false;
+            }
+        }
+
+        error = string.Empty;
+        return true;
+    }
+
     /// <summary>
     /// Recursive shape validator for a single DDB AttributeValue. Mirrors
     /// the type discipline the inferred encoder relies on, so any
@@ -45,22 +124,56 @@ internal static partial class ItemHandlers
     /// stack. Number / Binary / Set payloads must be strings; sets are
     /// arrays of strings; maps recurse; lists recurse.
     /// </summary>
-    private static bool ValidateAttributePayload(string attrName, JsonElement attr, out string error)
+    private static bool ValidateAttributePayload(
+        string attrName,
+        JsonElement attr,
+        out string error)
     {
         if (!ParsedAttributeValue.TryParse(attr, out var parsed))
         {
-            error = $"Attribute '{attrName}' must be a single-property typed attribute value.";
+            error = $"{attrName} must be a single-property typed attribute value.";
             return false;
         }
 
         switch (parsed.TypeTag)
         {
             case AttributeValueTypes.String:
+                if (parsed.Value.ValueKind != JsonValueKind.String)
+                {
+                    error =
+                        $"{attrName} payload for type {parsed.TypeTag} must be a JSON string.";
+                    return false;
+                }
+                break;
+
             case AttributeValueTypes.Number:
+                if (parsed.Value.ValueKind != JsonValueKind.String)
+                {
+                    error =
+                        $"{attrName} payload for type N must be a JSON string.";
+                    return false;
+                }
+                if (!InferredAttributeStorage.TryNormalizeDdbNumber(
+                        parsed.Value.GetString()!,
+                        out _,
+                        out _,
+                        out var numberError))
+                {
+                    error = $"{attrName} has an invalid Number value: {numberError}";
+                    return false;
+                }
+                break;
+
             case AttributeValueTypes.Binary:
                 if (parsed.Value.ValueKind != JsonValueKind.String)
                 {
-                    error = $"Attribute '{attrName}' payload for type {parsed.TypeTag} must be a JSON string.";
+                    error =
+                        $"{attrName} payload for type B must be a JSON string.";
+                    return false;
+                }
+                if (!IsValidBase64(parsed.Value.GetString()!))
+                {
+                    error = $"{attrName} binary value is not valid base64.";
                     return false;
                 }
                 break;
@@ -68,7 +181,7 @@ internal static partial class ItemHandlers
             case AttributeValueTypes.Bool:
                 if (parsed.Value.ValueKind != JsonValueKind.True && parsed.Value.ValueKind != JsonValueKind.False)
                 {
-                    error = $"Attribute '{attrName}' payload for type BOOL must be a JSON boolean.";
+                    error = $"{attrName} payload for type BOOL must be a JSON boolean.";
                     return false;
                 }
                 break;
@@ -76,7 +189,7 @@ internal static partial class ItemHandlers
             case AttributeValueTypes.Null:
                 if (parsed.Value.ValueKind != JsonValueKind.True)
                 {
-                    error = $"Attribute '{attrName}' payload for type NULL must be the literal true.";
+                    error = $"{attrName} payload for type NULL must be the literal true.";
                     return false;
                 }
                 break;
@@ -84,7 +197,7 @@ internal static partial class ItemHandlers
             case AttributeValueTypes.Map:
                 if (parsed.Value.ValueKind != JsonValueKind.Object)
                 {
-                    error = $"Attribute '{attrName}' payload for type M must be a JSON object.";
+                    error = $"{attrName} payload for type M must be a JSON object.";
                     return false;
                 }
                 foreach (var entry in parsed.Value.EnumerateObject())
@@ -96,12 +209,15 @@ internal static partial class ItemHandlers
                         // but raising here keeps the error surface as
                         // ValidationException at the API boundary instead of
                         // an encoder ArgumentException deeper in the stack.
-                        error = $"Attribute '{attrName}.{entry.Name}' uses the reserved '"
+                        error = $"{attrName}.{entry.Name} uses the reserved '"
                             + InferredAttributeStorage.EnvelopeTagPrefix
                             + "' prefix.";
                         return false;
                     }
-                    if (!ValidateAttributePayload($"{attrName}.{entry.Name}", entry.Value, out error))
+                    if (!ValidateAttributePayload(
+                            $"{attrName}.{entry.Name}",
+                            entry.Value,
+                            out error))
                         return false;
                 }
                 break;
@@ -109,7 +225,7 @@ internal static partial class ItemHandlers
             case AttributeValueTypes.List:
                 if (parsed.Value.ValueKind != JsonValueKind.Array)
                 {
-                    error = $"Attribute '{attrName}' payload for type L must be a JSON array.";
+                    error = $"{attrName} payload for type L must be a JSON array.";
                     return false;
                 }
                 int li = 0;
@@ -126,14 +242,58 @@ internal static partial class ItemHandlers
             case AttributeValueTypes.BinarySet:
                 if (parsed.Value.ValueKind != JsonValueKind.Array)
                 {
-                    error = $"Attribute '{attrName}' payload for type {parsed.TypeTag} must be a JSON array.";
+                    error =
+                        $"{attrName} payload for type {parsed.TypeTag} must be a JSON array.";
                     return false;
                 }
+                if (parsed.Value.GetArrayLength() == 0)
+                {
+                    error = $"{attrName} set must not be empty.";
+                    return false;
+                }
+
+                var unique = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var member in parsed.Value.EnumerateArray())
                 {
                     if (member.ValueKind != JsonValueKind.String)
                     {
-                        error = $"Attribute '{attrName}' members of {parsed.TypeTag} must be JSON strings.";
+                        error =
+                            $"{attrName} members of {parsed.TypeTag} must be JSON strings.";
+                        return false;
+                    }
+
+                    var raw = member.GetString()!;
+                    string canonical;
+                    if (parsed.TypeTag == AttributeValueTypes.NumberSet)
+                    {
+                        if (!InferredAttributeStorage.TryNormalizeDdbNumber(
+                                raw,
+                                out canonical,
+                                out _,
+                                out var setNumberError))
+                        {
+                            error =
+                                $"{attrName} has an invalid Number set member: {setNumberError}";
+                            return false;
+                        }
+                    }
+                    else if (parsed.TypeTag == AttributeValueTypes.BinarySet)
+                    {
+                        if (!TryCanonicalizeBase64(raw, out canonical))
+                        {
+                            error =
+                                $"{attrName} has a binary set member that is not valid base64.";
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        canonical = raw;
+                    }
+
+                    if (!unique.Add(canonical))
+                    {
+                        error = $"{attrName} set must not contain duplicate members.";
                         return false;
                     }
                 }
@@ -144,21 +304,264 @@ internal static partial class ItemHandlers
         return true;
     }
 
-    private static bool ValidateKeyAttributesInItem(JsonElement item, TableMetadata meta, out string error)
+    private static bool IsValidBase64(string value)
     {
-        foreach (var k in meta.KeySchema)
+        if (!TryDecodeBase64(value, out var bytes, out _))
         {
-            if (!item.TryGetProperty(k.Name, out var attr))
+            return false;
+        }
+
+        ArrayPool<byte>.Shared.Return(bytes);
+        return true;
+    }
+
+    private static bool TryCanonicalizeBase64(
+        string value,
+        out string canonical)
+    {
+        canonical = string.Empty;
+        if (!TryDecodeBase64(value, out var bytes, out var written))
+        {
+            return false;
+        }
+
+        try
+        {
+            canonical = Convert.ToBase64String(bytes, 0, written);
+            return true;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(bytes);
+        }
+    }
+
+    private static bool TryDecodeBase64(
+        string value,
+        out byte[] bytes,
+        out int written)
+    {
+        var maximumLength = checked(((value.Length + 3) / 4) * 3);
+        bytes = ArrayPool<byte>.Shared.Rent(Math.Max(1, maximumLength));
+        if (Convert.TryFromBase64Chars(value.AsSpan(), bytes, out written))
+        {
+            return true;
+        }
+
+        ArrayPool<byte>.Shared.Return(bytes);
+        bytes = Array.Empty<byte>();
+        written = 0;
+        return false;
+    }
+
+    internal static bool ValidateKeyAttributesInItem(
+        JsonElement item,
+        TableMetadata meta,
+        out string error)
+    {
+        foreach (var key in meta.KeySchema)
+        {
+            if (!item.TryGetProperty(key.Name, out var attribute))
             {
-                error = $"Item is missing required key attribute '{k.Name}'.";
+                error =
+                    $"Item is missing required key attribute '{key.Name}'.";
                 return false;
             }
-            if (!ItemKeyFormatter.ValidateKeyAttributeType(attr, meta, k.Name, out var typeError))
+            if (!ValidateItemKeyAttribute(
+                    attribute,
+                    meta,
+                    key,
+                    out error))
             {
-                error = typeError;
                 return false;
             }
         }
+
+        if (!ValidatePresentSecondaryIndexKeys(
+                item,
+                meta,
+                meta.GlobalSecondaryIndexes,
+                out error)
+            || !ValidatePresentSecondaryIndexKeys(
+                item,
+                meta,
+                meta.LocalSecondaryIndexes,
+                out error))
+        {
+            return false;
+        }
+
+        error = string.Empty;
+        return true;
+    }
+
+    private static bool ValidatePresentSecondaryIndexKeys(
+        JsonElement item,
+        TableMetadata meta,
+        List<TableIndexDefinition>? indexes,
+        out string error)
+    {
+        if (indexes is null)
+        {
+            error = string.Empty;
+            return true;
+        }
+
+        foreach (var index in indexes)
+        {
+            foreach (var key in index.KeySchema)
+            {
+                if (!item.TryGetProperty(key.Name, out var attribute))
+                {
+                    continue;
+                }
+                if (!ValidateItemKeyAttribute(
+                        attribute,
+                        meta,
+                        key,
+                        out error))
+                {
+                    error =
+                        $"Secondary index '{index.IndexName}' {error}";
+                    return false;
+                }
+            }
+        }
+
+        error = string.Empty;
+        return true;
+    }
+
+    private static bool ValidateItemKeyAttribute(
+        JsonElement attribute,
+        TableMetadata meta,
+        TableKeySchemaElement key,
+        out string error)
+    {
+        if (!ItemKeyFormatter.TryGetDeclaredKeyType(
+                meta,
+                key.Name,
+                out var declaredType))
+        {
+            error =
+                $"key attribute '{key.Name}' is not declared in the table's AttributeDefinitions.";
+            return false;
+        }
+        if (!AttributeValueTypes.IsScalarKeyType(declaredType))
+        {
+            error =
+                $"key attribute '{key.Name}' has unsupported declared type '{declaredType}'; DynamoDB keys must use S, N, or B.";
+            return false;
+        }
+        if (!ParsedAttributeValue.TryParse(attribute, out var parsed))
+        {
+            error =
+                $"key attribute '{key.Name}' must be a single-property typed attribute value.";
+            return false;
+        }
+        if (!string.Equals(
+                parsed.TypeTag,
+                declaredType,
+                StringComparison.Ordinal))
+        {
+            error =
+                $"key attribute '{key.Name}' has type {parsed.TypeTag} but the table declares {declaredType}.";
+            return false;
+        }
+        if (parsed.Value.ValueKind != JsonValueKind.String)
+        {
+            error =
+                $"key attribute '{key.Name}' value must be a JSON string per DynamoDB wire format.";
+            return false;
+        }
+
+        var raw = parsed.Value.GetString()!;
+        int byteCount;
+        switch (declaredType)
+        {
+            case AttributeValueTypes.String:
+                if (raw.Length == 0)
+                {
+                    error =
+                        $"key attribute '{key.Name}' value must not be empty.";
+                    return false;
+                }
+                try
+                {
+                    byteCount = StrictUtf8.GetByteCount(raw);
+                }
+                catch (EncoderFallbackException)
+                {
+                    error =
+                        $"key attribute '{key.Name}' must contain valid Unicode scalar values.";
+                    return false;
+                }
+                break;
+
+            case AttributeValueTypes.Number:
+                if (!InferredAttributeStorage.TryNormalizeDdbNumber(
+                        raw,
+                        out _,
+                        out _,
+                        out var numberError))
+                {
+                    error =
+                        $"key attribute '{key.Name}' has an invalid Number value: {numberError}";
+                    return false;
+                }
+                byteCount = raw.Length;
+                break;
+
+            case AttributeValueTypes.Binary:
+                if (!TryDecodeBase64(
+                        raw,
+                        out var bytes,
+                        out byteCount))
+                {
+                    error =
+                        $"key attribute '{key.Name}' binary value is not valid base64.";
+                    return false;
+                }
+                ArrayPool<byte>.Shared.Return(bytes);
+                if (byteCount == 0)
+                {
+                    error =
+                        $"key attribute '{key.Name}' binary value must not be empty.";
+                    return false;
+                }
+                break;
+
+            default:
+                error =
+                    $"key attribute '{key.Name}' has unsupported type '{declaredType}'.";
+                return false;
+        }
+
+        var isPartitionKey = string.Equals(
+            key.KeyType,
+            "HASH",
+            StringComparison.OrdinalIgnoreCase);
+        var isSortKey = string.Equals(
+            key.KeyType,
+            "RANGE",
+            StringComparison.OrdinalIgnoreCase);
+        if (!isPartitionKey && !isSortKey)
+        {
+            error =
+                $"key attribute '{key.Name}' has unsupported key role '{key.KeyType}'.";
+            return false;
+        }
+
+        var maximumBytes = isPartitionKey
+            ? MaximumPartitionKeyBytes
+            : MaximumSortKeyBytes;
+        if (byteCount > maximumBytes)
+        {
+            error =
+                $"key attribute '{key.Name}' is {byteCount} bytes and exceeds DynamoDB's {maximumBytes}-byte {(isPartitionKey ? "partition" : "sort")} key limit.";
+            return false;
+        }
+
         error = string.Empty;
         return true;
     }

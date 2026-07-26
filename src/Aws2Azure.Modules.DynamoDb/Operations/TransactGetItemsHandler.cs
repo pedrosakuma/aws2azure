@@ -1,347 +1,568 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Net;
-using System.Net.Http;
-using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
+using Aws2Azure.Modules.DynamoDb.Persistence;
 using Microsoft.AspNetCore.Http;
 
 namespace Aws2Azure.Modules.DynamoDb.Operations;
 
 /// <summary>
-/// DynamoDB <c>TransactGetItems</c> → fan-out of per-item Cosmos
-/// strongly-consistent GETs. Cosmos has no cross-container ACID read,
-/// but transactional get only requires that every read sees the latest
-/// committed value, so strong consistency on each fan-out call is
-/// behaviour-equivalent here.
-///
-/// <list type="bullet">
-///   <item>At most 100 items per request; over the cap → <c>ValidationException</c>.</item>
-///   <item>Responses are aligned positionally with TransactItems; missing items
-///   emit an empty <c>{}</c> entry.</item>
-///   <item>Every Cosmos GET sends <c>x-ms-consistency-level: Strong</c>.</item>
-///   <item>Per-item <c>ProjectionExpression</c> + <c>ExpressionAttributeNames</c>
-///   honoured (top-level / <c>#alias</c> only).</item>
-///   <item>Any non-2xx, non-404 from Cosmos cancels the whole transaction with
-///   <c>TransactionCanceledException</c> + per-item <c>CancellationReasons</c>.</item>
-/// </list>
+/// DynamoDB <c>TransactGetItems</c> implemented as one read-only Cosmos stored
+/// procedure. The handler rejects cross-table, cross-partition, and duplicate
+/// targets before invoking the snapshot operation.
 /// </summary>
 internal static class TransactGetItemsHandler
 {
     private const int MaxItemsPerCall = 100;
-    private const int MaxParallelism = 16;
 
     public static async Task HandleTransactGetItemsAsync(
-        HttpContext ctx, byte[] body, CosmosClient cosmos, CancellationToken ct)
+        HttpContext ctx,
+        byte[] body,
+        CosmosClient cosmos,
+        SprocContext? sprocContext,
+        CancellationToken ct)
     {
-        TransactGetItemsRequest? req;
+        if (!JsonUnicodePreflight.TryValidate(body, out var jsonError))
+        {
+            await CosmosOpsShared.WriteErrorAsync(
+                ctx,
+                StatusCodes.Status400BadRequest,
+                "SerializationException",
+                jsonError).ConfigureAwait(false);
+            return;
+        }
+
+        TransactGetItemsRequest? request;
         try
         {
-            req = JsonSerializer.Deserialize(body, TransactGetItemsJsonContext.Default.TransactGetItemsRequest);
+            request = JsonSerializer.Deserialize(
+                body,
+                TransactGetItemsJsonContext.Default.TransactGetItemsRequest);
         }
-        catch (JsonException ex)
+        catch (Exception exception) when (
+            exception is JsonException
+                or InvalidOperationException
+                or ArgumentException)
         {
-            await CosmosOpsShared.WriteErrorAsync(ctx, 400, "SerializationException",
-                "Malformed JSON: " + ex.Message).ConfigureAwait(false);
-            return;
-        }
-        if (req is null || req.TransactItems is null || req.TransactItems.Count == 0)
-        {
-            await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
-                "TransactItems is required and must contain at least one Get entry.").ConfigureAwait(false);
-            return;
-        }
-        if (req.TransactItems.Count > MaxItemsPerCall)
-        {
-            await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
-                $"TransactGetItems supports at most {MaxItemsPerCall} items per request.").ConfigureAwait(false);
+            await CosmosOpsShared.WriteErrorAsync(
+                ctx,
+                StatusCodes.Status400BadRequest,
+                "SerializationException",
+                "Malformed JSON: " + exception.Message).ConfigureAwait(false);
             return;
         }
 
-        var tableMeta = new Dictionary<string, TableMetadata>(StringComparer.Ordinal);
-        var work = new WorkUnit[req.TransactItems.Count];
-
-        for (int i = 0; i < req.TransactItems.Count; i++)
+        if (request?.TransactItems is null || request.TransactItems.Count == 0)
         {
-            var entry = req.TransactItems[i];
+            await RejectAsync(
+                ctx,
+                "TransactItems is required and must contain at least one Get entry.")
+                .ConfigureAwait(false);
+            return;
+        }
+        if (request.TransactItems.Count > MaxItemsPerCall)
+        {
+            await RejectAsync(
+                ctx,
+                $"TransactGetItems supports at most {MaxItemsPerCall} items per request.")
+                .ConfigureAwait(false);
+            return;
+        }
+        if (request.ReturnConsumedCapacity is not null
+            && !string.Equals(
+                request.ReturnConsumedCapacity,
+                "NONE",
+                StringComparison.Ordinal))
+        {
+            await RejectAsync(
+                ctx,
+                "ReturnConsumedCapacity is not supported for TransactGetItems; omit it or use NONE.")
+                .ConfigureAwait(false);
+            return;
+        }
+
+        string? tableName = null;
+        var projections = new Projection?[request.TransactItems.Count];
+        for (var index = 0; index < request.TransactItems.Count; index++)
+        {
+            var entry = request.TransactItems[index];
+            if (entry?.AdditionalProperties is { Count: > 0 } extras)
+            {
+                foreach (var extra in extras)
+                {
+                    await RejectAsync(
+                        ctx,
+                        $"TransactItems[{index}] contains unsupported action '{extra.Key}'.")
+                        .ConfigureAwait(false);
+                    return;
+                }
+            }
             if (entry is null || entry.Get.ValueKind != JsonValueKind.Object)
             {
-                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
-                    $"TransactItems[{i}].Get is required and must be an object.").ConfigureAwait(false);
+                await RejectAsync(
+                    ctx,
+                    $"TransactItems[{index}].Get is required and must be an object.")
+                    .ConfigureAwait(false);
                 return;
             }
-            if (!entry.Get.TryGetProperty("TableName", out var tEl) || tEl.ValueKind != JsonValueKind.String)
+            if (!TryValidateGetMembers(entry.Get, out var memberError))
             {
-                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
-                    $"TransactItems[{i}].Get.TableName is required.").ConfigureAwait(false);
+                await RejectAsync(
+                    ctx,
+                    $"TransactItems[{index}].Get {memberError}").ConfigureAwait(false);
                 return;
             }
-            var tableName = tEl.GetString()!;
-            if (!DynamoDbNames.IsValidTableName(tableName))
+            if (!entry.Get.TryGetProperty("TableName", out var tableElement)
+                || tableElement.ValueKind != JsonValueKind.String)
             {
-                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
-                    $"Invalid TableName '{tableName}'.").ConfigureAwait(false);
-                return;
-            }
-            if (!entry.Get.TryGetProperty("Key", out var keyEl) || keyEl.ValueKind != JsonValueKind.Object)
-            {
-                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
-                    $"TransactItems[{i}].Get.Key is required and must be an object.").ConfigureAwait(false);
-                return;
-            }
-
-            if (!tableMeta.TryGetValue(tableName, out var meta))
-            {
-                using var metaRead = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, tableName, ct).ConfigureAwait(false);
-                if (metaRead.Status == CosmosOpsShared.TableMetadataReadStatus.CosmosError)
-                {
-                    await CosmosOpsShared.WriteCosmosErrorAsync(ctx, metaRead.ErrorResponse!, ct).ConfigureAwait(false);
-                    return;
-                }
-                if (metaRead.Status == CosmosOpsShared.TableMetadataReadStatus.NotFound)
-                {
-                    await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
-                        $"Table not found: {tableName}").ConfigureAwait(false);
-                    return;
-                }
-                meta = metaRead.Metadata!;
-                tableMeta[tableName] = meta;
-            }
-
-            foreach (var k in meta.KeySchema)
-            {
-                if (!keyEl.TryGetProperty(k.Name, out var attr))
-                {
-                    await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
-                        $"TransactItems[{i}].Get.Key is missing required attribute '{k.Name}'.").ConfigureAwait(false);
-                    return;
-                }
-                if (!ItemKeyFormatter.ValidateKeyAttributeType(attr, meta, k.Name, out var typeError))
-                {
-                    await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", typeError).ConfigureAwait(false);
-                    return;
-                }
-            }
-            if (!ItemKeyFormatter.TryBuild(keyEl, meta, out var pk, out var id, out var keyError))
-            {
-                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", keyError).ConfigureAwait(false);
+                await RejectAsync(
+                    ctx,
+                    $"TransactItems[{index}].Get.TableName is required.")
+                    .ConfigureAwait(false);
                 return;
             }
 
-            Projection? projection = null;
-            if (entry.Get.TryGetProperty("ProjectionExpression", out var peEl) && peEl.ValueKind == JsonValueKind.String)
+            var candidateTable = tableElement.GetString()!;
+            if (!DynamoDbNames.IsValidTableName(candidateTable))
             {
+                await RejectAsync(ctx, $"Invalid TableName '{candidateTable}'.")
+                    .ConfigureAwait(false);
+                return;
+            }
+            if (tableName is null)
+            {
+                tableName = candidateTable;
+            }
+            else if (!string.Equals(
+                         tableName,
+                         candidateTable,
+                         StringComparison.Ordinal))
+            {
+                await RejectAsync(
+                    ctx,
+                    "TransactGetItems via aws2azure requires every Get to target the same table because the snapshot is scoped to one Cosmos container.")
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            if (!entry.Get.TryGetProperty("Key", out var key)
+                || key.ValueKind != JsonValueKind.Object)
+            {
+                await RejectAsync(
+                    ctx,
+                    $"TransactItems[{index}].Get.Key is required and must be an object.")
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            var hasProjection = entry.Get.TryGetProperty(
+                "ProjectionExpression",
+                out var projectionElement);
+            var hasNames = entry.Get.TryGetProperty(
+                "ExpressionAttributeNames",
+                out var namesElement);
+            if (hasProjection)
+            {
+                if (projectionElement.ValueKind != JsonValueKind.String)
+                {
+                    await RejectAsync(
+                        ctx,
+                        $"TransactItems[{index}].Get.ProjectionExpression must be a string.")
+                        .ConfigureAwait(false);
+                    return;
+                }
+
                 IReadOnlyDictionary<string, string>? names = null;
-                if (entry.Get.TryGetProperty("ExpressionAttributeNames", out var eanEl))
+                if (hasNames
+                    && !TryReadExpressionAttributeNames(
+                        namesElement,
+                        out names,
+                        out var namesError))
                 {
-                    if (eanEl.ValueKind != JsonValueKind.Object)
-                    {
-                        await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
-                            $"TransactItems[{i}].Get.ExpressionAttributeNames must be a JSON object.").ConfigureAwait(false);
-                        return;
-                    }
-                    var d = new Dictionary<string, string>(StringComparer.Ordinal);
-                    foreach (var p in eanEl.EnumerateObject())
-                    {
-                        if (p.Value.ValueKind != JsonValueKind.String)
-                        {
-                            await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
-                                $"TransactItems[{i}].Get.ExpressionAttributeNames['{p.Name}'] must be a string.").ConfigureAwait(false);
-                            return;
-                        }
-                        d[p.Name] = p.Value.GetString()!;
-                    }
-                    names = d;
+                    await RejectAsync(
+                        ctx,
+                        $"TransactItems[{index}].Get.{namesError}")
+                        .ConfigureAwait(false);
+                    return;
                 }
+
                 try
                 {
-                    projection = ProjectionExpressionParser.Parse(peEl.GetString()!, names);
+                    var parsed = ProjectionExpressionParser.ParseWithUsage(
+                        projectionElement.GetString()!,
+                        names);
+                    if (TryFindUnused(
+                            names,
+                            parsed.ConsumedNames,
+                            out var unusedName))
+                    {
+                        await RejectAsync(
+                            ctx,
+                            $"Value provided in ExpressionAttributeNames unused in expressions: {unusedName}.")
+                            .ConfigureAwait(false);
+                        return;
+                    }
+                    projections[index] = parsed.Projection;
                 }
-                catch (ExpressionSyntaxException ex)
+                catch (ExpressionSyntaxException exception)
                 {
-                    await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
-                        $"Invalid ProjectionExpression (offset {ex.Position}): {ex.Message}").ConfigureAwait(false);
+                    await RejectAsync(
+                        ctx,
+                        $"Invalid ProjectionExpression (offset {exception.Position}): {exception.Message}")
+                        .ConfigureAwait(false);
                     return;
                 }
             }
-
-            work[i] = new WorkUnit(tableName, pk, id, projection);
-        }
-
-        var results = new PerItemResult[work.Length];
-        using (var sem = new SemaphoreSlim(MaxParallelism))
-        {
-            var tasks = new Task[work.Length];
-            for (int i = 0; i < work.Length; i++)
+            else if (hasNames)
             {
-                var idx = i;
-                tasks[i] = ExecuteOneAsync(cosmos, work[i], sem, results, idx, ct);
+                await RejectAsync(
+                    ctx,
+                    $"TransactItems[{index}].Get.ExpressionAttributeNames requires ProjectionExpression.")
+                    .ConfigureAwait(false);
+                return;
             }
-            await Task.WhenAll(tasks).ConfigureAwait(false);
         }
 
-        bool anyHardError = false;
-        for (int i = 0; i < results.Length; i++)
+        if (sprocContext is not { IsSprocEnabled: true } || sprocContext.Manager is null)
         {
-            if (results[i].HardError is not null) { anyHardError = true; break; }
-        }
-        if (anyHardError)
-        {
-            await WriteTransactionCanceledAsync(ctx, results).ConfigureAwait(false);
+            await RejectAsync(
+                ctx,
+                "TransactGetItems requires stored procedures so all positions are read from one server-side snapshot. Set the DynamoDB stored-procedure mode to Preferred or Required.")
+                .ConfigureAwait(false);
             return;
         }
 
-        var responses = new List<TransactGetItemResponse>(work.Length);
-        for (int i = 0; i < work.Length; i++)
+        using var metadataRead = await CosmosOpsShared.TryReadTableMetadataAsync(
+            cosmos,
+            tableName!,
+            ct).ConfigureAwait(false);
+        if (metadataRead.Status == CosmosOpsShared.TableMetadataReadStatus.CosmosError)
         {
-            var item = results[i].Item;
-            if (item is null)
-            {
-                responses.Add(new TransactGetItemResponse());
-                continue;
-            }
-            if (work[i].Projection is { } projection)
-            {
-                item = projection.Apply(item);
-            }
-            responses.Add(new TransactGetItemResponse { Item = item });
+            await CosmosOpsShared.WriteCosmosErrorAsync(
+                ctx,
+                metadataRead.ErrorResponse!,
+                ct).ConfigureAwait(false);
+            return;
+        }
+        if (metadataRead.Status == CosmosOpsShared.TableMetadataReadStatus.NotFound)
+        {
+            await CosmosOpsShared.WriteErrorAsync(
+                ctx,
+                StatusCodes.Status400BadRequest,
+                "ResourceNotFoundException",
+                $"Table not found: {tableName}").ConfigureAwait(false);
+            return;
         }
 
-        var resp = new TransactGetItemsResponse { Responses = responses };
-        await CosmosOpsShared.WriteJsonAsync(ctx, 200, resp,
-            TransactGetItemsJsonContext.Default.TransactGetItemsResponse).ConfigureAwait(false);
-    }
+        var metadata = metadataRead.Metadata!;
+        var work = new WorkUnit[request.TransactItems.Count];
+        var documentIds = new string[request.TransactItems.Count];
+        var seenTargets = new HashSet<string>(StringComparer.Ordinal);
+        string? partitionKey = null;
 
-    private static async Task ExecuteOneAsync(
-        CosmosClient cosmos, WorkUnit unit,
-        SemaphoreSlim sem, PerItemResult[] results, int idx, CancellationToken ct)
-    {
-        await sem.WaitAsync(ct).ConfigureAwait(false);
-        try
+        for (var index = 0; index < request.TransactItems.Count; index++)
         {
-            var docLink = "dbs/" + cosmos.DatabaseName + "/colls/" + unit.Table + "/docs/" + unit.Id;
-            var pkHeader = CosmosOpsShared.BuildPartitionKeyHeader(unit.Pk);
-            var headers = new[]
+            var get = request.TransactItems[index]!.Get;
+            var key = get.GetProperty("Key");
+            foreach (var keyDefinition in metadata.KeySchema)
             {
-                new KeyValuePair<string, string>("x-ms-documentdb-partitionkey", pkHeader),
-                new KeyValuePair<string, string>("x-ms-consistency-level", "Strong"),
-            };
-            using var resp = await cosmos.SendAsync(
-                HttpMethod.Get, "docs", docLink, "/" + docLink,
-                content: null, headers, ct).ConfigureAwait(false);
-
-            if (resp.StatusCode == HttpStatusCode.NotFound)
-            {
-                if (CosmosOpsShared.Is404ContainerMissing(resp))
+                if (!key.TryGetProperty(keyDefinition.Name, out var attribute))
                 {
-                    results[idx] = new PerItemResult
-                    {
-                        HardError = new HardError("ResourceNotFoundException",
-                            $"Table not found: {unit.Table}"),
-                    };
+                    await RejectAsync(
+                        ctx,
+                        $"TransactItems[{index}].Get.Key is missing required attribute '{keyDefinition.Name}'.")
+                        .ConfigureAwait(false);
                     return;
                 }
-                results[idx] = new PerItemResult();
-                return;
+                if (!ItemKeyFormatter.ValidateKeyAttributeType(
+                        attribute,
+                        metadata,
+                        keyDefinition.Name,
+                        out var typeError))
+                {
+                    await RejectAsync(ctx, typeError).ConfigureAwait(false);
+                    return;
+                }
             }
-            if (!resp.IsSuccessStatusCode)
+            if (!ItemKeyFormatter.TryBuild(
+                    key,
+                    metadata,
+                    out var candidatePartitionKey,
+                    out var documentId,
+                    out var keyError))
             {
-                string bodyText = string.Empty;
-                try { bodyText = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false); }
-                catch { }
-                var status = (int)resp.StatusCode;
-                var code = status switch
-                {
-                    429 => "ProvisionedThroughputExceededException",
-                    401 or 403 => "AccessDeniedException",
-                    _ when status >= 500 => "InternalServerError",
-                    _ => "ValidationException",
-                };
-                results[idx] = new PerItemResult
-                {
-                    HardError = new HardError(code,
-                        string.IsNullOrEmpty(bodyText) ? (resp.ReasonPhrase ?? "Cosmos request failed.") : bodyText),
-                };
+                await RejectAsync(ctx, keyError).ConfigureAwait(false);
                 return;
             }
 
-            var item = await CosmosOpsShared.ReadAndExtractItemAsync(
-                resp.Content, DynamoDbMetrics.OpTransactGet, ct).ConfigureAwait(false);
-            results[idx] = new PerItemResult { Item = item };
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            results[idx] = new PerItemResult
+            if (partitionKey is null)
             {
-                HardError = new HardError("InternalServerError", ex.Message),
-            };
-        }
-        finally
-        {
-            sem.Release();
-        }
-    }
-
-    private static async Task WriteTransactionCanceledAsync(HttpContext ctx, PerItemResult[] results)
-    {
-        // TransactionCanceledException — preserve positional CancellationReasons
-        // so the SDK can surface per-item failure codes. Hand-rolled writer keeps
-        // the response AOT-friendly without needing a Dictionary<string, object?>
-        // JsonSerializerContext.
-        string? firstMessage = null;
-        foreach (var r in results)
-        {
-            if (r.HardError is { } he) { firstMessage = he.Message; break; }
-        }
-
-        using var ms = new MemoryStream();
-        await using (var w = new Utf8JsonWriter(ms))
-        {
-            w.WriteStartObject();
-            w.WriteString("__type", "com.amazonaws.dynamodb.v20120810#TransactionCanceledException");
-            w.WriteString("Message", firstMessage ?? "Transaction cancelled.");
-            w.WritePropertyName("CancellationReasons");
-            w.WriteStartArray();
-            foreach (var r in results)
-            {
-                w.WriteStartObject();
-                if (r.HardError is { } he)
-                {
-                    w.WriteString("Code", he.Code);
-                    if (!string.IsNullOrEmpty(he.Message))
-                    {
-                        w.WriteString("Message", he.Message);
-                    }
-                }
-                else
-                {
-                    w.WriteString("Code", "None");
-                }
-                w.WriteEndObject();
+                partitionKey = candidatePartitionKey;
             }
-            w.WriteEndArray();
-            w.WriteEndObject();
+            else if (!string.Equals(
+                         partitionKey,
+                         candidatePartitionKey,
+                         StringComparison.Ordinal))
+            {
+                await RejectAsync(
+                    ctx,
+                    "TransactGetItems via aws2azure requires every Get to share the same partition-key value because the snapshot is scoped to one Cosmos logical partition.")
+                    .ConfigureAwait(false);
+                return;
+            }
+            if (!seenTargets.Add(documentId))
+            {
+                await RejectAsync(
+                    ctx,
+                    "Transaction request cannot include multiple operations on one item.")
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            work[index] = new WorkUnit(documentId, projections[index]);
+            documentIds[index] = documentId;
         }
 
-        ctx.Response.StatusCode = 400;
-        ctx.Response.ContentType = "application/x-amz-json-1.0";
-        var bytes = ms.ToArray();
-        await ctx.Response.Body.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
+        var routeResolution = await cosmos.ResolveTransactionRouteAsync(
+                tableName!,
+                ct)
+            .ConfigureAwait(false);
+        if (routeResolution.Status
+            != CosmosTransactionRouteResolutionStatus.Ready)
+        {
+            await WriteRoutingFailureAsync(ctx, routeResolution)
+                .ConfigureAwait(false);
+            return;
+        }
+
+        var ready = await sprocContext.Manager.EnsureTransactGetSprocAsync(
+            cosmos,
+            tableName!,
+            routeResolution.Route,
+            ct).ConfigureAwait(false);
+        if (!ready)
+        {
+            await CosmosOpsShared.WriteErrorAsync(
+                ctx,
+                StatusCodes.Status500InternalServerError,
+                "InternalServerError",
+                "TransactGetItems snapshot stored procedure could not be provisioned or did not match its versioned body.")
+                .ConfigureAwait(false);
+            return;
+        }
+
+        var result = await sprocContext.Manager.ExecuteTransactGetAsync(
+            cosmos,
+            tableName!,
+            partitionKey!,
+            documentIds,
+            routeResolution.Route,
+            ct).ConfigureAwait(false);
+        if (!result.Success)
+        {
+            await WriteExecutionFailureAsync(ctx, result).ConfigureAwait(false);
+            return;
+        }
+
+        if (!TryBuildResponse(result.ResponseBody, work, out var response, out var responseError))
+        {
+            await CosmosOpsShared.WriteErrorAsync(
+                ctx,
+                StatusCodes.Status500InternalServerError,
+                "InternalServerError",
+                responseError).ConfigureAwait(false);
+            return;
+        }
+
+        await CosmosOpsShared.WriteJsonAsync(
+            ctx,
+            StatusCodes.Status200OK,
+            response!,
+            TransactGetItemsJsonContext.Default.TransactGetItemsResponse)
+            .ConfigureAwait(false);
     }
 
-    private readonly record struct WorkUnit(string Table, string Pk, string Id, Projection? Projection);
-
-    private struct PerItemResult
+    private static bool TryValidateGetMembers(JsonElement get, out string? error)
     {
-        public Dictionary<string, JsonElement>? Item;
-        public HardError? HardError;
+        foreach (var property in get.EnumerateObject())
+        {
+            if (property.Name is not (
+                    "TableName"
+                    or "Key"
+                    or "ProjectionExpression"
+                    or "ExpressionAttributeNames"))
+            {
+                error = $"contains unsupported member '{property.Name}'.";
+                return false;
+            }
+        }
+
+        error = null;
+        return true;
     }
 
-    private readonly record struct HardError(string Code, string Message);
+    private static bool TryReadExpressionAttributeNames(
+        JsonElement element,
+        out IReadOnlyDictionary<string, string>? names,
+        out string? error)
+    {
+        names = null;
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            error = "ExpressionAttributeNames must be a JSON object.";
+            return false;
+        }
+
+        var values = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var property in element.EnumerateObject())
+        {
+            if (property.Value.ValueKind != JsonValueKind.String)
+            {
+                error =
+                    $"ExpressionAttributeNames['{property.Name}'] must be a string.";
+                return false;
+            }
+            values[property.Name] = property.Value.GetString()!;
+        }
+
+        names = values;
+        error = null;
+        return true;
+    }
+
+    private static bool TryFindUnused(
+        IReadOnlyDictionary<string, string>? declared,
+        IReadOnlySet<string> consumed,
+        out string? unused)
+    {
+        if (declared is not null)
+        {
+            foreach (var key in declared.Keys)
+            {
+                if (!consumed.Contains(key))
+                {
+                    unused = key;
+                    return true;
+                }
+            }
+        }
+
+        unused = null;
+        return false;
+    }
+
+    private static bool TryBuildResponse(
+        string? body,
+        WorkUnit[] work,
+        out TransactGetItemsResponse? response,
+        out string error)
+    {
+        response = null;
+        error = "Snapshot stored procedure returned a malformed positional response.";
+        if (string.IsNullOrEmpty(body))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("items", out var items)
+                || items.ValueKind != JsonValueKind.Array
+                || items.GetArrayLength() != work.Length)
+            {
+                return false;
+            }
+
+            var responses = new List<TransactGetItemResponse>(work.Length);
+            var index = 0;
+            foreach (var itemElement in items.EnumerateArray())
+            {
+                if (itemElement.ValueKind == JsonValueKind.Null)
+                {
+                    responses.Add(new TransactGetItemResponse());
+                    index++;
+                    continue;
+                }
+                if (itemElement.ValueKind != JsonValueKind.Object)
+                {
+                    return false;
+                }
+
+                var item = InferredAttributeStorage.ExtractItem(itemElement);
+                if (item is null)
+                {
+                    return false;
+                }
+                if (work[index].Projection is { } projection)
+                {
+                    item = projection.Apply(item);
+                }
+                responses.Add(new TransactGetItemResponse { Item = item });
+                index++;
+            }
+
+            response = new TransactGetItemsResponse { Responses = responses };
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static Task WriteExecutionFailureAsync(
+        HttpContext ctx,
+        SprocTransactGetResult result)
+    {
+        var code = result.StatusCode switch
+        {
+            StatusCodes.Status429TooManyRequests =>
+                "ProvisionedThroughputExceededException",
+            StatusCodes.Status401Unauthorized or StatusCodes.Status403Forbidden =>
+                "AccessDeniedException",
+            _ => "InternalServerError",
+        };
+        var status = code == "InternalServerError"
+            ? StatusCodes.Status500InternalServerError
+            : StatusCodes.Status400BadRequest;
+        return CosmosOpsShared.WriteErrorAsync(
+            ctx,
+            status,
+            code,
+            string.IsNullOrEmpty(result.ErrorBody)
+                ? "TransactGetItems snapshot execution failed."
+                : result.ErrorBody);
+    }
+
+    private static Task RejectAsync(HttpContext ctx, string message)
+        => CosmosOpsShared.WriteErrorAsync(
+            ctx,
+            StatusCodes.Status400BadRequest,
+            "ValidationException",
+            message);
+
+    private static Task WriteRoutingFailureAsync(
+        HttpContext ctx,
+        CosmosTransactionRouteResolution resolution)
+        => resolution.Status
+            == CosmosTransactionRouteResolutionStatus.InvalidConfiguration
+            ? RejectAsync(ctx, resolution.Error)
+            : resolution.BackendStatus is { } backendStatus
+                ? CosmosOpsShared.WriteCosmosStatusErrorAsync(
+                    ctx,
+                    backendStatus,
+                    resolution.Error)
+                : CosmosOpsShared.WriteErrorAsync(
+                    ctx,
+                    StatusCodes.Status500InternalServerError,
+                    "InternalServerError",
+                    resolution.Error);
+
+    private readonly record struct WorkUnit(string DocumentId, Projection? Projection);
 }

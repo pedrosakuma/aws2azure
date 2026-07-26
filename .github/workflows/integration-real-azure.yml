@@ -78,6 +78,7 @@ on:
           - secretsmanager-basic-lifecycle
           - dynamodb-basic-crud
           - dynamodb-query-scan-indexes
+          - dynamodb-single-partition-transactions
           - sqs-standard-messaging
           - sqs-dlq-redrive
           - sqs-fifo-amqp
@@ -157,11 +158,13 @@ jobs:
           qualification_sha="$(git rev-parse HEAD)"
           qualifying=false
           runtime_mode=source_validation
+          persisted_format_qualification=0
+          rollback_blocker=
           profile=
           if [ "$EVENT_NAME" = workflow_dispatch ] &&
              [ "$QUALIFICATION_PROFILE" != source-validation ]; then
             case "$QUALIFICATION_PROFILE:$SELECTED_SERVICE" in
-              s3-basic-object-crud:s3|secretsmanager-basic-lifecycle:secretsmanager|dynamodb-basic-crud:dynamodb|dynamodb-query-scan-indexes:dynamodb|sqs-standard-messaging:sqs|sqs-dlq-redrive:sqs|sqs-fifo-amqp:sqs|kinesis-single-consumer-per-shard:kinesis)
+              s3-basic-object-crud:s3|secretsmanager-basic-lifecycle:secretsmanager|dynamodb-basic-crud:dynamodb|dynamodb-query-scan-indexes:dynamodb|dynamodb-single-partition-transactions:dynamodb|sqs-standard-messaging:sqs|sqs-dlq-redrive:sqs|sqs-fifo-amqp:sqs|kinesis-single-consumer-per-shard:kinesis)
                 profile="$QUALIFICATION_PROFILE"
                 ;;
               *)
@@ -186,6 +189,17 @@ jobs:
             fi
             qualifying=true
             runtime_mode=candidate
+            if [ "$profile" = dynamodb-single-partition-transactions ]; then
+              rollback_blocker="Transaction rollback qualification is blocked until a trusted prior release implements the same atomic snapshot, validation, and durable ClientRequestToken contract."
+              echo "::warning::$rollback_blocker"
+              {
+                echo
+                echo "## Transaction rollback qualification blocker"
+                echo
+                echo "$rollback_blocker"
+                echo "This run is rollout-only and must emit an inconclusive qualification artifact; it cannot claim rollback success."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
           fi
           {
             echo "qualifying=$qualifying"
@@ -194,6 +208,8 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           {
             echo "AWS2AZURE_SEALED_RUNTIME_MODE=$runtime_mode"
+            echo "AWS2AZURE_DDB_PERSISTED_FORMAT_QUALIFICATION=$persisted_format_qualification"
+            echo "AWS2AZURE_DDB_TRANSACTION_ROLLBACK_BLOCKER=$rollback_blocker"
             echo "AWS2AZURE_QUALIFICATION_SHA=$qualification_sha"
             echo "AWS2AZURE_QUALIFICATION_PROFILE=$profile"
           } >> "$GITHUB_ENV"
@@ -300,6 +316,18 @@ jobs:
           dotnet exec tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll \
             plan-conformance "${args[@]}" --output "$CONFORMANCE_PLAN"
 
+          ddb_sproc_mode="$(
+            jq -er '.configuration.dynamo_db_stored_procedure_mode' "$CONFORMANCE_PLAN"
+          )"
+          case "$ddb_sproc_mode" in
+            Disabled|Preferred) ;;
+            *)
+              echo "::error::Unsupported planned DynamoDB stored-procedure mode: $ddb_sproc_mode"
+              exit 1
+              ;;
+          esac
+          echo "AWS2AZURE_DDB_STORED_PROCEDURE_MODE=$ddb_sproc_mode" >> "$GITHUB_ENV"
+
           requires_real_azure="$(
             jq -r 'any(.scenarios[]; .evidence_source == "real_azure")' "$CONFORMANCE_PLAN"
           )"
@@ -318,6 +346,8 @@ jobs:
             echo "- Service: \`$SELECTED_SERVICE\`"
             echo "- Scenario: \`${SELECTED_SCENARIO:-all}\`"
             echo "- Scenarios: $(jq '.scenarios | length' "$CONFORMANCE_PLAN")"
+            echo "- Scenario set: \`$(jq -r '.scenario_set_sha256' "$CONFORMANCE_PLAN")\`"
+            echo "- DynamoDB stored procedures: \`$ddb_sproc_mode\`"
             echo "- Requires real Azure: \`$requires_real_azure\`"
             echo "- Enforce positive real-Azure evidence: \`$require_real_azure\`"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -326,32 +356,13 @@ jobs:
       # require every matrix identity to match exactly (or a theory case with
       # the identity followed by its argument list) before constructing filters.
       - name: Verify planned test discovery
-        run: |
-          failed=0
-          while IFS= read -r project; do
-            discovered="$RUNNER_TEMP/$(basename "$project")-discovered.txt"
-            dotnet test "$project" -c Release --no-build --nologo --list-tests > "$discovered"
-
-            while IFS= read -r identity; do
-              if ! awk -v expected="$identity" '
-                {
-                  line = $0
-                  sub(/^[[:space:]]+/, "", line)
-                  sub(/\r$/, "", line)
-                  if (line == expected || index(line, expected "(") == 1) found = 1
-                }
-                END { exit found ? 0 : 1 }
-              ' "$discovered"; then
-                echo "::error::Planned test was not discovered in $project: $identity"
-                failed=1
-              fi
-            done < <(
-              jq -r --arg project "$project" \
-                '.test_projects[] | select(.project == $project) | .tests[]' \
-                "$CONFORMANCE_PLAN"
-            )
-          done < <(jq -r '.test_projects[].project' "$CONFORMANCE_PLAN")
-          exit "$failed"
+        run: >-
+          dotnet exec
+          tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll
+          validate-conformance-discovery
+          --plan "$CONFORMANCE_PLAN"
+          --configuration Release
+          --no-build
 
       - name: Build planned test filters
         id: filters
@@ -393,6 +404,7 @@ jobs:
             --arg schema_version "1" \
             --arg git_sha "$(git rev-parse HEAD)" \
             --arg region "$AZURE_LOCATION" \
+            --arg dynamodb_stored_procedure_mode "$AWS2AZURE_DDB_STORED_PROCEDURE_MODE" \
             --arg matrix_sha256 "$(sha256sum docs/testing/real-azure-conformance.yaml | cut -d' ' -f1)" \
             --arg bicep_sha256 "$(sha256sum deploy/realazure/main.bicep | cut -d' ' -f1)" \
             --arg workflow_sha256 "$(sha256sum .github/workflows/integration-real-azure.yml | cut -d' ' -f1)" \
@@ -403,7 +415,8 @@ jobs:
               topology: "ephemeral-per-run",
               inputs: {
                 cosmos_database: "dynamodb",
-                event_hub: "kinesis-smoke"
+                event_hub: "kinesis-smoke",
+                dynamodb_stored_procedure_mode: $dynamodb_stored_procedure_mode
               },
               source_digests: {
                 conformance_matrix: ("sha256:" + $matrix_sha256),
@@ -673,17 +686,39 @@ jobs:
             status=1
           else
             verdict="$(sed -n 's/^verdict: //p' "$output" | head -n 1)"
-            if [ "$verdict" != candidate ]; then
-              echo "::error::Sealed correctness must produce verdict 'candidate', not '$verdict'."
-              status=1
+            if [ "$profile" = dynamodb-single-partition-transactions ]; then
+              if [ "$verdict" != inconclusive ]; then
+                echo "::error::Transaction rollback blocker must produce verdict 'inconclusive', not '$verdict'."
+                status=1
+              fi
+              if ! grep -q '^- id: rollback$' "$output"; then
+                echo "::error::Transaction qualification must emit the canonical rollback scenario."
+                status=1
+              fi
+              if [ -e "docs/workloads/approved-runtimes/$profile.yaml" ]; then
+                echo "::error::Blocked transaction qualification must not have an approved runtime ledger."
+                status=1
+              fi
+              {
+                echo "### $profile sealed rollout-only validation"
+                echo
+                echo "- Verdict: \`$verdict\`"
+                echo "- Rollback: blocked; no trusted compatible prior release exists"
+                echo "- Qualification claim: none"
+              } >> "$GITHUB_STEP_SUMMARY"
+            else
+              if [ "$verdict" != candidate ]; then
+                echo "::error::Sealed correctness must produce verdict 'candidate', not '$verdict'."
+                status=1
+              fi
+              {
+                echo "### $profile sealed correctness candidate"
+                echo
+                echo "- Verdict: \`$verdict\`"
+                echo "- Runtime: exact attested producer bytes; no source-built proxy was launched"
+                echo "- Capacity claim: none; three production-shaped load runs are still required"
+              } >> "$GITHUB_STEP_SUMMARY"
             fi
-            {
-              echo "### $profile sealed correctness candidate"
-              echo
-              echo "- Verdict: \`$verdict\`"
-              echo "- Runtime: exact attested producer bytes; no source-built proxy was launched"
-              echo "- Capacity claim: none; three production-shaped load runs are still required"
-            } >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
 
@@ -698,7 +733,7 @@ jobs:
             TestResults/real-azure-conformance/**
             artifacts/real-azure-qualification/runtime-sha256.txt
             artifacts/real-azure-qualification/config-manifest.json
-            artifacts/real-azure-qualification/sealed-runtimes/candidate-runtime.json
+            artifacts/real-azure-qualification/sealed-runtimes/**
             artifacts/real-azure-qualification/candidates/**
           if-no-files-found: error
 

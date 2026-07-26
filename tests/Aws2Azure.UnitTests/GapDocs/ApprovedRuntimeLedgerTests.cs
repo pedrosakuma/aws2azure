@@ -26,11 +26,12 @@ public sealed class ApprovedRuntimeLedgerTests
         Assert.Equal(4, records.Count);
         var approved = records.Where(record => record.Status == "approved").ToArray();
         var bootstrap = records.Where(record => record.Status == "bootstrap").ToArray();
-        // sqs-standard-messaging promoted to approved for issue #626: all four
-        // repository profiles (S3, SecretsManager, DynamoDB, SQS) are now
-        // approved with no remaining bootstrap-only record.
         Assert.Equal(4, approved.Length);
         Assert.Empty(bootstrap);
+        Assert.DoesNotContain(
+            records,
+            record => record.Profile.Id
+                == "dynamodb-single-partition-transactions");
         Assert.All(approved, record =>
         {
             Assert.True(record.Eligibility.RollbackBaselineEligible);
@@ -298,6 +299,25 @@ public sealed class ApprovedRuntimeLedgerTests
         Assert.Contains(errors, error => error.Contains(
             "conflicting artifact or runtime identities",
             StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Blocked_rollback_profile_must_not_have_a_runtime_record()
+    {
+        var profile = Profile("test-profile", 1);
+        profile.SourceFile = "docs/workloads/test-profile.yaml";
+        profile.Evidence.RollbackStatus = "blocked";
+
+        var errors = ApprovedRuntimeLedgerValidator.Validate(
+            [ValidRecord()],
+            [profile],
+            ValidationTime);
+
+        Assert.Contains(
+            errors,
+            error => error.Contains(
+                "must not have an approved-runtime record",
+                StringComparison.Ordinal));
     }
 
     [Fact]

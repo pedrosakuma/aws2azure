@@ -643,7 +643,7 @@ internal static class UpdateItemHandler
         var buf = new PooledByteBufferWriter(128);
         try
         {
-            var span = buf.GetSpan(Encoding.UTF8.GetMaxByteCount(json.Length));
+            var span = buf.GetSpan(Encoding.UTF8.GetByteCount(json));
             buf.Advance(Encoding.UTF8.GetBytes(json, span));
         }
         catch

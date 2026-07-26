@@ -1,67 +1,628 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
 using System.Net;
-using System.Net.Http;
 using System.Text;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
+using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
 using Aws2Azure.Modules.DynamoDb.Operations;
+using Aws2Azure.Modules.DynamoDb.Persistence;
 using Microsoft.AspNetCore.Http;
-using Xunit;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Aws2Azure.UnitTests.DynamoDb;
 
-/// <summary>
-/// Coverage for <see cref="TransactGetItemsHandler"/>:
-/// <list type="bullet">
-///   <item>Fan-out reads with strong consistency and positional Responses alignment.</item>
-///   <item>Missing items emit empty <c>{}</c> entries (not errors).</item>
-///   <item>Any Cosmos non-2xx,non-404 cancels the transaction with
-///   <c>TransactionCanceledException</c> + per-item <c>CancellationReasons</c>.</item>
-///   <item>Validation (100-item cap, missing TableName/Key, key-attr type, missing table).</item>
-///   <item>ProjectionExpression respected.</item>
-/// </list>
-/// </summary>
 [Collection(DynamoDbTestCollection.Name)]
-public class TransactGetItemsHandlerTests
+public sealed class TransactGetItemsHandlerTests
 {
+    private const string MetaPkSk =
+        "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        + "\"tableName\":\"orders\","
+        + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"sk\",\"type\":\"S\"}],"
+        + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
+        + "\"billingMode\":\"PAY_PER_REQUEST\"}";
+
+    private const string MultiWriteAccountJson =
+        """
+        {
+          "enableMultipleWriteLocations": true,
+          "readableLocations": [
+            { "name": "West US", "databaseAccountEndpoint": "https://txn-get-west.documents.azure.com/" },
+            { "name": "East US", "databaseAccountEndpoint": "https://txn-get-east.documents.azure.com/" }
+          ],
+          "writableLocations": [
+            { "name": "West US", "databaseAccountEndpoint": "https://txn-get-west.documents.azure.com/" },
+            { "name": "East US", "databaseAccountEndpoint": "https://txn-get-east.documents.azure.com/" }
+          ]
+        }
+        """;
+
+    private const string MultiWriteLaterOnlyAccountJson =
+        """
+        {
+          "enableMultipleWriteLocations": true,
+          "readableLocations": [
+            { "name": "East US", "databaseAccountEndpoint": "https://txn-get-east.documents.azure.com/" }
+          ],
+          "writableLocations": [
+            { "name": "East US", "databaseAccountEndpoint": "https://txn-get-east.documents.azure.com/" }
+          ]
+        }
+        """;
+
     public TransactGetItemsHandlerTests()
     {
-        // Clear metadata cache at test start to ensure isolation
         CosmosOpsShared.MetadataCache.Clear();
     }
 
-    private static readonly string MetaHashOnly =
-        "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
-        + "\"tableName\":\"orders\","
-        + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"}],"
-        + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}],"
-        + "\"billingMode\":\"PAY_PER_REQUEST\"}";
-
-    private static CosmosClient BuildClient(ScriptedHandler handler)
+    [Fact]
+    public async Task Snapshot_returns_positional_projected_responses_without_point_reads()
     {
-        var http = new AzureHttpClient(handler, ownsHandler: false,
-            new AzureHttpClientOptions { MaxAttempts = 1 });
-        var creds = new CosmosCredentials
+        var first = ItemDocument(
+            "a",
+            "a",
+            "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"},\"v\":{\"N\":\"1\"},\"hidden\":{\"S\":\"x\"}}");
+        var handler = new ScriptedHandler
         {
-            Endpoint = "https://example.documents.azure.com/",
-            PrimaryKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
-            DatabaseName = "main",
+            Responses =
+            {
+                CosmosOk(MetaPkSk),
+                CosmosCreated(),
+                CosmosOk(Snapshot(first, null)),
+            },
         };
-        return new CosmosClient(http, creds, new MasterKeyCosmosAuthenticator(creds.PrimaryKey));
+        var (context, responseBody) = NewContext();
+
+        await RunAsync(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            """
+            {
+              "TransactItems": [
+                {
+                  "Get": {
+                    "TableName": "orders",
+                    "Key": { "pk": { "S": "a" }, "sk": { "S": "1" } },
+                    "ProjectionExpression": "pk, sk, #v",
+                    "ExpressionAttributeNames": { "#v": "v" }
+                  }
+                },
+                {
+                  "Get": {
+                    "TableName": "orders",
+                    "Key": { "pk": { "S": "a" }, "sk": { "S": "2" } }
+                  }
+                }
+              ]
+            }
+            """);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        using var response = JsonDocument.Parse(ReadResponse(responseBody));
+        var items = response.RootElement.GetProperty("Responses");
+        Assert.Equal(2, items.GetArrayLength());
+        var projected = items[0].GetProperty("Item");
+        Assert.Equal("1", projected.GetProperty("v").GetProperty("N").GetString());
+        Assert.False(projected.TryGetProperty("hidden", out _));
+        Assert.False(items[1].TryGetProperty("Item", out _));
+
+        Assert.DoesNotContain(
+            handler.Requests,
+            request => request.Method == HttpMethod.Get
+                && !request.Uri.AbsolutePath.EndsWith(
+                    "/docs/__aws2azure_table_meta__",
+                    StringComparison.Ordinal));
+        var execution = Assert.Single(
+            handler.Requests,
+            request => request.Uri.AbsolutePath.EndsWith(
+                "/sprocs/" + SprocManager.TransactGetSprocId,
+                StringComparison.Ordinal));
+        Assert.Equal(HttpMethod.Post, execution.Method);
+        Assert.Equal("[\"61\"]", execution.Headers["x-ms-documentdb-partitionkey"]);
+        Assert.StartsWith("[[", execution.Body, StringComparison.Ordinal);
     }
 
-    private static (DefaultHttpContext ctx, MemoryStream body) NewCtx()
+    [Fact]
+    public async Task Cross_table_is_rejected_before_any_cosmos_request()
     {
-        var ctx = new DefaultHttpContext();
-        var ms = new MemoryStream();
-        ctx.Response.Body = ms;
-        return (ctx, ms);
+        var handler = new ScriptedHandler();
+        var (context, body) = NewContext();
+
+        await RunAsync(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            """
+            {
+              "TransactItems": [
+                { "Get": { "TableName": "orders", "Key": { "pk": { "S": "a" }, "sk": { "S": "1" } } } },
+                { "Get": { "TableName": "other", "Key": { "pk": { "S": "a" }, "sk": { "S": "2" } } } }
+              ]
+            }
+            """);
+
+        AssertValidation(context, body, "same table");
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Cross_partition_is_rejected_before_snapshot_execution()
+    {
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetaPkSk) },
+        };
+        var (context, body) = NewContext();
+
+        await RunAsync(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            """
+            {
+              "TransactItems": [
+                { "Get": { "TableName": "orders", "Key": { "pk": { "S": "a" }, "sk": { "S": "1" } } } },
+                { "Get": { "TableName": "orders", "Key": { "pk": { "S": "b" }, "sk": { "S": "2" } } } }
+              ]
+            }
+            """);
+
+        AssertValidation(context, body, "partition-key");
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Duplicate_target_is_rejected_before_snapshot_execution()
+    {
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetaPkSk) },
+        };
+        var (context, body) = NewContext();
+        const string request =
+            """
+            {
+              "TransactItems": [
+                { "Get": { "TableName": "orders", "Key": { "pk": { "S": "a" }, "sk": { "S": "1" } } } },
+                { "Get": { "TableName": "orders", "Key": { "pk": { "S": "a" }, "sk": { "S": "1" } } } }
+              ]
+            }
+            """;
+
+        await RunAsync(context, BuildClient(handler), EnabledSproc(), request);
+
+        AssertValidation(context, body, "multiple operations on one item");
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Disabled_stored_procedures_are_rejected()
+    {
+        var handler = new ScriptedHandler();
+        var (context, body) = NewContext();
+
+        await RunAsync(
+            context,
+            BuildClient(handler),
+            new SprocContext(StoredProcedureMode.Disabled, null),
+            SingleGet());
+
+        AssertValidation(context, body, "snapshot");
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Malformed_snapshot_success_response_fails_closed()
+    {
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaPkSk),
+                CosmosCreated(),
+                CosmosOk("{}"),
+            },
+        };
+        var (context, body) = NewContext();
+
+        await RunAsync(context, BuildClient(handler), EnabledSproc(), SingleGet());
+
+        Assert.Equal(StatusCodes.Status500InternalServerError, context.Response.StatusCode);
+        Assert.Contains("malformed", ReadResponse(body), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Snapshot_stays_on_authoritative_write_region_after_failure()
+    {
+        var handler = new ScriptedHandler
+        {
+            AccountTopologyJson = MultiWriteAccountJson,
+            Responses =
+            {
+                CosmosOk(MetaPkSk),
+                CosmosCreated(),
+                CosmosWriteRegionRejected(),
+            },
+        };
+        var cosmos = BuildClient(
+            handler,
+            endpoint: "https://txn-get-global.documents.azure.com/",
+            preferredRegions: ["West US", "East US"]);
+        var sproc = EnabledSproc();
+
+        var (firstContext, _) = NewContext();
+        await RunAsync(firstContext, cosmos, sproc, SingleGet());
+        Assert.Equal(
+            StatusCodes.Status500InternalServerError,
+            firstContext.Response.StatusCode);
+
+        var requestsAfterFailure = handler.Requests.Count;
+        var (retryContext, _) = NewContext();
+        await RunAsync(retryContext, cosmos, sproc, SingleGet());
+
+        Assert.Equal(
+            StatusCodes.Status500InternalServerError,
+            retryContext.Response.StatusCode);
+        Assert.Equal(requestsAfterFailure, handler.Requests.Count);
+        Assert.DoesNotContain(
+            handler.Requests,
+            request => request.Uri.Host
+                == "txn-get-east.documents.azure.com");
+        Assert.All(
+            handler.Requests.Where(request =>
+                request.Uri.AbsolutePath.Contains(
+                    "/sprocs",
+                    StringComparison.Ordinal)),
+            request => Assert.Equal(
+                "txn-get-west.documents.azure.com",
+                request.Uri.Host));
+    }
+
+    [Fact]
+    public async Task Snapshot_never_uses_later_preferred_region()
+    {
+        var handler = new ScriptedHandler
+        {
+            AccountTopologyJson = MultiWriteLaterOnlyAccountJson,
+            Responses = { CosmosOk(MetaPkSk) },
+        };
+        var (context, body) = NewContext();
+
+        await RunAsync(
+            context,
+            BuildClient(
+                handler,
+                endpoint:
+                    "https://txn-get-authority-absent.documents.azure.com/",
+                preferredRegions: ["West US", "East US"]),
+            EnabledSproc(),
+            SingleGet());
+
+        Assert.Equal(
+            StatusCodes.Status500InternalServerError,
+            context.Response.StatusCode);
+        Assert.Contains(
+            "West US",
+            ReadResponse(body),
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            handler.Requests,
+            request => request.Uri.AbsolutePath.Contains(
+                "/sprocs",
+                StringComparison.Ordinal));
+        Assert.Contains(
+            handler.Requests,
+            request => request.Uri.Host
+                == "txn-get-east.documents.azure.com");
+    }
+
+    [Fact]
+    public async Task Misaligned_snapshot_item_count_fails_closed()
+    {
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaPkSk),
+                CosmosCreated(),
+                CosmosOk(Snapshot()),
+            },
+        };
+        var (context, body) = NewContext();
+
+        await RunAsync(context, BuildClient(handler), EnabledSproc(), SingleGet());
+
+        Assert.Equal(StatusCodes.Status500InternalServerError, context.Response.StatusCode);
+        Assert.Contains("positional", ReadResponse(body), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(
+        """{"TransactItems":[{"Get":{"TableName":"orders","Key":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConsistentRead":true}}]}""",
+        "unsupported member")]
+    [InlineData(
+        """{"TransactItems":[{"Get":{"TableName":"orders","Key":{"pk":{"S":"a"},"sk":{"S":"1"}}},"Put":{}}]}""",
+        "unsupported action")]
+    [InlineData(
+        """{"TransactItems":[{"Get":{"TableName":"orders","Key":{"pk":{"S":"a"},"sk":{"S":"1"}},"ExpressionAttributeNames":{"#p":"pk"}}}]}""",
+        "requires ProjectionExpression")]
+    [InlineData(
+        """{"TransactItems":[{"Get":{"TableName":"orders","Key":{"pk":{"S":"a"},"sk":{"S":"1"}}}}],"ReturnConsumedCapacity":"TOTAL"}""",
+        "ReturnConsumedCapacity")]
+    public async Task Unsupported_request_shapes_are_rejected_without_data_reads(
+        string request,
+        string expected)
+    {
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetaPkSk) },
+        };
+        var (context, body) = NewContext();
+
+        await RunAsync(context, BuildClient(handler), EnabledSproc(), request);
+
+        AssertValidation(context, body, expected);
+        Assert.True(handler.Requests.Count <= 1);
+    }
+
+    [Fact]
+    public async Task Unused_projection_alias_is_rejected_before_metadata_io()
+    {
+        var handler = new ScriptedHandler();
+        var (context, body) = NewContext();
+
+        await RunAsync(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            """
+            {
+              "TransactItems": [{
+                "Get": {
+                  "TableName": "orders",
+                  "Key": { "pk": { "S": "a" }, "sk": { "S": "1" } },
+                  "ProjectionExpression": "#pk",
+                  "ExpressionAttributeNames": {
+                    "#pk": "pk",
+                    "#unused": "unused"
+                  }
+                }
+              }]
+            }
+            """);
+
+        AssertValidation(context, body, "#unused");
+        Assert.Contains(
+            "unused",
+            ReadResponse(body),
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Projection_expression_over_encoded_limit_is_rejected_before_metadata_io()
+    {
+        var expression =
+            "a"
+            + new string(
+                ' ',
+                ProjectionExpressionParser.MaxExpressionUtf8Bytes);
+        var request =
+            "{\"TransactItems\":[{\"Get\":{\"TableName\":\"orders\"," +
+            "\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"}}," +
+            "\"ProjectionExpression\":\"" + expression + "\"}}]}";
+        var handler = new ScriptedHandler();
+        var (context, body) = NewContext();
+
+        await RunAsync(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            request);
+
+        AssertValidation(context, body, "4 KiB");
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Overlong_projection_alias_is_rejected_before_metadata_io()
+    {
+        var alias =
+            "#"
+            + new string(
+                'p',
+                ProjectionExpressionParser.MaxPlaceholderUtf8Bytes);
+        var request =
+            "{\"TransactItems\":[{\"Get\":{\"TableName\":\"orders\"," +
+            "\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"}}," +
+            "\"ProjectionExpression\":\"" + alias + "\"," +
+            "\"ExpressionAttributeNames\":{\"" + alias + "\":\"pk\"}}}]}";
+        var handler = new ScriptedHandler();
+        var (context, body) = NewContext();
+
+        await RunAsync(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            request);
+
+        AssertValidation(context, body, "255 bytes");
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(
+        """{"TransactItems":[{"Get":{"TableName":"order\uD800s","Key":{"pk":{"S":"a"},"sk":{"S":"1"}}}}]}""")]
+    [InlineData(
+        """{"TransactItems":[{"Get":{"TableName":"orders","Key":{"pk":{"S":"a"},"sk":{"S":"1"}},"ProjectionExpression":"\uD800"}}]}""")]
+    [InlineData(
+        """{"TransactItems":[{"Get":{"TableName":"orders","Key":{"pk":{"S":"a"},"sk":{"S":"1"}},"ProjectionExpression":"#p","ExpressionAttributeNames":{"\uD800":"pk"}}}]}""")]
+    [InlineData(
+        """{"TransactItems":[{"Get":{"TableName":"orders","Key":{"pk":{"S":"a"},"sk":{"S":"1"}},"ProjectionExpression":"#p","ExpressionAttributeNames":{"#p":"\uD800"}}}]}""")]
+    [InlineData(
+        """{"TransactItems":[{"Get":{"TableName":"orders","Key":{"pk":{"S":"\uD800"},"sk":{"S":"1"}}}}]}""")]
+    public async Task Lone_surrogate_is_a_serialization_error_before_io(
+        string request)
+    {
+        var handler = new ScriptedHandler();
+        var (context, body) = NewContext();
+
+        await RunAsync(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            request);
+
+        Assert.Equal(
+            StatusCodes.Status400BadRequest,
+            context.Response.StatusCode);
+        var response = ReadResponse(body);
+        Assert.Contains(
+            "SerializationException",
+            response,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "valid Unicode",
+            response,
+            StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Missing_table_returns_resource_not_found()
+    {
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosStatus(
+                    HttpStatusCode.NotFound,
+                    "{\"code\":\"NotFound\",\"message\":\"x-ms-substatus: 1003\"}"),
+            },
+        };
+        var (context, body) = NewContext();
+
+        await RunAsync(context, BuildClient(handler), EnabledSproc(), SingleGet());
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("ResourceNotFoundException", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task More_than_100_items_is_rejected_without_cosmos_requests()
+    {
+        var request = new StringBuilder("{\"TransactItems\":[");
+        for (var index = 0; index < 101; index++)
+        {
+            if (index > 0)
+            {
+                request.Append(',');
+            }
+            request.Append(
+                "{\"Get\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"")
+                .Append(index)
+                .Append("\"}}}}");
+        }
+        request.Append("]}");
+        var handler = new ScriptedHandler();
+        var (context, body) = NewContext();
+
+        await RunAsync(
+            context,
+            BuildClient(handler),
+            EnabledSproc(),
+            request.ToString());
+
+        AssertValidation(context, body, "100");
+        Assert.Empty(handler.Requests);
+    }
+
+    private static string SingleGet() =>
+        """
+        {
+          "TransactItems": [
+            {
+              "Get": {
+                "TableName": "orders",
+                "Key": { "pk": { "S": "a" }, "sk": { "S": "1" } }
+              }
+            }
+          ]
+        }
+        """;
+
+    private static string Snapshot(params string?[] documents)
+    {
+        var builder = new StringBuilder("{\"success\":true,\"items\":[");
+        for (var index = 0; index < documents.Length; index++)
+        {
+            if (index > 0)
+            {
+                builder.Append(',');
+            }
+            builder.Append(documents[index] ?? "null");
+        }
+        return builder.Append("]}").ToString();
+    }
+
+    private static string ItemDocument(string id, string partitionKey, string item)
+    {
+        using var document = JsonDocument.Parse(item);
+        return InferredAttributeStorage.BuildCosmosDocument(
+            id,
+            partitionKey,
+            document.RootElement);
+    }
+
+    private static Task RunAsync(
+        DefaultHttpContext context,
+        CosmosClient cosmos,
+        SprocContext? sproc,
+        string request)
+        => TransactGetItemsHandler.HandleTransactGetItemsAsync(
+            context,
+            Encoding.UTF8.GetBytes(request),
+            cosmos,
+            sproc,
+            CancellationToken.None);
+
+    private static SprocContext EnabledSproc()
+        => new(
+            StoredProcedureMode.Preferred,
+            new SprocManager(NullLogger<SprocManager>.Instance));
+
+    private static CosmosClient BuildClient(
+        ScriptedHandler handler,
+        string endpoint = "https://example.documents.azure.com/",
+        IReadOnlyList<string>? preferredRegions = null)
+    {
+        var http = new AzureHttpClient(
+            handler,
+            ownsHandler: false,
+            new AzureHttpClientOptions { MaxAttempts = 1 });
+        var credentials = new CosmosCredentials
+        {
+            Endpoint = endpoint,
+            PrimaryKey =
+                "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+            DatabaseName = "main",
+            PreferredRegions = preferredRegions is null
+                ? null
+                : new List<string>(preferredRegions),
+        };
+        return new CosmosClient(
+            http,
+            credentials,
+            new MasterKeyCosmosAuthenticator(credentials.PrimaryKey));
+    }
+
+    private static (DefaultHttpContext Context, MemoryStream Body) NewContext()
+    {
+        var context = new DefaultHttpContext();
+        var body = new MemoryStream();
+        context.Response.Body = body;
+        return (context, body);
     }
 
     private static string ReadResponse(MemoryStream body)
@@ -70,355 +631,118 @@ public class TransactGetItemsHandlerTests
         return new StreamReader(body).ReadToEnd();
     }
 
+    private static void AssertValidation(
+        DefaultHttpContext context,
+        MemoryStream body,
+        string expected)
+    {
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        var response = ReadResponse(body);
+        Assert.Contains("ValidationException", response);
+        Assert.Contains(expected, response, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static HttpResponseMessage CosmosOk(string body)
-        => new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
-
-    private static HttpResponseMessage CosmosStatus(HttpStatusCode code, string body = "{}")
-        => new(code) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
-
-    private static HttpResponseMessage CosmosOkBinary(string body)
-        => new(HttpStatusCode.OK) { Content = new ByteArrayContent(CosmosBinaryTestEncoder.Encode(body)) };
-
-    private static string ItemDoc(string id, string pk, string itemJson)
-    {
-        using var d = JsonDocument.Parse(itemJson);
-        return Aws2Azure.Modules.DynamoDb.Persistence.InferredAttributeStorage.BuildCosmosDocument(id, pk, d.RootElement);
-    }
-
-    [Fact]
-    public async Task TransactGet_binary_body_byte_identical_to_text()
-    {
-        // Each Get is a single-doc point read (binary-direct ExtractItemFused).
-        // A CosmosBinary GET body must produce a byte-identical response to a
-        // text GET body for a rich-corpus item.
-        string itemA =
-            "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"99\"},"
-            + "\"name\":{\"S\":\"\\\"héllo\\\" <b>&</b> \\uD83D\\uDE00\"},"
-            + "\"bin\":{\"B\":\"AQID\"},\"ss\":{\"SS\":[\"a\",\"b\"]},"
-            + "\"nested\":{\"M\":{\"inner\":{\"L\":[{\"S\":\"z\"},{\"NULL\":true}]}}}}";
-        string docA = ItemDoc("a", "a", itemA);
-        string docB = ItemDoc("b", "b", "{\"pk\":{\"S\":\"b\"},\"v\":{\"N\":\"2\"}}");
-        string req = "{\"TransactItems\":[" +
-            "{\"Get\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}}}}," +
-            "{\"Get\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"b\"}}}}" +
-            "]}";
-
-        async Task<string> Run(Func<string, HttpResponseMessage> wrap)
+        => new(HttpStatusCode.OK)
         {
-            CosmosOpsShared.MetadataCache.Clear();
-            var (ctx, body) = NewCtx();
-            var handler = new ScriptedHandler
-            {
-                Responses = { CosmosOk(MetaHashOnly), wrap(docA), wrap(docB) },
-            };
-            var cosmos = BuildClient(handler);
-            await TransactGetItemsHandler.HandleTransactGetItemsAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
-            Assert.Equal(200, ctx.Response.StatusCode);
-            return ReadResponse(body);
-        }
-
-        string textResp = await Run(d => CosmosOk(d));
-        string binaryResp = await Run(d => CosmosOkBinary(d));
-
-        Assert.Equal(textResp, binaryResp);
-    }
-
-    [Fact]
-    public async Task TransactGet_returns_aligned_responses()
-    {
-        var (ctx, body) = NewCtx();
-        var handler = new ScriptedHandler
-        {
-            Responses =
-            {
-                CosmosOk(MetaHashOnly),
-                CosmosOk(ItemDoc("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"1\"}}")),
-                CosmosOk(ItemDoc("b", "b", "{\"pk\":{\"S\":\"b\"},\"v\":{\"N\":\"2\"}}")),
-            },
+            Content = new StringContent(body, Encoding.UTF8, "application/json"),
         };
-        var cosmos = BuildClient(handler);
-        var req = "{\"TransactItems\":[" +
-            "{\"Get\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}}}}," +
-            "{\"Get\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"b\"}}}}" +
-            "]}";
 
-        await TransactGetItemsHandler.HandleTransactGetItemsAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
-
-        Assert.Equal(200, ctx.Response.StatusCode);
-        using var doc = JsonDocument.Parse(ReadResponse(body));
-        var responses = doc.RootElement.GetProperty("Responses").EnumerateArray();
-        var arr = new List<JsonElement>();
-        foreach (var e in responses) arr.Add(e);
-        Assert.Equal(2, arr.Count);
-        Assert.Equal("1", arr[0].GetProperty("Item").GetProperty("v").GetProperty("N").GetString());
-        Assert.Equal("2", arr[1].GetProperty("Item").GetProperty("v").GetProperty("N").GetString());
-    }
-
-    [Fact]
-    public async Task TransactGet_uses_strong_consistency_on_every_read()
-    {
-        var (ctx, _) = NewCtx();
-        var handler = new ScriptedHandler
+    private static HttpResponseMessage CosmosCreated()
+        => new(HttpStatusCode.Created)
         {
-            Responses =
-            {
-                CosmosOk(MetaHashOnly),
-                CosmosOk(ItemDoc("a", "a", "{\"pk\":{\"S\":\"a\"}}")),
-            },
+            Content = new StringContent("{}", Encoding.UTF8, "application/json"),
         };
-        var cosmos = BuildClient(handler);
-        var req = "{\"TransactItems\":[{\"Get\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}}}}]}";
 
-        await TransactGetItemsHandler.HandleTransactGetItemsAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
-
-        // Last request is the per-key GET (routing id is hex of "a").
-        var docHex = Convert.ToHexStringLower(Encoding.UTF8.GetBytes("a"));
-        var gets = handler.Requests.FindAll(r => r.Method == HttpMethod.Get && r.Uri.AbsolutePath.Contains("/docs/" + docHex));
-        Assert.Single(gets);
-        Assert.Equal("Strong", gets[0].Headers["x-ms-consistency-level"]);
-    }
-
-    [Fact]
-    public async Task TransactGet_missing_item_emits_empty_entry()
-    {
-        var (ctx, body) = NewCtx();
-        var handler = new ScriptedHandler
+    private static HttpResponseMessage CosmosStatus(
+        HttpStatusCode status,
+        string body)
+        => new(status)
         {
-            Responses =
-            {
-                CosmosOk(MetaHashOnly),
-                CosmosStatus(HttpStatusCode.NotFound, "{\"code\":\"NotFound\"}"),
-                CosmosOk(ItemDoc("b", "b", "{\"pk\":{\"S\":\"b\"}}")),
-            },
+            Content = new StringContent(body, Encoding.UTF8, "application/json"),
         };
-        var cosmos = BuildClient(handler);
-        var req = "{\"TransactItems\":[" +
-            "{\"Get\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}}}}," +
-            "{\"Get\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"b\"}}}}" +
-            "]}";
 
-        await TransactGetItemsHandler.HandleTransactGetItemsAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
-
-        Assert.Equal(200, ctx.Response.StatusCode);
-        using var doc = JsonDocument.Parse(ReadResponse(body));
-        var responses = doc.RootElement.GetProperty("Responses");
-        Assert.Equal(2, responses.GetArrayLength());
-        Assert.False(responses[0].TryGetProperty("Item", out _));
-        Assert.True(responses[1].TryGetProperty("Item", out _));
-    }
-
-    [Fact]
-    public async Task TransactGet_hard_error_cancels_with_reasons()
+    private static HttpResponseMessage CosmosWriteRegionRejected()
     {
-        var (ctx, body) = NewCtx();
-        var handler = new ScriptedHandler
-        {
-            Responses =
-            {
-                CosmosOk(MetaHashOnly),
-                CosmosStatus(HttpStatusCode.InternalServerError, "{\"code\":\"Boom\"}"),
-                CosmosOk(ItemDoc("b", "b", "{\"pk\":{\"S\":\"b\"}}")),
-            },
-        };
-        var cosmos = BuildClient(handler);
-        var req = "{\"TransactItems\":[" +
-            "{\"Get\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}}}}," +
-            "{\"Get\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"b\"}}}}" +
-            "]}";
-
-        await TransactGetItemsHandler.HandleTransactGetItemsAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
-
-        Assert.Equal(400, ctx.Response.StatusCode);
-        using var doc = JsonDocument.Parse(ReadResponse(body));
-        Assert.Contains("TransactionCanceledException", doc.RootElement.GetProperty("__type").GetString());
-        var reasons = doc.RootElement.GetProperty("CancellationReasons");
-        Assert.Equal(2, reasons.GetArrayLength());
-        Assert.Equal("InternalServerError", reasons[0].GetProperty("Code").GetString());
-        Assert.Equal("None", reasons[1].GetProperty("Code").GetString());
-    }
-
-    [Fact]
-    public async Task TransactGet_over_100_items_is_rejected()
-    {
-        var (ctx, body) = NewCtx();
-        var cosmos = BuildClient(new ScriptedHandler());
-        var sb = new StringBuilder("{\"TransactItems\":[");
-        for (int i = 0; i < 101; i++)
-        {
-            if (i > 0) sb.Append(',');
-            sb.Append("{\"Get\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"k").Append(i).Append("\"}}}}");
-        }
-        sb.Append("]}");
-
-        await TransactGetItemsHandler.HandleTransactGetItemsAsync(ctx, Encoding.UTF8.GetBytes(sb.ToString()), cosmos, default);
-
-        Assert.Equal(400, ctx.Response.StatusCode);
-        Assert.Contains("100", ReadResponse(body));
-    }
-
-    [Fact]
-    public async Task TransactGet_missing_TableName_is_rejected()
-    {
-        var (ctx, _) = NewCtx();
-        var cosmos = BuildClient(new ScriptedHandler());
-        var req = "{\"TransactItems\":[{\"Get\":{\"Key\":{\"pk\":{\"S\":\"a\"}}}}]}";
-
-        await TransactGetItemsHandler.HandleTransactGetItemsAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
-
-        Assert.Equal(400, ctx.Response.StatusCode);
-    }
-
-    [Fact]
-    public async Task TransactGet_missing_Key_is_rejected()
-    {
-        var (ctx, _) = NewCtx();
-        var cosmos = BuildClient(new ScriptedHandler());
-        var req = "{\"TransactItems\":[{\"Get\":{\"TableName\":\"orders\"}}]}";
-
-        await TransactGetItemsHandler.HandleTransactGetItemsAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
-
-        Assert.Equal(400, ctx.Response.StatusCode);
-    }
-
-    [Fact]
-    public async Task TransactGet_table_not_found_is_rejected()
-    {
-        var (ctx, body) = NewCtx();
-        var handler = new ScriptedHandler
-        {
-            Responses =
-            {
-                CosmosStatus(HttpStatusCode.NotFound,
-                    "{\"code\":\"NotFound\",\"message\":\"x-ms-substatus: 1003\"}"),
-            },
-        };
-        var cosmos = BuildClient(handler);
-        var req = "{\"TransactItems\":[{\"Get\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}}}}]}";
-
-        await TransactGetItemsHandler.HandleTransactGetItemsAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
-
-        Assert.Equal(400, ctx.Response.StatusCode);
-        Assert.Contains("ResourceNotFoundException", ReadResponse(body));
-    }
-
-    [Fact]
-    public async Task TransactGet_projection_filters_attributes()
-    {
-        var (ctx, body) = NewCtx();
-        var handler = new ScriptedHandler
-        {
-            Responses =
-            {
-                CosmosOk(MetaHashOnly),
-                CosmosOk(ItemDoc("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"1\"},\"x\":{\"S\":\"hidden\"}}")),
-            },
-        };
-        var cosmos = BuildClient(handler);
-        var req = "{\"TransactItems\":[" +
-            "{\"Get\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}},\"ProjectionExpression\":\"pk,v\"}}" +
-            "]}";
-
-        await TransactGetItemsHandler.HandleTransactGetItemsAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
-
-        Assert.Equal(200, ctx.Response.StatusCode);
-        var text = ReadResponse(body);
-        Assert.DoesNotContain("hidden", text);
-        Assert.Contains("\"v\"", text);
-    }
-
-    [Fact]
-    public async Task TransactGet_empty_items_is_rejected()
-    {
-        var (ctx, _) = NewCtx();
-        var cosmos = BuildClient(new ScriptedHandler());
-
-        await TransactGetItemsHandler.HandleTransactGetItemsAsync(ctx, Encoding.UTF8.GetBytes("{\"TransactItems\":[]}"), cosmos, default);
-
-        Assert.Equal(400, ctx.Response.StatusCode);
-    }
-
-    [Fact]
-    public async Task TransactGet_malformed_json_is_rejected()
-    {
-        var (ctx, body) = NewCtx();
-        var cosmos = BuildClient(new ScriptedHandler());
-
-        await TransactGetItemsHandler.HandleTransactGetItemsAsync(ctx, Encoding.UTF8.GetBytes("{"), cosmos, default);
-
-        Assert.Equal(400, ctx.Response.StatusCode);
-        Assert.Contains("SerializationException", ReadResponse(body));
-    }
-
-    [Fact]
-    public async Task TransactGet_rejects_non_string_ExpressionAttributeName_value()
-    {
-        var (ctx, body) = NewCtx();
-        var handler = new ScriptedHandler { Responses = { CosmosOk(MetaHashOnly) } };
-        var cosmos = BuildClient(handler);
-        var req = "{\"TransactItems\":[" +
-            "{\"Get\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}}," +
-            "\"ProjectionExpression\":\"#a\",\"ExpressionAttributeNames\":{\"#a\":1}}}" +
-            "]}";
-
-        await TransactGetItemsHandler.HandleTransactGetItemsAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
-
-        Assert.Equal(400, ctx.Response.StatusCode);
-        var text = ReadResponse(body);
-        Assert.Contains("ValidationException", text);
-        Assert.Contains("ExpressionAttributeNames", text);
-    }
-
-    [Fact]
-    public async Task TransactGet_rejects_non_object_ExpressionAttributeNames()
-    {
-        var (ctx, body) = NewCtx();
-        var handler = new ScriptedHandler { Responses = { CosmosOk(MetaHashOnly) } };
-        var cosmos = BuildClient(handler);
-        var req = "{\"TransactItems\":[" +
-            "{\"Get\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}}," +
-            "\"ProjectionExpression\":\"#a\",\"ExpressionAttributeNames\":\"oops\"}}" +
-            "]}";
-
-        await TransactGetItemsHandler.HandleTransactGetItemsAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
-
-        Assert.Equal(400, ctx.Response.StatusCode);
-        Assert.Contains("ValidationException", ReadResponse(body));
+        var response = CosmosStatus(HttpStatusCode.Forbidden, "{}");
+        response.Headers.TryAddWithoutValidation("x-ms-substatus", "3");
+        return response;
     }
 
     private sealed class ScriptedHandler : HttpMessageHandler
     {
-        public List<HttpResponseMessage> Responses { get; } = new();
-        public List<CapturedRequest> Requests { get; } = new();
+        public List<HttpResponseMessage> Responses { get; } = [];
+        public List<CapturedRequest> Requests { get; } = [];
+        public string? AccountTopologyJson { get; init; }
 
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
         {
-            string? bodyText = null;
+            if (request.Method == HttpMethod.Get
+                && request.RequestUri!.AbsolutePath == "/")
+            {
+                return CosmosOk(
+                    AccountTopologyJson
+                    ?? SingleWriteAccountJson(request.RequestUri));
+            }
+
+            var body = request.Content is null
+                ? null
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+            var headers = new Dictionary<string, string>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var header in request.Headers)
+            {
+                headers[header.Key] = string.Join(",", header.Value);
+            }
             if (request.Content is not null)
             {
-                bodyText = await request.Content.ReadAsStringAsync(ct);
+                foreach (var header in request.Content.Headers)
+                {
+                    headers[header.Key] = string.Join(",", header.Value);
+                }
             }
-            var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var h in request.Headers) headers[h.Key] = string.Join(",", h.Value);
-            if (request.Content is not null)
+            Requests.Add(new CapturedRequest(
+                request.Method,
+                request.RequestUri!,
+                headers,
+                body));
+
+            if (Responses.Count == 0)
             {
-                foreach (var h in request.Content.Headers) headers[h.Key] = string.Join(",", h.Value);
+                return new HttpResponseMessage(
+                    HttpStatusCode.InternalServerError)
+                {
+                    Content = new StringContent("{}"),
+                };
             }
-            lock (Requests)
-            {
-                Requests.Add(new CapturedRequest(request.Method, request.RequestUri!, headers, bodyText));
-            }
-            HttpResponseMessage? next;
-            lock (Responses)
-            {
-                if (Responses.Count == 0)
-                    return new HttpResponseMessage(HttpStatusCode.InternalServerError);
-                next = Responses[0];
-                Responses.RemoveAt(0);
-            }
-            return next;
+
+            var response = Responses[0];
+            Responses.RemoveAt(0);
+            return response;
+        }
+
+        private static string SingleWriteAccountJson(Uri endpoint)
+        {
+            var accountEndpoint = endpoint.GetLeftPart(UriPartial.Authority) + "/";
+            return $$"""
+                {
+                  "enableMultipleWriteLocations": false,
+                  "readableLocations": [
+                    { "name": "East US", "databaseAccountEndpoint": "{{accountEndpoint}}" }
+                  ],
+                  "writableLocations": [
+                    { "name": "East US", "databaseAccountEndpoint": "{{accountEndpoint}}" }
+                  ]
+                }
+                """;
         }
     }
 
     private sealed record CapturedRequest(
-        HttpMethod Method, Uri Uri, Dictionary<string, string> Headers, string? Body);
+        HttpMethod Method,
+        Uri Uri,
+        Dictionary<string, string> Headers,
+        string? Body);
 }

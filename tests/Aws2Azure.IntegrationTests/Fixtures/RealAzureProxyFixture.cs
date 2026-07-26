@@ -98,6 +98,7 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     private string? _cosmosEndpoint;
     private string? _cosmosKey;
     private string? _cosmosDatabase;
+    private string? _dynamoDbStoredProcedureMode;
 
     private string? _sbNamespace;
     private string? _sbSasKeyName;
@@ -554,6 +555,8 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         _cosmosEndpoint = Env("AZURE_COSMOS_ENDPOINT");
         _cosmosKey = Env("AZURE_COSMOS_KEY");
         _cosmosDatabase = Env("AZURE_COSMOS_DATABASE");
+        _dynamoDbStoredProcedureMode =
+            Env("AWS2AZURE_DDB_STORED_PROCEDURE_MODE");
 
         // Service Bus is supplied as a connection string (the same
         // AZURE_SB_CONNSTR secret the SQS real-Azure job already consumes).
@@ -603,9 +606,9 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         var services = new StringBuilder();
         var azure = new StringBuilder();
         AppendService(services, "s3", BlobConfigured);
-        var dynamoDbServiceOptions = (CosmosConfigured || CosmosWorkloadIdentityConfigured)
-            ? ", \"cosmosBinaryResponses\": true, \"cosmosBinaryRequests\": true, \"enableGlobalSecondaryIndexQueries\": true, \"enableLocalSecondaryIndexNumericOrdering\": true"
-            : string.Empty;
+        var dynamoDbServiceOptions = BuildDynamoDbServiceOptions(
+            CosmosConfigured || CosmosWorkloadIdentityConfigured,
+            _dynamoDbStoredProcedureMode);
         AppendService(services, "dynamodb", CosmosConfigured || CosmosWorkloadIdentityConfigured, dynamoDbServiceOptions);
         AppendService(services, "sqs", ServiceBusConfigured);
         AppendService(services, "sns", ServiceBusConfigured);
@@ -733,6 +736,33 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
               ]
             }
             """;
+    }
+
+    internal static string BuildDynamoDbServiceOptions(
+        bool configured,
+        string? storedProcedureMode)
+    {
+        if (!configured)
+        {
+            return string.Empty;
+        }
+
+        var mode = string.IsNullOrWhiteSpace(storedProcedureMode)
+            ? "Disabled"
+            : storedProcedureMode;
+        if (mode is not ("Disabled" or "Preferred"))
+        {
+            throw new InvalidOperationException(
+                $"Unsupported planned DynamoDB stored-procedure mode '{mode}'.");
+        }
+
+        var storedProcedures = mode == "Preferred"
+            ? ", \"useStoredProcedures\": \"Preferred\""
+            : string.Empty;
+        return ", \"cosmosBinaryResponses\": true, \"cosmosBinaryRequests\": true, "
+            + "\"enableGlobalSecondaryIndexQueries\": true, "
+            + "\"enableLocalSecondaryIndexNumericOrdering\": true"
+            + storedProcedures;
     }
 
     private static void AppendCredential(StringBuilder sb, string accessKey, string secret, string azureBlock)

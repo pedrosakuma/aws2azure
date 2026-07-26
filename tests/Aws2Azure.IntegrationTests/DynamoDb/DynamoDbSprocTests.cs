@@ -24,7 +24,7 @@ public class DynamoDbSprocTests
     // fallback, so its server-side JS can only be validated against real Azure
     // Cosmos DB. These tests skip cleanly when the emulator refuses the sproc.
     private const string SprocUnsupportedReason =
-        "Cosmos emulator lacks server-side script support; validate TransactWriteItems against real Azure Cosmos DB.";
+        "Cosmos emulator lacks server-side script support; validate DynamoDB transactions against real Azure Cosmos DB.";
 
     // The emulator's script limitation surfaces via two distinct code paths
     // depending on the build: older builds reject *provisioning* the sproc (the
@@ -522,6 +522,110 @@ public class DynamoDbSprocTests
 
             Assert.False(await ItemExistsAsync(table, "order-1", "old"));
             Assert.True(await ItemExistsAsync(table, "order-1", "new"));
+        }
+        finally
+        {
+            await DeleteTableAsync(table);
+        }
+    }
+
+    [SkippableFact]
+    public async Task TransactGetItems_SinglePartitionSnapshot_IsAlignedAndProjected()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping DynamoDB sproc test.");
+
+        var table = "tgi" + Guid.NewGuid().ToString("N")[..8];
+        await CreateHashRangeTableAsync(table);
+        try
+        {
+            await ExecuteAndAssertAsync(
+                "PutItem",
+                $$"""
+                {
+                  "TableName": "{{table}}",
+                  "Item": {
+                    "pk": { "S": "order-1" },
+                    "sk": { "S": "left" },
+                    "version": { "S": "7" },
+                    "hidden": { "S": "x" }
+                  }
+                }
+                """,
+                "seed snapshot item");
+
+            var (status, response, _) = await ExecuteWithTimingAsync(
+                "TransactGetItems",
+                $$"""
+                {
+                  "TransactItems": [
+                    { "Get": {
+                        "TableName": "{{table}}",
+                        "Key": { "pk": { "S": "order-1" }, "sk": { "S": "left" } },
+                        "ProjectionExpression": "pk, sk, version"
+                    } },
+                    { "Get": {
+                        "TableName": "{{table}}",
+                        "Key": { "pk": { "S": "order-1" }, "sk": { "S": "missing" } }
+                    } }
+                  ]
+                }
+                """);
+            Skip.If(IsSprocUnsupported(response), SprocUnsupportedReason);
+            Assert.Equal(HttpStatusCode.OK, status);
+            using var document = JsonDocument.Parse(response);
+            var responses = document.RootElement.GetProperty("Responses");
+            Assert.Equal(2, responses.GetArrayLength());
+            var item = responses[0].GetProperty("Item");
+            Assert.Equal(
+                "7",
+                item.GetProperty("version").GetProperty("S").GetString());
+            Assert.False(item.TryGetProperty("hidden", out _));
+            Assert.False(responses[1].TryGetProperty("Item", out _));
+        }
+        finally
+        {
+            await DeleteTableAsync(table);
+        }
+    }
+
+    [SkippableFact]
+    public async Task TransactWriteItems_MissingAttributeNotEqual_RollsBack()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping DynamoDB sproc test.");
+
+        var table = "twi" + Guid.NewGuid().ToString("N")[..8];
+        await CreateHashRangeTableAsync(table);
+        try
+        {
+            var (status, response, _) = await ExecuteWithTimingAsync(
+                "TransactWriteItems",
+                $$"""
+                {
+                  "TransactItems": [
+                    { "Put": {
+                        "TableName": "{{table}}",
+                        "Item": {
+                          "pk": { "S": "order-1" },
+                          "sk": { "S": "conditional" }
+                        },
+                        "ConditionExpression": "missing <> :value",
+                        "ExpressionAttributeValues": { ":value": { "S": "x" } }
+                    } },
+                    { "Put": {
+                        "TableName": "{{table}}",
+                        "Item": {
+                          "pk": { "S": "order-1" },
+                          "sk": { "S": "peer" }
+                        }
+                    } }
+                  ]
+                }
+                """);
+            Skip.If(IsSprocUnsupported(response), SprocUnsupportedReason);
+            Assert.Equal(HttpStatusCode.BadRequest, status);
+            Assert.Contains("ConditionalCheckFailed", response);
+            Assert.False(await ItemExistsAsync(table, "order-1", "conditional"));
+            Assert.False(await ItemExistsAsync(table, "order-1", "peer"));
         }
         finally
         {

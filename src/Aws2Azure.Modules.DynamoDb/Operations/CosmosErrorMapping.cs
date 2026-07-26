@@ -1,4 +1,5 @@
 using System;
+using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -30,8 +31,30 @@ internal static partial class CosmosOpsShared
     public static async Task WriteCosmosErrorAsync(
         HttpContext ctx, HttpResponseMessage cosmosResp, CancellationToken ct)
     {
-        var status = (int)cosmosResp.StatusCode;
-        var (awsStatus, code) = status switch
+        string body = string.Empty;
+        try { body = await cosmosResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false); }
+        catch { }
+        var message = string.IsNullOrEmpty(body) ? cosmosResp.ReasonPhrase ?? "Cosmos request failed." : body;
+        await WriteCosmosStatusErrorAsync(
+            ctx,
+            cosmosResp.StatusCode,
+            message).ConfigureAwait(false);
+    }
+
+    public static Task WriteCosmosStatusErrorAsync(
+        HttpContext ctx,
+        HttpStatusCode statusCode,
+        string message)
+    {
+        var (awsStatus, code) = MapCosmosStatus(statusCode);
+        return WriteErrorAsync(ctx, awsStatus, code, message);
+    }
+
+    private static (int AwsStatus, string Code) MapCosmosStatus(
+        HttpStatusCode statusCode)
+    {
+        var status = (int)statusCode;
+        return status switch
         {
             401 or 403 => (400, "AccessDeniedException"),
             408 => (500, "InternalServerError"),
@@ -40,11 +63,6 @@ internal static partial class CosmosOpsShared
             _ when status >= 500 => (500, "InternalServerError"),
             _ => (400, "ValidationException"),
         };
-        string body = string.Empty;
-        try { body = await cosmosResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false); }
-        catch { }
-        var message = string.IsNullOrEmpty(body) ? cosmosResp.ReasonPhrase ?? "Cosmos request failed." : body;
-        await WriteErrorAsync(ctx, awsStatus, code, message).ConfigureAwait(false);
     }
 
     public static Task WriteErrorAsync(HttpContext ctx, int status, string code, string message)

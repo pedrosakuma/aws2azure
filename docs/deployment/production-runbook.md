@@ -38,6 +38,13 @@ and retain the release-note compatibility matrix with this record.
    [Workload compatibility](../site/workload-compatibility.md).
    For the candidate DynamoDB CRUD contract, also follow the
    [DynamoDB basic CRUD profile guide](../workloads/dynamodb-basic-crud.md).
+   For DynamoDB transactions, follow the
+   [single-partition transaction profile](../workloads/dynamodb-single-partition-transactions.md)
+   and record `target.preferredRegions[0]` as deployment topology: every replica
+   targeting the same multi-write data must use the same authority. This opt-in
+   deliberately trades transaction availability during that region's outage for
+   stable snapshot/idempotency history; later preferred regions are not
+   transaction failover targets.
 2. Inventory every AWS operation the application calls, including startup,
    health, cleanup, retry, and rarely used administrative paths. Confirm each
    operation and required sub-feature in the

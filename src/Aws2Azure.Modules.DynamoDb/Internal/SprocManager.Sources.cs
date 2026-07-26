@@ -148,6 +148,218 @@ internal sealed partial class SprocManager
     }
 """;
 
+    // Strict evaluator used by atomicTransactWrite_v3/v4/v5. The frozen
+    // atomicWrite_v2 body above keeps its original evaluator and hash.
+    private const string TransactionConditionEvaluatorJs = """
+    function evaluateCondition(ast, doc) {
+        if (!ast) return true;
+        switch (ast.type) {
+            case 'AND':
+                return evaluateCondition(ast.left, doc) && evaluateCondition(ast.right, doc);
+            case 'OR':
+                return evaluateCondition(ast.left, doc) || evaluateCondition(ast.right, doc);
+            case 'NOT':
+                return !evaluateCondition(ast.operand, doc);
+            case 'COMPARE':
+                return evaluateCompare(ast, doc);
+            case 'BETWEEN':
+                return evaluateBetween(ast, doc);
+            case 'IN':
+                return evaluateIn(ast, doc);
+            case 'ATTR_EXISTS':
+                return hasAttr(doc, extractPath(ast.attr));
+            case 'ATTR_NOT_EXISTS':
+                return !hasAttr(doc, extractPath(ast.attr));
+            case 'ATTR_TYPE':
+                return checkAttrType(doc, extractPath(ast.attr), ast.attrType);
+            case 'BEGINS_WITH':
+                var str = readOperand(doc, ast.attr);
+                var prefix = readOperand(doc, ast.prefix);
+                if (!str.exists || !prefix.exists) return false;
+                if (typeof str.value !== 'string'
+                    || typeof prefix.value !== 'string') {
+                    validationError(
+                        'Incorrect operand type for begins_with; both operands must be strings.');
+                }
+                return str.value.indexOf(prefix.value) === 0;
+            default:
+                throw new Error('Unsupported condition AST node: ' + ast.type);
+        }
+    }
+
+    function evaluateCompare(ast, doc) {
+        var left = readOperand(doc, ast.attr);
+        var right = readOperand(doc, ast.value);
+        if (!left.exists || !right.exists) {
+            return false;
+        }
+        if (ast.op === '=' || ast.op === 'EQ' || ast.op === '<>' || ast.op === 'NE') {
+            var equal = sameScalarType(left.value, right.value)
+                && left.value === right.value;
+            return (ast.op === '=' || ast.op === 'EQ') ? equal : !equal;
+        }
+        if (!sameScalarType(left.value, right.value)) {
+            validationError(
+                'Incorrect operand types for ordered comparison; operands must share one scalar type.');
+        }
+        var order = orderedCompare(left.value, right.value);
+        if (order === null) {
+            validationError(
+                'Incorrect operand type for ordered comparison; this transaction profile supports strings only.');
+        }
+        switch (ast.op) {
+            case '<': case 'LT': return order < 0;
+            case '<=': case 'LE': return order <= 0;
+            case '>': case 'GT': return order > 0;
+            case '>=': case 'GE': return order >= 0;
+            default: throw new Error('Unsupported comparison operator: ' + ast.op);
+        }
+    }
+
+    function evaluateBetween(ast, doc) {
+        var value = readOperand(doc, ast.value);
+        var low = readOperand(doc, ast.low);
+        var high = readOperand(doc, ast.high);
+        if (!value.exists || !low.exists || !high.exists) return false;
+        if (!sameScalarType(value.value, low.value)
+            || !sameScalarType(value.value, high.value)) {
+            validationError(
+                'Incorrect operand types for BETWEEN; the value and both bounds must share one scalar type.');
+        }
+        var lowOrder = orderedCompare(value.value, low.value);
+        var highOrder = orderedCompare(value.value, high.value);
+        if (lowOrder === null || highOrder === null) {
+            validationError(
+                'Incorrect operand type for BETWEEN; this transaction profile supports strings only.');
+        }
+        return lowOrder >= 0 && highOrder <= 0;
+    }
+
+    function evaluateIn(ast, doc) {
+        var value = readOperand(doc, ast.attr);
+        if (!value.exists) return false;
+        for (var i = 0; i < ast.values.length; i++) {
+            var candidate = readOperand(doc, ast.values[i]);
+            if (candidate.exists
+                && sameScalarType(value.value, candidate.value)
+                && value.value === candidate.value) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function readOperand(doc, operand) {
+        if (operand && typeof operand === 'object' && 'path' in operand) {
+            if (!hasAttr(doc, operand.path)) return { exists: false };
+            return { exists: true, value: getAttrValue(doc, operand.path) };
+        }
+        if (operand && typeof operand === 'object') {
+            throw new Error('Unsupported condition operand');
+        }
+        return { exists: true, value: operand };
+    }
+
+    function extractPath(operand) {
+        if (operand && typeof operand === 'object' && operand.path) return operand.path;
+        return operand;
+    }
+
+    function sameScalarType(left, right) {
+        if (left === null || right === null) return left === null && right === null;
+        var leftType = typeof left;
+        var rightType = typeof right;
+        if (leftType !== rightType) return false;
+        return leftType === 'string' || leftType === 'number' || leftType === 'boolean';
+    }
+
+    function validationError(message) {
+        throw { a2aValidationError: true, message: message };
+    }
+
+    function orderedCompare(left, right) {
+        if (typeof left !== 'string' || typeof right !== 'string') return null;
+        return compareUtf8(left, right);
+    }
+
+    function compareUtf8(left, right) {
+        var a = utf8Bytes(left);
+        var b = utf8Bytes(right);
+        var length = Math.min(a.length, b.length);
+        for (var i = 0; i < length; i++) {
+            if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+        }
+        return a.length === b.length ? 0 : (a.length < b.length ? -1 : 1);
+    }
+
+    function utf8Bytes(value) {
+        var bytes = [];
+        for (var i = 0; i < value.length; i++) {
+            var code = value.charCodeAt(i);
+            if (code >= 0xD800 && code <= 0xDBFF) {
+                var low = i + 1 < value.length ? value.charCodeAt(i + 1) : 0;
+                if (low >= 0xDC00 && low <= 0xDFFF) {
+                    code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+                    i++;
+                } else {
+                    code = 0xFFFD;
+                }
+            } else if (code >= 0xDC00 && code <= 0xDFFF) {
+                code = 0xFFFD;
+            }
+            if (code < 0x80) {
+                bytes.push(code);
+            } else if (code < 0x800) {
+                bytes.push(0xC0 | (code >> 6), 0x80 | (code & 0x3F));
+            } else if (code < 0x10000) {
+                bytes.push(0xE0 | (code >> 12),
+                    0x80 | ((code >> 6) & 0x3F),
+                    0x80 | (code & 0x3F));
+            } else {
+                bytes.push(0xF0 | (code >> 18),
+                    0x80 | ((code >> 12) & 0x3F),
+                    0x80 | ((code >> 6) & 0x3F),
+                    0x80 | (code & 0x3F));
+            }
+        }
+        return bytes;
+    }
+
+    function getAttrValue(doc, path) {
+        if (!doc) return undefined;
+        var parts = path.split('.');
+        var cur = doc;
+        for (var i = 0; i < parts.length; i++) {
+            if (cur === null || cur === undefined) return undefined;
+            cur = cur[parts[i]];
+        }
+        return cur;
+    }
+
+    function hasAttr(doc, path) {
+        if (!doc) return false;
+        var parts = path.split('.');
+        var cur = doc;
+        for (var i = 0; i < parts.length; i++) {
+            if (cur === null || cur === undefined) return false;
+            if (!Object.prototype.hasOwnProperty.call(cur, parts[i])) return false;
+            cur = cur[parts[i]];
+        }
+        return true;
+    }
+
+    function checkAttrType(doc, path, expectedType) {
+        if (!hasAttr(doc, path)) return false;
+        var val = getAttrValue(doc, path);
+        switch (expectedType) {
+            case 'S': return typeof val === 'string';
+            case 'BOOL': return typeof val === 'boolean';
+            case 'NULL': return val === null;
+            default: throw new Error('Unsupported attribute_type tag: ' + expectedType);
+        }
+    }
+""";
+
     /// <summary>
     /// The JavaScript stored procedure body that executes atomic conditional writes.
     /// Handles PUT, UPDATE, and DELETE operations with optional condition evaluation.
@@ -341,7 +553,9 @@ function atomicWrite(op, docId, payload, conditionAst, updateAst) {
     /// <summary>
     /// Multi-operation stored procedure for <c>TransactWriteItems</c>. Executes
     /// a list of PUT / DELETE / CHECK operations atomically within a single
-    /// logical partition. Algorithm (rollback-safe):
+    /// logical partition. When an idempotency descriptor is present, its
+    /// internal record is committed in the same transaction as the user writes.
+    /// Algorithm (rollback-safe):
     /// <list type="number">
     ///   <item>Read every target document.</item>
     ///   <item>Evaluate every operation's condition. If ANY fails, emit
@@ -355,15 +569,120 @@ function atomicWrite(op, docId, payload, conditionAst, updateAst) {
     /// by the handler and documented as a gap.
     /// </summary>
     internal static readonly string TransactSprocBody = """
-function atomicTransactWrite(operations) {
+function atomicTransactWrite(operations, idempotency) {
     var ctx = getContext();
     var coll = ctx.getCollection();
     var resp = ctx.getResponse();
     var selfLink = coll.getSelfLink();
     var n = operations.length;
     var existing = new Array(n);
+    var lookupNowMs = new Date().getTime();
 
-    readNext(0);
+    if (idempotency === null || idempotency === undefined) {
+        readNext(0);
+    } else {
+        validateIdempotencyInput();
+        readIdempotencyRecord();
+    }
+
+    function validateIdempotencyInput() {
+        if (typeof idempotency.id !== 'string'
+            || typeof idempotency.pk !== 'string'
+            || typeof idempotency.fingerprint !== 'string'
+            || typeof idempotency.windowMs !== 'number'
+            || idempotency.windowMs <= 0
+            || typeof idempotency.cleanupTtlSeconds !== 'number'
+            || idempotency.cleanupTtlSeconds <= 0) {
+            throw new Error('Malformed transaction idempotency descriptor');
+        }
+    }
+
+    function readIdempotencyRecord() {
+        var query = {
+            query: 'SELECT * FROM c WHERE c.id = @id',
+            parameters: [{ name: '@id', value: idempotency.id }]
+        };
+        var accepted = coll.queryDocuments(selfLink, query, {}, function(err, docs) {
+            if (err) throw err;
+            var record = (docs && docs.length > 0) ? docs[0] : null;
+            if (record && record.expiresAtMs > lookupNowMs) {
+                replayOrReject(record);
+                return;
+            }
+            cleanupExpiredRecords();
+        });
+        if (!accepted) throw new Error('idempotency queryDocuments not accepted');
+    }
+
+    function replayOrReject(record) {
+        if (record._a2a !== 'transaction-idempotency-v1'
+            || record._a2a_pk !== idempotency.pk
+            || record.formatVersion !== 1
+            || typeof record.fingerprint !== 'string'
+            || typeof record.createdAtMs !== 'number'
+            || typeof record.expiresAtMs !== 'number') {
+            throw new Error('Malformed transaction idempotency record');
+        }
+        if (record.fingerprint !== idempotency.fingerprint) {
+            resp.setBody({ success: false, idempotencyMismatch: true });
+            return;
+        }
+        if (record.outcome === 'success') {
+            resp.setBody({ success: true, replayed: true });
+            return;
+        }
+        if (record.outcome === 'canceled'
+            && validReasons(record.reasons)) {
+            resp.setBody({
+                success: false,
+                reasons: record.reasons,
+                replayed: true
+            });
+            return;
+        }
+        throw new Error('Unknown transaction idempotency outcome');
+    }
+
+    function validReasons(reasons) {
+        if (!Array.isArray(reasons) || reasons.length !== n) return false;
+        var failed = false;
+        for (var i = 0; i < reasons.length; i++) {
+            if (!reasons[i] || (reasons[i].code !== 'None'
+                && reasons[i].code !== 'ConditionalCheckFailed')) {
+                return false;
+            }
+            if (reasons[i].code === 'ConditionalCheckFailed') failed = true;
+        }
+        return failed;
+    }
+
+    // Token records carry native ttl for containers where TTL is armed. This
+    // bounded partition-local sweep is the fallback for tables where it is not:
+    // each new token removes more expired records than it creates, while an
+    // inactive partition has finite retained state and no continuing growth.
+    function cleanupExpiredRecords() {
+        var query = {
+            query: "SELECT TOP 8 * FROM c WHERE c._a2a = 'transaction-idempotency-v1' AND c.expiresAtMs <= @now",
+            parameters: [{ name: '@now', value: lookupNowMs }]
+        };
+        var accepted = coll.queryDocuments(selfLink, query, {}, function(err, docs) {
+            if (err) throw err;
+            deleteExpiredRecord(docs || [], 0);
+        });
+        if (!accepted) throw new Error('idempotency cleanup query not accepted');
+    }
+
+    function deleteExpiredRecord(docs, i) {
+        if (i >= docs.length) {
+            readNext(0);
+            return;
+        }
+        var accepted = coll.deleteDocument(docs[i]._self, function(err) {
+            if (err) throw err;
+            deleteExpiredRecord(docs, i + 1);
+        });
+        if (!accepted) throw new Error('idempotency cleanup delete not accepted');
+    }
 
     function readNext(i) {
         if (i >= n) { evaluateAndWrite(); return; }
@@ -389,16 +708,50 @@ function atomicTransactWrite(operations) {
         var anyFail = false;
         for (var i = 0; i < n; i++) {
             var cond = operations[i].condition;
-            var pass = (cond === null || cond === undefined) ? true : evaluateCondition(cond, existing[i]);
+            var pass;
+            try {
+                pass = (cond === null || cond === undefined)
+                    ? true
+                    : evaluateCondition(cond, existing[i]);
+            } catch (err) {
+                if (err
+                    && err.a2aValidationError === true
+                    && typeof err.message === 'string') {
+                    resp.setBody({
+                        success: false,
+                        validationError: {
+                            code: 'ValidationException',
+                            message: 'TransactItems[' + i + '] condition validation failed: '
+                                + err.message
+                        }
+                    });
+                    return;
+                }
+                throw err;
+            }
             reasons[i] = pass ? { code: 'None' } : { code: 'ConditionalCheckFailed' };
             if (!pass) anyFail = true;
         }
-        if (anyFail) { resp.setBody({ success: false, reasons: reasons }); return; }
+        if (anyFail) {
+            completeWithIdempotency(
+                'canceled',
+                reasons,
+                function() {
+                    resp.setBody({ success: false, reasons: reasons });
+                });
+            return;
+        }
         writeNext(0);
     }
 
     function writeNext(i) {
-        if (i >= n) { resp.setBody({ success: true }); return; }
+        if (i >= n) {
+            completeWithIdempotency(
+                'success',
+                null,
+                function() { resp.setBody({ success: true }); });
+            return;
+        }
         var op = operations[i];
         if (op.type === 'PUT') {
             var accP = coll.upsertDocument(selfLink, op.doc, function(err) {
@@ -424,7 +777,79 @@ function atomicTransactWrite(operations) {
         }
     }
 
-""" + ConditionEvaluatorJs + """
+    function completeWithIdempotency(outcome, reasons, complete) {
+        if (idempotency === null || idempotency === undefined) {
+            complete();
+            return;
+        }
+        var completionNowMs = new Date().getTime();
+        var record = {
+            id: idempotency.id,
+            _a2a_pk: idempotency.pk,
+            _a2a: 'transaction-idempotency-v1',
+            formatVersion: 1,
+            fingerprint: idempotency.fingerprint,
+            createdAtMs: completionNowMs,
+            expiresAtMs: completionNowMs + idempotency.windowMs,
+            ttl: idempotency.cleanupTtlSeconds,
+            outcome: outcome
+        };
+        if (reasons !== null) record.reasons = reasons;
+        var accepted = coll.upsertDocument(selfLink, record, function(err) {
+            if (err) throw err;
+            complete();
+        });
+        if (!accepted) throw new Error('idempotency upsertDocument not accepted');
+    }
+
+""" + TransactionConditionEvaluatorJs + """
+}
+""";
+
+    /// <summary>
+    /// Read-only single-partition snapshot used by <c>TransactGetItems</c>.
+    /// Every query executes inside one Cosmos stored-procedure transaction, so
+    /// the returned positions observe one coherent committed snapshot.
+    /// </summary>
+    internal static readonly string TransactGetSprocBody = """
+function atomicTransactGet(documentIds) {
+    var ctx = getContext();
+    var coll = ctx.getCollection();
+    var resp = ctx.getResponse();
+    var selfLink = coll.getSelfLink();
+    var items = new Array(documentIds.length);
+
+    readNext(0);
+
+    function readNext(i) {
+        if (i >= documentIds.length) {
+            resp.setBody({ success: true, items: items });
+            return;
+        }
+
+        var query = {
+            query: 'SELECT * FROM c WHERE c.id = @id',
+            parameters: [{ name: '@id', value: documentIds[i] }]
+        };
+        var accepted = coll.queryDocuments(selfLink, query, {}, function(err, docs) {
+            if (err) throw err;
+            var item = (docs && docs.length > 0) ? docs[0] : null;
+            if (item) stripSystemFields(item);
+            items[i] = item;
+            readNext(i + 1);
+        });
+        if (!accepted) throw new Error('queryDocuments not accepted at position ' + i);
+    }
+
+    function stripSystemFields(doc) {
+        delete doc._rid;
+        delete doc._self;
+        delete doc._etag;
+        delete doc._ts;
+        delete doc._attachments;
+        delete doc._lsn;
+        delete doc._metadata;
+    }
 }
 """;
 }

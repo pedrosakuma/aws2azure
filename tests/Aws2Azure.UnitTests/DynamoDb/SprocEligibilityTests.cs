@@ -257,4 +257,244 @@ public class SprocEligibilityTests
             values: new Dictionary<string, JsonElement> { [":i"] = Val("{\"N\":\"1\"}") });
         Assert.False(SprocEligibility.IsEligible(c, u));
     }
+
+    [Fact]
+    public void Transaction_condition_subset_accepts_scalar_top_level_composition()
+    {
+        var condition = Cond(
+            "attribute_exists(version) AND version BETWEEN :lo AND :hi AND begins_with(state, :prefix)",
+            values: new Dictionary<string, JsonElement>
+            {
+                [":lo"] = Val("{\"S\":\"1\"}"),
+                [":hi"] = Val("{\"S\":\"3\"}"),
+                [":prefix"] = Val("{\"S\":\"rea\"}"),
+            });
+
+        Assert.True(
+            SprocEligibility.TryValidateTransactionCondition(
+                condition,
+                out var error),
+            error);
+    }
+
+    [Fact]
+    public void Transaction_certification_condition_composition_is_eligible()
+    {
+        var condition = Cond(
+            "(#text = :wrong OR #text = :mango) "
+            + "AND NOT (#text = :wrong) "
+            + "AND #text BETWEEN :low AND :high "
+            + "AND #text IN (:pear, :mango) "
+            + "AND attribute_exists(#text) "
+            + "AND attribute_not_exists(#missing) "
+            + "AND begins_with(#prefix, :prefix) "
+            + "AND attribute_type(#text, :typeS) "
+            + "AND attribute_type(#flag, :typeBool) "
+            + "AND attribute_type(#nil, :typeNull) "
+            + "AND #flag = :true "
+            + "AND #nil = :null "
+            + "AND #count = :seven "
+            + "AND #count <> :eight "
+            + "AND #count IN (:six, :seven) "
+            + "AND :low < #text "
+            + "AND :seven = #count",
+            names: new Dictionary<string, string>
+            {
+                ["#text"] = "text",
+                ["#missing"] = "missing",
+                ["#prefix"] = "prefix",
+                ["#flag"] = "flag",
+                ["#nil"] = "nil",
+                ["#count"] = "count",
+            },
+            values: new Dictionary<string, JsonElement>
+            {
+                [":wrong"] = Val("{\"S\":\"wrong\"}"),
+                [":mango"] = Val("{\"S\":\"mango\"}"),
+                [":low"] = Val("{\"S\":\"apple\"}"),
+                [":high"] = Val("{\"S\":\"zebra\"}"),
+                [":pear"] = Val("{\"S\":\"pear\"}"),
+                [":prefix"] = Val("{\"S\":\"prefix-\"}"),
+                [":typeS"] = Val("{\"S\":\"S\"}"),
+                [":typeBool"] = Val("{\"S\":\"BOOL\"}"),
+                [":typeNull"] = Val("{\"S\":\"NULL\"}"),
+                [":true"] = Val("{\"BOOL\":true}"),
+                [":null"] = Val("{\"NULL\":true}"),
+                [":six"] = Val("{\"N\":\"6\"}"),
+                [":seven"] = Val("{\"N\":\"7\"}"),
+                [":eight"] = Val("{\"N\":\"8\"}"),
+            });
+
+        Assert.True(
+            SprocEligibility.TryValidateTransactionCondition(
+                condition,
+                out var error),
+            error);
+    }
+
+    [Fact]
+    public void Transaction_condition_subset_rejects_ordered_numeric_comparison()
+    {
+        var condition = Cond(
+            "version > :v",
+            values: new Dictionary<string, JsonElement>
+            {
+                [":v"] = Val("{\"N\":\"1\"}"),
+            });
+
+        Assert.False(
+            SprocEligibility.TryValidateTransactionCondition(
+                condition,
+                out var error));
+        Assert.Contains("strings only", error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("n = :v", "100000000000000000000")]
+    [InlineData("n <> :v", "100000000000000000000")]
+    [InlineData("n > :v", "100000000000000000000")]
+    [InlineData("n = :v", "1e-7")]
+    [InlineData("n <> :v", "1e-7")]
+    [InlineData("n > :v", "1e-7")]
+    [InlineData("n = :v", "0.12345678901234567890123456789012345678")]
+    [InlineData("n <> :v", "0.12345678901234567890123456789012345678")]
+    [InlineData("n > :v", "0.12345678901234567890123456789012345678")]
+    public void Transaction_condition_subset_rejects_numbers_persisted_as_envelopes(
+        string expression,
+        string number)
+    {
+        var condition = Cond(
+            expression,
+            values: new Dictionary<string, JsonElement>
+            {
+                [":v"] = Val($"{{\"N\":\"{number}\"}}"),
+            });
+
+        Assert.False(
+            SprocEligibility.TryValidateTransactionCondition(
+                condition,
+                out _));
+    }
+
+    [Fact]
+    public void Transaction_condition_subset_accepts_number_when_codec_persists_it_bare()
+    {
+        var condition = Cond(
+            "n = :v",
+            values: new Dictionary<string, JsonElement>
+            {
+                [":v"] = Val("{\"N\":\"1e3\"}"),
+            });
+
+        Assert.True(
+            SprocEligibility.TryValidateTransactionCondition(
+                condition,
+                out var error),
+            error);
+    }
+
+    [Fact]
+    public void Transaction_condition_subset_rejects_numeric_between()
+    {
+        var condition = Cond(
+            "version BETWEEN :lo AND :hi",
+            values: new Dictionary<string, JsonElement>
+            {
+                [":lo"] = Val("{\"N\":\"1\"}"),
+                [":hi"] = Val("{\"N\":\"3\"}"),
+            });
+
+        Assert.False(
+            SprocEligibility.TryValidateTransactionCondition(
+                condition,
+                out var error));
+        Assert.Contains("string bounds", error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("m = :v", "{\"M\":{\"x\":{\"S\":\"y\"}}}")]
+    [InlineData("xs = :v", "{\"L\":[{\"S\":\"y\"}]}")]
+    [InlineData("blob = :v", "{\"B\":\"AQID\"}")]
+    [InlineData("tags = :v", "{\"SS\":[\"x\"]}")]
+    [InlineData("n = :v", "{\"N\":\"9007199254740993\"}")]
+    public void Transaction_condition_subset_rejects_non_scalar_or_unsafe_values(
+        string expression,
+        string value)
+    {
+        var condition = Cond(
+            expression,
+            values: new Dictionary<string, JsonElement>
+            {
+                [":v"] = Val(value),
+            });
+
+        Assert.False(
+            SprocEligibility.TryValidateTransactionCondition(
+                condition,
+                out var error));
+        Assert.Contains("scalar", error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("m.x = :v")]
+    [InlineData("xs[0] = :v")]
+    public void Transaction_condition_subset_rejects_nested_paths(string expression)
+    {
+        var condition = Cond(
+            expression,
+            values: new Dictionary<string, JsonElement>
+            {
+                [":v"] = Val("{\"S\":\"y\"}"),
+            });
+
+        Assert.False(
+            SprocEligibility.TryValidateTransactionCondition(
+                condition,
+                out var error));
+        Assert.Contains("top-level", error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Transaction_condition_subset_rejects_path_to_path_comparison()
+    {
+        Assert.False(
+            SprocEligibility.TryValidateTransactionCondition(
+                Cond("left = right"),
+                out var error));
+        Assert.Contains("scalar", error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Transaction_condition_subset_accepts_reversed_scalar_comparison()
+    {
+        var condition = Cond(
+            ":minimum < price",
+            values: new Dictionary<string, JsonElement>
+            {
+                [":minimum"] = Val("{\"S\":\"100\"}"),
+            });
+
+        Assert.True(
+            SprocEligibility.TryValidateTransactionCondition(
+                condition,
+                out var error),
+            error);
+    }
+
+    [Fact]
+    public void Transaction_condition_subset_rejects_cosmos_system_field()
+    {
+        var condition = Cond(
+            "attribute_exists(#field)",
+            names: new Dictionary<string, string>
+            {
+                ["#field"] = "_etag",
+            });
+
+        Assert.False(
+            SprocEligibility.TryValidateTransactionCondition(
+                condition,
+                out var error));
+        Assert.Contains("Cosmos system", error, StringComparison.OrdinalIgnoreCase);
+    }
 }

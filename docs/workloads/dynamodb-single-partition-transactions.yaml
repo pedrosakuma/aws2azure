@@ -1,0 +1,61 @@
+schema_version: 1
+id: dynamodb-single-partition-transactions
+version: 1
+name: DynamoDB single-table single-partition transactions
+minimum_proxy_version: 0.1.0
+real_azure_seal_max_age_days: 90
+operations:
+  - dynamodb:TransactGetItems
+  - dynamodb:TransactWriteItems
+requirements:
+  - dynamodb_single_partition_transactions
+accepted_partial_operations:
+  - dynamodb:TransactGetItems
+  - dynamodb:TransactWriteItems
+accepted_design_gaps:
+  - "dynamodb:Transaction scope is single-partition, single-table"
+  - "dynamodb:Transaction execution has one configured Cosmos authority"
+required_sub_feature_seals:
+  - operation: dynamodb:TransactGetItems
+    sub_feature: Single-table single-partition snapshot
+  - operation: dynamodb:TransactGetItems
+    sub_feature: ProjectionExpression / ExpressionAttributeNames (per item)
+  - operation: dynamodb:TransactWriteItems
+    sub_feature: Atomic Put / Delete / ConditionCheck
+  - operation: dynamodb:TransactWriteItems
+    sub_feature: ConditionExpression transaction subset
+  - operation: dynamodb:TransactWriteItems
+    sub_feature: Positional CancellationReasons
+  - operation: dynamodb:TransactWriteItems
+    sub_feature: ClientRequestToken (idempotency)
+evidence:
+  qualification_artifact: ""
+  rollback_status: blocked
+  rollback_blocker: >-
+    No approved runtime implements the complete atomic snapshot, validation,
+    and durable ClientRequestToken contract, so rollback qualification is
+    inconclusive and this profile has no GA claim.
+  required_scenarios:
+    - representative-load
+    - transaction-snapshot
+    - transaction-region-pinning
+    - transaction-preflight-contracts
+    - transaction-atomicity-rollback
+    - transaction-conditions-cancellation
+    - transaction-scope-rejection
+    - transaction-idempotency
+    - transaction-contention
+    - transaction-restart-versioning
+    - transaction-sproc-body-verification
+    - rollback
+  required_real_azure_scenarios:
+    - representative-load
+    - transaction-snapshot
+    - transaction-atomicity-rollback
+    - transaction-conditions-cancellation
+    - transaction-scope-rejection
+    - transaction-idempotency
+    - transaction-contention
+    - transaction-restart-versioning
+    - transaction-sproc-body-verification
+    - rollback

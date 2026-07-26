@@ -12,6 +12,7 @@ Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned
 | Service | Area | Status |
 |---|---|---|
 | [dynamodb](#dynamodb) | Transaction scope is single-partition, single-table | 🔵 by design |
+| [dynamodb](#dynamodb) | Transaction execution has one configured Cosmos authority | 🔵 by design |
 | [dynamodb](#dynamodb) | Consistency and read-your-writes | 🔵 by design |
 | [dynamodb](#dynamodb) | Throughput and throttling model | 🔵 by design |
 | [dynamodb](#dynamodb) | Secondary indexes (GSI / LSI) | 🟡 partial |
@@ -58,13 +59,30 @@ References:
 
 - <https://learn.microsoft.com/azure/cosmos-db/nosql/stored-procedures-triggers-udfs>
 
+<a id="dynamodb-transaction-execution-has-one-configured-cosmos-authority"></a>
+
+### Transaction execution has one configured Cosmos authority
+
+- **Status:** 🔵 by design
+
+Cosmos stored procedures execute through a writable region. To preserve one atomic snapshot and one durable ClientRequestToken history, every TransactGetItems/TransactWriteItems execution uses one deployment-stable regional authority. On a multi-write account this is exactly target.preferredRegions[0], not the first currently available match. The proxy never replays a transaction in a second independently writable region or through the dynamically routed global account endpoint.
+
+**Impact.** Multi-write deployments must configure the same first preferred region on every replica and binding that targets the same data. Losing that region makes transactions unavailable even if another write region remains healthy; this is the availability cost of preserving one transaction/idempotency authority. Non-transactional routing and read failover are unchanged.
+
+**Workaround.** Prefer a single-write Cosmos account for this profile, or configure an explicit preferredRegions list whose first entry is the intended transaction authority. Restore that region before retrying. Change the first entry only as a coordinated migration after outstanding 10-minute idempotency windows and replication have converged; restarting alone never changes authority.
+
+References:
+
+- <https://learn.microsoft.com/azure/cosmos-db/nosql/how-to-multi-master>
+- <https://learn.microsoft.com/azure/cosmos-db/nosql/stored-procedures-triggers-udfs>
+
 <a id="dynamodb-consistency-and-read-your-writes"></a>
 
 ### Consistency and read-your-writes
 
 - **Status:** 🔵 by design
 
-The proxy issues independent Cosmos REST calls and does not propagate Cosmos session tokens between requests, so read-your-write determinism depends on the account's default consistency level (Strong is required for the conditional-write stored procedures to behave like DynamoDB). ConsistentRead effectiveness is therefore account-dependent.
+Ordinary operations issue independent Cosmos REST calls and do not propagate Cosmos session tokens between requests, so read-your-write determinism depends on the account's default consistency level. Single-partition TransactGetItems is the exception: it executes as one server-side stored-procedure snapshot. ConsistentRead effectiveness for non-transactional reads remains account-dependent.
 
 **Impact.** A DynamoDB client that assumes strong read-your-writes may observe stale reads if the Cosmos account is configured for Session/Eventual consistency. GSI reads are always eventually consistent (ConsistentRead=true is rejected, matching DynamoDB).
 

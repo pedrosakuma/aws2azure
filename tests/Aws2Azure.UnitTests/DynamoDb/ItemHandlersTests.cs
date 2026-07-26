@@ -49,6 +49,14 @@ public class ItemHandlersTests
         + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}],"
         + "\"billingMode\":\"PAY_PER_REQUEST\"}";
 
+    private static readonly string MetadataDocWithGsi =
+        "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        + "\"tableName\":\"orders\",\"creationDateTime\":0,"
+        + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"sk\",\"type\":\"S\"},{\"name\":\"gpk\",\"type\":\"S\"}],"
+        + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
+        + "\"globalSecondaryIndexes\":[{\"indexName\":\"byGlobal\",\"keySchema\":[{\"name\":\"gpk\",\"keyType\":\"HASH\"}],\"projectionType\":\"ALL\"}],"
+        + "\"billingMode\":\"PAY_PER_REQUEST\"}";
+
     private static CosmosClient BuildClient(ScriptedHandler handler, string db = "main")
     {
         var http = new AzureHttpClient(handler, ownsHandler: false,
@@ -208,6 +216,32 @@ public class ItemHandlersTests
         var resp = ReadResponse(body);
         Assert.Contains("ValidationException", resp);
         Assert.Contains("type", resp);
+    }
+
+    [Fact]
+    public async Task PutItem_rejects_invalid_present_secondary_index_key()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataDocWithGsi) },
+        };
+        var cosmos = BuildClient(handler);
+        var req =
+            """{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"},"gpk":{"N":"1"}}}""";
+
+        await ItemHandlers.HandlePutItemAsync(
+            ctx,
+            Encoding.UTF8.GetBytes(req),
+            cosmos,
+            null,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        var response = ReadResponse(body);
+        Assert.Contains("gpk", response, StringComparison.Ordinal);
+        Assert.Contains("declares S", response, StringComparison.Ordinal);
+        Assert.Single(handler.Requests);
     }
 
     [Fact]

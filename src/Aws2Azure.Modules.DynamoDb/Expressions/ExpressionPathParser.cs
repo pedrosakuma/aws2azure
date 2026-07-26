@@ -15,7 +15,8 @@ internal static class ExpressionPathParser
         IReadOnlyList<ExpressionToken> tokens,
         ref int position,
         IReadOnlyDictionary<string, string>? names,
-        AttributeAliasErrorStyle aliasErrorStyle = AttributeAliasErrorStyle.Expression)
+        AttributeAliasErrorStyle aliasErrorStyle = AttributeAliasErrorStyle.Expression,
+        ISet<string>? consumedNames = null)
     {
         var segments = new List<PathSegment>();
         var first = Peek(tokens, position);
@@ -26,7 +27,8 @@ internal static class ExpressionPathParser
         }
         else if (first.Kind == TokenKind.AttributeNameRef)
         {
-            segments.Add(new AttributePathSegment(ResolveAttributeName(first, names, aliasErrorStyle)));
+            segments.Add(new AttributePathSegment(
+                ResolveAttributeName(first, names, aliasErrorStyle, consumedNames)));
             position++;
         }
         else
@@ -48,7 +50,8 @@ internal static class ExpressionPathParser
                 }
                 else if (seg.Kind == TokenKind.AttributeNameRef)
                 {
-                    segments.Add(new AttributePathSegment(ResolveAttributeName(seg, names, aliasErrorStyle)));
+                    segments.Add(new AttributePathSegment(
+                        ResolveAttributeName(seg, names, aliasErrorStyle, consumedNames)));
                     position++;
                 }
                 else
@@ -91,10 +94,21 @@ internal static class ExpressionPathParser
     public static string ResolveAttributeName(
         ExpressionToken token,
         IReadOnlyDictionary<string, string>? names,
-        AttributeAliasErrorStyle aliasErrorStyle = AttributeAliasErrorStyle.Expression)
+        AttributeAliasErrorStyle aliasErrorStyle = AttributeAliasErrorStyle.Expression,
+        ISet<string>? consumedNames = null)
     {
+        if (!ExpressionParameterLimits.TryValidatePlaceholderLength(
+                token.Text,
+                out var placeholderError))
+        {
+            throw new ExpressionSyntaxException(
+                token.Position,
+                placeholderError);
+        }
+
         if (names is not null && names.TryGetValue(token.Text, out var resolved))
         {
+            consumedNames?.Add(token.Text);
             return resolved;
         }
 
@@ -106,14 +120,25 @@ internal static class ExpressionPathParser
 
     public static ValueRefOperand ResolveValueRef(
         ExpressionToken token,
-        IReadOnlyDictionary<string, JsonElement>? values)
+        IReadOnlyDictionary<string, JsonElement>? values,
+        ISet<string>? consumedValues = null)
     {
+        if (!ExpressionParameterLimits.TryValidatePlaceholderLength(
+                token.Text,
+                out var placeholderError))
+        {
+            throw new ExpressionSyntaxException(
+                token.Position,
+                placeholderError);
+        }
+
         if (values is null || !values.TryGetValue(token.Text, out var resolved))
         {
             throw new ExpressionSyntaxException(token.Position,
                 $"An expression attribute value used in expression is not defined; attribute value: {token.Text}");
         }
 
+        consumedValues?.Add(token.Text);
         return new ValueRefOperand(token.Text, resolved);
     }
 

@@ -105,6 +105,28 @@ internal static partial class InferredAttributeStorage
     }
 
     /// <summary>
+    /// Applies the persisted-number codec's exact bare-number decision to a raw
+    /// DynamoDB Number and returns the canonical JSON token when it is eligible.
+    /// Callers that execute against the stored native JSON shape must use this
+    /// gate rather than an approximate JavaScript-safety test.
+    /// </summary>
+    internal static bool TryGetCanonicalBareJsonNumber(
+        string? raw,
+        out string canonical)
+    {
+        canonical = string.Empty;
+        if (string.IsNullOrEmpty(raw)
+            || !TryNormalizeDdbNumber(raw, out canonical, out _, out _)
+            || !CanRoundTripAsBareJsonNumber(canonical))
+        {
+            canonical = string.Empty;
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Normalises a raw DDB Number string to its canonical decimal form
     /// (matching DynamoDB's documented behaviour: strip leading zeros,
     /// strip trailing zeros from the fraction, expand exponent notation

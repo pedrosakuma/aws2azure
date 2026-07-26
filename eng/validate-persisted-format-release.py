@@ -12,7 +12,10 @@ from typing import Any, NoReturn
 
 
 INVENTORY = pathlib.PurePosixPath(
-    "docs/compatibility/dynamodb-persisted-formats-v1.json"
+    "docs/compatibility/dynamodb-persisted-formats-v4.json"
+)
+PREVIOUS_INVENTORY = pathlib.PurePosixPath(
+    "docs/compatibility/dynamodb-persisted-formats-v3.json"
 )
 DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 
@@ -119,7 +122,9 @@ def validate_stored_procedure_immutability(
     candidate_identities = stored_procedure_identities(candidate, "candidate inventory")
     for sproc_id, baseline_hash in baseline_identities.items():
         candidate_hash = candidate_identities.get(sproc_id)
-        if candidate_hash is not None and candidate_hash != baseline_hash:
+        if candidate_hash is None:
+            fail(f"baseline stored-procedure id is missing from candidate: {sproc_id}")
+        if candidate_hash != baseline_hash:
             fail(
                 f"stored-procedure body changed without a new id: {sproc_id}"
             )
@@ -177,6 +182,58 @@ def string_field_value(
     return "".join(parts)
 
 
+def string_constants(source: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for match in re.finditer(
+        r'\bconst\s+string\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*("(?:[^"\\]|\\.)*")\s*;',
+        source,
+    ):
+        values[match.group(1)] = json.loads(match.group(2))
+    for match in re.finditer(
+        r'\bconst\s+string\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*'
+        r'"""\n(.*?)\n([ \t]*)""";',
+        source,
+        flags=re.DOTALL,
+    ):
+        values[match.group(1)] = raw_string_literal(
+            match.group(2),
+            match.group(3),
+            match.group(1),
+        )
+    return values
+
+
+def id_field_value(
+    manager: str,
+    field_name: str,
+    contract_constants: dict[str, str],
+) -> str | None:
+    match = re.search(
+        rf"\b{re.escape(field_name)}\s*=\s*([^;]+);",
+        manager,
+        flags=re.DOTALL,
+    )
+    if match is None:
+        return None
+    expression = " ".join(match.group(1).split())
+    literal = re.fullmatch(r'"(?:[^"\\]|\\.)*"', expression)
+    if literal is not None:
+        return str(json.loads(expression))
+    contract = re.fullmatch(
+        r"DynamoDbPersistedFormatContract\.([A-Za-z_][A-Za-z0-9_]*)",
+        expression,
+    )
+    if contract is not None:
+        value = contract_constants.get(contract.group(1))
+        if value is None:
+            fail(
+                f"baseline persisted-format contract does not declare "
+                f"{contract.group(1)}"
+            )
+        return value
+    fail(f"baseline source declares unsupported id expression for {field_name}")
+
+
 def baseline_stored_procedure_identities(
     baseline_root: pathlib.Path,
 ) -> dict[str, str]:
@@ -184,6 +241,11 @@ def baseline_stored_procedure_identities(
     if inventory_path.exists():
         return stored_procedure_identities(
             load_json(inventory_path), "baseline inventory"
+        )
+    previous_inventory_path = baseline_root / PREVIOUS_INVENTORY
+    if previous_inventory_path.exists():
+        return stored_procedure_identities(
+            load_json(previous_inventory_path), "baseline inventory v1"
         )
 
     manager_path = (
@@ -194,6 +256,10 @@ def baseline_stored_procedure_identities(
         baseline_root
         / "src/Aws2Azure.Modules.DynamoDb/Internal/SprocManager.Sources.cs"
     )
+    contract_path = (
+        baseline_root
+        / "src/Aws2Azure.Modules.DynamoDb/Internal/DynamoDbPersistedFormatContract.cs"
+    )
     try:
         manager = manager_path.read_text(encoding="utf-8")
         sources = sources_path.read_text(encoding="utf-8")
@@ -202,25 +268,37 @@ def baseline_stored_procedure_identities(
             "baseline has neither a persisted-format inventory nor readable "
             f"stored-procedure sources: {error}"
         )
+    try:
+        contract_constants = string_constants(
+            contract_path.read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeError):
+        contract_constants = {}
 
     constants: dict[str, str] = {}
-    if re.search(r"\bConditionEvaluatorJs\s*=", sources):
-        constants["ConditionEvaluatorJs"] = string_field_value(
-            sources, "ConditionEvaluatorJs", {}
-        )
+    for constant_name in (
+        "ConditionEvaluatorJs",
+        "TransactionConditionEvaluatorJs",
+    ):
+        if re.search(rf"\b{constant_name}\s*=", sources):
+            constants[constant_name] = string_field_value(
+                sources, constant_name, {}
+            )
     identities: dict[str, str] = {}
     declarations = (
-        ("SprocId", "SprocBody"),
-        ("TransactSprocId", "TransactSprocBody"),
+        ("SprocId", "SprocBody", False),
+        ("TransactSprocId", "TransactSprocBody", False),
+        ("TransactGetSprocId", "TransactGetSprocBody", True),
     )
-    for id_name, body_name in declarations:
-        id_match = re.search(
-            rf"\b{id_name}\s*=\s*\"([^\"]+)\";",
-            manager,
-        )
-        if id_match is None:
+    for id_name, body_name, optional in declarations:
+        sproc_id = id_field_value(manager, id_name, contract_constants)
+        has_body = re.search(rf"\b{body_name}\s*=", sources) is not None
+        if sproc_id is None and not has_body and optional:
+            continue
+        if sproc_id is None:
             fail(f"baseline source does not declare literal {id_name}")
-        sproc_id = id_match.group(1)
+        if not has_body:
+            fail(f"baseline source does not declare string {body_name}")
         body_hash = hashlib.sha256(
             string_field_value(
                 sources,

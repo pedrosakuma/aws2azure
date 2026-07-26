@@ -39,6 +39,8 @@
     "dynamodb.BatchWriteItem (25 items)":                          { "minThroughputPerSec":   3.0, "maxP99Ms": 3500.0, "maxPeakWorkingSetMb": 400.0, "maxAllocBytesPerOp": 2000000.0 },
     "dynamodb.BatchGetItem (25 items)":                            { "minThroughputPerSec":   0.0, "maxP99Ms":  700.0, "maxPeakWorkingSetMb": 400.0, "maxAllocBytesPerOp": 700000.0 },
     "dynamodb.BatchGetItem (large items)":                         { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
+    "dynamodb.TransactGetItems (10 items, single partition)":      { "emulatorRequired": false, "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
+    "dynamodb.TransactWriteItems (5 puts, single partition)":      { "emulatorRequired": false, "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
     "dynamodb.UpdateItem (SET expression)":                        { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
     "dynamodb.DeleteItem (idempotent)":                            { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
     "dynamodb.CosmosJsonParse (synthetic page)":                   { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },

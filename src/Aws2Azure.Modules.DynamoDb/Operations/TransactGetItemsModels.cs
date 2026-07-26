@@ -22,6 +22,9 @@ internal sealed class TransactGetItem
 {
     [JsonPropertyName("Get")]
     public JsonElement Get { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 internal sealed class TransactGetItemsResponse

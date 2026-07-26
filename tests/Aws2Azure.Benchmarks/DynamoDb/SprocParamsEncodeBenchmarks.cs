@@ -4,6 +4,7 @@ using System.Buffers;
 using System.Collections.Generic;
 using System.Text;
 using Aws2Azure.Benchmarks.DynamoDb.Spike332;
+using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
 using Aws2Azure.Modules.DynamoDb.Operations;
 using Aws2Azure.Modules.DynamoDb.Persistence;
@@ -62,6 +63,7 @@ public class SprocParamsEncodeBenchmarks
     private JsonDocument _document = null!;
     private JsonElement _item;
     private byte[] _itemUtf8 = null!;
+    private ConditionNode _condition = null!;
     private TransactWriteItemsHandler.PreparedOp[] _ops = null!;
 
     [GlobalSetup]
@@ -71,6 +73,10 @@ public class SprocParamsEncodeBenchmarks
         _document = JsonDocument.Parse(json);
         _item = _document.RootElement;
         _itemUtf8 = Encoding.UTF8.GetBytes(json);
+        _condition = ConditionExpressionParser.Parse(
+            "attribute_not_exists(id)",
+            expressionAttributeNames: null,
+            expressionAttributeValues: null);
 
         // Two Put ops + one conditional Delete — a representative transaction.
         _ops =
@@ -117,7 +123,13 @@ public class SprocParamsEncodeBenchmarks
     {
         using var docBuf = ItemHandlers.ItemDocumentBody.CreateText(Id, Pk, _itemUtf8, _item);
         using var buf = new PooledByteBufferWriter(256);
-        SprocManager.WriteSingleWriteParams(buf, SprocOperation.Put, Id, docBuf.Memory, ConditionAst, null);
+        SprocManager.WriteSingleWriteParams(
+            buf,
+            SprocOperation.Put,
+            Id,
+            docBuf.Memory,
+            _condition,
+            null);
         return buf.WrittenMemory.ToArray();
     }
 
@@ -146,7 +158,13 @@ public class SprocParamsEncodeBenchmarks
     {
         using var docBuf = ItemHandlers.ItemDocumentBody.CreateText(Id, Pk, _itemUtf8, _item);
         using var buf = new PooledByteBufferWriter(256);
-        SprocManager.WriteSingleWriteParams(buf, SprocOperation.Put, Id, docBuf.Memory, ConditionAst, null);
+        SprocManager.WriteSingleWriteParams(
+            buf,
+            SprocOperation.Put,
+            Id,
+            docBuf.Memory,
+            _condition,
+            null);
         return buf.WrittenMemory.Length;
     }
 
