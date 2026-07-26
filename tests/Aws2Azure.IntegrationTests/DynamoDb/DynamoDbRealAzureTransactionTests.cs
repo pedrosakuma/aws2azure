@@ -467,146 +467,155 @@ public sealed class DynamoDbRealAzureTransactionTests(
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
         await WithTableAsync(readerClient, async table =>
         {
+            const int itemCount = 72;
+            const int minimumSamples = 12;
+            const int maximumSamples = 36;
+            var sortKeys = Enumerable.Range(0, itemCount)
+                .Select(index => $"item-{index:D2}")
+                .ToArray();
             await WriteVersionAsync(
                 writerClient,
                 table,
                 "snapshot",
+                sortKeys,
                 "0",
                 timeout.Token);
-            var fillerSortKeys = Enumerable.Range(0, 80)
-                .Select(index => $"filler-{index:D2}")
-                .ToArray();
-            await writerClient.TransactWriteItemsAsync(
-                new TransactWriteItemsRequest
-                {
-                    TransactItems = fillerSortKeys
-                        .Select(sort => Put(
-                            table,
-                            "snapshot",
-                            sort,
-                            "stable",
-                            "version"))
-                        .ToList(),
-                },
-                timeout.Token);
 
-            const int samples = 16;
             using var overlap = CancellationTokenSource.CreateLinkedTokenSource(
                 timeout.Token);
-            using var readStarted = new SemaphoreSlim(0);
-            using var writeCommitted = new SemaphoreSlim(0);
-            using var readObserved = new SemaphoreSlim(0);
-            Task<TransactGetItemsResponse>? activeRead = null;
-            var writesStartedDuringRead = 0;
-            var writesCommittedDuringRead = 0;
+            var firstCommit = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var committedVersion = 0;
             var observedVersions = new HashSet<string>(StringComparer.Ordinal);
 
             var writer = Task.Run(async () =>
             {
                 try
                 {
-                    for (var version = 1; version <= samples; version++)
+                    for (var version = 1; ; version++)
                     {
-                        await readStarted.WaitAsync(overlap.Token);
-                        await Task.Delay(10, overlap.Token);
-                        var read = Volatile.Read(ref activeRead);
-                        Assert.NotNull(read);
-                        if (!read.IsCompleted)
-                        {
-                            Interlocked.Increment(
-                                ref writesStartedDuringRead);
-                        }
-
                         await WriteVersionAsync(
                             writerClient,
                             table,
                             "snapshot",
+                            sortKeys,
                             version.ToString(
                                 System.Globalization.CultureInfo.InvariantCulture),
                             overlap.Token);
-                        if (!read.IsCompleted)
-                        {
-                            Interlocked.Increment(
-                                ref writesCommittedDuringRead);
-                        }
-                        writeCommitted.Release();
-                        await readObserved.WaitAsync(overlap.Token);
+                        Volatile.Write(ref committedVersion, version);
+                        firstCommit.TrySetResult();
                     }
                 }
-                catch
+                catch (OperationCanceledException)
+                    when (overlap.IsCancellationRequested)
                 {
+                    firstCommit.TrySetCanceled(overlap.Token);
+                }
+                catch (Exception exception)
+                {
+                    firstCommit.TrySetException(exception);
                     overlap.Cancel();
                     throw;
                 }
-            }, overlap.Token);
+            }, CancellationToken.None);
 
-            var reader = Task.Run(async () =>
+            Exception? samplingFailure = null;
+            Exception? writerFailure = null;
+            try
             {
+                await firstCommit.Task.WaitAsync(overlap.Token);
+                var commitsAtSamplingStart =
+                    Volatile.Read(ref committedVersion);
+                var sampleCount = 0;
+                while (sampleCount < maximumSamples)
+                {
+                    var response = await readerClient.TransactGetItemsAsync(
+                        new TransactGetItemsRequest
+                        {
+                            TransactItems = sortKeys
+                                .Select(sort => Get(
+                                    table,
+                                    "snapshot",
+                                    sort))
+                                .ToList(),
+                        },
+                        overlap.Token);
+
+                    Assert.Equal(itemCount, response.Responses.Count);
+                    var snapshotVersion =
+                        response.Responses[0].Item["version"].S;
+                    for (var index = 0; index < itemCount; index++)
+                    {
+                        var item = response.Responses[index].Item;
+                        Assert.NotEmpty(item);
+                        Assert.Equal("snapshot", item["pk"].S);
+                        Assert.Equal(sortKeys[index], item["sk"].S);
+                        Assert.Equal(snapshotVersion, item["version"].S);
+                        Assert.DoesNotContain("payload", item.Keys);
+                    }
+
+                    Assert.True(
+                        int.TryParse(
+                            snapshotVersion,
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            out _),
+                        $"Snapshot version '{snapshotVersion}' is not numeric.");
+                    observedVersions.Add(snapshotVersion);
+                    sampleCount++;
+
+                    if (sampleCount >= minimumSamples
+                        && Volatile.Read(ref committedVersion)
+                           - commitsAtSamplingStart >= 6
+                        && observedVersions.Count >= 4)
+                    {
+                        break;
+                    }
+                }
+
+                var commitsDuringSampling =
+                    Volatile.Read(ref committedVersion)
+                    - commitsAtSamplingStart;
+                Assert.True(
+                    sampleCount >= minimumSamples,
+                    $"Snapshot sampling completed only {sampleCount} reads.");
+                Assert.True(
+                    commitsDuringSampling >= 6,
+                    $"Only {commitsDuringSampling} writer commits completed " +
+                    "during snapshot sampling.");
+                Assert.True(
+                    observedVersions.Count >= 4,
+                    $"Snapshot sampling observed only " +
+                    $"{observedVersions.Count} distinct committed versions.");
+            }
+            catch (Exception exception)
+            {
+                samplingFailure = exception;
+            }
+            finally
+            {
+                overlap.Cancel();
                 try
                 {
-                    for (var sample = 0; sample < samples; sample++)
-                    {
-                        var items = new List<TransactGetItem>(
-                            fillerSortKeys.Length + 2)
-                        {
-                            Get(table, "snapshot", "left"),
-                        };
-                        items.AddRange(fillerSortKeys.Select(
-                            sort => Get(table, "snapshot", sort)));
-                        items.Add(Get(table, "snapshot", "right"));
-
-                        var read = readerClient.TransactGetItemsAsync(
-                            new TransactGetItemsRequest
-                            {
-                                TransactItems = items,
-                            },
-                            overlap.Token);
-                        Volatile.Write(ref activeRead, read);
-                        readStarted.Release();
-                        await writeCommitted.WaitAsync(overlap.Token);
-
-                        try
-                        {
-                            var response = await read;
-                            Assert.Equal(
-                                fillerSortKeys.Length + 2,
-                                response.Responses.Count);
-                            var left = response.Responses[0].Item;
-                            var right = response.Responses[^1].Item;
-                            Assert.Equal(
-                                left["version"].S,
-                                right["version"].S);
-                            Assert.Equal("left", left["sk"].S);
-                            Assert.Equal("right", right["sk"].S);
-                            Assert.DoesNotContain("payload", left.Keys);
-                            Assert.DoesNotContain("payload", right.Keys);
-                            observedVersions.Add(left["version"].S);
-                        }
-                        finally
-                        {
-                            Volatile.Write(ref activeRead, null);
-                            readObserved.Release();
-                        }
-                    }
+                    await writer;
                 }
-                catch
+                catch (Exception exception)
                 {
-                    overlap.Cancel();
-                    throw;
+                    writerFailure = exception;
                 }
-            }, overlap.Token);
+            }
 
-            await Task.WhenAll(writer, reader);
-            Assert.True(
-                writesStartedDuringRead >= samples / 2,
-                $"Only {writesStartedDuringRead} of {samples} writes started " +
-                "while a TransactGetItems request was still in flight.");
-            Assert.True(
-                writesCommittedDuringRead >= 2,
-                "No meaningful writer/read commit overlap was observed.");
-            Assert.True(
-                observedVersions.Count >= 2,
-                "Snapshot evidence must observe at least two committed versions.");
+            if (writerFailure is not null)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo
+                    .Capture(writerFailure)
+                    .Throw();
+            }
+            if (samplingFailure is not null)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo
+                    .Capture(samplingFailure)
+                    .Throw();
+            }
         }, timeout.Token);
     }
 
@@ -1430,15 +1439,19 @@ public sealed class DynamoDbRealAzureTransactionTests(
         IAmazonDynamoDB client,
         string table,
         string partition,
+        IReadOnlyList<string> sortKeys,
         string version,
         CancellationToken cancellationToken)
         => await client.TransactWriteItemsAsync(new TransactWriteItemsRequest
         {
-            TransactItems =
-            [
-                Put(table, partition, "left", version, "version"),
-                Put(table, partition, "right", version, "version"),
-            ],
+            TransactItems = sortKeys
+                .Select(sort => Put(
+                    table,
+                    partition,
+                    sort,
+                    version,
+                    "version"))
+                .ToList(),
         }, cancellationToken);
 
     private static async Task<bool> TryWinAsync(

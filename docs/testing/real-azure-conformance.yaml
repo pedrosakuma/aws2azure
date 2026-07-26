@@ -269,7 +269,7 @@ services:
         establishes_verification: true
         profiles: [dynamodb-single-partition-transactions]
         requires_dynamo_db_stored_procedures: true
-        description: Barrier-synchronized writer/read overlap keeps wide TransactGetItems requests in flight across committed pair updates, requires at least two observed committed versions, and repeatedly proves each projected left/right pair is internally coherent from one single-partition server-side snapshot.
+        description: A continuously committing writer atomically advances 72 same-partition items while repeated full-set TransactGetItems samples prove positional alignment and one coherent version per response; the sampling interval must span several writer commits and distinct committed versions.
         operations: [TransactGetItems, TransactWriteItems]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Snapshot_reads_never_observe_mixed_transaction_versions
