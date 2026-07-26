@@ -33,7 +33,7 @@ public sealed class DynamoDbRealAzureTransactionLoadQualificationTests(
     private static readonly string[] RequiredScenarioIds =
     [
         "representative-load",
-        "transaction-snapshot",
+        "transaction-read-after-write",
         "transaction-region-pinning",
         "transaction-preflight-contracts",
         "transaction-atomicity-rollback",
@@ -151,10 +151,10 @@ public sealed class DynamoDbRealAzureTransactionLoadQualificationTests(
                 loadEnd));
 
             scenarios.Add(await VerifyScenarioAsync(
-                "transaction-snapshot",
+                "transaction-read-after-write",
                 "TransactGetItems",
                 "real_azure",
-                () => VerifySnapshotAsync(client, table, timeout.Token))
+                () => VerifyReadAfterWriteAsync(client, table, timeout.Token))
                 .ConfigureAwait(false));
             scenarios.Add(await VerifyScenarioAsync(
                 "transaction-preflight-contracts",
@@ -548,95 +548,63 @@ public sealed class DynamoDbRealAzureTransactionLoadQualificationTests(
         }
     }
 
-    private static async Task VerifySnapshotAsync(
+    private static async Task VerifyReadAfterWriteAsync(
         IAmazonDynamoDB client,
         string table,
         CancellationToken cancellationToken)
     {
+        const int sampleCount = 12;
+        var sampleInterval = TimeSpan.FromMilliseconds(200);
         var sortKeys = Enumerable.Range(0, 72)
             .Select(index => $"snapshot-{index:D2}")
             .ToArray();
-        await WriteVersionAsync(
-            client,
-            table,
-            sortKeys,
-            "0",
-            cancellationToken).ConfigureAwait(false);
-        using var overlap = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken);
-        var committedVersion = 0;
-        var firstCommit = new TaskCompletionSource(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-        var writer = Task.Run(async () =>
+        var observed = new HashSet<string>(StringComparer.Ordinal);
+        for (var version = 1; version <= sampleCount; version++)
         {
-            try
-            {
-                for (var version = 1; !overlap.IsCancellationRequested; version++)
+            var expectedVersion = version.ToString(
+                System.Globalization.CultureInfo.InvariantCulture);
+            await WriteVersionAsync(
+                client,
+                table,
+                sortKeys,
+                expectedVersion,
+                cancellationToken).ConfigureAwait(false);
+            var response = await client.TransactGetItemsAsync(
+                new TransactGetItemsRequest
                 {
-                    await WriteVersionAsync(
-                        client,
-                        table,
-                        sortKeys,
-                        version.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                        overlap.Token).ConfigureAwait(false);
-                    Volatile.Write(ref committedVersion, version);
-                    firstCommit.TrySetResult();
-                }
-            }
-            catch (OperationCanceledException) when (overlap.IsCancellationRequested)
+                    TransactItems = sortKeys
+                        .Select(sort => Get(table, Partition, sort))
+                        .ToList(),
+                },
+                cancellationToken).ConfigureAwait(false);
+            if (response.Responses.Count != sortKeys.Length)
             {
-                firstCommit.TrySetCanceled(overlap.Token);
+                throw new InvalidDataException(
+                    "Transactional read returned the wrong item count.");
             }
-            catch (Exception exception)
+            var snapshotVersion = response.Responses[0].Item["version"].S;
+            if (response.Responses.Any(item =>
+                    item.Item["version"].S != snapshotVersion))
             {
-                firstCommit.TrySetException(exception);
-                overlap.Cancel();
-                throw;
+                throw new InvalidDataException(
+                    "Transactional read observed mixed committed versions.");
             }
-        }, CancellationToken.None);
-        try
-        {
-            await firstCommit.Task.WaitAsync(overlap.Token).ConfigureAwait(false);
-            var observed = new HashSet<string>(StringComparer.Ordinal);
-            var startVersion = Volatile.Read(ref committedVersion);
-            var samples = 0;
-            while (samples < 36)
+            if (!string.Equals(
+                    snapshotVersion,
+                    expectedVersion,
+                    StringComparison.Ordinal))
             {
-                var response = await client.TransactGetItemsAsync(
-                    new TransactGetItemsRequest
-                    {
-                        TransactItems = sortKeys
-                            .Select(sort => Get(table, Partition, sort))
-                            .ToList(),
-                    },
-                    overlap.Token).ConfigureAwait(false);
-                if (response.Responses.Count != sortKeys.Length)
-                {
-                    throw new InvalidDataException(
-                        "Transaction snapshot returned the wrong item count.");
-                }
-                var version = response.Responses[0].Item["version"].S;
-                if (response.Responses.Any(item => item.Item["version"].S != version))
-                {
-                    throw new InvalidDataException(
-                        "Transaction snapshot observed mixed committed versions.");
-                }
-                observed.Add(version);
-                samples++;
-                if (samples >= 12
-                    && Volatile.Read(ref committedVersion) - startVersion >= 6
-                    && observed.Count >= 4)
-                {
-                    return;
-                }
+                throw new InvalidDataException(
+                    $"Transactional read returned version '{snapshotVersion}' after committing '{expectedVersion}'.");
             }
-            throw new InvalidDataException(
-                "Transaction snapshot did not span enough committed versions.");
+            observed.Add(snapshotVersion);
+            await Task.Delay(sampleInterval, cancellationToken).ConfigureAwait(false);
         }
-        finally
+
+        if (observed.Count != sampleCount)
         {
-            overlap.Cancel();
-            await writer.ConfigureAwait(false);
+            throw new InvalidDataException(
+                $"Transactional reads observed {observed.Count} of {sampleCount} committed versions.");
         }
     }
 

@@ -162,7 +162,19 @@ later distinct runtime. The provisional serverless calibration uses concurrency
 4 for five-write/ten-read transaction iterations. The initial concurrency-8 run
 [`30208156245`](https://github.com/pedrosakuma/aws2azure/actions/runs/30208156245)
 was non-qualifying after a surfaced `TransactGetItems` 429; it supplied no
-throughput floor and is not promotion evidence. Any future throughput/latency claim must cite that
+throughput floor and is not promotion evidence. The first c=4 qualifying run
+[`30211018893`](https://github.com/pedrosakuma/aws2azure/actions/runs/30211018893)
+also remained non-qualifying: the representative window completed, but the
+subsequent 72-item snapshot correctness probe self-throttled its unpaced
+writer. The load producer now records that follow-up as
+`transaction-read-after-write`: it commits and reads back 12 complete 72-item
+versions sequentially with pacing and no retries. It verifies that each
+transactional read returns exactly the version most recently committed, without
+claiming backend concurrency from client-side timing. Coherent snapshot
+isolation remains established separately by the real-Azure
+`transaction-snapshot` correctness scenario, which runs a continuously
+committing writer during repeated full-set reads. Any 429 still fails the run
+and blocks evidence. Any future throughput/latency claim must cite that
 real-Azure harness run; emulator results from other DynamoDB scenarios do not
 qualify this profile. GA additionally requires three reviewed load runs,
 correctness, rollback, and SLO evidence. The throughput floor remains
