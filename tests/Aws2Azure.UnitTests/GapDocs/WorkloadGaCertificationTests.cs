@@ -18,7 +18,7 @@ public sealed class WorkloadGaCertificationTests
     [InlineData("sqs-standard-messaging.yaml", "ga")]
     [InlineData("dynamodb-basic-crud.yaml", "ga")]
     [InlineData("dynamodb-query-scan-indexes.yaml", "candidate")]
-    [InlineData("dynamodb-single-partition-transactions.yaml", "blocked")]
+    [InlineData("dynamodb-single-partition-transactions.yaml", "conditional")]
     [InlineData("sns-standard-publish-service-bus.yaml", "candidate")]
     [InlineData("sns-standard-publish-event-grid.yaml", "candidate")]
     [InlineData("kinesis-basic-record-ingestion.yaml", "candidate")]
@@ -40,7 +40,7 @@ public sealed class WorkloadGaCertificationTests
     }
 
     [Fact]
-    public void Transaction_profile_is_blocked_without_an_approved_rollback_runtime()
+    public void Transaction_profile_has_bootstrap_but_remains_unqualified()
     {
         var manifest = LoadManifest(
             "dynamodb-single-partition-transactions.yaml");
@@ -52,11 +52,18 @@ public sealed class WorkloadGaCertificationTests
             RepoRoot,
             new DateOnly(2026, 7, 22));
 
-        Assert.Equal("blocked", report.Verdict);
+        Assert.Equal("conditional", report.Verdict);
+        Assert.DoesNotContain(
+            report.Findings,
+            finding => finding.Code is "rollback_runtime_unavailable"
+                or "rollback_blocker_ledger_conflict");
         Assert.Contains(
             report.Findings,
-            finding => finding.Code == "rollback_runtime_unavailable"
+            finding => finding.Code == "sub_feature_real_azure_seal_missing"
                        && finding.Disposition == "blocking");
+        Assert.Empty(manifest.Evidence.QualificationArtifact);
+        Assert.Empty(manifest.Evidence.RollbackStatus);
+        Assert.Empty(manifest.Evidence.RollbackBlocker);
     }
 
     [Fact]

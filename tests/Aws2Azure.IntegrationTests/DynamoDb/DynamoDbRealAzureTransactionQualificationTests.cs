@@ -10,38 +10,47 @@ namespace Aws2Azure.IntegrationTests.DynamoDb;
 public sealed class DynamoDbRealAzureTransactionQualificationTests(
     DynamoDbRealAzureProxyFixture fixture)
 {
+    private const string ProfileId =
+        "dynamodb-single-partition-transactions";
+    private const string BootstrapRuntimeDigest =
+        "sha256:8ed5e089baeacb3e703ffae788a148e6de89f355f97c3fd10e3a74536298314b";
+
     [SkippableFact]
     public async Task Adjacent_runtime_transaction_rollback_is_atomic_and_compatible()
     {
+        var profile = Environment.GetEnvironmentVariable(
+            "AWS2AZURE_QUALIFICATION_PROFILE");
+        Skip.IfNot(
+            string.Equals(profile, ProfileId, StringComparison.Ordinal),
+            "Transaction rollback runs only for its qualifying workload profile.");
         Skip.IfNot(
             fixture.CosmosConfigured,
             "Real Azure Cosmos DB is not configured.");
 
-        var profile = Environment.GetEnvironmentVariable(
-            "AWS2AZURE_QUALIFICATION_PROFILE");
         var runtimeMode = Environment.GetEnvironmentVariable(
             "AWS2AZURE_SEALED_RUNTIME_MODE");
-        if (string.Equals(
-                profile,
-                "dynamodb-single-partition-transactions",
-                StringComparison.Ordinal))
-        {
-            Assert.Equal("candidate", runtimeMode);
-            Assert.False(
-                fixture.SealedRollbackConfigured,
-                "The transaction profile must not load an unqualified prior runtime.");
-            Skip.If(
-                true,
-                Environment.GetEnvironmentVariable(
-                    "AWS2AZURE_DDB_TRANSACTION_ROLLBACK_BLOCKER")
-                ?? "Transaction rollback qualification is blocked until a trusted compatible prior release exists.");
-        }
-        else
-        {
-            Skip.IfNot(
-                fixture.SealedRollbackConfigured,
-                "Exact candidate and prior sealed runtimes are required.");
-        }
+        Assert.Equal(ProfileId, profile);
+        Assert.Equal("rollback", runtimeMode);
+        Assert.True(
+            fixture.SealedCandidateConfigured,
+            "The exact sealed candidate runtime is required.");
+        Assert.True(
+            fixture.SealedRollbackConfigured,
+            "The exact candidate and committed bootstrap prior are required.");
+        Assert.Equal("candidate", fixture.CandidateRuntimeIdentity.Role);
+        Assert.Equal("candidate", fixture.CandidateRuntimeIdentity.Status);
+        Assert.Equal("prior", fixture.PriorRuntimeIdentity.Role);
+        Assert.Equal("bootstrap", fixture.PriorRuntimeIdentity.Status);
+        Assert.True(
+            fixture.PriorRuntimeIdentity.Eligibility.RollbackBaselineEligible);
+        Assert.False(
+            fixture.PriorRuntimeIdentity.Eligibility.PromotionEligible);
+        Assert.Equal(
+            BootstrapRuntimeDigest,
+            fixture.PriorRuntimeIdentity.Runtime.AggregateDigest);
+        Assert.NotEqual(
+            fixture.CandidateRuntimeIdentity.Runtime.AggregateDigest,
+            fixture.PriorRuntimeIdentity.Runtime.AggregateDigest);
 
         var result =
             await RealAzureRollbackQualification.VerifyDynamoDbTransactionsAsync(

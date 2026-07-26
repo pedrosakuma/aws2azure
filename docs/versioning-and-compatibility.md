@@ -212,10 +212,11 @@ cannot be omitted from promotion notes.
 Inventory compatibility is necessary but not sufficient for a workload-profile
 rollback claim. The current `atomicTransactWrite_v2` runtime predates the
 single-partition transaction profile's atomic snapshot and durable
-`ClientRequestToken` contracts, so it is not an approved rollback
-baseline for that profile. Until a distinct compatible release exists, the
-transaction workflow is rollout-only and records rollback as
-skipped/inconclusive rather than successful.
+`ClientRequestToken` contracts, so it remains ineligible for that profile. The
+first complete compatible protected-main runtime is recorded as a rollback-only
+bootstrap. A later distinct sealed runtime must prove exact rollback correctness
+to that bootstrap; correctness alone does not establish operational
+qualification, promotion eligibility, candidate, approved, or GA status.
 
 | Format | Class | Compatibility boundary | Source and tests |
 |---|---|---|---|
