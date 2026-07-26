@@ -1,11 +1,12 @@
 # DynamoDB single-partition transaction profile
 
 This version 1 profile covers `TransactGetItems` and `TransactWriteItems` only
-when every item belongs to one table and one logical partition. Its initial
-verdict is `blocked`: the implementation and discoverable real-Azure tests
-exist, but the canonical rollback requirement has no approved runtime ledger or
-trusted prior release. The new snapshot/write sub-features also have no fresh
-seals, and the qualification artifact is intentionally empty.
+when every item belongs to one table and one logical partition. The first
+complete compatible protected-main runtime is now recorded as a rollback-only
+bootstrap, so compatibility is no longer blocked. The profile remains
+non-qualified: the new snapshot/write sub-features have no committed fresh
+seals, the qualification artifact is intentionally empty, and the bootstrap is
+not promotion eligible.
 
 ## Required topology and configuration
 
@@ -135,14 +136,14 @@ restart, and an isolated same-ID conflicting-body probe that exercises the real
 Cosmos 409/read/verify path and restores the exact v5 body. No new seal is
 committed without an actual workflow run containing those tests.
 
-There is deliberately no approved-runtime ledger for this profile. The
-previously proposed v2 runtime performs independent transaction reads and does
-not implement the profile's durable `ClientRequestToken` contract, so it is not
-a valid bootstrap or rollback target. A sealed workflow run is candidate-only
-and rollout-only: the adjacent-runtime rows skip with the recorded compatibility
-blocker, workload generation must emit `inconclusive`, and the workflow must not
-claim rollback success. Rollback qualification can begin only after a distinct,
-trusted prior release implements this same profile.
+The approved-runtime ledger records protected-main run `30184664479` only as
+the first complete compatible rollback bootstrap. The previously proposed v2
+runtime still performs independent transaction reads and lacks the durable
+`ClientRequestToken` contract, so it remains ineligible. A later distinct
+protected-main runtime can now run exact candidate-to-bootstrap transaction and
+persisted-format rollback correctness against the same Cosmos container.
+Passing that correctness run does not promote either runtime or qualify the
+profile.
 
 ## Performance and qualification boundary
 
@@ -157,5 +158,6 @@ The Cosmos Linux emulator cannot execute stored procedures, so these scenarios
 skip there and require real Azure. Any future throughput/latency claim must cite
 the real-Azure harness run; emulator results from other DynamoDB scenarios do
 not qualify this profile. GA additionally requires reviewed production-shaped
-load, rollback, and SLO evidence. Until a compatible prior release exists,
-operators must treat deployment as rollout-only with no qualified rollback.
+load, rollback, and SLO evidence. The throughput floor remains unresolved, no
+operational qualification artifact exists, and the bootstrap must not be
+treated as candidate, approved, GA, or production promotion evidence.

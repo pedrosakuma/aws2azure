@@ -24,6 +24,7 @@ public sealed class RealAzureTransactionWorkflowTests
         "workloads",
         "approved-runtimes",
         "dynamodb-single-partition-transactions.yaml");
+    private static readonly string Baseline = File.ReadAllText(BaselinePath);
     private static readonly string MigrationTestSource = File.ReadAllText(Path.Combine(
         RepositoryRoot,
         "tests",
@@ -55,7 +56,7 @@ public sealed class RealAzureTransactionWorkflowTests
         "workload-load-real-azure.yml"));
 
     [Fact]
-    public void Transaction_profile_is_discoverable_and_records_rollback_blocker()
+    public void Transaction_profile_resolves_exact_candidate_and_bootstrap_prior()
     {
         Assert.Contains(
             "- dynamodb-single-partition-transactions",
@@ -66,49 +67,57 @@ public sealed class RealAzureTransactionWorkflowTests
             Workflow,
             StringComparison.Ordinal);
         Assert.Contains(
-            "runtime_mode=candidate",
-            Workflow,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "persisted_format_qualification=0",
-            Workflow,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "AWS2AZURE_DDB_TRANSACTION_ROLLBACK_BLOCKER=$rollback_blocker",
-            Workflow,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "rollout-only and must emit an inconclusive qualification artifact",
-            Workflow,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "Transaction rollback blocker must produce verdict 'inconclusive'",
-            Workflow,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "Transaction qualification must emit the canonical rollback scenario",
-            Workflow,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "Blocked transaction qualification must not have an approved runtime ledger",
-            Workflow,
-            StringComparison.Ordinal);
-        Assert.DoesNotContain(
             "runtime_mode=rollback",
             Workflow,
             StringComparison.Ordinal);
-        Assert.DoesNotContain(
+        Assert.Contains(
             "persisted_format_qualification=1",
             Workflow,
             StringComparison.Ordinal);
+        Assert.Contains(
+            "export-approved-runtime \\",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "--profile \"${{ steps.mode.outputs.profile }}\" \\",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "--role candidate",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "--role prior \\",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "--ledger-json \"$prior_ledger\" \\",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "Transaction candidate and bootstrap prior must be distinct at $field.",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "correctness evidence does not make the profile candidate, approved, or GA",
+            Workflow,
+            StringComparison.Ordinal);
         Assert.DoesNotContain(
-            "export-approved-runtime",
+            "AWS2AZURE_DDB_TRANSACTION_ROLLBACK_BLOCKER",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "rollout-only",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "inconclusive",
             Workflow,
             StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Transaction_rollback_blocker_and_exact_body_probe_are_registered()
+    public void Transaction_rollback_correctness_and_exact_body_probe_are_registered()
     {
         Assert.Contains(
             "- id: rollback",
@@ -162,9 +171,24 @@ public sealed class RealAzureTransactionWorkflowTests
             "[Collection(DynamoDbRealAzureLoadCollection.Name)]",
             RollbackTestSource,
             StringComparison.Ordinal);
-        Assert.False(
+        Assert.True(
             File.Exists(BaselinePath),
-            "An incompatible runtime must not be recorded as the transaction rollback baseline.");
+            "The compatible transaction bootstrap must be committed.");
+        Assert.Contains("status: bootstrap", Baseline, StringComparison.Ordinal);
+        Assert.Contains(
+            "rollback_baseline_eligible: true",
+            Baseline,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "promotion_eligible: false",
+            Baseline,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("qualification:", Baseline, StringComparison.Ordinal);
+        Assert.DoesNotContain("revocation:", Baseline, StringComparison.Ordinal);
+        Assert.Contains(
+            "correctness row alone cannot establish operational qualification",
+            Matrix,
+            StringComparison.Ordinal);
     }
 
     [Fact]

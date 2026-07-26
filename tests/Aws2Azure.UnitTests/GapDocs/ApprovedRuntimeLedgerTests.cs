@@ -6,7 +6,7 @@ namespace Aws2Azure.UnitTests.GapDocs;
 public sealed class ApprovedRuntimeLedgerTests
 {
     private static readonly DateTimeOffset ValidationTime =
-        new(2026, 7, 18, 5, 0, 0, TimeSpan.Zero);
+        new(2026, 7, 26, 3, 0, 0, TimeSpan.Zero);
 
     [Fact]
     public void Repository_approved_records_are_valid_and_profile_owned()
@@ -23,15 +23,26 @@ public sealed class ApprovedRuntimeLedgerTests
             ValidationTime);
 
         Assert.Empty(errors);
-        Assert.Equal(4, records.Count);
+        Assert.Equal(5, records.Count);
         var approved = records.Where(record => record.Status == "approved").ToArray();
         var bootstrap = records.Where(record => record.Status == "bootstrap").ToArray();
         Assert.Equal(4, approved.Length);
-        Assert.Empty(bootstrap);
-        Assert.DoesNotContain(
-            records,
-            record => record.Profile.Id
-                == "dynamodb-single-partition-transactions");
+        var transactionBootstrap = Assert.Single(bootstrap);
+        Assert.Equal(
+            "dynamodb-single-partition-transactions",
+            transactionBootstrap.Profile.Id);
+        Assert.True(transactionBootstrap.Eligibility.RollbackBaselineEligible);
+        Assert.False(transactionBootstrap.Eligibility.PromotionEligible);
+        Assert.Null(transactionBootstrap.Qualification);
+        Assert.Null(transactionBootstrap.Revocation);
+        Assert.Contains(
+            "first complete",
+            transactionBootstrap.Approval.Reason,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "not promotion eligible",
+            transactionBootstrap.Approval.Reason,
+            StringComparison.OrdinalIgnoreCase);
         Assert.All(approved, record =>
         {
             Assert.True(record.Eligibility.RollbackBaselineEligible);

@@ -159,7 +159,6 @@ jobs:
           qualifying=false
           runtime_mode=source_validation
           persisted_format_qualification=0
-          rollback_blocker=
           profile=
           if [ "$EVENT_NAME" = workflow_dispatch ] &&
              [ "$QUALIFICATION_PROFILE" != source-validation ]; then
@@ -190,15 +189,8 @@ jobs:
             qualifying=true
             runtime_mode=candidate
             if [ "$profile" = dynamodb-single-partition-transactions ]; then
-              rollback_blocker="Transaction rollback qualification is blocked until a trusted prior release implements the same atomic snapshot, validation, and durable ClientRequestToken contract."
-              echo "::warning::$rollback_blocker"
-              {
-                echo
-                echo "## Transaction rollback qualification blocker"
-                echo
-                echo "$rollback_blocker"
-                echo "This run is rollout-only and must emit an inconclusive qualification artifact; it cannot claim rollback success."
-              } >> "$GITHUB_STEP_SUMMARY"
+              runtime_mode=rollback
+              persisted_format_qualification=1
             fi
           fi
           {
@@ -209,7 +201,6 @@ jobs:
           {
             echo "AWS2AZURE_SEALED_RUNTIME_MODE=$runtime_mode"
             echo "AWS2AZURE_DDB_PERSISTED_FORMAT_QUALIFICATION=$persisted_format_qualification"
-            echo "AWS2AZURE_DDB_TRANSACTION_ROLLBACK_BLOCKER=$rollback_blocker"
             echo "AWS2AZURE_QUALIFICATION_SHA=$qualification_sha"
             echo "AWS2AZURE_QUALIFICATION_PROFILE=$profile"
           } >> "$GITHUB_ENV"
@@ -242,7 +233,7 @@ jobs:
       - name: Build test harness and validation tools
         run: dotnet build -c Release --nologo
 
-      - name: Resolve exact sealed correctness candidate
+      - name: Resolve exact sealed correctness candidate and transaction prior
         if: steps.mode.outputs.qualifying == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -254,7 +245,7 @@ jobs:
           install -d -m 0700 "$PRIVATE_DIR"
           identity_dir="$QUALIFICATION_DIR/sealed-runtimes"
           install -d -m 0700 "$identity_dir"
-          args=(
+          candidate_args=(
             --repository "$GITHUB_REPOSITORY"
             --run-id "$CANDIDATE_RUN_ID"
             --run-attempt "$CANDIDATE_RUN_ATTEMPT"
@@ -268,9 +259,49 @@ jobs:
             --github-env "$GITHUB_ENV"
           )
           if [ -n "$CANDIDATE_ARTIFACT_ID" ]; then
-            args+=(--artifact-id "$CANDIDATE_ARTIFACT_ID")
+            candidate_args+=(--artifact-id "$CANDIDATE_ARTIFACT_ID")
           fi
-          ./eng/resolve-sealed-runtime.sh "${args[@]}"
+          ./eng/resolve-sealed-runtime.sh "${candidate_args[@]}"
+
+          if [ "${{ steps.mode.outputs.profile }}" = dynamodb-single-partition-transactions ]; then
+            gap_docs="tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll"
+            prior_ledger="$identity_dir/prior-ledger.json"
+            dotnet exec "$gap_docs" export-approved-runtime \
+              --profile "${{ steps.mode.outputs.profile }}" \
+              --output "$prior_ledger"
+            chmod 0600 "$prior_ledger"
+
+            prior_run_id="$(jq -er '.record.producer.run_id' "$prior_ledger")"
+            prior_attempt="$(jq -er '.record.producer.run_attempt' "$prior_ledger")"
+            prior_sha="$(jq -er '.record.runtime.source_sha' "$prior_ledger")"
+            prior_ref="$(jq -er '.record.attestation.source_ref' "$prior_ledger")"
+            prior_artifact_id="$(jq -er '.record.artifact.id' "$prior_ledger")"
+            ./eng/resolve-sealed-runtime.sh \
+              --repository "$GITHUB_REPOSITORY" \
+              --run-id "$prior_run_id" \
+              --run-attempt "$prior_attempt" \
+              --expected-sha "$prior_sha" \
+              --expected-ref "$prior_ref" \
+              --profile "${{ steps.mode.outputs.profile }}" \
+              --profile-version 1 \
+              --role prior \
+              --artifact-id "$prior_artifact_id" \
+              --ledger-json "$prior_ledger" \
+              --destination "$PRIVATE_DIR/sealed-prior" \
+              --identity-output "$identity_dir/prior-runtime.json" \
+              --github-env "$GITHUB_ENV"
+
+            candidate_identity="$identity_dir/candidate-runtime.json"
+            prior_identity="$identity_dir/prior-runtime.json"
+            for field in source.sha runtime.aggregate_digest runtime.executable_digest; do
+              candidate_value="$(jq -er ".$field" "$candidate_identity")"
+              prior_value="$(jq -er ".$field" "$prior_identity")"
+              if [ "$candidate_value" = "$prior_value" ]; then
+                echo "::error::Transaction candidate and bootstrap prior must be distinct at $field."
+                exit 1
+              fi
+            done
+          fi
           cp "$PRIVATE_DIR/sealed-candidate/bundle/runtime-sha256.txt" \
             "$QUALIFICATION_DIR/runtime-sha256.txt"
 
@@ -686,39 +717,18 @@ jobs:
             status=1
           else
             verdict="$(sed -n 's/^verdict: //p' "$output" | head -n 1)"
-            if [ "$profile" = dynamodb-single-partition-transactions ]; then
-              if [ "$verdict" != inconclusive ]; then
-                echo "::error::Transaction rollback blocker must produce verdict 'inconclusive', not '$verdict'."
-                status=1
-              fi
-              if ! grep -q '^- id: rollback$' "$output"; then
-                echo "::error::Transaction qualification must emit the canonical rollback scenario."
-                status=1
-              fi
-              if [ -e "docs/workloads/approved-runtimes/$profile.yaml" ]; then
-                echo "::error::Blocked transaction qualification must not have an approved runtime ledger."
-                status=1
-              fi
-              {
-                echo "### $profile sealed rollout-only validation"
-                echo
-                echo "- Verdict: \`$verdict\`"
-                echo "- Rollback: blocked; no trusted compatible prior release exists"
-                echo "- Qualification claim: none"
-              } >> "$GITHUB_STEP_SUMMARY"
-            else
-              if [ "$verdict" != candidate ]; then
-                echo "::error::Sealed correctness must produce verdict 'candidate', not '$verdict'."
-                status=1
-              fi
-              {
-                echo "### $profile sealed correctness candidate"
-                echo
-                echo "- Verdict: \`$verdict\`"
-                echo "- Runtime: exact attested producer bytes; no source-built proxy was launched"
-                echo "- Capacity claim: none; three production-shaped load runs are still required"
-              } >> "$GITHUB_STEP_SUMMARY"
+            if [ "$verdict" != candidate ]; then
+              echo "::error::Sealed correctness must produce verdict 'candidate', not '$verdict'."
+              status=1
             fi
+            {
+              echo "### $profile sealed correctness evidence"
+              echo
+              echo "- Evidence verdict: \`$verdict\`"
+              echo "- Runtime: exact attested producer bytes; no source-built proxy was launched"
+              echo "- Capacity claim: none; three production-shaped load runs are still required"
+              echo "- Promotion claim: none; correctness evidence does not make the profile candidate, approved, or GA"
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
 

@@ -2,12 +2,12 @@ schema_version: 1
 inventory: docs/compatibility/dynamodb-persisted-formats-v4.json
 scenarios:
   - id: adjacent-runtime-rollback
-    qualification_state: blocked
-    blocker: >-
-      No trusted prior release implements the complete single-partition
-      transaction profile. The known v2 runtime uses independent reads and lacks
-      durable ClientRequestToken idempotency, so it cannot be a rollback target
-      for issue 635.
+    qualification_state: correctness-enabled
+    prerequisite: >-
+      Run only with an exact sealed candidate and the committed rollback-eligible
+      transaction bootstrap resolved through its approved-runtime ledger. This
+      correctness scenario does not establish operational qualification or
+      promotion eligibility.
     topology: same-cosmos-container
     write_policy: serialized-runtime-switch
     steps:
@@ -16,8 +16,9 @@ scenarios:
       - candidate-provision-atomic-transact-write-v5-and-atomic-transact-get-v1
       - candidate-commit-and-snapshot-single-partition-transaction
       - freeze-writes-and-drain
-      - block-before-runtime-switch-until-compatible-prior-is-approved
-      - record-skipped-rollback-row-with-blocker
+      - resolve-exact-committed-compatible-bootstrap
+      - switch-to-bootstrap-and-prove-rollback-correctness
+      - restore-exact-candidate
     required_assertions:
       - item-key-and-inferred-attribute-parity
       - ttl-and-index-derived-fields-readable
@@ -31,8 +32,9 @@ scenarios:
       - transaction-idempotency-record-v1-is-hidden-and-expiry-bounded
       - conflicting-same-id-stored-procedure-body-fails-closed
       - known-v2-runtime-is-never-selected-as-profile-rollback-baseline
-      - qualification-remains-inconclusive-without-compatible-prior
-    evidence_owner: issues-657-and-635
+      - bootstrap-is-rollback-only-and-never-treated-as-promotable
+      - operational-qualification-remains-absent
+    evidence_owner: issue-677
 
   - id: historical-export-import
     topology: isolated-target-database

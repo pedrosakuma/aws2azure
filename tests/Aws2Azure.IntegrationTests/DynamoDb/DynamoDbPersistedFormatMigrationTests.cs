@@ -19,6 +19,11 @@ namespace Aws2Azure.IntegrationTests.DynamoDb;
 public sealed class DynamoDbPersistedFormatMigrationTests(
     DynamoDbRealAzureProxyFixture fixture)
 {
+    private const string TransactionProfileId =
+        "dynamodb-single-partition-transactions";
+    private const string TransactionBootstrapRuntimeDigest =
+        "sha256:8ed5e089baeacb3e703ffae788a148e6de89f355f97c3fd10e3a74536298314b";
+
     [SkippableFact]
     public async Task Frozen_v1_export_import_uses_isolated_container_and_preserves_rollback_source()
     {
@@ -188,13 +193,23 @@ public sealed class DynamoDbPersistedFormatMigrationTests(
         Skip.If(
             Environment.GetEnvironmentVariable(
                 "AWS2AZURE_DDB_PERSISTED_FORMAT_QUALIFICATION") != "1",
-            Environment.GetEnvironmentVariable(
-                "AWS2AZURE_DDB_TRANSACTION_ROLLBACK_BLOCKER")
-            ?? "AWS2AZURE_DDB_PERSISTED_FORMAT_QUALIFICATION is not enabled.");
+            "AWS2AZURE_DDB_PERSISTED_FORMAT_QUALIFICATION is not enabled.");
         Skip.IfNot(fixture.CosmosConfigured,
             "AZURE_COSMOS_ENDPOINT/KEY/DATABASE are not configured.");
+        Assert.Equal(
+            TransactionProfileId,
+            Environment.GetEnvironmentVariable("AWS2AZURE_QUALIFICATION_PROFILE"));
+        Assert.Equal(
+            "rollback",
+            Environment.GetEnvironmentVariable("AWS2AZURE_SEALED_RUNTIME_MODE"));
+        Assert.True(
+            fixture.SealedCandidateConfigured,
+            "The exact sealed candidate runtime is required.");
         Skip.IfNot(fixture.SealedRollbackConfigured,
             "Exact candidate and previous sealed runtimes are required.");
+        Assert.Equal(
+            TransactionBootstrapRuntimeDigest,
+            fixture.PriorRuntimeIdentity.Runtime.AggregateDigest);
 
         var table = "a2a-format-" + Guid.NewGuid().ToString("N")[..20];
         var candidateStopped = false;

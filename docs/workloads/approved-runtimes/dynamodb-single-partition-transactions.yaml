@@ -1,0 +1,48 @@
+schema_version: 1
+profile:
+  id: dynamodb-single-partition-transactions
+  version: 1
+status: bootstrap
+eligibility:
+  rollback_baseline_eligible: true
+  promotion_eligible: false
+runtime:
+  target:
+    operating_system: linux
+    architecture: x64
+    rid: linux-x64
+  source_repository: pedrosakuma/aws2azure
+  source_sha: fe05ff7a194096fddadae3da7c92e4086658cf4a
+  aggregate_digest: sha256:8ed5e089baeacb3e703ffae788a148e6de89f355f97c3fd10e3a74536298314b
+  executable_digest: sha256:b385a9cb8f11148908f2583d960bae2690e472a3e40fed181227bfd7b69c399f
+producer:
+  workflow: .github/workflows/sealed-runtime.yml
+  run_id: 30184664479
+  run_attempt: 1
+  run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30184664479
+artifact:
+  id: 8626651580
+  name: aws2azure-sealed-linux-x64-8ed5e089baeacb3e703ffae788a148e6de89f355f97c3fd10e3a74536298314b-run-30184664479-attempt-1
+  upload_digest: sha256:30171e93310773429752d0b01e9c7450bf37ab02eab06bda6ccb4ed97dd8add3
+  created_at: 2026-07-26T02:32:15Z
+  expires_at: 2026-10-24T02:30:27Z
+attestation:
+  predicate_type: https://slsa.dev/provenance/v1
+  repository: pedrosakuma/aws2azure
+  signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
+  source_sha: fe05ff7a194096fddadae3da7c92e4086658cf4a
+  source_ref: refs/heads/main
+  subject_name: Aws2Azure.Proxy
+  subject_digest: sha256:b385a9cb8f11148908f2583d960bae2690e472a3e40fed181227bfd7b69c399f
+  manifest_subject_name: sealed-runtime-manifest.json
+  manifest_subject_digest: sha256:be0697070140ca1ea020816fdd2f94092e837ff051682e666dc90f5de800425b
+approval:
+  reason: >-
+    Protected-main sealed-runtime run 30184664479 produced the first complete
+    runtime compatible with the DynamoDB single-partition transaction profile's
+    atomic snapshot, validation, and durable ClientRequestToken contract. It is
+    recorded only as a rollback bootstrap for a later distinct runtime and is
+    not promotion eligible, qualified, approved, candidate, or GA evidence.
+  review_url: https://github.com/pedrosakuma/aws2azure/issues/677
+  reviewed_at: 2026-07-26T02:32:21Z
+  reviewed_by: pedrosakuma

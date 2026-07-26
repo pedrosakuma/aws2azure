@@ -1,8 +1,8 @@
 # Initial policy for the production-shaped single-partition transaction
-# workload. Rollback qualification is intentionally blocked: no trusted prior
-# release implements this profile's atomic snapshot, validation, and
-# durable ClientRequestToken contract. The canonical rollback scenario must be
-# recorded as skipped/inconclusive until such a release is approved.
+# workload. The first complete compatible protected-main runtime is recorded as
+# a rollback-only bootstrap. A later distinct runtime must still pass rollback
+# correctness, three production-shaped load runs, and final review before any
+# promotion, candidate, approved, or GA claim.
 # Qualification currently provisions a single-write Cosmos account. Any future
 # multi-write run must configure one authoritative preferred writable region;
 # transaction execution must never fail over between writable regions.

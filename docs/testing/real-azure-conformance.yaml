@@ -393,7 +393,7 @@ services:
         establishes_verification: false
         profiles: [dynamodb-single-partition-transactions]
         requires_dynamo_db_stored_procedures: true
-        description: Canonical blocked rollback row. The tests skip with the recorded compatibility blocker until a trusted prior release implements the complete transaction profile; the known v2 runtime is not an approved rollback target and this row cannot establish a qualification claim.
+        description: The exact sealed candidate is switched to the committed rollback-eligible transaction bootstrap against the same Cosmos container, proving transaction atomicity plus adjacent persisted-format compatibility before the candidate is restored. The bootstrap is not promotion eligible, and this correctness row alone cannot establish operational qualification or a candidate/approved/GA profile claim.
         operations: [TransactGetItems, TransactWriteItems]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionQualificationTests.Adjacent_runtime_transaction_rollback_is_atomic_and_compatible

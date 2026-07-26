@@ -8,7 +8,7 @@ Legend: ⛔ blocked · 🟡 conditional · 🔵 candidate · ✅ GA
 |---|---:|---|---|---|
 | DynamoDB basic table and item CRUD (`dynamodb-basic-crud`) | 1 | `0.1.0` | 🔵 candidate | 11 |
 | DynamoDB Query, Scan, and secondary indexes (`dynamodb-query-scan-indexes`) | 1 | `0.1.0` | 🔵 candidate | 1 |
-| DynamoDB single-table single-partition transactions (`dynamodb-single-partition-transactions`) | 1 | `0.1.0` | ⛔ blocked | 8 |
+| DynamoDB single-table single-partition transactions (`dynamodb-single-partition-transactions`) | 1 | `0.1.0` | 🟡 conditional | 7 |
 | Kinesis basic record ingestion (`kinesis-basic-record-ingestion`) | 1 | `0.1.0` | 🔵 candidate | 1 |
 | Kinesis single consumer per shard (`kinesis-single-consumer-per-shard`) | 1 | `0.1.0` | 🔵 candidate | 1 |
 | S3 basic object CRUD (`s3-basic-object-crud`) | 1 | `0.1.0` | 🔵 candidate | 9 |
