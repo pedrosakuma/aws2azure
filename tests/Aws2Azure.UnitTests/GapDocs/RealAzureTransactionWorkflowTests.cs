@@ -211,16 +211,17 @@ public sealed class RealAzureTransactionWorkflowTests
         Assert.True(
             File.Exists(BaselinePath),
             "The compatible transaction bootstrap must be committed.");
-        Assert.Contains("status: bootstrap", Baseline, StringComparison.Ordinal);
+        Assert.Contains("status: approved", Baseline, StringComparison.Ordinal);
         Assert.Contains(
             "rollback_baseline_eligible: true",
             Baseline,
             StringComparison.Ordinal);
         Assert.Contains(
-            "promotion_eligible: false",
+            "promotion_eligible: true",
             Baseline,
             StringComparison.Ordinal);
-        Assert.DoesNotContain("qualification:", Baseline, StringComparison.Ordinal);
+        Assert.Contains("qualification:", Baseline, StringComparison.Ordinal);
+        Assert.Contains("verdict: qualified", Baseline, StringComparison.Ordinal);
         Assert.DoesNotContain("revocation:", Baseline, StringComparison.Ordinal);
         Assert.Contains(
             "correctness row alone cannot establish operational qualification",

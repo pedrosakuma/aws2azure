@@ -2,9 +2,17 @@ service: dynamodb
 operation: TransactWriteItems
 azure_equivalent: "Azure Cosmos DB (Core SQL API) — single-partition stored-procedure transaction"
 status: partial
+verified_real_azure:
+  date: "2026-07-27"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540
 sub_features:
   - name: Atomic Put / Delete / ConditionCheck
     status: implemented
+    verified_real_azure:
+      date: "2026-07-27"
+      evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540
+      workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540
     notes: >-
       `atomicTransactWrite_v5` reads and validates every target before issuing
       writes. All writes execute inside one Cosmos logical-partition ACID
@@ -14,6 +22,10 @@ sub_features:
       and is not an approved rollback baseline.
   - name: ConditionExpression transaction subset
     status: implemented
+    verified_real_azure:
+      date: "2026-07-27"
+      evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540
+      workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540
     notes: >-
       Conditions are prevalidated before stored-procedure invocation. Supported:
       AND/OR/NOT, scalar comparisons with one path and one literal in either
@@ -52,6 +64,10 @@ sub_features:
       capped at DynamoDB's 100 operands before any metadata or script I/O.
   - name: Positional CancellationReasons
     status: implemented
+    verified_real_azure:
+      date: "2026-07-27"
+      evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540
+      workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540
     notes: >-
       A failed condition returns exactly one aligned reason per TransactItem.
       Only None and ConditionalCheckFailed are accepted from the versioned
@@ -86,6 +102,10 @@ sub_features:
       4 MiB transaction, so the proxy's accepted aggregate is lower.
   - name: ClientRequestToken (idempotency)
     status: implemented
+    verified_real_azure:
+      date: "2026-07-27"
+      evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540
+      workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540
     notes: >-
       Tokens are validated at 1–36 characters. `atomicTransactWrite_v5` writes a
       collision-proof reserved record in the same Cosmos logical partition and
@@ -135,8 +155,8 @@ behavior_differences:
   - "Transaction provisioning and execution use one configured authority. For a multi-write account, target.preferredRegions[0] is a deployment contract: every replica and binding targeting the same data must configure the same first region. A fresh process that discovers only a later writable region fails retryably and never executes the snapshot/write/idempotency operation there or through the dynamically routed global account endpoint. Changing the first entry is an explicit operational migration, not failover. Ordinary non-transactional region routing can still use later available preferences."
   - "Transaction execution POSTs retain the no-automatic-retry transport option. Token-bearing requests explicitly retry only Cosmos write-conflict statuses once on the same pinned endpoint; any caller retry after an ambiguous/lost response is safe because the token outcome is committed atomically with the writes. Tokenless requests remain non-retried. Stored-procedure availability is cached per Cosmos account/database/container, invalidated on table lifecycle, and evicted/reprovisioned once after an execution 404."
   - "`atomicWrite_v2`, `atomicTransactWrite_v2`, `atomicTransactWrite_v3`, and `atomicTransactWrite_v4` remain frozen in the additive persisted-format identity set. The current durable idempotency contract uses `atomicTransactWrite_v5`; TransactGet uses `atomicTransactGet_v1`."
-  - "The Cosmos Linux emulator cannot execute these scripts. V5 write/idempotency semantics, v1 snapshots, contention, restart, and exact-body conflict handling require fresh real-Azure runs before new seals are committed."
-  - "The first complete compatible protected-main runtime is recorded as a rollback-only bootstrap. The known v2 runtime remains ineligible because it uses independent reads and lacks the durable ClientRequestToken contract. A later distinct runtime must pass exact candidate-to-bootstrap rollback correctness, three production-shaped load runs, and final review before any promotion, candidate, approved, or GA profile claim."
+  - "The Cosmos Linux emulator cannot execute these scripts. V5 write/idempotency semantics, v1 snapshots, contention, restart, and exact-body conflict handling remain real-Azure-only test surfaces."
+  - "The approved runtime passed exact candidate-to-bootstrap rollback correctness, three production-shaped zero-failure load runs, and final qualification. The known v2 runtime remains ineligible because it uses independent reads and lacks the durable ClientRequestToken contract."
   - "The exact serialized stored-procedure parameter body is limited to 2 MiB, below DynamoDB's 4 MiB aggregate TransactWriteItems limit. A bounded pooled writer stops on overflow, and token fingerprints are hashed incrementally instead of retaining a second canonical body. Oversize requests fail with ValidationException before stored-procedure I/O."
   - "Each Put first obeys the base 400 KiB item boundary; after metadata load, the base item plus all corresponding KEYS_ONLY/INCLUDE/ALL local-secondary-index entries must also fit within 400 KiB."
 references:

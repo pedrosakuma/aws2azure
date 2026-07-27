@@ -29,7 +29,7 @@ required_sub_feature_seals:
   - operation: dynamodb:TransactWriteItems
     sub_feature: ClientRequestToken (idempotency)
 evidence:
-  qualification_artifact: ""
+  qualification_artifact: docs/workloads/evidence/dynamodb-single-partition-transactions.yaml
   required_scenarios:
     - representative-load
     - transaction-read-after-write

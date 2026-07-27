@@ -6,7 +6,7 @@ namespace Aws2Azure.UnitTests.GapDocs;
 public sealed class ApprovedRuntimeLedgerTests
 {
     private static readonly DateTimeOffset ValidationTime =
-        new(2026, 7, 26, 3, 0, 0, TimeSpan.Zero);
+        new(2026, 7, 27, 10, 0, 0, TimeSpan.Zero);
 
     [Fact]
     public void Repository_approved_records_are_valid_and_profile_owned()
@@ -26,22 +26,25 @@ public sealed class ApprovedRuntimeLedgerTests
         Assert.Equal(5, records.Count);
         var approved = records.Where(record => record.Status == "approved").ToArray();
         var bootstrap = records.Where(record => record.Status == "bootstrap").ToArray();
-        Assert.Equal(4, approved.Length);
-        var transactionBootstrap = Assert.Single(bootstrap);
+        Assert.Equal(5, approved.Length);
+        Assert.Empty(bootstrap);
+        var transactionApproved = Assert.Single(
+            approved,
+            record => record.Profile.Id == "dynamodb-single-partition-transactions");
         Assert.Equal(
             "dynamodb-single-partition-transactions",
-            transactionBootstrap.Profile.Id);
-        Assert.True(transactionBootstrap.Eligibility.RollbackBaselineEligible);
-        Assert.False(transactionBootstrap.Eligibility.PromotionEligible);
-        Assert.Null(transactionBootstrap.Qualification);
-        Assert.Null(transactionBootstrap.Revocation);
+            transactionApproved.Profile.Id);
+        Assert.True(transactionApproved.Eligibility.RollbackBaselineEligible);
+        Assert.True(transactionApproved.Eligibility.PromotionEligible);
+        Assert.NotNull(transactionApproved.Qualification);
+        Assert.Null(transactionApproved.Revocation);
         Assert.Contains(
-            "first complete",
-            transactionBootstrap.Approval.Reason,
+            "qualification run 30255606947",
+            transactionApproved.Approval.Reason,
             StringComparison.OrdinalIgnoreCase);
         Assert.Contains(
-            "not promotion eligible",
-            transactionBootstrap.Approval.Reason,
+            "zero failures",
+            transactionApproved.Approval.Reason,
             StringComparison.OrdinalIgnoreCase);
         Assert.All(approved, record =>
         {
