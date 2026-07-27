@@ -95,6 +95,117 @@ public sealed class S3RealAzureSmokeTests
     }
 
     [SkippableFact]
+    public async Task Multipart_upload_lists_across_restart_and_completes_against_real_blob_storage()
+    {
+        Skip.IfNot(_fx.BlobConfigured,
+            "AZURE_BLOB_ACCOUNT/AZURE_BLOB_KEY not set — skipping real-Azure multipart smoke.");
+
+        var bucket = "aws2azure-it-" + Guid.NewGuid().ToString("N")[..12];
+        const string key = "multipart/restart.bin";
+        using var client = _fx.CreateS3Client();
+        var bucketCreated = false;
+        var uploadId = string.Empty;
+        var completed = false;
+        var part1 = new byte[6 * 1024 * 1024];
+        var part2 = new byte[256 * 1024];
+        Random.Shared.NextBytes(part1);
+        Random.Shared.NextBytes(part2);
+
+        try
+        {
+            await client.PutBucketAsync(new PutBucketRequest { BucketName = bucket }).ConfigureAwait(false);
+            bucketCreated = true;
+
+            var initiated = await client.InitiateMultipartUploadAsync(new InitiateMultipartUploadRequest
+            {
+                BucketName = bucket,
+                Key = key,
+            }).ConfigureAwait(false);
+            uploadId = initiated.UploadId;
+
+            var upload1 = await client.UploadPartAsync(new UploadPartRequest
+            {
+                BucketName = bucket,
+                Key = key,
+                UploadId = uploadId,
+                PartNumber = 1,
+                PartSize = part1.Length,
+                InputStream = new MemoryStream(part1, writable: false),
+            }).ConfigureAwait(false);
+
+            var upload2 = await client.UploadPartAsync(new UploadPartRequest
+            {
+                BucketName = bucket,
+                Key = key,
+                UploadId = uploadId,
+                PartNumber = 2,
+                PartSize = part2.Length,
+                InputStream = new MemoryStream(part2, writable: false),
+            }).ConfigureAwait(false);
+
+            await _fx.RestartAsync().ConfigureAwait(false);
+
+            var listed = await client.ListMultipartUploadsAsync(new ListMultipartUploadsRequest
+            {
+                BucketName = bucket,
+                Prefix = "multipart/",
+            }).ConfigureAwait(false);
+            var entry = Assert.Single(listed.MultipartUploads.Where(u => string.Equals(u.Key, key, StringComparison.Ordinal)));
+            Assert.Equal(uploadId, entry.UploadId);
+
+            var completedUpload = await client.CompleteMultipartUploadAsync(new CompleteMultipartUploadRequest
+            {
+                BucketName = bucket,
+                Key = key,
+                UploadId = uploadId,
+                PartETags =
+                [
+                    new PartETag(1, upload1.ETag),
+                    new PartETag(2, upload2.ETag),
+                ],
+            }).ConfigureAwait(false);
+            completed = true;
+            Assert.Contains("-2", completedUpload.ETag);
+
+            using var obj = await client.GetObjectAsync(new GetObjectRequest
+            {
+                BucketName = bucket,
+                Key = key,
+            }).ConfigureAwait(false);
+            using var got = new MemoryStream();
+            await obj.ResponseStream.CopyToAsync(got).ConfigureAwait(false);
+            var expected = new byte[part1.Length + part2.Length];
+            Buffer.BlockCopy(part1, 0, expected, 0, part1.Length);
+            Buffer.BlockCopy(part2, 0, expected, part1.Length, part2.Length);
+            Assert.Equal(expected, got.ToArray());
+        }
+        finally
+        {
+            if (bucketCreated)
+            {
+                if (!completed && !string.IsNullOrEmpty(uploadId))
+                {
+                    try
+                    {
+                        await client.AbortMultipartUploadAsync(new AbortMultipartUploadRequest
+                        {
+                            BucketName = bucket,
+                            Key = key,
+                            UploadId = uploadId,
+                        }).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                try { await client.DeleteObjectAsync(new DeleteObjectRequest { BucketName = bucket, Key = key }).ConfigureAwait(false); } catch { }
+                try { await client.DeleteBucketAsync(new DeleteBucketRequest { BucketName = bucket }).ConfigureAwait(false); } catch { }
+            }
+        }
+    }
+
+    [SkippableFact]
     public async Task ObjectLock_retention_and_legal_hold_round_trip()
     {
         Skip.IfNot(_fx.BlobConfigured,

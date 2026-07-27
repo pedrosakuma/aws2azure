@@ -184,6 +184,59 @@ public sealed class S3PerfTests(S3PerfFixture fixture)
     }
 
     [SkippableFact]
+    public async Task MultipartUpload_throughput()
+    {
+        Skip.IfNot(fixture.Ready, fixture.SkipReason);
+
+        using var client = fixture.CreateClient();
+        var payload = new byte[64 * 1024];
+        Random.Shared.NextBytes(payload);
+
+        using var memProbe = fixture.CreateMemoryProbe();
+        var result = await PerfRunner.RunAsync(
+            scenario: "s3.MultipartUpload (1x64 KiB)",
+            concurrency: 8,
+            duration: TimeSpan.FromSeconds(20),
+            warmup: TimeSpan.FromSeconds(3),
+            memoryProbe: memProbe,
+            action: async (workerId, ct) =>
+            {
+                var key = $"perf-multipart/w{workerId:D2}/{Guid.NewGuid():N}";
+                var initiated = await client.InitiateMultipartUploadAsync(new InitiateMultipartUploadRequest
+                {
+                    BucketName = fixture.Bucket,
+                    Key = key,
+                }, ct).ConfigureAwait(false);
+
+                using var input = new MemoryStream(payload, writable: false);
+                var part = await client.UploadPartAsync(new UploadPartRequest
+                {
+                    BucketName = fixture.Bucket,
+                    Key = key,
+                    UploadId = initiated.UploadId,
+                    PartNumber = 1,
+                    PartSize = payload.Length,
+                    InputStream = input,
+                }, ct).ConfigureAwait(false);
+
+                await client.CompleteMultipartUploadAsync(new CompleteMultipartUploadRequest
+                {
+                    BucketName = fixture.Bucket,
+                    Key = key,
+                    UploadId = initiated.UploadId,
+                    PartETags =
+                    [
+                        new PartETag(1, part.ETag),
+                    ],
+                }, ct).ConfigureAwait(false);
+            });
+
+        PerfReport.Append(result, notes: "S3→Azurite multipart upload — initiate + 1×64 KiB UploadPart + complete");
+        result.AssertHealthy(proxyOutput: fixture.ProxyOutput);
+        result.AssertNoRegression();
+    }
+
+    [SkippableFact]
     public async Task CopyObject_throughput()
     {
         Skip.IfNot(fixture.Ready, fixture.SkipReason);

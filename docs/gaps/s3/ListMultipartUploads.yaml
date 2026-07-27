@@ -1,18 +1,27 @@
 service: s3
 operation: ListMultipartUploads
-azure_equivalent: "(none — Azure Blob has no in-progress-upload enumeration)"
-status: partial
+azure_equivalent: "Proxy-owned multipart state container (Azure has no native cross-blob MPU enumeration primitive)"
+status: implemented
 sub_features:
-  - name: enumeration
-    status: unsupported
-    notes: "Always returns an empty <Upload> list. aws2azure does not record issued UploadIds and cannot reconstruct them from Azure block-list state alone (the HMAC tag depends on the original creation timestamp, which is not recoverable from a block name)."
-  - name: prefix-filter
-    status: unsupported
-    notes: "Echoed back in the response for SDK compatibility but not applied."
+  - name: deterministic-enumeration
+    status: implemented
+    notes: "The proxy stores one durable state record per active upload and lists those records to build S3's in-progress upload view. Enumeration survives proxy restart because the index lives in Azure Blob Storage."
   - name: pagination
-    status: unsupported
+    status: implemented
+    notes: "Honours max-uploads (default 1000, hard cap 1000), key-marker, and upload-id-marker. max-uploads=0 is rejected as InvalidArgument."
+  - name: prefix-filter
+    status: implemented
+  - name: delimiter-common-prefixes
+    status: implemented
+  - name: stale-generation-filtering
+    status: implemented
+    notes: "Only records whose stored destination-container ETag matches the bucket's current ETag are visible; uploads from a deleted/recreated bucket generation are filtered out."
+  - name: opportunistic-cleanup
+    status: implemented
+    notes: "ListMultipartUploads opportunistically deletes a bounded number of expired records while listing. Record names start with a zero-padded initiation timestamp so Azure's native lexical ordering exposes the oldest uploads first without a full cleanup scan."
 behavior_differences:
-  - "Returns a well-formed empty <ListMultipartUploadsResult> (IsTruncated=false, no <Upload> entries) rather than 501. This keeps SDK retry/recovery flows from erroring out, but callers cannot use this endpoint to discover orphaned uploads."
-  - "Bucket existence is still validated — missing bucket → NoSuchBucket."
+  - "Enumeration is implemented by the proxy's hidden state container, not by an Azure storage primitive; Azure Blob Storage has no cross-blob multipart-upload listing API."
+  - "Expired-record cleanup is bounded per request (small bound on CreateMultipartUpload, larger bound on ListMultipartUploads) so abandoned uploads are eventually reclaimed without unbounded work on the request path."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListMultipartUploads.html
+  - https://learn.microsoft.com/rest/api/storageservices/list-blobs

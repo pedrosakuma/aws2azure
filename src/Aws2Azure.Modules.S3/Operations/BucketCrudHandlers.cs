@@ -57,7 +57,10 @@ internal static class BucketCrudHandlers
             var page = AzureBlobXmlReader.ParseContainerListPage(xml);
             for (var i = 0; i < page.Containers.Count; i++)
             {
-                containers.Add(page.Containers[i]);
+                if (!blob.IsInternalContainer(page.Containers[i].Name))
+                {
+                    containers.Add(page.Containers[i]);
+                }
             }
             marker = page.NextMarker;
         } while (!string.IsNullOrEmpty(marker));
@@ -85,7 +88,7 @@ internal static class BucketCrudHandlers
 
     private static async Task CreateBucketAsync(HttpContext context, BlobClient blob, string bucket, CancellationToken cancellationToken)
     {
-        if (!BlobClient.IsValidContainerName(bucket))
+        if (!BlobClient.IsValidContainerName(bucket) || blob.IsInternalContainer(bucket))
         {
             await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidBucketName()).ConfigureAwait(false);
             return;
@@ -111,6 +114,19 @@ internal static class BucketCrudHandlers
 
             await S3ErrorMapping.WriteAsync(context, mapping).ConfigureAwait(false);
             return;
+        }
+
+        var generation = ReadHeader(response, "ETag");
+        if (!string.IsNullOrEmpty(generation))
+        {
+            var stateStore = new MultipartUploadStateStore(blob);
+            try
+            {
+                await stateStore.DeleteStaleBucketRecordsAsync(bucket, generation!, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+            }
         }
 
         WriteCreateBucketSuccess(context, bucket);
@@ -144,11 +160,37 @@ internal static class BucketCrudHandlers
             return;
         }
 
-        using var response = await blob.DeleteContainerAsync(bucket, cancellationToken).ConfigureAwait(false);
+        using var probe = await blob.GetContainerPropertiesAsync(bucket, cancellationToken).ConfigureAwait(false);
+        if (!probe.IsSuccessStatusCode)
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(probe, S3Operation.DeleteBucket)).ConfigureAwait(false);
+            return;
+        }
+
+        var generation = ReadHeader(probe, "ETag");
+        if (string.IsNullOrEmpty(generation))
+        {
+            await S3ErrorMapping.WriteAsync(context, new S3ErrorMapping.Mapping(
+                StatusCodes.Status500InternalServerError,
+                "InternalError",
+                "aws2azure: Azure container probe did not return an ETag for DeleteBucket generation binding.")).ConfigureAwait(false);
+            return;
+        }
+
+        using var response = await blob.DeleteContainerAsync(bucket, generation!, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.DeleteBucket)).ConfigureAwait(false);
             return;
+        }
+
+        var stateStore = new MultipartUploadStateStore(blob);
+        try
+        {
+            await stateStore.DeleteBucketRecordsAsync(bucket, generation!, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
         }
 
         context.Response.StatusCode = StatusCodes.Status204NoContent;
@@ -193,5 +235,21 @@ internal static class BucketCrudHandlers
         context.Response.Headers["x-amz-error-code"] = mapping.Code;
         context.Response.ContentLength = 0;
         return Task.CompletedTask;
+    }
+
+    private static string? ReadHeader(HttpResponseMessage response, string name)
+    {
+        if (response.Headers.TryGetValues(name, out var values))
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrEmpty(value))
+                {
+                    return value;
+                }
+            }
+        }
+
+        return null;
     }
 }

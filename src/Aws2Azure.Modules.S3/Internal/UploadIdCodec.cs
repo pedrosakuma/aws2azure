@@ -5,10 +5,10 @@ using System.Text;
 namespace Aws2Azure.Modules.S3.Internal;
 
 /// <summary>
-/// Stateless codec for S3 multipart <c>UploadId</c> tokens. The proxy keeps
-/// no per-upload server state — every uploadId is a 32-byte token that
-/// embeds its own nonce + creation timestamp and is HMAC-bound to the
-/// (Azure account, container, object key) it was issued for.
+/// Codec for S3 multipart <c>UploadId</c> tokens. The token remains a compact
+/// HMAC-bound handle that embeds its own nonce + creation timestamp; the proxy
+/// additionally persists bounded per-upload state (headers + enumeration index)
+/// keyed by the issued uploadId.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -111,6 +111,35 @@ internal static class UploadIdCodec
         }
 
         return new UploadToken(nonce.ToArray(), createdAt, encoded);
+    }
+
+    /// <summary>
+    /// Extracts the embedded creation timestamp from an <c>UploadId</c>
+    /// without validating the HMAC binding or age window. Used to derive the
+    /// durable multipart-state record name from the opaque token.
+    /// </summary>
+    public static bool TryReadCreatedAt(string encoded, out DateTimeOffset createdAt)
+    {
+        createdAt = default;
+        if (string.IsNullOrEmpty(encoded))
+        {
+            return false;
+        }
+        if (!Base64Url.TryDecode(encoded, out var raw) || raw.Length != RawLength)
+        {
+            return false;
+        }
+
+        var createdAtMs = BinaryPrimitives.ReadInt64BigEndian(raw.AsSpan(NonceBytes, 8));
+        try
+        {
+            createdAt = DateTimeOffset.FromUnixTimeMilliseconds(createdAtMs);
+            return true;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return false;
+        }
     }
 
     /// <summary>
