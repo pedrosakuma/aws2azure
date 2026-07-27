@@ -207,9 +207,15 @@ the whole closed-loop five-write/ten-read iteration window; it is not isolated
 Cosmos capacity or maximum transaction throughput. Emulator results and
 unrelated A/B scenarios do not qualify this profile.
 
-These calibration runs select policy only. Because this policy change creates
-a new protected-main SHA, they cannot satisfy final qualification's exact-SHA
-binding. GA still requires three new reviewed load runs plus correctness,
-rollback, and SLO evidence from that same candidate. No operational
-qualification artifact is committed, and the bootstrap must not be treated as
-candidate, approved, GA, or production promotion evidence.
+Those calibration runs selected policy only. Final qualification run
+[`30255606947`](https://github.com/pedrosakuma/aws2azure/actions/runs/30255606947)
+then evaluated correctness run `30242339540` and three new production-shaped
+loads (`30239146385`, `30240183393`, and `30241202630`) against the exact sealed
+protected-main candidate
+`e005cfac84dadab1b3db57e88e2ee2907e801c80`. The loads completed 457, 527, and
+461 iterations at 1.522893, 1.753810, and 1.536288 txn/s respectively, all with
+zero failures and successful candidate-to-bootstrap rollback. The committed
+qualification artifact is
+`docs/workloads/evidence/dynamodb-single-partition-transactions.yaml`; the
+approved-runtime ledger now promotes the candidate while retaining
+`fe05ff7a194096fddadae3da7c92e4086658cf4a` as its rollback baseline.

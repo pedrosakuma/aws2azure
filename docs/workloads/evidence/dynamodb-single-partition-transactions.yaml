@@ -1,0 +1,664 @@
+schema_version: 1
+artifact_kind: real_azure_workload_qualification
+verdict: qualified
+profile:
+  id: dynamodb-single-partition-transactions
+  version: 1
+  services:
+  - service: dynamodb
+    operations:
+    - TransactGetItems
+    - TransactWriteItems
+candidate:
+  git_sha: e005cfac84dadab1b3db57e88e2ee2907e801c80
+  artifact_digest: sha256:e060bfd17858f43d482c5a776ea0578248c1136d540666bd786cbd501711c79b
+  config_digest: sha256:a4634ff8427a516751237ea6c97a43e0c6f9ef1c8a889fc8a9a7bbb4fb169abc
+  qualification_mode: sealed
+  runtime:
+    schema_version: 1
+    role: candidate
+    profile:
+      id: dynamodb-single-partition-transactions
+      version: 1
+    status: candidate
+    eligibility:
+      rollback_baseline_eligible: false
+      promotion_eligible: false
+    source:
+      repository: pedrosakuma/aws2azure
+      sha: e005cfac84dadab1b3db57e88e2ee2907e801c80
+      ref: refs/heads/main
+    runtime:
+      aggregate_digest: sha256:e060bfd17858f43d482c5a776ea0578248c1136d540666bd786cbd501711c79b
+      executable_digest: sha256:b834be9c2ca5649d51b8020efdc2a49eb34f954ecb424e8f22929957c079ffdf
+      manifest_digest: sha256:dc10ac5478ff3a484dff8816e39bcb1265379f163570ab5c28bd65ca777ca69b
+    producer:
+      workflow: .github/workflows/sealed-runtime.yml
+      event_name: workflow_dispatch
+      run_id: 30239004144
+      run_attempt: 1
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30239004144
+      attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30239004144/attempts/1
+      run_started_at: 2026-07-27T05:10:23.0000000+00:00
+    artifact:
+      id: 8642601222
+      name: aws2azure-sealed-linux-x64-e060bfd17858f43d482c5a776ea0578248c1136d540666bd786cbd501711c79b-run-30239004144-attempt-1
+      upload_digest: sha256:b5bb26ef2fc596371e8b642f7f88252f05f6602034654a4899f917e96b30974e
+      created_at: 2026-07-27T05:12:30.0000000+00:00
+      expires_at: 2026-10-25T05:10:24.0000000+00:00
+    attestation:
+      predicate_type: https://slsa.dev/provenance/v1
+      repository: pedrosakuma/aws2azure
+      signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
+      source_sha: e005cfac84dadab1b3db57e88e2ee2907e801c80
+      source_ref: refs/heads/main
+      run_invocation_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30239004144/attempts/1
+      bundle_digest: sha256:c9fd022cc47a90015af4d46422d20ef2e7cc4af88d494ffc3063592c365db3e4
+      executable_subject_name: Aws2Azure.Proxy
+      executable_subject_digest: sha256:b834be9c2ca5649d51b8020efdc2a49eb34f954ecb424e8f22929957c079ffdf
+      manifest_subject_name: sealed-runtime-manifest.json
+      manifest_subject_digest: sha256:dc10ac5478ff3a484dff8816e39bcb1265379f163570ab5c28bd65ca777ca69b
+provenance:
+  run_id: 30255606947
+  run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30255606947
+  run_attempt: 1
+  generated_at_utc: 2026-07-27T09:51:04.6282424+00:00
+  window_start_utc: 2026-07-27T05:18:07.2772216+00:00
+  window_end_utc: 2026-07-27T06:07:15.6151333+00:00
+  region: eastus2
+  backend_description: Ephemeral Azure Cosmos DB serverless SQL API, Strong consistency, stored procedures Preferred
+  correctness_run:
+    run_id: 30242339540
+    run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540
+    run_attempt: 1
+    window_start_utc: 2026-07-27T06:38:33.8868572+00:00
+    window_end_utc: 2026-07-27T06:38:33.8868573+00:00
+    git_sha: e005cfac84dadab1b3db57e88e2ee2907e801c80
+    artifact_digest: sha256:e060bfd17858f43d482c5a776ea0578248c1136d540666bd786cbd501711c79b
+    config_digest: sha256:a4634ff8427a516751237ea6c97a43e0c6f9ef1c8a889fc8a9a7bbb4fb169abc
+    evidence_artifact:
+      schema_version: 1
+      profile_id: dynamodb-single-partition-transactions
+      repository: pedrosakuma/aws2azure
+      workflow_path: .github/workflows/integration-real-azure.yml
+      event_name: workflow_dispatch
+      conclusion: success
+      run_id: 30242339540
+      run_attempt: 1
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540
+      head_sha: e005cfac84dadab1b3db57e88e2ee2907e801c80
+      head_ref: refs/heads/main
+      artifact:
+        id: 8644072782
+        name: real-azure-conformance
+        upload_digest: sha256:3c8252864b66effd136a23729cf2f4f28bd7266c6c0a2ccca8e226d78e15441f
+        created_at: 2026-07-27T06:38:35.0000000+00:00
+        expires_at: 2026-10-25T06:19:04.0000000+00:00
+  source_runs:
+  - run_id: 30239146385
+    run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30239146385
+    run_attempt: 1
+    window_start_utc: 2026-07-27T05:18:07.2772216+00:00
+    window_end_utc: 2026-07-27T05:23:29.9939930+00:00
+    git_sha: e005cfac84dadab1b3db57e88e2ee2907e801c80
+    artifact_digest: sha256:e060bfd17858f43d482c5a776ea0578248c1136d540666bd786cbd501711c79b
+    config_digest: sha256:a4634ff8427a516751237ea6c97a43e0c6f9ef1c8a889fc8a9a7bbb4fb169abc
+    evidence_artifact:
+      schema_version: 1
+      profile_id: dynamodb-single-partition-transactions
+      repository: pedrosakuma/aws2azure
+      workflow_path: .github/workflows/workload-load-real-azure.yml
+      event_name: workflow_dispatch
+      conclusion: success
+      run_id: 30239146385
+      run_attempt: 1
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30239146385
+      head_sha: e005cfac84dadab1b3db57e88e2ee2907e801c80
+      head_ref: refs/heads/main
+      artifact:
+        id: 8642765308
+        name: real-azure-workload-load-dynamodb-single-partition-transactions
+        upload_digest: sha256:d86655428456fb5afec96d2dc1b8c850f7c64176b88609987a4699de1d4e67dd
+        created_at: 2026-07-27T05:23:32.0000000+00:00
+        expires_at: 2026-10-25T05:13:27.0000000+00:00
+  - run_id: 30240183393
+    run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30240183393
+    run_attempt: 1
+    window_start_utc: 2026-07-27T05:40:07.3303045+00:00
+    window_end_utc: 2026-07-27T05:45:23.3304883+00:00
+    git_sha: e005cfac84dadab1b3db57e88e2ee2907e801c80
+    artifact_digest: sha256:e060bfd17858f43d482c5a776ea0578248c1136d540666bd786cbd501711c79b
+    config_digest: sha256:a4634ff8427a516751237ea6c97a43e0c6f9ef1c8a889fc8a9a7bbb4fb169abc
+    evidence_artifact:
+      schema_version: 1
+      profile_id: dynamodb-single-partition-transactions
+      repository: pedrosakuma/aws2azure
+      workflow_path: .github/workflows/workload-load-real-azure.yml
+      event_name: workflow_dispatch
+      conclusion: success
+      run_id: 30240183393
+      run_attempt: 1
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30240183393
+      head_sha: e005cfac84dadab1b3db57e88e2ee2907e801c80
+      head_ref: refs/heads/main
+      artifact:
+        id: 8643116032
+        name: real-azure-workload-load-dynamodb-single-partition-transactions
+        upload_digest: sha256:0118951305bb74d0a32d0b12dcdbb69ca6e2c281b1756ec5f88d3625cf949b05
+        created_at: 2026-07-27T05:45:25.0000000+00:00
+        expires_at: 2026-10-25T05:35:36.0000000+00:00
+  - run_id: 30241202630
+    run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30241202630
+    run_attempt: 1
+    window_start_utc: 2026-07-27T06:01:51.5624067+00:00
+    window_end_utc: 2026-07-27T06:07:15.6151333+00:00
+    git_sha: e005cfac84dadab1b3db57e88e2ee2907e801c80
+    artifact_digest: sha256:e060bfd17858f43d482c5a776ea0578248c1136d540666bd786cbd501711c79b
+    config_digest: sha256:a4634ff8427a516751237ea6c97a43e0c6f9ef1c8a889fc8a9a7bbb4fb169abc
+    evidence_artifact:
+      schema_version: 1
+      profile_id: dynamodb-single-partition-transactions
+      repository: pedrosakuma/aws2azure
+      workflow_path: .github/workflows/workload-load-real-azure.yml
+      event_name: workflow_dispatch
+      conclusion: success
+      run_id: 30241202630
+      run_attempt: 1
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30241202630
+      head_sha: e005cfac84dadab1b3db57e88e2ee2907e801c80
+      head_ref: refs/heads/main
+      artifact:
+        id: 8643483875
+        name: real-azure-workload-load-dynamodb-single-partition-transactions
+        upload_digest: sha256:2baf41addc0ab58f0a177028d1f197f725c05298e2ef8328c5b05615174dc3d9
+        created_at: 2026-07-27T06:07:17.0000000+00:00
+        expires_at: 2026-10-25T05:57:08.0000000+00:00
+rules:
+  max_artifact_age_hours: 72
+  min_samples_per_scenario: 300
+  min_duration_seconds: 300
+  max_failure_rate: 0
+  zero_completions_disqualify: true
+  only_skipped_real_azure_disqualifies: true
+  min_distinct_runs: 3
+signals:
+- id: representative-load-throughput
+  scenario_id: representative-load
+  source: backend_capacity
+  disposition: blocking
+  metric: throughput_per_sec
+  min_value: 1.4
+  measured_value: 1.5228929045832325
+  samples: 1445
+  captured_at_utc: 2026-07-27T06:06:59.1106850+00:00
+- id: representative-load-p95
+  scenario_id: representative-load
+  source: backend_capacity
+  disposition: report_only
+  metric: p95_ms
+  measured_value: 82.0423
+  samples: 1445
+  captured_at_utc: 2026-07-27T06:06:59.1106850+00:00
+- id: representative-load-p99
+  scenario_id: representative-load
+  source: backend_capacity
+  disposition: report_only
+  metric: p99_ms
+  measured_value: 122.9395
+  samples: 1445
+  captured_at_utc: 2026-07-27T06:06:59.1106850+00:00
+- id: representative-load-throttle-rate
+  scenario_id: representative-load
+  source: backend_capacity
+  disposition: report_only
+  metric: throttle_rate
+  measured_value: 0
+  samples: 1445
+  captured_at_utc: 2026-07-27T06:06:59.1106850+00:00
+scenarios:
+- id: representative-load
+  service: dynamodb
+  operation: TransactWriteItems
+  evidence_source: real_azure
+  completions: 1445
+  failures: 0
+  skipped: 0
+  duration_seconds: 900.6492577
+  captured_at_utc: 2026-07-27T06:06:59.1106850+00:00
+- id: transaction-read-after-write
+  service: dynamodb
+  operation: TransactGetItems
+  evidence_source: real_azure
+  completions: 3
+  failures: 0
+  skipped: 0
+  duration_seconds: 16.5397611
+  captured_at_utc: 2026-07-27T06:07:06.2660831+00:00
+- id: transaction-region-pinning
+  service: dynamodb
+  operation: TransactWriteItems
+  evidence_source: deterministic
+  completions: 3
+  failures: 0
+  skipped: 0
+  duration_seconds: 6.7053973
+  captured_at_utc: 2026-07-27T06:07:10.7343041+00:00
+- id: transaction-preflight-contracts
+  service: dynamodb
+  operation: TransactWriteItems
+  evidence_source: deterministic
+  completions: 3
+  failures: 0
+  skipped: 0
+  duration_seconds: 0.2861407
+  captured_at_utc: 2026-07-27T06:07:06.3752464+00:00
+- id: transaction-atomicity-rollback
+  service: dynamodb
+  operation: TransactWriteItems
+  evidence_source: real_azure
+  completions: 3
+  failures: 0
+  skipped: 0
+  duration_seconds: 1.4947455
+  captured_at_utc: 2026-07-27T06:07:06.9582860+00:00
+- id: transaction-conditions-cancellation
+  service: dynamodb
+  operation: TransactWriteItems
+  evidence_source: real_azure
+  completions: 3
+  failures: 0
+  skipped: 0
+  duration_seconds: 1.4947455
+  captured_at_utc: 2026-07-27T06:07:06.9582860+00:00
+- id: transaction-scope-rejection
+  service: dynamodb
+  operation: TransactWriteItems
+  evidence_source: real_azure
+  completions: 3
+  failures: 0
+  skipped: 0
+  duration_seconds: 0.45364859999999996
+  captured_at_utc: 2026-07-27T06:07:07.1305004+00:00
+- id: transaction-idempotency
+  service: dynamodb
+  operation: TransactWriteItems
+  evidence_source: real_azure
+  completions: 3
+  failures: 0
+  skipped: 0
+  duration_seconds: 0.7611743
+  captured_at_utc: 2026-07-27T06:07:07.4417087+00:00
+- id: transaction-contention
+  service: dynamodb
+  operation: TransactWriteItems
+  evidence_source: real_azure
+  completions: 3
+  failures: 0
+  skipped: 0
+  duration_seconds: 1.4930512
+  captured_at_utc: 2026-07-27T06:07:08.1458154+00:00
+- id: transaction-restart-versioning
+  service: dynamodb
+  operation: TransactWriteItems
+  evidence_source: real_azure
+  completions: 3
+  failures: 0
+  skipped: 0
+  duration_seconds: 6.7053973
+  captured_at_utc: 2026-07-27T06:07:10.7343041+00:00
+- id: transaction-sproc-body-verification
+  service: dynamodb
+  operation: TransactWriteItems
+  evidence_source: real_azure
+  completions: 3
+  failures: 0
+  skipped: 0
+  duration_seconds: 10.1239437
+  captured_at_utc: 2026-07-27T06:01:58.6495651+00:00
+- id: rollback
+  service: dynamodb
+  operation: TransactGetItems
+  evidence_source: real_azure
+  completions: 3
+  failures: 0
+  skipped: 0
+  duration_seconds: 13.1616137
+  captured_at_utc: 2026-07-27T06:07:15.6140000+00:00
+rollback_proofs:
+- scenario_id: rollback
+  service: dynamodb
+  operation: TransactGetItems
+  evidence_run_id: 30239146385
+  evidence_run_attempt: 1
+  candidate:
+    schema_version: 1
+    role: candidate
+    profile:
+      id: dynamodb-single-partition-transactions
+      version: 1
+    status: candidate
+    eligibility:
+      rollback_baseline_eligible: false
+      promotion_eligible: false
+    source:
+      repository: pedrosakuma/aws2azure
+      sha: e005cfac84dadab1b3db57e88e2ee2907e801c80
+      ref: refs/heads/main
+    runtime:
+      aggregate_digest: sha256:e060bfd17858f43d482c5a776ea0578248c1136d540666bd786cbd501711c79b
+      executable_digest: sha256:b834be9c2ca5649d51b8020efdc2a49eb34f954ecb424e8f22929957c079ffdf
+      manifest_digest: sha256:dc10ac5478ff3a484dff8816e39bcb1265379f163570ab5c28bd65ca777ca69b
+    producer:
+      workflow: .github/workflows/sealed-runtime.yml
+      event_name: workflow_dispatch
+      run_id: 30239004144
+      run_attempt: 1
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30239004144
+      attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30239004144/attempts/1
+      run_started_at: 2026-07-27T05:10:23.0000000+00:00
+    artifact:
+      id: 8642601222
+      name: aws2azure-sealed-linux-x64-e060bfd17858f43d482c5a776ea0578248c1136d540666bd786cbd501711c79b-run-30239004144-attempt-1
+      upload_digest: sha256:b5bb26ef2fc596371e8b642f7f88252f05f6602034654a4899f917e96b30974e
+      created_at: 2026-07-27T05:12:30.0000000+00:00
+      expires_at: 2026-10-25T05:10:24.0000000+00:00
+    attestation:
+      predicate_type: https://slsa.dev/provenance/v1
+      repository: pedrosakuma/aws2azure
+      signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
+      source_sha: e005cfac84dadab1b3db57e88e2ee2907e801c80
+      source_ref: refs/heads/main
+      run_invocation_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30239004144/attempts/1
+      bundle_digest: sha256:c9fd022cc47a90015af4d46422d20ef2e7cc4af88d494ffc3063592c365db3e4
+      executable_subject_name: Aws2Azure.Proxy
+      executable_subject_digest: sha256:b834be9c2ca5649d51b8020efdc2a49eb34f954ecb424e8f22929957c079ffdf
+      manifest_subject_name: sealed-runtime-manifest.json
+      manifest_subject_digest: sha256:dc10ac5478ff3a484dff8816e39bcb1265379f163570ab5c28bd65ca777ca69b
+  prior:
+    schema_version: 1
+    role: prior
+    profile:
+      id: dynamodb-single-partition-transactions
+      version: 1
+    status: bootstrap
+    eligibility:
+      rollback_baseline_eligible: true
+      promotion_eligible: false
+    ledger_record_digest: sha256:cdb82d12a856e166b36adecfa82385e838c9e6be5ff4d458ab8706660281ea0b
+    source:
+      repository: pedrosakuma/aws2azure
+      sha: fe05ff7a194096fddadae3da7c92e4086658cf4a
+      ref: refs/heads/main
+    runtime:
+      aggregate_digest: sha256:8ed5e089baeacb3e703ffae788a148e6de89f355f97c3fd10e3a74536298314b
+      executable_digest: sha256:b385a9cb8f11148908f2583d960bae2690e472a3e40fed181227bfd7b69c399f
+      manifest_digest: sha256:be0697070140ca1ea020816fdd2f94092e837ff051682e666dc90f5de800425b
+    producer:
+      workflow: .github/workflows/sealed-runtime.yml
+      event_name: workflow_dispatch
+      run_id: 30184664479
+      run_attempt: 1
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30184664479
+      attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30184664479/attempts/1
+      run_started_at: 2026-07-26T02:30:25.0000000+00:00
+    artifact:
+      id: 8626651580
+      name: aws2azure-sealed-linux-x64-8ed5e089baeacb3e703ffae788a148e6de89f355f97c3fd10e3a74536298314b-run-30184664479-attempt-1
+      upload_digest: sha256:30171e93310773429752d0b01e9c7450bf37ab02eab06bda6ccb4ed97dd8add3
+      created_at: 2026-07-26T02:32:15.0000000+00:00
+      expires_at: 2026-10-24T02:30:27.0000000+00:00
+    attestation:
+      predicate_type: https://slsa.dev/provenance/v1
+      repository: pedrosakuma/aws2azure
+      signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
+      source_sha: fe05ff7a194096fddadae3da7c92e4086658cf4a
+      source_ref: refs/heads/main
+      run_invocation_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30184664479/attempts/1
+      bundle_digest: sha256:a235fa4a10437c905f8aec26459777e3b8b7ddb9ea131dc50b2dd48411741449
+      executable_subject_name: Aws2Azure.Proxy
+      executable_subject_digest: sha256:b385a9cb8f11148908f2583d960bae2690e472a3e40fed181227bfd7b69c399f
+      manifest_subject_name: sealed-runtime-manifest.json
+      manifest_subject_digest: sha256:be0697070140ca1ea020816fdd2f94092e837ff051682e666dc90f5de800425b
+  candidate_config_digest: sha256:12c21294e74e641512762fd982ed3b3ecae42575c357c0476f24e5a0ddca4ca7
+  prior_config_digest: sha256:12c21294e74e641512762fd982ed3b3ecae42575c357c0476f24e5a0ddca4ca7
+  candidate_backend_identity_digest: sha256:0055768244cf55c65b2415614aa5f8a02efe6f42d86fee709eace724150a0e78
+  prior_backend_identity_digest: sha256:0055768244cf55c65b2415614aa5f8a02efe6f42d86fee709eace724150a0e78
+  candidate_aws_binding_digest: sha256:0f093e88dfaedbec8a8dc54716090396c7228a356ab73c299d03f5929786f870
+  prior_aws_binding_digest: sha256:0f093e88dfaedbec8a8dc54716090396c7228a356ab73c299d03f5929786f870
+  canary_digest: sha256:cfebe542700d9b0d5425268736b85762f15fd7305a912e1d1df7c5d385120545
+  cleanup_semantics: atomic_delete_both_items_then_delete_table_verify_resource_not_found_exception
+  started_at_utc: 2026-07-27T05:23:25.3044313+00:00
+  candidate_create_completed_at_utc: 2026-07-27T05:23:26.4721852+00:00
+  candidate_read_completed_at_utc: 2026-07-27T05:23:26.6515398+00:00
+  candidate_stopped_at_utc: 2026-07-27T05:23:26.6923615+00:00
+  prior_started_at_utc: 2026-07-27T05:23:27.1981828+00:00
+  prior_read_completed_at_utc: 2026-07-27T05:23:28.8031186+00:00
+  cleanup_requested_at_utc: 2026-07-27T05:23:28.8033779+00:00
+  cleanup_verified_at_utc: 2026-07-27T05:23:29.4531994+00:00
+  candidate_restored_at_utc: 2026-07-27T05:23:29.9927675+00:00
+  completed_at_utc: 2026-07-27T05:23:29.9927682+00:00
+- scenario_id: rollback
+  service: dynamodb
+  operation: TransactGetItems
+  evidence_run_id: 30240183393
+  evidence_run_attempt: 1
+  candidate:
+    schema_version: 1
+    role: candidate
+    profile:
+      id: dynamodb-single-partition-transactions
+      version: 1
+    status: candidate
+    eligibility:
+      rollback_baseline_eligible: false
+      promotion_eligible: false
+    source:
+      repository: pedrosakuma/aws2azure
+      sha: e005cfac84dadab1b3db57e88e2ee2907e801c80
+      ref: refs/heads/main
+    runtime:
+      aggregate_digest: sha256:e060bfd17858f43d482c5a776ea0578248c1136d540666bd786cbd501711c79b
+      executable_digest: sha256:b834be9c2ca5649d51b8020efdc2a49eb34f954ecb424e8f22929957c079ffdf
+      manifest_digest: sha256:dc10ac5478ff3a484dff8816e39bcb1265379f163570ab5c28bd65ca777ca69b
+    producer:
+      workflow: .github/workflows/sealed-runtime.yml
+      event_name: workflow_dispatch
+      run_id: 30239004144
+      run_attempt: 1
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30239004144
+      attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30239004144/attempts/1
+      run_started_at: 2026-07-27T05:10:23.0000000+00:00
+    artifact:
+      id: 8642601222
+      name: aws2azure-sealed-linux-x64-e060bfd17858f43d482c5a776ea0578248c1136d540666bd786cbd501711c79b-run-30239004144-attempt-1
+      upload_digest: sha256:b5bb26ef2fc596371e8b642f7f88252f05f6602034654a4899f917e96b30974e
+      created_at: 2026-07-27T05:12:30.0000000+00:00
+      expires_at: 2026-10-25T05:10:24.0000000+00:00
+    attestation:
+      predicate_type: https://slsa.dev/provenance/v1
+      repository: pedrosakuma/aws2azure
+      signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
+      source_sha: e005cfac84dadab1b3db57e88e2ee2907e801c80
+      source_ref: refs/heads/main
+      run_invocation_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30239004144/attempts/1
+      bundle_digest: sha256:c9fd022cc47a90015af4d46422d20ef2e7cc4af88d494ffc3063592c365db3e4
+      executable_subject_name: Aws2Azure.Proxy
+      executable_subject_digest: sha256:b834be9c2ca5649d51b8020efdc2a49eb34f954ecb424e8f22929957c079ffdf
+      manifest_subject_name: sealed-runtime-manifest.json
+      manifest_subject_digest: sha256:dc10ac5478ff3a484dff8816e39bcb1265379f163570ab5c28bd65ca777ca69b
+  prior:
+    schema_version: 1
+    role: prior
+    profile:
+      id: dynamodb-single-partition-transactions
+      version: 1
+    status: bootstrap
+    eligibility:
+      rollback_baseline_eligible: true
+      promotion_eligible: false
+    ledger_record_digest: sha256:cdb82d12a856e166b36adecfa82385e838c9e6be5ff4d458ab8706660281ea0b
+    source:
+      repository: pedrosakuma/aws2azure
+      sha: fe05ff7a194096fddadae3da7c92e4086658cf4a
+      ref: refs/heads/main
+    runtime:
+      aggregate_digest: sha256:8ed5e089baeacb3e703ffae788a148e6de89f355f97c3fd10e3a74536298314b
+      executable_digest: sha256:b385a9cb8f11148908f2583d960bae2690e472a3e40fed181227bfd7b69c399f
+      manifest_digest: sha256:be0697070140ca1ea020816fdd2f94092e837ff051682e666dc90f5de800425b
+    producer:
+      workflow: .github/workflows/sealed-runtime.yml
+      event_name: workflow_dispatch
+      run_id: 30184664479
+      run_attempt: 1
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30184664479
+      attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30184664479/attempts/1
+      run_started_at: 2026-07-26T02:30:25.0000000+00:00
+    artifact:
+      id: 8626651580
+      name: aws2azure-sealed-linux-x64-8ed5e089baeacb3e703ffae788a148e6de89f355f97c3fd10e3a74536298314b-run-30184664479-attempt-1
+      upload_digest: sha256:30171e93310773429752d0b01e9c7450bf37ab02eab06bda6ccb4ed97dd8add3
+      created_at: 2026-07-26T02:32:15.0000000+00:00
+      expires_at: 2026-10-24T02:30:27.0000000+00:00
+    attestation:
+      predicate_type: https://slsa.dev/provenance/v1
+      repository: pedrosakuma/aws2azure
+      signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
+      source_sha: fe05ff7a194096fddadae3da7c92e4086658cf4a
+      source_ref: refs/heads/main
+      run_invocation_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30184664479/attempts/1
+      bundle_digest: sha256:a235fa4a10437c905f8aec26459777e3b8b7ddb9ea131dc50b2dd48411741449
+      executable_subject_name: Aws2Azure.Proxy
+      executable_subject_digest: sha256:b385a9cb8f11148908f2583d960bae2690e472a3e40fed181227bfd7b69c399f
+      manifest_subject_name: sealed-runtime-manifest.json
+      manifest_subject_digest: sha256:be0697070140ca1ea020816fdd2f94092e837ff051682e666dc90f5de800425b
+  candidate_config_digest: sha256:3772601f3416051f86c3132da090304ee9e1a23b3ddbf246bf555ca496971a54
+  prior_config_digest: sha256:3772601f3416051f86c3132da090304ee9e1a23b3ddbf246bf555ca496971a54
+  candidate_backend_identity_digest: sha256:59838ec007dc72f822f1dfb6c08790749f85fd465990d2eab7fac230d472e8a1
+  prior_backend_identity_digest: sha256:59838ec007dc72f822f1dfb6c08790749f85fd465990d2eab7fac230d472e8a1
+  candidate_aws_binding_digest: sha256:0f093e88dfaedbec8a8dc54716090396c7228a356ab73c299d03f5929786f870
+  prior_aws_binding_digest: sha256:0f093e88dfaedbec8a8dc54716090396c7228a356ab73c299d03f5929786f870
+  canary_digest: sha256:7e9b3a2a179e446cb7775e9dd51407a66d189931c5ed3d5e8d2cf9367545aa68
+  cleanup_semantics: atomic_delete_both_items_then_delete_table_verify_resource_not_found_exception
+  started_at_utc: 2026-07-27T05:45:19.7338871+00:00
+  candidate_create_completed_at_utc: 2026-07-27T05:45:20.7346011+00:00
+  candidate_read_completed_at_utc: 2026-07-27T05:45:20.8448004+00:00
+  candidate_stopped_at_utc: 2026-07-27T05:45:20.8857039+00:00
+  prior_started_at_utc: 2026-07-27T05:45:21.3911871+00:00
+  prior_read_completed_at_utc: 2026-07-27T05:45:22.3028647+00:00
+  cleanup_requested_at_utc: 2026-07-27T05:45:22.3031548+00:00
+  cleanup_verified_at_utc: 2026-07-27T05:45:22.7862372+00:00
+  candidate_restored_at_utc: 2026-07-27T05:45:23.3292978+00:00
+  completed_at_utc: 2026-07-27T05:45:23.3292982+00:00
+- scenario_id: rollback
+  service: dynamodb
+  operation: TransactGetItems
+  evidence_run_id: 30241202630
+  evidence_run_attempt: 1
+  candidate:
+    schema_version: 1
+    role: candidate
+    profile:
+      id: dynamodb-single-partition-transactions
+      version: 1
+    status: candidate
+    eligibility:
+      rollback_baseline_eligible: false
+      promotion_eligible: false
+    source:
+      repository: pedrosakuma/aws2azure
+      sha: e005cfac84dadab1b3db57e88e2ee2907e801c80
+      ref: refs/heads/main
+    runtime:
+      aggregate_digest: sha256:e060bfd17858f43d482c5a776ea0578248c1136d540666bd786cbd501711c79b
+      executable_digest: sha256:b834be9c2ca5649d51b8020efdc2a49eb34f954ecb424e8f22929957c079ffdf
+      manifest_digest: sha256:dc10ac5478ff3a484dff8816e39bcb1265379f163570ab5c28bd65ca777ca69b
+    producer:
+      workflow: .github/workflows/sealed-runtime.yml
+      event_name: workflow_dispatch
+      run_id: 30239004144
+      run_attempt: 1
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30239004144
+      attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30239004144/attempts/1
+      run_started_at: 2026-07-27T05:10:23.0000000+00:00
+    artifact:
+      id: 8642601222
+      name: aws2azure-sealed-linux-x64-e060bfd17858f43d482c5a776ea0578248c1136d540666bd786cbd501711c79b-run-30239004144-attempt-1
+      upload_digest: sha256:b5bb26ef2fc596371e8b642f7f88252f05f6602034654a4899f917e96b30974e
+      created_at: 2026-07-27T05:12:30.0000000+00:00
+      expires_at: 2026-10-25T05:10:24.0000000+00:00
+    attestation:
+      predicate_type: https://slsa.dev/provenance/v1
+      repository: pedrosakuma/aws2azure
+      signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
+      source_sha: e005cfac84dadab1b3db57e88e2ee2907e801c80
+      source_ref: refs/heads/main
+      run_invocation_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30239004144/attempts/1
+      bundle_digest: sha256:c9fd022cc47a90015af4d46422d20ef2e7cc4af88d494ffc3063592c365db3e4
+      executable_subject_name: Aws2Azure.Proxy
+      executable_subject_digest: sha256:b834be9c2ca5649d51b8020efdc2a49eb34f954ecb424e8f22929957c079ffdf
+      manifest_subject_name: sealed-runtime-manifest.json
+      manifest_subject_digest: sha256:dc10ac5478ff3a484dff8816e39bcb1265379f163570ab5c28bd65ca777ca69b
+  prior:
+    schema_version: 1
+    role: prior
+    profile:
+      id: dynamodb-single-partition-transactions
+      version: 1
+    status: bootstrap
+    eligibility:
+      rollback_baseline_eligible: true
+      promotion_eligible: false
+    ledger_record_digest: sha256:cdb82d12a856e166b36adecfa82385e838c9e6be5ff4d458ab8706660281ea0b
+    source:
+      repository: pedrosakuma/aws2azure
+      sha: fe05ff7a194096fddadae3da7c92e4086658cf4a
+      ref: refs/heads/main
+    runtime:
+      aggregate_digest: sha256:8ed5e089baeacb3e703ffae788a148e6de89f355f97c3fd10e3a74536298314b
+      executable_digest: sha256:b385a9cb8f11148908f2583d960bae2690e472a3e40fed181227bfd7b69c399f
+      manifest_digest: sha256:be0697070140ca1ea020816fdd2f94092e837ff051682e666dc90f5de800425b
+    producer:
+      workflow: .github/workflows/sealed-runtime.yml
+      event_name: workflow_dispatch
+      run_id: 30184664479
+      run_attempt: 1
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30184664479
+      attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30184664479/attempts/1
+      run_started_at: 2026-07-26T02:30:25.0000000+00:00
+    artifact:
+      id: 8626651580
+      name: aws2azure-sealed-linux-x64-8ed5e089baeacb3e703ffae788a148e6de89f355f97c3fd10e3a74536298314b-run-30184664479-attempt-1
+      upload_digest: sha256:30171e93310773429752d0b01e9c7450bf37ab02eab06bda6ccb4ed97dd8add3
+      created_at: 2026-07-26T02:32:15.0000000+00:00
+      expires_at: 2026-10-24T02:30:27.0000000+00:00
+    attestation:
+      predicate_type: https://slsa.dev/provenance/v1
+      repository: pedrosakuma/aws2azure
+      signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
+      source_sha: fe05ff7a194096fddadae3da7c92e4086658cf4a
+      source_ref: refs/heads/main
+      run_invocation_url: https://github.com/pedrosakuma/aws2azure/actions/runs/30184664479/attempts/1
+      bundle_digest: sha256:a235fa4a10437c905f8aec26459777e3b8b7ddb9ea131dc50b2dd48411741449
+      executable_subject_name: Aws2Azure.Proxy
+      executable_subject_digest: sha256:b385a9cb8f11148908f2583d960bae2690e472a3e40fed181227bfd7b69c399f
+      manifest_subject_name: sealed-runtime-manifest.json
+      manifest_subject_digest: sha256:be0697070140ca1ea020816fdd2f94092e837ff051682e666dc90f5de800425b
+  candidate_config_digest: sha256:7a3fbb508874cef119c8f287dd2a64bc0ac15757db18050471cdc0406f0988fe
+  prior_config_digest: sha256:7a3fbb508874cef119c8f287dd2a64bc0ac15757db18050471cdc0406f0988fe
+  candidate_backend_identity_digest: sha256:28d633e7362d0f3625ad87a451993bc296b584518c89ee4a7724a223820cb837
+  prior_backend_identity_digest: sha256:28d633e7362d0f3625ad87a451993bc296b584518c89ee4a7724a223820cb837
+  candidate_aws_binding_digest: sha256:0f093e88dfaedbec8a8dc54716090396c7228a356ab73c299d03f5929786f870
+  prior_aws_binding_digest: sha256:0f093e88dfaedbec8a8dc54716090396c7228a356ab73c299d03f5929786f870
+  canary_digest: sha256:8d9fdbf4cacd18d6e42019f96b007d2ff148def6a0bf1bace39bef8baac62d3a
+  cleanup_semantics: atomic_delete_both_items_then_delete_table_verify_resource_not_found_exception
+  started_at_utc: 2026-07-27T06:07:10.7361357+00:00
+  candidate_create_completed_at_utc: 2026-07-27T06:07:11.9090091+00:00
+  candidate_read_completed_at_utc: 2026-07-27T06:07:12.0911150+00:00
+  candidate_stopped_at_utc: 2026-07-27T06:07:12.1264898+00:00
+  prior_started_at_utc: 2026-07-27T06:07:12.6311803+00:00
+  prior_read_completed_at_utc: 2026-07-27T06:07:14.4368639+00:00
+  cleanup_requested_at_utc: 2026-07-27T06:07:14.4371434+00:00
+  cleanup_verified_at_utc: 2026-07-27T06:07:15.0803052+00:00
+  candidate_restored_at_utc: 2026-07-27T06:07:15.6139996+00:00
+  completed_at_utc: 2026-07-27T06:07:15.6140000+00:00
+findings: []

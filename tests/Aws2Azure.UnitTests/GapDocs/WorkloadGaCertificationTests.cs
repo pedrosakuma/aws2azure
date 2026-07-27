@@ -13,18 +13,19 @@ public sealed class WorkloadGaCertificationTests
         Loader.LoadDesignDocs(Path.Combine(RepoRoot, "docs", "gaps"));
 
     [Theory]
-    [InlineData("s3-basic-object-crud.yaml", "ga")]
-    [InlineData("secretsmanager-basic-lifecycle.yaml", "ga")]
-    [InlineData("sqs-standard-messaging.yaml", "ga")]
-    [InlineData("dynamodb-basic-crud.yaml", "ga")]
-    [InlineData("dynamodb-query-scan-indexes.yaml", "candidate")]
-    [InlineData("dynamodb-single-partition-transactions.yaml", "conditional")]
-    [InlineData("sns-standard-publish-service-bus.yaml", "candidate")]
-    [InlineData("sns-standard-publish-event-grid.yaml", "candidate")]
-    [InlineData("kinesis-basic-record-ingestion.yaml", "candidate")]
+    [InlineData("s3-basic-object-crud.yaml", "ga", 22)]
+    [InlineData("secretsmanager-basic-lifecycle.yaml", "ga", 22)]
+    [InlineData("sqs-standard-messaging.yaml", "ga", 22)]
+    [InlineData("dynamodb-basic-crud.yaml", "ga", 22)]
+    [InlineData("dynamodb-query-scan-indexes.yaml", "candidate", 22)]
+    [InlineData("dynamodb-single-partition-transactions.yaml", "ga", 27)]
+    [InlineData("sns-standard-publish-service-bus.yaml", "candidate", 22)]
+    [InlineData("sns-standard-publish-event-grid.yaml", "candidate", 22)]
+    [InlineData("kinesis-basic-record-ingestion.yaml", "candidate", 22)]
     public void Repository_profiles_have_expected_mechanical_verdict(
         string fileName,
-        string expectedVerdict)
+        string expectedVerdict,
+        int evaluationDay)
     {
         var manifest = LoadManifest(fileName);
 
@@ -34,13 +35,13 @@ public sealed class WorkloadGaCertificationTests
             Operations,
             Designs,
             RepoRoot,
-            new DateOnly(2026, 7, 22));
+            new DateOnly(2026, 7, evaluationDay));
 
         Assert.Equal(expectedVerdict, report.Verdict);
     }
 
     [Fact]
-    public void Transaction_profile_has_bootstrap_but_remains_unqualified()
+    public void Transaction_profile_is_qualified_and_approved()
     {
         var manifest = LoadManifest(
             "dynamodb-single-partition-transactions.yaml");
@@ -50,18 +51,15 @@ public sealed class WorkloadGaCertificationTests
             Operations,
             Designs,
             RepoRoot,
-            new DateOnly(2026, 7, 22));
+            new DateOnly(2026, 7, 27));
 
-        Assert.Equal("conditional", report.Verdict);
+        Assert.Equal("ga", report.Verdict);
         Assert.DoesNotContain(
             report.Findings,
-            finding => finding.Code is "rollback_runtime_unavailable"
-                or "rollback_blocker_ledger_conflict");
-        Assert.Contains(
-            report.Findings,
-            finding => finding.Code == "sub_feature_real_azure_seal_missing"
-                       && finding.Disposition == "blocking");
-        Assert.Empty(manifest.Evidence.QualificationArtifact);
+            finding => finding.Disposition == "blocking");
+        Assert.Equal(
+            "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
+            manifest.Evidence.QualificationArtifact);
         Assert.Empty(manifest.Evidence.RollbackStatus);
         Assert.Empty(manifest.Evidence.RollbackBlocker);
     }

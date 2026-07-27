@@ -2,9 +2,17 @@ service: dynamodb
 operation: TransactGetItems
 azure_equivalent: "Azure Cosmos DB (Core SQL API) — single-partition read-only stored-procedure snapshot"
 status: partial
+verified_real_azure:
+  date: "2026-07-27"
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540
 sub_features:
   - name: Single-table single-partition snapshot
     status: implemented
+    verified_real_azure:
+      date: "2026-07-27"
+      evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540
+      workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540
     notes: >-
       Every request is validated as one table, one logical partition, and unique
       item targets before item data is read. The proxy then invokes
@@ -24,17 +32,16 @@ sub_features:
   - name: ProjectionExpression / ExpressionAttributeNames (per item)
     status: implemented
     verified_real_azure:
-      date: "2026-07-02"
-      evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/28566172080
-      workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/28566172080
+      date: "2026-07-27"
+      evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540
+      workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540
     notes: >-
       Top-level attributes, aliases, and nested projection paths are applied
       positionally after the server-side snapshot. Every declared
       ExpressionAttributeNames alias must be consumed; leftovers fail with
       ValidationException before table metadata or stored-procedure I/O. The
-      historical seal covers projection behavior; the new snapshot/validation
-      contract requires fresh real-Azure evidence before the transaction profile
-      can advance.
+      The final transaction qualification reverified projection behavior together
+      with the current snapshot and validation contract.
   - name: ReturnConsumedCapacity
     status: unsupported
     notes: >-
@@ -53,7 +60,7 @@ sub_features:
 behavior_differences:
   - "**Single table + single partition key only.** Cross-table and cross-partition reads are rejected before the snapshot stored procedure is invoked. DynamoDB can transact across tables and partitions."
   - "Duplicate keys in one request are rejected with ValidationException before item data is read."
-  - "Stored procedures must be enabled. The Cosmos Linux emulator does not execute server-side scripts, so snapshot execution is a real-Azure-only test surface; no new snapshot seal is recorded until that suite runs."
+  - "Stored procedures must be enabled. The Cosmos Linux emulator does not execute server-side scripts, so snapshot execution remains a real-Azure-only test surface."
   - "Key values use the proxy-owned encoded Cosmos id/partition-key format (S -> hex UTF-8, B -> hex raw bytes, N -> order-preserving digits); the effective raw key limit remains approximately 127 bytes."
   - "The stored-procedure response is JSON text even when CosmosBinary document responses are enabled; projected DynamoDB AttributeValue maps are reconstructed from the returned raw documents."
   - "Transaction snapshot provisioning/execution never fails over between independently writable Cosmos regions. For a multi-write account, target.preferredRegions[0] is a deployment contract: every replica and binding for the same data must configure the same first region. If that region is missing from discovered writable topology, or returns 403/3, 408, 503, timeout, or a transport failure, the snapshot fails retryably instead of using a later preference or the global account endpoint. Later preferred regions remain available to ordinary non-transactional routing."

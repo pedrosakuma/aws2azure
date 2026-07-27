@@ -18,8 +18,8 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | dynamodb | [Query](dynamodb.md#query) | 🟡 partial | ✅ | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [Scan](dynamodb.md#scan) | 🟡 partial | ✅ | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [TagResource](dynamodb.md#tagresource) | ✅ implemented | — | `Azure Cosmos DB account/resource tags (control plane)` |
-| dynamodb | [TransactGetItems](dynamodb.md#transactgetitems) | 🟡 partial | — | `Azure Cosmos DB (Core SQL API) — single-partition read-only stored-procedure snapshot` |
-| dynamodb | [TransactWriteItems](dynamodb.md#transactwriteitems) | 🟡 partial | — | `Azure Cosmos DB (Core SQL API) — single-partition stored-procedure transaction` |
+| dynamodb | [TransactGetItems](dynamodb.md#transactgetitems) | 🟡 partial | ✅ | `Azure Cosmos DB (Core SQL API) — single-partition read-only stored-procedure snapshot` |
+| dynamodb | [TransactWriteItems](dynamodb.md#transactwriteitems) | 🟡 partial | ✅ | `Azure Cosmos DB (Core SQL API) — single-partition stored-procedure transaction` |
 | dynamodb | [UntagResource](dynamodb.md#untagresource) | ✅ implemented | — | `Azure Cosmos DB account/resource tags (control plane)` |
 | dynamodb | [UpdateItem](dynamodb.md#updateitem) | 🟡 partial | ✅ | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [UpdateTimeToLive](dynamodb.md#updatetimetolive) | 🟡 partial | — | `Azure Cosmos DB container `defaultTtl` / per-item `ttl`` |
