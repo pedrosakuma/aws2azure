@@ -1,0 +1,20 @@
+schema_version: 1
+profile_id: dynamodb-single-partition-transactions
+profile_version: 1
+minimum_window_minutes: 60
+maximum_window_minutes: 180
+maximum_evidence_age_hours: 72
+minimum_samples_per_cohort: 300
+load_shape:
+  candidate_concurrency: 1
+  stable_concurrency: 1
+  operation_mix_identity: sha256:aa733cebf0913f3eae6922cad06112fd852d289178674c4db22c6068608becd7
+metrics:
+  - id: representative-load-throughput
+    unit: throughput_per_sec
+    threshold_source: qualification_signal
+    threshold_reference: representative-load-throughput
+  - id: representative-load-failure-rate
+    unit: ratio
+    threshold_source: qualification_rule
+    threshold_reference: max_failure_rate
