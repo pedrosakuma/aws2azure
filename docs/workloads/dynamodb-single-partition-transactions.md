@@ -187,11 +187,29 @@ was non-qualifying after 144,763 of 155,693 operation attempts received Cosmos
 429 responses. Once throttling began, four unpaced workers immediately
 re-entered and amplified the failure rate. The revised shape uses one worker
 and a 500 ms interval after every iteration, including failed iterations; SDK
-retries remain disabled and any single 429 still blocks evidence. Any future
-throughput/latency claim must cite that
-real-Azure harness run; emulator results from other DynamoDB scenarios do not
-qualify this profile. GA additionally requires three reviewed load runs,
-correctness, rollback, and SLO evidence. The throughput floor remains
-unresolved, no operational qualification artifact is committed, and the
-bootstrap must not be treated as candidate, approved, GA, or production
-promotion evidence.
+retries remain disabled and any single 429 still blocks evidence.
+
+Three comparable zero-failure runs of that shape against the sealed
+protected-main candidate
+`ee840d6481bf09be8c5f2b095516c84d44cc948d` selected the representative-load
+floor:
+
+| Workflow run | Iterations | Throughput | p95 | p99 |
+|---|---:|---:|---:|---:|
+| [`30225815426`](https://github.com/pedrosakuma/aws2azure/actions/runs/30225815426) | 445 | 1.481245 txn/s | 100.19 ms | 122.70 ms |
+| [`30226615491`](https://github.com/pedrosakuma/aws2azure/actions/runs/30226615491) | 563 | 1.874342 txn/s | 22.34 ms | 49.96 ms |
+| [`30227515778`](https://github.com/pedrosakuma/aws2azure/actions/runs/30227515778) | 557 | 1.855369 txn/s | 28.33 ms | 51.10 ms |
+
+The blocking floor is 1.4 txn/s: below the worst healthy run rather than an
+average, so the first run's materially higher network latency remains covered.
+The metric is completed five-write `TransactWriteItems` operations divided by
+the whole closed-loop five-write/ten-read iteration window; it is not isolated
+Cosmos capacity or maximum transaction throughput. Emulator results and
+unrelated A/B scenarios do not qualify this profile.
+
+These calibration runs select policy only. Because this policy change creates
+a new protected-main SHA, they cannot satisfy final qualification's exact-SHA
+binding. GA still requires three new reviewed load runs plus correctness,
+rollback, and SLO evidence from that same candidate. No operational
+qualification artifact is committed, and the bootstrap must not be treated as
+candidate, approved, GA, or production promotion evidence.

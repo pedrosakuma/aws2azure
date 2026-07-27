@@ -77,6 +77,12 @@ public sealed class RealAzureTransactionWorkflowTests
         "workloads",
         "qualification",
         "dynamodb-single-partition-transactions.yaml"));
+    private static readonly string ObservationPolicy = File.ReadAllText(Path.Combine(
+        RepositoryRoot,
+        "docs",
+        "workloads",
+        "observation",
+        "dynamodb-single-partition-transactions.yaml"));
 
     [Fact]
     public void Transaction_profile_resolves_exact_candidate_and_bootstrap_prior()
@@ -385,6 +391,19 @@ public sealed class RealAzureTransactionWorkflowTests
         Assert.Contains(
             "value?.Item is { Count: > 0 }",
             RollbackQualificationSource,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Transaction_capacity_floor_and_observation_policy_are_resolved()
+    {
+        Assert.Contains("threshold_status: resolved", LoadPolicy, StringComparison.Ordinal);
+        Assert.Contains("min_value: 1.4", LoadPolicy, StringComparison.Ordinal);
+        Assert.Contains("candidate_concurrency: 1", ObservationPolicy, StringComparison.Ordinal);
+        Assert.Contains("stable_concurrency: 1", ObservationPolicy, StringComparison.Ordinal);
+        Assert.Contains(
+            "operation_mix_identity: sha256:aa733cebf0913f3eae6922cad06112fd852d289178674c4db22c6068608becd7",
+            ObservationPolicy,
             StringComparison.Ordinal);
     }
 

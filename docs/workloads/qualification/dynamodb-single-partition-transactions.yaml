@@ -30,11 +30,15 @@ scenarios:
         source: backend_capacity
         disposition: blocking
         metric: throughput_per_sec
-        threshold_status: unresolved
+        threshold_status: resolved
+        min_value: 1.4
         threshold_reason: >-
-          No comparable repeated sealed live-Cosmos transaction runs have been
-          reviewed. Select a floor from the worst healthy run without using
-          emulator or A/B data.
+          Three comparable zero-failure protected-main live-Cosmos runs for
+          candidate ee840d6481bf09be8c5f2b095516c84d44cc948d completed at
+          1.481245, 1.874342, and 1.855369 transactions per second (workflow
+          runs 30225815426, 30226615491, and 30227515778). The 1.4 floor is
+          deliberately below the worst healthy run, does not average away that
+          run's higher network latency, and uses neither emulator nor A/B data.
       - id: representative-load-p95
         source: backend_capacity
         disposition: report_only
