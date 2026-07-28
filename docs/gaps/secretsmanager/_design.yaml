@@ -1,118 +1,67 @@
 service: secretsmanager
 design_gaps:
-  - area: Versioning and staging modelled on Key Vault version tags
-    status: partial
-    summary: >-
-      Secrets Manager version stages (AWSCURRENT / AWSPREVIOUS / custom labels)
-      are modelled with Key Vault secret versions plus per-version tags. Key
-      Vault's created timestamp has one-second granularity, so deterministic
-      resolution uses created time plus version id and relies on tag bookkeeping
-      rather than a native staging concept.
-    impact: >-
-      Version creation, inventory, and per-version tag patches cannot be one Key
-      Vault transaction. The proxy uses empty-stage creation, loser-first
-      publication, fresh tag merges, and bounded verification/repair, but strict
-      cross-instance atomicity remains structurally impossible without an
-      external coordinator. Key Vault secret PATCH does not expose a contractual
-      ETag/If-Match primitive, so a tag edit that lands in the narrow interval
-      between the proxy's fresh GET and PATCH can still be overwritten.
-    workaround: >-
-      Retry an explicit ResourceExistsException after propagation settles and
-      use a single writer when stronger ordering is required. Unrelated
-      out-of-band tags are preserved by fresh merges, but out-of-band edits to
-      proxy-owned aws2azure-* tags are unsupported. Before rollback, drain writes
-      and let the candidate runtime finish or repair every pending publication;
-      the previous runtime can read completed versions but cannot interpret the
-      candidate-only pending-publication intent metadata.
-  - area: Rotation has no Lambda equivalent
-    status: partial
-    summary: >-
-      Secrets Manager rotation is driven by a customer Lambda function; Azure
-      Key Vault has no equivalent in-line rotation-function contract, so
-      RotateSecret cannot execute an arbitrary rotation workflow.
-    impact: >-
-      Automatic, function-driven credential rotation as configured in AWS is not
-      reproduced end-to-end.
-    workaround: >-
-      Rotate secrets via an external process (e.g. an Azure Function / pipeline)
-      that calls PutSecretValue through the proxy.
-  - area: Deletion recovery semantics differ
-    status: by_design
-    summary: >-
-      DeleteSecret's RecoveryWindowInDays / ForceDeleteWithoutRecovery map onto
-      Key Vault soft-delete and purge, whose retention model and immediate-purge
-      permissions are governed by the vault, not by AWS parameters.
-    impact: >-
-      Recovery-window timing and force-delete behaviour follow the Key Vault
-      soft-delete configuration rather than the exact AWS window semantics.
-    workaround: >-
-      Configure the Key Vault soft-delete retention to match the intended
-      recovery window; grant purge permission only where force-delete is needed.
-  - area: No resource policies or cross-account access
-    status: unsupported
-    summary: >-
-      Secrets Manager resource policies and cross-account secret sharing have no
-      Key Vault equivalent in the wire-protocol path; authorization is the
-      static AWS-key-to-Azure-credential mapping, not server-side IAM.
-    impact: >-
-      Policy-based or cross-account access patterns cannot be expressed through
-      the proxy.
-    workaround: >-
-      Use Key Vault RBAC / access policies at the Azure level for
-      authorization.
+- area: Versioning and staging modelled on Key Vault version tags
+  status: partial
+  summary: Secrets Manager version stages (AWSCURRENT / AWSPREVIOUS / custom labels) are modelled with Key Vault secret versions plus per-version tags. Key Vault's created timestamp has one-second granularity, so deterministic resolution uses created time plus version id and relies on tag bookkeeping rather than a native staging concept.
+  impact: Version creation, inventory, and per-version tag patches cannot be one Key Vault transaction. The proxy uses empty-stage creation, loser-first publication, fresh tag merges, and bounded verification/repair, but strict cross-instance atomicity remains structurally impossible without an external coordinator. Key Vault secret PATCH does not expose a contractual ETag/If-Match primitive, so a tag edit that lands in the narrow interval between the proxy's fresh GET and PATCH can still be overwritten.
+  workaround: Retry an explicit ResourceExistsException after propagation settles and use a single writer when stronger ordering is required. Unrelated out-of-band tags are preserved by fresh merges, but out-of-band edits to proxy-owned aws2azure-* tags are unsupported. Before rollback, drain writes and let the candidate runtime finish or repair every pending publication; the previous runtime can read completed versions but cannot interpret the candidate-only pending-publication intent metadata.
+  disposition: by_design
+- area: Rotation has no Lambda equivalent
+  status: partial
+  summary: Secrets Manager rotation is driven by a customer Lambda function; Azure Key Vault has no equivalent in-line rotation-function contract, so RotateSecret cannot execute an arbitrary rotation workflow.
+  impact: Automatic, function-driven credential rotation as configured in AWS is not reproduced end-to-end.
+  workaround: Rotate secrets via an external process (e.g. an Azure Function / pipeline) that calls PutSecretValue through the proxy.
+  disposition: non_goal
+- area: Deletion recovery semantics differ
+  status: by_design
+  summary: DeleteSecret's RecoveryWindowInDays / ForceDeleteWithoutRecovery map onto Key Vault soft-delete and purge, whose retention model and immediate-purge permissions are governed by the vault, not by AWS parameters.
+  impact: Recovery-window timing and force-delete behaviour follow the Key Vault soft-delete configuration rather than the exact AWS window semantics.
+  workaround: Configure the Key Vault soft-delete retention to match the intended recovery window; grant purge permission only where force-delete is needed.
+- area: No resource policies or cross-account access
+  status: unsupported
+  summary: Secrets Manager resource policies and cross-account secret sharing have no Key Vault equivalent in the wire-protocol path; authorization is the static AWS-key-to-Azure-credential mapping, not server-side IAM.
+  impact: Policy-based or cross-account access patterns cannot be expressed through the proxy.
+  workaround: Use Key Vault RBAC / access policies at the Azure level for authorization.
+  disposition: by_design
 workload_patterns:
-  - id: secretsmanager_basic_lifecycle
-    name: Basic secret lifecycle
-    compatibility: conditional
-    summary: >-
-      Create, inspect, retrieve, update, list, and delete secrets through the
-      corresponding Key Vault data-plane APIs.
-    operations:
-      - CreateSecret
-      - DescribeSecret
-      - GetSecretValue
-      - UpdateSecret
-      - ListSecrets
-      - DeleteSecret
-    design_gaps:
-      - Deletion recovery semantics differ
-    guidance: >-
-      Suitable after configuring Entra ID authentication and validating Key
-      Vault soft-delete behavior for the deployment.
-  - id: secretsmanager_version_stages
-    name: Version stages
-    compatibility: conditional
-    summary: >-
-      AWS version stages are represented through Key Vault versions and tags
-      rather than a native staging model.
-    operations:
-      - PutSecretValue
-      - GetSecretValue
-      - UpdateSecret
-    design_gaps:
-      - Versioning and staging modelled on Key Vault version tags
-    guidance: >-
-      Do not edit proxy-owned aws2azure-* tags; test rapid successive writes and
-      handle bounded ResourceExistsException conflicts.
-  - id: secretsmanager_lambda_rotation
-    name: Lambda-driven managed rotation
-    compatibility: blocked
-    summary: >-
-      RotateSecret cannot execute an AWS Lambda-compatible rotation workflow.
-    operations:
-      - RotateSecret
-    design_gaps:
-      - Rotation has no Lambda equivalent
-    guidance: >-
-      Run rotation from an external Azure Function or pipeline that writes the
-      new version through the proxy.
-  - id: secretsmanager_resource_policies
-    name: Resource policies and cross-account sharing
-    compatibility: blocked
-    summary: >-
-      Secrets Manager resource-policy and cross-account authorization semantics
-      are not exposed.
-    design_gaps:
-      - No resource policies or cross-account access
-    guidance: >-
-      Use Key Vault RBAC and separate bindings to enforce access.
+- id: secretsmanager_basic_lifecycle
+  name: Basic secret lifecycle
+  compatibility: conditional
+  summary: Create, inspect, retrieve, update, list, and delete secrets through the corresponding Key Vault data-plane APIs.
+  operations:
+  - CreateSecret
+  - DescribeSecret
+  - GetSecretValue
+  - UpdateSecret
+  - ListSecrets
+  - DeleteSecret
+  design_gaps:
+  - Deletion recovery semantics differ
+  guidance: Suitable after configuring Entra ID authentication and validating Key Vault soft-delete behavior for the deployment.
+- id: secretsmanager_version_stages
+  name: Version stages
+  compatibility: conditional
+  summary: AWS version stages are represented through Key Vault versions and tags rather than a native staging model.
+  operations:
+  - PutSecretValue
+  - GetSecretValue
+  - UpdateSecret
+  design_gaps:
+  - Versioning and staging modelled on Key Vault version tags
+  guidance: Do not edit proxy-owned aws2azure-* tags; test rapid successive writes and handle bounded ResourceExistsException conflicts.
+- id: secretsmanager_lambda_rotation
+  name: Lambda-driven managed rotation
+  compatibility: blocked
+  summary: RotateSecret cannot execute an AWS Lambda-compatible rotation workflow.
+  operations:
+  - RotateSecret
+  design_gaps:
+  - Rotation has no Lambda equivalent
+  guidance: Run rotation from an external Azure Function or pipeline that writes the new version through the proxy.
+- id: secretsmanager_resource_policies
+  name: Resource policies and cross-account sharing
+  compatibility: blocked
+  summary: Secrets Manager resource-policy and cross-account authorization semantics are not exposed.
+  design_gaps:
+  - No resource policies or cross-account access
+  guidance: Use Key Vault RBAC and separate bindings to enforce access.

@@ -1,61 +1,63 @@
 service: dynamodb
 operation: UpdateItem
-azure_equivalent: "Azure Cosmos DB (Core SQL API)"
+azure_equivalent: Azure Cosmos DB (Core SQL API)
 status: partial
 verified_real_azure:
-  date: "2026-07-16"
+  date: '2026-07-16'
   evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
   workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
 sub_features:
-  - name: UpdateExpression grammar (SET / REMOVE / ADD / DELETE)
-    status: implemented
-    notes: "Hand-rolled lexer + parser shared with the future Condition/Filter slice."
-  - name: SET arithmetic (`a = a + :i`, `a = :x - :y`)
-    status: implemented
-    notes: "Decimal arithmetic preserves up to 28-29 significant digits; DynamoDB allows 38. Overflow surfaces as ValidationException."
-  - name: SET functions `if_not_exists(path, fallback)` and `list_append(l1, l2)`
-    status: implemented
-  - name: SET on nested paths (`addr.zip`, `items[0].name`)
-    status: implemented
-    notes: "Parent path must already exist as a map/list, matching DynamoDB. Creating a deeply-nested fresh structure requires top-level SET."
-  - name: REMOVE on nested paths and missing attributes
-    status: implemented
-    notes: "REMOVE on a missing path is a no-op."
-  - name: ADD on numeric attribute (create-if-missing + addition)
-    status: implemented
-  - name: ADD / DELETE on string/number/binary sets (union / subtract)
-    status: implemented
-    notes: "Empty result set causes the attribute to be removed entirely, matching DynamoDB."
-  - name: AttributeUpdates (legacy) PUT / DELETE / ADD
-    status: implemented
-    notes: "Normalised internally into the same UpdateExpression AST."
-  - name: ExpressionAttributeNames / ExpressionAttributeValues (`#name`, `:value`)
-    status: implemented
-  - name: Path overlap detection
-    status: implemented
-    notes: "Two paths in the same expression where one is a prefix of the other are rejected with ValidationException."
-  - name: ReturnValues (NONE / ALL_OLD / UPDATED_OLD / ALL_NEW / UPDATED_NEW)
-    status: implemented
-    notes: "UPDATED_OLD/UPDATED_NEW project only the top-level attributes touched by the expression, matching AWS."
-  - name: Create-if-missing (upsert) semantics
-    status: implemented
-    notes: "Atomic create with `If-None-Match: *` when the target item does not exist; concurrent create races surface as Cosmos 409 and are replayed by the optimistic-retry loop against the winner's state."
-  - name: ConditionExpression / Expected / ConditionalOperator
-    status: implemented
-    notes: "Modern ConditionExpression and legacy Expected + ConditionalOperator both supported; mutual exclusion enforced with ValidationException. Evaluator covers comparisons, AND/OR/NOT, BETWEEN, IN, attribute_exists/not_exists/type, begins_with, contains, size(). Failure returns HTTP 400 ConditionalCheckFailedException; ReturnValuesOnConditionCheckFailure=ALL_OLD includes the prior item."
-  - name: ReturnConsumedCapacity / ReturnItemCollectionMetrics
-    status: unsupported
-    notes: "Silently ignored; response omits ConsumedCapacity / ItemCollectionMetrics."
+- name: UpdateExpression grammar (SET / REMOVE / ADD / DELETE)
+  status: implemented
+  notes: Hand-rolled lexer + parser shared with the future Condition/Filter slice.
+- name: SET arithmetic (`a = a + :i`, `a = :x - :y`)
+  status: implemented
+  notes: Decimal arithmetic preserves up to 28-29 significant digits; DynamoDB allows 38. Overflow surfaces as ValidationException.
+- name: SET functions `if_not_exists(path, fallback)` and `list_append(l1, l2)`
+  status: implemented
+- name: SET on nested paths (`addr.zip`, `items[0].name`)
+  status: implemented
+  notes: Parent path must already exist as a map/list, matching DynamoDB. Creating a deeply-nested fresh structure requires top-level SET.
+- name: REMOVE on nested paths and missing attributes
+  status: implemented
+  notes: REMOVE on a missing path is a no-op.
+- name: ADD on numeric attribute (create-if-missing + addition)
+  status: implemented
+- name: ADD / DELETE on string/number/binary sets (union / subtract)
+  status: implemented
+  notes: Empty result set causes the attribute to be removed entirely, matching DynamoDB.
+- name: AttributeUpdates (legacy) PUT / DELETE / ADD
+  status: implemented
+  notes: Normalised internally into the same UpdateExpression AST.
+- name: ExpressionAttributeNames / ExpressionAttributeValues (`#name`, `:value`)
+  status: implemented
+- name: Path overlap detection
+  status: implemented
+  notes: Two paths in the same expression where one is a prefix of the other are rejected with ValidationException.
+- name: ReturnValues (NONE / ALL_OLD / UPDATED_OLD / ALL_NEW / UPDATED_NEW)
+  status: implemented
+  notes: UPDATED_OLD/UPDATED_NEW project only the top-level attributes touched by the expression, matching AWS.
+- name: Create-if-missing (upsert) semantics
+  status: implemented
+  notes: 'Atomic create with `If-None-Match: *` when the target item does not exist; concurrent create races surface as Cosmos 409 and are replayed by the optimistic-retry loop against the winner''s state.'
+- name: ConditionExpression / Expected / ConditionalOperator
+  status: implemented
+  notes: Modern ConditionExpression and legacy Expected + ConditionalOperator both supported; mutual exclusion enforced with ValidationException. Evaluator covers comparisons, AND/OR/NOT, BETWEEN, IN, attribute_exists/not_exists/type, begins_with, contains, size(). Failure returns HTTP 400 ConditionalCheckFailedException; ReturnValuesOnConditionCheckFailure=ALL_OLD includes the prior item.
+- name: ReturnConsumedCapacity / ReturnItemCollectionMetrics
+  status: unsupported
+  notes: Silently ignored; response omits ConsumedCapacity / ItemCollectionMetrics.
+  disposition: by_design
 behavior_differences:
-  - "Cosmos storage-metadata system fields (`_rid`/`_self`/`_etag`/`_ts`/`_attachments`/`_lsn`/`_metadata`) are stripped from response items and never surface as DynamoDB attributes (#203). Caveat: a user attribute literally named identically is also stripped on read; the durable fix is attribute namespacing."
-  - "Key attribute values (S/B) are hex-encoded into the internal Cosmos `id`/partition-key (S → hex(UTF-8 bytes), B → hex(raw bytes), N → order-preserving numeric digit string), accepting Cosmos-forbidden characters (`/`, `\\`, `?`, `#`) and fixing B byte-ordering. Effective raw key limit ~127 bytes; over-limit keys are rejected with ValidationException. **On-disk-format breaking change** vs earlier builds. See PutItem for the full rationale."
-  - "Atomicity is implemented as a GET → modify → PUT(If-Match) (or atomic-create with If-None-Match) loop with up to 4 retries on Cosmos 412/409. Sustained contention surfaces as InternalServerError after the retry budget is exhausted."
-  - "Numeric arithmetic is performed with System.Decimal (28-29 significant digits) rather than DynamoDB's 38-digit precision. Operands exceeding the proxy's precision are rejected up front with ValidationException to avoid silent rounding; overflow also throws ValidationException."
-  - "Key attributes referenced by the request are always reinforced into the resulting item — a REMOVE targeting the partition or sort key never deletes them in the stored doc."
-  - "Cosmos 429 (throttled) is surfaced to clients as DynamoDB ProvisionedThroughputExceededException."
-  - "Conditional / ReturnValues=NONE updates use the single-item `atomicWrite_v2` Cosmos stored procedure when stored procedures are enabled AND the expression is within the sproc's supported subset: the condition is evaluated and the UpdateExpression applied server-side in one atomic round-trip. **Validated against real Azure Cosmos DB** (Strong consistency). The v2 body fixes two defects the emulator could never catch (it does not run sprocs): (1) the read link is a partition-local `SELECT * FROM c WHERE c.id = @id` query rather than an invalid `getSelfLink() + 'docs/' + id` mixed link; (2) SET-value operands are serialised as `$k`-tagged envelopes (`lit`/`path`/`op`/`ifne`/`lap`) so the sproc resolves arithmetic (`a = a + :i`), attribute copies, `if_not_exists` and `list_append` server-side instead of storing the unresolved AST."
-  - "The sproc executes only the slice of the expression surface it can reproduce faithfully: SET (scalar/native-map/list literals, `+`/`-` arithmetic, path copy, `if_not_exists`, `list_append`) and REMOVE, with scalar conditions (comparisons, AND/OR/NOT, `attribute_exists`/`attribute_not_exists`, `attribute_type` of S/N/BOOL/NULL/L/M, `begins_with`, BETWEEN, IN). Anything outside it — `ADD`/`DELETE` clauses, string/number/binary **sets**, **binary** values, **high-precision numbers** that do not round-trip through a double, **list-index paths** (`a[0]`), and the `size()` / `contains()` condition forms — is routed away from the sproc: under stored-procedure mode `Preferred` it falls back to the non-atomic GET → modify → PUT loop; under `Required` it fails loud rather than run divergent server-side JS. Atomic counters are still served atomically via `SET c = c + :n`."
-  - "Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; the GET → modify → PUT fallback path is emulator-covered, the `atomicWrite_v2` sproc path is validated against real Azure Cosmos DB."
-  - "When the existing item must be materialized for condition evaluation or ReturnValues (the GET → modify → PUT loop) and Cosmos returns a CosmosBinary body (opt-in `DynamoDb.CosmosBinaryResponses`), the AttributeValue map is built straight off the binary body via `CosmosBinaryReader` (no binary→text decode + JsonDocument DOM). A marker the streaming reader does not fast-path falls back to the decode-to-text path; a text body uses it directly. The chosen path is observable on `aws2azure_dynamodb_read_decode_path_total{op=\"update\",path=binary|fallback|text}`. The emulator never emits CosmosBinary, so the binary-direct path is exercised against real Azure only."
-  - "The standalone document write body (the create-with-If-None-Match / replace-with-If-Match in the GET → modify → PUT loop) is sent as CosmosBinary (the `0x80` format) when the opt-in `DynamoDb.CosmosBinaryRequests` is enabled (default off), encoded single-pass straight to the wire; the gateway auto-detects the marker so no negotiation header or special Content-Type is used. The sproc-embedded atomic path (`atomicWrite_v2`) keeps JSON text, since the document is embedded as a value inside the sproc parameter array. The chosen format is observable on `aws2azure_dynamodb_write_body_total{format=binary|text}`. The Cosmos DB Linux emulator neither emits nor reliably accepts CosmosBinary, so the binary write path is validated against real Azure only — confirmed parsed + indexed (text read-back + indexed query) by the nightly acceptance test."
-  - https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Expressions.UpdateExpressions.html
+- 'Cosmos storage-metadata system fields (`_rid`/`_self`/`_etag`/`_ts`/`_attachments`/`_lsn`/`_metadata`) are stripped from response items and never surface as DynamoDB attributes (#203). Caveat: a user attribute literally named identically is also stripped on read; the durable fix is attribute namespacing.'
+- Key attribute values (S/B) are hex-encoded into the internal Cosmos `id`/partition-key (S → hex(UTF-8 bytes), B → hex(raw bytes), N → order-preserving numeric digit string), accepting Cosmos-forbidden characters (`/`, `\`, `?`, `#`) and fixing B byte-ordering. Effective raw key limit ~127 bytes; over-limit keys are rejected with ValidationException. **On-disk-format breaking change** vs earlier builds. See PutItem for the full rationale.
+- Atomicity is implemented as a GET → modify → PUT(If-Match) (or atomic-create with If-None-Match) loop with up to 4 retries on Cosmos 412/409. Sustained contention surfaces as InternalServerError after the retry budget is exhausted.
+- Numeric arithmetic is performed with System.Decimal (28-29 significant digits) rather than DynamoDB's 38-digit precision. Operands exceeding the proxy's precision are rejected up front with ValidationException to avoid silent rounding; overflow also throws ValidationException.
+- Key attributes referenced by the request are always reinforced into the resulting item — a REMOVE targeting the partition or sort key never deletes them in the stored doc.
+- Cosmos 429 (throttled) is surfaced to clients as DynamoDB ProvisionedThroughputExceededException.
+- 'Conditional / ReturnValues=NONE updates use the single-item `atomicWrite_v2` Cosmos stored procedure when stored procedures are enabled AND the expression is within the sproc''s supported subset: the condition is evaluated and the UpdateExpression applied server-side in one atomic round-trip. **Validated against real Azure Cosmos DB** (Strong consistency). The v2 body fixes two defects the emulator could never catch (it does not run sprocs): (1) the read link is a partition-local `SELECT * FROM c WHERE c.id = @id` query rather than an invalid `getSelfLink() + ''docs/'' + id` mixed link; (2) SET-value operands are serialised as `$k`-tagged envelopes (`lit`/`path`/`op`/`ifne`/`lap`) so the sproc resolves arithmetic (`a = a + :i`), attribute copies, `if_not_exists` and `list_append` server-side instead of storing the unresolved AST.'
+- 'The sproc executes only the slice of the expression surface it can reproduce faithfully: SET (scalar/native-map/list literals, `+`/`-` arithmetic, path copy, `if_not_exists`, `list_append`) and REMOVE, with scalar conditions (comparisons, AND/OR/NOT, `attribute_exists`/`attribute_not_exists`, `attribute_type` of S/N/BOOL/NULL/L/M, `begins_with`, BETWEEN, IN). Anything outside it — `ADD`/`DELETE` clauses, string/number/binary **sets**, **binary** values, **high-precision numbers** that do not round-trip through a double, **list-index paths** (`a[0]`), and the `size()` / `contains()` condition forms — is routed away from the sproc: under stored-procedure mode `Preferred` it falls back to the non-atomic GET → modify → PUT loop; under `Required` it fails loud rather than run divergent server-side JS. Atomic counters are still served atomically via `SET c = c + :n`.'
+- Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; the GET → modify → PUT fallback path is emulator-covered, the `atomicWrite_v2` sproc path is validated against real Azure Cosmos DB.
+- When the existing item must be materialized for condition evaluation or ReturnValues (the GET → modify → PUT loop) and Cosmos returns a CosmosBinary body (opt-in `DynamoDb.CosmosBinaryResponses`), the AttributeValue map is built straight off the binary body via `CosmosBinaryReader` (no binary→text decode + JsonDocument DOM). A marker the streaming reader does not fast-path falls back to the decode-to-text path; a text body uses it directly. The chosen path is observable on `aws2azure_dynamodb_read_decode_path_total{op="update",path=binary|fallback|text}`. The emulator never emits CosmosBinary, so the binary-direct path is exercised against real Azure only.
+- The standalone document write body (the create-with-If-None-Match / replace-with-If-Match in the GET → modify → PUT loop) is sent as CosmosBinary (the `0x80` format) when the opt-in `DynamoDb.CosmosBinaryRequests` is enabled (default off), encoded single-pass straight to the wire; the gateway auto-detects the marker so no negotiation header or special Content-Type is used. The sproc-embedded atomic path (`atomicWrite_v2`) keeps JSON text, since the document is embedded as a value inside the sproc parameter array. The chosen format is observable on `aws2azure_dynamodb_write_body_total{format=binary|text}`. The Cosmos DB Linux emulator neither emits nor reliably accepts CosmosBinary, so the binary write path is validated against real Azure only — confirmed parsed + indexed (text read-back + indexed query) by the nightly acceptance test.
+- https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Expressions.UpdateExpressions.html
+disposition: by_design

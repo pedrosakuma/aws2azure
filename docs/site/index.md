@@ -18,6 +18,7 @@ that do not map to a single operation live in [design gaps](design-gaps.md).
 ## Cross-cutting
 
 - [Coverage matrix](coverage.md) — every operation and status on one screen.
+- [Maximum-viable completeness](completeness.md) — backlog vs structural boundaries.
 - [Workload compatibility](workload-compatibility.md) — adoption patterns and go/no-go guidance.
 - [Workload GA certification](workload-ga.md) — mechanical verdicts for versioned support profiles.
 - [Design gaps](design-gaps.md) — architectural limitations spanning operations.

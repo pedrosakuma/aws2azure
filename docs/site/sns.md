@@ -3,14 +3,15 @@
 ## ConfirmSubscription
 
 - **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
 - **Azure equivalent:** `Azure Service Bus topic subscriptions`
 - **Real-Azure verified:** ✅ 2026-07-22 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719)
 
 ### Sub-features
 
-| Name | Status | Real-Azure | Notes | Gap | Workaround |
-|---|---|---|---|---|---|
-| Auto-confirmed no-op | ✅ implemented | — | Subscriptions are treated as immediately confirmed when created. ConfirmSubscription accepts either the deterministic 20-hex subscription id or the matching synthetic SubscriptionArn, verifies the live Service Bus subscription and its persisted protocol/endpoint metadata, and returns success without mutating Azure resources. |  |  |
+| Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|---|---|
+| Auto-confirmed no-op | ✅ implemented | — | — | — | Subscriptions are treated as immediately confirmed when created. ConfirmSubscription accepts either the deterministic 20-hex subscription id or the matching synthetic SubscriptionArn, verifies the live Service Bus subscription and its persisted protocol/endpoint metadata, and returns success without mutating Azure resources. |  |  |
 
 ### Behaviour differences
 
@@ -26,15 +27,17 @@
 ## CreateTopic
 
 - **Status:** 🟡 partial
+- **Disposition:** 🛠️ feasible backlog
+- **Tracking issue:** [#692](https://github.com/pedrosakuma/aws2azure/issues/692)
 - **Azure equivalent:** `Azure Service Bus Topics management REST API`
 - **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
-| Name | Status | Real-Azure | Notes | Gap | Workaround |
-|---|---|---|---|---|---|
-| Basic topic create over Service Bus Topics REST | ✅ implemented | — | Maps CreateTopic(Name) to PUT https://{namespace}.servicebus.windows.net/{topic}?api-version=2021-05 with an empty TopicDescription Atom entry. 200/201 both succeed so create remains idempotent from the SNS caller's perspective. |  |  |
-| Attribute translation | 🟡 partial | — | CreateTopic attributes are parsed by AWS clients but ignored in this slice. Topic property translation lands with SetTopicAttributes / GetTopicAttributes. |  |  |
+| Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|---|---|
+| Basic topic create over Service Bus Topics REST | ✅ implemented | — | — | — | Maps CreateTopic(Name) to PUT https://{namespace}.servicebus.windows.net/{topic}?api-version=2021-05 with an empty TopicDescription Atom entry. 200/201 both succeed so create remains idempotent from the SNS caller's perspective. |  |  |
+| Attribute translation | 🟡 partial | 🛠️ feasible backlog | [#691](https://github.com/pedrosakuma/aws2azure/issues/691) | — | CreateTopic attributes are parsed by AWS clients but ignored in this slice. Topic property translation lands with SetTopicAttributes / GetTopicAttributes. |  |  |
 
 ### Behaviour differences
 
@@ -52,14 +55,16 @@
 ## DeleteTopic
 
 - **Status:** 🟡 partial
+- **Disposition:** 🛠️ feasible backlog
+- **Tracking issue:** [#692](https://github.com/pedrosakuma/aws2azure/issues/692)
 - **Azure equivalent:** `Azure Service Bus Topics management REST API`
 - **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
-| Name | Status | Real-Azure | Notes | Gap | Workaround |
-|---|---|---|---|---|---|
-| Idempotent topic delete over Service Bus Topics REST | ✅ implemented | — | Parses TopicArn, extracts the topic name, and issues DELETE https://{namespace}.servicebus.windows.net/{topic}?api-version=2021-05. The delete is preceded by a GET probe so that a missing-entity 404 short-circuits cleanly without depending on the DELETE status code (the SB emulator returns HTTP 400 with no distinguishing body for DELETE on a missing entity; real Azure returns 404 for both). |  |  |
+| Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|---|---|
+| Idempotent topic delete over Service Bus Topics REST | ✅ implemented | — | — | — | Parses TopicArn, extracts the topic name, and issues DELETE https://{namespace}.servicebus.windows.net/{topic}?api-version=2021-05. The delete is preceded by a GET probe so that a missing-entity 404 short-circuits cleanly without depending on the DELETE status code (the SB emulator returns HTTP 400 with no distinguishing body for DELETE on a missing entity; real Azure returns 404 for both). |  |  |
 
 ### Behaviour differences
 
@@ -75,14 +80,15 @@
 ## GetSubscriptionAttributes
 
 - **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
 - **Azure equivalent:** `Azure Service Bus subscription description`
 - **Real-Azure verified:** ✅ 2026-07-22 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719)
 
 ### Sub-features
 
-| Name | Status | Real-Azure | Notes | Gap | Workaround |
-|---|---|---|---|---|---|
-| Subscription metadata projection | ✅ implemented | — | Fetches the Service Bus subscription Atom entry, parses SubscriptionDescription with XmlReader, and projects aws2azure's UserMetadata JSON back into SNS protocol, endpoint, filter, and raw-delivery attributes. |  |  |
+| Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|---|---|
+| Subscription metadata projection | ✅ implemented | — | — | — | Fetches the Service Bus subscription Atom entry, parses SubscriptionDescription with XmlReader, and projects aws2azure's UserMetadata JSON back into SNS protocol, endpoint, filter, and raw-delivery attributes. |  |  |
 
 ### Behaviour differences
 
@@ -100,13 +106,14 @@
 ## GetTopicAttributes
 
 - **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
 - **Azure equivalent:** `Azure Service Bus topic description`
 
 ### Sub-features
 
-| Name | Status | Real-Azure | Notes | Gap | Workaround |
-|---|---|---|---|---|---|
-| Topic property projection | ✅ implemented | — | Fetches the Service Bus topic Atom entry, parses TopicDescription with XmlReader, and maps SubscriptionCount / RequiresDuplicateDetection into the closest SNS attribute surface. |  |  |
+| Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|---|---|
+| Topic property projection | ✅ implemented | — | — | — | Fetches the Service Bus topic Atom entry, parses TopicDescription with XmlReader, and maps SubscriptionCount / RequiresDuplicateDetection into the closest SNS attribute surface. |  |  |
 
 ### Behaviour differences
 
@@ -125,14 +132,15 @@
 ## ListSubscriptions
 
 - **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
 - **Azure equivalent:** `Azure Service Bus topic subscriptions`
 - **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
-| Name | Status | Real-Azure | Notes | Gap | Workaround |
-|---|---|---|---|---|---|
-| Cross-topic subscription enumeration | ✅ implemented | — | Enumerates Service Bus topics first, then pages each topic's subscriptions and flattens the results into SNS member entries. |  |  |
+| Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|---|---|
+| Cross-topic subscription enumeration | ✅ implemented | — | — | — | Enumerates Service Bus topics first, then pages each topic's subscriptions and flattens the results into SNS member entries. |  |  |
 
 ### Behaviour differences
 
@@ -148,14 +156,15 @@
 ## ListSubscriptionsByTopic
 
 - **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
 - **Azure equivalent:** `Azure Service Bus topic subscriptions`
 - **Real-Azure verified:** ✅ 2026-07-22 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719)
 
 ### Sub-features
 
-| Name | Status | Real-Azure | Notes | Gap | Workaround |
-|---|---|---|---|---|---|
-| Per-topic subscription enumeration | ✅ implemented | — | Lists Azure Service Bus subscriptions for a single topic and projects stored UserMetadata back into SNS protocol/endpoint fields. |  |  |
+| Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|---|---|
+| Per-topic subscription enumeration | ✅ implemented | — | — | — | Lists Azure Service Bus subscriptions for a single topic and projects stored UserMetadata back into SNS protocol/endpoint fields. |  |  |
 
 ### Behaviour differences
 
@@ -170,14 +179,16 @@
 ## ListTopics
 
 - **Status:** 🟡 partial
+- **Disposition:** 🛠️ feasible backlog
+- **Tracking issue:** [#692](https://github.com/pedrosakuma/aws2azure/issues/692)
 - **Azure equivalent:** `Azure Service Bus Topics management REST API`
 - **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
-| Name | Status | Real-Azure | Notes | Gap | Workaround |
-|---|---|---|---|---|---|
-| Topic enumeration over Service Bus Topics REST | ✅ implemented | — | Maps ListTopics to GET https://{namespace}.servicebus.windows.net/$Resources/topics?api-version=2021-05&$skip={N}&$top=100, parses the Atom feed entry titles, and emits SNS XML members with synthetic TopicArns. |  |  |
+| Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|---|---|
+| Topic enumeration over Service Bus Topics REST | ✅ implemented | — | — | — | Maps ListTopics to GET https://{namespace}.servicebus.windows.net/$Resources/topics?api-version=2021-05&$skip={N}&$top=100, parses the Atom feed entry titles, and emits SNS XML members with synthetic TopicArns. |  |  |
 
 ### Behaviour differences
 
@@ -194,15 +205,16 @@
 ## Publish
 
 - **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
 - **Azure equivalent:** `Azure Service Bus Topics / Azure Event Grid`
 - **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
-| Name | Status | Real-Azure | Notes | Gap | Workaround |
-|---|---|---|---|---|---|
-| AMQP publish path | ✅ implemented | ✅ | Sends SNS Publish requests to Azure Service Bus Topics over AMQP 1.0 using SAS or Entra ID CBS authentication. |  |  |
-| Event Grid publish path | ✅ implemented | ✅ | Sends SNS Publish requests to Azure Event Grid custom topics over the classic Event Grid schema using a per-topic backend switch. |  |  |
+| Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|---|---|
+| AMQP publish path | ✅ implemented | — | — | ✅ | Sends SNS Publish requests to Azure Service Bus Topics over AMQP 1.0 using SAS or Entra ID CBS authentication. |  |  |
+| Event Grid publish path | ✅ implemented | — | — | ✅ | Sends SNS Publish requests to Azure Event Grid custom topics over the classic Event Grid schema using a per-topic backend switch. |  |  |
 
 ### Behaviour differences
 
@@ -228,15 +240,16 @@
 ## PublishBatch
 
 - **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
 - **Azure equivalent:** `Azure Service Bus Topics / Azure Event Grid`
 - **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
-| Name | Status | Real-Azure | Notes | Gap | Workaround |
-|---|---|---|---|---|---|
-| AMQP batch publish path | ✅ implemented | ✅ | Sends PublishBatch entries to Azure Service Bus Topics over AMQP 1.0 and reports per-entry success or failure. |  |  |
-| Event Grid batch publish path | ✅ implemented | ✅ | Sends PublishBatch entries to Azure Event Grid custom topics in classic-schema JSON batches, splitting oversized batches when required. |  |  |
+| Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|---|---|
+| AMQP batch publish path | ✅ implemented | — | — | ✅ | Sends PublishBatch entries to Azure Service Bus Topics over AMQP 1.0 and reports per-entry success or failure. |  |  |
+| Event Grid batch publish path | ✅ implemented | — | — | ✅ | Sends PublishBatch entries to Azure Event Grid custom topics in classic-schema JSON batches, splitting oversized batches when required. |  |  |
 
 ### Behaviour differences
 
@@ -261,15 +274,17 @@
 ## SetSubscriptionAttributes
 
 - **Status:** 🟡 partial
+- **Disposition:** 🛠️ feasible backlog
+- **Tracking issue:** [#691](https://github.com/pedrosakuma/aws2azure/issues/691)
 - **Azure equivalent:** `Azure Service Bus subscription description`
 - **Real-Azure verified:** ✅ 2026-07-22 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719)
 
 ### Sub-features
 
-| Name | Status | Real-Azure | Notes | Gap | Workaround |
-|---|---|---|---|---|---|
-| UserMetadata attribute updates | ✅ implemented | — | Performs a GET → merge → conditional PUT cycle against the Service Bus subscription description and persists FilterPolicy, FilterPolicyScope, and RawMessageDelivery inside UserMetadata as compact JSON. |  |  |
-| Compatibility no-ops | ✅ implemented | — | Treats DeliveryPolicy, RedrivePolicy, and SubscriptionRoleArn as successful no-ops because this slice does not translate those SNS attributes onto Azure primitives. |  |  |
+| Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|---|---|
+| UserMetadata attribute updates | ✅ implemented | — | — | — | Performs a GET → merge → conditional PUT cycle against the Service Bus subscription description and persists FilterPolicy, FilterPolicyScope, and RawMessageDelivery inside UserMetadata as compact JSON. |  |  |
+| Compatibility no-ops | ✅ implemented | — | — | — | Treats DeliveryPolicy, RedrivePolicy, and SubscriptionRoleArn as successful no-ops because this slice does not translate those SNS attributes onto Azure primitives. |  |  |
 
 ### Behaviour differences
 
@@ -289,14 +304,15 @@
 ## SetTopicAttributes
 
 - **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
 - **Azure equivalent:** `Azure Service Bus topic description`
 
 ### Sub-features
 
-| Name | Status | Real-Azure | Notes | Gap | Workaround |
-|---|---|---|---|---|---|
-| Attribute no-op compatibility | ✅ implemented | — | Accepts DisplayName, Policy, DeliveryPolicy, EffectiveDeliveryPolicy, KmsMasterKeyId, SignatureVersion, and TracingConfig as successful no-ops so common SDK flows continue. |  |  |
-| Content-based deduplication validation | ✅ implemented | — | Reads the current Service Bus topic description and rejects attempts to change RequiresDuplicateDetection after topic creation. Re-applying the existing value returns success. |  |  |
+| Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|---|---|
+| Attribute no-op compatibility | ✅ implemented | — | — | — | Accepts DisplayName, Policy, DeliveryPolicy, EffectiveDeliveryPolicy, KmsMasterKeyId, SignatureVersion, and TracingConfig as successful no-ops so common SDK flows continue. |  |  |
+| Content-based deduplication validation | ✅ implemented | — | — | — | Reads the current Service Bus topic description and rejects attempts to change RequiresDuplicateDetection after topic creation. Re-applying the existing value returns success. |  |  |
 
 ### Behaviour differences
 
@@ -312,16 +328,17 @@
 ## Subscribe
 
 - **Status:** 🟡 partial
+- **Disposition:** ⚫ non-goal
 - **Azure equivalent:** `Azure Service Bus topic subscriptions`
 - **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
-| Name | Status | Real-Azure | Notes | Gap | Workaround |
-|---|---|---|---|---|---|
-| Service Bus subscription provisioning | ✅ implemented | — | Creates an Azure Service Bus topic subscription with deterministic 20-hex subscription IDs derived from TopicArn + Protocol + Endpoint so repeat Subscribe calls return the same ARN. Supported protocols in this slice: sqs, https, http. |  |  |
-| Subscription metadata projection | ✅ implemented | — | Stores protocol, endpoint, compact filter policy JSON, and RawMessageDelivery in SubscriptionDescription.UserMetadata. Requests that would exceed the 1024-character Service Bus UserMetadata limit are rejected with InvalidParameter. |  |  |
-| Subscriber delivery forwarder | ⛔ unsupported | — | WON'T IMPLEMENT (out of scope by design). aws2azure provides the SNS *publish* side: Subscribe records subscription metadata and published messages land in the backing Azure Service Bus topic subscription, where any Azure-native consumer can read them. It does NOT implement the SNS *delivery* side (pushing each message out to an HTTPS/HTTP endpoint or into an SQS-backed queue). Active push delivery requires a stateful, always-on dispatcher with retry/backoff, dead-letter, and signed delivery — i.e. a callback service (Azure Function / hosted worker) that lives entirely outside this stateless request/response proxy. Use a native Azure subscriber (Service Bus consumer, or an Event Grid event subscription with its own webhook/handler) instead. |  |  |
+| Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|---|---|
+| Service Bus subscription provisioning | ✅ implemented | — | — | — | Creates an Azure Service Bus topic subscription with deterministic 20-hex subscription IDs derived from TopicArn + Protocol + Endpoint so repeat Subscribe calls return the same ARN. Supported protocols in this slice: sqs, https, http. |  |  |
+| Subscription metadata projection | ✅ implemented | — | — | — | Stores protocol, endpoint, compact filter policy JSON, and RawMessageDelivery in SubscriptionDescription.UserMetadata. Requests that would exceed the 1024-character Service Bus UserMetadata limit are rejected with InvalidParameter. |  |  |
+| Subscriber delivery forwarder | ⛔ unsupported | ⚫ non-goal | — | — | WON'T IMPLEMENT (out of scope by design). aws2azure provides the SNS *publish* side: Subscribe records subscription metadata and published messages land in the backing Azure Service Bus topic subscription, where any Azure-native consumer can read them. It does NOT implement the SNS *delivery* side (pushing each message out to an HTTPS/HTTP endpoint or into an SQS-backed queue). Active push delivery requires a stateful, always-on dispatcher with retry/backoff, dead-letter, and signed delivery — i.e. a callback service (Azure Function / hosted worker) that lives entirely outside this stateless request/response proxy. Use a native Azure subscriber (Service Bus consumer, or an Event Grid event subscription with its own webhook/handler) instead. |  |  |
 
 ### Behaviour differences
 
@@ -341,14 +358,15 @@
 ## Unsubscribe
 
 - **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
 - **Azure equivalent:** `Azure Service Bus topic subscriptions`
 - **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
-| Name | Status | Real-Azure | Notes | Gap | Workaround |
-|---|---|---|---|---|---|
-| Service Bus subscription deletion | ✅ implemented | — | Deletes the mapped Azure Service Bus topic subscription identified by the SNS SubscriptionArn suffix. |  |  |
+| Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|---|---|
+| Service Bus subscription deletion | ✅ implemented | — | — | — | Deletes the mapped Azure Service Bus topic subscription identified by the SNS SubscriptionArn suffix. |  |  |
 
 ### Behaviour differences
 

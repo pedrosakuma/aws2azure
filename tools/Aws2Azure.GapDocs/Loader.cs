@@ -121,6 +121,14 @@ public static class Validator
             {
                 Err($"invalid status '{doc.Status}'; allowed: {string.Join(", ", StatusValues.Operation)}");
             }
+            ValidateDisposition(
+                doc.Status,
+                doc.Disposition,
+                doc.TrackingIssue,
+                context: $"operation '{doc.Operation}'",
+                implementedStatus: "implemented",
+                allowImplementedDisposition: false,
+                error: Err);
             if (doc.VerifiedRealAzure is not null)
             {
                 ValidateVerification(doc.VerifiedRealAzure, "verified_real_azure", Err);
@@ -153,6 +161,14 @@ public static class Validator
                 {
                     Err($"sub_features[{i}] invalid status '{sf.Status}'");
                 }
+                ValidateDisposition(
+                    sf.Status,
+                    sf.Disposition,
+                    sf.TrackingIssue,
+                    context: $"sub_features[{i}] '{sf.Name}'",
+                    implementedStatus: "implemented",
+                    allowImplementedDisposition: false,
+                    error: Err);
                 if (sf.VerifiedRealAzure is not null)
                 {
                     ValidateVerification(sf.VerifiedRealAzure, $"sub_features[{i}].verified_real_azure", Err);
@@ -313,6 +329,84 @@ public static class Validator
             && int.TryParse(segments[3], NumberStyles.None, CultureInfo.InvariantCulture, out _);
     }
 
+    private static void ValidateDisposition(
+        string status,
+        string disposition,
+        string trackingIssue,
+        string context,
+        string implementedStatus,
+        bool allowImplementedDisposition,
+        Action<string> error)
+    {
+        var isImplemented = status.Equals(implementedStatus, StringComparison.OrdinalIgnoreCase);
+        var hasDisposition = !string.IsNullOrWhiteSpace(disposition);
+        if (!hasDisposition)
+        {
+            if (!isImplemented)
+            {
+                error($"{context} with status '{status}' must declare disposition");
+            }
+
+            if (!string.IsNullOrWhiteSpace(trackingIssue))
+            {
+                error($"{context} cannot declare tracking_issue without disposition");
+            }
+
+            return;
+        }
+
+        if (isImplemented && !allowImplementedDisposition)
+        {
+            error($"{context} with status '{status}' must not declare disposition");
+            if (!string.IsNullOrWhiteSpace(trackingIssue))
+            {
+                error($"{context} with status '{status}' must not declare tracking_issue");
+            }
+
+            return;
+        }
+
+        if (!StatusValues.Disposition.Contains(disposition))
+        {
+            error(
+                $"{context} has invalid disposition '{disposition}'; allowed: " +
+                $"{string.Join(", ", StatusValues.Disposition)}");
+            return;
+        }
+
+        if (isImplemented
+            && allowImplementedDisposition
+            && !disposition.Equals(implementedStatus, StringComparison.OrdinalIgnoreCase))
+        {
+            error(
+                $"{context} with status '{status}' may only declare disposition '{implementedStatus}'");
+        }
+
+        var isFeasibleBacklog = disposition.Equals("feasible_backlog", StringComparison.OrdinalIgnoreCase);
+        if (isFeasibleBacklog)
+        {
+            if (!IsIssueReference(trackingIssue))
+            {
+                error($"{context} with disposition 'feasible_backlog' must declare tracking_issue as '#<number>'");
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(trackingIssue))
+        {
+            error($"{context} with disposition '{disposition}' must not declare tracking_issue");
+        }
+
+        if (isImplemented && !string.IsNullOrWhiteSpace(trackingIssue))
+        {
+            error($"{context} with status '{status}' must not declare tracking_issue");
+        }
+    }
+
+    private static bool IsIssueReference(string value) =>
+        !string.IsNullOrWhiteSpace(value)
+        && value.Length > 1
+        && value[0] == '#'
+        && int.TryParse(value.AsSpan(1), NumberStyles.None, CultureInfo.InvariantCulture, out _);
+
     private static string OperationKey(OperationDoc doc) =>
         doc.Service.ToLowerInvariant() + "/" + doc.Operation;
 
@@ -428,6 +522,14 @@ public static class Validator
                 {
                     Err($"design_gaps[{i}] invalid status '{g.Status}'; allowed: {string.Join(", ", StatusValues.DesignGap)}");
                 }
+                ValidateDisposition(
+                    g.Status,
+                    g.Disposition,
+                    g.TrackingIssue,
+                    context: $"design_gaps[{i}] '{g.Area}'",
+                    implementedStatus: "by_design",
+                    allowImplementedDisposition: true,
+                    error: Err);
             }
 
             var designGapsByArea = new Dictionary<string, DesignGap>(StringComparer.OrdinalIgnoreCase);

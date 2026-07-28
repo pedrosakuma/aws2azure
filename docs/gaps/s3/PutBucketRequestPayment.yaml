@@ -1,15 +1,17 @@
 service: s3
 operation: PutBucketRequestPayment
-azure_equivalent: "(no equivalent — BucketOwner is an accepted stable no-op)"
+azure_equivalent: (no equivalent — BucketOwner is an accepted stable no-op)
 status: partial
 sub_features:
-  - name: "BucketOwner"
-    status: implemented
-    notes: "Accepted as a 200 no-op; the matching GET remains BucketOwner."
-  - name: "Requester"
-    status: unsupported
-    notes: "Returns 501 NotImplemented because Azure cannot implement requester billing."
+- name: BucketOwner
+  status: implemented
+  notes: Accepted as a 200 no-op; the matching GET remains BucketOwner.
+- name: Requester
+  status: unsupported
+  notes: Returns 501 NotImplemented because Azure cannot implement requester billing.
+  disposition: by_design
 behavior_differences:
-  - "BucketOwner is stable but not persisted because it is the only representable state."
+- BucketOwner is stable but not persisted because it is the only representable state.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketRequestPayment.html
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketRequestPayment.html
+disposition: by_design

@@ -1,17 +1,18 @@
 service: dynamodb
 operation: ListTagsOfResource
-azure_equivalent: "Azure Cosmos DB account/resource tags (control plane)"
+azure_equivalent: Azure Cosmos DB account/resource tags (control plane)
 status: implemented
 sub_features:
-  - name: Returns persisted TableMetadata tags
-    status: implemented
-    notes: "Reads tags from the aws2azure TableMetadata sidecar document written by TagResource."
-  - name: Pagination
-    status: partial
-    notes: "The proxy returns the full tag set (DynamoDB allows at most 50 tags) and rejects NextToken instead of paginating."
+- name: Returns persisted TableMetadata tags
+  status: implemented
+  notes: Reads tags from the aws2azure TableMetadata sidecar document written by TagResource.
+- name: Pagination
+  status: partial
+  notes: The proxy returns the full tag set (DynamoDB allows at most 50 tags) and rejects NextToken instead of paginating.
+  disposition: non_goal
 behavior_differences:
-  - "Tags are stored in the aws2azure TableMetadata sidecar document inside the table's Cosmos container, not as Azure control-plane resource tags."
-  - "Persisted tags have no effect on Azure billing, routing, Azure Policy, or Azure-native tag queries."
-  - "Acceptance has unit-test coverage against the Cosmos REST test double; real-Azure validation is pending."
+- Tags are stored in the aws2azure TableMetadata sidecar document inside the table's Cosmos container, not as Azure control-plane resource tags.
+- Persisted tags have no effect on Azure billing, routing, Azure Policy, or Azure-native tag queries.
+- Acceptance has unit-test coverage against the Cosmos REST test double; real-Azure validation is pending.
 references:
-  - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ListTagsOfResource.html
+- https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ListTagsOfResource.html

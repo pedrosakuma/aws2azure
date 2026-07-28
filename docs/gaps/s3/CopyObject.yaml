@@ -1,32 +1,37 @@
 service: s3
 operation: CopyObject
-azure_equivalent: "PUT https://{account}.blob.core.windows.net/{container}/{blob} with x-ms-copy-source"
+azure_equivalent: PUT https://{account}.blob.core.windows.net/{container}/{blob} with x-ms-copy-source
 status: implemented
 sub_features:
-  - name: x-amz-copy-source (path-prefixed + legacy form)
-    status: implemented
-    gap: "URL-decoded before issuing to Azure. The bucket/key separator is accepted as a literal '/' (hand-built/legacy callers) or as a percent-encoded '%2F' — the official AWS SDKs fully percent-encode the value when marshalling CopyObjectRequest, so '{bucket}%2F{key}' is the default wire form."
-  - name: source conditional headers (if-match / if-none-match / if-modified-since / if-unmodified-since)
-    status: partial
-    gap: "if-modified-since / if-unmodified-since forward verbatim. Concrete-ETag x-amz-copy-source-if-match / x-amz-copy-source-if-none-match return 501 NotImplemented (proxy-translated S3 ETags do not round-trip back to Azure's raw ETag space); the '*' sentinel is honored."
-  - name: x-amz-metadata-directive=COPY (default)
-    status: implemented
-    gap: "Azure preserves source metadata when no x-ms-meta-* is sent, matching S3 COPY semantics."
-  - name: x-amz-metadata-directive=REPLACE
-    status: implemented
-    gap: "Request's metadata + Content-Type override source via standard header forwarding."
-  - name: versionId source qualifier
-    status: unsupported
-    gap: "Rejected with InvalidArgument; versioning is a later slice."
-  - name: cross-account copy (source in a different Azure storage account)
-    status: unsupported
-    gap: "Azure cross-account copy is asynchronous; rejected with NotImplemented to avoid reporting fake success."
-  - name: ARN copy-source (S3-on-Outposts)
-    status: unsupported
+- name: x-amz-copy-source (path-prefixed + legacy form)
+  status: implemented
+  gap: URL-decoded before issuing to Azure. The bucket/key separator is accepted as a literal '/' (hand-built/legacy callers) or as a percent-encoded '%2F' — the official AWS SDKs fully percent-encode the value when marshalling CopyObjectRequest, so '{bucket}%2F{key}' is the default wire form.
+- name: source conditional headers (if-match / if-none-match / if-modified-since / if-unmodified-since)
+  status: partial
+  gap: if-modified-since / if-unmodified-since forward verbatim. Concrete-ETag x-amz-copy-source-if-match / x-amz-copy-source-if-none-match return 501 NotImplemented (proxy-translated S3 ETags do not round-trip back to Azure's raw ETag space); the '*' sentinel is honored.
+  disposition: feasible_backlog
+  tracking_issue: '#690'
+- name: x-amz-metadata-directive=COPY (default)
+  status: implemented
+  gap: Azure preserves source metadata when no x-ms-meta-* is sent, matching S3 COPY semantics.
+- name: x-amz-metadata-directive=REPLACE
+  status: implemented
+  gap: Request's metadata + Content-Type override source via standard header forwarding.
+- name: versionId source qualifier
+  status: unsupported
+  gap: Rejected with InvalidArgument; versioning is a later slice.
+  disposition: feasible_backlog
+  tracking_issue: '#690'
+- name: cross-account copy (source in a different Azure storage account)
+  status: unsupported
+  gap: Azure cross-account copy is asynchronous; rejected with NotImplemented to avoid reporting fake success.
+  disposition: by_design
+- name: ARN copy-source (S3-on-Outposts)
+  status: unsupported
+  disposition: non_goal
 behavior_differences:
-  - "Intra-account copies are synchronous on Azure; the proxy verifies x-ms-copy-status=success before responding 200."
-  - "ETag in CopyObjectResult is normalised to the same S3-shaped, proxy-translated value HEAD/GET emit for the destination blob (synthetic MD5 of Azure's raw ETag when Content-MD5 is absent), so clients can reuse it across operations without seeing two different ETags for the same object."
+- Intra-account copies are synchronous on Azure; the proxy verifies x-ms-copy-status=success before responding 200.
+- ETag in CopyObjectResult is normalised to the same S3-shaped, proxy-translated value HEAD/GET emit for the destination blob (synthetic MD5 of Azure's raw ETag when Content-MD5 is absent), so clients can reuse it across operations without seeing two different ETags for the same object.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html
-  - https://learn.microsoft.com/rest/api/storageservices/copy-blob
-
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html
+- https://learn.microsoft.com/rest/api/storageservices/copy-blob

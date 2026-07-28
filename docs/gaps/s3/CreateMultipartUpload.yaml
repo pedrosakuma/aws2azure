@@ -1,29 +1,34 @@
 service: s3
 operation: CreateMultipartUpload
-azure_equivalent: "HEAD container + proxy-owned durable multipart state record"
+azure_equivalent: HEAD container + proxy-owned durable multipart state record
 status: implemented
 sub_features:
-  - name: durable-state-record
-    status: implemented
-    notes: "The proxy writes one bounded state blob per active upload into its hidden aws2azure-mpu-<account-hash> container. The record captures Content-Type/Content-Encoding/Content-Language/Content-Disposition/Cache-Control and x-amz-meta-* headers (16 KiB cap) so CompleteMultipartUpload can apply them to the committed blob."
-  - name: bucket-generation-binding
-    status: implemented
-    notes: "CreateMultipartUpload captures the destination container ETag before writing the state record, stores it in record metadata, then re-verifies the ETag after the write. If the bucket was deleted/recreated mid-request the proxy deletes the just-written record and returns 409 OperationAborted."
-  - name: server-side-encryption
-    status: unsupported
-    notes: "x-amz-server-side-encryption* request headers are ignored. Encryption remains governed by the destination storage account."
-  - name: object-tagging
-    status: unsupported
-    notes: "x-amz-tagging is ignored on initiate."
-  - name: object-lock
-    status: unsupported
-  - name: storage-class
-    status: unsupported
-    notes: "x-amz-storage-class is ignored; Azure uses the account/container defaults."
+- name: durable-state-record
+  status: implemented
+  notes: The proxy writes one bounded state blob per active upload into its hidden aws2azure-mpu-<account-hash> container. The record captures Content-Type/Content-Encoding/Content-Language/Content-Disposition/Cache-Control and x-amz-meta-* headers (16 KiB cap) so CompleteMultipartUpload can apply them to the committed blob.
+- name: bucket-generation-binding
+  status: implemented
+  notes: CreateMultipartUpload captures the destination container ETag before writing the state record, stores it in record metadata, then re-verifies the ETag after the write. If the bucket was deleted/recreated mid-request the proxy deletes the just-written record and returns 409 OperationAborted.
+- name: server-side-encryption
+  status: unsupported
+  notes: x-amz-server-side-encryption* request headers are ignored. Encryption remains governed by the destination storage account.
+  disposition: by_design
+- name: object-tagging
+  status: unsupported
+  notes: x-amz-tagging is ignored on initiate.
+  disposition: feasible_backlog
+  tracking_issue: '#690'
+- name: object-lock
+  status: unsupported
+  disposition: by_design
+- name: storage-class
+  status: unsupported
+  notes: x-amz-storage-class is ignored; Azure uses the account/container defaults.
+  disposition: by_design
 behavior_differences:
-  - "UploadId remains a 32-byte base64url token HMAC-bound to (account, bucket, key) and expiring after 7 days, but multipart is no longer purely stateless: a proxy-owned durable index record is also created so in-progress uploads can be enumerated and later completed with the original metadata." 
-  - "Initiation fails with InvalidArgument when the captured metadata/property headers would exceed the 16 KiB durable-state cap."
-  - "The hidden multipart-state container is internal-only and not reachable through S3 bucket routes or copy-source headers."
+- 'UploadId remains a 32-byte base64url token HMAC-bound to (account, bucket, key) and expiring after 7 days, but multipart is no longer purely stateless: a proxy-owned durable index record is also created so in-progress uploads can be enumerated and later completed with the original metadata.'
+- Initiation fails with InvalidArgument when the captured metadata/property headers would exceed the 16 KiB durable-state cap.
+- The hidden multipart-state container is internal-only and not reachable through S3 bucket routes or copy-source headers.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateMultipartUpload.html
-  - https://learn.microsoft.com/rest/api/storageservices/get-container-properties
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateMultipartUpload.html
+- https://learn.microsoft.com/rest/api/storageservices/get-container-properties

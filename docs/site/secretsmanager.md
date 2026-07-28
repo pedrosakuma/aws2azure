@@ -97,15 +97,16 @@
 ## PutSecretValue
 
 - **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
 - **Azure equivalent:** `PUT https://{vault}.vault.azure.net/secrets/{name}`
 - **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
-| Name | Status | Real-Azure | Notes | Gap | Workaround |
-|---|---|---|---|---|---|
-| ClientRequestToken idempotency | 🟡 partial | — | Proxy-owned Key Vault version metadata now drives a paginated, bounded reconciliation loop. A new version is created without public stages, relisted, duplicate tokens are classified deterministically by created time plus version id, and only the deterministic winner is published. Same-payload replays converge on one AWS VersionId; different payload hashes return AWS ResourceExistsException with HTTP 400. Per-secret process locks are reference-counted and removed after the final waiter. | Key Vault does not provide a transaction spanning version creation, version inventory, and multiple version-tag patches. Two proxy instances can therefore create same-token duplicate physical versions during a race; bounded reconciliation removes labels from deterministic losers, but strict cross-instance atomicity is structurally impossible without an external coordinator. Versions written outside aws2azure without its token/hash metadata cannot participate in token replay detection. | Treat ResourceExistsException from a contended write as an explicit retry/read signal. Route a secret's writers through one instance only when the application requires stronger single-writer behavior than Key Vault can provide without another dependency. |
-| VersionStages request labels | 🟡 partial | — | A shared paginated inventory is used by PutSecretValue, UpdateSecret, GetSecretValue, and DescribeSecret. Writers create an empty-stage version, relist it, remove requested labels from every loser before publishing the winner, merge stage metadata into freshly fetched tags, and verify/repair the invariant within a bounded retry budget. DescribeSecret now enumerates the logical version-stage map. | Label changes remain separate Key Vault PATCH requests. Loser-first publication prevents multiple intended AWSCURRENT holders during normal proxy writes, but a crash or independent out-of-band writer can expose a temporary zero-holder or duplicate-holder state. If the unique-label invariant is not observed after bounded repair, the proxy returns ResourceExistsException rather than claiming success. RotateSecret remains unsupported. | Retry a conflicted write or read after Key Vault propagation settles, then inspect DescribeSecret. Applications needing an indivisible cross-instance stage transaction require a coordinator outside this Key Vault-only design. |
+| Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|---|---|
+| ClientRequestToken idempotency | 🟡 partial | 🔵 by design | — | — | Proxy-owned Key Vault version metadata now drives a paginated, bounded reconciliation loop. A new version is created without public stages, relisted, duplicate tokens are classified deterministically by created time plus version id, and only the deterministic winner is published. Same-payload replays converge on one AWS VersionId; different payload hashes return AWS ResourceExistsException with HTTP 400. Per-secret process locks are reference-counted and removed after the final waiter. | Key Vault does not provide a transaction spanning version creation, version inventory, and multiple version-tag patches. Two proxy instances can therefore create same-token duplicate physical versions during a race; bounded reconciliation removes labels from deterministic losers, but strict cross-instance atomicity is structurally impossible without an external coordinator. Versions written outside aws2azure without its token/hash metadata cannot participate in token replay detection. | Treat ResourceExistsException from a contended write as an explicit retry/read signal. Route a secret's writers through one instance only when the application requires stronger single-writer behavior than Key Vault can provide without another dependency. |
+| VersionStages request labels | 🟡 partial | 🔵 by design | — | — | A shared paginated inventory is used by PutSecretValue, UpdateSecret, GetSecretValue, and DescribeSecret. Writers create an empty-stage version, relist it, remove requested labels from every loser before publishing the winner, merge stage metadata into freshly fetched tags, and verify/repair the invariant within a bounded retry budget. DescribeSecret now enumerates the logical version-stage map. | Label changes remain separate Key Vault PATCH requests. Loser-first publication prevents multiple intended AWSCURRENT holders during normal proxy writes, but a crash or independent out-of-band writer can expose a temporary zero-holder or duplicate-holder state. If the unique-label invariant is not observed after bounded repair, the proxy returns ResourceExistsException rather than claiming success. RotateSecret remains unsupported. | Retry a conflicted write or read after Key Vault propagation settles, then inspect DescribeSecret. Applications needing an indivisible cross-instance stage transaction require a coordinator outside this Key Vault-only design. |
 
 ### Behaviour differences
 
@@ -126,14 +127,15 @@
 ## RotateSecret
 
 - **Status:** ⛔ unsupported
+- **Disposition:** ⚫ non-goal
 - **Azure equivalent:** `None — Azure Key Vault has no equivalent managed-rotation trigger the proxy can drive`
 
 ### Sub-features
 
-| Name | Status | Real-Azure | Notes | Gap | Workaround |
-|---|---|---|---|---|---|
-| Rotation Lambda orchestration | ⛔ unsupported | — | AWS RotateSecret invokes a customer-owned Lambda rotation function that generates, sets, tests, and finishes new credential versions (createSecret/setSecret/testSecret/finishSecret steps). aws2azure is a stateless wire-protocol translator: it has no Lambda runtime, no place to execute rotation logic, and no durable state to track a multi-step rotation, so it cannot honour the contract. Translating it to a single Key Vault write would silently break the caller's rotation expectations. |  |  |
-| RotateImmediately / RotationRules / RotationLambdaARN | ⛔ unsupported | — | Not applicable without rotation orchestration; the operation is rejected before any backend call so these parameters are never interpreted. |  |  |
+| Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|---|---|
+| Rotation Lambda orchestration | ⛔ unsupported | ⚫ non-goal | — | — | AWS RotateSecret invokes a customer-owned Lambda rotation function that generates, sets, tests, and finishes new credential versions (createSecret/setSecret/testSecret/finishSecret steps). aws2azure is a stateless wire-protocol translator: it has no Lambda runtime, no place to execute rotation logic, and no durable state to track a multi-step rotation, so it cannot honour the contract. Translating it to a single Key Vault write would silently break the caller's rotation expectations. |  |  |
+| RotateImmediately / RotationRules / RotationLambdaARN | ⛔ unsupported | ⚫ non-goal | — | — | Not applicable without rotation orchestration; the operation is rejected before any backend call so these parameters are never interpreted. |  |  |
 
 ### Behaviour differences
 
@@ -153,9 +155,9 @@
 
 ### Sub-features
 
-| Name | Status | Real-Azure | Notes | Gap | Workaround |
-|---|---|---|---|---|---|
-| Version durability and ClientRequestToken replay | 🟡 partial | — | UpdateSecret uses the same empty-stage creation, paginated inventory, deterministic token resolution, loser-first stage publication, fresh tag merge, and bounded verification path as PutSecretValue. | The Key Vault-only reconciliation cannot make version creation plus multi-version label patches atomic across proxy instances. A bounded conflict is returned when the invariant cannot be observed. | Retry ResourceExistsException after propagation settles, or use a single writer when stronger ordering is required. |
+| Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
+|---|---|---|---|---|---|---|---|
+| Version durability and ClientRequestToken replay | 🟡 partial | 🔵 by design | — | — | UpdateSecret uses the same empty-stage creation, paginated inventory, deterministic token resolution, loser-first stage publication, fresh tag merge, and bounded verification path as PutSecretValue. | The Key Vault-only reconciliation cannot make version creation plus multi-version label patches atomic across proxy instances. A bounded conflict is returned when the invariant cannot be observed. | Retry ResourceExistsException after propagation settles, or use a single writer when stronger ordering is required. |
 
 ### Behaviour differences
 

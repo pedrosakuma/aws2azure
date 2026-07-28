@@ -1,15 +1,17 @@
 service: s3
 operation: GetBucketAcl
-azure_equivalent: "(no Azure equivalent — synthetic ownership-only response)"
+azure_equivalent: (no Azure equivalent — synthetic ownership-only response)
 status: partial
 sub_features:
-  - name: "owner reporting"
-    status: implemented
-    notes: "Owner ID = SHA-256(accountName) hex; DisplayName = accountName."
-  - name: "non-owner grants"
-    status: unsupported
-    notes: "Always reports a single FULL_CONTROL grant to the owner."
+- name: owner reporting
+  status: implemented
+  notes: Owner ID = SHA-256(accountName) hex; DisplayName = accountName.
+- name: non-owner grants
+  status: unsupported
+  notes: Always reports a single FULL_CONTROL grant to the owner.
+  disposition: by_design
 behavior_differences:
-  - "Azure Blob Storage's authorisation model (RBAC + Shared Key + SAS) does not map onto S3 canonical-user grants. The proxy reports the ownership-only shape that matches BucketOwnerEnforced ObjectOwnership."
+- Azure Blob Storage's authorisation model (RBAC + Shared Key + SAS) does not map onto S3 canonical-user grants. The proxy reports the ownership-only shape that matches BucketOwnerEnforced ObjectOwnership.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketAcl.html
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketAcl.html
+disposition: by_design

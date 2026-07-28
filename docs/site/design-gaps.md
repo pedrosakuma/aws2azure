@@ -9,37 +9,37 @@ Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned
 
 ## Summary
 
-| Service | Area | Status |
-|---|---|---|
-| [dynamodb](#dynamodb) | Transaction scope is single-partition, single-table | 🔵 by design |
-| [dynamodb](#dynamodb) | Transaction execution has one configured Cosmos authority | 🔵 by design |
-| [dynamodb](#dynamodb) | Consistency and read-your-writes | 🔵 by design |
-| [dynamodb](#dynamodb) | Throughput and throttling model | 🔵 by design |
-| [dynamodb](#dynamodb) | Secondary indexes (GSI / LSI) | 🟡 partial |
-| [dynamodb](#dynamodb) | Key encoding and on-disk storage format | 🔵 by design |
-| [dynamodb](#dynamodb) | Absent DynamoDB features | ⛔ unsupported |
-| [kinesis](#kinesis) | Synthetic sequence numbers and iterator positioning | 🔵 by design |
-| [kinesis](#kinesis) | Iterator link lifetime and durable replay | 🔵 by design |
-| [kinesis](#kinesis) | No resharding / enhanced fan-out / KCL lease model | ⛔ unsupported |
-| [s3](#s3) | No IAM / ACL / bucket-policy authorization model | 🔵 by design |
-| [s3](#s3) | No enforceable server-side-encryption configuration surface | 🔵 by design |
-| [s3](#s3) | Multipart upload keeps bounded durable proxy state | 🔵 by design |
-| [s3](#s3) | Multipart per-part ETag validation cannot be reproduced | 🔵 by design |
-| [s3](#s3) | Bucket sub-resource configs are not translated | ⛔ unsupported |
-| [secretsmanager](#secretsmanager) | Versioning and staging modelled on Key Vault version tags | 🟡 partial |
-| [secretsmanager](#secretsmanager) | Rotation has no Lambda equivalent | 🟡 partial |
-| [secretsmanager](#secretsmanager) | Deletion recovery semantics differ | 🔵 by design |
-| [secretsmanager](#secretsmanager) | No resource policies or cross-account access | ⛔ unsupported |
-| [sns](#sns) | Two backends with different fidelity | 🔵 by design |
-| [sns](#sns) | FIFO topics are deferred | 🟡 partial |
-| [sns](#sns) | No AWS region / account namespace | 🔵 by design |
-| [sns](#sns) | No IAM-backed policy surface | ⛔ unsupported |
-| [sns](#sns) | Event Grid subscription management is excluded | ⛔ unsupported |
-| [sqs](#sqs) | FIFO ordering requires the AMQP transport | 🟡 partial |
-| [sqs](#sqs) | No AWS region / account namespace | 🔵 by design |
-| [sqs](#sqs) | PurgeQueue is best-effort emulation | 🔵 by design |
-| [sqs](#sqs) | Queue lifecycle eventual-consistency | 🔵 by design |
-| [sqs](#sqs) | Transport-dependent capability differences | 🔵 by design |
+| Service | Area | Status | Disposition | Tracking |
+|---|---|---|---|---|
+| [dynamodb](#dynamodb) | Transaction scope is single-partition, single-table | 🔵 by design | 🔵 by design | — |
+| [dynamodb](#dynamodb) | Transaction execution has one configured Cosmos authority | 🔵 by design | 🔵 by design | — |
+| [dynamodb](#dynamodb) | Consistency and read-your-writes | 🔵 by design | 🔵 by design | — |
+| [dynamodb](#dynamodb) | Throughput and throttling model | 🔵 by design | 🔵 by design | — |
+| [dynamodb](#dynamodb) | Secondary indexes (GSI / LSI) | 🟡 partial | 🔵 by design | — |
+| [dynamodb](#dynamodb) | Key encoding and on-disk storage format | 🔵 by design | 🔵 by design | — |
+| [dynamodb](#dynamodb) | Absent DynamoDB features | ⛔ unsupported | ⚫ non-goal | — |
+| [kinesis](#kinesis) | Synthetic sequence numbers and iterator positioning | 🔵 by design | 🔵 by design | — |
+| [kinesis](#kinesis) | Iterator link lifetime and durable replay | 🔵 by design | 🔵 by design | — |
+| [kinesis](#kinesis) | No resharding / enhanced fan-out / KCL lease model | ⛔ unsupported | 🔵 by design | — |
+| [s3](#s3) | No IAM / ACL / bucket-policy authorization model | 🔵 by design | 🔵 by design | — |
+| [s3](#s3) | No enforceable server-side-encryption configuration surface | 🔵 by design | 🔵 by design | — |
+| [s3](#s3) | Multipart upload keeps bounded durable proxy state | 🔵 by design | 🔵 by design | — |
+| [s3](#s3) | Multipart per-part ETag validation cannot be reproduced | 🔵 by design | 🔵 by design | — |
+| [s3](#s3) | Bucket sub-resource configs are not translated | ⛔ unsupported | 🔵 by design | — |
+| [secretsmanager](#secretsmanager) | Versioning and staging modelled on Key Vault version tags | 🟡 partial | 🔵 by design | — |
+| [secretsmanager](#secretsmanager) | Rotation has no Lambda equivalent | 🟡 partial | ⚫ non-goal | — |
+| [secretsmanager](#secretsmanager) | Deletion recovery semantics differ | 🔵 by design | 🔵 by design | — |
+| [secretsmanager](#secretsmanager) | No resource policies or cross-account access | ⛔ unsupported | 🔵 by design | — |
+| [sns](#sns) | Two backends with different fidelity | 🔵 by design | 🔵 by design | — |
+| [sns](#sns) | FIFO topics are deferred | 🟡 partial | 🛠️ feasible backlog | [#692](https://github.com/pedrosakuma/aws2azure/issues/692) |
+| [sns](#sns) | No AWS region / account namespace | 🔵 by design | 🔵 by design | — |
+| [sns](#sns) | No IAM-backed policy surface | ⛔ unsupported | 🔵 by design | — |
+| [sns](#sns) | Event Grid subscription management is excluded | ⛔ unsupported | 🔵 by design | — |
+| [sqs](#sqs) | FIFO ordering requires the AMQP transport | 🟡 partial | 🔵 by design | — |
+| [sqs](#sqs) | No AWS region / account namespace | 🔵 by design | 🔵 by design | — |
+| [sqs](#sqs) | PurgeQueue is best-effort emulation | 🔵 by design | 🔵 by design | — |
+| [sqs](#sqs) | Queue lifecycle eventual-consistency | 🔵 by design | 🔵 by design | — |
+| [sqs](#sqs) | Transport-dependent capability differences | 🔵 by design | 🔵 by design | — |
 
 ## dynamodb
 
@@ -105,6 +105,7 @@ Capacity is Cosmos RU/s, not DynamoDB RCU/WCU. Cosmos 429 (throttled) is surface
 ### Secondary indexes (GSI / LSI)
 
 - **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
 
 All attributes live in one base container; GSI queries are opt-in and LSI queries are always available over that container. GSI Query is a cross-partition fan-out (unlike a base-table Query's single-partition guarantee); string sort keys follow Cosmos code-point collation rather than DynamoDB UTF-8 byte order; numeric ordering relies on a synthetic order-preserving field written at item-write time.
 
@@ -129,6 +130,7 @@ DynamoDB key attribute values are encoded into the internal Cosmos id/partition-
 ### Absent DynamoDB features
 
 - **Status:** ⛔ unsupported
+- **Disposition:** ⚫ non-goal
 
 DynamoDB Streams, DAX, point-in-time recovery / on-demand backups, global tables, and auto-scaling have no in-scope Cosmos translation and are not exposed by the proxy.
 
@@ -171,6 +173,7 @@ Each proxy-issued shard iterator has a distinct identity and therefore a distinc
 ### No resharding / enhanced fan-out / KCL lease model
 
 - **Status:** ⛔ unsupported
+- **Disposition:** 🔵 by design
 
 Kinesis shards map to Event Hubs partitions, which are fixed at the hub level. Dynamic resharding (SplitShard/MergeShards), enhanced fan-out (SubscribeToShard), and the KCL DynamoDB lease/checkpoint model have no in-scope translation.
 
@@ -237,6 +240,7 @@ Even with durable multipart state, Azure still exposes no primitive that lets th
 ### Bucket sub-resource configs are not translated
 
 - **Status:** ⛔ unsupported
+- **Disposition:** 🔵 by design
 
 Lifecycle, replication, website hosting, event notifications, Requester Pays, acceleration, and logging bucket configurations have no Blob-storage equivalent in the wire-protocol path.
 
@@ -251,6 +255,7 @@ Lifecycle, replication, website hosting, event notifications, Requester Pays, ac
 ### Versioning and staging modelled on Key Vault version tags
 
 - **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
 
 Secrets Manager version stages (AWSCURRENT / AWSPREVIOUS / custom labels) are modelled with Key Vault secret versions plus per-version tags. Key Vault's created timestamp has one-second granularity, so deterministic resolution uses created time plus version id and relies on tag bookkeeping rather than a native staging concept.
 
@@ -263,6 +268,7 @@ Secrets Manager version stages (AWSCURRENT / AWSPREVIOUS / custom labels) are mo
 ### Rotation has no Lambda equivalent
 
 - **Status:** 🟡 partial
+- **Disposition:** ⚫ non-goal
 
 Secrets Manager rotation is driven by a customer Lambda function; Azure Key Vault has no equivalent in-line rotation-function contract, so RotateSecret cannot execute an arbitrary rotation workflow.
 
@@ -287,6 +293,7 @@ DeleteSecret's RecoveryWindowInDays / ForceDeleteWithoutRecovery map onto Key Va
 ### No resource policies or cross-account access
 
 - **Status:** ⛔ unsupported
+- **Disposition:** 🔵 by design
 
 Secrets Manager resource policies and cross-account secret sharing have no Key Vault equivalent in the wire-protocol path; authorization is the static AWS-key-to-Azure-credential mapping, not server-side IAM.
 
@@ -317,6 +324,8 @@ References:
 ### FIFO topics are deferred
 
 - **Status:** 🟡 partial
+- **Disposition:** 🛠️ feasible backlog
+- **Tracking issue:** [#692](https://github.com/pedrosakuma/aws2azure/issues/692)
 
 SNS FIFO topic semantics are only approximated. FifoTopic is inferred from a .fifo suffix or RequiresDuplicateDetection; MessageGroupId / MessageDeduplicationId are not honoured on the Event Grid backend (dropped with a warning), and strict FIFO ordering/dedup is not modelled.
 
@@ -345,6 +354,7 @@ References:
 ### No IAM-backed policy surface
 
 - **Status:** ⛔ unsupported
+- **Disposition:** 🔵 by design
 
 DeliveryPolicy, RedrivePolicy, and SubscriptionRoleArn are accepted as no-ops because Service Bus / Event Grid expose no matching SNS attribute contract, and there is no server-side IAM evaluation.
 
@@ -357,6 +367,7 @@ DeliveryPolicy, RedrivePolicy, and SubscriptionRoleArn are accepted as no-ops be
 ### Event Grid subscription management is excluded
 
 - **Status:** ⛔ unsupported
+- **Disposition:** 🔵 by design
 
 Subscribe, ConfirmSubscription, ListSubscriptions, ListSubscriptionsByTopic, GetSubscriptionAttributes, SetSubscriptionAttributes, and Unsubscribe translate only to Azure Service Bus topic subscriptions. They never create, enumerate, mutate, confirm, or delete Azure Event Grid event subscriptions.
 
@@ -375,6 +386,7 @@ References:
 ### FIFO ordering requires the AMQP transport
 
 - **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
 
 Strict per-MessageGroupId ordering is implemented only when a queue is configured with transport: Amqp — the receive path acquires a broker-assigned Service Bus session and holds the session lock so a group's in-flight messages stay pinned to one consumer. The REST transport cannot express session-receive and therefore does not provide strict per-group ordering (it surfaces MessageGroupId but does not block concurrent delivery of the same group).
 

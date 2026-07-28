@@ -1,39 +1,47 @@
 service: dynamodb
 operation: PutItem
-azure_equivalent: "Azure Cosmos DB (Core SQL API)"
+azure_equivalent: Azure Cosmos DB (Core SQL API)
 status: partial
 verified_real_azure:
-  date: "2026-07-16"
+  date: '2026-07-16'
   evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
   workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
 sub_features:
-  - name: HASH-only key tables
-    status: implemented
-  - name: HASH+RANGE composite key tables
-    status: implemented
-  - name: Full DynamoDB wire-form round-trip (S/N/B/BOOL/NULL/M/L/SS/NS/BS)
-    status: implemented
-    notes: "Attributes stored as inferred Cosmos JSON (no `{S}`/`{N}` wrapping); number values are normalised to DynamoDB's canonical decimal form (no trailing zeros, no exponent, no `-0`) — matching real DDB's documented behaviour. Numbers whose canonical form exceeds IEEE 754 double round-trip safety are stored via the `{\"_a2a:N\":\"<canonical>\"}` envelope so 16–38 digit precision survives Cosmos storage byte-identical."
-  - name: ConditionExpression / Expected / ConditionalOperator
-    status: implemented
-    notes: "Conditional path performs GET → evaluate → PUT(If-Match) or POST(If-None-Match: *) with up to 4 retries on Cosmos 412/409. Failure returns HTTP 400 ConditionalCheckFailedException with optional Item when ReturnValuesOnConditionCheckFailure=ALL_OLD. attribute_not_exists(pk) is the standard idiom for first-time create."
-  - name: ExpressionAttributeNames / ExpressionAttributeValues
-    status: unsupported
-  - name: ReturnValues
-    status: partial
-    notes: "Only NONE accepted; ALL_OLD/UPDATED_* rejected with ValidationException."
-  - name: ReturnConsumedCapacity / ReturnItemCollectionMetrics
-    status: unsupported
-    notes: "Silently ignored; response omits ConsumedCapacity / ItemCollectionMetrics."
+- name: HASH-only key tables
+  status: implemented
+- name: HASH+RANGE composite key tables
+  status: implemented
+- name: Full DynamoDB wire-form round-trip (S/N/B/BOOL/NULL/M/L/SS/NS/BS)
+  status: implemented
+  notes: Attributes stored as inferred Cosmos JSON (no `{S}`/`{N}` wrapping); number values are normalised to DynamoDB's canonical decimal form (no trailing zeros, no exponent, no `-0`) — matching real DDB's documented behaviour. Numbers whose canonical form exceeds IEEE 754 double round-trip safety are stored via the `{"_a2a:N":"<canonical>"}` envelope so 16–38 digit precision survives Cosmos storage byte-identical.
+- name: ConditionExpression / Expected / ConditionalOperator
+  status: implemented
+  notes: 'Conditional path performs GET → evaluate → PUT(If-Match) or POST(If-None-Match: *) with up to 4 retries on Cosmos 412/409. Failure returns HTTP 400 ConditionalCheckFailedException with optional Item when ReturnValuesOnConditionCheckFailure=ALL_OLD. attribute_not_exists(pk) is the standard idiom for first-time create.'
+- name: ExpressionAttributeNames / ExpressionAttributeValues
+  status: unsupported
+  disposition: feasible_backlog
+  tracking_issue: '#687'
+- name: ReturnValues
+  status: partial
+  notes: Only NONE accepted; ALL_OLD/UPDATED_* rejected with ValidationException.
+  disposition: feasible_backlog
+  tracking_issue: '#687'
+- name: ReturnConsumedCapacity / ReturnItemCollectionMetrics
+  status: unsupported
+  notes: Silently ignored; response omits ConsumedCapacity / ItemCollectionMetrics.
+  disposition: by_design
 behavior_differences:
-  - "Cosmos storage-metadata system fields (`_rid`/`_self`/`_etag`/`_ts`/`_attachments`/`_lsn`/`_metadata`) are stripped from response items and never surface as DynamoDB attributes (#203). Caveat: a user attribute literally named identically is also stripped on read; the durable fix is attribute namespacing."
-  - "Attributes are stored *flat* on the Cosmos document — `{id, _a2a_pk, ...inferred attributes...}` — with no per-item type wrapper. Scalar values are stored without `{S}`/`{N}`/`{B}` tags; the type is inferred on read from the JSON value kind. Maps/lists nest as Cosmos JSON. Number values are normalised to DDB canonical form (matching real DDB) — e.g. `42.0`→`42`, `1e10`→`10000000000`. Values that cannot survive an IEEE 754 round-trip (high-precision numbers, binary, sets) are stored under a typed envelope (`_a2a:N`, `_a2a:B`, `_a2a:SS`, `_a2a:NS`, `_a2a:BS`)."
-  - "Attribute names with the reserved `_a2a:` prefix are rejected with ValidationException at the API surface, both at top level and inside nested maps. The prefix is reserved for the typed-envelope encoding above; allowing user attributes to collide would let callers shadow / probe storage internals."
-  - "Numbers outside DynamoDB's published range are rejected with ValidationException — match real DDB. The bounds are 38 significant digits of precision and a magnitude (most-significant-digit exponent) in [1e-130, ~9.99e+125]; the lower bound is a magnitude floor, so values like `1.1e-130` (magnitude ≥ 1e-130, with digits below 1e-130) are accepted exactly as real DynamoDB does."
-  - "Sentinel id `__aws2azure_table_meta__` is no longer special-cased for key values: S/B keys are hex-encoded before routing (see below), so a user key can never collide with the sidecar sentinel and the value is stored normally."
-  - "Key attribute values are encoded into the internal Cosmos `id`/partition-key with an **order-preserving, digits-only codec** so Cosmos collation never matters: S → lowercase hex(UTF-8 bytes); B → lowercase hex(raw bytes after base64-decode); N → a fixed-width sign+exponent+mantissa digit string (sign flag, 3-digit biased decimal exponent, 38-digit mantissa = 42 chars) that sorts in true numeric order. Numerically-equal numbers collapse to one id (`42`, `42.0`, `4.2e1`, `+42` → same; `0`, `-0`, `0.0` → same), fixing the earlier bug where `{\"N\":\"42\"}` and `{\"N\":\"42.0\"}` routed to different documents. This is an **on-disk-format breaking change** — documents written by earlier builds route under a different id and are not readable by this build. The encoding is invisible to clients (key attributes are always returned from the flat-stored attributes, never reconstructed from id). Cosmos-forbidden characters (`/`, `\\`, `?`, `#`) and previously-rejected empty-after-trim strings are now accepted because the codec never emits them. Because hex doubles length and Cosmos caps the id at 255 chars, the effective raw S/B key limit is ~127 bytes (vs DynamoDB's 1024); N keys are always 42 chars; over-limit keys are rejected with ValidationException."
-  - "Cosmos 429 (throttled) is surfaced to clients as DynamoDB ProvisionedThroughputExceededException — including 429 on the sidecar metadata read."
-  - "Conditional writes use the single-item `atomicWrite_v2` Cosmos stored procedure when stored procedures are enabled and the ConditionExpression is within the sproc's supported subset (scalar comparisons, AND/OR/NOT, `attribute_exists`/`attribute_not_exists`, `attribute_type` of S/N/BOOL/NULL/L/M, `begins_with`, BETWEEN, IN): the condition is evaluated server-side and the PUT is applied atomically in one round-trip. **Validated against real Azure Cosmos DB** (Strong consistency). The v2 body reads the existing document with a partition-local `SELECT * FROM c WHERE c.id = @id` query (an earlier `getSelfLink() + 'docs/' + id` read link was an invalid RID+id mixed link rejected by real Cosmos with `Error creating request message`; the emulator could not catch it because it does not run sprocs) and strips Cosmos system fields before the upsert. Conditions outside the subset — `size()`, `contains()`, `attribute_type` of a set/binary, comparisons against binary/set literals, list-index paths — are routed away from the sproc: under mode `Preferred` the request falls back to the non-atomic GET → PUT loop; under `Required` it fails loud rather than degrade atomicity."
-  - "Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; the GET → PUT fallback path is emulator-covered, the `atomicWrite_v2` sproc path is validated against real Azure Cosmos DB."
-  - "When the existing item is materialized for ConditionExpression evaluation (the GET → PUT loop) and Cosmos returns a CosmosBinary body (opt-in `DynamoDb.CosmosBinaryResponses`), the AttributeValue map is built straight off the binary body via `CosmosBinaryReader` (no binary→text decode + JsonDocument DOM), falling back to decode-to-text on an unsupported marker. The chosen path is observable on `aws2azure_dynamodb_read_decode_path_total{op=\"put\",path=binary|fallback|text}`. The emulator never emits CosmosBinary, so the binary-direct path is exercised against real Azure only."
-  - "The standalone document write body (the unconditional upsert and the non-atomic GET → PUT/POST fallback) is sent as CosmosBinary (the `0x80` format) when the opt-in `DynamoDb.CosmosBinaryRequests` is enabled (default off), encoded single-pass straight to the wire; the gateway auto-detects the marker so no negotiation header or special Content-Type is used. The sproc-embedded conditional path (`atomicWrite_v2`) keeps JSON text, since the document is embedded as a value inside the sproc parameter array. The chosen format is observable on `aws2azure_dynamodb_write_body_total{format=binary|text}`. The Cosmos DB Linux emulator neither emits nor reliably accepts CosmosBinary, so the binary write path is validated against real Azure only — confirmed parsed + indexed (text read-back + indexed query) by the nightly acceptance test, not stored opaquely."
+- 'Cosmos storage-metadata system fields (`_rid`/`_self`/`_etag`/`_ts`/`_attachments`/`_lsn`/`_metadata`) are stripped from response items and never surface as DynamoDB attributes (#203). Caveat: a user attribute literally named identically is also stripped on read; the durable fix is attribute namespacing.'
+- Attributes are stored *flat* on the Cosmos document — `{id, _a2a_pk, ...inferred attributes...}` — with no per-item type wrapper. Scalar values are stored without `{S}`/`{N}`/`{B}` tags; the type is inferred on read from the JSON value kind. Maps/lists nest as Cosmos JSON. Number values are normalised to DDB canonical form (matching real DDB) — e.g. `42.0`→`42`, `1e10`→`10000000000`. Values that cannot survive an IEEE 754 round-trip (high-precision numbers, binary, sets) are stored under a typed envelope (`_a2a:N`, `_a2a:B`, `_a2a:SS`, `_a2a:NS`, `_a2a:BS`).
+- Attribute names with the reserved `_a2a:` prefix are rejected with ValidationException at the API surface, both at top level and inside nested maps. The prefix is reserved for the typed-envelope encoding above; allowing user attributes to collide would let callers shadow / probe storage internals.
+- Numbers outside DynamoDB's published range are rejected with ValidationException — match real DDB. The bounds are 38 significant digits of precision and a magnitude (most-significant-digit exponent) in [1e-130, ~9.99e+125]; the lower bound is a magnitude floor, so values like `1.1e-130` (magnitude ≥ 1e-130, with digits below 1e-130) are accepted exactly as real DynamoDB does.
+- 'Sentinel id `__aws2azure_table_meta__` is no longer special-cased for key values: S/B keys are hex-encoded before routing (see below), so a user key can never collide with the sidecar sentinel and the value is stored normally.'
+- 'Key attribute values are encoded into the internal Cosmos `id`/partition-key with an **order-preserving, digits-only codec** so Cosmos collation never matters: S → lowercase hex(UTF-8 bytes); B → lowercase hex(raw bytes after base64-decode); N → a fixed-width sign+exponent+mantissa digit string (sign flag, 3-digit biased decimal exponent, 38-digit mantissa = 42 chars) that sorts in true numeric order. Numerically-equal numbers collapse to one id (`42`, `42.0`, `4.2e1`, `+42` → same; `0`, `-0`, `0.0` → same), fixing the earlier bug where `{"N":"42"}` and `{"N":"42.0"}` routed to different documents. This is an **on-disk-format breaking change** — documents written by earlier builds route under a different id and are not readable by this build. The encoding is invisible to clients (key attributes are always returned from the flat-stored attributes, never reconstructed from id). Cosmos-forbidden characters (`/`, `\`, `?`, `#`) and previously-rejected empty-after-trim strings are now accepted
+  because the codec never emits them. Because hex doubles length and Cosmos caps the id at 255 chars, the effective raw S/B key limit is ~127 bytes (vs DynamoDB''s 1024); N keys are always 42 chars; over-limit keys are rejected with ValidationException.'
+- Cosmos 429 (throttled) is surfaced to clients as DynamoDB ProvisionedThroughputExceededException — including 429 on the sidecar metadata read.
+- 'Conditional writes use the single-item `atomicWrite_v2` Cosmos stored procedure when stored procedures are enabled and the ConditionExpression is within the sproc''s supported subset (scalar comparisons, AND/OR/NOT, `attribute_exists`/`attribute_not_exists`, `attribute_type` of S/N/BOOL/NULL/L/M, `begins_with`, BETWEEN, IN): the condition is evaluated server-side and the PUT is applied atomically in one round-trip. **Validated against real Azure Cosmos DB** (Strong consistency). The v2 body reads the existing document with a partition-local `SELECT * FROM c WHERE c.id = @id` query (an earlier `getSelfLink() + ''docs/'' + id` read link was an invalid RID+id mixed link rejected by real Cosmos with `Error creating request message`; the emulator could not catch it because it does not run sprocs) and strips Cosmos system fields before the upsert. Conditions outside the subset — `size()`, `contains()`, `attribute_type` of a set/binary, comparisons against binary/set literals, list-index paths
+  — are routed away from the sproc: under mode `Preferred` the request falls back to the non-atomic GET → PUT loop; under `Required` it fails loud rather than degrade atomicity.'
+- Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; the GET → PUT fallback path is emulator-covered, the `atomicWrite_v2` sproc path is validated against real Azure Cosmos DB.
+- When the existing item is materialized for ConditionExpression evaluation (the GET → PUT loop) and Cosmos returns a CosmosBinary body (opt-in `DynamoDb.CosmosBinaryResponses`), the AttributeValue map is built straight off the binary body via `CosmosBinaryReader` (no binary→text decode + JsonDocument DOM), falling back to decode-to-text on an unsupported marker. The chosen path is observable on `aws2azure_dynamodb_read_decode_path_total{op="put",path=binary|fallback|text}`. The emulator never emits CosmosBinary, so the binary-direct path is exercised against real Azure only.
+- The standalone document write body (the unconditional upsert and the non-atomic GET → PUT/POST fallback) is sent as CosmosBinary (the `0x80` format) when the opt-in `DynamoDb.CosmosBinaryRequests` is enabled (default off), encoded single-pass straight to the wire; the gateway auto-detects the marker so no negotiation header or special Content-Type is used. The sproc-embedded conditional path (`atomicWrite_v2`) keeps JSON text, since the document is embedded as a value inside the sproc parameter array. The chosen format is observable on `aws2azure_dynamodb_write_body_total{format=binary|text}`. The Cosmos DB Linux emulator neither emits nor reliably accepts CosmosBinary, so the binary write path is validated against real Azure only — confirmed parsed + indexed (text read-back + indexed query) by the nightly acceptance test, not stored opaquely.
+disposition: by_design

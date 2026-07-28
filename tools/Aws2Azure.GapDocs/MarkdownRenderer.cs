@@ -22,6 +22,7 @@ public static class MarkdownRenderer
 
         WriteIndex(byService, designDocs, siteRoot);
         WriteCoverage(byService, siteRoot);
+        WriteCompleteness(byService, designDocs, siteRoot);
         WriteWorkloadCompatibility(byService, designDocs, siteRoot);
         WriteDivergences(byService, migration, siteRoot);
         WriteDesignGaps(designDocs, siteRoot);
@@ -59,6 +60,7 @@ public static class MarkdownRenderer
         sb.AppendLine("## Cross-cutting");
         sb.AppendLine();
         sb.AppendLine("- [Coverage matrix](coverage.md) — every operation and status on one screen.");
+        sb.AppendLine("- [Maximum-viable completeness](completeness.md) — backlog vs structural boundaries.");
         sb.AppendLine("- [Workload compatibility](workload-compatibility.md) — adoption patterns and go/no-go guidance.");
         sb.AppendLine("- [Workload GA certification](workload-ga.md) — mechanical verdicts for versioned support profiles.");
         sb.AppendLine("- [Design gaps](design-gaps.md) — architectural limitations spanning operations.");
@@ -73,16 +75,170 @@ public static class MarkdownRenderer
         sb.AppendLine();
         sb.AppendLine("For adoption decisions, start with the generated [workload compatibility](workload-compatibility.md) guide.");
         sb.AppendLine();
-        sb.AppendLine("| Service | Operation | Status | Real-Azure | Azure equivalent |");
-        sb.AppendLine("|---|---|---|---|---|");
+        sb.AppendLine("| Service | Operation | Status | Disposition | Tracking | Real-Azure | Azure equivalent |");
+        sb.AppendLine("|---|---|---|---|---|---|---|");
         foreach (var group in byService)
         {
             foreach (var op in group.OrderBy(o => o.Operation, System.StringComparer.Ordinal))
             {
-                sb.AppendLine($"| {op.Service} | [{op.Operation}]({group.Key}.md#{op.Operation.ToLowerInvariant()}) | {StatusBadge(op.Status)} | {Seal(op.VerifiedRealAzure)} | `{op.AzureEquivalent}` |");
+                sb.AppendLine(
+                    $"| {op.Service} | [{op.Operation}]({group.Key}.md#{op.Operation.ToLowerInvariant()}) | " +
+                    $"{StatusBadge(op.Status)} | {DispositionBadge(op.Disposition)} | {IssueLink(op.TrackingIssue)} | " +
+                    $"{Seal(op.VerifiedRealAzure)} | `{op.AzureEquivalent}` |");
             }
         }
         File.WriteAllText(Path.Combine(siteRoot, "coverage.md"), sb.ToString());
+    }
+
+    private static void WriteCompleteness(
+        IList<IGrouping<string, OperationDoc>> byService,
+        IReadOnlyList<ServiceDesignDoc> designDocs,
+        string siteRoot)
+    {
+        var designByService = designDocs.ToDictionary(
+            doc => doc.Service.ToLowerInvariant(),
+            doc => doc,
+            System.StringComparer.OrdinalIgnoreCase);
+        var sb = new StringBuilder();
+        sb.AppendLine("# Maximum-viable completeness");
+        sb.AppendLine();
+        sb.AppendLine("This page separates feasible backlog from permanent AWS/Azure boundaries and explicit project non-goals.");
+        sb.AppendLine("It complements the raw [coverage matrix](coverage.md): status alone is **not** an AWS-parity claim.");
+        sb.AppendLine();
+        sb.AppendLine("Workload/profile maturity lives in [workload-compatibility](workload-compatibility.md) and [workload-ga](workload-ga.md).");
+        sb.AppendLine();
+        sb.AppendLine("## Service summary");
+        sb.AppendLine();
+        sb.AppendLine("| Service | Implemented | Partial | Stub | Unsupported | Feasible ops | By-design ops | Non-goal ops | Feasible sub-features | Feasible design gaps | Structural boundaries |");
+        sb.AppendLine("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+        foreach (var group in byService)
+        {
+            var operations = group.ToList();
+            var nonImplementedSubFeatures = operations
+                .SelectMany(o => o.SubFeatures)
+                .Where(sf => !sf.Status.Equals("implemented", System.StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var serviceDesign = designByService.GetValueOrDefault(group.Key);
+            var feasibleDesignGapCount = serviceDesign?.DesignGaps.Count(
+                g => g.Disposition.Equals("feasible_backlog", System.StringComparison.OrdinalIgnoreCase)) ?? 0;
+            var structuralBoundaryCount = operations.Count(o => IsStructuralDisposition(o.Disposition))
+                + nonImplementedSubFeatures.Count(sf => IsStructuralDisposition(sf.Disposition))
+                + (serviceDesign?.DesignGaps.Count(g => IsStructuralGap(g)) ?? 0);
+            sb.AppendLine(
+                $"| [{group.Key}]({group.Key}.md) | {CountStatus(operations, "implemented")} | {CountStatus(operations, "partial")} | " +
+                $"{CountStatus(operations, "stub")} | {CountStatus(operations, "unsupported")} | " +
+                $"{CountDisposition(operations, "feasible_backlog")} | {CountDisposition(operations, "by_design")} | " +
+                $"{CountDisposition(operations, "non_goal")} | {CountDisposition(nonImplementedSubFeatures, "feasible_backlog")} | " +
+                $"{feasibleDesignGapCount} | {structuralBoundaryCount} |");
+        }
+        sb.AppendLine();
+
+        foreach (var group in byService)
+        {
+            var operations = group.OrderBy(o => o.Operation, System.StringComparer.Ordinal).ToList();
+            var serviceDesign = designByService.GetValueOrDefault(group.Key);
+            var nonImplementedSubFeatures = operations
+                .SelectMany(o => o.SubFeatures.Select(sf => new { Operation = o.Operation, SubFeature = sf }))
+                .Where(entry => !entry.SubFeature.Status.Equals("implemented", System.StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var feasibleOps = operations
+                .Where(o => o.Disposition.Equals("feasible_backlog", System.StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var feasibleSubFeatures = nonImplementedSubFeatures
+                .Where(entry => entry.SubFeature.Disposition.Equals("feasible_backlog", System.StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var structuralEntries = operations
+                .Where(o => IsStructuralDisposition(o.Disposition))
+                .Select(o => $"- Operation [{o.Operation}]({group.Key}.md#{o.Operation.ToLowerInvariant()}) — {DispositionBadge(o.Disposition)}")
+                .Concat(nonImplementedSubFeatures
+                    .Where(entry => IsStructuralDisposition(entry.SubFeature.Disposition))
+                    .Select(entry =>
+                        $"- Sub-feature [{entry.Operation}]({group.Key}.md#{entry.Operation.ToLowerInvariant()}) / {Esc(entry.SubFeature.Name)} — {DispositionBadge(entry.SubFeature.Disposition)}"))
+                .ToList();
+            if (serviceDesign is not null)
+            {
+                structuralEntries.AddRange(serviceDesign.DesignGaps
+                    .Where(IsStructuralGap)
+                    .Select(gap =>
+                        $"- Design gap [${Esc(gap.Area)}](design-gaps.md#{DocumentationLinks.Anchor(serviceDesign.Service + "-" + gap.Area)}) — {DispositionBadge(DesignGapDisposition(gap))}")
+                    .Select(entry => entry.Replace("[$", "[", System.StringComparison.Ordinal)));
+            }
+
+            sb.AppendLine($"## {group.Key}");
+            sb.AppendLine();
+            sb.AppendLine("| Status | Feasible backlog | By design | Non-goal |");
+            sb.AppendLine("|---|---:|---:|---:|");
+            foreach (var status in new[] { "implemented", "partial", "stub", "unsupported" })
+            {
+                var rows = operations.Where(o => o.Status.Equals(status, System.StringComparison.OrdinalIgnoreCase)).ToList();
+                sb.AppendLine(
+                    $"| {StatusBadge(status)} | {CountDisposition(rows, "feasible_backlog")} | {CountDisposition(rows, "by_design")} | {CountDisposition(rows, "non_goal")} |");
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("### Feasible backlog");
+            sb.AppendLine();
+            if (feasibleOps.Count == 0 && feasibleSubFeatures.Count == 0 && (serviceDesign?.DesignGaps.Count(g => g.Disposition.Equals("feasible_backlog", System.StringComparison.OrdinalIgnoreCase)) ?? 0) == 0)
+            {
+                sb.AppendLine("_No remaining feasible backlog is documented for this service._");
+            }
+            else
+            {
+                foreach (var operation in feasibleOps)
+                {
+                    sb.AppendLine(
+                        $"- Operation [{operation.Operation}]({group.Key}.md#{operation.Operation.ToLowerInvariant()}) — " +
+                        $"{IssueLink(operation.TrackingIssue)}");
+                }
+                foreach (var entry in feasibleSubFeatures)
+                {
+                    sb.AppendLine(
+                        $"- Sub-feature [{entry.Operation}]({group.Key}.md#{entry.Operation.ToLowerInvariant()}) / " +
+                        $"{Esc(entry.SubFeature.Name)} — {IssueLink(entry.SubFeature.TrackingIssue)}");
+                }
+                if (serviceDesign is not null)
+                {
+                    foreach (var gap in serviceDesign.DesignGaps.Where(g => g.Disposition.Equals("feasible_backlog", System.StringComparison.OrdinalIgnoreCase)))
+                    {
+                        sb.AppendLine(
+                            $"- Design gap [{Esc(gap.Area)}](design-gaps.md#{DocumentationLinks.Anchor(serviceDesign.Service + "-" + gap.Area)}) — " +
+                            $"{IssueLink(gap.TrackingIssue)}");
+                    }
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("### Workload maturity");
+            sb.AppendLine();
+            if (serviceDesign is null || serviceDesign.WorkloadPatterns.Count == 0)
+            {
+                sb.AppendLine("See the generated cross-service [workload-compatibility](workload-compatibility.md) and [workload-ga](workload-ga.md) reports.");
+            }
+            else
+            {
+                sb.AppendLine(
+                    $"{serviceDesign.WorkloadPatterns.Count} workload pattern(s) are documented for this service. " +
+                    $"See [workload-compatibility](workload-compatibility.md#{group.Key}) and [workload-ga](workload-ga.md).");
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("### Structural boundaries");
+            sb.AppendLine();
+            if (structuralEntries.Count == 0)
+            {
+                sb.AppendLine("_No structural boundaries are currently documented for this service._");
+            }
+            else
+            {
+                foreach (var entry in structuralEntries.OrderBy(value => value, System.StringComparer.Ordinal))
+                {
+                    sb.AppendLine(entry);
+                }
+            }
+            sb.AppendLine();
+        }
+
+        File.WriteAllText(Path.Combine(siteRoot, "completeness.md"), sb.ToString());
     }
 
     private static void WriteWorkloadCompatibility(
@@ -221,6 +377,14 @@ public static class MarkdownRenderer
             sb.AppendLine($"## {op.Operation}");
             sb.AppendLine();
             sb.AppendLine($"- **Status:** {StatusBadge(op.Status)}");
+            if (!string.IsNullOrWhiteSpace(op.Disposition))
+            {
+                sb.AppendLine($"- **Disposition:** {DispositionBadge(op.Disposition)}");
+            }
+            if (!string.IsNullOrWhiteSpace(op.TrackingIssue))
+            {
+                sb.AppendLine($"- **Tracking issue:** {IssueLink(op.TrackingIssue)}");
+            }
             sb.AppendLine($"- **Azure equivalent:** `{op.AzureEquivalent}`");
             if (op.VerifiedRealAzure is not null)
             {
@@ -232,11 +396,14 @@ public static class MarkdownRenderer
             {
                 sb.AppendLine("### Sub-features");
                 sb.AppendLine();
-                sb.AppendLine("| Name | Status | Real-Azure | Notes | Gap | Workaround |");
-                sb.AppendLine("|---|---|---|---|---|---|");
+                sb.AppendLine("| Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |");
+                sb.AppendLine("|---|---|---|---|---|---|---|---|");
                 foreach (var sf in op.SubFeatures)
                 {
-                    sb.AppendLine($"| {sf.Name} | {StatusBadge(sf.Status)} | {Seal(sf.VerifiedRealAzure)} | {Esc(sf.Notes)} | {Esc(sf.Gap)} | {Esc(sf.Workaround)} |");
+                    sb.AppendLine(
+                        $"| {sf.Name} | {StatusBadge(sf.Status)} | {DispositionBadge(sf.Disposition)} | " +
+                        $"{IssueLink(sf.TrackingIssue)} | {Seal(sf.VerifiedRealAzure)} | {Esc(sf.Notes)} | " +
+                        $"{Esc(sf.Gap)} | {Esc(sf.Workaround)} |");
                 }
                 sb.AppendLine();
             }
@@ -290,13 +457,15 @@ public static class MarkdownRenderer
 
         sb.AppendLine("## Summary");
         sb.AppendLine();
-        sb.AppendLine("| Service | Area | Status |");
-        sb.AppendLine("|---|---|---|");
+        sb.AppendLine("| Service | Area | Status | Disposition | Tracking |");
+        sb.AppendLine("|---|---|---|---|---|");
         foreach (var doc in ordered)
         {
             foreach (var g in doc.DesignGaps)
             {
-                sb.AppendLine($"| [{doc.Service.ToLowerInvariant()}](#{doc.Service.ToLowerInvariant()}) | {Esc(g.Area)} | {DesignBadge(g.Status)} |");
+                sb.AppendLine(
+                    $"| [{doc.Service.ToLowerInvariant()}](#{doc.Service.ToLowerInvariant()}) | {Esc(g.Area)} | " +
+                    $"{DesignBadge(g.Status)} | {DispositionBadge(DesignGapDisposition(g))} | {IssueLink(g.TrackingIssue)} |");
             }
         }
         sb.AppendLine();
@@ -312,6 +481,14 @@ public static class MarkdownRenderer
                 sb.AppendLine($"### {Esc(g.Area)}");
                 sb.AppendLine();
                 sb.AppendLine($"- **Status:** {DesignBadge(g.Status)}");
+                if (!string.IsNullOrWhiteSpace(g.Disposition))
+                {
+                    sb.AppendLine($"- **Disposition:** {DispositionBadge(g.Disposition)}");
+                }
+                if (!string.IsNullOrWhiteSpace(g.TrackingIssue))
+                {
+                    sb.AppendLine($"- **Tracking issue:** {IssueLink(g.TrackingIssue)}");
+                }
                 sb.AppendLine();
                 sb.AppendLine(g.Summary);
                 sb.AppendLine();
@@ -356,6 +533,15 @@ public static class MarkdownRenderer
         _ => status
     };
 
+    private static string DispositionBadge(string disposition) => disposition.ToLowerInvariant() switch
+    {
+        "" => "—",
+        "feasible_backlog" => "🛠️ feasible backlog",
+        "by_design" => "🔵 by design",
+        "non_goal" => "⚫ non-goal",
+        _ => disposition
+    };
+
     private static string Seal(RealAzureVerification? verified) => verified is null ? "—" : "✅";
 
     private static string CompatibilityBadge(string compatibility) => compatibility.ToLowerInvariant() switch
@@ -368,6 +554,19 @@ public static class MarkdownRenderer
 
     private static int CountStatus(IEnumerable<OperationDoc> docs, string status) =>
         docs.Count(o => o.Status.Equals(status, System.StringComparison.OrdinalIgnoreCase));
+
+    private static int CountDisposition<T>(IEnumerable<T> rows, string disposition)
+        where T : class =>
+        rows.Count(row => GetDisposition(row).Equals(disposition, System.StringComparison.OrdinalIgnoreCase));
+
+    private static string GetDisposition<T>(T row)
+        where T : class =>
+        row switch
+        {
+            OperationDoc operation => operation.Disposition,
+            SubFeature subFeature => subFeature.Disposition,
+            _ => string.Empty
+        };
 
     private static int StatusOrder(string status) => status switch
     {
@@ -461,6 +660,33 @@ public static class MarkdownRenderer
             details.Add($"[workflow run]({verification.WorkflowRun})");
         }
         return string.Join(" · ", details);
+    }
+
+    private static string DesignGapDisposition(DesignGap gap) =>
+        string.IsNullOrWhiteSpace(gap.Disposition) && gap.Status.Equals("by_design", System.StringComparison.OrdinalIgnoreCase)
+            ? "by_design"
+            : gap.Disposition;
+
+    private static bool IsStructuralGap(DesignGap gap) => IsStructuralDisposition(DesignGapDisposition(gap));
+
+    private static bool IsStructuralDisposition(string disposition) =>
+        disposition.Equals("by_design", System.StringComparison.OrdinalIgnoreCase)
+        || disposition.Equals("non_goal", System.StringComparison.OrdinalIgnoreCase);
+
+    private static string IssueLink(string issueReference)
+    {
+        if (string.IsNullOrWhiteSpace(issueReference))
+        {
+            return "—";
+        }
+
+        var id = issueReference.Trim();
+        if (id[0] != '#')
+        {
+            return Esc(id);
+        }
+
+        return $"[{id}](https://github.com/pedrosakuma/aws2azure/issues/{id[1..]})";
     }
 
     private static string Esc(string s) => string.IsNullOrEmpty(s) ? "" : s.Replace("|", "\\|").Replace("\n", " ");

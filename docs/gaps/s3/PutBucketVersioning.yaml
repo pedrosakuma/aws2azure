@@ -1,24 +1,26 @@
 service: s3
 operation: PutBucketVersioning
-azure_equivalent: "Container metadata (per-bucket toggle); account-level Blob versioning assumed pre-enabled"
+azure_equivalent: Container metadata (per-bucket toggle); account-level Blob versioning assumed pre-enabled
 status: partial
 verified_real_azure:
-  date: "2026-06-30"
+  date: '2026-06-30'
   evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/28477441131
   workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/28477441131
 sub_features:
-  - name: "configuration storage"
-    status: implemented
-    verified_real_azure:
-      date: "2026-06-30"
-      evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/28477441131
-      workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/28477441131
-    notes: "Persists the bucket-level Status (Enabled/Suspended) in container metadata. Malformed/unrecognised bodies rejected with MalformedXML."
-  - name: "MFADelete"
-    status: unsupported
-    notes: "MFADelete is silently ignored / unsupported."
+- name: configuration storage
+  status: implemented
+  verified_real_azure:
+    date: '2026-06-30'
+    evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/28477441131
+    workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/28477441131
+  notes: Persists the bucket-level Status (Enabled/Suspended) in container metadata. Malformed/unrecognised bodies rejected with MalformedXML.
+- name: MFADelete
+  status: unsupported
+  notes: MFADelete is silently ignored / unsupported.
+  disposition: by_design
 behavior_differences:
-  - "Stores the S3 bucket-level intent only; does not toggle account-level Azure Blob versioning (no control-plane). Operators must enable account versioning out-of-band for versionId retention to function (opt-in, documented per topology)."
-  - "Container metadata updates use bounded ETag/If-Match retry and re-merge fresh metadata on conflict so concurrent tagging/versioning/compatibility-intent updates do not silently clobber unrelated entries."
+- Stores the S3 bucket-level intent only; does not toggle account-level Azure Blob versioning (no control-plane). Operators must enable account versioning out-of-band for versionId retention to function (opt-in, documented per topology).
+- Container metadata updates use bounded ETag/If-Match retry and re-merge fresh metadata on conflict so concurrent tagging/versioning/compatibility-intent updates do not silently clobber unrelated entries.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketVersioning.html
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketVersioning.html
+disposition: by_design

@@ -1,15 +1,17 @@
 service: s3
 operation: PutBucketAccelerateConfiguration
-azure_equivalent: "(no equivalent — Suspended is an accepted stable no-op)"
+azure_equivalent: (no equivalent — Suspended is an accepted stable no-op)
 status: partial
 sub_features:
-  - name: "Suspended"
-    status: implemented
-    notes: "Accepted as a 200 no-op; the matching GET remains Suspended."
-  - name: "Enabled"
-    status: unsupported
-    notes: "Returns 501 NotImplemented; no Azure acceleration topology is assumed or provisioned."
+- name: Suspended
+  status: implemented
+  notes: Accepted as a 200 no-op; the matching GET remains Suspended.
+- name: Enabled
+  status: unsupported
+  notes: Returns 501 NotImplemented; no Azure acceleration topology is assumed or provisioned.
+  disposition: by_design
 behavior_differences:
-  - "Suspended is stable but not persisted because it is the only representable state."
+- Suspended is stable but not persisted because it is the only representable state.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketAccelerateConfiguration.html
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketAccelerateConfiguration.html
+disposition: by_design

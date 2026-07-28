@@ -1,19 +1,21 @@
 service: s3
 operation: PutObjectAcl
-azure_equivalent: "(no Azure equivalent — validates owner-only intent and replies 200)"
+azure_equivalent: (no Azure equivalent — validates owner-only intent and replies 200)
 status: partial
 sub_features:
-  - name: "canned ACL 'private'"
-    status: implemented
-    notes: "Accepted as no-op."
-  - name: "other canned ACLs / x-amz-grant-* headers / non-owner grants"
-    status: unsupported
-    notes: "Rejected with AccessControlListNotSupported."
-  - name: "versionId existence check"
-    status: implemented
-    notes: "The no-op owner-only ACL update verifies the selected Azure blob version exists and returns x-amz-version-id before replying."
+- name: canned ACL 'private'
+  status: implemented
+  notes: Accepted as no-op.
+- name: other canned ACLs / x-amz-grant-* headers / non-owner grants
+  status: unsupported
+  notes: Rejected with AccessControlListNotSupported.
+  disposition: by_design
+- name: versionId existence check
+  status: implemented
+  notes: The no-op owner-only ACL update verifies the selected Azure blob version exists and returns x-amz-version-id before replying.
 behavior_differences:
-  - "The versionId selects the object existence check only; Azure stores no S3 ACL document."
-  - "Azure BlobVersionNotFound maps to S3 NoSuchVersion."
+- The versionId selects the object existence check only; Azure stores no S3 ACL document.
+- Azure BlobVersionNotFound maps to S3 NoSuchVersion.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectAcl.html
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectAcl.html
+disposition: by_design

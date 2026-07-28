@@ -1,15 +1,17 @@
 service: s3
 operation: DeletePublicAccessBlock
-azure_equivalent: "Conditional container-metadata update"
+azure_equivalent: Conditional container-metadata update
 status: partial
 sub_features:
-  - name: "idempotent intent clear"
-    status: implemented
-    notes: "Removes only the proxy-owned public-access-block intent key and returns 204."
-  - name: "public-access enforcement"
-    status: unsupported
-    notes: "Azure public-access settings are unchanged."
+- name: idempotent intent clear
+  status: implemented
+  notes: Removes only the proxy-owned public-access-block intent key and returns 204.
+- name: public-access enforcement
+  status: unsupported
+  notes: Azure public-access settings are unchanged.
+  disposition: by_design
 behavior_differences:
-  - "The operation clears persisted proxy intent only."
+- The operation clears persisted proxy intent only.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeletePublicAccessBlock.html
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeletePublicAccessBlock.html
+disposition: by_design

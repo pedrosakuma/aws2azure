@@ -1,27 +1,28 @@
 service: s3
 operation: ListMultipartUploads
-azure_equivalent: "Proxy-owned multipart state container (Azure has no native cross-blob MPU enumeration primitive)"
+azure_equivalent: Proxy-owned multipart state container (Azure has no native cross-blob MPU enumeration primitive)
 status: partial
 sub_features:
-  - name: deterministic-enumeration
-    status: implemented
-    notes: "The proxy stores one durable state record per active upload and lists those records to build S3's in-progress upload view. Enumeration survives proxy restart because the index lives in Azure Blob Storage."
-  - name: pagination
-    status: implemented
-    notes: "Honours max-uploads (default 1000, hard cap 1000), key-marker, and upload-id-marker. max-uploads=0 is rejected as InvalidArgument."
-  - name: prefix-filter
-    status: implemented
-  - name: delimiter-common-prefixes
-    status: implemented
-  - name: stale-generation-filtering
-    status: implemented
-    notes: "Only records whose stored destination-container ETag matches the bucket's current ETag are visible; uploads from a deleted/recreated bucket generation are filtered out."
-  - name: opportunistic-cleanup
-    status: implemented
-    notes: "ListMultipartUploads opportunistically deletes a bounded number of expired records while listing. Record names start with a zero-padded initiation timestamp so Azure's native lexical ordering exposes the oldest uploads first without a full cleanup scan."
+- name: deterministic-enumeration
+  status: implemented
+  notes: The proxy stores one durable state record per active upload and lists those records to build S3's in-progress upload view. Enumeration survives proxy restart because the index lives in Azure Blob Storage.
+- name: pagination
+  status: implemented
+  notes: Honours max-uploads (default 1000, hard cap 1000), key-marker, and upload-id-marker. max-uploads=0 is rejected as InvalidArgument.
+- name: prefix-filter
+  status: implemented
+- name: delimiter-common-prefixes
+  status: implemented
+- name: stale-generation-filtering
+  status: implemented
+  notes: Only records whose stored destination-container ETag matches the bucket's current ETag are visible; uploads from a deleted/recreated bucket generation are filtered out.
+- name: opportunistic-cleanup
+  status: implemented
+  notes: ListMultipartUploads opportunistically deletes a bounded number of expired records while listing. Record names start with a zero-padded initiation timestamp so Azure's native lexical ordering exposes the oldest uploads first without a full cleanup scan.
 behavior_differences:
-  - "Enumeration is implemented by the proxy's hidden state container, not by an Azure storage primitive; Azure Blob Storage has no cross-blob multipart-upload listing API."
-  - "Expired-record cleanup is bounded per request (small bound on CreateMultipartUpload, larger bound on ListMultipartUploads) so abandoned uploads are eventually reclaimed without unbounded work on the request path."
+- Enumeration is implemented by the proxy's hidden state container, not by an Azure storage primitive; Azure Blob Storage has no cross-blob multipart-upload listing API.
+- Expired-record cleanup is bounded per request (small bound on CreateMultipartUpload, larger bound on ListMultipartUploads) so abandoned uploads are eventually reclaimed without unbounded work on the request path.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListMultipartUploads.html
-  - https://learn.microsoft.com/rest/api/storageservices/list-blobs
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListMultipartUploads.html
+- https://learn.microsoft.com/rest/api/storageservices/list-blobs
+disposition: by_design

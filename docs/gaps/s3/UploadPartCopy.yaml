@@ -1,31 +1,36 @@
 service: s3
 operation: UploadPartCopy
-azure_equivalent: "Proxy state HEAD/verification + Put Block From URL (?comp=block&blockid=…)"
+azure_equivalent: Proxy state HEAD/verification + Put Block From URL (?comp=block&blockid=…)
 status: implemented
 sub_features:
-  - name: same-account-copy
-    status: implemented
-    notes: "Source is referenced via a short-lived read-only blob SAS minted from the same Azure storage account key."
-  - name: copy-source-range
-    status: implemented
-    notes: "x-amz-copy-source-range 'bytes=start-end' is canonicalised and forwarded as x-ms-source-range."
-  - name: upload-existence-check
-    status: implemented
-    notes: "UploadPartCopy requires the durable multipart state record to exist and match the bucket's current generation; stale or aborted uploadIds return NoSuchUpload."
-  - name: internal-container-source-guard
-    status: implemented
-    notes: "The proxy's hidden multipart-state container is rejected as a copy source so internal state cannot be reached through x-amz-copy-source."
-  - name: cross-account-copy
-    status: unsupported
-  - name: source-conditional-headers
-    status: partial
-    notes: "Date-based x-amz-copy-source-if-* headers forward to Azure. Concrete-ETag x-amz-copy-source-if-match / x-amz-copy-source-if-none-match remain unsupported because proxy-translated S3 ETags do not round-trip into Azure's raw ETag space; '*' is still honoured."
-  - name: versionId
-    status: unsupported
+- name: same-account-copy
+  status: implemented
+  notes: Source is referenced via a short-lived read-only blob SAS minted from the same Azure storage account key.
+- name: copy-source-range
+  status: implemented
+  notes: x-amz-copy-source-range 'bytes=start-end' is canonicalised and forwarded as x-ms-source-range.
+- name: upload-existence-check
+  status: implemented
+  notes: UploadPartCopy requires the durable multipart state record to exist and match the bucket's current generation; stale or aborted uploadIds return NoSuchUpload.
+- name: internal-container-source-guard
+  status: implemented
+  notes: The proxy's hidden multipart-state container is rejected as a copy source so internal state cannot be reached through x-amz-copy-source.
+- name: cross-account-copy
+  status: unsupported
+  disposition: by_design
+- name: source-conditional-headers
+  status: partial
+  notes: Date-based x-amz-copy-source-if-* headers forward to Azure. Concrete-ETag x-amz-copy-source-if-match / x-amz-copy-source-if-none-match remain unsupported because proxy-translated S3 ETags do not round-trip into Azure's raw ETag space; '*' is still honoured.
+  disposition: feasible_backlog
+  tracking_issue: '#690'
+- name: versionId
+  status: unsupported
+  disposition: feasible_backlog
+  tracking_issue: '#690'
 behavior_differences:
-  - "Per-part ETag is synthesised from the (uploadId, partNumber) pair when Azure omits Content-MD5. The value is stable for the upload flow but is NOT a content hash and does not equal the UploadPart ETag returned for an equivalent non-copy body."
-  - "UploadPartCopy with source==destination is rejected with InvalidRequest so the eventual CompleteMultipartUpload cannot silently reconcile against the live source blob."
-  - "The hidden multipart-state container is never usable as x-amz-copy-source."
+- Per-part ETag is synthesised from the (uploadId, partNumber) pair when Azure omits Content-MD5. The value is stable for the upload flow but is NOT a content hash and does not equal the UploadPart ETag returned for an equivalent non-copy body.
+- UploadPartCopy with source==destination is rejected with InvalidRequest so the eventual CompleteMultipartUpload cannot silently reconcile against the live source blob.
+- The hidden multipart-state container is never usable as x-amz-copy-source.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPartCopy.html
-  - https://learn.microsoft.com/rest/api/storageservices/put-block-from-url
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPartCopy.html
+- https://learn.microsoft.com/rest/api/storageservices/put-block-from-url

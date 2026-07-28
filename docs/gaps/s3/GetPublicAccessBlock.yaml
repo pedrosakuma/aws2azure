@@ -1,15 +1,17 @@
 service: s3
 operation: GetPublicAccessBlock
-azure_equivalent: "Container metadata (persisted compatibility intent only)"
+azure_equivalent: Container metadata (persisted compatibility intent only)
 status: partial
 sub_features:
-  - name: "four-flag configuration round-trip"
-    status: implemented
-    notes: "Returns the stored BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy, and RestrictPublicBuckets values."
-  - name: "public-access enforcement"
-    status: unsupported
-    notes: "Azure container/account public-access controls are not changed or evaluated."
+- name: four-flag configuration round-trip
+  status: implemented
+  notes: Returns the stored BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy, and RestrictPublicBuckets values.
+- name: public-access enforcement
+  status: unsupported
+  notes: Azure container/account public-access controls are not changed or evaluated.
+  disposition: by_design
 behavior_differences:
-  - "A missing intent returns 404 NoSuchPublicAccessBlockConfiguration; a present intent is not an Azure access-control boundary."
+- A missing intent returns 404 NoSuchPublicAccessBlockConfiguration; a present intent is not an Azure access-control boundary.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetPublicAccessBlock.html
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetPublicAccessBlock.html
+disposition: by_design

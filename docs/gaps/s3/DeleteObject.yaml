@@ -1,25 +1,28 @@
 service: s3
 operation: DeleteObject
-azure_equivalent: "DELETE https://{account}.blob.core.windows.net/{container}/{blob}"
+azure_equivalent: DELETE https://{account}.blob.core.windows.net/{container}/{blob}
 status: implemented
 verified_real_azure:
-  date: "2026-07-16"
+  date: '2026-07-16'
   evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
   workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
 sub_features:
-  - name: idempotent delete (404 → 204)
-    status: implemented
-    gap: "Azure returns 404 for a missing blob; the proxy mirrors S3 by returning 204 in that case."
-  - name: versioning (versionId query)
-    status: partial
-    gap: "?versionId selector deletes a specific blob version (maps to Azure ?versionid). Delete-marker semantics and x-amz-delete-marker not modelled; requires account-level versioning enabled out-of-band."
-  - name: MFA delete (x-amz-mfa)
-    status: unsupported
-  - name: bypass-governance
-    status: unsupported
+- name: idempotent delete (404 → 204)
+  status: implemented
+  gap: Azure returns 404 for a missing blob; the proxy mirrors S3 by returning 204 in that case.
+- name: versioning (versionId query)
+  status: partial
+  gap: ?versionId selector deletes a specific blob version (maps to Azure ?versionid). Delete-marker semantics and x-amz-delete-marker not modelled; requires account-level versioning enabled out-of-band.
+  disposition: by_design
+- name: MFA delete (x-amz-mfa)
+  status: unsupported
+  disposition: by_design
+- name: bypass-governance
+  status: unsupported
+  disposition: by_design
 behavior_differences:
-  - "Soft-delete behavior depends on the configured Azure storage account; the proxy does not toggle it per-request."
-  - "Presigned DELETE is accepted (see PresignedUrl.yaml)."
+- Soft-delete behavior depends on the configured Azure storage account; the proxy does not toggle it per-request.
+- Presigned DELETE is accepted (see PresignedUrl.yaml).
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObject.html
-  - https://learn.microsoft.com/rest/api/storageservices/delete-blob
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObject.html
+- https://learn.microsoft.com/rest/api/storageservices/delete-blob

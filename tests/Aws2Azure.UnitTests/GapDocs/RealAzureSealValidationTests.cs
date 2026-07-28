@@ -195,6 +195,7 @@ public sealed class RealAzureSealValidationTests
         Operation = name,
         AzureEquivalent = "Azure Blob Storage",
         Status = status,
+        Disposition = status == "implemented" ? string.Empty : "by_design",
         SourceFile = Path.Combine("repo", "docs", "gaps", "s3", name + ".yaml")
     };
 

@@ -1,17 +1,17 @@
 service: s3
 operation: AbortMultipartUpload
-azure_equivalent: "Lease state record + delete proxy-owned multipart state blob"
+azure_equivalent: Lease state record + delete proxy-owned multipart state blob
 status: implemented
 sub_features:
-  - name: lease-based-convergence
-    status: implemented
-    notes: "Abort acquires a 60-second lease on the multipart state blob before deleting it so concurrent Abort/Complete operations converge on one winner."
-  - name: bounded-lease-work
-    status: implemented
-    notes: "Lease-protected work is bounded by a 45-second linked deadline. On timeout the proxy returns RequestTimeout and lets the lease expire naturally instead of risking a late release race."
+- name: lease-based-convergence
+  status: implemented
+  notes: Abort acquires a 60-second lease on the multipart state blob before deleting it so concurrent Abort/Complete operations converge on one winner.
+- name: bounded-lease-work
+  status: implemented
+  notes: Lease-protected work is bounded by a 45-second linked deadline. On timeout the proxy returns RequestTimeout and lets the lease expire naturally instead of risking a late release race.
 behavior_differences:
-  - "Abort does not delete Azure's uncommitted blocks eagerly; removing the durable state record is what invalidates the UploadId immediately. Azure later garbage-collects the abandoned blocks on its normal schedule."
-  - "Subsequent UploadPart/ListParts/CompleteMultipartUpload calls on the same UploadId return NoSuchUpload because the proxy state record is gone, even if Azure still retains the uncommitted blocks temporarily."
+- Abort does not delete Azure's uncommitted blocks eagerly; removing the durable state record is what invalidates the UploadId immediately. Azure later garbage-collects the abandoned blocks on its normal schedule.
+- Subsequent UploadPart/ListParts/CompleteMultipartUpload calls on the same UploadId return NoSuchUpload because the proxy state record is gone, even if Azure still retains the uncommitted blocks temporarily.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html
-  - https://learn.microsoft.com/rest/api/storageservices/lease-blob
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html
+- https://learn.microsoft.com/rest/api/storageservices/lease-blob

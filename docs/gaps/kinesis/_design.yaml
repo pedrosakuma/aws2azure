@@ -1,107 +1,60 @@
 service: kinesis
 design_gaps:
-  - area: Synthetic sequence numbers and iterator positioning
-    status: by_design
-    summary: >-
-      Kinesis sequence numbers are minted by the proxy as (unixMs << 20) |
-      counter and mapped to an Event Hubs enqueue-time position.
-      AT_SEQUENCE_NUMBER / AFTER_SEQUENCE_NUMBER are therefore best-effort at
-      millisecond granularity, and MillisBehindLatest is derived from the last
-      record's enqueue timestamp versus the proxy clock.
-    impact: >-
-      Records sharing a millisecond may be returned together at a sequence-based
-      boundary; exact per-record sequence positioning is not reproducible.
-      ExplicitHashKey and SequenceNumberForOrdering are accepted for wire
-      compatibility but ignored.
-    workaround: >-
-      Prefer TRIM_HORIZON / LATEST / AT_TIMESTAMP iterators where exact sequence
-      positioning is not required.
-    references:
-      - https://learn.microsoft.com/rest/api/eventhub/
-  - area: Iterator link lifetime and durable replay
-    status: by_design
-    summary: >-
-      Each proxy-issued shard iterator has a distinct identity and therefore a
-      distinct pooled AMQP receiver link. Iterator chains advance independently
-      while their links are live. The embedded continuation position recreates
-      a link after failure, idle eviction, or restart, but the supported profile
-      deliberately stops at one consumer loop per partition and consumer group.
-    impact: >-
-      Multiple iterator identities on one consumer group are not a certified
-      durable consumer-ownership or replay topology. Recreated links resume from
-      the best available Event Hubs offset/enqueue-time position and inherit the
-      synthetic-sequence and millisecond-boundary differences documented above.
-    workaround: >-
-      Use one consumer loop per partition. Assign distinct Event Hubs consumer
-      groups when consumers require independently operated replay/checkpoint
-      lifecycles.
-  - area: No resharding / enhanced fan-out / KCL lease model
-    status: unsupported
-    summary: >-
-      Kinesis shards map to Event Hubs partitions, which are fixed at the hub
-      level. Dynamic resharding (SplitShard/MergeShards), enhanced fan-out
-      (SubscribeToShard), and the KCL DynamoDB lease/checkpoint model have no
-      in-scope translation.
-    impact: >-
-      Applications that resize streams at runtime or rely on enhanced-fan-out
-      throughput isolation cannot drive those code paths through the proxy.
-    workaround: >-
-      Provision Event Hubs partition count for peak load up front; use consumer
-      groups for isolation.
+- area: Synthetic sequence numbers and iterator positioning
+  status: by_design
+  summary: Kinesis sequence numbers are minted by the proxy as (unixMs << 20) | counter and mapped to an Event Hubs enqueue-time position. AT_SEQUENCE_NUMBER / AFTER_SEQUENCE_NUMBER are therefore best-effort at millisecond granularity, and MillisBehindLatest is derived from the last record's enqueue timestamp versus the proxy clock.
+  impact: Records sharing a millisecond may be returned together at a sequence-based boundary; exact per-record sequence positioning is not reproducible. ExplicitHashKey and SequenceNumberForOrdering are accepted for wire compatibility but ignored.
+  workaround: Prefer TRIM_HORIZON / LATEST / AT_TIMESTAMP iterators where exact sequence positioning is not required.
+  references:
+  - https://learn.microsoft.com/rest/api/eventhub/
+- area: Iterator link lifetime and durable replay
+  status: by_design
+  summary: Each proxy-issued shard iterator has a distinct identity and therefore a distinct pooled AMQP receiver link. Iterator chains advance independently while their links are live. The embedded continuation position recreates a link after failure, idle eviction, or restart, but the supported profile deliberately stops at one consumer loop per partition and consumer group.
+  impact: Multiple iterator identities on one consumer group are not a certified durable consumer-ownership or replay topology. Recreated links resume from the best available Event Hubs offset/enqueue-time position and inherit the synthetic-sequence and millisecond-boundary differences documented above.
+  workaround: Use one consumer loop per partition. Assign distinct Event Hubs consumer groups when consumers require independently operated replay/checkpoint lifecycles.
+- area: No resharding / enhanced fan-out / KCL lease model
+  status: unsupported
+  summary: Kinesis shards map to Event Hubs partitions, which are fixed at the hub level. Dynamic resharding (SplitShard/MergeShards), enhanced fan-out (SubscribeToShard), and the KCL DynamoDB lease/checkpoint model have no in-scope translation.
+  impact: Applications that resize streams at runtime or rely on enhanced-fan-out throughput isolation cannot drive those code paths through the proxy.
+  workaround: Provision Event Hubs partition count for peak load up front; use consumer groups for isolation.
+  disposition: by_design
 workload_patterns:
-  - id: kinesis_record_ingestion
-    name: Basic record ingestion
-    compatibility: conditional
-    summary: >-
-      PutRecord and PutRecords publish to provisioned Event Hubs partitions, but
-      ordering-related request fields and returned sequence numbers differ.
-    operations:
-      - PutRecord
-      - PutRecords
-    design_gaps:
-      - Synthetic sequence numbers and iterator positioning
-    guidance: >-
-      Use partition keys for routing and do not depend on
-      SequenceNumberForOrdering or exact AWS sequence-number semantics.
-  - id: kinesis_single_consumer_per_shard
-    name: Single consumer per shard
-    compatibility: conditional
-    summary: >-
-      Shard discovery and polling work best with one consumer loop per partition
-      and timestamp/latest iterator positioning.
-    operations:
-      - ListShards
-      - GetShardIterator
-      - GetRecords
-    design_gaps:
-      - Synthetic sequence numbers and iterator positioning
-      - Iterator link lifetime and durable replay
-    guidance: >-
-      Prefer TRIM_HORIZON, LATEST, or AT_TIMESTAMP and dedicate a consumer group
-      to each independent consumer.
-  - id: kinesis_shared_consumer_group_replay
-    name: Independent replaying consumers on one consumer group
-    compatibility: blocked
-    summary: >-
-      Distinct iterator identities progress independently in a live proxy, but
-      multiple independently operated consumers sharing one Event Hubs consumer
-      group are outside the certified ownership, restart, and replay contract.
-    operations:
-      - GetShardIterator
-      - GetRecords
-    design_gaps:
-      - Iterator link lifetime and durable replay
-    guidance: >-
-      Assign distinct Event Hubs consumer groups or redesign around one consumer
-      per shard.
-  - id: kinesis_resharding_enhanced_fanout_kcl
-    name: Resharding, enhanced fan-out, or KCL lease management
-    compatibility: blocked
-    summary: >-
-      Dynamic shard topology and enhanced fan-out have no equivalent in the
-      exposed proxy surface.
-    design_gaps:
-      - No resharding / enhanced fan-out / KCL lease model
-    guidance: >-
-      Provision partitions for peak demand and manage consumer isolation with
-      Event Hubs consumer groups.
+- id: kinesis_record_ingestion
+  name: Basic record ingestion
+  compatibility: conditional
+  summary: PutRecord and PutRecords publish to provisioned Event Hubs partitions, but ordering-related request fields and returned sequence numbers differ.
+  operations:
+  - PutRecord
+  - PutRecords
+  design_gaps:
+  - Synthetic sequence numbers and iterator positioning
+  guidance: Use partition keys for routing and do not depend on SequenceNumberForOrdering or exact AWS sequence-number semantics.
+- id: kinesis_single_consumer_per_shard
+  name: Single consumer per shard
+  compatibility: conditional
+  summary: Shard discovery and polling work best with one consumer loop per partition and timestamp/latest iterator positioning.
+  operations:
+  - ListShards
+  - GetShardIterator
+  - GetRecords
+  design_gaps:
+  - Synthetic sequence numbers and iterator positioning
+  - Iterator link lifetime and durable replay
+  guidance: Prefer TRIM_HORIZON, LATEST, or AT_TIMESTAMP and dedicate a consumer group to each independent consumer.
+- id: kinesis_shared_consumer_group_replay
+  name: Independent replaying consumers on one consumer group
+  compatibility: blocked
+  summary: Distinct iterator identities progress independently in a live proxy, but multiple independently operated consumers sharing one Event Hubs consumer group are outside the certified ownership, restart, and replay contract.
+  operations:
+  - GetShardIterator
+  - GetRecords
+  design_gaps:
+  - Iterator link lifetime and durable replay
+  guidance: Assign distinct Event Hubs consumer groups or redesign around one consumer per shard.
+- id: kinesis_resharding_enhanced_fanout_kcl
+  name: Resharding, enhanced fan-out, or KCL lease management
+  compatibility: blocked
+  summary: Dynamic shard topology and enhanced fan-out have no equivalent in the exposed proxy surface.
+  design_gaps:
+  - No resharding / enhanced fan-out / KCL lease model
+  guidance: Provision partitions for peak demand and manage consumer isolation with Event Hubs consumer groups.
