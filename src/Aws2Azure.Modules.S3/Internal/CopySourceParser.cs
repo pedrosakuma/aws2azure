@@ -16,9 +16,10 @@ namespace Aws2Azure.Modules.S3.Internal;
 /// <c>%2F</c>: the official AWS SDKs fully percent-encode the value
 /// (including the separator) when marshalling <c>CopyObjectRequest</c>, so
 /// the wire form is <c>{bucket}%2F{key}</c>. Both forms are accepted.
-/// Optional trailing <c>?versionId=…</c> (including the SDK-encoded
-/// <c>%3FversionId%3D…</c> form) is parsed and returned separately so copy
-/// flows can resolve a specific Azure blob version.
+/// Optional trailing <c>?versionId=…</c> is parsed and returned separately so
+/// copy flows can resolve a specific Azure blob version. The query delimiter
+/// must remain literal; an encoded <c>%3FversionId=…</c> sequence is treated
+/// as part of the object key so keys containing that text still round-trip.
 /// </summary>
 internal static class CopySourceParser
 {
@@ -157,19 +158,6 @@ internal static class CopySourceParser
             TryReadVersionId(value[(literalQmark + 1)..], out versionId);
             value = value[..literalQmark];
             return;
-        }
-
-        var encodedVersionMarker = value.IndexOf("%3FversionId", StringComparison.OrdinalIgnoreCase);
-        if (encodedVersionMarker < 0)
-        {
-            return;
-        }
-
-        var decodedQuery = Uri.UnescapeDataString(value[encodedVersionMarker..]);
-        if (decodedQuery.Length > 1 && decodedQuery[0] == '?')
-        {
-            TryReadVersionId(decodedQuery[1..], out versionId);
-            value = value[..encodedVersionMarker];
         }
 
     }

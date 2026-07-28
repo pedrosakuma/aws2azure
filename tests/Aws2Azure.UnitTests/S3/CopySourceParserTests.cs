@@ -18,6 +18,7 @@ public class CopySourceParserTests
     [InlineData("b%2Fwith%20space.txt",        "b",      "with space.txt", null)]
     [InlineData("/bucket/key.txt?versionId=v1", "bucket", "key.txt", "v1")]
     [InlineData("bucket%2Fkey.txt?versionId=v2", "bucket", "key.txt", "v2")]
+    [InlineData("bucket%2Fkey%3FversionId%3Dliteral.txt", "bucket", "key?versionId=literal.txt", null)]
     public void Parses_well_formed_sources(string raw, string expectedBucket, string expectedKey, string? expectedVersionId)
     {
         var r = CopySourceParser.Parse(raw);

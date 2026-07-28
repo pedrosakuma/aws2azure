@@ -229,6 +229,46 @@ public sealed class MultipartHandlersTests
     }
 
     [Fact]
+    public async Task Complete_returns_invalid_part_before_entity_too_small_when_manifest_references_missing_part()
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var upload = await InitiateAsync(handler, blob, "bucket", "object.txt");
+
+        handler.Enqueue(StateGet(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(LeaseAcquired());
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(Encoding.UTF8.GetBytes($$"""
+                <?xml version="1.0" encoding="utf-8"?>
+                <BlockList>
+                  <UncommittedBlocks>
+                    <Block><Name>{{UploadIdCodec.BlockId(upload.Token.NonceHex, 1)}}</Name><Size>1</Size></Block>
+                  </UncommittedBlocks>
+                </BlockList>
+                """))
+        });
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK));
+
+        var complete = TestHttpContext.CreateContext(
+            body: """
+                   <CompleteMultipartUpload>
+                     <Part><PartNumber>1</PartNumber></Part>
+                     <Part><PartNumber>7</PartNumber></Part>
+                   </CompleteMultipartUpload>
+                   """,
+            method: HttpMethods.Post,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId));
+        await MultipartHandlers.HandleAsync(complete, Route(S3Operation.CompleteMultipartUpload, "bucket", "object.txt"), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, complete.Response.StatusCode);
+        Assert.Contains("InvalidPart", await TestHttpContext.ReadBodyAsync(complete), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Abort_multipart_upload_deletes_state_and_future_use_returns_no_such_upload()
     {
         var handler = new ScriptedHandler();

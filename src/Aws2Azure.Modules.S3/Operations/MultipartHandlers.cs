@@ -472,10 +472,21 @@ internal static class MultipartHandlers
                 }
 
                 var blockListXml = await blockListResponse.Content.ReadAsByteArrayAsync(deadlineCts.Token).ConfigureAwait(false);
+                var blockList = BlockListParser.Parse(new MemoryStream(blockListXml));
+                if (TryFindInvalidPartError(
+                        token.Value.NonceHex,
+                        parsed.Parts,
+                        blockList,
+                        out var invalidPartError))
+                {
+                    await S3ErrorMapping.WriteAsync(ctx, invalidPartError).ConfigureAwait(false);
+                    return;
+                }
+
                 if (TryFindEntityTooSmallError(
                         token.Value.NonceHex,
                         parsed.Parts,
-                        BlockListParser.Parse(new MemoryStream(blockListXml)),
+                        blockList,
                         out var tooSmallError))
                 {
                     await S3ErrorMapping.WriteAsync(ctx, tooSmallError).ConfigureAwait(false);
@@ -931,6 +942,39 @@ internal static class MultipartHandlers
                     StatusCodes.Status400BadRequest,
                     "EntityTooSmall",
                     "Your proposed upload is smaller than the minimum allowed object size.");
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryFindInvalidPartError(
+        string nonceHex,
+        IReadOnlyList<CompleteMultipartUploadParser.PartRef> parts,
+        BlockListParser.BlockList blockList,
+        out S3ErrorMapping.Mapping error)
+    {
+        error = default;
+        var uploadedParts = new HashSet<int>();
+        for (var i = 0; i < blockList.Uncommitted.Count; i++)
+        {
+            var block = blockList.Uncommitted[i];
+            if (BlockListParser.TryParseBlockName(block.Name, out var blockNonce, out var partNumber)
+                && string.Equals(blockNonce, nonceHex, StringComparison.Ordinal))
+            {
+                uploadedParts.Add(partNumber);
+            }
+        }
+
+        for (var i = 0; i < parts.Count; i++)
+        {
+            if (!uploadedParts.Contains(parts[i].PartNumber))
+            {
+                error = new S3ErrorMapping.Mapping(
+                    StatusCodes.Status400BadRequest,
+                    "InvalidPart",
+                    "One or more of the specified parts could not be found.");
                 return true;
             }
         }
