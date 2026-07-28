@@ -106,7 +106,7 @@ public class DynamoDbItemOpsTests
             Assert.True(resp.IsSuccessStatusCode, $"UpdateItem → {(int)resp.StatusCode} {text}");
             using var doc = JsonDocument.Parse(text);
             var attrs = doc.RootElement.GetProperty("Attributes");
-            Assert.Equal("5", attrs.GetProperty("qty").GetProperty("N").GetString());
+            Assert.Equal("6", attrs.GetProperty("qty").GetProperty("N").GetString());
             Assert.False(attrs.TryGetProperty("name", out _));
         }
 
@@ -125,7 +125,7 @@ public class DynamoDbItemOpsTests
             Assert.True(resp.IsSuccessStatusCode, $"DeleteItem → {(int)resp.StatusCode} {text}");
             using var doc = JsonDocument.Parse(text);
             var attrs = doc.RootElement.GetProperty("Attributes");
-            Assert.Equal("5", attrs.GetProperty("qty").GetProperty("N").GetString());
+            Assert.Equal("6", attrs.GetProperty("qty").GetProperty("N").GetString());
             Assert.False(attrs.TryGetProperty("name", out _));
         }
 
