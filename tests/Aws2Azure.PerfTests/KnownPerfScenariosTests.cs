@@ -40,6 +40,7 @@ public sealed partial class KnownPerfScenariosTests
         "s3.PutObject (4 KiB)",
         "s3.PutObject (1 MiB)",
         "s3.PutObject (10 MiB)",
+        "s3.MultipartUpload (1x64 KiB)",
         "s3.GetObject (64 KiB)",
         "s3.ListObjectsV2 (500 keys)",
         "s3.CopyObject (4 KiB)",

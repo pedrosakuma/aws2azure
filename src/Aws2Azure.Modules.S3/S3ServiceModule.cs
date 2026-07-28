@@ -95,6 +95,16 @@ public sealed class S3ServiceModule : IServiceModule
         }
 
         var blob = new BlobClient(_http, blobCreds);
+        if (route.Bucket is { } bucket && blob.IsInternalContainer(bucket))
+        {
+            await S3ErrorMapping.WriteAsync(
+                context,
+                route.Operation == S3Operation.CreateBucket
+                    ? S3ErrorMapping.InvalidBucketName()
+                    : S3ErrorMapping.NoSuchBucket()).ConfigureAwait(false);
+            return;
+        }
+
         switch (target)
         {
             case S3DispatchTarget.Object:

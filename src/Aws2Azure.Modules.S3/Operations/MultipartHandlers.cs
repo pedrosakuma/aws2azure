@@ -34,6 +34,7 @@ internal static class MultipartHandlers
     /// 10,000 parts × ~256 bytes per &lt;Part&gt; entry leaves plenty of
     /// headroom while keeping memory bounded.</summary>
     private const int MaxCompleteBodyBytes = 4 * 1024 * 1024;
+    private static readonly TimeSpan LeaseOperationTimeout = TimeSpan.FromSeconds(45);
 
     public static Task HandleAsync(HttpContext context, S3RouteResult route, BlobClient blob, CancellationToken ct, ICredentialResolver? credentials = null) =>
         route.Operation switch
@@ -63,16 +64,48 @@ internal static class MultipartHandlers
             return;
         }
 
-        // Probe the container so a missing bucket short-circuits with
-        // NoSuchBucket instead of issuing a successful token the client
-        // would then UploadPart against and fail.
-        if (await blob.CheckContainerExistsAsync(bucket, S3Operation.CreateMultipartUpload, ct).ConfigureAwait(false) is { } bucketErr)
+        var token = UploadIdCodec.Issue(blob.AccountName, bucket, key, blob.AccountKeyBytes);
+        var stateStore = new MultipartUploadStateStore(blob);
+        var currentGeneration = await stateStore.ReadOrCreateContainerGenerationAsync(bucket, ct).ConfigureAwait(false);
+        if (currentGeneration.Kind == MultipartUploadStateStore.ResultKind.BucketMissing)
         {
-            await S3ErrorMapping.WriteAsync(ctx, bucketErr).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.NoSuchBucket()).ConfigureAwait(false);
+            return;
+        }
+        if (currentGeneration.Kind != MultipartUploadStateStore.ResultKind.Success || string.IsNullOrEmpty(currentGeneration.Generation))
+        {
+            await S3ErrorMapping.WriteAsync(ctx, currentGeneration.Error ?? new S3ErrorMapping.Mapping(
+                StatusCodes.Status500InternalServerError,
+                "InternalError",
+                "We encountered an internal error. Please try again.")).ConfigureAwait(false);
+            return;
+        }
+        try
+        {
+            if (await stateStore.CreateAsync(bucket, key, token.Encoded, token.CreatedAt, currentGeneration.Generation!, ctx.Request, ct).ConfigureAwait(false) is { } stateError)
+            {
+                await S3ErrorMapping.WriteAsync(ctx, stateError).ConfigureAwait(false);
+                return;
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.InvalidArgument(ex.Message)).ConfigureAwait(false);
             return;
         }
 
-        var token = UploadIdCodec.Issue(blob.AccountName, bucket, key, blob.AccountKeyBytes);
+        var stateGeneration = await stateStore.VerifyContainerGenerationAsync(bucket, currentGeneration.Generation!, ct).ConfigureAwait(false);
+        if (stateGeneration.Kind != MultipartUploadStateStore.ResultKind.Success)
+        {
+            _ = await stateStore.DeleteAsync(bucket, token.Encoded, ct).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(
+                ctx,
+                stateGeneration.Kind == MultipartUploadStateStore.ResultKind.Error
+                    ? stateGeneration.Error ?? OperationAborted()
+                    : OperationAborted()).ConfigureAwait(false);
+            return;
+        }
+
         var xml = S3XmlWriter.InitiateMultipartUploadResult(bucket, key, token.Encoded);
         await WriteXmlAsync(ctx, StatusCodes.Status200OK, xml, ct).ConfigureAwait(false);
     }
@@ -102,6 +135,22 @@ internal static class MultipartHandlers
             await S3ErrorMapping.WriteAsync(ctx, NoSuchUpload()).ConfigureAwait(false);
             return;
         }
+        var stateStore = new MultipartUploadStateStore(blob);
+        var stateRead = await stateStore.ReadSummaryAsync(bucket, uploadId, ct).ConfigureAwait(false);
+        var legacyMultipart = false;
+        if (stateRead.Kind == MultipartUploadStateStore.ResultKind.NotFound)
+        {
+            if (!await TryHandleLegacyMultipartFallbackAsync(ctx, stateStore, bucket, token.Value, ct).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            legacyMultipart = true;
+        }
+        else if (!await TryHandleStateSummaryResultAsync(ctx, stateRead).ConfigureAwait(false))
+        {
+            return;
+        }
 
         var blockId = UploadIdCodec.BlockId(token.Value.NonceHex, partNumber);
         var query   = "?comp=block&blockid=" + Uri.EscapeDataString(blockId);
@@ -129,6 +178,12 @@ internal static class MultipartHandlers
             if (!azureResp.IsSuccessStatusCode)
             {
                 await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.FromAzure(azureResp, S3Operation.UploadPart)).ConfigureAwait(false);
+                return;
+            }
+
+            if (!legacyMultipart &&
+                !await VerifyMultipartBucketGenerationAfterWriteAsync(ctx, stateStore, bucket, uploadId, stateRead.Summary!.Value.ContainerGeneration, ct).ConfigureAwait(false))
+            {
                 return;
             }
 
@@ -177,7 +232,6 @@ internal static class MultipartHandlers
             await S3ErrorMapping.WriteAsync(ctx, NoSuchUpload()).ConfigureAwait(false);
             return;
         }
-
         var parsed = CopySourceParser.ParseAndValidate(ctx.Request);
         if (!parsed.Success)
         {
@@ -186,6 +240,11 @@ internal static class MultipartHandlers
         }
         var sourceBucket = parsed.Bucket!;
         var sourceKey = parsed.Key!;
+        if (blob.IsInternalContainer(sourceBucket))
+        {
+            await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.NoSuchBucket()).ConfigureAwait(false);
+            return;
+        }
 
         // S3 forbids targeting an in-flight upload's part at the same key as
         // the source — Azure would happily Put Block From URL onto the
@@ -204,6 +263,23 @@ internal static class MultipartHandlers
         if (rangeHeader.Error is { } rangeErr)
         {
             await S3ErrorMapping.WriteAsync(ctx, rangeErr).ConfigureAwait(false);
+            return;
+        }
+
+        var stateStore = new MultipartUploadStateStore(blob);
+        var stateRead = await stateStore.ReadSummaryAsync(destBucket, uploadId, ct).ConfigureAwait(false);
+        var legacyMultipart = false;
+        if (stateRead.Kind == MultipartUploadStateStore.ResultKind.NotFound)
+        {
+            if (!await TryHandleLegacyMultipartFallbackAsync(ctx, stateStore, destBucket, token.Value, ct).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            legacyMultipart = true;
+        }
+        else if (!await TryHandleStateSummaryResultAsync(ctx, stateRead).ConfigureAwait(false))
+        {
             return;
         }
 
@@ -246,6 +322,12 @@ internal static class MultipartHandlers
             // destination-side 404 (NoSuchBucket); both surface as 404 from
             // Azure with x-ms-error-code on the response.
             await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.FromAzure(azureResp, S3Operation.UploadPartCopy)).ConfigureAwait(false);
+            return;
+        }
+
+        if (!legacyMultipart &&
+            !await VerifyMultipartBucketGenerationAfterWriteAsync(ctx, stateStore, destBucket, uploadId, stateRead.Summary!.Value.ContainerGeneration, ct).ConfigureAwait(false))
+        {
             return;
         }
 
@@ -334,13 +416,133 @@ internal static class MultipartHandlers
             await S3ErrorMapping.WriteAsync(ctx, NoSuchUpload()).ConfigureAwait(false);
             return;
         }
+        var stateStore = new MultipartUploadStateStore(blob);
+        var stateAcquire = await stateStore.AcquireAsync(bucket, uploadId, ct).ConfigureAwait(false);
+        var legacyMultipart = false;
+        if (stateAcquire.Kind == MultipartUploadStateStore.ResultKind.NotFound)
+        {
+            if (!await TryHandleLegacyMultipartFallbackAsync(ctx, stateStore, bucket, token.Value, ct).ConfigureAwait(false))
+            {
+                return;
+            }
 
-        // Buffer the (small) part list body; XmlReader requires sync I/O and
-        // Kestrel forbids it on the live request stream.
+            legacyMultipart = true;
+        }
+        else if (!await TryHandleStateAcquireResultAsync(ctx, stateAcquire).ConfigureAwait(false) || stateAcquire.Record is null || string.IsNullOrEmpty(stateAcquire.LeaseId))
+        {
+            return;
+        }
+
+        var deadlineCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadlineCts.CancelAfter(LeaseOperationTimeout);
+        var timedOut = false;
+        var deletedState = false;
         using var buffered = new MemoryStream();
         try
         {
-            await ctx.Request.Body.CopyToAsync(new BoundedWriteStream(buffered, MaxCompleteBodyBytes), ct).ConfigureAwait(false);
+            // Buffer the (small) part list body; XmlReader requires sync I/O
+            // and Kestrel forbids it on the live request stream.
+            await ctx.Request.Body.CopyToAsync(new BoundedWriteStream(buffered, MaxCompleteBodyBytes), deadlineCts.Token).ConfigureAwait(false);
+            buffered.Position = 0;
+
+            var parsed = CompleteMultipartUploadParser.Parse(buffered);
+            if (!parsed.Success)
+            {
+                await S3ErrorMapping.WriteAsync(ctx, new S3ErrorMapping.Mapping(
+                    StatusCodes.Status400BadRequest, "MalformedXML",
+                    parsed.Error ?? "The XML you provided was not well-formed.")).ConfigureAwait(false);
+                return;
+            }
+
+            var blockIds = new List<string>(parsed.Parts.Count);
+            foreach (var p in parsed.Parts)
+            {
+                blockIds.Add(UploadIdCodec.BlockId(token.Value.NonceHex, p.PartNumber));
+            }
+
+            var body = BlockListXml.Build(blockIds);
+            using var azureReq = new HttpRequestMessage(HttpMethod.Put, blob.BuildBlobUri(bucket, key, "?comp=blocklist"))
+            {
+                Content = new ByteArrayContent(body),
+            };
+            azureReq.Options.Set(Aws2Azure.Core.Azure.AzureHttpClient.NoRetryOption, true);
+            azureReq.Content.Headers.ContentLength = body.Length;
+            azureReq.Content.Headers.TryAddWithoutValidation("Content-Type", "application/xml");
+            if (!legacyMultipart)
+            {
+                var preCommitGeneration = await stateStore.VerifyContainerGenerationAsync(bucket, stateAcquire.Record!.Value.Summary.ContainerGeneration, deadlineCts.Token).ConfigureAwait(false);
+                if (preCommitGeneration.Kind != MultipartUploadStateStore.ResultKind.Success)
+                {
+                    _ = await stateStore.DeleteLeasedAsync(bucket, uploadId, stateAcquire.LeaseId!, deadlineCts.Token).ConfigureAwait(false);
+                    deletedState = true;
+                    await S3ErrorMapping.WriteAsync(
+                        ctx,
+                        preCommitGeneration.Kind == MultipartUploadStateStore.ResultKind.Error
+                            ? preCommitGeneration.Error ?? OperationAborted()
+                            : OperationAborted()).ConfigureAwait(false);
+                    return;
+                }
+
+                stateAcquire.Record!.Value.Headers.ApplyHeaders(azureReq);
+            }
+
+            using var azureResp = await blob.SendBlobRequestAsync(azureReq, deadlineCts.Token).ConfigureAwait(false);
+            if (!azureResp.IsSuccessStatusCode)
+            {
+                var mapping = S3ErrorMapping.FromAzure(azureResp, S3Operation.CompleteMultipartUpload);
+                if (azureResp.StatusCode == HttpStatusCode.BadRequest &&
+                    string.Equals(ReadHeader(azureResp, "x-ms-error-code"), "InvalidBlockList", StringComparison.Ordinal))
+                {
+                    mapping = new S3ErrorMapping.Mapping(400, "InvalidPart",
+                        "One or more of the specified parts could not be found.");
+                }
+                await S3ErrorMapping.WriteAsync(ctx, mapping).ConfigureAwait(false);
+                return;
+            }
+
+            if (!legacyMultipart)
+            {
+                var completeGeneration = await stateStore.VerifyContainerGenerationAsync(bucket, stateAcquire.Record!.Value.Summary.ContainerGeneration, deadlineCts.Token).ConfigureAwait(false);
+                if (completeGeneration.Kind != MultipartUploadStateStore.ResultKind.Success)
+                {
+                    _ = await stateStore.DeleteLeasedAsync(bucket, uploadId, stateAcquire.LeaseId!, deadlineCts.Token).ConfigureAwait(false);
+                    deletedState = true;
+                    await S3ErrorMapping.WriteAsync(
+                        ctx,
+                        completeGeneration.Kind == MultipartUploadStateStore.ResultKind.Error
+                            ? completeGeneration.Error ?? OperationAborted()
+                            : OperationAborted()).ConfigureAwait(false);
+                    return;
+                }
+
+                var retiredState = await TryRetireCompletedStateAsync(
+                    stateStore,
+                    bucket,
+                    uploadId,
+                    stateAcquire.Record.Value.Summary,
+                    stateAcquire.LeaseId!,
+                    deadlineCts.Token).ConfigureAwait(false);
+                if (!retiredState.Retired)
+                {
+                    await S3ErrorMapping.WriteAsync(ctx, retiredState.Error ?? new S3ErrorMapping.Mapping(
+                        StatusCodes.Status500InternalServerError,
+                        "InternalError",
+                        "We encountered an internal error. Please try again.")).ConfigureAwait(false);
+                    return;
+                }
+
+                if (!deletedState)
+                {
+                    deletedState = true;
+                }
+            }
+
+            var azureEtag = ReadHeader(azureResp, "ETag") ?? string.Empty;
+            var synth = SynthesizeMultipartEtag(azureEtag, parsed.Parts.Count);
+            var location = blob.BuildBlobUri(bucket, key).AbsoluteUri;
+            var xml = S3XmlWriter.CompleteMultipartUploadResult(location, bucket, key, synth);
+            await WriteXmlAsync(ctx, StatusCodes.Status200OK, xml, ct).ConfigureAwait(false);
+            return;
         }
         catch (InvalidDataException)
         {
@@ -349,53 +551,20 @@ internal static class MultipartHandlers
                 "CompleteMultipartUpload body exceeded the allowed size.")).ConfigureAwait(false);
             return;
         }
-        buffered.Position = 0;
-
-        var parsed = CompleteMultipartUploadParser.Parse(buffered);
-        if (!parsed.Success)
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            await S3ErrorMapping.WriteAsync(ctx, new S3ErrorMapping.Mapping(
-                StatusCodes.Status400BadRequest, "MalformedXML",
-                parsed.Error ?? "The XML you provided was not well-formed.")).ConfigureAwait(false);
+            timedOut = true;
+            await S3ErrorMapping.WriteAsync(ctx, RequestTimedOut()).ConfigureAwait(false);
             return;
         }
-
-        var blockIds = new List<string>(parsed.Parts.Count);
-        foreach (var p in parsed.Parts)
+        finally
         {
-            blockIds.Add(UploadIdCodec.BlockId(token.Value.NonceHex, p.PartNumber));
-        }
-
-        var body = BlockListXml.Build(blockIds);
-        using var azureReq = new HttpRequestMessage(HttpMethod.Put, blob.BuildBlobUri(bucket, key, "?comp=blocklist"))
-        {
-            Content = new ByteArrayContent(body),
-        };
-        azureReq.Content.Headers.ContentLength = body.Length;
-        azureReq.Content.Headers.TryAddWithoutValidation("Content-Type", "application/xml");
-
-        using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
-        if (!azureResp.IsSuccessStatusCode)
-        {
-            // Azure returns 400 InvalidBlockList when a referenced block was
-            // never uploaded — surface it as S3 InvalidPart so SDKs can
-            // distinguish "you gave me a bogus partNumber" from generic 400s.
-            var mapping = S3ErrorMapping.FromAzure(azureResp, S3Operation.CompleteMultipartUpload);
-            if (azureResp.StatusCode == HttpStatusCode.BadRequest &&
-                string.Equals(ReadHeader(azureResp, "x-ms-error-code"), "InvalidBlockList", StringComparison.Ordinal))
+            deadlineCts.Dispose();
+            if (!legacyMultipart && !timedOut && !deletedState)
             {
-                mapping = new S3ErrorMapping.Mapping(400, "InvalidPart",
-                    "One or more of the specified parts could not be found.");
+                await ReleaseMultipartLeaseBestEffortAsync(stateStore, bucket, uploadId, stateAcquire.LeaseId!).ConfigureAwait(false);
             }
-            await S3ErrorMapping.WriteAsync(ctx, mapping).ConfigureAwait(false);
-            return;
         }
-
-        var azureEtag = ReadHeader(azureResp, "ETag") ?? string.Empty;
-        var synth = SynthesizeMultipartEtag(azureEtag, parsed.Parts.Count);
-        var location = blob.BuildBlobUri(bucket, key).AbsoluteUri;
-        var xml = S3XmlWriter.CompleteMultipartUploadResult(location, bucket, key, synth);
-        await WriteXmlAsync(ctx, StatusCodes.Status200OK, xml, ct).ConfigureAwait(false);
     }
 
     // ---------- AbortMultipartUpload ----------
@@ -414,18 +583,61 @@ internal static class MultipartHandlers
             await S3ErrorMapping.WriteAsync(ctx, NoSuchUpload()).ConfigureAwait(false);
             return;
         }
-
-        if (await blob.CheckContainerExistsAsync(bucket, S3Operation.AbortMultipartUpload, ct).ConfigureAwait(false) is { } bucketErr)
+        var stateStore = new MultipartUploadStateStore(blob);
+        var acquire = await stateStore.AcquireAsync(bucket, uploadId, ct).ConfigureAwait(false);
+        var legacyMultipart = false;
+        if (acquire.Kind == MultipartUploadStateStore.ResultKind.NotFound)
         {
-            await S3ErrorMapping.WriteAsync(ctx, bucketErr).ConfigureAwait(false);
+            if (!await TryHandleLegacyMultipartFallbackAsync(ctx, stateStore, bucket, token.Value, ct).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            legacyMultipart = true;
+        }
+        else if (!await TryHandleStateAcquireResultAsync(ctx, acquire).ConfigureAwait(false) || string.IsNullOrEmpty(acquire.LeaseId))
+        {
             return;
         }
 
-        // Azure auto-GCs uncommitted blocks ~7 days after their last upload,
-        // which matches the UploadId TTL — so Abort is a server-side no-op
-        // beyond credentials/bucket validation. Documented in the gap doc.
-        ctx.Response.StatusCode = StatusCodes.Status204NoContent;
-        ctx.Response.ContentLength = 0;
+        if (legacyMultipart)
+        {
+            ctx.Response.StatusCode = StatusCodes.Status204NoContent;
+            ctx.Response.ContentLength = 0;
+            return;
+        }
+
+        var deadlineCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadlineCts.CancelAfter(LeaseOperationTimeout);
+        var timedOut = false;
+        var deletedState = false;
+        try
+        {
+            if (await stateStore.DeleteLeasedAsync(bucket, uploadId, acquire.LeaseId!, deadlineCts.Token).ConfigureAwait(false) is { } deleteError)
+            {
+                await S3ErrorMapping.WriteAsync(ctx, deleteError).ConfigureAwait(false);
+                return;
+            }
+            deletedState = true;
+
+            ctx.Response.StatusCode = StatusCodes.Status204NoContent;
+            ctx.Response.ContentLength = 0;
+            return;
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            timedOut = true;
+            await S3ErrorMapping.WriteAsync(ctx, RequestTimedOut()).ConfigureAwait(false);
+            return;
+        }
+        finally
+        {
+            deadlineCts.Dispose();
+            if (!timedOut && !deletedState)
+            {
+                await ReleaseMultipartLeaseBestEffortAsync(stateStore, bucket, uploadId, acquire.LeaseId!).ConfigureAwait(false);
+            }
+        }
     }
 
     // ---------- ListParts ----------
@@ -449,6 +661,22 @@ internal static class MultipartHandlers
             await S3ErrorMapping.WriteAsync(ctx, NoSuchUpload()).ConfigureAwait(false);
             return;
         }
+        var stateStore = new MultipartUploadStateStore(blob);
+        var stateRead = await stateStore.ReadSummaryAsync(bucket, uploadId, ct).ConfigureAwait(false);
+        var legacyMultipart = false;
+        if (stateRead.Kind == MultipartUploadStateStore.ResultKind.NotFound)
+        {
+            if (!await TryHandleLegacyMultipartFallbackAsync(ctx, stateStore, bucket, token.Value, ct).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            legacyMultipart = true;
+        }
+        else if (!await TryHandleStateSummaryResultAsync(ctx, stateRead).ConfigureAwait(false))
+        {
+            return;
+        }
 
         var (maxParts, maxPartsErr) = ParseMaxParts(ctx.Request.Query);
         if (maxPartsErr is not null) { await S3ErrorMapping.WriteAsync(ctx, maxPartsErr.Value).ConfigureAwait(false); return; }
@@ -468,6 +696,11 @@ internal static class MultipartHandlers
                 await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.FromAzure(azureResp, S3Operation.ListParts)).ConfigureAwait(false);
                 return;
             }
+            if (!legacyMultipart &&
+                !await TryHandleMultipartStateStillActiveAsync(ctx, stateStore, bucket, uploadId, ct).ConfigureAwait(false))
+            {
+                return;
+            }
             var emptyXml = S3XmlWriter.ListPartsResult(bucket, key, uploadId,
                 marker, null, maxParts, false, Array.Empty<S3XmlWriter.ListedPart>());
             await WriteXmlAsync(ctx, StatusCodes.Status200OK, emptyXml, ct).ConfigureAwait(false);
@@ -479,6 +712,12 @@ internal static class MultipartHandlers
             return;
         }
 
+        if (!legacyMultipart &&
+            !await TryHandleMultipartStateStillActiveAsync(ctx, stateStore, bucket, uploadId, ct).ConfigureAwait(false))
+        {
+            return;
+        }
+
         var rawXml = await azureResp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
         var parsed = BlockListParser.Parse(new MemoryStream(rawXml));
 
@@ -486,7 +725,7 @@ internal static class MultipartHandlers
         // PartNumberMarker. Synthesise ETag/LastModified — we don't retain
         // per-part MD5s and Azure exposes no per-block timestamp.
         var nonceHex = token.Value.NonceHex;
-        var initiated = token.Value.CreatedAt;
+        var initiated = legacyMultipart ? token.Value.CreatedAt : stateRead.Summary!.Value.Initiated;
         var ours = new List<S3XmlWriter.ListedPart>(parsed.Uncommitted.Count);
         foreach (var b in parsed.Uncommitted)
         {
@@ -537,17 +776,42 @@ internal static class MultipartHandlers
             return;
         }
 
-        // Stateless design: we don't record issued UploadIds and cannot
-        // reconstruct one without the original timestamp (HMAC input). We
-        // always return an empty list so SDKs receive a well-formed
-        // response instead of a 501 — documented in the gap doc.
-        var prefix    = ctx.Request.Query["prefix"].ToString();
-        var delimiter = ctx.Request.Query["delimiter"].ToString();
+        if (!TryParseMaxUploads(ctx.Request.Query, out var maxUploads, out var maxUploadsError))
+        {
+            await S3ErrorMapping.WriteAsync(ctx, maxUploadsError!.Value).ConfigureAwait(false);
+            return;
+        }
+
+        var prefix = StringOrNull(ctx.Request.Query, "prefix");
+        var delimiter = StringOrNull(ctx.Request.Query, "delimiter");
+        var keyMarker = StringOrNull(ctx.Request.Query, "key-marker");
+        var uploadIdMarker = StringOrNull(ctx.Request.Query, "upload-id-marker");
+
+        var stateStore = new MultipartUploadStateStore(blob);
+        var list = await stateStore.ListAsync(bucket, keyMarker, uploadIdMarker, prefix, delimiter, maxUploads, ct).ConfigureAwait(false);
+        if (list.Kind == MultipartUploadStateStore.ResultKind.BucketMissing)
+        {
+            await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.NoSuchBucket()).ConfigureAwait(false);
+            return;
+        }
+        if (list.Kind == MultipartUploadStateStore.ResultKind.Error)
+        {
+            await S3ErrorMapping.WriteAsync(ctx, list.Error ?? new S3ErrorMapping.Mapping(500, "InternalError", "We encountered an internal error. Please try again.")).ConfigureAwait(false);
+            return;
+        }
+
         var xml = S3XmlWriter.ListMultipartUploadsResult(
             bucket,
-            string.IsNullOrEmpty(prefix) ? null : prefix,
-            string.IsNullOrEmpty(delimiter) ? null : delimiter,
-            1000, false, Array.Empty<S3XmlWriter.ListedUpload>());
+            keyMarker,
+            uploadIdMarker,
+            list.NextKeyMarker,
+            list.NextUploadIdMarker,
+            prefix,
+            delimiter,
+            maxUploads,
+            list.IsTruncated,
+            list.Uploads,
+            list.CommonPrefixes);
         await WriteXmlAsync(ctx, StatusCodes.Status200OK, xml, ct).ConfigureAwait(false);
     }
 
@@ -579,6 +843,26 @@ internal static class MultipartHandlers
         return (parsed, null);
     }
 
+    private static bool TryParseMaxUploads(IQueryCollection query, out int maxUploads, out S3ErrorMapping.Mapping? error)
+    {
+        error = null;
+        if (!query.TryGetValue("max-uploads", out var values) || values.Count == 0 || string.IsNullOrEmpty(values[0]))
+        {
+            maxUploads = DefaultMaxParts;
+            return true;
+        }
+
+        if (!int.TryParse(values[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) || parsed <= 0)
+        {
+            maxUploads = 0;
+            error = S3ErrorMapping.InvalidArgument("max-uploads must be an integer between 1 and 1000.");
+            return false;
+        }
+
+        maxUploads = Math.Min(parsed, 1000);
+        return true;
+    }
+
     /// <summary>
     /// Synthetic ETag for ListParts entries. Stable per (uploadId, partNumber)
     /// because the block name encodes both. NOT equal to the MD5 returned
@@ -596,6 +880,185 @@ internal static class MultipartHandlers
     private static S3ErrorMapping.Mapping NoSuchUpload() =>
         new(404, "NoSuchUpload",
             "The specified multipart upload does not exist. The upload ID may be invalid, expired, or scoped to a different object.");
+
+    private static S3ErrorMapping.Mapping OperationAborted() =>
+        new(409, "OperationAborted",
+            "A conflicting conditional operation is currently in progress against this resource.");
+
+    private static S3ErrorMapping.Mapping RequestTimedOut() =>
+        new(400, "RequestTimeout",
+            "Your socket connection to the server was not read from or written to within the timeout period.");
+
+    private static async Task<bool> TryHandleStateSummaryResultAsync(HttpContext ctx, MultipartUploadStateStore.SummaryResult result)
+    {
+        if (result.Kind == MultipartUploadStateStore.ResultKind.Success && result.Summary is not null)
+        {
+            return true;
+        }
+
+        await S3ErrorMapping.WriteAsync(
+            ctx,
+            result.Kind switch
+            {
+                MultipartUploadStateStore.ResultKind.BucketMissing => S3ErrorMapping.NoSuchBucket(),
+                MultipartUploadStateStore.ResultKind.Error => result.Error ?? new S3ErrorMapping.Mapping(500, "InternalError", "We encountered an internal error. Please try again."),
+                _ => NoSuchUpload()
+            }).ConfigureAwait(false);
+        return false;
+    }
+
+    private static async Task<bool> TryHandleStateAcquireResultAsync(HttpContext ctx, MultipartUploadStateStore.AcquireResult result)
+    {
+        if (result.Kind == MultipartUploadStateStore.ResultKind.Success && result.Record is not null && !string.IsNullOrEmpty(result.LeaseId))
+        {
+            return true;
+        }
+
+        await S3ErrorMapping.WriteAsync(
+            ctx,
+            result.Kind switch
+            {
+                MultipartUploadStateStore.ResultKind.Conflict => OperationAborted(),
+                MultipartUploadStateStore.ResultKind.BucketMissing => S3ErrorMapping.NoSuchBucket(),
+                MultipartUploadStateStore.ResultKind.Error => result.Error ?? new S3ErrorMapping.Mapping(500, "InternalError", "We encountered an internal error. Please try again."),
+                _ => NoSuchUpload()
+            }).ConfigureAwait(false);
+        return false;
+    }
+
+    private static async Task<bool> VerifyMultipartBucketGenerationAfterWriteAsync(
+        HttpContext ctx,
+        MultipartUploadStateStore stateStore,
+        string bucket,
+        string uploadId,
+        string expectedGeneration,
+        CancellationToken cancellationToken)
+    {
+        var verification = await stateStore.VerifyContainerGenerationAsync(bucket, expectedGeneration, cancellationToken).ConfigureAwait(false);
+        if (verification.Kind != MultipartUploadStateStore.ResultKind.Success)
+        {
+            _ = await stateStore.DeleteAsync(bucket, uploadId, cancellationToken).ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(
+                ctx,
+                verification.Kind == MultipartUploadStateStore.ResultKind.Error
+                    ? verification.Error ?? OperationAborted()
+                    : OperationAborted()).ConfigureAwait(false);
+            return false;
+        }
+
+        var stateRead = await stateStore.ReadSummaryAsync(bucket, uploadId, cancellationToken).ConfigureAwait(false);
+        if (stateRead.Kind == MultipartUploadStateStore.ResultKind.Success)
+        {
+            return true;
+        }
+
+        await S3ErrorMapping.WriteAsync(
+            ctx,
+            stateRead.Kind == MultipartUploadStateStore.ResultKind.Error
+                ? stateRead.Error ?? OperationAborted()
+                : stateRead.Kind == MultipartUploadStateStore.ResultKind.BucketMissing
+                    ? S3ErrorMapping.NoSuchBucket()
+                : OperationAborted()).ConfigureAwait(false);
+        return false;
+    }
+
+    private static async Task<(bool Retired, S3ErrorMapping.Mapping? Error)> TryRetireCompletedStateAsync(
+        MultipartUploadStateStore stateStore,
+        string bucket,
+        string uploadId,
+        MultipartUploadStateStore.MultipartUploadStateSummary summary,
+        string leaseId,
+        CancellationToken cancellationToken)
+    {
+        var deleteError = await stateStore.DeleteLeasedAsync(bucket, uploadId, leaseId, cancellationToken).ConfigureAwait(false);
+        if (deleteError is null)
+        {
+            return (true, null);
+        }
+
+        var invalidateError = await stateStore.InvalidateLeasedAsync(summary, leaseId, cancellationToken).ConfigureAwait(false);
+        if (invalidateError is null)
+        {
+            return (true, null);
+        }
+
+        var stateRead = await stateStore.ReadSummaryAsync(bucket, uploadId, cancellationToken).ConfigureAwait(false);
+        return stateRead.Kind is MultipartUploadStateStore.ResultKind.NotFound or MultipartUploadStateStore.ResultKind.BucketMissing
+            ? (true, null)
+            : (false, stateRead.Kind == MultipartUploadStateStore.ResultKind.Error ? stateRead.Error ?? invalidateError : invalidateError);
+    }
+
+    private static async Task<bool> TryHandleMultipartStateStillActiveAsync(
+        HttpContext ctx,
+        MultipartUploadStateStore stateStore,
+        string bucket,
+        string uploadId,
+        CancellationToken cancellationToken)
+    {
+        var stateRead = await stateStore.ReadSummaryAsync(bucket, uploadId, cancellationToken).ConfigureAwait(false);
+        if (stateRead.Kind == MultipartUploadStateStore.ResultKind.Success)
+        {
+            return true;
+        }
+
+        await S3ErrorMapping.WriteAsync(
+            ctx,
+            stateRead.Kind switch
+            {
+                MultipartUploadStateStore.ResultKind.BucketMissing => S3ErrorMapping.NoSuchBucket(),
+                MultipartUploadStateStore.ResultKind.Error => stateRead.Error ?? OperationAborted(),
+                _ => OperationAborted()
+            }).ConfigureAwait(false);
+        return false;
+    }
+
+    private static async Task<bool> TryHandleLegacyMultipartFallbackAsync(
+        HttpContext ctx,
+        MultipartUploadStateStore stateStore,
+        string bucket,
+        UploadIdCodec.UploadToken token,
+        CancellationToken cancellationToken)
+    {
+        // The state record for this upload was not found. That is normal for
+        // (a) a legacy pre-migration token that never had a durable record, or
+        // (b) an upload whose bucket was deleted (cascading cleanup already
+        // removed the record along with the container). Distinguish those from
+        // "this upload never existed / already completed or aborted" by
+        // checking whether the bucket/container itself still exists — a
+        // missing container must surface as NoSuchBucket regardless of the
+        // token's layout, not as NoSuchUpload.
+        var generation = await stateStore.ReadContainerGenerationAsync(bucket, cancellationToken).ConfigureAwait(false);
+        if (generation.Kind == MultipartUploadStateStore.ResultKind.Success)
+        {
+            if (token.LegacyLayout)
+            {
+                return true;
+            }
+
+            await S3ErrorMapping.WriteAsync(ctx, NoSuchUpload()).ConfigureAwait(false);
+            return false;
+        }
+
+        await S3ErrorMapping.WriteAsync(
+            ctx,
+            generation.Kind switch
+            {
+                MultipartUploadStateStore.ResultKind.BucketMissing => S3ErrorMapping.NoSuchBucket(),
+                MultipartUploadStateStore.ResultKind.Error => generation.Error ?? NoSuchUpload(),
+                _ => NoSuchUpload()
+            }).ConfigureAwait(false);
+        return false;
+    }
+
+    private static async Task ReleaseMultipartLeaseBestEffortAsync(
+        MultipartUploadStateStore stateStore,
+        string bucket,
+        string uploadId,
+        string leaseId)
+    {
+        using var releaseCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        _ = await stateStore.ReleaseAsync(bucket, uploadId, leaseId, releaseCts.Token).ConfigureAwait(false);
+    }
 
     private static async Task WriteXmlAsync(HttpContext ctx, int status, string xml, CancellationToken ct)
     {
@@ -617,6 +1080,17 @@ internal static class MultipartHandlers
             foreach (var v in v2) return v;
         }
         return null;
+    }
+
+    private static string? StringOrNull(IQueryCollection query, string key)
+    {
+        if (!query.TryGetValue(key, out var values) || values.Count == 0)
+        {
+            return null;
+        }
+
+        var value = values[0];
+        return string.IsNullOrEmpty(value) ? null : value;
     }
 
     /// <summary>

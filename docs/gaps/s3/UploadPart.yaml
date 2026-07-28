@@ -1,19 +1,22 @@
 service: s3
 operation: UploadPart
-azure_equivalent: "Put Block (?comp=block&blockid=…)"
+azure_equivalent: "Proxy state HEAD/verification + Put Block (?comp=block&blockid=…)"
 status: implemented
 sub_features:
+  - name: durable-upload-existence-check
+    status: implemented
+    notes: "UploadPart first resolves the proxy-owned multipart state record and re-verifies the destination container generation. Missing, expired, aborted, completed, or stale-generation uploadIds return NoSuchUpload before Azure stages a block."
   - name: content-md5
     status: implemented
     notes: "ETag returned to clients is hex(MD5) of the part body, computed in-flight as the body streams to Azure."
   - name: aws-chunked-payload
     status: implemented
-    notes: "Decodes every STREAMING-* chunk framing (signed AWS4-HMAC-SHA256-PAYLOAD and unsigned, with or without a checksum trailer) before streaming the decoded part to Azure; the part ETag is the MD5 of the decoded bytes. The trailing checksum / x-amz-trailer-signature section is consumed and discarded (Azure validates integrity independently). The -ECDSA-* (SigV4a) variants are not recognized."
+    notes: "All STREAMING-* chunked payload variants already supported by the proxy are decoded before forwarding the part to Azure."
   - name: server-side-encryption-customer
     status: unsupported
 behavior_differences:
-  - "Block IDs use the fixed-width layout b{nonce16hex}p{partNumber5d} (base64-encoded) so all parts of a blob share a constant length, satisfying Azure's per-blob block-ID uniformity rule."
-  - "Part numbers must be in [1, 10000] (S3 limit). Azure supports up to 50,000 blocks per blob — surplus capacity is unused."
+  - "Block IDs use the fixed-width layout b{nonce16hex}p{partNumber5d} (base64-encoded) so all parts of a blob share a constant length, satisfying Azure's block-ID uniformity rule."
+  - "Part numbers must be in [1, 10000] (S3 limit). Azure's higher block-count ceiling is intentionally unused."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPart.html
   - https://learn.microsoft.com/rest/api/storageservices/put-block

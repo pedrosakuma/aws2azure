@@ -23,8 +23,8 @@ Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned
 | [kinesis](#kinesis) | No resharding / enhanced fan-out / KCL lease model | ⛔ unsupported |
 | [s3](#s3) | No IAM / ACL / bucket-policy authorization model | 🔵 by design |
 | [s3](#s3) | No enforceable server-side-encryption configuration surface | 🔵 by design |
-| [s3](#s3) | Region derived from the signed scope only | 🔵 by design |
-| [s3](#s3) | Stateless multipart upload without per-part ETag validation | 🔵 by design |
+| [s3](#s3) | Multipart upload keeps bounded durable proxy state | 🔵 by design |
+| [s3](#s3) | Multipart per-part ETag validation cannot be reproduced | 🔵 by design |
 | [s3](#s3) | Bucket sub-resource configs are not translated | ⛔ unsupported |
 | [secretsmanager](#secretsmanager) | Versioning and staging modelled on Key Vault version tags | 🟡 partial |
 | [secretsmanager](#secretsmanager) | Rotation has no Lambda equivalent | 🟡 partial |
@@ -186,11 +186,11 @@ Kinesis shards map to Event Hubs partitions, which are fixed at the hub level. D
 
 - **Status:** 🔵 by design
 
-Authorization is the static AWS-key-to-Azure-credential mapping validated by SigV4; there is no server-side IAM. ACLs are synthesised as owner-only (non-'private' canned ACLs and x-amz-grant-* headers are rejected or ignored), GetBucketPolicy / GetBucketPolicyStatus return 404 NoSuchBucketPolicy, and ownership-controls/public-access-block documents are persisted as compatibility intent without enforcement.
+Authorization is the static AWS-key-to-Azure-credential mapping validated by SigV4; there is no server-side IAM. ACLs are synthesised as owner-only and bucket-policy enforcement is not translated.
 
-**Impact.** Fine-grained S3 access control (ACL grants, bucket policies, block-public-access enforcement) is not translated. Access is entirely governed by the mapped Azure Storage credential.
+**Impact.** Fine-grained S3 access control remains outside the proxy.
 
-**Workaround.** Enforce authorization at the Azure Storage account level (RBAC, SAS, network rules); do not rely on S3 ACLs or bucket policies being honoured.
+**Workaround.** Enforce authorization with Azure RBAC, SAS, and network controls.
 
 References:
 
@@ -202,43 +202,35 @@ References:
 
 - **Status:** 🔵 by design
 
-Azure Blob Storage encrypts at rest transparently. The proxy can persist and round-trip SSE-S3/AES256 bucket intent, but that metadata does not configure Azure encryption. SSE-KMS and SSE-C key semantics remain unsupported and SSE request headers are not honoured as distinct key material.
+Azure Blob Storage encrypts at rest transparently. The proxy can persist some S3 encryption intent, but it does not map SSE request headers to distinct Azure key material or KMS workflows.
 
-**Impact.** Applications that assert a specific SSE mode, customer-provided keys (SSE-C), or per-bucket KMS configuration cannot drive those semantics.
+**Impact.** Applications that require SSE-C/SSE-KMS semantics cannot preserve them.
 
-**Workaround.** Configure encryption (including customer-managed keys) at the Azure Storage account level.
+**Workaround.** Configure encryption and customer-managed keys at the Azure Storage account level.
 
-References:
+<a id="s3-multipart-upload-keeps-bounded-durable-proxy-state"></a>
 
-- <https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketEncryption.html>
-
-<a id="s3-region-derived-from-the-signed-scope-only"></a>
-
-### Region derived from the signed scope only
+### Multipart upload keeps bounded durable proxy state
 
 - **Status:** 🔵 by design
 
-The proxy does not model AWS regions; region-sensitive behaviour such as CreateBucket idempotency (200 in us-east-1 vs 409 elsewhere) is reproduced from the SigV4 credential scope, and Azure cannot distinguish 'owned by someone else', so BucketAlreadyExists is always treated as owned-by-you.
+Azure Blob Storage has no native cross-blob multipart-upload enumeration primitive, so aws2azure persists one bounded state record per active multipart upload in a hidden Azure container. Record names begin with the zero-padded initiation timestamp, record bodies store only the headers needed to finish the upload (16 KiB cap), and Create/List opportunistically delete a bounded number of expired records.
 
-**Impact.** Multi-region S3 topology, location constraints, and foreign-owner bucket conflicts are not represented.
+**Impact.** Multipart enumeration and metadata fidelity now survive proxy restart, but the proxy deliberately owns a small amount of durable control-plane state.
 
-**Workaround.** Treat the deployment as single-region; region awareness is tracked as opt-in future work.
+**Workaround.** Treat the hidden multipart-state container as proxy-owned implementation data; do not manage or replicate it through S3.
 
-References:
+<a id="s3-multipart-per-part-etag-validation-cannot-be-reproduced"></a>
 
-- <https://github.com/pedrosakuma/aws2azure/issues/267>
-
-<a id="s3-stateless-multipart-upload-without-per-part-etag-validation"></a>
-
-### Stateless multipart upload without per-part ETag validation
+### Multipart per-part ETag validation cannot be reproduced
 
 - **Status:** 🔵 by design
 
-UploadId is a stateless HMAC-bound token (no Azure call on initiate) and blocks are addressed by (uploadId, PartNumber) only. Client-supplied per-part ETags are not validated, so re-uploading a PartNumber with different bytes commits the latest version regardless of the ETag the client sends (S3 would reject with InvalidPart).
+Even with durable multipart state, Azure still exposes no primitive that lets the proxy re-read the true MD5/ETag of each staged uncommitted block. CompleteMultipartUpload and ListParts therefore cannot validate or replay AWS's per-part ETag contract exactly.
 
-**Impact.** Workflows that overwrite a part within an upload and rely on ETag rejection behave differently from S3.
+**Impact.** Workloads that overwrite a PartNumber with different bytes and rely on AWS rejecting the stale ETag at CompleteMultipartUpload will observe different behaviour.
 
-**Workaround.** Do not re-upload a PartNumber with different content within one upload.
+**Workaround.** Gate those workloads out or avoid re-uploading the same PartNumber with different content inside one multipart session.
 
 <a id="s3-bucket-sub-resource-configs-are-not-translated"></a>
 
@@ -246,11 +238,11 @@ UploadId is a stateless HMAC-bound token (no Azure call on initiate) and blocks 
 
 - **Status:** ⛔ unsupported
 
-Lifecycle, replication, website hosting, event notifications, Requester Pays, acceleration Enabled, and logging bucket configurations have no Blob-storage equivalent in the wire-protocol path; the corresponding Get operations return a documented not-configured/stable-disabled shape and Put/Delete are no-ops or unsupported.
+Lifecycle, replication, website hosting, event notifications, Requester Pays, acceleration, and logging bucket configurations have no Blob-storage equivalent in the wire-protocol path.
 
-**Impact.** Automated tiering/expiry, cross-region replication, static-website hosting, and S3 event notifications configured via these APIs have no effect.
+**Impact.** Automated tiering/expiry, cross-region replication, static-website hosting, and S3 event automation configured through these APIs have no effect.
 
-**Workaround.** Use Azure Blob lifecycle-management policies, object replication, static website, and Event Grid subscriptions configured directly on the storage account.
+**Workaround.** Use Azure Blob lifecycle-management policies, object replication, static website settings, and Event Grid subscriptions configured directly on the storage account.
 
 ## secretsmanager
 

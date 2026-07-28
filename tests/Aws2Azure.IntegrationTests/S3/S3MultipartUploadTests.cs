@@ -171,6 +171,12 @@ public class S3MultipartUploadTests
 
         using var head = await SendAsync(HttpMethod.Head, $"/{bucket}/{key}", Array.Empty<byte>());
         Assert.Equal(HttpStatusCode.NotFound, head.StatusCode);
+
+        using var reuse = await SendAsync(HttpMethod.Put,
+            $"/{bucket}/{key}?uploadId={uploadId}&partNumber=1",
+            "stale"u8.ToArray(), contentType: "application/octet-stream");
+        Assert.Equal(HttpStatusCode.NotFound, reuse.StatusCode);
+        Assert.Contains("<Code>NoSuchUpload</Code>", await reuse.Content.ReadAsStringAsync());
     }
 
     [SkippableFact]

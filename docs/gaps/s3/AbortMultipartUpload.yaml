@@ -1,12 +1,17 @@
 service: s3
 operation: AbortMultipartUpload
-azure_equivalent: "(no-op; uncommitted blocks GC after 7 days)"
+azure_equivalent: "Lease state record + delete proxy-owned multipart state blob"
 status: implemented
-sub_features: []
+sub_features:
+  - name: lease-based-convergence
+    status: implemented
+    notes: "Abort acquires a 60-second lease on the multipart state blob before deleting it so concurrent Abort/Complete operations converge on one winner."
+  - name: bounded-lease-work
+    status: implemented
+    notes: "Lease-protected work is bounded by a 45-second linked deadline. On timeout the proxy returns RequestTimeout and lets the lease expire naturally instead of risking a late release race."
 behavior_differences:
-  - "Server-side no-op once the UploadId is validated. Azure auto-removes uncommitted blocks ~7 days after their last upload, which matches the UploadId TTL — so an aborted upload's blocks expire on the same schedule as a forgotten one."
-  - "The destination bucket is still probed so a missing container surfaces NoSuchBucket instead of 204."
-  - "Subsequent UploadPart calls on the same UploadId continue to succeed until the TTL expires (no active invalidation). To prevent reuse, callers should treat the UploadId as discarded after Abort."
+  - "Abort does not delete Azure's uncommitted blocks eagerly; removing the durable state record is what invalidates the UploadId immediately. Azure later garbage-collects the abandoned blocks on its normal schedule."
+  - "Subsequent UploadPart/ListParts/CompleteMultipartUpload calls on the same UploadId return NoSuchUpload because the proxy state record is gone, even if Azure still retains the uncommitted blocks temporarily."
 references:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html
-  - https://learn.microsoft.com/rest/api/storageservices/put-block
+  - https://learn.microsoft.com/rest/api/storageservices/lease-blob

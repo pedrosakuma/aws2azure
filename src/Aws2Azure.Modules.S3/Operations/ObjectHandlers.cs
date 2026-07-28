@@ -71,6 +71,11 @@ internal static class ObjectHandlers
         }
         var sourceBucket = parsed.Bucket!;
         var sourceKey = parsed.Key!;
+        if (blob.IsInternalContainer(sourceBucket))
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchBucket()).ConfigureAwait(false);
+            return;
+        }
 
         var sourceUri = blob.BuildBlobUri(sourceBucket, sourceKey);
 

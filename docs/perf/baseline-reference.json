@@ -8,6 +8,7 @@
     "s3.PutObject (4 KiB)":                                        { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0, "maxPeakWorkingSetMb": 400.0, "maxAllocBytesPerOp": 100000.0 },
     "s3.PutObject (1 MiB)":                                        { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
     "s3.PutObject (10 MiB)":                                       { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
+    "s3.MultipartUpload (1x64 KiB)":                               { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0, "maxPeakWorkingSetMb": 400.0, "maxAllocBytesPerOp": 800000.0 },
     "s3.GetObject (64 KiB)":                                       { "minThroughputPerSec": 100.0, "maxP99Ms":  500.0, "maxPeakWorkingSetMb": 400.0, "maxAllocBytesPerOp": 120000.0 },
     "s3.ListObjectsV2 (500 keys)":                                 { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
     "s3.CopyObject (4 KiB)":                                       { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },

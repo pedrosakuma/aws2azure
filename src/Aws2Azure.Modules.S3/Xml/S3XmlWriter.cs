@@ -241,18 +241,21 @@ internal static class S3XmlWriter
     }
 
     /// <summary>
-    /// S3 <c>ListMultipartUploadsResult</c> envelope. aws2azure cannot
-    /// fully enumerate in-progress uploads (stateless design — no record
-    /// of issued UploadIds) so the <paramref name="uploads"/> list is
-    /// typically empty. See gap doc.
+    /// S3 <c>ListMultipartUploadsResult</c> envelope. Multipart uploads are
+    /// emitted in real key-order and carry resumable key/upload markers.
     /// </summary>
     public static string ListMultipartUploadsResult(
         string bucket,
+        string? keyMarker,
+        string? uploadIdMarker,
+        string? nextKeyMarker,
+        string? nextUploadIdMarker,
         string? prefix,
         string? delimiter,
         int maxUploads,
         bool isTruncated,
-        IReadOnlyList<ListedUpload> uploads)
+        IReadOnlyList<ListedUpload> uploads,
+        IReadOnlyList<string>? commonPrefixes = null)
     {
         var sb = new StringBuilder(384);
         using (var writer = XmlWriter.Create(sb, Settings))
@@ -260,10 +263,16 @@ internal static class S3XmlWriter
             writer.WriteStartDocument();
             writer.WriteStartElement("ListMultipartUploadsResult", S3Namespace);
             writer.WriteElementString("Bucket", bucket);
-            writer.WriteElementString("KeyMarker", string.Empty);
-            writer.WriteElementString("UploadIdMarker", string.Empty);
-            writer.WriteElementString("NextKeyMarker", string.Empty);
-            writer.WriteElementString("NextUploadIdMarker", string.Empty);
+            writer.WriteElementString("KeyMarker", keyMarker ?? string.Empty);
+            writer.WriteElementString("UploadIdMarker", uploadIdMarker ?? string.Empty);
+            if (!string.IsNullOrEmpty(nextKeyMarker))
+            {
+                writer.WriteElementString("NextKeyMarker", nextKeyMarker);
+            }
+            if (!string.IsNullOrEmpty(nextUploadIdMarker))
+            {
+                writer.WriteElementString("NextUploadIdMarker", nextUploadIdMarker);
+            }
             if (!string.IsNullOrEmpty(prefix))
             {
                 writer.WriteElementString("Prefix", prefix);
@@ -283,6 +292,10 @@ internal static class S3XmlWriter
                     u.Initiated.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
                 writer.WriteElementString("StorageClass", "STANDARD");
                 writer.WriteEndElement();
+            }
+            if (commonPrefixes is not null)
+            {
+                WriteCommonPrefixes(writer, commonPrefixes, encodeUrl: false);
             }
             writer.WriteEndElement();
             writer.WriteEndDocument();

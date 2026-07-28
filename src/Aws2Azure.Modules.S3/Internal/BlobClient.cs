@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
@@ -26,6 +27,7 @@ internal sealed partial class BlobClient
     private readonly string _endpointWithSlash;
     private readonly string _accountName;
     private readonly byte[] _accountKeyBytes;
+    private readonly string _multipartStateContainerName;
 
     /// <summary>Azure Storage REST API version sent on every blob request
     /// (matches the version used by <see cref="SendBlobRequestAsync"/> and
@@ -47,6 +49,7 @@ internal sealed partial class BlobClient
         _endpointWithSlash = _serviceEndpoint.AbsoluteUri;
         _accountName = credentials.AccountName;
         _accountKeyBytes = Convert.FromBase64String(credentials.AccountKey);
+        _multipartStateContainerName = BuildMultipartStateContainerName(credentials.AccountName);
     }
 
     /// <summary>
@@ -55,6 +58,10 @@ internal sealed partial class BlobClient
     /// against account B.
     /// </summary>
     internal string AccountName => _accountName;
+    internal string MultipartStateContainerName => _multipartStateContainerName;
+
+    internal bool IsInternalContainer(string bucket) =>
+        string.Equals(bucket, _multipartStateContainerName, StringComparison.Ordinal);
 
     /// <summary>
     /// Raw Azure account-key bytes (already base64-decoded). Used as the
@@ -149,6 +156,15 @@ internal sealed partial class BlobClient
         return SendAsync(HttpMethod.Delete, uri, cancellationToken);
     }
 
+    public Task<HttpResponseMessage> DeleteContainerAsync(string container, string ifMatch, CancellationToken cancellationToken)
+    {
+        var uri = new Uri(_serviceEndpoint, $"{container}?restype=container");
+        var request = new HttpRequestMessage(HttpMethod.Delete, uri);
+        request.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+        request.Options.Set(AzureHttpClient.NoRetryOption, true);
+        return SendBlobRequestAsync(request, cancellationToken);
+    }
+
     public Task<HttpResponseMessage> GetContainerPropertiesAsync(string container, CancellationToken cancellationToken)
     {
         var uri = new Uri(_serviceEndpoint, $"{container}?restype=container");
@@ -220,6 +236,31 @@ internal sealed partial class BlobClient
         if (includeVersions)
         {
             sb.Append("&include=versions");
+        }
+        var uri = new Uri(_serviceEndpoint, sb.ToString());
+        return SendAsync(HttpMethod.Get, uri, cancellationToken);
+    }
+
+    public Task<HttpResponseMessage> ListBlobsWithMetadataAsync(
+        string container,
+        string? prefix,
+        string? marker,
+        int? maxResults,
+        CancellationToken cancellationToken)
+    {
+        var sb = new System.Text.StringBuilder(96);
+        sb.Append(container).Append("?restype=container&comp=list&include=metadata");
+        if (!string.IsNullOrEmpty(prefix))
+        {
+            sb.Append("&prefix=").Append(Uri.EscapeDataString(prefix));
+        }
+        if (!string.IsNullOrEmpty(marker))
+        {
+            sb.Append("&marker=").Append(Uri.EscapeDataString(marker));
+        }
+        if (maxResults is int max)
+        {
+            sb.Append("&maxresults=").Append(max.ToString(CultureInfo.InvariantCulture));
         }
         var uri = new Uri(_serviceEndpoint, sb.ToString());
         return SendAsync(HttpMethod.Get, uri, cancellationToken);
@@ -475,5 +516,11 @@ internal sealed partial class BlobClient
             return new Uri(raw, UriKind.Absolute);
         }
         return new Uri($"https://{credentials.AccountName}.blob.core.windows.net/", UriKind.Absolute);
+    }
+
+    private static string BuildMultipartStateContainerName(string accountName)
+    {
+        var hash = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(accountName));
+        return "aws2azure-mpu-" + Convert.ToHexString(hash[..3]).ToLowerInvariant();
     }
 }
