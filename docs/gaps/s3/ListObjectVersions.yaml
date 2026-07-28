@@ -25,10 +25,8 @@ sub_features:
   notes: Azure delete markers do not map 1:1 to S3 delete markers; <DeleteMarker> entries are not emitted.
   disposition: by_design
 - name: version-id-marker pagination
-  status: unsupported
-  notes: Pagination keys on key-marker only; Azure's marker is opaque and key-ordered.
-  disposition: feasible_backlog
-  tracking_issue: '#690'
+  status: implemented
+  notes: The proxy carries both key-marker and version-id-marker through pagination and emits NextVersionIdMarker alongside NextKeyMarker.
 behavior_differences:
 - VersionId 'null' is used when account versioning is off (the blob has no version id).
 - Owner element omitted.

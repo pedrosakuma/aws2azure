@@ -252,6 +252,64 @@ public class S3LongTailTests
     }
 
     [SkippableFact]
+    public async Task ListObjectVersions_respects_version_id_marker_pagination()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
+
+        var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
+        await PutBucket(bucket);
+
+        using (var p1 = await SendAsync(HttpMethod.Put, $"/{bucket}/a.txt", Encoding.UTF8.GetBytes("aaa"), contentType: "text/plain"))
+            Assert.Equal(HttpStatusCode.OK, p1.StatusCode);
+        using (var p2 = await SendAsync(HttpMethod.Put, $"/{bucket}/b.txt", Encoding.UTF8.GetBytes("bbb"), contentType: "text/plain"))
+            Assert.Equal(HttpStatusCode.OK, p2.StatusCode);
+
+        using var page1 = await SendAsync(HttpMethod.Get, $"/{bucket}?versions&max-keys=1", Array.Empty<byte>());
+        Assert.Equal(HttpStatusCode.OK, page1.StatusCode);
+        var doc1 = XDocument.Parse(await page1.Content.ReadAsStringAsync());
+        Assert.Equal("true", doc1.Root!.Element(S3Ns + "IsTruncated")!.Value);
+
+        var nextKeyMarker = doc1.Root!.Element(S3Ns + "NextKeyMarker")!.Value;
+        var nextVersionIdMarker = doc1.Root!.Element(S3Ns + "NextVersionIdMarker")!.Value;
+        Assert.False(string.IsNullOrEmpty(nextVersionIdMarker));
+
+        using var page2 = await SendAsync(
+            HttpMethod.Get,
+            $"/{bucket}?versions&key-marker={Uri.EscapeDataString(nextKeyMarker)}&version-id-marker={Uri.EscapeDataString(nextVersionIdMarker)}",
+            Array.Empty<byte>());
+        Assert.Equal(HttpStatusCode.OK, page2.StatusCode);
+        var doc2 = XDocument.Parse(await page2.Content.ReadAsStringAsync());
+        Assert.Equal("false", doc2.Root!.Element(S3Ns + "IsTruncated")!.Value);
+
+        var keys = doc2.Root!.Elements(S3Ns + "Version").Select(v => v.Element(S3Ns + "Key")!.Value).ToArray();
+        Assert.Single(keys);
+        Assert.DoesNotContain(nextKeyMarker, keys);
+    }
+
+    [SkippableFact]
+    public async Task ListObjectVersions_uses_common_prefix_as_next_key_marker_when_page_ends_on_prefix()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
+
+        var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
+        await PutBucket(bucket);
+
+        using (var root = await SendAsync(HttpMethod.Put, $"/{bucket}/a.txt", Encoding.UTF8.GetBytes("aaa"), contentType: "text/plain"))
+            Assert.Equal(HttpStatusCode.OK, root.StatusCode);
+        using (var nested = await SendAsync(HttpMethod.Put, $"/{bucket}/logs/x.txt", Encoding.UTF8.GetBytes("bbb"), contentType: "text/plain"))
+            Assert.Equal(HttpStatusCode.OK, nested.StatusCode);
+        using (var trailing = await SendAsync(HttpMethod.Put, $"/{bucket}/z.txt", Encoding.UTF8.GetBytes("ccc"), contentType: "text/plain"))
+            Assert.Equal(HttpStatusCode.OK, trailing.StatusCode);
+
+        using var page1 = await SendAsync(HttpMethod.Get, $"/{bucket}?versions&delimiter=/&max-keys=2", Array.Empty<byte>());
+        Assert.Equal(HttpStatusCode.OK, page1.StatusCode);
+        var doc1 = XDocument.Parse(await page1.Content.ReadAsStringAsync());
+        Assert.Equal("true", doc1.Root!.Element(S3Ns + "IsTruncated")!.Value);
+        Assert.Equal("logs/", doc1.Root!.Element(S3Ns + "NextKeyMarker")!.Value);
+        Assert.Null(doc1.Root!.Element(S3Ns + "NextVersionIdMarker"));
+    }
+
+    [SkippableFact]
     public async Task GetBucketAcl_reports_ownership_only_shape()
     {
         Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");

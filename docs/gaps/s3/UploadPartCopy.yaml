@@ -19,14 +19,11 @@ sub_features:
   status: unsupported
   disposition: by_design
 - name: source-conditional-headers
-  status: partial
-  notes: Date-based x-amz-copy-source-if-* headers forward to Azure. Concrete-ETag x-amz-copy-source-if-match / x-amz-copy-source-if-none-match remain unsupported because proxy-translated S3 ETags do not round-trip into Azure's raw ETag space; '*' is still honoured.
-  disposition: feasible_backlog
-  tracking_issue: '#690'
+  status: implemented
+  notes: Date-based conditionals forward to Azure. Concrete-ETag if-match is evaluated proxy-side and then guarded on Put Block From URL; concrete if-none-match is supported when the source is version-pinned (explicit versionId or Azure current-version pinning), otherwise the proxy returns NotImplemented rather than risk staging bytes from the wrong source.
 - name: versionId
-  status: unsupported
-  disposition: feasible_backlog
-  tracking_issue: '#690'
+  status: implemented
+  notes: x-amz-copy-source?versionId maps to Azure's ?versionid selector when constructing the source SAS URL.
 behavior_differences:
 - Per-part ETag is synthesised from the (uploadId, partNumber) pair when Azure omits Content-MD5. The value is stable for the upload flow but is NOT a content hash and does not equal the UploadPart ETag returned for an equivalent non-copy body.
 - UploadPartCopy with source==destination is rejected with InvalidRequest so the eventual CompleteMultipartUpload cannot silently reconcile against the live source blob.

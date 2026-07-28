@@ -80,7 +80,7 @@ internal sealed partial class BlobClient
     /// <c>x-ms-copy-source-authorization: SharedKey</c>, which is why this
     /// path uses SAS even in same-account scenarios.
     /// </summary>
-    public Uri BuildSourceReadSasUri(string container, string key, TimeSpan validFor)
+    public Uri BuildSourceReadSasUri(string container, string key, TimeSpan validFor, string? versionId = null)
     {
         var baseUri = BuildBlobUri(container, key);
 
@@ -124,7 +124,12 @@ internal sealed partial class BlobClient
             + "&sr=" + resource
             + "&sp=" + permissions
             + "&sig=" + Uri.EscapeDataString(sig);
-        return new Uri(baseUri.AbsoluteUri + query, UriKind.Absolute);
+        var absolute = baseUri.AbsoluteUri + query;
+        if (!string.IsNullOrEmpty(versionId))
+        {
+            absolute += "&versionid=" + Uri.EscapeDataString(versionId);
+        }
+        return new Uri(absolute, UriKind.Absolute);
     }
 
     public static bool IsValidContainerName(string name) =>

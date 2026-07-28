@@ -13,6 +13,7 @@ public enum S3Operation
     DeleteBucket,
     HeadBucket,
     PutObject,
+    PostObject,
     GetObject,
     HeadObject,
     DeleteObject,

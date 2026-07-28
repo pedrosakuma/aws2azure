@@ -19,6 +19,7 @@ internal static class S3OperationDispatcher
             S3Operation.Unknown or S3Operation.Unsupported => S3DispatchTarget.NotImplemented,
 
             S3Operation.PutObject or
+            S3Operation.PostObject or
             S3Operation.GetObject or
             S3Operation.HeadObject or
             S3Operation.DeleteObject or

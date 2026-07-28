@@ -536,8 +536,7 @@ internal static class S3XmlWriter
     /// <summary>
     /// S3 ListObjectVersions response. Maps Azure blob versions to S3
     /// &lt;Version&gt; entries. Delete markers are not modelled (Azure delete
-    /// markers do not map 1:1 to S3 delete markers). Pagination uses KeyMarker
-    /// / NextKeyMarker only (Azure's marker is opaque and key-ordered).
+    /// markers do not map 1:1 to S3 delete markers).
     /// </summary>
     public static async Task WriteListVersionsResultAsync(
         Stream output,
@@ -547,7 +546,9 @@ internal static class S3XmlWriter
         int maxKeys,
         bool isTruncated,
         string? keyMarker,
+        string? versionIdMarker,
         string? nextKeyMarker,
+        string? nextVersionIdMarker,
         bool encodeUrl,
         IReadOnlyList<ListedVersion> versions,
         IReadOnlyList<string> commonPrefixes)
@@ -561,10 +562,14 @@ internal static class S3XmlWriter
             writer.WriteElementString("Name", bucket);
             writer.WriteElementString("Prefix", Encode(prefix, encodeUrl));
             writer.WriteElementString("KeyMarker", Encode(keyMarker, encodeUrl));
-            writer.WriteElementString("VersionIdMarker", string.Empty);
+            writer.WriteElementString("VersionIdMarker", Encode(versionIdMarker, encodeUrl));
             if (!string.IsNullOrEmpty(nextKeyMarker))
             {
                 writer.WriteElementString("NextKeyMarker", Encode(nextKeyMarker, encodeUrl));
+            }
+            if (!string.IsNullOrEmpty(nextVersionIdMarker))
+            {
+                writer.WriteElementString("NextVersionIdMarker", Encode(nextVersionIdMarker, encodeUrl));
             }
             WriteIntElement(writer, "MaxKeys", maxKeys);
             if (!string.IsNullOrEmpty(delimiter))

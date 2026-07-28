@@ -10,8 +10,8 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 | Service | Implemented | Partial | Stub | Unsupported | Feasible ops | By-design ops | Non-goal ops | Feasible sub-features | Feasible design gaps | Structural boundaries |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 8 | 0 | 46 |
-| [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 12 |
-| [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 12 | 0 | 122 |
+| [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 1 | 6 | 0 | 0 | 0 | 9 |
+| [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 1 | 0 | 122 |
 | [secretsmanager](secretsmanager.md) | 6 | 1 | 0 | 1 | 0 | 1 | 1 | 0 | 0 | 11 |
 | [sns](sns.md) | 0 | 14 | 0 | 0 | 4 | 9 | 1 | 1 | 1 | 15 |
 | [sqs](sqs.md) | 10 | 8 | 2 | 0 | 0 | 10 | 0 | 14 | 0 | 31 |
@@ -94,13 +94,13 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 | Status | Feasible backlog | By design | Non-goal |
 |---|---:|---:|---:|
 | ✅ implemented | 0 | 0 | 0 |
-| 🟡 partial | 0 | 7 | 0 |
+| 🟡 partial | 1 | 6 | 0 |
 | ⚪ stub | 0 | 0 | 0 |
 | ⛔ unsupported | 0 | 0 | 0 |
 
 ### Feasible backlog
 
-_No remaining feasible backlog is documented for this service._
+- Operation [ListShards](kinesis.md#listshards) — [#689](https://github.com/pedrosakuma/aws2azure/issues/689)
 
 ### Workload maturity
 
@@ -115,11 +115,8 @@ _No remaining feasible backlog is documented for this service._
 - Operation [DescribeStream](kinesis.md#describestream) — 🔵 by design
 - Operation [GetRecords](kinesis.md#getrecords) — 🔵 by design
 - Operation [GetShardIterator](kinesis.md#getsharditerator) — 🔵 by design
-- Operation [ListShards](kinesis.md#listshards) — 🔵 by design
 - Operation [PutRecord](kinesis.md#putrecord) — 🔵 by design
 - Operation [PutRecords](kinesis.md#putrecords) — 🔵 by design
-- Sub-feature [ListShards](kinesis.md#listshards) / AT_TIMESTAMP shard filter — 🔵 by design
-- Sub-feature [ListShards](kinesis.md#listshards) / AT_TRIM_HORIZON shard filter — 🔵 by design
 
 ## s3
 
@@ -132,18 +129,7 @@ _No remaining feasible backlog is documented for this service._
 
 ### Feasible backlog
 
-- Sub-feature [CompleteMultipartUpload](s3.md#completemultipartupload) / minimum-part-size — [#690](https://github.com/pedrosakuma/aws2azure/issues/690)
-- Sub-feature [CopyObject](s3.md#copyobject) / source conditional headers (if-match / if-none-match / if-modified-since / if-unmodified-since) — [#690](https://github.com/pedrosakuma/aws2azure/issues/690)
-- Sub-feature [CopyObject](s3.md#copyobject) / versionId source qualifier — [#690](https://github.com/pedrosakuma/aws2azure/issues/690)
 - Sub-feature [CreateMultipartUpload](s3.md#createmultipartupload) / object-tagging — [#690](https://github.com/pedrosakuma/aws2azure/issues/690)
-- Sub-feature [GetObject](s3.md#getobject) / response header overrides (response-content-type, response-content-disposition, …) — [#690](https://github.com/pedrosakuma/aws2azure/issues/690)
-- Sub-feature [ListBuckets](s3.md#listbuckets) / pagination — [#690](https://github.com/pedrosakuma/aws2azure/issues/690)
-- Sub-feature [ListObjectVersions](s3.md#listobjectversions) / version-id-marker pagination — [#690](https://github.com/pedrosakuma/aws2azure/issues/690)
-- Sub-feature [PresignedUrl](s3.md#presignedurl) / Presigned POST (browser form uploads) — [#690](https://github.com/pedrosakuma/aws2azure/issues/690)
-- Sub-feature [PresignedUrl](s3.md#presignedurl) / Presigned multipart upload subresources — [#690](https://github.com/pedrosakuma/aws2azure/issues/690)
-- Sub-feature [PresignedUrl](s3.md#presignedurl) / response-content-* query overrides — [#690](https://github.com/pedrosakuma/aws2azure/issues/690)
-- Sub-feature [UploadPartCopy](s3.md#uploadpartcopy) / source-conditional-headers — [#690](https://github.com/pedrosakuma/aws2azure/issues/690)
-- Sub-feature [UploadPartCopy](s3.md#uploadpartcopy) / versionId — [#690](https://github.com/pedrosakuma/aws2azure/issues/690)
 
 ### Workload maturity
 

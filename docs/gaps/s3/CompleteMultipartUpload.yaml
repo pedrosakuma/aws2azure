@@ -17,10 +17,8 @@ sub_features:
   notes: The proxy still cannot validate client-supplied per-part ETags against Azure's staged blocks because Azure exposes no equivalent per-block MD5 lookup. This remains an explicit permanent gap.
   disposition: by_design
 - name: minimum-part-size
-  status: unsupported
-  notes: S3's 5 MiB minimum for non-final parts is not enforced.
-  disposition: feasible_backlog
-  tracking_issue: '#690'
+  status: implemented
+  notes: CompleteMultipartUpload resolves the staged Azure block list and rejects any non-final part smaller than 5 MiB with EntityTooSmall before committing.
 behavior_differences:
 - Response ETag has the S3 multipart shape "{hash}-{count}" but {hash} is derived from the Azure blob ETag, not from concatenated per-part MD5s. SDKs that only pattern-match the dash-suffix accept it as multipart.
 - Missing/unknown PartNumbers surface as InvalidPart (mapped from Azure's InvalidBlockList).

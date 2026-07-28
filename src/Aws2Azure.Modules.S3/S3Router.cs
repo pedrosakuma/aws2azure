@@ -109,9 +109,16 @@ public static class S3Router
             var m when m == HttpMethods.Get    => new S3RouteResult(ClassifyListOperation(request.Query), bucket, null, virtualHosted),
             var m when m == HttpMethods.Post && request.Query.ContainsKey("delete")
                                               => new S3RouteResult(S3Operation.DeleteObjects, bucket, null, virtualHosted),
+            var m when m == HttpMethods.Post && IsMultipartFormRequest(request)
+                                              => new S3RouteResult(S3Operation.PostObject, bucket, null, virtualHosted),
             _ => new S3RouteResult(S3Operation.Unknown, bucket, null, virtualHosted),
         };
     }
+
+    private static bool IsMultipartFormRequest(HttpRequest request) =>
+        request.HasFormContentType
+        && request.ContentType is { } contentType
+        && contentType.StartsWith("multipart/form-data", StringComparison.OrdinalIgnoreCase);
 
     public static bool MatchesHost(string host)
     {
